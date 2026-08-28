@@ -47,6 +47,8 @@ import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
+import type { BatchUploadFailure } from '~/utils/upload-batch';
+import { batchUploadFailureNotification } from '~/utils/upload-batch';
 import { fetchAndUploadGeneratorImage } from '~/utils/comic-image-picker';
 import { fetchBlob } from '~/utils/file-utils';
 
@@ -350,26 +352,24 @@ function ReferenceUpload() {
   };
 
   const handleRefImageDrop = async (files: File[]) => {
+    /**
+     * 🔴 PER-FILE `continue`, AND ONE AGGREGATED REPORT AT THE END — the same policy, from
+     * the same module, as `PanelModal`'s bulk panel drop. See `~/utils/upload-batch`.
+     *
+     * `uploadToCF` now rejects on a refused PUT instead of resolving as if it had worked.
+     * Un-caught, that throw leaves the `for` loop: files 2..N are never attempted, nothing
+     * is shown, and the rejection escapes into Mantine's `onDrop` (and `onDropCapture`),
+     * both of which discard the promise. Before the hook change a 403 resolved and the
+     * loop continued — with a dead key — so continue-on-failure is the pre-existing
+     * behaviour and is what is restored; only the dead key and the silence are removed.
+     */
+    const failed: BatchUploadFailure[] = [];
     for (const file of files) {
-      /**
-       * 🔴 PER-FILE, so one refused PUT cannot end the batch.
-       *
-       * `uploadToCF` now rejects on a refused PUT instead of resolving as if it had
-       * worked. Un-caught, that throw leaves the `for` loop: files 2..N are never
-       * attempted, nothing is shown, and the rejection escapes into Mantine's `onDrop`
-       * (and `onDropCapture`), both of which discard the promise. Before the hook change
-       * a 403 resolved and the loop continued — with a dead key — so the loop's
-       * continue-on-failure behaviour is pre-existing and is what is restored here; only
-       * the dead key and the silence are removed.
-       */
       let result: Awaited<ReturnType<typeof uploadToCF>>;
       try {
         result = await uploadToCF(file);
       } catch (error) {
-        showErrorNotification({
-          title: `Failed to upload ${file.name}`,
-          error: error as Error,
-        });
+        failed.push({ name: file.name, error: error as Error });
         continue;
       }
       const img = new window.Image();
@@ -396,6 +396,11 @@ function ReferenceUpload() {
         };
       });
     }
+
+    // One notification naming how many of how many failed, and which files — not one
+    // toast per file, which over a ten-file drop buries the UI it is reporting on.
+    const report = batchUploadFailureNotification(failed, files.length);
+    if (report) showErrorNotification(report);
   };
 
   const handleSaveUploadedRefs = () => {

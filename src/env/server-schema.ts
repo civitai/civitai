@@ -666,14 +666,36 @@ export const serverSchema = z
     //      a write-only/rotated key answers 403 — both land on `unknown`, both look
     //      clean. A low `absent` count is only meaningful once `present` proves the probe
     //      reaches the bucket at all.
-    //   2. `unknown` is a small share of the total. A large `unknown` share means the
-    //      probe is mostly failing open, so the `absent` count is not a rate.
-    //   3. The `absent` rate is at or below the known defect rate of ~0.01% (10 rows in
-    //      ~101k/day of key mints — NOT the ~0.04% an earlier draft of this comment gave;
-    //      that number divided by a sample size instead of a rate). Materially higher and
-    //      the excess is false rejects. Settle "defect or false reject" by taking a
-    //      logged `absent` key and HEADing the bucket by hand — which is what the `url`
-    //      field on the log line exists for.
+    //   2. `unknown` is a small share of the PROBED lines (`present + absent + unknown`,
+    //      i.e. excluding `not-applicable`). A large `unknown` share means the probe is
+    //      mostly failing open, so the `absent` count is not a rate.
+    //   3. The `absent` rate is at or below ~0.011%.
+    //
+    // 🔴 CONDITION 3'S DENOMINATOR IS THE LOG'S OWN LINE COUNT, and that is the whole
+    // reason a line is emitted on EVERY call rather than only on a bad verdict:
+    //
+    //        absent rate = (lines with verdict `absent`) / (ALL `create-image-media-
+    //                       verify` lines in the window)
+    //
+    // One line per `createImage` call, so the denominator is "image creations" — which is
+    // exactly the population the numerator was measured against: **10 defective rows over
+    // ~92,000 image creations in the same ~24 h window ⇒ ~0.011%**, about 1 in 9,000.
+    // Numerator and denominator come from one query over one population; nothing here is
+    // reconciled across two.
+    //
+    // 🔴 TWO OTHER FIGURES ARE IN CIRCULATION AND NEITHER IS THIS DENOMINATOR:
+    //   - **~22,800** was the SAMPLE SIZE an early defect query examined, not a rate and
+    //     not a population count. Dividing by it produced ~0.04%; that number is retired.
+    //   - **~101k–105k/day** is the KEY-MINT rate (`POST /api/v1/image-upload[/multipart]
+    //     /index`, spanmetrics x10). Different population: browser-originated upload
+    //     requests, not image creations. It is quoted in the PR body only as an
+    //     order-of-magnitude cross-check — it lands within ~10% of 92,000, which is what
+    //     you would expect given abandoned uploads on one side and server-side creation
+    //     paths on the other. Do NOT use it as the threshold's denominator.
+    //
+    // Materially above ~0.011% and the excess is false rejects. Settle "defect or false
+    // reject" per-verdict by taking a logged `absent` key and HEADing the bucket by hand —
+    // which is what the `url` field on the log line exists for.
     //
     // 🔴 `=1` and `=TRUE` are SILENT NO-OPS. `zc.booleanString` is an exact,
     // case-sensitive match on `'true'`; every other value parses to `false` without

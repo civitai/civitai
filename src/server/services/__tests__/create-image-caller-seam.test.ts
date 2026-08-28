@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
+// The repo-wide ledger below PARSES its candidates rather than grepping them — see the
+// note there for why a regex over source text was walkable in one direction and
+// false-failing in the other.
+import ts from 'typescript';
 // Setup-order import: installs the shared ~/env/server / db / logging mocks.
 import '~/__tests__/setup';
 
@@ -22,9 +26,12 @@ import '~/__tests__/setup';
  *  - SPOT CHECK: the four post entry points named in the defect report still route
  *    through `addPostImage`. This one is a fixed list and cannot see a NEW entry point;
  *    it says so where it lives.
- *  - REPO-WIDE LEDGER: a scan of `src/` for every direct `image.create*` call, asserted
- *    equal to a named set. This is the half that fails when the set GROWS (a new writer
- *    that bypasses the funnel) or SHRINKS.
+ *  - REPO-WIDE LEDGER: a scan of `src/` for the two shapes that write an `Image` row
+ *    without going through `createImage` — a parsed Prisma `*.image.create*(…)` call and
+ *    a raw `INSERT INTO "Image"` — asserted equal to a named set. This is the half that
+ *    fails when the set GROWS (a new writer that bypasses the funnel) or SHRINKS. It is a
+ *    ledger over those two NAMED shapes and not a completeness proof; the limits it
+ *    cannot see are enumerated where it lives.
  */
 
 const { createImageMock, createImageResourcesMock } = vi.hoisted(() => ({
@@ -184,27 +191,54 @@ describe('the four post entry points named in the defect report reach addPostIma
   });
 });
 
-describe('repo-wide ledger — every file that writes an Image row directly', () => {
+describe('repo-wide ledger — every file that writes an Image row outside `createImage`', () => {
   /**
    * 🔴 THE LEDGER THAT ACTUALLY SCANS THE TREE.
    *
-   * The media-existence check sits in `createImage`. Any Prisma `image.create*` call
-   * that does NOT go through it is a row the check never sees — the "not covered"
-   * caveat in the PR body is exactly this set, so it has to be a set the repo can be
-   * held to rather than a sentence.
+   * The media-existence check sits in `createImage`. Any write of an `Image` row that
+   * does NOT go through it is a row the check never sees — the "not covered" caveat in
+   * the PR body is exactly this set, so it has to be a set the repo can be held to
+   * rather than a sentence.
    *
-   * 🔴 THE MATCH IS WIDER THAN IT LOOKS LIKE IT NEEDS TO BE, ON PURPOSE. The regex this
-   * replaces was `db(Write|Read)\.image\.create(Many)?\(`, which is wrong twice over
-   * and was measured to survive a planted bypass:
+   * 🔴 WHAT IT SCANS FOR, AND — SAID PLAINLY — WHAT IT DOES NOT.
    *
-   *   - it cannot match `createManyAndReturn(` — the shape BOTH real bypass writers in
-   *     this repo use (`article.service.ts`, `migrate-article-images.ts`);
-   *   - it pins the receiver to `dbWrite`/`dbRead`, and both of those writers go through
-   *     a transaction handle (`tx.image.…`) instead.
+   * TWO scans, because there are two ways to write the row and a Prisma-shaped check
+   * silently misses the other:
    *
-   * So it matches on `.image.create…(` with ANY receiver. Line comments are stripped
-   * first, because `huggingFaceModel.ts` carries a commented-out `tx.image.create({`
-   * that is not a call site and must not be one.
+   *   1. A Prisma call `<anything>.image.create | createMany | createManyAndReturn(...)`,
+   *      found by PARSING each candidate file with the TypeScript compiler and matching
+   *      the call's shape in the AST.
+   *   2. A raw-SQL `INSERT INTO "Image"`, found textually in the source of a string or
+   *      template literal. `daily-challenge-processing.ts` writes rows this way, through
+   *      `dbWrite.$queryRawUnsafe`, and NO Prisma-shaped matcher can see it. The first
+   *      revision of this block claimed to cover "every file that writes an Image row
+   *      directly" while being structurally blind to it.
+   *
+   * 🔴 IT IS AN AST WALK, NOT A REGEX, AND THAT IS THE POINT. The regex it replaces —
+   * `/\.image\.create(Many(AndReturn)?)?\(/` over a line-comment-stripped source — was
+   * walkable and false-positive-prone in the same breath:
+   *
+   *   - PRETTIER WRAPS CHAINS AT 100 COLUMNS. A real bypass on a long receiver renders as
+   *     `tx.image\n  .createManyAndReturn({...})`, and the regex requires `.image.create`
+   *     to be adjacent. Measured: planting that shape in `post.service.ts` left the suite
+   *     at 11 passed — the ledger did not fire. That is the same defect class the ledger
+   *     exists to catch.
+   *   - THE COMMENT STRIPPER FALSE-FAILED ON ORDINARY PROSE. It dropped only lines whose
+   *     FIRST non-space token was `//`, `*` or `/*`, so a TRAILING comment — or a string
+   *     literal — mentioning `tx.image.create({ data })` added that file to the found set
+   *     and broke the build for a contributor who touched nothing relevant, with an
+   *     opaque set-inequality error. Measured on a planted
+   *     `const __note = 1; // historical: this used to call tx.image.create({ data })`.
+   *
+   * A parse answers both: comments and string literals are not expressions, and source
+   * formatting is not part of the AST.
+   *
+   * 🔴 STILL NOT A PROOF OF COMPLETENESS, and the names above say only what is checked.
+   * Out of reach by construction: a dynamic member access (`db['image']['create']`), a
+   * table alias, an `INSERT` assembled from fragments, and anything outside `src/`
+   * (`packages/`, `apps/`, `prisma/`). This is a LEDGER OVER TWO NAMED SHAPES, not an
+   * exhaustive census, and it is worth having because those two shapes are the ones the
+   * repo actually uses.
    *
    * WHEN THIS GOES RED: a file was added to or removed from the set. Do not widen the
    * ledger to make it pass — decide whether the new writer should route through
@@ -227,6 +261,10 @@ describe('repo-wide ledger — every file that writes an Image row directly', ()
       file: 'src/pages/api/admin/temp/migrate-article-images.ts',
       why: 'one-off admin backfill over rows that already exist; not a user path',
     },
+    {
+      file: 'src/server/jobs/daily-challenge-processing.ts',
+      why: 'raw `INSERT INTO "Image" ... SELECT` via `$queryRawUnsafe` — `duplicateImage` copies an EXISTING row\'s columns, `url` included, so the object exists by construction. Invisible to any Prisma-shaped matcher; the raw-SQL scan is here for it.',
+    },
   ];
 
   /** Walk `src/`, skipping test files — a mock or an assertion is not a call site. */
@@ -243,40 +281,135 @@ describe('repo-wide ledger — every file that writes an Image row directly', ()
     return acc;
   }
 
-  const CREATE_CALL = /\.image\.create(Many(AndReturn)?)?\(/;
-  const stripLineComments = (source: string) =>
-    source
-      .split('\n')
-      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
-      .join('\n');
+  const CREATE_METHODS = new Set(['create', 'createMany', 'createManyAndReturn']);
+
+  /**
+   * Does this source contain a call shaped `<expr>.image.<createMethod>(…)`?
+   *
+   * Parsed, not matched. `ts.createSourceFile` gives an AST in which comments are trivia
+   * and string literals are leaves, so neither can be mistaken for a call — and line
+   * wrapping is invisible, which is what the regex could not manage.
+   */
+  function hasPrismaImageCreate(source: string, fileName: string): boolean {
+    const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
+    let found = false;
+
+    const visit = (node: ts.Node): void => {
+      if (found) return;
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+        const method = node.expression.name.text;
+        const receiver = node.expression.expression;
+        if (
+          CREATE_METHODS.has(method) &&
+          ts.isPropertyAccessExpression(receiver) &&
+          receiver.name.text === 'image'
+        ) {
+          found = true;
+          return;
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+
+    visit(sourceFile);
+    return found;
+  }
+
+  /**
+   * A raw `INSERT INTO "Image"` in a string or template literal.
+   *
+   * Kept textual on purpose: the statement is assembled from a template literal with
+   * interpolated column lists, so the table name is the only stable token and it does not
+   * live in a node shape worth matching. `"Image"` is quoted in the SQL, which is what
+   * keeps `"ImageFlag"` / `"ImageResourceNew"` / `"ImageTagForReview"` out — a bare
+   * `Image` prefix match would sweep all three in.
+   */
+  const RAW_IMAGE_INSERT = /INSERT\s+INTO\s+"Image"\s*\(/i;
 
   const found = sourceFiles('src')
-    .filter((file) => CREATE_CALL.test(stripLineComments(read(file))))
+    .filter((file) => {
+      const source = read(file);
+      // Cheap textual pre-filter so only a handful of files are actually parsed. It is a
+      // deliberate SUPERSET of the AST match — it also hits comments, strings and any
+      // amount of wrapping/trivia between the two property accesses — so narrowing it
+      // with the parse afterwards cannot drop a real call site. Over-matching only costs
+      // a parse. The raw-SQL arm is evaluated independently and is not pre-filtered.
+      const prismaCandidate = /\.\s*image\b[\s\S]{0,200}?\.\s*create/.test(source);
+      return (
+        (prismaCandidate && hasPrismaImageCreate(source, file)) || RAW_IMAGE_INSERT.test(source)
+      );
+    })
     .sort();
 
   it('the scan is wired to something — it finds the funnel itself', () => {
     // 🔴 POSITIVE CONTROL. A reassuring empty/short result is indistinguishable from a
-    // walker pointed at the wrong root or a regex that matches nothing, and the
+    // walker pointed at the wrong root or a matcher that matches nothing, and the
     // equality assertion below would then be comparing two lists of the same wrong
     // thing. `image.service.ts` MUST be in any correct scan.
     expect(found).toContain('src/server/services/image.service.ts');
     expect(found.length).toBeGreaterThan(1);
   });
 
-  it('the widened regex matches `createManyAndReturn`, which the old one could not', () => {
-    // The exact planted-mutant shape that survived the previous spelling.
-    expect(CREATE_CALL.test('const rows = await tx.image.createManyAndReturn({ data: [] })')).toBe(
+  it('the AST match survives a prettier-wrapped chain, which the regex did not', () => {
+    // 🔴 THE EXACT PLANTED MUTANT THAT SURVIVED THE PREVIOUS SPELLING. Prettier breaks a
+    // chain whose receiver pushes past 100 columns onto its own line, so a real bypass
+    // routinely looks like this and `\.image\.create` never matched it.
+    expect(
+      hasPrismaImageCreate(
+        'async function f(tx: any) {\n  return await tx.image\n    .createManyAndReturn({ data: [] });\n}',
+        'wrapped.ts'
+      )
+    ).toBe(true);
+    // The unwrapped shapes still match.
+    expect(
+      hasPrismaImageCreate('await dbWrite.image.createManyAndReturn({ data: [] });', 'a.ts')
+    ).toBe(true);
+    expect(hasPrismaImageCreate('await dbWrite.image.createMany({ data: [] });', 'b.ts')).toBe(
       true
     );
-    expect(CREATE_CALL.test('await dbWrite.image.createMany({ data: [] })')).toBe(true);
-    expect(CREATE_CALL.test('await dbWrite.image.create({ data: {} })')).toBe(true);
-    // And a comment is not a call site.
-    expect(stripLineComments('  //   const image = await tx.image.create({')).not.toMatch(
-      CREATE_CALL
+    expect(hasPrismaImageCreate('await tx.image.create({ data: {} });', 'c.ts')).toBe(true);
+    // A neighbouring model is not this model.
+    expect(hasPrismaImageCreate('await dbWrite.imageFlag.create({ data: {} });', 'd.ts')).toBe(
+      false
     );
   });
 
-  it('the set of direct Image-row writers is exactly the ledger', () => {
+  it('a comment or a string mentioning the call is NOT a call site', () => {
+    /**
+     * 🔴 THE FALSE-FAIL HALF, and it is the half that breaks someone else's build.
+     *
+     * All four shapes below made the old line-prefix stripper add the file to the found
+     * set, turning an ordinary comment or a log message into a red build with an opaque
+     * set-inequality error. A parse cannot make that mistake: trivia and string leaves
+     * are not call expressions.
+     */
+    expect(
+      hasPrismaImageCreate('const __note = 1; // historical: called tx.image.create({ data })', 'a')
+    ).toBe(false);
+    expect(hasPrismaImageCreate('//   const image = await tx.image.create({ data });', 'b')).toBe(
+      false
+    );
+    expect(
+      hasPrismaImageCreate('/* block: await dbWrite.image.createMany({ data: [] }); */', 'c')
+    ).toBe(false);
+    expect(
+      hasPrismaImageCreate("const msg = 'do not call dbWrite.image.create({}) here';", 'd')
+    ).toBe(false);
+  });
+
+  it('the raw-SQL arm sees `INSERT INTO "Image"` and ignores neighbouring tables', () => {
+    // 🔴 POSITIVE CONTROL for the second arm, plus the discrimination that keeps
+    // `"ImageFlag"` / `"ImageResourceNew"` / `"ImageTagForReview"` — all three real, all
+    // three in this repo — out of the ledger.
+    expect(RAW_IMAGE_INSERT.test('INSERT INTO "Image" ("id", "url") SELECT')).toBe(true);
+    expect(RAW_IMAGE_INSERT.test('insert into "Image"  (a) values')).toBe(true);
+    expect(RAW_IMAGE_INSERT.test('INSERT INTO "ImageFlag" ("imageId") VALUES')).toBe(false);
+    expect(RAW_IMAGE_INSERT.test('INSERT INTO "ImageResourceNew" ("imageId") VALUES')).toBe(false);
+    // And it actually fires on the real file, not just on the fixture above.
+    expect(found).toContain('src/server/jobs/daily-challenge-processing.ts');
+  });
+
+  it('the set of Image-row writers outside `createImage` is exactly the ledger', () => {
     expect(found).toEqual(IMAGE_ROW_WRITERS.map((entry) => entry.file).sort());
   });
 });

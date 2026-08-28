@@ -237,6 +237,40 @@ describe('createImage media verification — the log is the measurement', () => 
     });
   });
 
+  it('carries the media KEY when the probe actually ran — the per-verdict check needs it', async () => {
+    // 🔴 POSITIVE CONTROL for the omission below. "url is null" is only meaningful if the
+    // field is ever populated at all; this is the branch that populates it, and the value
+    // has to be the key itself or there is nothing to HEAD by hand.
+    respondAbsent();
+    setEnforce(false);
+
+    await createImage(imageInput);
+
+    expect(verifyEvent()).toMatchObject({ verdict: 'absent', url: MEDIA_KEY });
+  });
+
+  it('OMITS the url on a `not-applicable` verdict — that is the arbitrary-text population', async () => {
+    /**
+     * 🔴 `not-applicable` is BY DEFINITION the urls that failed `isProbeableMediaKey` —
+     * the arbitrary caller-supplied strings this PR exists because callers can invent.
+     * They are never rejected and nobody will ever HEAD one by hand, so logging them buys
+     * nothing and ships unbounded caller text to a log sink. The comment justifying the
+     * field ("a bare UUID … not PII") was only ever true of the OTHER branch.
+     *
+     * Driven with a long, non-key string rather than the tidy `https://` case above, so a
+     * fix that special-cased only real URLs would not satisfy it.
+     */
+    respondAbsent();
+    setEnforce(true);
+    const junk = `not-a-key/${'x'.repeat(500)}?token=shouldnotbelogged`;
+
+    const result = await createImage({ ...imageInput, url: junk });
+
+    expect(result).toEqual({ id: CREATED_ID });
+    expect(verifyEvent()).toMatchObject({ verdict: 'not-applicable' });
+    expect(verifyEvent()?.url).toBeNull();
+  });
+
   it('a telemetry failure cannot change the outcome of the creation', async () => {
     // The log is fire-and-forget and contained. An awaited, uncontained logToAxiom
     // once turned ~5,300 successful uploads into 500s when the ingest host went

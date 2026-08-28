@@ -54,6 +54,7 @@ import styles from './ImageUpload.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
+import { isUploadInFlight } from '~/utils/upload-status';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -223,8 +224,21 @@ export function ImageUpload({
                 >
                   {files.map((image, index) => {
                     const match = imageFiles.find((file) => image.file === file.file);
-                    const { progress } = match ?? { progress: 0 };
-                    const showLoading = (match && progress < 100) || image.file;
+                    /**
+                     * 🔴 THE FIFTH COPY OF THE SPINNER PREDICATE, now on the shared rule.
+                     *
+                     * It used to be `(match && progress < 100) || image.file`. Round 1 gave
+                     * this file a DIFFERENT remedy from the other four — dropping the
+                     * placeholder entry on error, which clears `image.file` and so does
+                     * prevent the latch — and that remedy is kept, because it is also what
+                     * makes the tile disappear so the user can retry. But leaving the
+                     * predicate open-coded here left the rule spelled two ways in one repo,
+                     * which is the exact thing `isUploadInFlight` exists to stop. The
+                     * `|| image.file` half stays: an entry queued for upload has no tracked
+                     * file yet, so `match` is undefined and only that half can show its
+                     * spinner.
+                     */
+                    const showLoading = isUploadInFlight(match) || !!image.file;
 
                     if (showLoading)
                       return (

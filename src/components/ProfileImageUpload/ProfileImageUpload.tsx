@@ -22,6 +22,18 @@ type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> &
   previewDisabled?: boolean;
 };
 
+/**
+ * The preview the CURRENT form value implies, or `undefined` when the form holds nothing.
+ *
+ * Used both for the initial state and to put the preview back after a refused upload —
+ * `handleDrop` clears it optimistically, and on failure the form value is unchanged, so
+ * the honest render is the one that value describes.
+ */
+function valuePreview(value: SimpleImageUploadProps['value']) {
+  if (typeof value === 'string') return isValidURL(value) ? { url: value } : undefined;
+  return value ? { url: value.url } : undefined;
+}
+
 export function ProfileImageUpload({
   value,
   onChange,
@@ -31,8 +43,8 @@ export function ProfileImageUpload({
   ...props
 }: SimpleImageUploadProps) {
   const { uploadToCF, files: imageFiles, resetFiles } = useCFImageUpload();
-  const [image, setImage] = useState<{ url: string; objectUrl?: string } | undefined>(
-    typeof value === 'string' && isValidURL(value) ? { url: value } : undefined
+  const [image, setImage] = useState<{ url: string; objectUrl?: string } | undefined>(() =>
+    valuePreview(value)
   );
   const [error, setError] = useState('');
 
@@ -55,17 +67,33 @@ export function ProfileImageUpload({
       await uploadToCF(file);
     } catch (e) {
       setError((e as Error).message);
+      // 🔴 The form value never changed, so put its preview back. `handleDrop` cleared it
+      // optimistically above; leaving it cleared renders an empty circle for a user whose
+      // avatar is still set, which reads as "your avatar was removed".
+      setImage(valuePreview(value));
     }
   };
 
   useDidUpdate(() => {
     if (!imageFile) return;
-    setImage({ url: imageFile.url, objectUrl: imageFile.objectUrl });
+    /**
+     * 🔴 ONLY A SUCCEEDED UPLOAD MAY SET THE PREVIEW.
+     *
+     * This used to `setImage(...)` unconditionally and then call `onChange` only on
+     * `success`. While the latched `progress < 100` spinner existed the preview branch was
+     * unreachable on failure, so the bug was invisible; deriving the spinner from `status`
+     * exposed it. On a refused PUT the effect fired with `status: 'error'` and painted the
+     * NEW avatar into the circle beside the error line, while `onChange` never fired and
+     * the form still held the OLD value — so Save silently kept the old avatar.
+     *
+     * The preview and the emitted value must come from the same branch, because they are
+     * the same claim: "this is the image the form now holds."
+     */
+    if (imageFile.status !== 'success') return;
 
-    if (imageFile.status === 'success') {
-      const { status, ...file } = imageFile;
-      onChange?.(file);
-    }
+    setImage({ url: imageFile.url, objectUrl: imageFile.objectUrl });
+    const { status, ...file } = imageFile;
+    onChange?.(file);
   }, [imageFile]);
 
   useEffect(() => {

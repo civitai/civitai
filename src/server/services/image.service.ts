@@ -7347,6 +7347,23 @@ export const getImagesByEntity = async ({
   return attachTagsToImages(images, tagsVar);
 };
 
+/**
+ * Hard ceiling on the `url` value the `create-image-media-verify` line carries.
+ *
+ * That line only carries a `url` for a PROBED verdict, where `isProbeableMediaKey` has
+ * already accepted the value and it is therefore a 36-character UUID. This bound is the
+ * belt-and-braces half: it is caller-supplied text reaching a log sink, so it gets a
+ * length that does not depend on the predicate staying exactly as strict as it is today.
+ * 64 leaves obvious headroom over 36 and is far below anything worth truncating a log
+ * line for — so on today's population it never fires, which is the intent.
+ *
+ * 🔴 Declared here rather than beside the probe deliberately: an import line in this file
+ * shifts the four `image.service.ts:<line>` keys the Flipt-eval ledger
+ * (`src/server/flipt/__tests__/flipt-eval-context.test.ts`) pins, and this constant sits
+ * comfortably below all four.
+ */
+export const CREATE_IMAGE_MEDIA_VERIFY_URL_LOG_MAX = 64;
+
 export async function createImage({
   toolIds,
   techniqueIds,
@@ -7396,8 +7413,16 @@ export async function createImage({
   // key, HEADing the bucket by hand and looking for the row. Without the key there is
   // nothing to look up — `postId` is null on most non-post paths (comics, cover images,
   // thumbnails, model-version images before the post exists) and `userId` alone selects
-  // thousands of rows. The value is the media key itself: a bare UUID minted by
-  // `/api/v1/image-upload`, not a filename and not PII.
+  // thousands of rows.
+  //
+  // 🔴 LOGGED ONLY WHEN THE PROBE ACTUALLY RAN, AND LENGTH-BOUNDED. On a probed verdict
+  // the value is a bare UUID that `isProbeableMediaKey` already accepted — 36 chars, not
+  // a filename and not PII. `not-applicable` is the opposite population by definition:
+  // it is precisely the urls that FAILED that predicate, i.e. the arbitrary caller-
+  // supplied strings this PR exists because callers can invent. Those can be any length
+  // and any content, they are never rejected, and nobody will ever HEAD one by hand — so
+  // they are omitted rather than shipped to the log. The `slice` is belt-and-braces for
+  // the probed branch, where the predicate already bounds the shape.
   //
   // There is deliberately no image id — the row does not exist yet at this point, which
   // is the whole reason the check sits here.
@@ -7413,7 +7438,10 @@ export async function createImage({
     verdict: mediaVerdict,
     enforcing: enforcingMediaVerify,
     rejected: rejectingMedia,
-    url: typeof image.url === 'string' ? image.url : null,
+    url:
+      mediaVerdict !== 'not-applicable' && typeof image.url === 'string'
+        ? image.url.slice(0, CREATE_IMAGE_MEDIA_VERIFY_URL_LOG_MAX)
+        : null,
     userId: image.userId,
     postId: image.postId ?? null,
   }).catch(() => undefined);

@@ -55,6 +55,8 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { showErrorNotification } from '~/utils/notifications';
+import { uploadBulkPanels } from '~/components/Comics/bulk-panel-upload';
+import { batchUploadFailureNotification } from '~/utils/upload-batch';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { fetchAndUploadGeneratorImage } from '~/utils/comic-image-picker';
@@ -478,67 +480,34 @@ export function PanelModal({
   const handleBulkImageDrop = async (files: File[]) => {
     if (files.length === 0) return;
     setBulkUploading(true);
-    /**
-     * 🔴 DECLARED OUTSIDE THE `try`, and committed in the `finally`.
-     *
-     * The commit used to sit at the end of the `try`, after the loop, so one refused PUT
-     * threw past it and discarded the WHOLE batch — including the panels that had already
-     * uploaded fine. The comment claiming "keep the partial batch behaviour" described
-     * the opposite of what the code did.
-     */
-    const newItems: BulkPanelItem[] = [];
     try {
-      for (const file of files) {
-        const img = new window.Image();
-        const objectUrl = URL.createObjectURL(file);
-        const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
-          img.onload = () => {
-            resolve({ width: img.naturalWidth, height: img.naturalHeight });
-            URL.revokeObjectURL(objectUrl);
-          };
-          img.onerror = () => {
-            URL.revokeObjectURL(objectUrl);
-            reject(new Error('Failed to load image'));
-          };
-          img.src = objectUrl;
-        }).catch(() => ({ width: 512, height: 512 }));
+      /**
+       * 🔴 THE LOOP LIVES IN `bulk-panel-upload.ts`, AND ITS FAILURE POLICY IS DECIDED
+       * THERE — read that file, not this handler, for why one refused PUT does not end
+       * the batch. It was moved out because it is the half of this component that needed
+       * an executed test and could not have one while it was inline: `PanelModal` takes
+       * ~40 required props and pulls in the Buzz hooks, feature flags, a tRPC query,
+       * dnd-kit and `dialogStore`.
+       *
+       * `uploadBulkPanels` does not throw on a refused upload — it returns the panels that
+       * landed and the files that did not. The `try` here is for the unexpected only.
+       */
+      const { items, failed } = await uploadBulkPanels({ files, uploadToCF: uploadBulkToCF });
 
-        // Try to extract embedded generation metadata (Automatic1111 /
-        // ComfyUI / SwarmUI / RuinedFooocus PNG tags) so we can attribute
-        // the panel's Image to whatever model produced the upload. Failures
-        // here are non-fatal — we just continue without meta.
-        let extractedMeta: Record<string, unknown> | undefined;
-        try {
-          const parsed = await getMetadata(file);
-          if (parsed && Object.keys(parsed).length > 0) extractedMeta = parsed;
-        } catch (err) {
-          console.error('Failed to extract metadata from uploaded image:', err);
-        }
+      // Commit BEFORE reporting: the panels that uploaded are kept whatever else happened.
+      // A first-file failure leaves `items` empty, so this is a no-op rather than a
+      // spurious state write.
+      if (items.length > 0) setBulkItems((prev) => [...prev, ...items].slice(0, 20));
 
-        const result = await uploadBulkToCF(file);
-        newItems.push({
-          id: `bulk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          sourceImage: {
-            url: result.id,
-            cfId: result.id,
-            width: dims.width,
-            height: dims.height,
-            preview: getEdgeUrl(result.id, { width: 120 }) ?? result.id,
-          },
-          prompt: '',
-          aspectRatio: '3:4',
-          meta: extractedMeta,
-        });
-      }
-      // Nothing after the loop — the commit is in `finally` so it runs on both paths.
+      // 🔴 Names the files and the count. The whole-loop `catch` this replaces showed one
+      // "Failed to upload image" naming neither, over a batch of up to 20.
+      const report = batchUploadFailureNotification(failed, files.length);
+      if (report) showErrorNotification(report);
     } catch (err) {
-      // Same as the enhance drop above: a refused PUT now rejects, and this handler
-      // had no catch — the rejection escaped and the user was told nothing.
+      // Anything the per-file policy did NOT already handle. A refused PUT no longer
+      // reaches here; a genuine defect still should be surfaced rather than swallowed.
       showErrorNotification({ error: err as Error, title: 'Failed to upload image' });
     } finally {
-      // 🔴 The panels that DID upload are kept. `newItems` is empty when the first file
-      // fails, so this is a no-op in that case rather than a spurious state write.
-      if (newItems.length > 0) setBulkItems((prev) => [...prev, ...newItems].slice(0, 20));
       setBulkUploading(false);
     }
   };

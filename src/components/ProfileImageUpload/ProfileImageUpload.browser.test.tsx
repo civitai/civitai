@@ -26,8 +26,15 @@ import { renderWithProviders } from '../../../test/component-setup';
 
 const mocks = vi.hoisted(() => ({
   behavior: 'success' as 'success' | 'fail' | 'hang',
-  /** ms the mocked PUT stays in flight — see the note in `uploadToCF` below. */
-  uploadMs: 150,
+  /**
+   * ms the mocked PUT stays in flight — see the note in `uploadToCF` below.
+   *
+   * Comfortably wider than `vi.waitFor`'s 50 ms poll interval so the "the spinner went UP"
+   * edge cannot be stepped over between polls. At 150 ms it passed 5/5 under load but had
+   * only ~3 polls of margin; the window is free to widen, a missed edge is a hard failure
+   * (the assertion can never become true afterwards), so buy the margin.
+   */
+  uploadMs: 500,
   uploaded: { url: 'new-key', objectUrl: 'blob:new', id: 'new-key', type: 'image' },
 }));
 
@@ -83,6 +90,10 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
 import { ProfileImageUpload } from '~/components/ProfileImageUpload/ProfileImageUpload';
 
 const overlay = () => document.querySelector('.mantine-LoadingOverlay-root');
+const preview = () => document.querySelector('[data-testid="preview"]') as HTMLImageElement | null;
+
+/** A pre-existing avatar, in the string form `value` accepts. */
+const EXISTING = 'https://cdn.example.com/existing-avatar.png';
 
 async function dropFile() {
   await expect
@@ -150,6 +161,37 @@ describe('ProfileImageUpload — a refused PUT', () => {
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain('Upload failed (status 403)')
     );
+    /**
+     * 🔴 AND NO PREVIEW OF THE REFUSED FILE.
+     *
+     * The `useDidUpdate` used to set `image` from the tracked file on EVERY status,
+     * `error` included, and call `onChange` only on `success`. So a refused PUT painted
+     * the new avatar into the circle while the form still held the old value — the user
+     * saw their new avatar plus an error line, and Save silently kept the old one. There
+     * is no `value` here, so the honest render is no preview at all.
+     */
+    expect(preview()).toBeNull();
+  });
+
+  test('a refused PUT leaves the EXISTING avatar on screen, not the refused one', async () => {
+    /**
+     * 🔴 THE SAME DEFECT WITH A NON-EMPTY FORM VALUE, which is the shape a real user hits.
+     *
+     * Two ways to be wrong and this pins both: painting `new-key` claims an upload that
+     * did not happen, and painting nothing claims the avatar was removed. `onChange` never
+     * fired, so the form still holds `EXISTING` and that is what has to be on screen.
+     */
+    mocks.behavior = 'fail';
+    const onChange = vi.fn();
+    renderWithProviders(<ProfileImageUpload label="Avatar" value={EXISTING} onChange={onChange} />);
+
+    await vi.waitFor(() => expect(preview()?.getAttribute('src')).toBe(EXISTING));
+    await dropFile();
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('Upload failed (status 403)')
+    );
+    await vi.waitFor(() => expect(preview()?.getAttribute('src')).toBe(EXISTING));
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   test('the refused PUT does not produce an unhandled rejection', async () => {
@@ -175,5 +217,8 @@ describe('ProfileImageUpload — a refused PUT', () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ url: 'new-key' }));
     await vi.waitFor(() => expect(overlay()).toBeNull());
     expect(document.body.textContent).not.toContain('Upload failed');
+    // 🔴 POSITIVE CONTROL for the two `preview()` absences above: they are only meaningful
+    // if this component renders a preview at all and the selector matches it.
+    await vi.waitFor(() => expect(preview()?.getAttribute('src')).toBe('blob:new'));
   });
 });

@@ -10,11 +10,18 @@ import { getImageUploadBackend, headObject } from '~/utils/s3-utils';
  * none of them is checked against storage, so any key a caller invents produces a
  * complete, healthy-looking row whose media 404s forever.
  *
- * Measured in production: over a ~24 h window, 10 rows referenced media that was
- * never stored. 🔴 ~22,800 was the SAMPLE SIZE that query examined, not a rate —
- * the denominator is the key-mint rate, ~101k–105k/day (`POST /api/v1/image-upload/
- * multipart/index` + `.../index`, spanmetrics x10, measured 2026-08-28), so the
- * defect rate is ~0.010%, not the ~0.04% an earlier draft derived.
+ * Measured in production: over a ~24 h window of **~92,000 image creations, 10 rows**
+ * referenced media that was never stored — **~0.011%**, about 1 in 9,000. Numerator
+ * and denominator are one query over one population, and it is the same population
+ * the observe-only log counts (one line per `createImage` call), so the historical
+ * rate and the live rate are the same quantity.
+ *
+ * 🔴 Two other figures are in circulation and neither is this denominator: ~22,800
+ * was the SAMPLE SIZE an early query examined (dividing by it gave ~0.04%, retired),
+ * and ~101k–105k/day is the KEY-MINT rate (`POST /api/v1/image-upload/multipart/
+ * index` + `.../index`, spanmetrics x10, measured 2026-08-28) — a different
+ * population, upload requests rather than image creations, useful only as an
+ * order-of-magnitude cross-check on the 92,000.
  *
  * The 10 split into two distinct populations:
  *   - 7 had a key that WAS issued by an upload endpoint 2.0–23.3s before the row
