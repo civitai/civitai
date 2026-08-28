@@ -4,7 +4,11 @@ import { createCache } from './cache';
 import { dbRead } from './db';
 import { bounded } from './bounded';
 import { getImageReviewCounts } from './image-review.service';
-import { countImagesPendingIngestion, countIngestionErrorImages } from './ingestion.service';
+import {
+  countImagesPendingIngestion,
+  countIngestionErrorImages,
+  countMissingMediaImages,
+} from './ingestion.service';
 import { getImageRatingReviewCount } from './image-rating-review.service';
 import { countModeratorArticles } from './articles.service';
 import { getArticleRatingReviewCounts } from './article-rating-reviews.service';
@@ -30,6 +34,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     reports,
     toIngest,
     ingestionErrors,
+    missingMedia,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -63,6 +68,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     // neither predicate has an index of its own; see `bounded`.
     bounded(countImagesPendingIngestion),
     bounded(countIngestionErrorImages),
+    bounded(countMissingMediaImages),
   ]);
   return {
     ...modes,
@@ -75,5 +81,6 @@ async function fetchCounts(): Promise<SidebarCounts> {
     articleRatings: articleRatings.Pending,
     ...(toIngest != null ? { toIngest } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),
+    ...(missingMedia != null ? { missingMedia } : {}),
   };
 }

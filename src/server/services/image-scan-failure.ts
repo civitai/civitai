@@ -14,12 +14,19 @@
  * giving up almost immediately on genuinely unscannable media. The ceilings are the
  * hard backstop that stops any image re-flooding the scanner forever.
  */
+import { IMAGE_SCAN_FAILURE_CLASS_PERMANENT } from '@civitai/shared';
 
 export const ImageScanFailureClass = {
   /** Infra churn that recovers on its own (container-create, 5xx, timeout, expiry). Keep retrying. */
   Transient: 'transient',
-  /** The media itself can't be downloaded/decoded — it will never scan. Stop almost immediately. */
-  Permanent: 'permanent',
+  /**
+   * The media itself can't be downloaded/decoded — it will never scan. Stop almost immediately.
+   *
+   * Sourced from `@civitai/shared` rather than spelled here, because the moderator spoke's SQL keys
+   * a queue off this exact stored string and cannot see this file. Two literals that must agree,
+   * in two runtimes, is how they stop agreeing.
+   */
+  Permanent: IMAGE_SCAN_FAILURE_CLASS_PERMANENT,
   /** Unclassifiable reason. Retry conservatively under the historical cap. */
   Unknown: 'unknown',
 } as const;

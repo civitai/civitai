@@ -90,6 +90,9 @@ export const NAVIGATION: NavLink[] = [
         informational: true,
       },
       { path: '/images/ingestion-errors', label: 'Ingestion Errors', countKey: 'ingestionErrors' },
+      // The permanent-failure half of the ingestion errors, carved off so they are never rated:
+      // publishing one puts a permanent 404 on the site. Delete-only.
+      { path: '/images/missing-media', label: 'Missing Media', countKey: 'missingMedia' },
     ],
   },
   // Models gets its own group beside Images and Articles rather than a single top-level entry — the

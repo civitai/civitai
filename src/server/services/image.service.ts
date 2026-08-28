@@ -1,5 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import {
+  assertMediaPresentForPublish,
+  MediaPresence,
+  type MediaPresence as MediaPresenceType,
+} from '@civitai/shared';
 import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
@@ -224,7 +229,7 @@ import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
+import { serverUploadImage, getB2ImageS3Client, headObject } from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
@@ -8051,8 +8056,36 @@ export async function updateImageNsfwLevel({
 // NOTE(moderator-migration): getImageRatingRequests + getDownleveledImages (the image-rating-review and
 // downleveled-review queues) now live in the spoke app (apps/moderator). updateImageNsfwLevel STAYS — it
 // backs user rating votes + the mod APIs (set-image-nsfw-level, retool) + new-order.
-// NOTE(moderator-migration): getIngestionErrorImages (the ingestion-error-review queue) now lives in the
-// spoke app (apps/moderator, Kysely). resolveIngestionError STAYS — main's article-image-scan
+/**
+ * Timeout budget for the media-existence probe below. A moderator is waiting on this click, and an
+ * UNBOUNDED probe against a degraded store would turn a review action into a hung request — strictly
+ * worse than the bug it guards. Per `headObject`'s contract this bounds each network ATTEMPT, not
+ * wall clock: the SDK's retry sleep is not abort-aware, so worst case is this budget plus one
+ * backoff. An abort is not a not-found shape, so it lands on `unknown` and the publish proceeds.
+ */
+const RESOLVE_INGESTION_MEDIA_PROBE_TIMEOUT_MS = 5_000;
+
+/** Every image object lives in the b2Image uploads bucket, and `Image.url` IS its key. */
+const imageUploadsBucket = () => env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads';
+
+/**
+ * Ask the uploads bucket whether an image's object is actually there, as a three-valued answer.
+ *
+ * Exported for the wiring test only — building the client is deliberately INSIDE the caller's try
+ * (see `assertMediaPresentForPublish`), because `getB2ImageS3Client()` throws when credentials are
+ * absent and that must land on `unknown`, not on a failed publish.
+ */
+export async function probeImageMediaPresence(key: string): Promise<MediaPresenceType> {
+  const head = await headObject(imageUploadsBucket(), key, getB2ImageS3Client(), {
+    abortSignal: AbortSignal.timeout(RESOLVE_INGESTION_MEDIA_PROBE_TIMEOUT_MS),
+  });
+  if (head.status === 'present') return MediaPresence.Present;
+  if (head.status === 'absent') return MediaPresence.Absent;
+  return MediaPresence.Unknown;
+}
+
+// NOTE(moderator-migration): getIngestionErrorImages (the ingestion-error-review queue) now lives in
+// the spoke app (apps/moderator, Kysely). resolveIngestionError STAYS — main's article-image-scan
 // (resolveArticleImageScan) reuses it to pin an article image's nsfwLevel.
 export async function resolveIngestionError({
   id,
@@ -8070,9 +8103,39 @@ export async function resolveIngestionError({
       postId: true,
       userId: true,
       metadata: true,
+      url: true,
     },
   });
   if (!image) throw new Error('Image not found');
+
+  /**
+   * 🔴 REFUSE TO PUBLISH AN IMAGE WHOSE MEDIA IS GONE.
+   *
+   * This function's whole effect is to make an image visible: `ingestion = 'Scanned'` plus a locked
+   * nsfwLevel. It did that unconditionally, and the queue that feeds it selects only on
+   * `ingestion = 'Error' AND nsfwLevel = 0` — so an image whose file can never be fetched was
+   * presented to a moderator for a rating exactly like a scan that merely timed out, and publishing
+   * it put a permanent 404 on the site. Measured over ~92,000 image creations in 24h: 10 such
+   * images, all 10 confirmed absent from the store, 8 of them published by the queue that day.
+   *
+   * The verdict is three-valued and only `absent` refuses; see `@civitai/shared/missing-media` for
+   * why an unconsultable store must fail OPEN. The same rule runs in the moderator spoke, from the
+   * same module, so the two cannot drift.
+   */
+  await assertMediaPresentForPublish({
+    probe: () => probeImageMediaPresence(image.url),
+    raise: (message) => throwBadRequestError(message),
+    // Silent fail-open is how a guard lies for months: with credentials rotated, every publish
+    // would take the `unknown` branch and this would be indistinguishable from a clean run.
+    onUnknown: (error) =>
+      logToAxiom({
+        type: 'warning',
+        name: 'resolveIngestionError:media-probe-unknown',
+        message: 'Could not consult the uploads bucket; allowing the publish',
+        imageId: id,
+        error: error instanceof Error ? error.message : String(error ?? ''),
+      }).catch(() => undefined),
+  });
 
   const metadata = (image.metadata as ImageMetadata) ?? {};
 
