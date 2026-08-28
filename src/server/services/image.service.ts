@@ -7390,6 +7390,18 @@ export async function createImage({
   // against the total. A log emitted only on the bad verdict has no denominator, and
   // the denominator is the entire point of the observe-only phase.
   //
+  // 🔴 `url` IS THE FIELD THAT MAKES THE ROLLOUT CRITERION ANSWERABLE, so it is logged.
+  // The criterion is "is this `absent` rate real defects or false rejects?", and that is
+  // a question about INDIVIDUAL verdicts: it can only be settled by taking an `absent`
+  // key, HEADing the bucket by hand and looking for the row. Without the key there is
+  // nothing to look up — `postId` is null on most non-post paths (comics, cover images,
+  // thumbnails, model-version images before the post exists) and `userId` alone selects
+  // thousands of rows. The value is the media key itself: a bare UUID minted by
+  // `/api/v1/image-upload`, not a filename and not PII.
+  //
+  // There is deliberately no image id — the row does not exist yet at this point, which
+  // is the whole reason the check sits here.
+  //
   // NOT awaited, and contained. On 2026-08-23 an awaited, uncontained `logToAxiom`
   // turned ~5,300 successful uploads into 500s when the ingest host went unreachable
   // for 44 minutes. Telemetry must never be able to change this call's outcome, and
@@ -7401,6 +7413,7 @@ export async function createImage({
     verdict: mediaVerdict,
     enforcing: enforcingMediaVerify,
     rejected: rejectingMedia,
+    url: typeof image.url === 'string' ? image.url : null,
     userId: image.userId,
     postId: image.postId ?? null,
   }).catch(() => undefined);

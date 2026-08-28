@@ -16,11 +16,15 @@ import '~/__tests__/setup';
  * swallows the rejection so enforcement silently does nothing — is invisible to every
  * one of them.
  *
- * Two halves, deliberately:
+ * Three parts, deliberately:
  *  - BEHAVIOURAL: drive the real `addPostImage` and assert what actually crosses the
  *    seam. A structural check would type-check past a wrong argument.
- *  - STRUCTURAL LEDGER: an asserted list of the entry points, failing when the set
- *    GROWS (a new path that might not funnel) or SHRINKS (a path silently rerouted).
+ *  - SPOT CHECK: the four post entry points named in the defect report still route
+ *    through `addPostImage`. This one is a fixed list and cannot see a NEW entry point;
+ *    it says so where it lives.
+ *  - REPO-WIDE LEDGER: a scan of `src/` for every direct `image.create*` call, asserted
+ *    equal to a named set. This is the half that fails when the set GROWS (a new writer
+ *    that bypasses the funnel) or SHRINKS.
  */
 
 const { createImageMock, createImageResourcesMock } = vi.hoisted(() => ({
@@ -150,22 +154,24 @@ describe('addPostImage → createImage seam', () => {
   });
 });
 
-describe('structural ledger — the post entry points funnel through addPostImage', () => {
-  /**
-   * 🔴 An ASSERTED LEDGER, not a spot-check. It fails when the set grows (a new post
-   * entry point that might bypass the funnel) and when it shrinks (one silently
-   * rerouted). Either direction is a change to the claim that the media check in
-   * `createImage` covers every post image, and either should be a deliberate edit
-   * here rather than something that slips through.
-   *
-   * These four are the paths named in the defect report. They are asserted as
-   * PRESENT; the ledger does not claim to enumerate every `createImage` caller in the
-   * repo (comics, cover images and offsite listings call it directly, and are covered
-   * by the funnel itself rather than by this list).
-   */
-  const REPO_ROOT = path.resolve(__dirname, '../../../..');
-  const read = (relative: string) => fs.readFileSync(path.join(REPO_ROOT, relative), 'utf8');
+const REPO_ROOT = path.resolve(__dirname, '../../../..');
+const read = (relative: string) => fs.readFileSync(path.join(REPO_ROOT, relative), 'utf8');
 
+describe('the four post entry points named in the defect report reach addPostImage', () => {
+  /**
+   * 🔴 A SPOT CHECK OVER FOUR HARDCODED FILES, and labelled as one.
+   *
+   * The previous docstring here claimed this "fails when the set grows (a new post entry
+   * point that might bypass the funnel)". It cannot: the list below is a literal array
+   * and each case only asserts `toContain(symbol)`, so a new entry point anywhere in the
+   * repo is invisible to it. That was a description claiming coverage the implementation
+   * did not provide, which is worse than no guard because it stops anyone looking.
+   *
+   * What it actually pins: these four named paths still route through `addPostImage`. If
+   * one is rewritten to call `createImage` directly, or to write a row itself, this goes
+   * red. The GROWS half of the claim is carried by the repo-wide ledger below, which is
+   * where it belongs.
+   */
   const ENTRY_POINTS: ReadonlyArray<{ file: string; symbol: string }> = [
     { file: 'src/server/services/post.service.ts', symbol: 'addPostImage' },
     { file: 'src/server/controllers/post.controller.ts', symbol: 'createPostWithImagesHandler' },
@@ -174,17 +180,103 @@ describe('structural ledger — the post entry points funnel through addPostImag
   ];
 
   it.each(ENTRY_POINTS)('$file reaches the funnel via $symbol', ({ file, symbol }) => {
-    const source = read(file);
-    expect(source).toContain(symbol);
+    expect(read(file)).toContain(symbol);
+  });
+});
+
+describe('repo-wide ledger — every file that writes an Image row directly', () => {
+  /**
+   * 🔴 THE LEDGER THAT ACTUALLY SCANS THE TREE.
+   *
+   * The media-existence check sits in `createImage`. Any Prisma `image.create*` call
+   * that does NOT go through it is a row the check never sees — the "not covered"
+   * caveat in the PR body is exactly this set, so it has to be a set the repo can be
+   * held to rather than a sentence.
+   *
+   * 🔴 THE MATCH IS WIDER THAN IT LOOKS LIKE IT NEEDS TO BE, ON PURPOSE. The regex this
+   * replaces was `db(Write|Read)\.image\.create(Many)?\(`, which is wrong twice over
+   * and was measured to survive a planted bypass:
+   *
+   *   - it cannot match `createManyAndReturn(` — the shape BOTH real bypass writers in
+   *     this repo use (`article.service.ts`, `migrate-article-images.ts`);
+   *   - it pins the receiver to `dbWrite`/`dbRead`, and both of those writers go through
+   *     a transaction handle (`tx.image.…`) instead.
+   *
+   * So it matches on `.image.create…(` with ANY receiver. Line comments are stripped
+   * first, because `huggingFaceModel.ts` carries a commented-out `tx.image.create({`
+   * that is not a call site and must not be one.
+   *
+   * WHEN THIS GOES RED: a file was added to or removed from the set. Do not widen the
+   * ledger to make it pass — decide whether the new writer should route through
+   * `createImage`, and if it genuinely should not, add it here WITH the reason.
+   */
+  const IMAGE_ROW_WRITERS: ReadonlyArray<{ file: string; why: string }> = [
+    {
+      file: 'src/server/services/image.service.ts',
+      why: 'the funnel itself (`createImage`), plus the `createMany` bulk paths it owns',
+    },
+    {
+      file: 'src/server/services/article.service.ts',
+      why: 'edge-media sync, `tx.image.createManyAndReturn` — NOT covered by the check; this is the "createEntityImages" caveat in the PR body',
+    },
+    {
+      file: 'src/server/services/blocks/app-listing-assets.service.ts',
+      why: 'app-listing asset rows; mints its own key via `uploadImageBufferToStore`, so the object exists by construction',
+    },
+    {
+      file: 'src/pages/api/admin/temp/migrate-article-images.ts',
+      why: 'one-off admin backfill over rows that already exist; not a user path',
+    },
+  ];
+
+  /** Walk `src/`, skipping test files — a mock or an assertion is not a call site. */
+  function sourceFiles(dir: string, acc: string[] = []): string[] {
+    for (const entry of fs.readdirSync(path.join(REPO_ROOT, dir), { withFileTypes: true })) {
+      const relative = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '__tests__') continue;
+        sourceFiles(relative, acc);
+      } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
+        acc.push(relative);
+      }
+    }
+    return acc;
+  }
+
+  const CREATE_CALL = /\.image\.create(Many(AndReturn)?)?\(/;
+  const stripLineComments = (source: string) =>
+    source
+      .split('\n')
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join('\n');
+
+  const found = sourceFiles('src')
+    .filter((file) => CREATE_CALL.test(stripLineComments(read(file))))
+    .sort();
+
+  it('the scan is wired to something — it finds the funnel itself', () => {
+    // 🔴 POSITIVE CONTROL. A reassuring empty/short result is indistinguishable from a
+    // walker pointed at the wrong root or a regex that matches nothing, and the
+    // equality assertion below would then be comparing two lists of the same wrong
+    // thing. `image.service.ts` MUST be in any correct scan.
+    expect(found).toContain('src/server/services/image.service.ts');
+    expect(found.length).toBeGreaterThan(1);
   });
 
-  it('none of the post entry points writes an Image row directly', () => {
-    // A direct `image.create` / `image.createMany` in one of these files would be a
-    // row the media check never sees. post.service.ts is exempt from the `create`
-    // half only for the funnel call itself, so it is checked for the bypass shapes.
-    const bypassing = ENTRY_POINTS.map(({ file }) => file)
-      .filter((file, index, all) => all.indexOf(file) === index)
-      .filter((file) => /db(Write|Read)\.image\.create(Many)?\(/.test(read(file)));
-    expect(bypassing).toEqual([]);
+  it('the widened regex matches `createManyAndReturn`, which the old one could not', () => {
+    // The exact planted-mutant shape that survived the previous spelling.
+    expect(CREATE_CALL.test('const rows = await tx.image.createManyAndReturn({ data: [] })')).toBe(
+      true
+    );
+    expect(CREATE_CALL.test('await dbWrite.image.createMany({ data: [] })')).toBe(true);
+    expect(CREATE_CALL.test('await dbWrite.image.create({ data: {} })')).toBe(true);
+    // And a comment is not a call site.
+    expect(stripLineComments('  //   const image = await tx.image.create({')).not.toMatch(
+      CREATE_CALL
+    );
+  });
+
+  it('the set of direct Image-row writers is exactly the ledger', () => {
+    expect(found).toEqual(IMAGE_ROW_WRITERS.map((entry) => entry.file).sort());
   });
 });

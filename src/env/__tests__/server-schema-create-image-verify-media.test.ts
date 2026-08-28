@@ -30,7 +30,13 @@ describe('CREATE_IMAGE_VERIFY_MEDIA_ENFORCE env gate', () => {
     expect(typeof parsed).toBe('boolean');
   });
 
-  it.each(['', 'false', 'FALSE', 'no', '0', 'yes', 'garbage', 'TRUE '])(
+  // 🔴 `'1'` and `'TRUE'` are in this list on purpose: they are the two spellings an
+  // operator is most likely to reach for, and both are SILENT no-ops. `zc.booleanString`
+  // is `val === true || val === 'true'` — exact and case-sensitive — so neither errors,
+  // neither warns, and the only tell is `enforcing: false` on the
+  // `create-image-media-verify` log line. Pinned here so a future widening of the
+  // preprocessor is a deliberate edit rather than a surprise at rollout time.
+  it.each(['', 'false', 'FALSE', 'no', '0', '1', 'TRUE', 'True', 'yes', 'garbage', 'TRUE '])(
     'treats %j as NOT enforcing — a malformed value lands on observe-only, never on rejecting',
     (value) => {
       const parsed = field.parse(value);

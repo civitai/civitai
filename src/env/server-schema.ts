@@ -652,13 +652,35 @@ export const serverSchema = z
     UPLOAD_COMPLETE_VERIFY_ENFORCE: zc.booleanString.optional().default(false),
     // Enforce the media-existence check in `createImage` (every Image row, whatever
     // the entry point). Same family, same stance as the flag above.
+    //
     // 🔴 Defaults to FALSE = observe-only: the probe still runs and its verdict is
     // logged on every call, but an `absent` verdict does NOT reject the creation. The
-    // measurement has to come first — the observed defect rate is ~10 rows in ~22,800
-    // creations, so a false-reject rate anywhere near that would cost more than the
-    // bug, and it can only be read from the log this emits. Flip it only once the
-    // logged `absent` rate has been compared against the total and matches the known
-    // defect rate.
+    // measurement has to come first, and it can only be read from the log this emits.
+    //
+    // 🔴 THREE CONDITIONS, ALL REQUIRED, before flipping this on — see the PR body for
+    // the derivation:
+    //
+    //   1. POSITIVE CONTROL: a NON-ZERO `present` count in the window. A probe that can
+    //      never answer emits zero `absent` verdicts, and "zero absent" is exactly what a
+    //      clean result looks like. `getB2ImageS3Client()` throws without credentials and
+    //      a write-only/rotated key answers 403 — both land on `unknown`, both look
+    //      clean. A low `absent` count is only meaningful once `present` proves the probe
+    //      reaches the bucket at all.
+    //   2. `unknown` is a small share of the total. A large `unknown` share means the
+    //      probe is mostly failing open, so the `absent` count is not a rate.
+    //   3. The `absent` rate is at or below the known defect rate of ~0.01% (10 rows in
+    //      ~101k/day of key mints — NOT the ~0.04% an earlier draft of this comment gave;
+    //      that number divided by a sample size instead of a rate). Materially higher and
+    //      the excess is false rejects. Settle "defect or false reject" by taking a
+    //      logged `absent` key and HEADing the bucket by hand — which is what the `url`
+    //      field on the log line exists for.
+    //
+    // 🔴 `=1` and `=TRUE` are SILENT NO-OPS. `zc.booleanString` is an exact,
+    // case-sensitive match on `'true'`; every other value parses to `false` without
+    // error. The only tell is `enforcing: false` on the `create-image-media-verify` log
+    // line — check that after setting it, not the deploy.
+    //
+    // Flipping it back off is a config change, not a revert.
     CREATE_IMAGE_VERIFY_MEDIA_ENFORCE: zc.booleanString.optional().default(false),
     POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.url()).optional()),
     CHOPPED_TOKEN: z.string().optional(),

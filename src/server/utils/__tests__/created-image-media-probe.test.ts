@@ -3,6 +3,7 @@ import '~/__tests__/setup';
 
 import { isProbeableMediaKey } from '@civitai/shared/media-key';
 import {
+  CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS,
   probeCreatedImageMedia,
   type CreatedImageMediaProbeDeps,
 } from '~/server/utils/created-image-media-probe';
@@ -167,6 +168,46 @@ describe('probeCreatedImageMedia — three verdicts, never a boolean', () => {
     });
     expect(verdict).toBe('not-applicable');
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it('BOUNDS the probe: `headObject` is handed an abort signal', async () => {
+    /**
+     * 🔴 This exists because deleting the whole
+     * `{ abortSignal: AbortSignal.timeout(CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS) }`
+     * argument passed the entire suite. The abort test above proves how an abort is
+     * CLASSIFIED (it injects an `AbortError` from the stubbed `send`); it does not, and
+     * cannot, prove that anything ever asks for one. An unbounded probe on a
+     * user-facing mutation turns a guard into a hang against a degraded backend —
+     * strictly worse than the bug it guards — so the budget's existence is its own
+     * assertion.
+     *
+     * It asserts the SIGNAL, not the constant, because `AbortSignal.timeout` exposes no
+     * readable deadline. The reachable, observable claim is "a live AbortSignal arrives
+     * at the call that performs the network IO".
+     */
+    const headObjectSpy = vi.fn(headObject);
+    await probeCreatedImageMedia(KEY, {
+      getBackend: async () => ({
+        s3: { send: vi.fn(async () => ({ ContentLength: 1 })) } as never,
+        bucket: BUCKET,
+      }),
+      headObject: headObjectSpy,
+    });
+
+    expect(headObjectSpy).toHaveBeenCalledTimes(1);
+    const options = headObjectSpy.mock.calls[0][3];
+    expect(options?.abortSignal).toBeInstanceOf(AbortSignal);
+    // Not already aborted — a spent signal would abort every probe instantly, which is
+    // the failure mode a bare `toBeDefined()` would sail past.
+    expect(options?.abortSignal?.aborted).toBe(false);
+  });
+
+  it('the timeout budget is a positive, finite number of milliseconds', () => {
+    // The value the signal above is built from. Pinned as a range rather than a literal
+    // so tuning it is not a test edit, but a 0 / NaN / negative budget — each of which
+    // makes `AbortSignal.timeout` fire immediately or throw — is caught.
+    expect(Number.isFinite(CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS)).toBe(true);
+    expect(CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS).toBeGreaterThan(0);
   });
 
   it('asks for the key it was given, in the bucket the backend resolved', async () => {
