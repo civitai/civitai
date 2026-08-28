@@ -31,12 +31,34 @@ test.describe('guided tours', () => {
     await forceFirstRun(page);
   });
 
+  /**
+   * The step sets `locale: { next: "Let's go" }`, but `LazyTours` passes
+   * `nextLabelWithProgress: 'Next'` and the step shows progress — so Joyride renders
+   * "Next" here. Verified in a browser 2026-08-28: the first step reads "1 of 10" with
+   * buttons Close|Skip|Next. The welcome tour keeps its own label because its step sets
+   * `showProgress: false`.
+   */
   test('the generator tour opens and advances past its intro step', async ({ page }) => {
     await page.goto('/generate');
     await expect(tourTooltip(page)).toBeVisible();
 
-    await tourTooltip(page).getByRole('button', { name: "Let's go" }).click();
+    await tourTooltip(page).getByRole('button', { name: 'Next' }).click();
     await expect(tourTooltip(page)).toBeVisible();
+  });
+
+  /**
+   * The step after the intro is the terms gate: `hideFooter` + `hideCloseButton`, so the
+   * ONLY way past it is the in-page control that calls `setReviewed(true)`. A tour-wide
+   * blocked-footer flag would put Joyride's own Next here and let a user skip the gate.
+   * Verified in a browser 2026-08-28: this step renders zero buttons.
+   */
+  test('the terms step offers no way past itself', async ({ page }) => {
+    await page.goto('/generate');
+    await expect(tourTooltip(page)).toBeVisible();
+    await tourTooltip(page).getByRole('button', { name: 'Next' }).click();
+
+    await expect(tourTooltip(page)).toContainText('Accept the Terms');
+    await expect(tourTooltip(page).getByRole('button')).toHaveCount(0);
   });
 
   // Needs a click path to a step whose target can be removed; the intervening
