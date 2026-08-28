@@ -166,3 +166,26 @@ describe('spoke resolveIngestionError — missing-media guard', () => {
     expect(headObject).not.toHaveBeenCalled();
   });
 });
+
+describe('spoke resolveIngestionError — a non-key Image.url is never a missing object', () => {
+  /**
+   * The mirror of the main app's case, and it exists because the round-1 mutation sweep found this
+   * side UNCOVERED: dropping the spoke's short-circuit left every test green. Both runtimes share
+   * one rule, so both need a case proving they actually apply it — otherwise "shared" is a claim
+   * about the module rather than about the call sites.
+   *
+   * The store is armed to answer `absent`, so if the probe ran at all the publish would be refused.
+   */
+  it.each([
+    ['an external avatar CDN url', 'https://cdn.discordapp.com/avatars/123/abc.png'],
+    ['a legacy blob: handle', 'blob:https://civitai.com/9f8e-1234'],
+  ])('publishes without consulting the store for %s', async (_label, url) => {
+    imageRow = { postId: null, metadata: {}, url };
+    headObject.mockResolvedValue({ exists: false });
+
+    await resolve();
+
+    expect(headObject).not.toHaveBeenCalled();
+    expect(updates).toHaveLength(1);
+  });
+});
