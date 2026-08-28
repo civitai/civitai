@@ -1812,4 +1812,31 @@ describe('textOutput — structured tool calls are verdict-gated', () => {
     expect(snapshot.textOutputs).toBeUndefined();
     expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
   });
+
+  it('WITHHOLDS on a call whose `type` is not the declared literal', async () => {
+    // `type` is a LITERAL on `BlockStepToolCall`, and the shape guard used to
+    // check every OTHER field while trusting this one to hold at runtime. A
+    // type declaration is not a runtime check: the extractor is called on a
+    // provider response, so the value can be anything. Fails closed like every
+    // other field in that guard.
+    scannerReturns(scanOutput([]));
+    registryOverride.set(
+      CHAT_TYPE,
+      makeToolCallStep({
+        extractToolCalls: () =>
+          [
+            { id: 'call_1', type: 'not_a_function', function: { name: 'f', arguments: '{}' } },
+          ] as never,
+      })
+    );
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    expect(snapshot.toolCalls).toBeUndefined();
+    expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+  });
 });

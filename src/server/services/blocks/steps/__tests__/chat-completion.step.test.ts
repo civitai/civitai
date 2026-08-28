@@ -550,15 +550,35 @@ describe('chat-completion — extractText, against the REAL response', () => {
     ).toEqual([]);
   });
 
-  it('🔴 the entry’s own canonical sample is the SAME real response, for every variant', () => {
-    // Clause 8a probes `extractText(canonicalOutputFor(v))`. This asserts the
-    // sample was not quietly re-written to suit the extractor: it must still
-    // equal the captured response held independently at the top of this file.
+  it('🔴 every choice in the entry’s canonical sample is a REAL captured choice, for every variant', () => {
+    // Clauses 8a and 8b both probe `canonicalOutputFor(v)`. This asserts the
+    // sample was not quietly re-written to suit the extractors: each choice must
+    // still equal a choice from one of the two captured responses held
+    // independently at the top of this file.
+    //
+    // 🔴 THE SECOND CHOICE IS WHY THE SAMPLE CARRIES TWO, AND WHY THIS TEST
+    // CHANGED. With a content-only sample, clause 8b's containment loop iterates
+    // an EMPTY set and passes vacuously — the audit demonstrated that a real
+    // containment break in the shipped extractor loaded clean. The tool-call
+    // choice is what makes that clause execute. Asserting choice-by-choice
+    // rather than whole-object keeps the "verbatim, not invented" property that
+    // this test has always existed to pin.
     for (const variant of CHAT_COMPLETION_MODELS) {
-      expect(chatCompletionStep.canonicalOutputFor(variant)).toEqual(REAL_COMPLETED_STEP);
-      expect(
-        chatCompletionStep.extractText(chatCompletionStep.canonicalOutputFor(variant))
-      ).toEqual(['OK']);
+      const sample = chatCompletionStep.canonicalOutputFor(variant) as typeof REAL_COMPLETED_STEP & {
+        output: { choices: unknown[] };
+      };
+      expect(sample.output.choices).toHaveLength(2);
+      expect(sample.output.choices[0]).toEqual(REAL_COMPLETED_STEP.output.choices[0]);
+      expect(sample.output.choices[1]).toEqual({
+        ...REAL_TOOL_CALL_STEP.output.choices[0],
+        // The captured tool-call response is a single-choice response, so its
+        // own `index` is 0; only the position in this composed envelope differs.
+        index: 1,
+      });
+      expect(chatCompletionStep.extractText(sample)).toEqual([
+        'OK',
+        '{"query":"DreamShaper checkpoint","limit":1}',
+      ]);
     }
   });
 });
@@ -783,6 +803,32 @@ describe('chat-completion — the tool ROUND bound', () => {
     tool_call_id: `call_${i}`,
   });
 
+  /**
+   * The assistant turn that DECLARES `call_${i}`, so the matching tool message
+   * answers a call that was actually made.
+   *
+   * 🔴 REQUIRED SINCE THE CORRELATION GUARD LANDED, and the fixtures below were
+   * changed rather than the guard weakened. Before it, a `tool` message could
+   * reference an id no assistant turn had ever declared and still parse — which
+   * an OpenAI-compatible provider rejects, after the payload has been quoted,
+   * reserved and charged. A round is a PAIR (the ask, then the answer), and a
+   * fixture that carried only the answer was not modelling a real conversation.
+   */
+  const askMessage = (i: number) => ({
+    role: 'assistant' as const,
+    tool_calls: [
+      {
+        id: `call_${i}`,
+        type: 'function' as const,
+        function: { name: 'search_models', arguments: '{}' },
+      },
+    ],
+  });
+
+  /** `n` complete rounds: each ask immediately followed by its answer. */
+  const rounds = (n: number) =>
+    Array.from({ length: n }, (_, i) => [askMessage(i), toolMessage(i)]).flat();
+
   it('🔴 MAX_TOOL_ROUNDS is a real exported number — the cases below degenerate without it', () => {
     // 🔴 THIS GUARD EXISTS BECAUSE THE DEGENERATION WAS OBSERVED, not imagined.
     // Measured while taking the red-at-base matrix for this change: against
@@ -800,21 +846,22 @@ describe('chat-completion — the tool ROUND bound', () => {
   });
 
   it('accepts exactly MAX_TOOL_ROUNDS tool messages', () => {
-    const messages = [
-      { role: 'user' as const, content: 'hello' },
-      ...Array.from({ length: MAX_TOOL_ROUNDS }, (_, i) => toolMessage(i)),
-    ];
+    const messages = [{ role: 'user' as const, content: 'hello' }, ...rounds(MAX_TOOL_ROUNDS)];
     expect(parse({ ...VALID_PARAMS, messages }).success).toBe(true);
   });
 
   it('🔴 REJECTS MAX_TOOL_ROUNDS + 1 tool messages', () => {
-    const messages = [
-      { role: 'user' as const, content: 'hello' },
-      ...Array.from({ length: MAX_TOOL_ROUNDS + 1 }, (_, i) => toolMessage(i)),
-    ];
+    // 🔴 `rounds()`, NOT bare tool messages — the fixture must violate ONLY the
+    // round bound. With unpaired tool messages the correlation guard rejects
+    // this payload too, so the case would stay red with the round bound
+    // DELETED: green (or red) for the wrong reason, and a vacuous guard.
+    const messages = [{ role: 'user' as const, content: 'hello' }, ...rounds(MAX_TOOL_ROUNDS + 1)];
     const result = parse({ ...VALID_PARAMS, messages });
     expect(result.success).toBe(false);
-    expect(JSON.stringify(result.error?.issues)).toContain('too many tool rounds');
+    const issues = JSON.stringify(result.error?.issues);
+    expect(issues).toContain('too many tool rounds');
+    // ...and it is the ONLY complaint, which is what pins the attribution.
+    expect(issues).not.toContain('no PRECEDING assistant message');
   });
 
   it('🔴 the bound is enforced on the ESTIMATE path too, not only on submit', () => {
@@ -824,25 +871,58 @@ describe('chat-completion — the tool ROUND bound', () => {
     // Asserted through the registry's own accessor rather than the imported
     // const, so it reads the entry the router would resolve.
     const entry = getStep(STEP_ID) as AnyBlockStep;
+    const messages = [{ role: 'user' as const, content: 'hello' }, ...rounds(MAX_TOOL_ROUNDS + 1)];
+    const result = entry.paramSchema.safeParse({ ...VALID_PARAMS, messages });
+    expect(result.success).toBe(false);
+    // Same attribution point as the submit-path case: the round bound must be
+    // what rejects this, not the correlation guard.
+    expect(JSON.stringify(result.error?.issues)).toContain('too many tool rounds');
+  });
+
+  it('🔴 REJECTS a tool message whose tool_call_id no assistant turn declared', () => {
+    // The provider rejects this, but only AFTER the payload has been quoted,
+    // reserved against every cap and charged — with an error the app author
+    // cannot diagnose. Same class as `toolChoice` naming an undeclared function.
     const messages = [
       { role: 'user' as const, content: 'hello' },
-      ...Array.from({ length: MAX_TOOL_ROUNDS + 1 }, (_, i) => toolMessage(i)),
+      askMessage(0),
+      { role: 'tool' as const, content: 'result', tool_call_id: 'call_nobody_asked' },
     ];
-    expect(entry.paramSchema.safeParse({ ...VALID_PARAMS, messages }).success).toBe(false);
+    const result = parse({ ...VALID_PARAMS, messages });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('no PRECEDING assistant message');
+  });
+
+  it('🔴 REJECTS a tool message with no preceding assistant turn at all', () => {
+    const messages = [{ role: 'user' as const, content: 'hello' }, toolMessage(0)];
+    const result = parse({ ...VALID_PARAMS, messages });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('no PRECEDING assistant message');
+  });
+
+  it('🔴 REJECTS an answer that PRECEDES its own ask — ordering, not just membership', () => {
+    // 🔴 THE CASE THAT SEPARATES THIS GUARD FROM A MEMBERSHIP CHECK. The id IS
+    // declared in the payload, just later. Collecting every id first and then
+    // testing membership would accept this, and the provider would not.
+    const messages = [
+      { role: 'user' as const, content: 'hello' },
+      toolMessage(0),
+      askMessage(0),
+    ];
+    const result = parse({ ...VALID_PARAMS, messages });
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('no PRECEDING assistant message');
   });
 
   it('does not count assistant tool_calls turns toward the round bound', () => {
     // A round is a RESULT coming back. The assistant turn that requested it is
-    // replayed history and is bounded by `MAX_MESSAGES`, not by this cap.
+    // replayed history and is bounded by `MAX_MESSAGES`, not by this cap. Here
+    // six extra asks are declared and left UNANSWERED — legal, since the
+    // correlation guard constrains answers to declared asks and not the reverse.
     const messages = [
       { role: 'user' as const, content: 'hello' },
-      ...Array.from({ length: 6 }, () => ({
-        role: 'assistant' as const,
-        tool_calls: [
-          { id: 'c', type: 'function' as const, function: { name: 'f', arguments: '{}' } },
-        ],
-      })),
-      ...Array.from({ length: MAX_TOOL_ROUNDS }, (_, i) => toolMessage(i)),
+      ...Array.from({ length: 6 }, (_, i) => askMessage(100 + i)),
+      ...rounds(MAX_TOOL_ROUNDS),
     ];
     expect(parse({ ...VALID_PARAMS, messages }).success).toBe(true);
   });
@@ -1001,5 +1081,94 @@ describe('chat-completion — extractToolCalls', () => {
 
   it('returns nothing for an ordinary reply that called no tool', () => {
     expect(chatCompletionStep.extractToolCalls(REAL_COMPLETED_STEP)).toEqual([]);
+  });
+
+  const PROSE_ID = `not a real id ${'x'.repeat(4900)} urn:air:sd1:checkpoint:civitai:4384@128713`;
+  const withToolCall = (id: string, args: string) => ({
+    output: {
+      choices: [
+        {
+          message: {
+            tool_calls: [{ id, type: 'function', function: { name: 'f', arguments: args } }],
+          },
+        },
+      ],
+    },
+  });
+
+  it('🔴 DROPS an unbounded prose `id` carrying an AIR literal', () => {
+    // 🔴 THE CASE THE AUDIT DEMONSTRATED, kept as the regression. `id` was
+    // accepted on `typeof id === 'string' && length > 0` alone, so a 5,000-char
+    // id carrying prose AND a literal AIR was published to the block verbatim.
+    // Neither clause 8b (which compares `arguments` only) nor the runtime shape
+    // guard in ./moderation (types, not bounds) sees it — the output-side
+    // pattern + length check is the whole control.
+    expect(chatCompletionStep.extractToolCalls(withToolCall(PROSE_ID, '{}'))).toEqual([]);
+  });
+
+  it('🔴 the ZERO-SCAN combination: a prose id with EMPTY arguments', () => {
+    // 🔴 THE SHARPER HALF, AND IT NEEDS BOTH FIXES. With empty `arguments`,
+    // `extractText` returns NOTHING for this response — so `screenGeneratedText`
+    // short-circuits on the empty text set and RELEASES WITHOUT EVER CALLING THE
+    // SCANNER. Pre-fix, the prose id was therefore published on a path where no
+    // scan ran at all. Note the assertion that `extractText` is empty is what
+    // makes this case distinct from the one above, where '{}' IS scanned.
+    const evil = withToolCall(PROSE_ID, '');
+    expect(chatCompletionStep.extractText(evil)).toEqual([]);
+    expect(chatCompletionStep.extractToolCalls(evil)).toEqual([]);
+  });
+
+  it('DROPS an id that escapes the safe character class, or exceeds the length cap', () => {
+    const build = (id: string) => ({
+      output: {
+        choices: [
+          {
+            message: {
+              tool_calls: [{ id, type: 'function', function: { name: 'f', arguments: '{}' } }],
+            },
+          },
+        ],
+      },
+    });
+    expect(chatCompletionStep.extractToolCalls(build('call has spaces'))).toEqual([]);
+    expect(chatCompletionStep.extractToolCalls(build('call:with:colons'))).toEqual([]);
+    expect(chatCompletionStep.extractToolCalls(build('a'.repeat(65)))).toEqual([]);
+    // ...and the real provider id shape still passes, so the bound is not a ban.
+    expect(
+      chatCompletionStep.extractToolCalls(build('call_d41b5525e73e4551ab588457'))
+    ).toHaveLength(1);
+  });
+
+  it('🔴 DROPS empty / whitespace-only arguments, which is what makes containment TRUE', () => {
+    // Before this, `extractToolCalls` accepted any string while `extractText`
+    // required `trim().length > 0` — so a call with `arguments: ''` was
+    // published while the scan was handed nothing for it, and the containment
+    // property clause 8b and three docstrings state was literally false on
+    // UNMUTATED code. The ordinary no-argument encoding is '{}' and is
+    // unaffected.
+    const build = (args: string) => ({
+      output: {
+        choices: [
+          {
+            message: {
+              tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'f', arguments: args } }],
+            },
+          },
+        ],
+      },
+    });
+    expect(chatCompletionStep.extractToolCalls(build(''))).toEqual([]);
+    expect(chatCompletionStep.extractToolCalls(build('   \n\t '))).toEqual([]);
+    expect(chatCompletionStep.extractToolCalls(build('{}'))).toHaveLength(1);
+
+    // The property itself, asserted over every shape above rather than only the
+    // captured response: whatever survives must be scannable.
+    for (const args of ['', '   \n\t ', '{}', '{"a":1}']) {
+      const step = build(args);
+      const texts = chatCompletionStep.extractText(step);
+      for (const call of chatCompletionStep.extractToolCalls(step)) {
+        expect(texts).toContain(call.function.arguments);
+      }
+    }
   });
 });

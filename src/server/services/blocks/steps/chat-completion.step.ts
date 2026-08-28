@@ -70,9 +70,28 @@ import type { BlockStep, OrchestratorStepTemplate } from './index';
 // block pasted back in — plus tool descriptions and JSON Schemas the app author
 // wrote. More volume and more provenance on a channel that was already
 // unaudited; no new channel. It is bounded rather than audited: `MAX_TOOL_ROUNDS`
-// caps how many tool results one submit can carry, `MAX_MESSAGE_CHARS` caps each,
-// and the OUTPUT scan still stands in front of everything the model says ABOUT a
-// tool result before a block can publish it.
+// caps how many tool results one submit can carry, and the OUTPUT scan still
+// stands in front of everything the model says ABOUT a tool result before a
+// block can publish it.
+//
+// 🔴 "`MAX_MESSAGE_CHARS` CAPS EACH" USED TO BE ON THAT LIST AND WAS WRONG.
+// That constant caps each `content` field, but an assistant message ALSO
+// carries up to `MAX_TOOLS` tool calls whose `arguments` each get the SAME cap,
+// so one message can now reach roughly `MAX_MESSAGE_CHARS * (1 + MAX_TOOLS)`
+// rather than `MAX_MESSAGE_CHARS`. Measured across the whole payload, the
+// maximum accepted built step grew ~9x with tool calling (≈257k -> ≈2.32M
+// chars). There is no per-message aggregate cap.
+//
+// 🔴 THAT IS A DELIBERATE DECLINE, NOT AN OVERSIGHT, AND HERE IS THE REASONING
+// SO IT CAN BE RE-EXAMINED RATHER THAN RE-DISCOVERED. It is not a spend hole:
+// prompt tokens are priced by the per-submit live quote and gated by
+// `buzzBudget` before anything is reserved. It is not a CPU hole either: the
+// AIR scan over a maximal ~2.3 MB payload measured ~6 ms. What it does cost is
+// request size and prefill compute, driven by an untrusted iframe, on the
+// ESTIMATE path as well as submit. If that becomes a problem the fix is a
+// per-message aggregate cap, which is additive and cheap; it is left out today
+// because a cap chosen without a real payload distribution would be a guess
+// that breaks legitimate callers.
 //
 // 🔴 DO NOT "CLOSE" THIS BY SWITCHING TO `'promptAudit'`. The map's own inclusion
 // criterion forbids exactly that trade: declaring it would audit the input and
@@ -318,28 +337,38 @@ const TEMPERATURE_MAX = 2;
  * The maximum number of `role: 'tool'` messages one submit may carry — i.e. the
  * bound on how many tool ROUNDS a conversation can accumulate.
  *
- * 🔴 THIS IS THE BILLING BOUND, AND IT IS WHY THE ENTRY CAN STAY `prepaidFixed`.
- * Tool calling makes a conversation a LOOP, and a loop is N charges rather than
- * one. `prepaidFixed` means "cost knowable before execution", which the submit
- * path enforces by quoting the orchestrator (`whatif:true`) for the step it is
- * about to submit and reserving `max(declared, quoted)`. That holds PER SUBMIT
- * and cannot bound a round that does not exist yet: round k+1's input depends on
- * what the model emitted and what the tool returned, neither of which exists
- * when round k is quoted.
+ * 🔴 BE EXACT ABOUT WHAT THIS BOUNDS: HISTORY DEPTH IN ONE PAYLOAD. It is NOT
+ * a bound on the conversation, and it is NOT what keeps the entry billable as
+ * `prepaidFixed`. An earlier revision of this comment called it "THE BILLING
+ * BOUND, AND WHY THE ENTRY CAN STAY `prepaidFixed`" and said "a caller cannot
+ * loop past it" — both were stronger than the code, and a reader relying on
+ * either would be wrong. A block that drops or summarises the oldest tool
+ * result keeps every payload at or under this cap and can submit
+ * INDEFINITELY; nothing counts rounds across submits, because submits are
+ * independent requests.
  *
- * The resolution is that each round IS its own submit — this entry does NOT
- * loop server-side, and the block drives the loop by appending the tool result
- * and submitting again. Every round therefore gets its own live quote, its own
- * per-call `buzzBudget` gate and its own reservation against every cap. What
- * this constant adds is the bound on how far that can run.
+ * WHAT ACTUALLY BOUNDS THE MONEY, and it is sound: each round is its own
+ * submit — this entry does NOT loop server-side, the block drives the loop by
+ * appending the tool result and submitting again — so every round gets its own
+ * live orchestrator quote (`whatif:true` on the exact step about to be
+ * submitted, reserving `max(declared, quoted)`), its own per-call `buzzBudget`
+ * gate, and its own reservation against the per-user daily cap, the per-app
+ * aggregate cap and the dev-session cap. That is what makes "cost knowable
+ * before execution" true per submit, and it is what stops a runaway loop —
+ * this constant is not load-bearing for either.
  *
- * 🔴 ENFORCED AT PARSE, NOT IN THE BLOCK, AND THAT PLACEMENT IS THE POINT. A
- * block is untrusted sandboxed code; a round cap it applies to itself is not a
- * cap. `parseStepParams` runs this schema on BOTH the estimate and the submit
- * path, so the two cannot disagree and a caller cannot loop past it by declining
- * to count. It rejects as BAD_REQUEST before the orchestrator quote and before
- * every reservation, so a rejection costs no round-trip and has nothing to
- * refund.
+ * 🔴 "ROUNDS" IS ALSO NOT "TOOL CALLS". An assistant turn's `tool_calls` array
+ * is capped by `MAX_TOOLS`, so a single submit can request that many tool
+ * executions while counting as one round — and a payload at this cap can carry
+ * several times that many calls in total. If you need to bound executions
+ * rather than history depth, this is the wrong constant.
+ *
+ * 🔴 ENFORCED AT PARSE, NOT IN THE BLOCK, AND THAT PLACEMENT IS STILL THE
+ * POINT. A block is untrusted sandboxed code, so a cap it applies to itself is
+ * not a cap. `parseStepParams` runs this schema on BOTH the estimate and the
+ * submit path, so the two cannot disagree about what is accepted. It rejects as
+ * BAD_REQUEST before the orchestrator quote and before every reservation, so a
+ * rejection costs no round-trip and has nothing to refund.
  *
  * WHY THREE. Two rounds cover the shape this exists for — call a catalog tool,
  * read the result, answer — and the third leaves room for one refinement when
@@ -423,18 +452,26 @@ const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
  * note prescribes, paid here where the unbounded value enters rather than left
  * for the scan to be wrong about.
  *
- * `JSON.stringify` also throws on a circular structure and returns `undefined`
- * for a bare function/symbol; both are caught and rejected rather than allowed
- * to surface as a 500 from inside the resolver.
+ * `JSON.stringify` also THROWS for several distinct reasons — a circular
+ * structure, a `BigInt`, a throwing getter, a throwing `toJSON` — and returns
+ * `undefined` for a bare function/symbol; all are caught and rejected rather
+ * than allowed to surface as a 500 from inside the resolver. 🔴 The rejection
+ * message names the CLASS rather than guessing the cause: it used to say "a
+ * circular structure was rejected" for every throw, which is a confidently
+ * wrong diagnostic for the `BigInt` and throwing-`toJSON` cases and sends an
+ * app author looking for a cycle that is not there.
  */
 const toolParametersSchema = z.unknown().transform((value, ctx) => {
   let serialized: string | undefined;
   try {
     serialized = JSON.stringify(value);
-  } catch {
+  } catch (e) {
     ctx.addIssue({
       code: 'custom',
-      message: 'tool parameters must be JSON-serializable (a circular structure was rejected)',
+      message:
+        'tool parameters must be JSON-serializable — serializing them threw ' +
+        `(${e instanceof Error ? e.message : String(e)}). Common causes: a circular reference, ` +
+        'a BigInt, or a getter/toJSON that throws',
     });
     return z.NEVER;
   }
@@ -681,6 +718,41 @@ const chatCompletionParamsSchema = z
           `${MAX_TOOL_ROUNDS}. Each round is a separate billed submit, so the loop is bounded ` +
           'here rather than by the caller',
       });
+    }
+
+    // ── A TOOL RESULT MUST ANSWER A TOOL CALL THAT WAS ACTUALLY MADE, AND MUST
+    // COME AFTER IT. Exactly the reasoning the `toolChoice` clause below
+    // applies to an undeclared function name, on the axis the provider is just
+    // as strict about: an OpenAI-compatible provider rejects a `tool` message
+    // whose `tool_call_id` matches no preceding assistant `tool_calls[].id`,
+    // and rejects one with no preceding assistant turn at all. There is no
+    // orchestrator-side validation that catches either before execution, so
+    // without this the payload is QUOTED, RESERVED against every cap, CHARGED,
+    // and only then fails at the provider — with a block-side error the app
+    // author cannot diagnose. Rejecting at parse costs no round-trip and has
+    // nothing to refund.
+    //
+    // 🔴 THE SET IS BUILT IN ORDER, WHICH IS WHAT MAKES THIS AN ORDERING CHECK
+    // AND NOT MERELY A MEMBERSHIP ONE. Collecting every id first and then
+    // testing membership would accept a `tool` message that PRECEDES the
+    // assistant turn declaring it — a payload the provider still rejects.
+    const declaredCallIds = new Set<string>();
+    for (const message of params.messages) {
+      if (message.role === 'assistant') {
+        for (const call of message.tool_calls ?? []) declaredCallIds.add(call.id);
+        continue;
+      }
+      if (message.role !== 'tool') continue;
+      if (!declaredCallIds.has(message.tool_call_id)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['messages'],
+          message:
+            `tool message references tool_call_id '${message.tool_call_id}', which no PRECEDING ` +
+            'assistant message declared in tool_calls. A tool result must answer a tool call ' +
+            'that was actually made, and must come after it',
+        });
+      }
     }
 
     // ── `toolChoice` WITHOUT `tools` IS A NO-OP THE CALLER WILL MISREAD.
@@ -1006,11 +1078,42 @@ export const chatCompletionStep = {
    * `StepOutputMedia.url` smuggle in a new field name.
    *
    * 🔴 IT DROPS, RATHER THAN PUBLISHES, A MALFORMED CALL — including one whose
-   * NAME does not match `TOOL_NAME_PATTERN`. The name is the one string here
-   * that does not go through the scan, and the argument for that is precisely
-   * that the pattern makes it incapable of carrying prose. A provider that
-   * echoed back an unbounded name would break that argument, so the extractor
+   * NAME or ID does not match `TOOL_NAME_PATTERN`. Those two are the strings
+   * here that do NOT go through the scan, and the argument for both is the
+   * same: the pattern makes them incapable of carrying prose. A provider that
+   * echoed back an unbounded value would break that argument, so the extractor
    * enforces the pattern on the way out rather than trusting the round trip.
+   *
+   * 🔴 THE ID BOUND IS NOT SYMMETRY-FOR-ITS-OWN-SAKE — IT CLOSES A ZERO-SCAN
+   * PUBLISH PATH. Until it existed, `id` was accepted on `typeof id === 'string'
+   * && length > 0` alone while the INPUT schema capped it at
+   * `MAX_TOOL_NAME_CHARS`. Measured: a 5,000-char `id` carrying prose and a
+   * literal `urn:air:` was published to the block verbatim — and because that
+   * response's `extractText` returns `[]`, `screenGeneratedText` short-circuits
+   * on the empty text set and releases WITHOUT EVER CALLING THE SCANNER. So the
+   * unbounded field was not merely unscanned, it was on a path where no scan
+   * ran at all. Neither clause 8b (which compares `arguments` only) nor the
+   * runtime shape guard in `./moderation` (which checks types, not bounds)
+   * would catch a regression here; this line is the whole control.
+   *
+   * 🔴 AND THE DOCSTRING THIS REPLACES ASSERTED THE NAME WAS "the one string
+   * here that does not go through the scan", WHICH WAS FALSE — `id` did not
+   * either. The unscanned published set is exactly `{ name, id }`, and it is
+   * enumerated here so the next person widening this surface has to count.
+   *
+   * 🔴 EMPTY / WHITESPACE-ONLY `arguments` ARE DROPPED, AND THAT IS WHAT MAKES
+   * THE CONTAINMENT INVARIANT TRUE AS WRITTEN. `extractText` pushes an
+   * arguments string only when `trim().length > 0`; accepting any string here
+   * meant a call with `arguments: ''` or `'   '` was published while
+   * `extractText` returned nothing for it — so the property clause 8b and three
+   * docstrings state ("every arguments string this can publish is also returned
+   * by extractText") was literally false on unmutated code. Aligning the two
+   * predicates is the fix, in the fail-closed direction the rest of this
+   * extractor already takes. The ordinary no-argument encoding is `'{}'`, which
+   * is neither empty nor whitespace and is unaffected; a provider that instead
+   * emits `''` for a no-arg call has that call DROPPED, and the fix for that
+   * would be to normalise it to `'{}'` at the point of capture — never to
+   * loosen the containment.
    */
   extractToolCalls: (step: unknown): BlockToolCall[] => {
     const choices = (step as ChatCompletionOutputStepLike | null | undefined)?.output?.choices;
@@ -1023,25 +1126,49 @@ export const chatCompletionStep = {
         const id = call?.id;
         const name = call?.function?.name;
         const args = call?.function?.arguments;
-        if (typeof id !== 'string' || id.length === 0) continue;
+        if (typeof id !== 'string' || !TOOL_NAME_PATTERN.test(id)) continue;
+        if (id.length > MAX_TOOL_NAME_CHARS) continue;
         if (typeof name !== 'string' || !TOOL_NAME_PATTERN.test(name)) continue;
         if (name.length > MAX_TOOL_NAME_CHARS) continue;
-        if (typeof args !== 'string') continue;
+        // Same predicate `extractText` applies — see the containment note above.
+        if (typeof args !== 'string' || args.trim().length === 0) continue;
         calls.push({ id, type: 'function', function: { name, arguments: args } });
       }
     }
     return calls;
   },
   /**
-   * A canonical COMPLETED step, for the load-time extraction probe (clause 8a).
+   * A canonical COMPLETED step, for the load-time extraction probes (clauses 8a
+   * and 8b).
    *
-   * 🔴 COPIED VERBATIM FROM A REAL ORCHESTRATOR RESPONSE, not invented to match
-   * `extractText`. A sample written from the extractor would make the probe
-   * assert only that the code agrees with itself — the both-wrong-blind shape
-   * clause 8a's own docstring names as the thing it cannot catch. Note what the
-   * real response does NOT contain: `choices[0].message` carries **only
-   * `content`** — no `role`, despite the generated `AssistantMessage` declaring
-   * it required. That absence is the reason `extractText` does not key off it.
+   * 🔴 EVERY CHOICE HERE IS COPIED VERBATIM FROM A REAL ORCHESTRATOR RESPONSE,
+   * not invented to match the extractors. A sample written from the extractor
+   * would make the probe assert only that the code agrees with itself — the
+   * both-wrong-blind shape clause 8a's own docstring names as the thing it
+   * cannot catch. Note what the first real response does NOT contain:
+   * `message` carries **only `content`** — no `role`, despite the generated
+   * `AssistantMessage` declaring it required. That absence is the reason
+   * `extractText` does not key off it.
+   *
+   * 🔴 THE SECOND CHOICE IS WHY THIS SAMPLE HAS TWO, AND IT IS LOAD-BEARING
+   * RATHER THAN DECORATIVE. Clause 8b asserts that every `arguments` string
+   * `extractToolCalls` publishes is also returned by `extractText` — but it can
+   * only assert it over THIS sample, so a sample with no `tool_calls` makes the
+   * clause iterate an EMPTY set and pass vacuously. That was the state when
+   * tool calling first landed: the containment property three separate
+   * docstrings name as the mechanism protecting the tool-call surface was
+   * asserted over nothing, and a real containment break in the shipped
+   * extractor (`arguments: args + 'SMUGGLED'`) loaded CLEAN. A guard that
+   * passes because its loop body never runs reads as coverage while providing
+   * none — the exact failure this registry's clause design exists to refuse.
+   *
+   * 🔴 THE TWO-CHOICE ENVELOPE IS A COMPOSITION, AND THAT IS SAID PLAINLY. Each
+   * choice object is verbatim from a captured response; no single captured
+   * response carried both, because `n` defaults to 1. The composition is
+   * legitimate for what these clauses actually test — that the extractor PAIR
+   * agrees with itself on a real message shape — and it is what keeps BOTH the
+   * content path and the tool-call path covered at load instead of trading one
+   * for the other. It is NOT a claim that the orchestrator emits two choices.
    */
   canonicalOutputFor: (): unknown => ({
     $type: 'chatCompletion',
@@ -1052,7 +1179,26 @@ export const chatCompletionStep = {
       object: 'chat.completion',
       created: 1785782779,
       model: 'openai/gpt-4o-mini',
-      choices: [{ index: 0, message: { content: 'OK' }, finishReason: 'stop' }],
+      choices: [
+        { index: 0, message: { content: 'OK' }, finishReason: 'stop' },
+        {
+          index: 1,
+          finishReason: 'tool_calls',
+          message: {
+            role: 'assistant',
+            tool_calls: [
+              {
+                id: 'call_d41b5525e73e4551ab588457',
+                type: 'function',
+                function: {
+                  name: 'search_models',
+                  arguments: '{"query":"DreamShaper checkpoint","limit":1}',
+                },
+              },
+            ],
+          },
+        },
+      ],
       usage: { promptTokens: 12, completionTokens: 1, totalTokens: 13 },
       systemFingerprint: 'fp_5259353f0d',
     },

@@ -344,6 +344,11 @@ const moderationPostureHandlers: Record<StepModerationPosture, StepModerationPha
                 c === null ||
                 typeof c !== 'object' ||
                 typeof c.id !== 'string' ||
+                // `type` is declared a LITERAL on `BlockStepToolCall`, so a value
+                // other than 'function' is a contract violation the block would
+                // have to defend against — check it like every other field
+                // rather than trusting the type to hold at runtime.
+                c.type !== 'function' ||
                 typeof c.function?.name !== 'string' ||
                 typeof c.function?.arguments !== 'string'
             )
