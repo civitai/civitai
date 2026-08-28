@@ -6,11 +6,17 @@ import {
   getStepByOrchestratorType,
   isModerationPostureImplemented,
   posturePhaseRequirements,
+  postureRequiresTextExtraction,
   STEP_MODERATION_POSTURES,
   type AnyBlockStep,
+  type BlockStepToolCall,
   type StepModerationPosture,
 } from './index';
-import { screenGeneratedText, TEXT_OUTPUT_WITHHELD_MESSAGE } from './text-output-moderation';
+import {
+  screenGeneratedText,
+  TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE,
+  TEXT_OUTPUT_WITHHELD_MESSAGE,
+} from './text-output-moderation';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MODERATION DISPATCH for the App Blocks step-type registry (`kind: 'step'`).
@@ -160,7 +166,7 @@ export type StepOutputModerationRequest = {
  * that did not come back through here cannot reach a block.
  */
 export type StepOutputModerationResult =
-  | { released: true; texts: string[] }
+  | { released: true; texts: string[]; toolCalls?: BlockStepToolCall[] }
   | { released: false; reason: string };
 
 type StepOutputModerationHandler = (
@@ -306,7 +312,7 @@ const moderationPostureHandlers: Record<StepModerationPosture, StepModerationPha
           return { released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE };
         }
 
-        return await screenGeneratedText({
+        const verdict = await screenGeneratedText({
           texts,
           userId,
           isGreen,
@@ -315,6 +321,52 @@ const moderationPostureHandlers: Record<StepModerationPosture, StepModerationPha
           stepId: step.id,
           model: step.orchestratorType,
         });
+
+        // 🔴 TOOL CALLS ARE ATTACHED ONLY ONTO A RELEASED VERDICT, AND ONLY
+        // HERE. The scan above ran over `extractText`'s strings, which already
+        // CONTAIN every arguments string `extractToolCalls` can return — held
+        // structurally by a shared predicate for `chat-completion`, and by
+        // registry clause 8b for any entry that open-codes the two extractors
+        // separately. So attaching them after a release publishes nothing the
+        // scan did not read, and a withheld verdict returns early below with no
+        // tool calls at all.
+        //
+        // 🔴 THE EARLY RETURN IS THE CONTROL, NOT AN OPTIMISATION. Writing this
+        // as `{ ...verdict, toolCalls }` would attach the field to a WITHHELD
+        // verdict too — where `attachModeratedStepTextOutputs` would ignore it
+        // today, and would publish it the moment anyone refactored that merge.
+        // The withhold path must not carry the value at all.
+        if (!verdict.released) return verdict;
+
+        const toolCalls = step.extractToolCalls?.(orchestratorStep);
+        // Same fail-closed posture as the extractor guard above: a malformed
+        // tool-call surface withholds rather than publishing a coerced value.
+        // Clause 8b probes the canonical sample; a REAL response can still
+        // produce a shape it never saw.
+        if (toolCalls !== undefined) {
+          if (
+            !Array.isArray(toolCalls) ||
+            toolCalls.some(
+              (c) =>
+                c === null ||
+                typeof c !== 'object' ||
+                typeof c.id !== 'string' ||
+                // `type` is declared a LITERAL on `BlockStepToolCall`, so a value
+                // other than 'function' is a contract violation the block would
+                // have to defend against — check it like every other field
+                // rather than trusting the type to hold at runtime.
+                c.type !== 'function' ||
+                typeof c.function?.name !== 'string' ||
+                typeof c.function?.arguments !== 'string'
+            )
+          ) {
+            return { released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE };
+          }
+        }
+
+        return toolCalls !== undefined && toolCalls.length > 0
+          ? { ...verdict, toolCalls }
+          : verdict;
       },
     },
   } satisfies Record<StepModerationPosture, StepModerationPhases>);
@@ -461,6 +513,14 @@ export async function runStepOutputModeration(
 export type ModeratedTextOutputFields = {
   textOutputs?: string[];
   textOutputWithheld?: { reason: string };
+  /**
+   * Structured tool calls the model requested, on a RELEASED verdict only.
+   *
+   * Same producer, same stripping and the same single-writer rule as
+   * `textOutputs` — see `attachModeratedStepTextOutputs`. Setting it anywhere
+   * else publishes model output the scan never released.
+   */
+  toolCalls?: BlockStepToolCall[];
 };
 
 /**
@@ -493,6 +553,25 @@ export type ModeratedTextOutputFields = {
  * `textOutputs` runs through the scan below, and the withhold branch simply
  * never writes the field.
  *
+ * 🔴 THE SAME IS TRUE OF `toolCalls`, AND IT IS HELD BY A DIFFERENT MECHANISM
+ * WORTH NAMING SEPARATELY. Tool calls are not scanned as structured objects —
+ * the scan reads STRINGS. Publishing them is safe because of two things: every
+ * `arguments` string `extractToolCalls` can return is ALSO returned by
+ * `extractText`, so the released verdict was computed over that text; and the
+ * posture handler attaches them only onto an already-released verdict, never
+ * onto a withheld one. Take either half away and this becomes a channel that
+ * publishes model-written prose on the strength of a scan that never read it.
+ *
+ * 🔴 NAME THE RIGHT MECHANISM FOR THE FIRST HALF — an earlier revision credited
+ * registry clause 8b, and for `chat-completion` that is now stale. That entry
+ * derives BOTH extractors from one shared predicate, so containment holds
+ * STRUCTURALLY: no divergence is expressible without editing that function. 8b
+ * is what catches someone re-splitting it, and it remains the live check for any
+ * OTHER entry that open-codes two predicates. The safety conclusion is
+ * unchanged — if anything better supported, since a structural guarantee does
+ * not depend on a sample being rich enough to expose the divergence. Only the
+ * mechanism name was wrong.
+ *
  * The incoming snapshot's own text fields are STRIPPED before merging, so a
  * caller that somehow arrived carrying text cannot smuggle it past the scan by
  * pre-populating them. That is cheap, and it is what turns "nothing else sets
@@ -512,11 +591,41 @@ export async function attachModeratedStepTextOutputs<T extends ModeratedTextOutp
   const {
     textOutputs: _ignoredIncomingTexts,
     textOutputWithheld: _ignoredIncomingWithheld,
+    // 🔴 STRIPPED FOR THE SAME REASON AS THE TWO ABOVE. A caller that arrived
+    // carrying tool calls must not be able to smuggle them past the scan by
+    // pre-populating the field — that is what turns "nothing else sets this
+    // field today" into "nothing else CAN".
+    toolCalls: _ignoredIncomingToolCalls,
     ...rest
   } = snapshot;
 
   const released: string[] = [];
-  let withheldReason: string | undefined;
+  const releasedToolCalls: BlockStepToolCall[] = [];
+
+  // ── 🔴 TWO REASON CHANNELS, NOT ONE, AND THE MERGE BELOW GIVES POLICY
+  //    PRECEDENCE. These are SEMANTICALLY OPPOSED values — one says the content
+  //    failed Civitai's policy, the other says explicitly that it did NOT — and
+  //    a single first-wins slot decided between them by STEP ORDER.
+  //
+  //    Measured on the pre-fix code, same content, scanner tripping `Young`:
+  //      [unpublishable, policy-hit] → "No content policy issue was found"  ← WRONG
+  //      [policy-hit, unpublishable] → "did not pass Civitai's content policy"
+  //    Opposite verdicts for the same workflow, chosen by which step came first.
+  //
+  //    🔴 BE EXACT ABOUT THE SEVERITY: the offending text was WITHHELD in both
+  //    orderings. This is a REASON-REPORTING defect, not a content leak — the
+  //    scan's release/withhold decision is per-step and was never in question.
+  //    What was wrong is the sentence the app author reads, and it was wrong in
+  //    the direction that matters: it told them nothing was moderated when
+  //    something was.
+  //
+  //    This was harmless until the round that introduced
+  //    `TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE`, because until then every candidate
+  //    value was the single constant `TEXT_OUTPUT_WITHHELD_MESSAGE` and
+  //    first-wins could not pick a wrong one. Adding a second, opposed value to
+  //    an existing first-wins slot is what created the defect.
+  let policyWithheldReason: string | undefined;
+  let unpublishableReason: string | undefined;
 
   for (const step of workflow.steps ?? []) {
     // Only REGISTERED step types have a declared posture. Everything else —
@@ -535,13 +644,88 @@ export async function attachModeratedStepTextOutputs<T extends ModeratedTextOutp
       appId: ctx.appId,
       appBlockId: ctx.appBlockId,
     });
-    if (verdict.released) released.push(...verdict.texts);
-    else withheldReason ??= verdict.reason;
+    if (verdict.released) {
+      released.push(...verdict.texts);
+      if (verdict.toolCalls) releasedToolCalls.push(...verdict.toolCalls);
+
+      // ── 🔴 THE NO-SILENT-SUCCESS INVARIANT. ────────────────────────────────
+      //
+      // A text-posture step that SUCCEEDED and RELEASED, but contributed
+      // neither text nor a tool call, would leave the snapshot carrying none of
+      // `textOutputs` / `toolCalls` / `textOutputWithheld`. The step is CHARGED,
+      // reports `succeeded`, and publishes literally nothing the app author can
+      // act on — no output, and no reason for its absence.
+      //
+      // 🔴 THIS IS A STRUCTURAL INVARIANT, NOT A THIRD POINT-FIX, AND THE
+      // HISTORY IS WHY. The same silent-success class has now been reached
+      // three times by three different routes, each closed individually and
+      // each closure opening the next:
+      //   1. `extractText` required non-empty `arguments` while
+      //      `extractToolCalls` did not — fixed by aligning them;
+      //   2. aligning them by DROPPING empty-argument calls made a no-argument
+      //      tool call vanish — fixed by normalising `''` to `'{}'`;
+      //   3. the shared predicate then dropped calls on the `id`/`name` charset
+      //      axes on BOTH sides at once, which is unrepairable by normalisation
+      //      (an unusable id cannot be invented).
+      // Enumerating drop reasons has failed three times, so this does not
+      // enumerate them: it asserts the OUTCOME the entry owes a block,
+      // whatever the entry's extractors do now or later.
+      //
+      // 🔴 SCOPED TO TEXT POSTURES DELIBERATELY. A `'none'`/media entry legitimately
+      // contributes no text here — `runStepOutputModeration` returns an empty
+      // released verdict for it — so applying this to every registered entry
+      // would fire on `convert-image` in any mixed workflow and report an
+      // absence that is correct.
+      //
+      // The reason is DISTINCT from the policy message on purpose: nothing was
+      // moderated here. See `TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE`.
+      //
+      // 🔴 GATED ON THE STEP'S OWN TERMINAL STATUS, AND THAT GATE IS THE WHOLE
+      // DIFFERENCE BETWEEN A DIAGNOSTIC AND A LIE. This function runs on EVERY
+      // `pollWorkflow` and on `cancelWorkflow` — see this module's header — and
+      // the loop above iterates `workflow.steps` with no status filter of its
+      // own. A queued/processing chat step has no `output`, so `extractText`
+      // returns `[]` and the verdict releases empty, which is EXACTLY the shape
+      // this invariant fires on. Without the gate, a block polling a perfectly
+      // healthy in-flight generation was told, for the entire duration of that
+      // generation, that the response had "completed" with nothing to show —
+      // and a user-cancelled workflow got the same. Measured before this gate:
+      // a `processing` workflow and a `canceled` workflow both returned the
+      // message.
+      //
+      // `'succeeded'` and nothing else. The other terminal states —
+      // `failed` / `expired` / `canceled` — legitimately produce no output, and
+      // their absence is already explained by the workflow's own status; firing
+      // here would replace a correct explanation with a wrong one. The absent
+      // field is the right answer for every non-succeeded state, and it is what
+      // this path did before the invariant existed.
+      //
+      // Reading a `status` the orchestrator did not send yields `undefined`,
+      // which fails this test and therefore falls back to the pre-invariant
+      // behaviour (no field). That is the safe direction: silence, not a
+      // fabricated claim about a step whose state we could not read.
+      if (
+        step.status === 'succeeded' &&
+        postureRequiresTextExtraction(entry.moderationPosture) &&
+        verdict.texts.length === 0 &&
+        (verdict.toolCalls === undefined || verdict.toolCalls.length === 0)
+      ) {
+        unpublishableReason ??= TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE;
+      }
+    } else policyWithheldReason ??= verdict.reason;
   }
+
+  // 🔴 POLICY WINS. A real content-policy withhold must never be masked by a
+  // sibling step's extraction failure: the two need different fixes, and only
+  // one of them is the app author's to make. Within each kind the merge stays
+  // first-wins, which is the pre-existing per-kind semantics — the change is
+  // that the two kinds no longer compete for one slot.
+  const withheldReason = policyWithheldReason ?? unpublishableReason;
 
   return {
     ...(rest as T),
     ...(released.length > 0 ? { textOutputs: released } : {}),
+    ...(releasedToolCalls.length > 0 ? { toolCalls: releasedToolCalls } : {}),
     ...(withheldReason ? { textOutputWithheld: { reason: withheldReason } } : {}),
   };
 }

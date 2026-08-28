@@ -35,9 +35,8 @@ import * as z from 'zod';
  *     keyed on `blocked` would release it.
  */
 
-const { mockCreateXGuardModerationRequest,  } = vi.hoisted(() => ({
+const { mockCreateXGuardModerationRequest } = vi.hoisted(() => ({
   mockCreateXGuardModerationRequest: vi.fn(),
-  
 }));
 
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
@@ -90,6 +89,7 @@ import {
   screenGeneratedText,
   SFW_ONLY_WITHHOLD_LABELS,
   TEXT_OUTPUT_SCAN_LABELS,
+  TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE,
   TEXT_OUTPUT_WITHHELD_MESSAGE,
   VERDICT_CACHE_MAX_ENTRIES,
   __clearTextOutputVerdictCacheForTests,
@@ -118,12 +118,104 @@ const CHAT_TYPE = 'fixtureChat';
 type FixtureParams = { value: number };
 const fixtureParamSchema = z.object({ value: z.number().int().min(1).max(10) }).strict();
 
-/** An orchestrator-shaped COMPLETED chat step, as it arrives on a workflow. */
+/**
+ * An orchestrator-shaped COMPLETED chat step, as it arrives on a workflow.
+ *
+ * 🔴 `status` IS PART OF THE SHAPE AND WAS MISSING, which is exactly how the
+ * no-silent-success invariant shipped without a status gate. `WorkflowStep.status`
+ * is REQUIRED (non-optional) on the generated `@civitai/client` type, so a
+ * fixture omitting it is not orchestrator-shaped at all — and every test built on
+ * it was blind to the difference between a step that SUCCEEDED with no output and
+ * one that had simply not run yet. Keep it on every step fixture, and use
+ * `runningChatStep` below when a non-terminal step is what the case is about.
+ */
 function chatStep(content = GENERATED_TEXT) {
   return {
     $type: CHAT_TYPE,
+    status: 'succeeded',
     output: { choices: [{ message: { content } }] },
   };
+}
+
+/**
+ * A chat step that has NOT produced output yet — queued or mid-flight.
+ *
+ * This is the shape `pollWorkflow` sees for most of a generation's life, and the
+ * shape `cancelWorkflow` sees for a user-cancelled one.
+ */
+function runningChatStep(status: 'processing' | 'canceled' | 'failed' = 'processing') {
+  return { $type: CHAT_TYPE, status };
+}
+
+/** The model-written argument string used by the tool-call cases below. */
+const TOOL_ARGUMENTS = '{"query":"the model chose this query","limit":1}';
+
+/** A COMPLETED chat step whose reply is a TOOL CALL rather than prose. */
+function toolCallStep(args = TOOL_ARGUMENTS) {
+  return {
+    $type: CHAT_TYPE,
+    status: 'succeeded',
+    output: {
+      choices: [
+        {
+          finishReason: 'tool_calls',
+          message: {
+            tool_calls: [
+              {
+                id: 'call_1',
+                type: 'function',
+                function: { name: 'search_models', arguments: args },
+              },
+            ],
+          },
+        },
+      ],
+    },
+  };
+}
+
+/**
+ * A `'textOutput'` entry that ALSO publishes structured tool calls — the shape
+ * `chat-completion` has once tools are exposed.
+ *
+ * 🔴 `extractText` RETURNS THE ARGUMENTS TOO, and that is not fixture padding:
+ * it is the containment property registry clause 8b enforces, and the reason
+ * publishing the structured form is defensible at all. A fixture that omitted it
+ * would be a fixture the registry REJECTS — asserted below.
+ */
+function makeToolCallStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
+  type Choices = Array<{
+    message?: {
+      content?: string;
+      tool_calls?: Array<{
+        id: string;
+        type: string;
+        function: { name: string; arguments: string };
+      }>;
+    };
+  }>;
+  const readChoices = (step: unknown): Choices =>
+    (step as { output?: { choices?: Choices } })?.output?.choices ?? [];
+  return makeTextStep({
+    extractText: (step: unknown) => {
+      const texts: string[] = [];
+      for (const c of readChoices(step)) {
+        if (c.message?.content) texts.push(c.message.content);
+        for (const call of c.message?.tool_calls ?? []) texts.push(call.function.arguments);
+      }
+      return texts;
+    },
+    extractToolCalls: (step: unknown) =>
+      readChoices(step).flatMap((c) =>
+        (c.message?.tool_calls ?? []).map((call) => ({
+          id: call.id,
+          type: 'function' as const,
+          function: { name: call.function.name, arguments: call.function.arguments },
+        }))
+      ),
+    canonicalOutputFor: (): unknown => toolCallStep(),
+    ...overrides,
+  });
 }
 
 /**
@@ -467,11 +559,25 @@ describe('textOutput — 🔴 FAILS CLOSED', () => {
     expect(mockCreateXGuardModerationRequest).not.toHaveBeenCalled();
   });
 
-  it('releases an EMPTY result without scanning when there is no generated text', async () => {
+  it('releases an EMPTY result without scanning — and now SAYS SO rather than going silent', async () => {
     // The mirror image of the input-side rule, and deliberately NOT a rejection:
     // an empty extraction publishes nothing, so no unscanned text escapes. (On
     // the INPUT side an empty prompt IS rejected — there, "scan nothing" means
     // the submit proceeds unaudited.)
+    //
+    // 🔴 THE LAST ASSERTION FLIPPED, AND IT IS A DELIBERATE BEHAVIOUR CHANGE,
+    // NOT A TEST ACCOMMODATING A REGRESSION. This case used to assert
+    // `textOutputWithheld` was ALSO undefined — i.e. a text step that was
+    // charged and reported `succeeded` returned a snapshot with none of the
+    // three output fields, giving the app author neither output nor any reason
+    // for its absence. That is the silent-success class the no-silent-success
+    // invariant now closes (see the block at the end of this file, and
+    // `attachModeratedStepTextOutputs`).
+    //
+    // The SAFETY property this test was written for is untouched and still
+    // asserted: nothing was scanned, and nothing was published. What is added is
+    // diagnosability — and the reason deliberately is NOT the policy message,
+    // because no policy hit occurred.
     registryOverride.set(CHAT_TYPE, makeTextStep({ extractText: () => ['  ', ''] }));
     const snapshot = await attachModeratedStepTextOutputs(
       { workflowId: 'wf-1', status: 'succeeded' as const },
@@ -480,7 +586,8 @@ describe('textOutput — 🔴 FAILS CLOSED', () => {
     );
     expect(mockCreateXGuardModerationRequest).not.toHaveBeenCalled();
     expect(snapshot.textOutputs).toBeUndefined();
-    expect(snapshot.textOutputWithheld).toBeUndefined();
+    expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE });
+    expect(snapshot.textOutputWithheld?.reason).not.toBe(TEXT_OUTPUT_WITHHELD_MESSAGE);
   });
 });
 
@@ -1573,5 +1680,468 @@ describe('textOutput — an ERRORED label FAILS CLOSED', () => {
     const recovered = await screenGeneratedText({ ...opts, texts: [GENERATED_TEXT] });
     expect(recovered).toEqual({ released: true, texts: [GENERATED_TEXT] });
     expect(mockCreateXGuardModerationRequest).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 STRUCTURED TOOL CALLS — published ONLY on a released verdict.
+//
+// This block is the AC4 control for tool calling. The tool-call objects are
+// never handed to a scanner as objects; what makes publishing them safe is that
+// (a) every `arguments` string is ALSO returned by `extractText` and therefore
+// scanned, enforced at load by clause 8b, and (b) they are attached only onto an
+// already-released verdict. Each of those halves has a case below, and each case
+// has its positive control — a bare "toolCalls is undefined" is indistinguishable
+// from a field nothing ever populates.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('textOutput — structured tool calls are verdict-gated', () => {
+  beforeEach(() => {
+    registryOverride.set(CHAT_TYPE, makeToolCallStep());
+  });
+
+  it('the tool-call fixture is a REGISTRABLE entry', () => {
+    // Same control as the suite's own opening case: if the registry would reject
+    // this shape, every assertion below would describe an entry that cannot ship.
+    expect(() => assertStepInvariants('fixture-chat', makeToolCallStep())).not.toThrow();
+  });
+
+  it('🔴 A WITHHELD VERDICT PUBLISHES NO TOOL CALLS — the single most important case', async () => {
+    scannerReturns(scanOutput(['Young']));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    expect(snapshot.toolCalls).toBeUndefined();
+    expect(snapshot.textOutputs).toBeUndefined();
+    // Not just the field: the model's argument string must not appear ANYWHERE
+    // in the object the block receives.
+    expect(JSON.stringify(snapshot)).not.toContain(TOOL_ARGUMENTS);
+    expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+  });
+
+  it('🔴 POSITIVE CONTROL — the SAME path publishes the tool call on a clean scan', async () => {
+    scannerReturns(scanOutput([]));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    expect(snapshot.toolCalls).toEqual([
+      {
+        id: 'call_1',
+        type: 'function',
+        function: { name: 'search_models', arguments: TOOL_ARGUMENTS },
+      },
+    ]);
+    // …and the arguments were scanned, which is what licenses publishing them.
+    expect(snapshot.textOutputs).toContain(TOOL_ARGUMENTS);
+  });
+
+  it('🔴 the model-written ARGUMENTS are what the scanner was actually given', async () => {
+    // The containment property, observed at the scanner boundary rather than
+    // inferred from the extractor. If `extractText` stopped returning arguments,
+    // the structured surface would still publish them — on the strength of a
+    // scan that never read them. This is the case that goes red for that.
+    scannerReturns(scanOutput([]));
+
+    await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    // Read the `content` field directly rather than stringifying the whole
+    // request: `JSON.stringify` escapes the quotes inside the arguments JSON, so
+    // a `toContain` against the raw string would fail even when the scanner DID
+    // receive it — a test that goes red for a reason that is not the property.
+    const arg = mockCreateXGuardModerationRequest.mock.calls[0][0] as { content: string };
+    expect(arg.content).toContain(TOOL_ARGUMENTS);
+  });
+
+  it('🔴 an INCOMING toolCalls on the snapshot is STRIPPED and cannot survive', async () => {
+    // The smuggle path. A caller that arrived carrying tool calls must not be
+    // able to publish them by pre-populating the field — the same property
+    // `textOutputs` and `textOutputWithheld` already have.
+    scannerReturns(scanOutput(['Young']));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      {
+        workflowId: 'wf-1',
+        status: 'succeeded' as const,
+        toolCalls: [
+          {
+            id: 'smuggled',
+            type: 'function' as const,
+            function: { name: 'evil_tool', arguments: '{"smuggled":true}' },
+          },
+        ],
+      },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    expect(snapshot.toolCalls).toBeUndefined();
+    expect(JSON.stringify(snapshot)).not.toContain('smuggled');
+  });
+
+  it('🔴 an incoming toolCalls is stripped even when the scan RELEASES', async () => {
+    // The nastier half: on a withhold the field is absent anyway, so the case
+    // above passes for a "nothing was written" reason as well as the right one.
+    // On a RELEASE the field IS written, so this pins that what gets written is
+    // the scanned value and not the caller's.
+    scannerReturns(scanOutput([]));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      {
+        workflowId: 'wf-1',
+        status: 'succeeded' as const,
+        toolCalls: [
+          {
+            id: 'smuggled',
+            type: 'function' as const,
+            function: { name: 'evil_tool', arguments: '{"smuggled":true}' },
+          },
+        ],
+      },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    expect(snapshot.toolCalls).toEqual([
+      {
+        id: 'call_1',
+        type: 'function',
+        function: { name: 'search_models', arguments: TOOL_ARGUMENTS },
+      },
+    ]);
+    expect(JSON.stringify(snapshot)).not.toContain('smuggled');
+  });
+
+  it('omits the field entirely for a text-only reply, so existing snapshots are byte-identical', async () => {
+    scannerReturns(scanOutput([]));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(chatStep()),
+      CTX
+    );
+
+    expect(snapshot.textOutputs).toEqual([GENERATED_TEXT]);
+    expect('toolCalls' in snapshot).toBe(false);
+  });
+
+  it('WITHHOLDS rather than publishing when the tool-call extractor returns a malformed call', async () => {
+    // Clause 8b probes the CANONICAL sample; a real response can still produce a
+    // shape it never saw, so the request-time guard fails closed the same way
+    // the `extractText` guard beside it does.
+    scannerReturns(scanOutput([]));
+    registryOverride.set(
+      CHAT_TYPE,
+      makeToolCallStep({
+        extractToolCalls: () => [{ id: 'x' }] as never,
+      })
+    );
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    expect(snapshot.toolCalls).toBeUndefined();
+    expect(snapshot.textOutputs).toBeUndefined();
+    expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+  });
+
+  it('WITHHOLDS on a call whose `type` is not the declared literal', async () => {
+    // `type` is a LITERAL on `BlockStepToolCall`, and the shape guard used to
+    // check every OTHER field while trusting this one to hold at runtime. A
+    // type declaration is not a runtime check: the extractor is called on a
+    // provider response, so the value can be anything. Fails closed like every
+    // other field in that guard.
+    scannerReturns(scanOutput([]));
+    registryOverride.set(
+      CHAT_TYPE,
+      makeToolCallStep({
+        extractToolCalls: () =>
+          [
+            { id: 'call_1', type: 'not_a_function', function: { name: 'f', arguments: '{}' } },
+          ] as never,
+      })
+    );
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(toolCallStep()),
+      CTX
+    );
+
+    expect(snapshot.toolCalls).toBeUndefined();
+    expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 THE NO-SILENT-SUCCESS INVARIANT.
+//
+// A text-posture step that SUCCEEDED and passed the scan must never leave the
+// snapshot carrying none of `textOutputs` / `toolCalls` / `textOutputWithheld`.
+// That state is a step the viewer was CHARGED for which reports `succeeded` and
+// publishes nothing at all — no output, and no reason for its absence.
+//
+// 🔴 THIS BLOCK PINS THE INVARIANT, NOT THE INSTANCES. The same class has been
+// reached three times by three different routes (an extractor disagreement, a
+// drop-on-empty-arguments, and the shared predicate's charset axes), each closed
+// individually and each closure opening the next. Enumerating causes has failed
+// three times, so these cases assert the OUTCOME for an arbitrary "publishes
+// nothing" entry as well as for the two real axes — a fourth cause added later
+// is covered without editing this block.
+//
+// 🔴 THESE DRIVE THE REAL REGISTERED `chatCompletion` ENTRY, not a fixture. The
+// registry mock falls through to the real registry for any type it has no
+// override for, and `CHAT_TYPE` is `'fixtureChat'` — so `$type: 'chatCompletion'`
+// reaches shipped `publishableToolCalls` bounds. A fixture here would assert
+// only that the test agrees with itself on the axes that matter.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('no-silent-success invariant', () => {
+  const REAL_CHAT = 'chatCompletion';
+
+  /** A COMPLETED real-entry chat step whose only choice is one tool call. */
+  function realChatToolCall(call: Record<string, unknown>) {
+    return {
+      $type: REAL_CHAT,
+      status: 'succeeded',
+      output: { choices: [{ finishReason: 'tool_calls', message: { tool_calls: [call] } }] },
+    };
+  }
+
+  const GOOD_CALL = {
+    id: 'call_ok0000000000000000000',
+    type: 'function',
+    function: { name: 'search_models', arguments: '{"query":"x"}' },
+  };
+
+  // Each case is a DIFFERENT reason the entry publishes nothing. The two axes
+  // are the shipped ones; the third is an arbitrary unpublishable response, and
+  // it is what makes this a claim about the invariant rather than about two bugs.
+  const unpublishable: Array<{ label: string; step: unknown }> = [
+    {
+      label: 'ID axis — a provider id outside the published charset',
+      step: realChatToolCall({ ...GOOD_CALL, id: 'call.with.dots' }),
+    },
+    {
+      label: 'NAME axis — a tool name outside the published charset',
+      step: realChatToolCall({
+        ...GOOD_CALL,
+        function: { name: 'bad name!', arguments: '{"a":1}' },
+      }),
+    },
+    {
+      label: 'a succeeded response carrying no publishable field at all',
+      step: {
+        $type: REAL_CHAT,
+        status: 'succeeded',
+        output: { choices: [{ finishReason: 'stop', message: {} }] },
+      },
+    },
+  ];
+
+  for (const { label, step } of unpublishable) {
+    it(`🔴 surfaces a REASON rather than silence — ${label}`, async () => {
+      scannerReturns(scanOutput([]));
+
+      const snapshot = await attachModeratedStepTextOutputs(
+        { workflowId: 'wf-1', status: 'succeeded' as const },
+        workflowWith(step),
+        CTX
+      );
+
+      // The invariant itself, stated as the property and not as three fields.
+      const surfaced =
+        snapshot.textOutputs !== undefined ||
+        snapshot.toolCalls !== undefined ||
+        snapshot.textOutputWithheld !== undefined;
+      expect(surfaced).toBe(true);
+
+      // …and specifically: nothing published, and a reason that does NOT claim a
+      // content-policy failure, because none occurred.
+      expect(snapshot.textOutputs).toBeUndefined();
+      expect(snapshot.toolCalls).toBeUndefined();
+      expect(snapshot.textOutputWithheld).toEqual({
+        reason: TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE,
+      });
+      expect(snapshot.textOutputWithheld?.reason).not.toBe(TEXT_OUTPUT_WITHHELD_MESSAGE);
+    });
+  }
+
+  it('🔴 POSITIVE CONTROL — a publishable call sets no unpublishable reason', async () => {
+    scannerReturns(scanOutput([]));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(realChatToolCall(GOOD_CALL)),
+      CTX
+    );
+
+    expect(snapshot.toolCalls).toHaveLength(1);
+    expect(snapshot.textOutputs).toContain('{"query":"x"}');
+    expect(snapshot.textOutputWithheld).toBeUndefined();
+  });
+
+  it('🔴 A POLICY WITHHOLD KEEPS ITS OWN REASON — the two are not conflated', async () => {
+    scannerReturns(scanOutput(['Young']));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(realChatToolCall(GOOD_CALL)),
+      CTX
+    );
+
+    // A real policy hit must still say so; the new reason must not shadow it.
+    expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 F1 — the invariant must not fire on a step that has not finished.
+  //
+  // `attachModeratedStepTextOutputs` runs on EVERY `pollWorkflow` and on
+  // `cancelWorkflow`. A queued/processing step has no `output`, so `extractText`
+  // returns `[]` and the verdict releases empty — the exact shape the invariant
+  // fires on. Before the status gate, a block polling a healthy in-flight
+  // generation was told for its whole duration that the response had
+  // "completed" with nothing to show, and a cancelled one got the same.
+  //
+  // Every case here is paired with the succeeded-and-unpublishable cases above,
+  // which are the positive control: if the gate were widened to fire on any
+  // status, those still pass, so these are what pin the difference.
+  // ───────────────────────────────────────────────────────────────────────────
+  for (const status of ['processing', 'canceled', 'failed'] as const) {
+    it(`🔴 NO reason on a step that is not succeeded — ${status}`, async () => {
+      scannerReturns(scanOutput([]));
+
+      const snapshot = await attachModeratedStepTextOutputs(
+        { workflowId: 'wf-1', status: status as 'processing' },
+        workflowWith(runningChatStep(status)),
+        CTX
+      );
+
+      // The pre-invariant behaviour, and the correct one: an absent field.
+      // A non-succeeded step's missing output is already explained by its own
+      // status; claiming it "completed" with nothing is a fabrication.
+      expect(snapshot.textOutputWithheld).toBeUndefined();
+      expect(snapshot.textOutputs).toBeUndefined();
+      expect(snapshot.toolCalls).toBeUndefined();
+    });
+  }
+
+  it('🔴 a step with NO status at all gets no reason — unreadable state fails to silence', async () => {
+    scannerReturns(scanOutput([]));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      // No `status` key — the shape every fixture in this file used to have.
+      workflowWith({ $type: REAL_CHAT }),
+      CTX
+    );
+
+    expect(snapshot.textOutputWithheld).toBeUndefined();
+  });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // 🔴 F2 — a policy withhold must never be masked by a sibling's extraction
+  // failure, IN EITHER STEP ORDER.
+  //
+  // The reason slot was first-wins, and this round put two semantically OPPOSED
+  // values into it. Measured on the pre-fix code, same content, same scanner
+  // verdict, differing only in step order:
+  //   [unpublishable, policy-hit] → "No content policy issue was found"  ← WRONG
+  //   [policy-hit, unpublishable] → "did not pass Civitai's content policy"
+  //
+  // 🔴 BOTH ORDERINGS ARE REQUIRED. `A POLICY WITHHOLD KEEPS ITS OWN REASON`
+  // above uses ONE step and therefore cannot see this defect at all — with a
+  // single step there is no second candidate to win the slot. A test that
+  // cannot distinguish the fixed code from the broken code is not coverage.
+  //
+  // NOTE ON SEVERITY, so nobody reads this as a moderation bypass: the flagged
+  // text is WITHHELD in both orderings. Only the sentence explaining it was
+  // wrong. That is a diagnosability defect, and it pointed the app author away
+  // from the real cause.
+  // ───────────────────────────────────────────────────────────────────────────
+  for (const [label, steps] of [
+    ['unpublishable FIRST', ['unpublishable', 'policy'] as const],
+    ['policy-hit FIRST', ['policy', 'unpublishable'] as const],
+  ] as const) {
+    it(`🔴 a POLICY withhold wins the reason slot — ${label}`, async () => {
+      // The scanner trips on any scanned text. The unpublishable step
+      // contributes none, so only the policy step's text is ever scanned.
+      scannerReturns(scanOutput(['Young']));
+
+      const workflow = workflowWith(
+        ...steps.map((kind) =>
+          kind === 'policy'
+            ? realChatToolCall(GOOD_CALL)
+            : realChatToolCall({ ...GOOD_CALL, id: 'call.with.dots' })
+        )
+      );
+
+      const snapshot = await attachModeratedStepTextOutputs(
+        { workflowId: 'wf-1', status: 'succeeded' as const },
+        workflow,
+        CTX
+      );
+
+      // Order must not decide which of two opposed sentences the author reads.
+      expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+      expect(snapshot.textOutputWithheld?.reason).not.toBe(TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE);
+      // And the flagged content is withheld either way — this was never a leak.
+      expect(snapshot.textOutputs).toBeUndefined();
+      expect(snapshot.toolCalls).toBeUndefined();
+    });
+  }
+
+  it('🔴 F3 — the reason is scoped to A STEP, so a sibling’s published text does not contradict it', async () => {
+    scannerReturns(scanOutput([]));
+
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith(
+        realChatToolCall(GOOD_CALL),
+        realChatToolCall({ ...GOOD_CALL, id: 'call.with.dots' })
+      ),
+      CTX
+    );
+
+    // Both fields legitimately co-exist (workflow.schema documents the pairing).
+    expect(snapshot.textOutputs).toContain('{"query":"x"}');
+    expect(snapshot.textOutputWithheld).toEqual({ reason: TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE });
+    // So the sentence must not make a claim about the whole response, which the
+    // `textOutputs` beside it would flatly contradict.
+    expect(TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE).not.toContain('This response completed');
+    expect(TEXT_OUTPUT_UNPUBLISHABLE_MESSAGE.startsWith('A step in this response')).toBe(true);
+  });
+
+  it('🔴 SCOPING CONTROL — a MEDIA-posture entry publishes no text and is NOT a violation', async () => {
+    scannerReturns(scanOutput([]));
+
+    // `convert-image` is a real registered entry with `moderationPosture: 'none'`.
+    // It legitimately contributes no text here. Applying the invariant to every
+    // registered entry instead of text postures would report this correct
+    // absence as a fault, on any workflow mixing a media step with a chat step.
+    const snapshot = await attachModeratedStepTextOutputs(
+      { workflowId: 'wf-1', status: 'succeeded' as const },
+      workflowWith({
+        $type: 'convertImage',
+        status: 'succeeded',
+        output: { blob: { url: 'https://x/y.png' } },
+      }),
+      CTX
+    );
+
+    expect(snapshot.textOutputWithheld).toBeUndefined();
   });
 });
