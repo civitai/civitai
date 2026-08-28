@@ -194,13 +194,14 @@ describe('upsertBounty — blurb expansion', () => {
 });
 
 describe('upsertBounty — blurb reconciliation', () => {
-  it('reconciles after the write, against the bounty id', async () => {
+  it('reconciles in the same transaction as the write, against the bounty id', async () => {
     await upsert();
 
     expect(reconcileBlurbReferences).toHaveBeenCalledWith({
       entityType: 'Bounty',
       entityId: BOUNTY_ID,
       uses: USES,
+      tx: expect.anything(),
     });
 
     const [write] = dbMock.dbWrite.bounty.update.mock.invocationCallOrder;

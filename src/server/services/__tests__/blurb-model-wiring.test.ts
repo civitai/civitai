@@ -224,13 +224,14 @@ describe('upsertModel — blurb expansion', () => {
 });
 
 describe('upsertModel — blurb reconciliation', () => {
-  it('reconciles after the write, against the model id', async () => {
+  it('reconciles in the same transaction as the write, against the model id', async () => {
     await upsert();
 
     expect(reconcileBlurbReferences).toHaveBeenCalledWith({
       entityType: 'Model',
       entityId: MODEL_ID,
       uses: USES,
+      tx: expect.anything(),
     });
 
     const [write] = dbMock.dbWrite.model.update.mock.invocationCallOrder;
@@ -249,6 +250,47 @@ describe('upsertModel — blurb reconciliation', () => {
     expect(dbMock.dbWrite.model.update).toHaveBeenCalled();
   });
 
+  it('🔴 a reconcile failure aborts the write TRANSACTION, so no model row survives it', async () => {
+    // The bug this pins: reconcile used to run after the write had already committed, so a throw
+    // here returned a 500 to a creator whose model row existed anyway. They retried, and each
+    // retry made another — 562 orphaned drafts on 2026-08-27.
+    //
+    // A mock cannot roll back, so the observable is the callback boundary: the rejection has to
+    // escape from INSIDE `$transaction`, which is what makes Postgres discard the write. Move the
+    // reconcile back below the transaction and `rejectedInsideTxn` stays false.
+    let rejectedInsideTxn = false;
+    dbMock.dbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
+      try {
+        return await cb(dbMock.dbWrite);
+      } catch (e) {
+        rejectedInsideTxn = true;
+        throw e;
+      }
+    });
+    reconcileBlurbReferences.mockRejectedValue(new Error('reference write failed'));
+
+    await expect(upsert({ id: undefined })).rejects.toThrow('reference write failed');
+
+    expect(rejectedInsideTxn).toBe(true);
+  });
+
+  it('🔴 the same on the UPDATE path', async () => {
+    let rejectedInsideTxn = false;
+    dbMock.dbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => {
+      try {
+        return await cb(dbMock.dbWrite);
+      } catch (e) {
+        rejectedInsideTxn = true;
+        throw e;
+      }
+    });
+    reconcileBlurbReferences.mockRejectedValue(new Error('reference write failed'));
+
+    await expect(upsert()).rejects.toThrow('reference write failed');
+
+    expect(rejectedInsideTxn).toBe(true);
+  });
+
   it('🔴 reconciles on the CREATE path too, against the id it was created with', async () => {
     // The create branch has its own reconcile call, and only the update branch was covered. A
     // blurb inserted while creating a model would get no reference row at all, so the fan-out
@@ -259,6 +301,7 @@ describe('upsertModel — blurb reconciliation', () => {
       entityType: 'Model',
       entityId: MODEL_ID,
       uses: USES,
+      tx: expect.anything(),
     });
   });
 });

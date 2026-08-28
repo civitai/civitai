@@ -195,8 +195,10 @@ describe('BlurbReference is not read outside the feature gate', () => {
     // later "just resolve it for everyone" simplification of the restrict predicate goes red.
     await upsert({ description: BLURB_HTML });
 
-    // Exactly one read, and it is reconcile's — the owner branch passes no restriction at all.
-    expect(dbMock.dbRead.blurbReference.findMany).toHaveBeenCalledTimes(1);
+    // No replica read at all: the owner branch passes no restriction, and reconcile now reads
+    // through the write transaction rather than dbRead. Either one appearing here is the
+    // regression this guards.
+    expect(dbMock.dbRead.blurbReference.findMany).not.toHaveBeenCalled();
     // …and the owner's own blurbs ARE resolved, so this is not "the path never ran".
     expect(dbMock.dbRead.blurb.findMany).toHaveBeenCalled();
   });

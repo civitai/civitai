@@ -239,11 +239,13 @@ describe('upsertModelVersion — cannot take a published version down through th
   // Negative control. Without it a guard broadened to refuse every save of a published version —
   // which kills the resource editor outright — passes every assertion above.
   it('lets an ordinary edit of a published version through', async () => {
-    dbMock.dbWrite.modelVersion.update.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
+    // On the tx client, not dbWrite: the version update runs inside upsertModelVersion's
+    // transaction so a blurb-reference failure can roll it back.
+    mockTx.modelVersion.update.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
 
     await upsertModelVersion({ id: VERSION_ID, name: 'renamed' } as never);
 
-    expect(dbMock.dbWrite.modelVersion.update).toHaveBeenCalled();
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
   });
 
   // The control for the clause the others cannot see. Dropping `data.status !== Published` turns the
@@ -251,11 +253,11 @@ describe('upsertModelVersion — cannot take a published version down through th
   // above still passes — and which breaks declineReviewHandler, since it spreads the version's own
   // Published status back in on a review decision.
   it('lets a save that carries the current status through', async () => {
-    dbMock.dbWrite.modelVersion.update.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
+    mockTx.modelVersion.update.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
 
     await upsertModelVersion({ id: VERSION_ID, status: 'Published', name: 'renamed' } as never);
 
-    expect(dbMock.dbWrite.modelVersion.update).toHaveBeenCalled();
+    expect(mockTx.modelVersion.update).toHaveBeenCalled();
   });
 });
 

@@ -225,21 +225,25 @@ describe('upsertArticle — blurb expansion', () => {
 });
 
 describe('upsertArticle — blurb reconciliation', () => {
-  it('reconciles after the write and after the moderation submit, against the article id', async () => {
+  it('reconciles inside the write transaction, before the post-commit moderation submit', async () => {
     await upsert();
 
     expect(reconcileBlurbReferences).toHaveBeenCalledWith({
       entityType: 'Article',
       entityId: ARTICLE_ID,
       uses: USES,
+      tx: expect.anything(),
     });
 
     const write = Math.min(...dbMock.dbWrite.article.update.mock.invocationCallOrder);
     const [submit] = submitTextModeration.mock.invocationCallOrder;
     const [reconcile] = reconcileBlurbReferences.mock.invocationCallOrder;
 
-    expect(submit).toBeGreaterThan(write);
-    expect(reconcile).toBeGreaterThan(submit);
+    // Reconcile is now INSIDE the write transaction, so it lands after the write and before the
+    // post-commit moderation submit. That ordering is the point: a reconcile failure has to be
+    // able to roll the article back, which it cannot do once the txn has committed.
+    expect(reconcile).toBeGreaterThan(write);
+    expect(submit).toBeGreaterThan(reconcile);
   });
 
   it('runs the moved follow-up block exactly once per save', async () => {
@@ -278,6 +282,7 @@ describe('upsertArticle — blurb reconciliation', () => {
       entityType: 'Article',
       entityId: CREATED_ID,
       uses: USES,
+      tx: expect.anything(),
     });
 
     const [create] = dbMock.dbWrite.article.create.mock.invocationCallOrder;

@@ -706,8 +706,8 @@ export const upsertModelVersion = async ({
       throw throwBadRequestError('You cannot add versions to a private model.');
     }
 
-    const [version] = await dbWrite.$transaction([
-      dbWrite.modelVersion.create({
+    const version = await dbWrite.$transaction(async (tx) => {
+      const created = await tx.modelVersion.create({
         data: {
           ...data,
           meta:
@@ -752,22 +752,27 @@ export const upsertModelVersion = async ({
             : undefined,
           baseModelType: data.baseModelType ?? undefined,
         },
-      }),
-      ...existingVersions.map(({ id }, index) =>
-        dbWrite.modelVersion.update({ where: { id }, data: { index: index + 1 } })
-      ),
-    ]);
+      });
+
+      for (const [index, { id: existingId }] of existingVersions.entries())
+        await tx.modelVersion.update({ where: { id: existingId }, data: { index: index + 1 } });
+
+      // Inside the txn with the create: a throw here must not leave a committed version whose
+      // reference rows were never written.
+      if (descriptionSupplied && expansion.evaluated)
+        await reconcileBlurbReferences({
+          entityType: 'ModelVersion',
+          entityId: created.id,
+          uses: expansion.uses,
+          tx,
+        });
+
+      return created;
+    });
 
     // Native: derive the gate straight from the config input (endsAt materialized at publish for a
     // timed window), and create the EA donation goal here (option A) instead of at publish.
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
-
-    if (descriptionSupplied && expansion.evaluated)
-      await reconcileBlurbReferences({
-        entityType: 'ModelVersion',
-        entityId: version.id,
-        uses: expansion.uses,
-      });
 
     return version;
   } else {
@@ -852,88 +857,101 @@ export const upsertModelVersion = async ({
           }
         : undefined;
 
-    const version = await dbWrite.modelVersion.update({
-      where: { id },
-      data: {
-        ...data,
-        meta: (mergedMeta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined,
-        availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
-        settings: settings !== null ? settings : Prisma.JsonNull,
-        monetization:
-          existingVersion.monetization?.id && !monetization
-            ? { delete: true }
-            : monetization && monetization.type
-            ? {
-                upsert: {
-                  create: {
-                    type: monetization.type,
-                    unitAmount: monetization.unitAmount,
-                    currency: constants.defaultCurrency,
-                    sponsorshipSettings: monetization.sponsorshipSettings
-                      ? {
-                          create: {
-                            type: monetization.sponsorshipSettings?.type,
-                            currency: constants.defaultCurrency,
-                            unitAmount: monetization?.sponsorshipSettings?.unitAmount,
-                          },
-                        }
-                      : undefined,
-                  },
-                  update: {
-                    type: monetization.type,
-                    unitAmount: monetization.unitAmount,
-                    currency: constants.defaultCurrency,
-                    sponsorshipSettings:
-                      existingVersion.monetization?.sponsorshipSettings &&
-                      !monetization.sponsorshipSettings
-                        ? { delete: true }
-                        : monetization.sponsorshipSettings
+    const version = await dbWrite.$transaction(async (tx) => {
+      const updated = await tx.modelVersion.update({
+        where: { id },
+        data: {
+          ...data,
+          meta: (mergedMeta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined,
+          availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
+          settings: settings !== null ? settings : Prisma.JsonNull,
+          monetization:
+            existingVersion.monetization?.id && !monetization
+              ? { delete: true }
+              : monetization && monetization.type
+              ? {
+                  upsert: {
+                    create: {
+                      type: monetization.type,
+                      unitAmount: monetization.unitAmount,
+                      currency: constants.defaultCurrency,
+                      sponsorshipSettings: monetization.sponsorshipSettings
                         ? {
-                            upsert: {
-                              create: {
-                                type: monetization.sponsorshipSettings?.type,
-                                currency: constants.defaultCurrency,
-                                unitAmount: monetization?.sponsorshipSettings?.unitAmount,
-                              },
-                              update: {
-                                type: monetization.sponsorshipSettings?.type,
-                                currency: constants.defaultCurrency,
-                                unitAmount: monetization?.sponsorshipSettings?.unitAmount,
-                              },
+                            create: {
+                              type: monetization.sponsorshipSettings?.type,
+                              currency: constants.defaultCurrency,
+                              unitAmount: monetization?.sponsorshipSettings?.unitAmount,
                             },
                           }
                         : undefined,
+                    },
+                    update: {
+                      type: monetization.type,
+                      unitAmount: monetization.unitAmount,
+                      currency: constants.defaultCurrency,
+                      sponsorshipSettings:
+                        existingVersion.monetization?.sponsorshipSettings &&
+                        !monetization.sponsorshipSettings
+                          ? { delete: true }
+                          : monetization.sponsorshipSettings
+                          ? {
+                              upsert: {
+                                create: {
+                                  type: monetization.sponsorshipSettings?.type,
+                                  currency: constants.defaultCurrency,
+                                  unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                                },
+                                update: {
+                                  type: monetization.sponsorshipSettings?.type,
+                                  currency: constants.defaultCurrency,
+                                  unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                                },
+                              },
+                            }
+                          : undefined,
+                    },
+                  },
+                }
+              : undefined,
+          recommendedResources: recommendedResources
+            ? {
+                deleteMany: {
+                  id: {
+                    notIn: recommendedResources.map((resource) => resource.id).filter(isDefined),
                   },
                 },
+                createMany: {
+                  data: recommendedResources
+                    .filter((resource) => !resource.id)
+                    .map((resource) => ({
+                      resourceId: resource.resourceId,
+                      settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
+                    })),
+                },
+                update: recommendedResources
+                  .filter((resource) => resource.id)
+                  .map((resource) => ({
+                    where: { id: resource.id },
+                    data: {
+                      settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
+                    },
+                  })),
               }
             : undefined,
-        recommendedResources: recommendedResources
-          ? {
-              deleteMany: {
-                id: {
-                  notIn: recommendedResources.map((resource) => resource.id).filter(isDefined),
-                },
-              },
-              createMany: {
-                data: recommendedResources
-                  .filter((resource) => !resource.id)
-                  .map((resource) => ({
-                    resourceId: resource.resourceId,
-                    settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
-                  })),
-              },
-              update: recommendedResources
-                .filter((resource) => resource.id)
-                .map((resource) => ({
-                  where: { id: resource.id },
-                  data: {
-                    settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
-                  },
-                })),
-            }
-          : undefined,
-        baseModelType: data.baseModelType ?? undefined,
-      },
+          baseModelType: data.baseModelType ?? undefined,
+        },
+      });
+
+      // Inside the txn with the update, for the reason the create branch above states.
+      if (descriptionSupplied && expansion.evaluated)
+        await reconcileBlurbReferences({
+          entityType: 'ModelVersion',
+          entityId: updated.id,
+          uses: expansion.uses,
+          tx,
+        });
+
+      return updated;
     });
 
     const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;
@@ -984,13 +1002,6 @@ export const upsertModelVersion = async ({
         id: version.id,
         description: version.description ?? '',
         context: { modelId: version.modelId },
-      });
-
-    if (descriptionSupplied && expansion.evaluated)
-      await reconcileBlurbReferences({
-        entityType: 'ModelVersion',
-        entityId: version.id,
-        uses: expansion.uses,
       });
 
     return version;
