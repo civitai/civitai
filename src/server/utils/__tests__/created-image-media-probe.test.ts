@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import '~/__tests__/setup';
 
+import { isProbeableMediaKey } from '@civitai/shared/media-key';
 import {
-  isProbeableMediaKey,
   probeCreatedImageMedia,
   type CreatedImageMediaProbeDeps,
 } from '~/server/utils/created-image-media-probe';
@@ -44,7 +44,18 @@ function notFoundError() {
   });
 }
 
-describe('isProbeableMediaKey', () => {
+/**
+ * 🔴 The predicate itself now lives in `@civitai/shared/media-key` and is imported by BOTH media
+ * existence checks — this one and the moderator publish guard. It used to be open-coded at each,
+ * by opposite construction, and the two disagreed on real rows: for `some-file.png` the other
+ * spelling probed, got a 404 and PERMANENTLY refused the publish, while this one never asked.
+ *
+ * These cases stay HERE as well as in the shared package's own suite, deliberately. They are not a
+ * duplicate of it — they run under THIS app's resolver and module graph, so they are what proves
+ * the import actually resolves and that this call site is reading the shared rule rather than a
+ * reintroduced local one.
+ */
+describe('isProbeableMediaKey — the SHARED predicate, as this app resolves it', () => {
   it('accepts a bare media key (the uuid an upload endpoint issues)', () => {
     expect(isProbeableMediaKey('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee')).toBe(true);
   });
@@ -55,8 +66,10 @@ describe('isProbeableMediaKey', () => {
     'https://image.civitai.com/xyz/width=450/thing.jpeg',
     '',
     'not-a-uuid',
+    'some-file.png',
     'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee/extra',
     '  aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee  ',
+    'blob:https://civitai.com/aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
   ])('rejects %j — not a key this store can be asked about', (value) => {
     expect(isProbeableMediaKey(value)).toBe(false);
   });

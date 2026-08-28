@@ -1,4 +1,5 @@
 import type { S3Client } from '@aws-sdk/client-s3';
+import { isProbeableMediaKey } from '@civitai/shared/media-key';
 import { getImageUploadBackend, headObject } from '~/utils/s3-utils';
 
 /**
@@ -57,27 +58,6 @@ export type CreatedImageMediaVerdict =
 export const CREATED_IMAGE_MEDIA_PROBE_TIMEOUT_MS = 3_000;
 
 /**
- * A bare media key — the UUID an upload endpoint issues and stores as `Image.url`.
- *
- * 🔴 Not every `Image.url` is one. `addPostImageSchema` accepts
- * `z.url().or(z.string().uuid())`, and legacy avatar rows hold a full external URL
- * where every other row holds a bucket key — the same distinction
- * `deleteImageFromS3` documents when it declines to delete an `http`-prefixed url
- * because it names a bucket we do not own. HEADing one of those against OUR bucket
- * asks a nonsensical question and would answer `absent` for a perfectly good row,
- * so those are classified `not-applicable` and never probed.
- *
- * Deliberately a positive test (it IS a uuid) rather than a negative one (it is NOT
- * an http url): a relative path, an empty string or a stray token is equally not a
- * key we can look up, and a negative test would send all of them to the bucket.
- */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-export function isProbeableMediaKey(url: unknown): url is string {
-  return typeof url === 'string' && UUID_RE.test(url);
-}
-
-/**
  * Seam for tests. Both default to the real implementations, so production behaviour
  * is whatever `getImageUploadBackend` / `headObject` do — the injection point exists
  * so a test can drive the three verdicts without a bucket, not so the probe can
@@ -105,6 +85,20 @@ export async function probeCreatedImageMedia(
   url: unknown,
   deps: CreatedImageMediaProbeDeps = defaultDeps
 ): Promise<CreatedImageMediaVerdict> {
+  /**
+   * 🔴 The SHARED predicate (`@civitai/shared/media-key`), not a local copy.
+   *
+   * This rule used to be open-coded here AND in the moderator publish guard, by
+   * OPPOSITE construction — this one asked "is it a bare uuid?", that one asked
+   * "does it carry a URI scheme?" and probed everything else. For `some-file.png`
+   * they returned opposite verdicts, and on that side the verdict is a PERMANENT
+   * refusal to publish. Read that module for why the surviving test is a
+   * deliberate under-approximation rather than an accurate one.
+   *
+   * The two call sites act differently on the answer and that is fine: this one is
+   * observe-only behind a flag defaulting off, so a wrong verdict is logged; the
+   * publish guard's is enforced immediately. What must not differ is the QUESTION.
+   */
   if (!isProbeableMediaKey(url)) return 'not-applicable';
 
   try {
