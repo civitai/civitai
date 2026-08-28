@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import {
   assertMediaPresentForPublish,
   MediaPresence,
-  type MediaPresence as MediaPresenceType,
+  type MediaProbeAnswer,
   summarizeProbeError,
 } from '@civitai/shared';
 import { randomUUID } from 'crypto';
@@ -8076,7 +8076,7 @@ const imageUploadsBucket = () => env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-upload
  * because `getB2ImageS3Client()` throws when credentials are absent and that must land on `unknown`,
  * not on a failed publish.
  */
-async function probeImageMediaPresence(key: string): Promise<MediaPresenceType> {
+async function probeImageMediaPresence(key: string): Promise<MediaProbeAnswer> {
   // 🔴 No key check here, deliberately. `assertMediaPresentForPublish` classifies the url and only
   // calls this with a value that already passed the SHARED `isProbeableMediaKey` — a copy of that
   // test in each probe is exactly how the two runtimes came to disagree about the same row.
