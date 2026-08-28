@@ -19,8 +19,17 @@ import { logToAxiom } from '~/server/logging/client';
 // so presenting it here is far more authority than this one call needs. The moderator app is dropping
 // it from its accepted set; once MOD_INBOUND_TOKEN is set in every environment, the fallback (and
 // then this comment) can go.
+//
+// 🔴 THE ENDPOINT IS DELIBERATELY *NOT* `MODERATOR_APP_URL`, AND THE TWO ARE NOT INTERCHANGEABLE.
+// `MODERATOR_APP_URL` has a second consumer with the opposite requirement: `src/pages/moderator/
+// [...slug].tsx` builds a `getServerSideProps` REDIRECT DESTINATION from it, which is a Location
+// header sent to a moderator's BROWSER — so that value has to stay publicly resolvable. This call is
+// server-to-server and wants the shortest private path instead. Pointing the single shared variable
+// at a private address would silently break every migrated /moderator/* link while this call got
+// faster, so the two consumers get two variables. `MODERATOR_APP_INTERNAL_URL` is optional and falls
+// back to the public one, so an environment that sets neither behaves exactly as it does today.
 export const moderatorApp = createModeratorClient({
-  endpoint: env.MODERATOR_APP_URL,
+  endpoint: env.MODERATOR_APP_INTERNAL_URL || env.MODERATOR_APP_URL,
   token: env.MOD_INBOUND_TOKEN || env.WEBHOOK_TOKEN,
   onFailure: (failure) =>
     logToAxiom(
