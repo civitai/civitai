@@ -267,6 +267,10 @@ export function ArticleProblematicImages({
             <Stack gap="sm">
               {blockedImages.map((image) => {
                 const remedy = articleImageActions(image.url);
+                // ONE expression per affordance — see the note on the error section below.
+                const showOverride =
+                  !!canOverride && remedy.offerOverride && !image.nsfwLevelLocked;
+                const showOverridden = !!canOverride && image.nsfwLevelLocked;
                 return (
                   <Paper key={image.id} p="xs" withBorder className="border-l-2 border-l-red-6">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
@@ -297,14 +301,14 @@ export function ArticleProblematicImages({
                           )}
                         </Stack>
                       </div>
-                      {canOverride && (remedy.offerOverride || image.nsfwLevelLocked) && (
+                      {(showOverride || showOverridden) && (
                         <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
-                          {canOverride && remedy.offerOverride && !image.nsfwLevelLocked && (
+                          {showOverride && (
                             <ImageOverrideControl articleId={articleId} imageId={image.id} />
                           )}
                           {/* The STATUS survives the withdrawal of the action — see
                             ImageOverriddenBadge. */}
-                          {canOverride && image.nsfwLevelLocked && <ImageOverriddenBadge />}
+                          {showOverridden && <ImageOverriddenBadge />}
                         </div>
                       )}
                     </div>
@@ -327,6 +331,21 @@ export function ArticleProblematicImages({
             <Stack gap="sm">
               {errorImages.map((image) => {
                 const remedy = articleImageActions(image.url);
+                /**
+                 * 🔴 ONE EXPRESSION PER AFFORDANCE, USED BY BOTH THE CONTAINER AND THE CHILD.
+                 *
+                 * These used to be spelled twice — once in the container's disjunction and once on
+                 * the child — and the duplication made the child's copy UNREACHABLE: the container
+                 * already returned false for exactly the inputs the child's gate exists to reject,
+                 * so removing `remedy.offerOverride` from the child changed nothing observable and
+                 * a mutation test on it SURVIVED. Measured, not inferred. A predicate open-coded at
+                 * two sites is one edit away from disagreeing with itself; naming it once means
+                 * there is a single thing to get wrong and a single thing to test.
+                 */
+                const showRetry = !!canRetry && remedy.offerRetry && !image.nsfwLevelLocked;
+                const showOverride =
+                  !!canOverride && remedy.offerOverride && !image.nsfwLevelLocked;
+                const showOverridden = !!canOverride && image.nsfwLevelLocked;
                 return (
                   <Paper key={image.id} p="xs" withBorder className="border-l-2 border-l-yellow-6">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
@@ -354,17 +373,15 @@ export function ArticleProblematicImages({
                         mutation that refuses it, and Retry re-fetches a handle nothing outside the
                         originating document can read. The note above names the remedy instead. The
                         Overridden BADGE is not an action and is not withdrawn with them. */}
-                      {((canRetry && remedy.offerRetry && !image.nsfwLevelLocked) ||
-                        (canOverride && remedy.offerOverride && !image.nsfwLevelLocked) ||
-                        (canOverride && image.nsfwLevelLocked)) && (
+                      {(showRetry || showOverride || showOverridden) && (
                         <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
-                          {canRetry && remedy.offerRetry && !image.nsfwLevelLocked && (
+                          {showRetry && (
                             <ImageRetryButton articleId={articleId} imageId={image.id} />
                           )}
-                          {canOverride && remedy.offerOverride && !image.nsfwLevelLocked && (
+                          {showOverride && (
                             <ImageOverrideControl articleId={articleId} imageId={image.id} />
                           )}
-                          {canOverride && image.nsfwLevelLocked && <ImageOverriddenBadge />}
+                          {showOverridden && <ImageOverriddenBadge />}
                         </div>
                       )}
                     </div>
