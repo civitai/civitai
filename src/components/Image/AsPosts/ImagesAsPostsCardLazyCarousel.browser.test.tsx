@@ -58,6 +58,10 @@ const mocks = vi.hoisted(() => {
   });
   // Per-test knobs (reset in beforeEach).
   const state = { error: false };
+  // The active slide's `getState` — what its `RoutedDialogLink` hands the detail modal.
+  // Captured rather than clicked: the mocked slide leaves render at zero size, so a real
+  // click never passes playwright's actionability check.
+  const link = { getState: undefined as undefined | (() => any) };
   const ctx = {
     browsingLevel: 1,
     hiddenImageIds: [] as number[],
@@ -79,7 +83,7 @@ const mocks = vi.hoisted(() => {
       isError: false,
     };
   });
-  return { tailImage, state, ctx, getInfiniteUseQuery };
+  return { tailImage, state, ctx, link, getInfiniteUseQuery };
 });
 
 // --- tail fetch ---------------------------------------------------------------
@@ -182,7 +186,10 @@ vi.mock('~/components/Cards/components/HoverActionButton', () => ({ default: () 
 // in any pass/fail count. Spreading is immune to the next export added upstream.
 vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
   ...(await importOriginal<typeof RoutedDialogLinkModule>()),
-  RoutedDialogLink: ({ children }: any) => <a>{children}</a>,
+  RoutedDialogLink: ({ children, getState }: any) => {
+    mocks.link.getState = getState;
+    return <a>{children}</a>;
+  },
 }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ imageGeneration: false }),
@@ -229,6 +236,7 @@ const walkToTail = async () => {
 
 beforeEach(() => {
   mocks.getInfiniteUseQuery.mockClear();
+  mocks.link.getState = undefined;
   mocks.state.error = false;
   mocks.ctx.browsingLevel = 1;
   mocks.ctx.hiddenImageIds = [];
@@ -322,6 +330,27 @@ describe('LazyPostImagesCarousel', () => {
       await expect.element(activeSlideId()).toBeInTheDocument();
       await clickNext();
     }
+  });
+
+  test('hands the detail modal the descriptor for the rest of the post, not just the seed', async () => {
+    // A cover click happens at index 0 — six slides short of the approach threshold —
+    // so the seed the modal receives is the bare first slice. Without the descriptor
+    // riding along, images 7..20 are unreachable by that route.
+    mocks.ctx.hiddenImageIds = [42];
+    const data = { postId: 100, imageCount: 20, images: slice(6) } as any;
+    renderWithProviders(<LazyPostImagesCarousel data={data} postId={100} />);
+    await expect.element(activeSlideId()).toHaveAttribute('data-image-id', '1');
+
+    const state = mocks.link.getState!();
+    expect(state.images).toHaveLength(6);
+    expect(state.postTail).toMatchObject({
+      postId: 100,
+      imageCount: 20,
+      browsingLevel: 1,
+      // The owner-curation lists travel too — `getInfinite` re-derives none of them.
+      hiddenImageIds: [42],
+      filters: { modelId: 1, modelVersionId: 2 },
+    });
   });
 
   test('never enables the tail query when postId is null (no broadening to the general feed)', async () => {
