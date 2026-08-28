@@ -434,7 +434,7 @@ const MAX_TOOL_PARAMETERS_DEPTH = 8;
  * one OpenAI documents for function names, so a bounded name is not a
  * civitai-specific restriction a caller has to discover.
  */
-const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+export const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
 /**
  * A tool's JSON-Schema `parameters` object — bounded, and NORMALISED THROUGH

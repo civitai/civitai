@@ -79,9 +79,22 @@ export const MAX_TOOL_RESULT_CHARS = 6_000;
 /** Hard cap on results returned in one call, independent of the char budget. */
 export const MAX_TOOL_RESULT_ITEMS = 10;
 
-/** Bounds on individual projected strings, so one pathological field cannot eat the budget. */
-const MAX_PROJECTED_NAME_CHARS = 120;
-const MAX_PROJECTED_TAGS = 8;
+/**
+ * Bounds on individual projected strings, so one pathological field cannot eat
+ * the budget.
+ *
+ * 🔴 EXPORTED SO THE TESTS CAN REACH THE BRANCH THEY CLAIM TO COVER. An audit
+ * killed four mutants here — widening any of these to 100000, and deleting
+ * `str()`'s truncation branch outright — because every fixture in the suite sat
+ * comfortably UNDER each bound, so the truncation never executed and the
+ * docstring's "one pathological field cannot eat the budget" had zero coverage.
+ * A test that builds its fixture from the constant is the only kind that stays
+ * reaching when the constant moves.
+ */
+export const MAX_PROJECTED_NAME_CHARS = 120;
+export const MAX_PROJECTED_TAG_CHARS = 40;
+export const MAX_PROJECTED_CREATOR_CHARS = 60;
+export const MAX_PROJECTED_TAGS = 8;
 
 /**
  * The AIR URN prefix, lowercase.
@@ -138,12 +151,29 @@ export function neutralizeAirLiterals<T>(value: T): T {
   return value;
 }
 
-/** Read a string field defensively off an `unknown` search item. */
+/**
+ * Read a string field defensively off an `unknown` search item.
+ *
+ * 🔴 THE CUT IS SURROGATE-AWARE. `String.prototype.slice` counts UTF-16 CODE
+ * UNITS, and an astral character (emoji, and every non-BMP script) occupies two.
+ * Cutting between them emits a LONE SURROGATE: still valid JSON — it serializes
+ * as `\udXXX` — so nothing downstream errors, and the model simply reads
+ * mojibake at the boundary. Measured on an emoji-heavy name before this guard
+ * existed. Catalog names are user-authored and routinely emoji-laden, so this is
+ * the ordinary case rather than a pathological one.
+ */
 function str(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   if (trimmed.length === 0) return undefined;
-  return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
+  if (trimmed.length <= max) return trimmed;
+  let cut = max - 1;
+  // The last retained unit is at `cut - 1`. If it is a HIGH surrogate its
+  // partner sits at `cut` and would be dropped, so retreat one unit and let the
+  // ellipsis take the slack.
+  const last = trimmed.charCodeAt(cut - 1);
+  if (last >= 0xd800 && last <= 0xdbff) cut -= 1;
+  return `${trimmed.slice(0, cut)}…`;
 }
 
 /** Read a finite number field defensively off an `unknown` search item. */
@@ -209,7 +239,7 @@ export function projectModelForTool(raw: unknown): ProjectedModel | null {
 
   const tags = Array.isArray(row.tags)
     ? row.tags
-        .map((t) => str(t, 40))
+        .map((t) => str(t, MAX_PROJECTED_TAG_CHARS))
         .filter((t): t is string => t !== undefined)
         .slice(0, MAX_PROJECTED_TAGS)
     : undefined;
@@ -221,8 +251,8 @@ export function projectModelForTool(raw: unknown): ProjectedModel | null {
     ...(latest && str(latest.baseModel, 40) !== undefined
       ? { baseModel: str(latest.baseModel, 40) }
       : {}),
-    ...(creatorRecord && str(creatorRecord.username, 60) !== undefined
-      ? { creator: str(creatorRecord.username, 60) }
+    ...(creatorRecord && str(creatorRecord.username, MAX_PROJECTED_CREATOR_CHARS) !== undefined
+      ? { creator: str(creatorRecord.username, MAX_PROJECTED_CREATOR_CHARS) }
       : {}),
     ...(statsRecord && num(statsRecord.downloadCount) !== undefined
       ? { downloads: num(statsRecord.downloadCount) }

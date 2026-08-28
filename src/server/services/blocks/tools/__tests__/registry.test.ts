@@ -358,3 +358,80 @@ describe('block tool registry — the result is bounded so it can be replayed', 
     expect(bounded.truncated).toBe(0);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PER-FIELD LENGTH BOUNDS. Every one of these was uncovered: an audit widened
+// each bound to 100000 and deleted `str()`'s truncation branch outright, and all
+// four mutants SURVIVED — because every fixture in the file sat comfortably
+// UNDER each bound, so the truncation never executed. The docstring's claim
+// ("one pathological field cannot eat the budget") had zero coverage.
+//
+// 🔴 EACH FIXTURE IS BUILT FROM THE EXPORTED CONSTANT, not from a magic number,
+// so it stays REACHING if the bound is later retuned. A fixture with a hardcoded
+// length silently stops reaching the branch the moment the constant grows — which
+// is exactly how these came to be uncovered.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('projectModelForTool — per-field length bounds', () => {
+  // 🔴 THE EXPECTED LENGTHS ARE LITERALS, NOT THE CONSTANTS. A first version of
+  // this block built both the fixture AND the expectation from the exported
+  // constant — and all three widen-the-bound mutants SURVIVED, because widening
+  // the constant moved the assertion with it. That is "never derive a test's
+  // expectation from the implementation it tests", reproduced while fixing the
+  // very gap it describes. A literal makes a retune a deliberate test edit.
+  const OVERSHOOT = 400; // comfortably over every bound below
+
+  it('🔴 truncates an over-long NAME to 120', () => {
+    const p = projectModelForTool({ id: 1, name: 'N'.repeat(OVERSHOOT) }) as ProjectedModel;
+    expect(p.name).toHaveLength(120);
+    expect(p.name.endsWith('…')).toBe(true);
+  });
+
+  it('🔴 truncates an over-long CREATOR to 60', () => {
+    const p = projectModelForTool({
+      id: 1,
+      name: 'ok',
+      creator: { username: 'U'.repeat(OVERSHOOT) },
+    }) as ProjectedModel;
+    expect(p.creator).toHaveLength(60);
+    expect(p.creator?.endsWith('…')).toBe(true);
+  });
+
+  it('🔴 truncates an over-long TAG to 40', () => {
+    const p = projectModelForTool({
+      id: 1,
+      name: 'ok',
+      tags: ['T'.repeat(OVERSHOOT)],
+    }) as ProjectedModel;
+    expect(p.tags?.[0]).toHaveLength(40);
+    expect(p.tags?.[0].endsWith('…')).toBe(true);
+  });
+
+  it('the literals above ARE the shipped constants (drift guard)', async () => {
+    const m = await import('~/server/services/blocks/tools/registry');
+    expect(m.MAX_PROJECTED_NAME_CHARS).toBe(120);
+    expect(m.MAX_PROJECTED_CREATOR_CHARS).toBe(60);
+    expect(m.MAX_PROJECTED_TAG_CHARS).toBe(40);
+  });
+
+  it('POSITIVE CONTROL — a field UNDER its bound is passed through untouched', () => {
+    const exact = 'N'.repeat(120);
+    const p = projectModelForTool({ id: 1, name: exact }) as ProjectedModel;
+    // At exactly the bound there is nothing to cut, so no ellipsis — this is what
+    // distinguishes "the bound is applied" from "every string is mangled".
+    expect(p.name).toBe(exact);
+    expect(p.name.endsWith('…')).toBe(false);
+  });
+
+  // 🔴 `slice` counts UTF-16 CODE UNITS. An astral character occupies two, so a
+  // cut between them emits a LONE SURROGATE — valid JSON (`\udXXX`), nothing
+  // throws, and the model just reads mojibake. Catalog names are user-authored
+  // and routinely emoji-laden, so this is the ordinary case.
+  it('🔴 never cuts through a surrogate pair', () => {
+    const p = projectModelForTool({ id: 1, name: '🔥'.repeat(OVERSHOOT) }) as ProjectedModel;
+    expect(p.name.length).toBeLessThanOrEqual(120);
+    // A lone surrogate does not survive a JSON round trip intact.
+    expect(JSON.parse(JSON.stringify(p.name))).toBe(p.name);
+    expect(/[\ud800-\udbff](?![\udc00-\udfff])/.test(p.name)).toBe(false);
+    expect(/(?<![\ud800-\udbff])[\udc00-\udfff]/.test(p.name)).toBe(false);
+  });
+});

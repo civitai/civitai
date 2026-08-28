@@ -20,9 +20,11 @@ import {
   blockToolDeclarations,
   boundToolResult,
   getBlockTool,
+  neutralizeAirLiterals,
   projectModelForTool,
   MAX_TOOL_RESULT_ITEMS,
 } from '~/server/services/blocks/tools/registry';
+import { TOOL_NAME_PATTERN } from '~/server/services/blocks/steps/chat-completion.step';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
 
@@ -74,7 +76,19 @@ export const config = { api: { bodyParser: { sizeLimit: '8kb' } } };
  */
 const callSchema = z
   .object({
-    name: z.string().min(1).max(64),
+    // 🔴 PATTERN-BOUNDED AT THE WIRE, and not merely for tidiness. Both 400
+    // bodies below REFLECT this value back to the caller, and the caller is an
+    // untrusted sandboxed iframe that will hand our reply to a chat model as a
+    // `role:'tool'` message. `containsAirReference` (the chat step's entitlement
+    // guard) throws FORBIDDEN on the literal `urn:air:` ANYWHERE in a submitted
+    // step input — so an unbounded `name` lets a caller compose a 400 body it can
+    // never replay, with no diagnostic explaining why. The pattern makes the
+    // reflection structurally inert instead of relying on the scrub below.
+    //
+    // Same pattern the chat step enforces on a declared tool name, IMPORTED
+    // rather than re-spelled: `registry.ts` already documented the coupling in
+    // prose, and a second copy is how the two drift.
+    name: z.string().min(1).max(64).regex(TOOL_NAME_PATTERN),
     arguments: z.unknown().optional(),
   })
   .strict();
@@ -84,8 +98,16 @@ const DEFAULT_LIMIT = 5;
 const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const claims = (req as BlockScopedNextApiRequest).blockClaims;
   if (!claims) {
-    // withBlockScope only invokes this handler with a valid block JWT; defense
-    // in depth, mirroring blocks/models.ts.
+    // 🔴 THIS IS THE GATE, NOT A BACKSTOP — the previous comment here said
+    // "defense in depth", and that was wrong in the direction that matters.
+    // `withBlockScope` does NOT reject and return on its own in two cases: when
+    // no bearer token is present, and when the `app-blocks-runtime-enabled`
+    // flag is off. In BOTH it FALLS THROUGH to the wrapped handler with
+    // `blockClaims` unset. So deleting these five lines does not lose a
+    // redundant check — it serves the tool declarations unauthenticated.
+    //
+    // Pinned by its own test; a mutant that removes it previously survived the
+    // whole suite, which is why the comment is now explicit about what it holds.
     res.status(401).json({ error: 'Block token required' });
     return;
   }
@@ -103,7 +125,16 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
   const parsed = callSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error });
+    // 🔴 `.message`, NOT the ZodError object. Measured: `JSON.stringify({error:
+    // zodError})` emits `{"name":"ZodError","message":"[…issues…]"}`, and those
+    // issues echo the caller's own keys verbatim (`"keys":["<their key>"]`). That
+    // is caller input rather than server internals — no Prisma table/column, no pg
+    // row value — so it is not the disclosure the ledger is named for. It is still
+    // an error OBJECT on the wire, and the scrub below is what makes the echo safe
+    // to replay rather than the shape being harmless.
+    res.status(400).json({
+      error: neutralizeAirLiterals(`invalid request body: ${parsed.error.message}`),
+    });
     return;
   }
 
@@ -113,6 +144,10 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // inherited value.
   const tool = getBlockTool(parsed.data.name);
   if (!tool) {
+    // Not scrubbed, and it does not need to be: `name` cleared
+    // `TOOL_NAME_PATTERN` above, which admits no `:` and therefore cannot carry
+    // `urn:air:`. The scrub on the two bodies that CAN echo free text is what
+    // does the work; adding one here would imply this reflection is unbounded.
     res.status(400).json({
       error: `unknown tool '${parsed.data.name}'`,
     });
@@ -124,8 +159,14 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
   // contract this route does not enforce.
   const args = tool.argsSchema.safeParse(parsed.data.arguments ?? {});
   if (!args.success) {
+    // SCRUBBED: unlike `name`, an argument value is free text (`query`), and zod
+    // echoes offending values and unrecognized keys into `.message`. A caller
+    // that sends `query: "urn:air:…"` would otherwise get a 400 body it cannot
+    // replay as a `role:'tool'` message.
     res.status(400).json({
-      error: `invalid arguments for tool '${tool.name}': ${args.error.message}`,
+      error: neutralizeAirLiterals(
+        `invalid arguments for tool '${tool.name}': ${args.error.message}`
+      ),
     });
     return;
   }
@@ -168,7 +209,21 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       } catch (e) {
         if (e instanceof ModelSearchMeiliTimeoutError) {
           res.setHeader('Retry-After', '2');
-          res.status(503).json({ error: e.message });
+          // 🔴 A LITERAL, NOT `e.message`, AND THAT IS THE POINT — CI caught the
+          // difference. `rest-error-envelope-ledger` flags `{ error: <ident>.message }`
+          // as a class, because the shape is indistinguishable from serving a
+          // DRIVER-authored message (a Prisma error carries table + column; a pg
+          // 23505 carries the offending ROW VALUE). Here the value happens to be
+          // our own first-party string, so this was over-reporting rather than a
+          // live disclosure — but the ledger's own docstring says the remedy for
+          // that is a baseline entry, and a brand-new route does not belong in a
+          // list of PRE-EXISTING unfixed offenders. Writing the string here costs
+          // nothing, removes the offence instead of recording it, and cannot
+          // drift if `ModelSearchMeiliTimeoutError`'s text changes.
+          //
+          // `blocks/models.ts` has the identical `e.message` line and IS
+          // baselined. Do not copy it back.
+          res.status(503).json({ error: 'Model search is temporarily overloaded — please retry.' });
           return;
         }
         throw e;

@@ -320,3 +320,141 @@ describe('/api/v1/blocks/tools — rate limit', () => {
     expect(mockCheckRateLimit).toHaveBeenCalledWith('bki_test');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GAPS AN AUDIT FOUND BY MUTATION. Each case below corresponds to a mutant that
+// SURVIVED the original 42-test suite — i.e. the guard could be deleted and
+// nothing went red. They are grouped rather than scattered so the reason they
+// exist stays legible.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 /api/v1/blocks/tools — guards that were unpinned', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  // 🔴 NOT defence in depth. `withBlockScope` falls through to the wrapped
+  // handler — rather than rejecting — both when no bearer token is present and
+  // when `app-blocks-runtime-enabled` is off. Deleting the handler's own `!claims`
+  // check therefore serves the declarations UNAUTHENTICATED. It previously
+  // survived the whole suite.
+  it('🔴 a request with NO claims is 401, on GET and on POST', async () => {
+    claimsBox.claims = undefined;
+
+    const get = await invoke('GET');
+    expect(get.statusCode).toBe(401);
+    expect(get.body).toEqual({ error: 'Block token required' });
+    // The declarations must not leak through the unauthenticated path.
+    expect(get.body.tools).toBeUndefined();
+
+    const post = await invoke('POST', { name: 'search_models', arguments: { query: 'x' } });
+    expect(post.statusCode).toBe(401);
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+
+  it('POSITIVE CONTROL — the same GET succeeds once claims are present', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    const res = await invoke('GET');
+    expect(res.statusCode).toBe(200);
+    expect(res.body.tools).toBeDefined();
+  });
+
+  // 🔴 THE SEAM. `boundToolResult` was unit-tested in isolation and the endpoint
+  // never asserted its OUTPUT was bounded, so replacing the call with a
+  // passthrough survived every test. Losing it produces a result the block
+  // CANNOT replay — the chat step rejects an over-length `role:'tool'` message —
+  // with no diagnostic. The fixture is deliberately maximal so the CHAR budget
+  // binds before the item cap; asserting `< MAX_TOOL_RESULT_ITEMS` can only hold
+  // if the budget actually ran.
+  it('🔴 the char budget is applied AT THE SEAM, not merely unit-tested', async () => {
+    const { MAX_TOOL_RESULT_ITEMS, MAX_TOOL_RESULT_CHARS } = await import(
+      '~/server/services/blocks/tools/registry'
+    );
+    const fat = Array.from({ length: MAX_TOOL_RESULT_ITEMS }, (_, i) => ({
+      ...rawRow(1000 + i),
+      name: 'N'.repeat(300),
+      creator: { username: 'U'.repeat(200) },
+      tags: Array.from({ length: 8 }, () => 'T'.repeat(80)),
+    }));
+    mockRunModelSearch.mockResolvedValue({ items: fat, nextCursor: undefined });
+
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { query: 'x', limit: MAX_TOOL_RESULT_ITEMS },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.result.items.length).toBeLessThan(MAX_TOOL_RESULT_ITEMS);
+    expect(res.body.result.truncated).toBeGreaterThan(0);
+    expect(JSON.stringify(res.body.result.items).length).toBeLessThanOrEqual(MAX_TOOL_RESULT_CHARS);
+  });
+
+  // The meili timeout arm: mutating its 503 to a 200 previously survived.
+  it('🔴 a meili timeout is a 503 with Retry-After, not a 200', async () => {
+    const { ModelSearchMeiliTimeoutError } = await import('~/server/services/model-search.service');
+    mockResolveModelSearchIds.mockRejectedValue(new ModelSearchMeiliTimeoutError());
+
+    const res = await invoke('POST', { name: 'search_models', arguments: { query: 'x' } });
+
+    expect(res.statusCode).toBe(503);
+    expect(res.headers['Retry-After']).toBe('2');
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+    // 🔴 A LITERAL, never `e.message`. `rest-error-envelope-ledger` flags
+    // `{ error: <ident>.message }` as a class regardless of whose text it is, and
+    // a brand-new route must not land in that baseline.
+    expect(typeof res.body.error).toBe('string');
+    expect(res.body.error).toBe('Model search is temporarily overloaded — please retry.');
+  });
+
+  it('🔴 the wire body is STRICT — an unknown top-level key is rejected', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { query: 'x' },
+      extra: 'nope',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+
+  // nit 8: both 400 bodies reflect caller input, and the block hands our reply to
+  // a chat model as a `role:'tool'` message — where `containsAirReference` throws
+  // FORBIDDEN on the literal `urn:air:`. The wire pattern makes the `name`
+  // reflection structurally inert; the scrub covers the free-text argument path.
+  it('🔴 a tool NAME carrying an AIR literal is rejected, and the reply is replayable', async () => {
+    const res = await invoke('POST', {
+      name: 'urn:air:sd1:checkpoint:civitai:4384@128713',
+      arguments: { query: 'x' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.stringify(res.body).toLowerCase()).not.toContain('urn:air:');
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+
+  // 🔴 THE FIXTURE HAS TO REACH THE SCRUB, AND THE OBVIOUS ONE DOES NOT. A first
+  // version sent `limit: 'urn:air:…'` — an invalid VALUE — and the mutant that
+  // deletes the scrub SURVIVED, because zod reports "expected number, received
+  // string" without echoing the value, so no AIR was ever in the message to
+  // scrub. `.strict()`'s `unrecognized_keys` DOES echo the offending KEY
+  // (measured: `Unrecognized key: "<key>"`), which is the path that reaches it.
+  it('🔴 an ARGUMENT carrying an AIR literal yields a replayable 400 body', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { query: 'x', 'urn:air:sd1:checkpoint:civitai:4384@128713': 1 },
+    });
+    expect(res.statusCode).toBe(400);
+    const body = JSON.stringify(res.body).toLowerCase();
+
+    // POSITIVE CONTROL — the key WAS echoed, so the reflection path is live and
+    // this assertion is not passing merely because nothing was reflected.
+    expect(body).toContain('unrecognized key');
+    expect(body).toContain('checkpoint:civitai:4384');
+
+    // …and the AIR prefix within that echo is neutralised, so the block can
+    // replay this body as a `role:'tool'` message without a FORBIDDEN.
+    expect(body).not.toContain('urn:air:');
+  });
+});
