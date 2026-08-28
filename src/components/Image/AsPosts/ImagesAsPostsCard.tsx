@@ -48,10 +48,9 @@ import { isDefined } from '~/utils/type-guards';
 import { SimpleImageCarousel } from '~/components/SimpleImageCarousel/SimpleImageCarousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { mergePostImages, shouldFetchPostTail } from '~/components/Image/AsPosts/lazyPostImages';
-import { POST_IMAGE_LIMIT } from '~/server/common/constants';
-import { trpc } from '~/utils/trpc';
+import { shouldFetchPostTail } from '~/components/Image/AsPosts/lazyPostImages';
+import type { PostTailDescriptor } from '~/components/Image/AsPosts/usePostImagesWithTail';
+import { usePostImagesWithTail } from '~/components/Image/AsPosts/usePostImagesWithTail';
 import classes from './ImagesAsPostsCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -378,16 +377,18 @@ const carouselIndicatorProps = {
  * One carousel slide's content (blur guard, remix, image, reactions, meta). Shared
  * by the static and lazy carousels so an appended (lazily-fetched) image renders
  * byte-identically to a seeded one. `dialogImages` seeds the detail modal with the
- * carousel's currently-loaded set.
+ * carousel's currently-loaded set; `postTail` lets it load the rest itself.
  */
 function PostCarouselSlide({
   image,
   postId,
   dialogImages,
+  postTail,
 }: {
   image: ImagesAsPostModel['images'][number];
   postId: number;
   dialogImages: ImagesAsPostModel['images'];
+  postTail?: PostTailDescriptor;
 }) {
   const features = useFeatureFlags();
   const handleRemixClick = (e: React.MouseEvent) => {
@@ -424,7 +425,7 @@ function PostCarouselSlide({
           <RoutedDialogLink
             name="imageDetail"
             state={{ imageId: image.id }}
-            getState={() => ({ imageId: image.id, images: dialogImages })}
+            getState={() => ({ imageId: image.id, images: dialogImages, postTail })}
             className={classes.link}
           >
             <>
@@ -571,8 +572,11 @@ export function StaticPostImagesCarousel({
  * N" immediately (indicators from `imageCount`); fetches the post's remaining
  * images via `trpc.image.getInfinite({ postId })` when the active slide approaches
  * the loaded edge, re-applies the feed's hidden preferences to the fetched tail
- * (content safety), and appends. The detail modal is seeded with whatever is
- * loaded at click time.
+ * (content safety), and appends.
+ *
+ * The detail modal is seeded with what is loaded at click time PLUS the descriptor
+ * it needs to load the rest itself — a click on the cover happens long before the
+ * approach threshold, so the seed alone is usually just the first slice.
  *
  * Exported for component tests.
  */
@@ -600,48 +604,27 @@ export function LazyPostImagesCarousel({
     [seed.length, total]
   );
 
-  // The tail = the WHOLE post (≤ POST_IMAGE_LIMIT), same version/browsing-level
-  // filters the gallery used, so the returned set matches `imageCount`. postId
-  // forces the DB path server-side (covered index, ~2ms).
-  const { data: tailData, isError: tailError } = trpc.image.getInfinite.useQuery(
-    {
-      ...filters,
-      postId,
-      browsingLevel,
-      limit: POST_IMAGE_LIMIT,
-      include: ['cosmetics', 'tagIds'],
-    },
-    {
-      // `postId != null` is the explicit invariant: a null postId must never broaden
-      // `getInfinite` to the model's general feed (it would append unrelated images).
-      enabled: fetchTail && postId != null,
-      trpc: { context: { skipBatch: true } },
-      staleTime: 5 * 60 * 1000,
-    }
-  );
-
-  // Content safety: re-apply the feed's hidden preferences to the fetched tail so
-  // it never surfaces images the feed slice would have dropped (owner/user-hidden,
-  // system-hidden tags, poi/minor). Browsing level is already applied server-side.
-  const { items: filteredTail } = useApplyHiddenPreferences({
-    type: 'images',
-    data: tailData?.items,
-    hiddenImages: hiddenImageIds,
-    hiddenUsers,
-    hiddenTags,
+  const {
+    images: loaded,
+    fetched,
+    isError: tailError,
+  } = usePostImagesWithTail({
+    seed,
+    postId,
+    filters,
     browsingLevel,
+    hiddenImageIds,
+    hiddenTags,
+    hiddenUsers,
+    enabled: fetchTail,
   });
 
-  const fetched = !!tailData;
-  const loaded = useMemo(
+  const postTail = useMemo<PostTailDescriptor | undefined>(
     () =>
-      fetched
-        ? (mergePostImages(
-            seed as { id: number }[],
-            (filteredTail ?? []) as { id: number }[]
-          ) as ImagesAsPostModel['images'])
-        : seed,
-    [fetched, seed, filteredTail]
+      postId != null
+        ? { postId, imageCount: total, filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers }
+        : undefined,
+    [postId, total, filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers]
   );
 
   // Before the tail resolves, advertise the true count so indicators read "1 of N".
@@ -665,6 +648,7 @@ export function LazyPostImagesCarousel({
             image={loaded[index]}
             postId={postId}
             dialogImages={loaded}
+            postTail={postTail}
           />
         ) : (
           <Center key={index} className="size-full">

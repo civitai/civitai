@@ -15,10 +15,10 @@
  *  - the feed card (`ImagesCard` / `Cards/ImageCard`) + its context menu,
  *  - the hidden-preferences `images` filter (`useApplyHiddenPreferences`),
  *  - the masonry grid + OG/SSR structured-data path,
- *  - AND the image-detail modal seeded from the card (`ImageDetail2`), which reads
- *    the SEEDED image objects directly (no refetch when the seed contains the
- *    clicked id — `ImageDetailProvider` uses `initialImages` as-is), so its
- *    read-set is load-bearing here and was traced explicitly.
+ *  - AND the image-detail modal seeded from the card (`ImageDetail2`), which renders
+ *    the SEEDED image objects directly, so its read-set is load-bearing here and was
+ *    traced explicitly. It reaches this shape twice over: as the seed, and as the
+ *    per-post tail a model-gallery modal loads via `usePostImagesWithTail`.
  *
  * The correctness of "these are unread" is enforced by the compiler, not asserted:
  * because `ImagesInfiniteModel` is defined from `getAllImages`' return type and the
