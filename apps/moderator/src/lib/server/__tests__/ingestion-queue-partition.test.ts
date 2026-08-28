@@ -79,10 +79,19 @@ describe('ingestion-error queue predicates', () => {
         "AND i.\"scanJobs\"->'error'->>'failureClass' IS NOT DISTINCT FROM $1"
     );
 
-    // The class is a BOUND PARAMETER carrying the exact stored value, not a fuzzy text match. A
-    // `reason ILIKE '%download%'` predicate would pass a keyword assertion and fail this one.
+    // The class is a BOUND PARAMETER carrying the exact stored value.
     expect(errors.parameters).toEqual(['permanent']);
     expect(missing.parameters).toEqual(['permanent']);
+  });
+
+  it('never keys the split off the scanner reason TEXT', async () => {
+    // Its own case, deliberately, so it stays REACHABLE. Folded into the pin above it would be
+    // unreachable the moment the pin fails, and a mutant that swapped the class predicate for
+    // `reason ILIKE '%download%'` would then die to the pin rather than to the rule it violates.
+    // The reason string is prose the scanner owns: one reword and every permanently-broken image
+    // walks back into the review queue, silently.
+    const errors = await run(() => countIngestionErrorImages());
+    const missing = await run(() => countMissingMediaImages());
     for (const s of [errors.sql, missing.sql]) {
       expect(s).not.toMatch(/like/i);
       expect(s).not.toMatch(/reason/i);
