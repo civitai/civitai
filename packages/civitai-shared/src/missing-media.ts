@@ -157,6 +157,22 @@ export const UNRENDERABLE_MEDIA_URL_PREFIX = 'blob:';
  * and is left alone on purpose: it is NOT in either renderer's passthrough set, so it is rewritten
  * into a CDN path and is probably broken too, but "probably broken" is inference, and inference is
  * not enough to justify a permanent refusal. It stays fail-open until someone measures it.
+ *
+ * 🔴 THERE ARE OTHER SPELLINGS OF "IS THIS A BLOB URL" IN THE REPO, AND THEY DIVERGE FROM THIS ONE
+ * ON PURPOSE. Recorded here because "one rule, one place" is the usual instinct and consolidating
+ * these would be wrong — they answer a different question, so they get to be wider:
+ *
+ *   - `isBlobUrl` (`src/utils/type-guards.ts`) and the inline `src?.startsWith('blob')` in
+ *     `src/libs/tiptap/extensions/CustomImage.tsx` / `src/components/TipTap/EdgeMediaNode.tsx` are
+ *     colon-LESS, i.e. strictly wider: they also catch `blobfish.png`. Their consequence is a
+ *     DISPLAY FALLBACK — render `user.image` instead, treat the node as an unsaved object url — and
+ *     a false positive there costs one avatar. Being wide is the right trade for that.
+ *   - This predicate's consequence is a PERMANENT PUBLISH REFUSAL. A false positive there is
+ *     unrecoverable for the uploader, so it is deliberately the narrower, colon-bearing subset, on
+ *     the reasoning two paragraphs up.
+ *
+ * So: do NOT "unify" them, and do not widen this one to match theirs. If you are adding a THIRD
+ * spelling, decide which of the two consequences yours has and reuse the matching predicate.
  */
 export function isUnrenderableMediaUrl(url: unknown): url is string {
   return typeof url === 'string' && url.startsWith(UNRENDERABLE_MEDIA_URL_PREFIX);
