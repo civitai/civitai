@@ -154,11 +154,8 @@ beforeEach(() => {
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 });
 
-// `reconcileBlurbReferences` reads the SAME table with byte-identical arguments, so the db mock
-// cannot tell the two readers apart. Both cases below therefore pick a fixture in which
-// reconcile provably cannot run — flag off (`expansion.evaluated` is false) or no `description`
-// on the payload (`descriptionSupplied` is false) — which leaves the restrict read as the only
-// possible caller and makes the zero attributable.
+// A `dbRead.blurbReference` read can only be the restrict read — reconcile reads through the
+// write client. That is what makes every zero below attributable.
 describe('BlurbReference is not read outside the feature gate', () => {
   it('does not read BlurbReference when the flag is off for the owner', async () => {
     isFlipt.mockResolvedValue(false);
@@ -195,8 +192,7 @@ describe('BlurbReference is not read outside the feature gate', () => {
     // later "just resolve it for everyone" simplification of the restrict predicate goes red.
     await upsert({ description: BLURB_HTML });
 
-    // Exactly one read, and it is reconcile's — the owner branch passes no restriction at all.
-    expect(dbMock.dbRead.blurbReference.findMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.blurbReference.findMany).not.toHaveBeenCalled();
     // …and the owner's own blurbs ARE resolved, so this is not "the path never ran".
     expect(dbMock.dbRead.blurb.findMany).toHaveBeenCalled();
   });

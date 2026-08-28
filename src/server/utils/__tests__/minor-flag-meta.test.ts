@@ -193,7 +193,7 @@ describe('textModeration redaction', () => {
   } as ModelMeta;
 
   // Model.meta reaches clients by TWO paths: filterModelMetaForClient (moderator-aware) and
-  // stripMinorHashMeta called directly (model.service.ts:1651,2433 — NOT moderator-aware).
+  // stripMinorHashMeta called directly (model.service.ts:1711,2534 — NOT moderator-aware).
   // The strip has to live in the function both paths share, or the second one leaks.
   it('strips textModeration in stripMinorHashMeta itself', () => {
     expect(stripMinorHashMeta(meta).textModeration).toBeUndefined();

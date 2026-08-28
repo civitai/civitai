@@ -1,4 +1,5 @@
-import { dbRead, dbWrite } from '~/server/db/client';
+import { Prisma } from '@prisma/client';
+import { dbRead } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { findBlurbSpans, replaceBlurbSpans, unwrapBlurbSpans } from '~/server/utils/blurb-html';
 
@@ -118,12 +119,17 @@ export async function reconcileBlurbReferences({
   entityType,
   entityId,
   uses,
+  tx,
 }: {
   entityType: string;
   entityId: number;
   uses: BlurbUse[];
+  /** Required: reconciling outside the entity's own write leaves the two able to disagree. */
+  tx: Prisma.TransactionClient;
 }) {
-  const current = await dbRead.blurbReference.findMany({
+  // Never the replica: this is a read-then-write, and a lagging replica hides reference rows
+  // that then survive the delete below.
+  const current = await tx.blurbReference.findMany({
     where: { entityType, entityId },
     select: { blurbId: true },
   });
@@ -132,26 +138,24 @@ export async function reconcileBlurbReferences({
   const remove = current.map((r) => r.blurbId).filter((id) => !keep.has(id));
 
   if (remove.length)
-    await dbWrite.blurbReference.deleteMany({
+    await tx.blurbReference.deleteMany({
       where: { entityType, entityId, blurbId: { in: remove } },
     });
 
+  if (!uses.length) return;
+
+  // `pendingSince: NULL` because this row was just materialized BY this save. Leave it set and the
+  // fan-out re-does work the save already did.
   const now = new Date();
-  for (const use of uses) {
-    await dbWrite.blurbReference.upsert({
-      where: {
-        blurbId_entityType_entityId: { blurbId: use.blurbId, entityType, entityId },
-      },
-      create: {
-        blurbId: use.blurbId,
-        entityType,
-        entityId,
-        materializedHash: use.contentHash,
-        materializedAt: now,
-      },
-      // `pendingSince: null` because this row was just materialized BY this save. Leave it set and
-      // the fan-out re-does work the save already did.
-      update: { materializedHash: use.contentHash, materializedAt: now, pendingSince: null },
-    });
-  }
+  await tx.$executeRaw`
+    INSERT INTO "BlurbReference" ("blurbId", "entityType", "entityId", "materializedHash", "materializedAt", "pendingSince")
+    SELECT u.id, ${entityType}, ${entityId}::int, u.hash, ${now}, NULL
+    FROM unnest(${uses.map((u) => u.blurbId)}::int[], ${uses.map(
+    (u) => u.contentHash
+  )}::text[]) AS u(id, hash)
+    ON CONFLICT ("blurbId", "entityType", "entityId") DO UPDATE
+      SET "materializedHash" = EXCLUDED."materializedHash",
+          "materializedAt"   = EXCLUDED."materializedAt",
+          "pendingSince"     = NULL
+  `;
 }

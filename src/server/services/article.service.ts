@@ -939,6 +939,14 @@ export const upsertArticle = async ({
           });
         }
 
+        if (expansion.evaluated)
+          await reconcileBlurbReferences({
+            entityType: 'Article',
+            entityId: article.id,
+            uses: expansion.uses,
+            tx,
+          });
+
         return article;
       });
 
@@ -997,13 +1005,6 @@ export const upsertArticle = async ({
           }).catch();
         });
       }
-
-      if (expansion.evaluated)
-        await reconcileBlurbReferences({
-          entityType: 'Article',
-          entityId: result.id,
-          uses: expansion.uses,
-        });
 
       return result;
     }
@@ -1189,6 +1190,14 @@ export const upsertArticle = async ({
         });
       }
 
+      if (expansion.evaluated)
+        await reconcileBlurbReferences({
+          entityType: 'Article',
+          entityId: updated.id,
+          uses: expansion.uses,
+          tx,
+        });
+
       return updated;
     });
 
@@ -1217,11 +1226,6 @@ export const upsertArticle = async ({
         coverId: coverId ?? article.coverId,
       },
     });
-
-    // No try/catch, deliberately: swallowing a failure here leaves the reference rows stale and
-    // the fan-out never maintains this article.
-    if (expansion.evaluated)
-      await reconcileBlurbReferences({ entityType: 'Article', entityId: id, uses: expansion.uses });
 
     // If it was published, process it.
     if (result.publishedAt && result.publishedAt <= new Date()) {
