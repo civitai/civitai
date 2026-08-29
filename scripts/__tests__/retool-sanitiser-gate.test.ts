@@ -15,6 +15,8 @@ import {
   findIPv6,
   findMissingPlaceholders,
   findOutOfRangeIPv4,
+  annotate,
+  passScope,
   hashValue,
   isAllowedIPv4,
   mask,
@@ -158,7 +160,7 @@ describe('check 2 — IPv4 range allowlist', () => {
     const result = runGate({ root, salt: SALT });
     expect(result.ok).toBe(false);
     expect(result.failures).toHaveLength(1);
-    expect(result.failures[0]).toContain(PUBLIC_DNS_IP);
+    expect(result.failures[0]).not.toContain(PUBLIC_DNS_IP); // masked — r2 F2
     expect(result.failures[0]).toMatch(/outside the documentation\/private ranges/);
   });
 
@@ -419,7 +421,7 @@ describe('audit 🔴2 — a salt/hash desync must fail, never pass silently', ()
 describe('audit 🟡5 — the credential rule must cover the corpus it scans', () => {
   it.each([
     ['quoted JSON key', '"apiKey": "AKIAQQQ12345678ZZ"'],
-    ['transit key,value pair', '"WEBHOOK_TOKEN","ghp_abcdefghij0123456789"'],
+    ['screaming-snake JSON key', '"WEBHOOK_TOKEN": "ghp_abcdefghij0123456789"'],
     ['escaped double-quoted JS in JSON', '\\"const apiKey = \\"AKIAQQQ12345678ZZ\\"\\"'],
     ['template literal', 'const apiKey = `AKIAQQQ12345678ZZ`'],
     ['lowercase bearer', 'authorization: bearer ghp_abcdefghij0123456789'],
@@ -434,7 +436,7 @@ describe('audit 🟡5 — the credential rule must cover the corpus it scans', (
     const blob = `{"token":"${'a'.repeat(400)}","other":${JSON.stringify('x'.repeat(50_000))}}`;
     for (const hit of findCredentialShapes(blob)) {
       const chars = Number(/^(\d+) chars/.exec(hit.sample)?.[1] ?? 0);
-      expect(chars).toBeLessThanOrEqual(200);
+      expect(chars).toBeLessThanOrEqual(4096);
     }
   });
 });
@@ -477,7 +479,10 @@ describe('audit nits — IPv6 and dotted-quad adjacency', () => {
     expect(findIPv6('client 2a01:4f8:c17:1234::1 banned')).toEqual(['2a01:4f8:c17:1234::1']);
   });
 
-  it('allows loopback/unspecified', () => {
+  // NOT "the allowlist exempts them" — V6_RE requires a leading `group:`, so bare
+  // ::/::1 never match at all. The old version of this test asserted the same
+  // empty array and passed with the allowlist DELETED: vacuous either way.
+  it('does not match bare ::/::1, which the pattern structurally cannot emit', () => {
     expect(findIPv6('bound ::1 and ::')).toEqual([]);
   });
 
@@ -509,5 +514,136 @@ describe('real-corpus regressions the synthetic cases did not catch', () => {
     const result = runGate({ root: REPO_ROOT, salt: undefined });
     expect(result.failures).toEqual([]);
     expect(result.files.length).toBeGreaterThan(20);
+  });
+});
+
+// ===========================================================================
+// Round-2 delta audit regressions. Every one of these is a case the round-1
+// FIX introduced — each regex was widened on one axis and narrowed on another.
+// ===========================================================================
+
+describe('audit r2 🟡F3 — the V4 lookahead must not eat a sentence period', () => {
+  it.each([
+    'Banned the account at 8.8.8.8.',
+    'The user last logged in from 8.8.8.8. Ban applied.',
+    'from 8.8.8.8...',
+    'at 8.8.8.8, then elsewhere',
+    '(8.8.8.8)',
+  ])('still finds a routable IP in prose: %s', (sample) => {
+    expect(findOutOfRangeIPv4(sample)).toEqual([PUBLIC_DNS_IP]);
+  });
+
+  it.each(['version 1.2.3.4.5', 'build 10.20.30.40.1', 'v2.45.13.22.9'])(
+    'still ignores a dotted quad inside a longer run: %s',
+    (sample) => {
+      expect(findOutOfRangeIPv4(sample)).toEqual([]);
+    }
+  );
+});
+
+describe('audit r2 🟡F4 — IPv6 must catch the one-group-before-:: family', () => {
+  it.each([
+    'fe80::1',
+    'fe80::a00:27ff:fe4e:66a1',
+    '2a02::1',
+    'fd00::abcd',
+    '2001::dead:beef',
+    '2001:db8::1',
+  ])('flags %s', (addr) => {
+    expect(findIPv6(`client ${addr} banned`)).toEqual([addr]);
+  });
+
+  it('still ignores ordinary colon-separated text', () => {
+    expect(findIPv6('12:30:45 duration, key:value, ratio 3:1')).toEqual([]);
+  });
+});
+
+describe('audit r2 🟡F5 — long opaque secrets must not fall off the top', () => {
+  it.each([201, 320, 512, 1024])('catches a %s-char opaque token', (len) => {
+    const found = findCredentialShapes(`{"token": "${'a'.repeat(len)}"}`);
+    expect(found.map((f) => f.rule)).toContain('secret-assignment');
+  });
+
+  it('still cannot run away across a large blob', () => {
+    const blob = `{"token":"${'a'.repeat(400)}","other":${JSON.stringify('x'.repeat(50_000))}}`;
+    for (const hit of findCredentialShapes(blob)) {
+      expect(Number(/^(\d+) chars/.exec(hit.sample)?.[1] ?? 0)).toBeLessThanOrEqual(4096);
+    }
+  });
+});
+
+describe('audit r2 🟡F6 — the prefix widener must not flag author*/tokenizer', () => {
+  it.each([
+    '{"author": "Jane Quinn Public"}',
+    '{"authorName": "Jane Q Public"}',
+    '{"authorEmail": "jane@example.com"}',
+    '"authorAvatarUrl": "https://x.example/a.png"',
+    '{"authorized": "yes-by-moderator"}',
+    '{"tokenizer": "whitespace-basic"}',
+    '{"tags": ["auth","authentication"]}',
+  ])('does not flag %s', (sample) => {
+    expect(findCredentialShapes(sample)).toEqual([]);
+  });
+
+  it.each([
+    '"WEBHOOK_TOKEN": "ghp_abcdefghij0123456789"',
+    '{"apiKey": "abcdef123456"}',
+    "const stripeSecretKey = 'sk_live_abcdefghijkl'",
+  ])('still flags the real shape %s', (sample) => {
+    expect(findCredentialShapes(sample).length).toBeGreaterThan(0);
+  });
+});
+
+describe('audit r2 \u{1F7E1}F7 — annotations point at the file that regressed', () => {
+  it('derives file= from the finding, not the hardcoded denylist path', () => {
+    const msg = `${SCAN_DIR}/raw/user-lookup-v2.json: redaction placeholder is gone`;
+    const out = annotate('error', msg, true);
+    expect(out).toBe(`::error file=${SCAN_DIR}/raw/user-lookup-v2.json::${msg}`);
+    expect(out).not.toContain(DENYLIST_PATH);
+  });
+
+  it('falls back to the denylist path only when the message names no file', () => {
+    expect(annotate('warning', 'something with no path prefix', true)).toContain(
+      `file=${DENYLIST_PATH}`
+    );
+  });
+
+  it('outside Actions it is plain text, not an annotation', () => {
+    expect(annotate('error', 'x.json: boom', false)).toBe(
+      'retool-sanitiser-gate: ERROR x.json: boom'
+    );
+  });
+});
+
+describe('audit r2 🔴F2 — no branch may print a raw value', () => {
+  it('masks the IPv4 address, the class this gate exists to keep out', () => {
+    mutate(appendTo('bulk-ban.md', 'banned from 109.236.62.211 yesterday'));
+    const result = runGate({ root, salt: undefined });
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).not.toContain('109.236.62.211');
+    expect(result.failures[0]).not.toContain('109.236');
+    expect(result.failures[0]).toMatch(/\d+ chars, sha256:[0-9a-f]{8}…/);
+  });
+
+  it('masks the IPv6 address too', () => {
+    mutate(appendTo('bulk-ban.md', 'client 2a01:4f8:c17:1234::1 banned'));
+    const result = runGate({ root, salt: undefined });
+    expect(result.failures.join(' ')).not.toContain('2a01:4f8');
+  });
+});
+
+describe('audit r2 \u{1F7E2}F11 — guards the fix round left unguarded', () => {
+  it('the value floor is the quantifier, pinned at its boundary', () => {
+    // A separate minValueLength property was removed as unreachable: the
+    // quantifier counts repetitions and each unescapes to >=1 char, so no input
+    // could ever reach the floor. This pins the real behaviour instead.
+    expect(findCredentialShapes('{"token": "abcdefg"}')).toEqual([]); // 7
+    expect(findCredentialShapes('{"token": "abcdefgh"}').length).toBe(1); // 8
+  });
+
+  it('the PASS scope string SHRINKS when the denylist did not run', () => {
+    expect(passScope(true)).toContain('no known-bad value');
+    expect(passScope(false)).not.toContain('no known-bad value');
+    expect(passScope(false)).toContain('THE DENYLIST DID NOT RUN');
   });
 });

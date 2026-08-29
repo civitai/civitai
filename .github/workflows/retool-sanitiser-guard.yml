@@ -1,6 +1,11 @@
 name: Retool Sanitiser Guard
 
-# Blocks a PR that puts personal data back into `docs/moderator-app/retool-exports/**`.
+# Reports a PR or push that puts personal data back into
+# `docs/moderator-app/retool-exports/**`.
+#
+# 🔴 It REPORTS, it does not BLOCK — this repo has no required status checks, so a
+# red run merges anyway. See the note on the gate step below; do not re-describe
+# this as an enforcement boundary.
 #
 # WHY: PR #4476 removed three classes of personal data from these exports — staff
 # real names, banned-user IP addresses and end-user account ids. The sanitisation
@@ -35,8 +40,14 @@ on:
 permissions:
   contents: read
 
+# 🔴 The group MUST vary per commit now that this triggers on push-to-main.
+# `github.ref` alone is ONE group for the whole branch, so two commits landing
+# close together cancel each other and only the last is ever scanned — which
+# half-reopens the very hole the push trigger was added to close, and the loser
+# renders as `cancelled`, which this repo cannot distinguish from a failure.
+# Pinned by scripts/__tests__/main-branch-ci-coverage.test.ts, which caught this.
 concurrency:
-  group: retool-sanitiser-guard-${{ github.ref }}
+  group: retool-sanitiser-guard-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:

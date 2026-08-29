@@ -83,10 +83,15 @@ const ALLOWED_V4 = [
   [[169, 254], 16], // link-local
 ];
 
-// The negative look-around rejects a dotted quad that is part of a LONGER dotted
-// run — `1.2.3.4.5` is a version string, not an address. Without it `1.2.3.4.5.6`
-// reported a bogus "IPv4 literal 1.2.3.4".
-const V4_RE = /(?<![\d.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\d.])/g;
+// Rejects a dotted quad that is part of a LONGER dotted run — `1.2.3.4.5` is a
+// version string, not an address.
+//
+// 🔴 The lookahead must be `(?!\.?\d)`, NOT `(?![\d.])`. The stricter form also
+// rejected a trailing sentence period, so `Banned the account at 8.8.8.8.` went
+// UNDETECTED — and half this corpus is markdown prose where that is the natural
+// way to write it. Narrowing a false positive into a false negative, on exactly
+// the class the gate exists for.
+const V4_RE = /(?<![\d.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?!\.?\d)/g;
 
 /**
  * IPv6, deliberately narrow: at least three groups and one `::` or five `:`, so
@@ -99,16 +104,42 @@ const V4_RE = /(?<![\d.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\d.])/g;
  */
 // The tail alternation must try `:<group>` FIRST, or a `::1` suffix is truncated to
 // `::` and the address is reported without its final group.
-const V6_RE = /(?:[0-9a-f]{1,4}:){2,7}(?::[0-9a-f]{1,4}|[0-9a-f]{1,4}|:)(?:%[0-9a-z]+)?/gi;
+//
+// 🔴 `{1,7}`, not `{2,7}`. Requiring TWO `group:` repetitions missed the entire
+// `X::Y` family at every start offset — including `fe80::1` and
+// `fe80::a00:27ff:fe4e:66a1`, the standard link-local form — while the docstring,
+// the README and the PR all claimed no IPv6 literal survives. The only v6 test
+// used a 4-group address, so nothing covered the gap.
+// Allowing EMPTY groups (`{0,4}`) is what makes `::` work at any position and lets
+// the match absorb a multi-group tail. The previous `(?:[0-9a-f]{1,4}:){1,7}` plus a
+// single-group tail truncated `fe80::a00:27ff:fe4e:66a1` to `fe80::a00`, and a
+// `{2,7}` version before that missed the whole `X::Y` family outright.
+// Over-matching is handled by the post-filter, not by the pattern.
+// 🔴 The surrounding boundaries are load-bearing, not tidiness. Allowing empty
+// groups is what lets `::` match anywhere, but it also matches inside a POSTGRES
+// CAST: `id::date` yields `d::da` — two hex groups either side of `::`, i.e. a
+// perfectly well-formed "address". These exports are full of SQL, and the corpus
+// reported four such literals. Requiring the match not to touch a word character
+// rejects every cast while leaving a standalone address untouched.
+const V6_RE = /(?<![\w:.])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:.])/gi;
 
-/** ::1 and :: are loopback/unspecified — never a person. */
+/** `::` and `::1` are unspecified/loopback — never a person. */
 const ALLOWED_V6 = new Set(['::', '::1']);
 
+/**
+ * A match is a real address only if it is compressed (`::`) or full-length (8
+ * groups), AND carries at least two actual hex groups. Everything else the
+ * pattern can reach — `12:30:45`, a bare `::`, a truncated cast — is not an
+ * address. The pattern is deliberately loose and this is where it is decided.
+ */
 export function findIPv6(text) {
   const found = [];
   for (const match of text.matchAll(V6_RE)) {
     const literal = match[0];
-    if (!literal.includes('::') && literal.split(':').length !== 8) continue;
+    const compressed = literal.includes('::');
+    const groups = literal.split(':').filter(Boolean);
+    if (!compressed && literal.split(':').length !== 8) continue;
+    if (groups.length < 2) continue;
     if (ALLOWED_V6.has(literal.toLowerCase())) continue;
     found.push(literal);
   }
@@ -198,18 +229,46 @@ export const CREDENTIAL_RULES = [
     // cannot match `TOKEN` there: the character before it is `_`, which is a word
     // character, so there is no boundary and the dominant Retool config-var shape
     // walked straight past.
-    re: /(?:^|[^\w$])\\?["']?[\w$]*?(?:api[_-]?key|apikey|token|secret|password|passwd|auth)\w*\\?["']?\s*[:=,]\s*\\?(["'])((?:\\[^"'\n]|[^"'\\\n]){8,200}?)\\?\1/gi,
+    //
+    // 🔴 But the keyword must END the identifier — `(?![a-z0-9])`. Without it the
+    // prefix widener flagged `author`, `authorName`, `authorEmail`, `authorized`
+    // and `tokenizer`, a false-positive class the narrower rule never had. These
+    // exports will carry `author*` keys on the next re-download of any app that
+    // queries models or articles, and a gate that cries wolf gets ignored.
+    //
+    // 🔴 Bound raised from 200: long OPAQUE tokens are the likeliest real finding
+    // and were falling off the top silently (a real JWT is rescued by the `jwt`
+    // rule's dot structure; an opaque session token has nothing behind it). The
+    // runaway that motivated the bound is prevented by the character class — the
+    // value cannot contain a quote, a backslash-quote or a newline — not by 200.
+    //
+    // 🔴 The `,` separator is DELIBERATELY GONE, reverting part of the previous
+    // round. It was added for Retool's transit `"KEY","value"` pair, but `,` cannot
+    // be told apart from an ordinary array: `{"tags": ["auth","authentication"]}`
+    // and `{"columns": ["password","created_at_utc"]}` are the SAME shape, and both
+    // are realistic in these exports. Measured before reverting — every comma-form
+    // instance in the real corpus is `"token","{{ retoolContext.configVars.… }}"`,
+    // a template reference already skipped as redacted, so the separator caught
+    // nothing real while adding a false-positive class. The JSON key form
+    // `"token": "…"` is still covered by `:`.
+    name: 'secret-assignment',
+    // 🔴 NO `i` FLAG, deliberately. `(?![a-z0-9])` under `i` also rejects UPPERCASE,
+    // so the anchor killed `stripeSecretKey` via its own `K` — the rule was
+    // narrowed on exactly the compound names the widening existed for. Case-based
+    // boundary logic and a case-insensitive flag cannot coexist, so the casings are
+    // enumerated and the anchor is genuinely case-sensitive.
+    re: /(?:^|[^\w$])\\?["']?[\w$]*?(?:api[_-]?key|apiKey|API[_-]?KEY|APIKEY|ApiKey|Api[_-]?Key|token|Token|TOKEN|secret|Secret|SECRET|password|Password|PASSWORD|passwd|Passwd|PASSWD|auth|Auth|AUTH)(?![a-z])[\w$]*\\?["']?\s*[:=]\s*\\?(["'])((?:\\[^"'\n]|[^"'\\\n]){8,4096}?)\\?\1/g,
     describe: 'a secret-named variable assigned a literal value',
     valueGroup: 2,
-    minValueLength: 8,
   },
   {
-    // Template literals, separately and bounded for the same reason.
+    // Same widening as its sibling: without it `WEBHOOK_TOKEN = \`…\`` was missed
+    // by BOTH rules, so the compound-name case this round justified only worked
+    // for quoted values.
     name: 'secret-assignment-template',
-    re: /\b(?:api[_-]?key|apikey|token|secret|password|passwd|auth)\w*\s*[:=]\s*`([^`\n]{8,200})`/gi,
+    re: /(?:^|[^\w$])[\w$]*?(?:api[_-]?key|apiKey|API[_-]?KEY|APIKEY|ApiKey|Api[_-]?Key|token|Token|TOKEN|secret|Secret|SECRET|password|Password|PASSWORD|passwd|Passwd|PASSWD|auth|Auth|AUTH)(?![a-z])[\w$]*\s*[:=]\s*`([^`\n]{8,4096})`/g,
     describe: 'a secret-named variable assigned a template-literal value',
     valueGroup: 1,
-    minValueLength: 8,
   },
 ];
 
@@ -218,6 +277,14 @@ function unescapeValue(raw) {
   return raw.replace(/\\(["'`\\])/g, '$1');
 }
 
+/**
+ * There is deliberately no separate minimum-length filter. One was added and
+ * proved UNREACHABLE: the `{8,4096}` quantifier counts REPETITIONS of the value
+ * alternation, and each repetition unescapes to at least one character, so the
+ * unescaped value can never be shorter than the floor. A guard no input can reach
+ * reads as coverage while providing none. The floor is the quantifier; the tests
+ * pin it at its boundary.
+ */
 export function findCredentialShapes(text) {
   const found = [];
   for (const rule of CREDENTIAL_RULES) {
@@ -225,7 +292,6 @@ export function findCredentialShapes(text) {
       const raw = rule.valueGroup ? match[rule.valueGroup] : match[1] ?? match[0];
       const value = raw ? unescapeValue(raw) : raw;
       if (value && REDACTED_RE.test(value.trim())) continue;
-      if (rule.minValueLength && (!value || value.length < rule.minValueLength)) continue;
       found.push({ rule: rule.name, describe: rule.describe, sample: mask(value ?? match[0]) });
     }
   }
@@ -447,7 +513,11 @@ export function runGate({ root = REPO_ROOT, salt = process.env.RETOOL_SANITISER_
     const text = readFileSync(path.join(root, rel), 'utf8');
 
     for (const ip of findOutOfRangeIPv4(text)) {
-      failures.push(`${rel}: IPv4 literal ${ip} is outside the documentation/private ranges`);
+      // 🔴 mask(), like every other branch. A banned-user IP is the single class
+      // this gate exists to keep out of a public repo, and it was the one value
+      // printed raw — into an Actions log that is world-readable and outlives any
+      // force-push. The `::error` annotations added alongside made it MORE visible.
+      failures.push(`${rel}: IPv4 literal ${mask(ip)} is outside the documentation/private ranges`);
     }
     for (const ip of findIPv6(text)) {
       failures.push(`${rel}: IPv6 literal ${mask(ip)} — these exports carry no legitimate IPv6`);
@@ -483,10 +553,26 @@ export function runGate({ root = REPO_ROOT, salt = process.env.RETOOL_SANITISER_
  * console.log is invisible on a green check, which is how "reports SKIPPED
  * loudly" turned out to mean "buried in a log nobody opens".
  */
-const annotate = (level, message) =>
-  process.env.GITHUB_ACTIONS === 'true'
-    ? `::${level} file=${DENYLIST_PATH}::${message}`
-    : `retool-sanitiser-gate: ${level.toUpperCase()} ${message}`;
+// 🔴 The annotation must point at the file that actually regressed. Hardcoding
+// DENYLIST_PATH pinned every finding to line 1 of the denylist, pointing a
+// reviewer AWAY from the export that changed. Every failure string already starts
+// with its own path, so recover it.
+export const annotate = (level, message, inActions = process.env.GITHUB_ACTIONS === 'true') => {
+  if (!inActions) return `retool-sanitiser-gate: ${level.toUpperCase()} ${message}`;
+  const [, file] = /^([\w./-]+):\s/.exec(message) ?? [];
+  return `::${level} file=${file ?? DENYLIST_PATH}::${message}`;
+};
+
+/**
+ * The scope a PASS line is allowed to claim. Exported so it can be tested: the
+ * round that introduced it left it unguarded, and a mutant forcing the full-scope
+ * string stayed green — in a change whose entire premise was a PASS asserting a
+ * scope it had not established.
+ */
+export const passScope = (denylistActive) =>
+  denylistActive
+    ? 'no known-bad value, out-of-range IP, credential shape or missing placeholder'
+    : 'no out-of-range IP, credential shape or missing placeholder (THE DENYLIST DID NOT RUN)';
 
 function main(argv) {
   const salt = process.env.RETOOL_SANITISER_SALT?.trim();
@@ -524,10 +610,7 @@ function main(argv) {
   for (const note of result.notes) console.log(annotate('warning', note));
   console.log(`retool-sanitiser-gate: scanned ${result.files.length} file(s) under ${SCAN_DIR}`);
   if (result.ok) {
-    const scope = result.denylistActive
-      ? 'no known-bad value, out-of-range IP, credential shape or missing placeholder'
-      : 'no out-of-range IP, credential shape or missing placeholder (THE DENYLIST DID NOT RUN)';
-    console.log(`retool-sanitiser-gate: PASS — ${scope}.`);
+    console.log(`retool-sanitiser-gate: PASS — ${passScope(result.denylistActive)}.`);
     console.log(
       'retool-sanitiser-gate: this does NOT mean the exports are free of personal data — a novel name or bare account id has no shape to match on. See the header.'
     );

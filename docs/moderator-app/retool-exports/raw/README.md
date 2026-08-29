@@ -85,7 +85,9 @@ mechanical half on every PR **and every direct push** touching this directory:
 
 - known-bad values that must never come back, matched against **salted hashes** — the
   plaintext is deliberately not in this repo, and neither is the salt;
-- every IP literal must be an RFC5737/RFC1918 address (v6 is rejected outright);
+- every IPv4 literal must be an RFC5737/RFC1918 address, and any IPv6 address is
+  rejected except loopback/unspecified (`::`, `::1`) — a Postgres cast such as
+  `id::date` is not an address and does not count;
 - the credential shapes above, as code rather than prose;
 - the redaction **placeholders must still be present, at their expected counts** —
   which is what catches the headline risk, a wholesale re-download silently
