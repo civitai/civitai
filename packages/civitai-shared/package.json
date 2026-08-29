@@ -6,12 +6,21 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./media-key": "./src/media-key.ts",
     "./basemodel.constants": "./src/basemodel.constants.ts",
     "./lazy": "./src/lazy.ts",
     "./type-guards": "./src/type-guards.ts",
-    "./moderator-paths": "./src/moderator-paths.ts"
+    "./moderator-paths": "./src/moderator-paths.ts",
+    "./missing-media": "./src/missing-media.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@civitai/db-schema": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.11"
   }
 }
