@@ -112,9 +112,16 @@ const V4_RE = /(?<![\d.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?!\.?\d)/g;
  *  - The trailing boundary must still permit a SENTENCE PERIOD. `(?![\w:.])`
  *    rejected it, so `Banned the account from fe80::1.` went undetected — the
  *    exact mirror of the V4 defect, and 21 of the 32 scanned files are prose.
+ *    Relaxing it to `(?![\w:])` is what fixes that.
  *  - The leading boundary omits `:` so a bare `ip:2001:db8::1` still matches.
+ *  - 🔴 There is NO `(?!\.[0-9a-f])`. One was added alongside the period fix and
+ *    contributed nothing to it, while silently suppressing every IPv4-embedded
+ *    form: `::ffff:192.168.1.1` matched NOTHING at all — not check 2 either,
+ *    since the inner address is RFC1918. Deleting it left the suite fully green
+ *    and the corpus at rc=0, i.e. it was pinned by nothing and cost real
+ *    detections. A narrowing nobody can observe is the easiest kind to keep.
  */
-const V6_RE = /(?<![\w.])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])(?!\.[0-9a-f])/gi;
+const V6_RE = /(?<![\w.])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])/gi;
 
 /** `::` and `::1` are unspecified/loopback — never a person. */
 const ALLOWED_V6 = new Set(['::', '::1']);
@@ -125,9 +132,12 @@ const ALLOWED_V6 = new Set(['::', '::1']);
  * ordinary colon-separated text.
  *
  * 🔴 There is NO `groups.length < 2` filter, and adding one was a mistake worth
- * recording. It was introduced to stop Postgres casts, but the BOUNDARIES alone
- * already do that — measured: with the filter removed, `select id::date from t`
- * still yields `[]` and the real corpus still passes. Its only observable effects
+ * recording. It was introduced to stop Postgres casts. The boundaries already do
+ * that for every cast in this corpus and every common type name — but only
+ * because those contain a non-hex character. A hex-only alias such as `)::dec`
+ * (a real Postgres alias for `decimal`, and `)::decimal` appears here twice) is
+ * shape-identical to the legitimate address `::dead`, so NO filter can separate
+ * them and this one fails closed rather than silently. Its other effects
  * were bad ones: it silently exempted every single-group address (`fe80::`,
  * `::dead` went unreported while the README said any IPv6 is rejected), and it
  * consumed `::1` before `ALLOWED_V6` could see it — making that Set dead code
@@ -178,7 +188,30 @@ export function findOutOfRangeIPv4(text) {
  * A value already redacted is not a finding. Kept deliberately narrow: anything
  * broader starts excusing real secrets that merely mention one of these words.
  */
-const REDACTED_RE = /^(?:<[^>]*>|__[A-Z0-9_]+__|\{\{[^}]*\}\}|\$\{[^}]*\}|x{3,}|\*{3,}|REDACTED)$/i;
+// The optional leading `<scheme> ` matters for the Retool kv shape, where the value
+// is written `Basic {{ SomeCredentials.value }}` — a placeholder with an auth-scheme
+// prefix. Without it the 12 already-redacted Authorization entries in the corpus all
+// report as findings. The scheme is bounded to one short word so it cannot excuse a
+// real secret that merely happens to be preceded by text.
+const REDACTED_RE =
+  /^(?:[A-Za-z][A-Za-z-]{2,14}\s+)?(?:<[^>]*>|__[A-Z0-9_]+__|\{\{[^}]*\}\}|\$\{[^}]*\}|x{3,}|\*{3,}|REDACTED)$/i;
+
+/**
+ * The secret-word alternation, as ONE source string.
+ *
+ * Case-sensitive by necessity (`(?![a-z])` under an `i` flag also rejects
+ * uppercase), so the casings are enumerated. Ordered longest-first: `authorization`
+ * must precede `auth`, or `auth` wins and the anchor then rejects the identifier.
+ *
+ * Shared rather than pasted into each rule — it was byte-identical in two places
+ * and is now needed in three, which is exactly how the copies start to drift.
+ */
+const SECRET_WORD = String.raw`API[_-]?KEY|API[_-]?Key|Api[_-]?Key|Api[_-]?key|api[_-]?Key|api[_-]?key|APIKEY|APIKey|ApiKey|Apikey|apiKey|apikey|AUTHORIZATION|Authorization|authorization|AUTHENTICATION|Authentication|authentication|SECRETKEY|SecretKey|secretKey|secretkey|TOKEN|Token|token|SECRET|Secret|secret|PASSWORD|Password|password|PASSWD|Passwd|passwd|AUTH|Auth|auth`;
+
+/** A quote that may be backslash-escaped, as it is inside JSON-embedded JS. */
+const Q = String.raw`\\?["']`;
+/** A value body that cannot contain a quote, an escaped quote, or a newline. */
+const VALUE_BODY = String.raw`(?:\\[^"'\n]|[^"'\\\n]){8,4096}?`;
 
 export const CREDENTIAL_RULES = [
   {
@@ -217,57 +250,86 @@ export const CREDENTIAL_RULES = [
     // So: the identifier may be quoted, the separator may be `:`/`=`/`,`, and the
     // value may be single, double or backtick quoted, with `\"` escapes allowed
     // inside (escaped JS embedded in JSON is exactly how the original miss happened).
-    // 🔴 The value body must exclude BOTH quote characters and newlines, and be
+    // The value body must exclude BOTH quote characters and newlines, and be
     // length-bounded. A first attempt used `(?:\\.|[^\\])*?` with a backreference
     // and included backticks in the quote class: in an 11-file JSON corpus where
     // backticks are rare, one opener ran to end-of-file and reported a 646,934-char
     // "secret" in three files. A guard that matches everything is not a guard.
     //
-    // `[\w$]*?` before the keyword, because the secret-named identifier is usually a
-    // COMPONENT of a longer name — `WEBHOOK_TOKEN`, `stripeSecretKey`. A leading `\b`
-    // cannot match `TOKEN` there: the character before it is `_`, which is a word
-    // character, so there is no boundary and the dominant Retool config-var shape
-    // walked straight past.
+    // `[\w$]*?` before the keyword, because the secret-named identifier is usually
+    // a COMPONENT of a longer name — `WEBHOOK_TOKEN`, `stripeSecretKey`. A leading
+    // `\b` cannot match `TOKEN` there: the preceding `_` is a word character.
     //
-    // 🔴 But the keyword must END the identifier — `(?![a-z])`, plus an optional
-    // plural `s`. Without it the
-    // prefix widener flagged `author`, `authorName`, `authorEmail`, `authorized`
-    // and `tokenizer`, a false-positive class the narrower rule never had. These
-    // exports will carry `author*` keys on the next re-download of any app that
-    // queries models or articles, and a gate that cries wolf gets ignored.
-    //
-    // 🔴 Bound raised from 200: long OPAQUE tokens are the likeliest real finding
-    // and were falling off the top silently (a real JWT is rescued by the `jwt`
-    // rule's dot structure; an opaque session token has nothing behind it). The
-    // runaway that motivated the bound is prevented by the character class — the
-    // value cannot contain a quote, a backslash-quote or a newline — not by 200.
-    //
-    // 🔴 The `,` separator is DELIBERATELY GONE, reverting part of the previous
-    // round. It was added for Retool's transit `"KEY","value"` pair, but `,` cannot
-    // be told apart from an ordinary array: `{"tags": ["auth","authentication"]}`
-    // and `{"columns": ["password","created_at_utc"]}` are the SAME shape, and both
-    // are realistic in these exports. Measured before reverting — every comma-form
-    // instance in the real corpus is `"token","{{ retoolContext.configVars.… }}"`,
-    // a template reference already skipped as redacted, so the separator caught
-    // nothing real while adding a false-positive class. The JSON key form
-    // `"token": "…"` is still covered by `:`.
+    // 🔴 The `,` separator is DELIBERATELY ABSENT. It was tried for Retool's
+    // transit pair and reverted: `,` cannot be told apart from an ordinary array,
+    // so `{"tags": ["auth","authentication"]}` and `{"columns": ["password",…]}`
+    // matched too. The transit pair is handled by `retool-kv-credential` below,
+    // which requires the literal `key`/`value` wrapper and so cannot match an array.
     name: 'secret-assignment',
-    // 🔴 NO `i` FLAG, deliberately. `(?![a-z])` under `i` would also reject UPPERCASE,
-    // so the anchor killed `stripeSecretKey` via its own `K` — the rule was
-    // narrowed on exactly the compound names the widening existed for. Case-based
-    // boundary logic and a case-insensitive flag cannot coexist, so the casings are
-    // enumerated and the anchor is genuinely case-sensitive.
-    re: /(?:^|[^\w$])\\?["']?[\w$]*?(?:API[_-]?KEY|API[_-]?Key|Api[_-]?Key|Api[_-]?key|api[_-]?Key|api[_-]?key|APIKEY|APIKey|ApiKey|Apikey|apiKey|apikey|AUTHORIZATION|Authorization|authorization|AUTHENTICATION|Authentication|authentication|SECRETKEY|SecretKey|secretKey|secretkey|TOKEN|Token|token|SECRET|Secret|secret|PASSWORD|Password|password|PASSWD|Passwd|passwd|AUTH|Auth|auth)s?(?![a-z])[\w$]*\\?["']?\s*[:=]\s*\\?(["'])((?:\\[^"'\n]|[^"'\\\n]){8,4096}?)\\?\1/g,
+    re: new RegExp(
+      String.raw`(?:^|[^\w$])` +
+        Q +
+        String.raw`?[\w$]*?(?:` +
+        SECRET_WORD +
+        String.raw`)s?(?![a-z])[\w$]*` +
+        Q +
+        String.raw`?\s*[:=]\s*\\?(["'])(` +
+        VALUE_BODY +
+        String.raw`)\\?\1`,
+      'g'
+    ),
     describe: 'a secret-named variable assigned a literal value',
     valueGroup: 2,
   },
   {
-    // Same widening as its sibling: without it `WEBHOOK_TOKEN = \`…\`` was missed
-    // by BOTH rules, so the compound-name case this round justified only worked
-    // for quoted values.
+    // Template literals, same widening as the quoted rule.
     name: 'secret-assignment-template',
-    re: /(?:^|[^\w$])[\w$]*?(?:API[_-]?KEY|API[_-]?Key|Api[_-]?Key|Api[_-]?key|api[_-]?Key|api[_-]?key|APIKEY|APIKey|ApiKey|Apikey|apiKey|apikey|AUTHORIZATION|Authorization|authorization|AUTHENTICATION|Authentication|authentication|SECRETKEY|SecretKey|secretKey|secretkey|TOKEN|Token|token|SECRET|Secret|secret|PASSWORD|Password|password|PASSWD|Passwd|passwd|AUTH|Auth|auth)s?(?![a-z])[\w$]*\s*[:=]\s*`([^`\n]{8,4096})`/g,
+    re: new RegExp(
+      String.raw`(?:^|[^\w$])[\w$]*?(?:` +
+        SECRET_WORD +
+        String.raw`)s?(?![a-z])[\w$]*\s*[:=]\s*` +
+        '`([^`\\n]{8,4096})`',
+      'g'
+    ),
     describe: 'a secret-named variable assigned a template-literal value',
+    valueGroup: 1,
+  },
+  {
+    // 🔴 Retool's transit serialisation, which is how EVERY credential header in
+    // this corpus is actually written:
+    //     \"key\":\"Authorization\",\"value\":\"Basic <base64>\"
+    // The identifier is a VALUE, and the separator after it is `,` — so neither
+    // assignment rule above can see it. Twelve `Authorization` entries in
+    // raw/user-lookup-v2.json have this shape. The `Bearer` variant happened to be
+    // caught by the `bearer-token` rule; `Basic <base64>` was caught by NOTHING,
+    // while a test comment claimed the class was covered.
+    //
+    // Safe where a bare `,` separator was not: this requires the literal `key`/
+    // `value` wrapper, so a tag or column array cannot match it.
+    name: 'retool-kv-credential',
+    re: new RegExp(
+      Q +
+        String.raw`key` +
+        Q +
+        String.raw`\s*:\s*` +
+        Q +
+        String.raw`[\w$-]*?(?:` +
+        SECRET_WORD +
+        String.raw`)s?[\w$-]*` +
+        Q +
+        String.raw`\s*,\s*` +
+        Q +
+        String.raw`value` +
+        Q +
+        String.raw`\s*:\s*` +
+        Q +
+        String.raw`(` +
+        VALUE_BODY +
+        String.raw`)` +
+        Q,
+      'g'
+    ),
+    describe: 'a Retool key/value pair whose key names a credential',
     valueGroup: 1,
   },
 ];

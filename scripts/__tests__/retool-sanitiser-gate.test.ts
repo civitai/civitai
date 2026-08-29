@@ -189,6 +189,7 @@ describe('check 3 — credential shapes', () => {
       'stripe-key',
       'secret-assignment',
       'secret-assignment-template',
+      'retool-kv-credential',
     ]);
     expect(CREDENTIAL_RULES.map((r) => r.name).sort()).toEqual([...covered].sort());
   });
@@ -699,10 +700,13 @@ describe('audit r3 🟡3 — dropping the i flag must not lose real identifiers'
   it.each([
     '{"Authorization": "Basic ZGVtbzpwYXNzd29yZDEyMw=="}',
     '{"authorization": "Basic ZGVtbzpwYXNzd29yZDEyMw=="}',
+    // INVARIANT GUARD, not a regression test: the pre-existing `AUTH` branch
+    // already caught this (uppercase `O` passes the anchor), so it was green
+    // before the widening too and cannot fail for it.
     '{"AUTHORIZATION": "Basic ZGVtbzpwYXNzd29yZDEyMw=="}',
     '{"authentication": "Basic ZGVtbzpwYXNzd29yZDEyMw=="}',
     '{"X-API-Key": "abcdef1234567890"}',
-    '{"X-API-KEY": "abcdef1234567890"}',
+    '{"X-API-KEY": "abcdef1234567890"}', // invariant guard, as above
     '{"Api_key": "abcdef1234567890"}',
     '{"Apikey": "abcdef1234567890"}',
     '{"tokens": "abcdef1234567890"}',
@@ -710,9 +714,12 @@ describe('audit r3 🟡3 — dropping the i flag must not lose real identifiers'
     '{"passwords": "abcdef1234567890"}',
     '{"secretkey": "abcdef1234567890"}',
   ])('catches %s', (sample) => {
-    // `Authorization` appears 12 times in raw/user-lookup-v2.json — the dominant
-    // credential identifier in the corpus this gate scans. A `Basic` credential is
-    // caught by NO other rule, so losing this loses the class entirely.
+    // These pin the `{"Authorization": "..."}` JSON-key shape only. The corpus's
+    // OWN 12 Authorization entries use Retool's transit pair instead, which no
+    // assignment rule can see — that is covered by `retool-kv-credential` and its
+    // own describe block below. An earlier version of this comment claimed these
+    // cases covered the corpus, which was false and would have stopped the next
+    // person looking.
     expect(findCredentialShapes(sample).length).toBeGreaterThan(0);
   });
 
@@ -724,5 +731,64 @@ describe('audit r3 🟡3 — dropping the i flag must not lose real identifiers'
     '{"tokenizer": "whitespace-basic"}',
   ])('still does not flag %s', (sample) => {
     expect(findCredentialShapes(sample)).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// Round-4 delta audit.
+// ===========================================================================
+
+describe('audit r4 🟡F1 — no lookahead may suppress IPv4-embedded IPv6', () => {
+  it.each([
+    '::ffff:8.8.8.8',
+    '::ffff:192.168.1.1',
+    '2001:db8::1.2.3.4',
+    'banned 64:ff9b::104.16.132.229 today',
+  ])('reports something for %s', (sample) => {
+    // `::ffff:192.168.1.1` previously matched NOTHING — not check 2 either, since
+    // the inner address is RFC1918. The reported literal may truncate at the
+    // embedded IPv4; that is cosmetic, because findings are masked anyway.
+    expect(findIPv6(sample).length).toBeGreaterThan(0);
+  });
+
+  it('still finds an address at the end of a sentence', () => {
+    expect(findIPv6('Banned the account from fe80::1.')).toEqual(['fe80::1']);
+    expect(findIPv6('from 2001:db8::1...')).toEqual(['2001:db8::1']);
+  });
+});
+
+describe("audit r4 🟡F2 — the corpus's OWN Authorization serialisation", () => {
+  // All 12 Authorization entries in raw/user-lookup-v2.json are written as a
+  // Retool transit pair: \"key\":\"Authorization\",\"value\":\"Basic …\". The
+  // identifier is a VALUE and the separator is `,`, so neither assignment rule
+  // can see it. `Bearer` was caught incidentally by bearer-token; `Basic` was
+  // caught by NOTHING, while a test comment claimed the class was covered.
+  const kv = (key: string, value: string) => String.raw`\"key\":\"${key}\",\"value\":\"${value}\"`;
+
+  it('catches a live Basic credential in the transit shape', () => {
+    const found = findCredentialShapes(kv('Authorization', 'Basic ZGVtbzpzdXBlcnNlY3JldDEyMw=='));
+    expect(found.map((f) => f.rule)).toContain('retool-kv-credential');
+  });
+
+  it.each(['X-API-Key', 'token', 'WEBHOOK_TOKEN', 'password'])(
+    'catches a credential-named key %s',
+    (key) => {
+      expect(findCredentialShapes(kv(key, 'abcdef1234567890')).length).toBeGreaterThan(0);
+    }
+  );
+
+  it("does NOT fire on the corpus's redacted placeholder value", () => {
+    expect(
+      findCredentialShapes(kv('Authorization', 'Basic {{ FreshdeskCredentials.value }}'))
+    ).toEqual([]);
+  });
+
+  it('does NOT fire on an ordinary array — the reason the bare comma rule was reverted', () => {
+    expect(findCredentialShapes('{"tags": ["auth","authentication"]}')).toEqual([]);
+    expect(findCredentialShapes('{"columns": ["password","created_at_utc"]}')).toEqual([]);
+  });
+
+  it('does not fire when the key is not credential-named', () => {
+    expect(findCredentialShapes(kv('Content-Type', 'application/json-x'))).toEqual([]);
   });
 });
