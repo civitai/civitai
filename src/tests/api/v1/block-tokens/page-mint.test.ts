@@ -935,6 +935,26 @@ describe('POST /api/v1/block-tokens — approved-scope snapshot gate', () => {
     expect(res._body.missingScopes).toEqual([]);
   });
 
+  // The SECOND producer of `knownManifestScopes.length === 0`, and the one the
+  // graceful-deprecation block above the gate exists for: a manifest that
+  // declares only scopes that have since been RETIRED. `catalog:read` is a real
+  // retired scope (dropped when catalog reads moved to "any valid block token"),
+  // so it survives in an old approved manifest but no longer passes
+  // `isKnownBlockScope` — it is filtered out, leaving an empty known set. Before
+  // this fix that whole class of app was unmintable: retiring a scope silently
+  // bricked every block whose manifest named only that scope.
+  it('MINTS (200) when the manifest declares ONLY retired scopes (deprecation path)', async () => {
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BLOCK(['catalog:read'], [], 0));
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
+    // The retired scope is DROPPED, not carried into the token.
+    expect(mockTokenService.sign.mock.calls[0][0].scopes).toEqual([]);
+  });
+
   // Same for the MODEL-slot path — the gate is shared, so the fix must not be
   // page-only.
   it('MINTS (200) a zero-scope token on the MODEL-slot path too (shared gate)', async () => {

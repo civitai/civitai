@@ -976,7 +976,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // reports it as "no approved scopes", and the intersection immediately below
   // would independently reject every one of those scopes as outside the
   // snapshot. This branch is kept as the more precise diagnostic (and as a belt
-  // if the intersection is ever refactored).
+  // if the intersection is ever refactored) — but ONLY for the empty-snapshot
+  // half. It does NOT cover the PARTIAL-snapshot case: a manifest declaring
+  // `A`+`B` against a snapshot holding only `A` reaches this branch with
+  // `approvedScopes.size === 1`, passes it, and is caught solely by the
+  // intersection below. Deleting that intersection on the strength of this
+  // "belt" would sign `B` into the token. Both checks are load-bearing.
   const approvedScopes = new Set(block.approvedScopes ?? []);
   if (knownManifestScopes.length > 0 && approvedScopes.size === 0) {
     res.status(403).json({ error: 'block has no approved scopes' });
