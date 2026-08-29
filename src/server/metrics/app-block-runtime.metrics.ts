@@ -39,8 +39,17 @@ import client, { type Counter, type Histogram, type Registry } from 'prom-client
 
 /**
  * Low-cardinality LOGICAL endpoint names for the block REST surface. Passed by
- * each `withBlockScope(...)` call site (derived from the HANDLER, never from
- * `req.url`), so ids in the path can never leak into the label.
+ * each `withBlockScope(...)` call site, so ids in the path can never leak into
+ * the label.
+ *
+ * 🔴 "DERIVED FROM THE HANDLER" IS NO LONGER THE WHOLE STORY, and the
+ * distinction that survives is the one that matters. A call site may pass a
+ * RESOLVER instead of a literal, and `blocks/tools` does — its label depends on
+ * `req.method`. So the label is not purely handler-derived any more. What is
+ * still absolute: every value a resolver can return is written out at the call
+ * site and typed as this union, so the label set stays enumerated and bounded,
+ * and nothing is ever derived from `req.url` or any other free-form
+ * client-controlled input.
  */
 export type AppBlockEndpoint =
   | 'tip'
@@ -55,12 +64,21 @@ export type AppBlockEndpoint =
   | 'shared_storage_top'
   | 'shared_storage_increment'
   | 'generation_resources'
-  // The read-only chat-tool surface (#398 AC5): GET returns the tool
-  // declarations, POST executes one. It is a model-shaped view of the SAME
-  // clamped catalog path 'models' serves, and it shares that endpoint's
-  // per-token rate-limit budget deliberately — so it gets its own label for
-  // attribution, not its own allowance.
-  | 'tools';
+  // The read-only chat-tool surface (#398 AC5). It is a model-shaped view of
+  // the SAME clamped catalog path 'models' serves, and it shares that
+  // endpoint's per-token rate-limit budget deliberately — so it gets its own
+  // label for attribution, not its own allowance.
+  //
+  // 🔴 TWO LABELS FOR ONE PATH, BECAUSE ONE PATH SERVES TWO DIFFERENT
+  // WORKLOADS. `GET /api/v1/blocks/tools` returns static declarations from an
+  // in-process registry; `POST` runs a Meilisearch query and a catalog read.
+  // Labelling both 'tools' merged a free constant-time read with the only
+  // request on this route that can be slow, rate-limited or 503 — so the RED
+  // series could not answer "are tool CALLS degrading", which is the question
+  // it exists for. The p95 of the merged series is dominated by whichever
+  // outnumbers the other, and the declarations GET outnumbers the calls.
+  | 'tools'
+  | 'tools_call';
 // NOTE: buzz self-reads (balance/transactions/accounts/daily-compensation) are
 // NOT here — they are host-mediated tRPC MUTATIONS (blocks.getMyBuzz*), not
 // withBlockScope REST routes, so they are not metered via this per-endpoint

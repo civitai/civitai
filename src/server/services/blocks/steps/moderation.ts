@@ -700,6 +700,33 @@ export async function attachModeratedStepTextOutputs<T extends ModeratedTextOutp
       // field is the right answer for every non-succeeded state, and it is what
       // this path did before the invariant existed.
       //
+      // 🔴 THAT SENTENCE NAMES THE WORKFLOW'S STATUS WHILE THIS GATE READS THE
+      // STEP'S, AND THAT IS DELIBERATE — the two are answering different
+      // questions. "Explained to whom?" is the app author, and the WORKFLOW's
+      // status is the only one they can see: both block-facing surfaces
+      // (`BlockWorkflowSnapshot`, `AppWorkflow`) carry exactly one `status`,
+      // derived from the workflow's, and neither exposes a per-step status at
+      // all. Naming the step's status here would point the reader at a field
+      // that does not exist on the wire.
+      //
+      // 🔴 WHY THE MISMATCH IS SAFE, since a gate justified by a field it does
+      // not read deserves an argument rather than a shrug. The two cannot
+      // disagree: a workflow's status is AGGREGATED from its steps worst-wins —
+      // any non-terminal step leaves the workflow non-terminal, and among
+      // terminal steps a non-succeeded one dominates — so a workflow reads
+      // `succeeded` only when EVERY step does. Verified against the
+      // orchestrator's own status derivation (that repo is private, so the
+      // mechanism is stated here rather than quoted) and corroborated against
+      // live workflow data over two 24h windows 30 days apart, where the
+      // intersection — `succeeded` workflow AND a non-succeeded step — was
+      // EMPTY in both. Each clause was confirmed to match on its own first, so
+      // that emptiness is a measurement rather than a query wired to nothing.
+      //
+      // Note the gate does NOT depend on that premise: it reads `step.status`
+      // directly, so worst-wins aggregation only widens its reach. If the
+      // aggregation ever changed, this gate would still be correct — it is the
+      // COMMENT that rests on the premise, not the code.
+      //
       // Reading a `status` the orchestrator did not send yields `undefined`,
       // which fails this test and therefore falls back to the pre-invariant
       // behaviour (no field). That is the safe direction: silence, not a

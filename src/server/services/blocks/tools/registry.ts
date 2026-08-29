@@ -80,6 +80,20 @@ export const MAX_TOOL_RESULT_CHARS = 6_000;
 export const MAX_TOOL_RESULT_ITEMS = 10;
 
 /**
+ * How many results a call returns when it does not ask.
+ *
+ * 🔴 LIVES HERE SO THE NUMBER THE MODEL IS TOLD AND THE NUMBER THE ROUTE APPLIES
+ * ARE ONE VALUE. The `limit` declaration below tells the model "default 5"; the
+ * route applies its own default when `limit` is absent. Those were two separate
+ * literals, so changing the route's default would have left the declaration
+ * confidently describing the old one — and the declaration is the model's only
+ * source of truth about the contract, so the drift is invisible until a caller
+ * relies on it. Interpolated into the `.describe` below and imported by the
+ * route; do not write `5` in either place again.
+ */
+export const DEFAULT_TOOL_RESULT_ITEMS = 5;
+
+/**
  * Bounds on individual projected strings, so one pathological field cannot eat
  * the budget.
  *
@@ -142,13 +156,57 @@ export const AIR_URN_PREFIX_LOCAL = 'urn:air:';
  * AIRs to answer a question about a model.
  *
  * Case-insensitive, because the scan it defends against is.
+ *
+ * 🔴 DEPTH-CAPPED, AND THE FAIL DIRECTION IS THE OPPOSITE OF ITS SIBLING'S.
+ * `containsAirReference` (steps/index) is a DETECTOR, so past `AIR_SCAN_MAX_DEPTH`
+ * it returns TRUE — "I could not prove this carries no AIR". This is a SCRUBBER,
+ * and the mirror of that is not "stop recursing": stopping would RETURN the
+ * over-deep subtree unscrubbed, which is fail-OPEN — exactly the literal this
+ * function exists to remove, surviving because the input was nested. So at the
+ * cap it substitutes a constant that carries no caller content at all, which is
+ * trivially AIR-free.
+ *
+ * Without the cap, deep recursion on a caller-shaped value is a `RangeError` —
+ * the same crash class the sibling's cap exists for, and it would turn a 400
+ * into a 500. Not reachable through today's two call sites, which both pass a
+ * string: this is a property of an EXPORTED function, whose next caller is the
+ * one that would find out.
  */
+const NEUTRALIZE_MAX_DEPTH = 128;
+
+/**
+ * What replaces a subtree past `NEUTRALIZE_MAX_DEPTH`. A first-party constant,
+ * so it cannot itself contain the literal being scrubbed.
+ */
+export const NEUTRALIZE_DEPTH_PLACEHOLDER = '[omitted: nested too deeply to scrub]';
+
 export function neutralizeAirLiterals<T>(value: T): T {
+  return scrubAirLiterals(value, 0);
+}
+
+/**
+ * 🔴 THE DEPTH PARAMETER IS PRIVATE, AND THAT IS NOT STYLE — IT IS THE WHOLE
+ * REASON THIS HELPER EXISTS.
+ *
+ * An exported `neutralizeAirLiterals(value, depth = 0)` is arity-2 with a
+ * `number` second parameter, which is EXACTLY `Array.prototype.map`'s callback
+ * shape. So `names.map(neutralizeAirLiterals)` passes the INDEX as `depth`, and
+ * every element from index 129 on is replaced by the placeholder instead of
+ * being scrubbed — measured on a 200-element array: 129 scrubbed, 71 destroyed.
+ * `tsc` reports zero errors on it, because the signature genuinely matches.
+ *
+ * The damage is destructive rather than leaky (content is replaced, not
+ * exposed), but it is silent, un-typechecked, and the point-free `.map(fn)` form
+ * is the most natural way anyone would ever call this over a projected row set.
+ * Keeping the public signature single-arg makes the hazard unwritable.
+ */
+function scrubAirLiterals<T>(value: T, depth: number): T {
+  if (depth > NEUTRALIZE_MAX_DEPTH) return NEUTRALIZE_DEPTH_PLACEHOLDER as unknown as T;
   if (typeof value === 'string') {
     return value.replace(/urn:air:/gi, 'urn-air-') as unknown as T;
   }
   if (Array.isArray(value)) {
-    return value.map((v) => neutralizeAirLiterals(v)) as unknown as T;
+    return value.map((v) => scrubAirLiterals(v, depth + 1)) as unknown as T;
   }
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = {};
@@ -156,7 +214,7 @@ export function neutralizeAirLiterals<T>(value: T): T {
       // Keys are scrubbed too: `containsAirReference` scans object KEYS, because
       // the orchestrator's own `additionalNetworks` / `WorkflowCost.fees` shapes
       // are AIR-keyed maps.
-      out[neutralizeAirLiterals(k)] = neutralizeAirLiterals(v);
+      out[scrubAirLiterals(k, depth + 1)] = scrubAirLiterals(v, depth + 1);
     }
     return out as unknown as T;
   }
@@ -326,7 +384,9 @@ const searchModelsArgs = z
       .min(1)
       .max(MAX_TOOL_RESULT_ITEMS)
       .optional()
-      .describe(`Maximum results to return (default 5, max ${MAX_TOOL_RESULT_ITEMS})`),
+      .describe(
+        `Maximum results to return (default ${DEFAULT_TOOL_RESULT_ITEMS}, max ${MAX_TOOL_RESULT_ITEMS})`
+      ),
   })
   .strict();
 

@@ -22,9 +22,13 @@ import {
   getBlockTool,
   neutralizeAirLiterals,
   projectModelForTool,
+  DEFAULT_TOOL_RESULT_ITEMS,
   MAX_TOOL_RESULT_ITEMS,
 } from '~/server/services/blocks/tools/registry';
-import { TOOL_NAME_PATTERN } from '~/server/services/blocks/steps/chat-completion.step';
+import {
+  MAX_TOOL_NAME_CHARS,
+  TOOL_NAME_PATTERN,
+} from '~/server/services/blocks/steps/chat-completion.step';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
 
@@ -89,21 +93,22 @@ const callSchema = z
     // rather than re-spelled: `registry.ts` already documented the coupling in
     // prose, and a second copy is how the two drift.
     //
-    // ⚠️ THE LENGTH BOUND IS STILL A SECOND COPY — the same class this line's
-    // `.regex` just closed, one axis over. `64` here is the chat step's
-    // `MAX_TOOL_NAME_CHARS` (`~/server/services/blocks/steps/chat-completion.step`),
-    // which is module-private, so it cannot be imported today and the two agree
-    // only by inspection. Nothing is broken: the values match, and a drift would
-    // narrow or widen only what this wire accepts before the registry lookup
-    // rejects an unknown name anyway. Closing it means EXPORTING that constant —
-    // a source change to a file merged in #4472 — so it is left deliberate and
-    // named rather than done as a drive-by here.
-    name: z.string().min(1).max(64).regex(TOOL_NAME_PATTERN),
+    // The LENGTH bound is imported for the same reason as the pattern beside
+    // it. It used to be a literal `64` — the chat step's `MAX_TOOL_NAME_CHARS`
+    // was module-private, so the two agreed only by inspection, which is the
+    // drift class the `.regex` above had already closed one axis over. That
+    // constant is now exported and imported here, so there is one number.
+    name: z.string().min(1).max(MAX_TOOL_NAME_CHARS).regex(TOOL_NAME_PATTERN),
     arguments: z.unknown().optional(),
   })
   .strict();
 
-const DEFAULT_LIMIT = 5;
+/**
+ * The route's default is the registry's, imported rather than re-spelled: the
+ * `limit` declaration served to the model interpolates the SAME constant, so
+ * the number the model is told and the number applied here cannot drift.
+ */
+const DEFAULT_LIMIT = DEFAULT_TOOL_RESULT_ITEMS;
 
 const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const claims = (req as BlockScopedNextApiRequest).blockClaims;
@@ -138,7 +143,29 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     return;
   }
 
-  // ── GET: the declarations. Cheap, no catalog access, no rate limit needed.
+  // ── GET: the declarations. Served from a static in-process registry — no
+  // catalog access, no database read, no external call.
+  //
+  // 🔴 DELIBERATELY NOT RATE-LIMITED, and the honest reason is NOT the one this
+  // comment used to give ("cheap, no catalog access"). That reasoned about
+  // CATALOG cost only, and a GET is not free: like every route under this
+  // prefix it still costs `withBlockScope` a Redis revocation read and a
+  // `BlockScopeInvocation` insert. The reasons it is still right to leave
+  // unlimited are:
+  //
+  //   1. that cost belongs to the PREFIX, not to this route. Every
+  //      `/api/v1/blocks/*` endpoint pays it per request, so metering this one
+  //      GET would not address the class — it would just be the one route that
+  //      happens to have been looked at.
+  //   2. the limiter available here is the wrong one. `checkBlockCatalogRateLimit`
+  //      is the SHARED catalog budget, spent below by the POST. Charging a
+  //      static declarations read against it would take search budget away from
+  //      the block for fetching the contract it needs in order to search — a
+  //      block that fetches declarations once per turn would throttle its own
+  //      catalog access.
+  //
+  // If the audit-row volume ever needs bounding, the fix is a prefix-level
+  // limit in the middleware, not a local one here.
   if (req.method === 'GET') {
     res.status(200).json({ tools: blockToolDeclarations() });
     return;
@@ -220,6 +247,14 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         type?: string;
         limit?: number;
       };
+      // The `Math.min` is redundant TODAY — `searchModelsArgs.limit` is already
+      // `.max(MAX_TOOL_RESULT_ITEMS)`, so a larger value is rejected before it
+      // reaches here. It stays deliberately: it is the last bound before a value
+      // becomes a Meilisearch `limit`, and the schema that makes it redundant
+      // lives in a different module. Deleting it would make this route's
+      // page-size safety a property of a file it does not own, and the failure
+      // if that schema ever relaxes is an unbounded catalog read. A redundant
+      // clamp costs one comparison; removing a bound is the wrong direction.
       const effectiveLimit = Math.min(limit ?? DEFAULT_LIMIT, MAX_TOOL_RESULT_ITEMS);
       const types = type ? [type] : undefined;
 
@@ -307,4 +342,15 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 // allowOpaqueOrigin: an UNVERIFIED block runs at an opaque origin (`Origin:
 // null`) and calls this directly from the sandboxed iframe, so it needs
 // `ACAO: null` to clear the CORS preflight.
-export default withBlockScope(baseHandler, { endpoint: 'tools', allowOpaqueOrigin: true });
+export default withBlockScope(baseHandler, {
+  // 🔴 TWO LABELS, ONE PATH. The GET is a static registry read; the POST runs a
+  // Meilisearch query and a catalog read, and is the only request here that can
+  // be slow, rate-limited or 503. One label merged them, so the RED series
+  // could not answer "are tool CALLS degrading" — and since the GET outnumbers
+  // the POST, the merged p95 tracked the cheap half.
+  //
+  // Every value this can return is written out here; nothing is derived from
+  // `req.url` or any other client-controlled input.
+  endpoint: (req) => (req.method === 'POST' ? 'tools_call' : 'tools'),
+  allowOpaqueOrigin: true,
+});

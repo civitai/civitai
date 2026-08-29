@@ -130,11 +130,24 @@ export interface WithBlockScopeOpts {
    * Low-cardinality LOGICAL name for this endpoint (e.g. 'tip', 'me',
    * 'model_detail', 'collections', 'shared_storage_top'). Used as the `endpoint` label on the
    * per-app REST-RED metrics (`civitai_app_block_requests_total` /
-   * `civitai_app_block_request_duration_seconds`). Derived from the HANDLER, so
-   * ids in the path can never leak into the label. Strictly enumerated — see
-   * AppBlockEndpoint in ~/server/metrics/app-block-runtime.metrics.
+   * `civitai_app_block_request_duration_seconds`). Never derived from `req.url`,
+   * so ids in the path can never leak into the label. Strictly enumerated — see
+   * AppBlockEndpoint in ~/server/metrics/app-block-runtime.metrics. (A call site
+   * may pass a resolver — see below — so this is no longer purely
+   * handler-derived; what holds is that the value set stays enumerated.)
+   *
+   * A FUNCTION may be passed when one path serves two materially different
+   * workloads and merging them would make the RED series unreadable — today
+   * only `blocks/tools`, whose GET is a static registry read and whose POST is
+   * a catalog search. It is resolved per request and its return type is the
+   * same strict union, so this cannot become a channel for `req.url`: the call
+   * site still has to name every value it can produce.
+   *
+   * 🔴 NOT a general "label from the request" hook. Anything derived from
+   * client-controlled input belongs nowhere near this label — that is the whole
+   * reason it is enumerated and handler-derived.
    */
-  endpoint: AppBlockEndpoint;
+  endpoint: AppBlockEndpoint | ((req: NextApiRequest) => AppBlockEndpoint);
 
   /**
    * The block scope this endpoint requires. When PRESENT, the middleware
@@ -793,7 +806,13 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       metricRecorded = true;
       try {
         const { requestsTotal, requestDurationSeconds } = ensureRegisterAppBlockRuntimeMetrics();
-        const labels = { app_block_id: appBlockIdLabel, endpoint: opts.endpoint };
+        // Resolved HERE, inside the recorder, so a per-request resolver sees the
+        // request that is actually being recorded. Both `finish` and `close`
+        // run through the recorded-once guard above, so it resolves at most
+        // once per request either way.
+        const endpointLabel =
+          typeof opts.endpoint === 'function' ? opts.endpoint(req) : opts.endpoint;
+        const labels = { app_block_id: appBlockIdLabel, endpoint: endpointLabel };
         const elapsedSeconds = Number(process.hrtime.bigint() - metricStart) / 1e9;
         requestDurationSeconds.observe(labels, elapsedSeconds);
         requestsTotal.inc({ ...labels, result: statusToRequestResult(res.statusCode) });
