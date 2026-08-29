@@ -72,30 +72,52 @@ const ingestionErrorState = sql`
 `;
 
 /**
- * 🔴 THE 2-DAY LOWER BOUND IS A REAL LIMIT ON REACH, AND BOTH QUEUES INHERIT IT.
+ * 🔴 THE WINDOW IS A REAL LIMIT ON REACH IN BOTH DIRECTIONS, AND BOTH QUEUES INHERIT IT.
  *
- * It is right for the RATING queue: a moderator rates recent scan errors, and an unbounded backlog
- * of old ones is not work anybody is going to do. It is less obviously right for the missing-media
- * queue, whose rows are terminal — they only leave it by being deleted — and whose motivating
- * population, `blob:` urls from a legacy upload bug (`src/utils/type-guards.ts`), is plausibly
- * mostly OLDER than two days. That is inference from where the bug came from, not a production
- * count; nobody has measured it.
+ * TWO bounds, not one: `createdAt` must be older than 1 hour AND younger than 2 days. The 1-hour
+ * bound predates this app — it arrived with the original main-app query in `3575ab0413` and again
+ * in the cutover `e4104d5bf1`, in both cases with NO comment — so the reason for it is not recorded
+ * anywhere and is not restated here as though it were. What matters for the copy on the page is the
+ * EFFECT, which is measurable: a row younger than an hour is not listed.
  *
- * So the state of play, said rather than glossed: an unpublishable row older than two days is
- * deletable by the POST action (`missingMediaScope` deliberately drops the window — see that const)
- * but is rendered by NO page here. The copy in `@civitai/shared/missing-media` and on the article
- * surface is written so it does not promise a queue that will list such a row.
+ * The lower bound is right for the RATING queue: a moderator rates recent scan errors, and an
+ * unbounded backlog of old ones is not work anybody is going to do. It is less obviously right for
+ * the missing-media queue, whose rows are terminal — they only leave it by being deleted — and
+ * whose motivating population, `blob:` urls from a legacy upload bug (`src/utils/type-guards.ts`),
+ * is plausibly mostly OLDER than two days. That is inference from where the bug came from, not a
+ * production count; nobody has measured it.
+ *
+ * So the state of play, said rather than glossed: an unpublishable row on EITHER side of the window
+ * — older than two days, or younger than an hour — is deletable by the POST action
+ * (`missingMediaScope` deliberately drops both bounds; see that const) but is rendered by NO page
+ * here. The copy in `@civitai/shared/missing-media`, on this page, and on the article surface is
+ * written so it does not promise a queue that will list such a row.
  *
  * Widening it was considered and NOT taken, for a reason that is worth writing down because it is
- * not the obvious one: both queues order `createdAt DESC`, so dropping the bound would put the old
- * `blob:` rows at the BACK of an unbounded list behind every historical permanent scan failure —
- * burying the motivating population rather than surfacing it, at an unmeasured queue size. The one
- * query that would settle whether widening is worth it, and what shape it should take:
+ * not the obvious one: both queues order `createdAt DESC`, so dropping the lower bound would put
+ * the old `blob:` rows at the BACK of an unbounded list behind every historical permanent scan
+ * failure — burying the motivating population rather than surfacing it, at an unmeasured queue
+ * size. The one query that would settle whether widening is worth it, and what shape it should
+ * take, counts the WHOLE stranded set: both sides of the window, and both disjuncts of
+ * `unpublishableMedia` rather than the `blob:` half alone.
  *
- *     SELECT count(*) FROM "Image"
- *      WHERE ingestion = 'Error' AND "nsfwLevel" = 0
- *        AND "createdAt" < now() - INTERVAL '2 days'
- *        AND url LIKE 'blob:%';
+ *     SELECT
+ *       count(*) FILTER (WHERE "createdAt" < now() - INTERVAL '2 days')  AS too_old,
+ *       count(*) FILTER (WHERE "createdAt" > now() - INTERVAL '1 hour')  AS too_new,
+ *       count(*) FILTER (WHERE url LIKE 'blob:%')                        AS unrenderable_url,
+ *       count(*) FILTER (
+ *         WHERE "scanJobs"->'error'->>'failureClass' IS NOT DISTINCT FROM 'permanent'
+ *       )                                                                AS permanent_failure,
+ *       count(*)                                                         AS total
+ *     FROM "Image"
+ *     WHERE ingestion = 'Error' AND "nsfwLevel" = 0
+ *       AND ( "scanJobs"->'error'->>'failureClass' IS NOT DISTINCT FROM 'permanent'
+ *             OR COALESCE(url, '') LIKE 'blob:%' )
+ *       AND ( "createdAt" < now() - INTERVAL '2 days'
+ *             OR "createdAt" > now() - INTERVAL '1 hour' );
+ *
+ * (The `too_old`/`too_new` columns overlap with nothing — the WHERE already excludes the window —
+ * so they sum to `total`, while the two disjunct columns can both count the same row.)
  */
 const ingestionErrorBaseWhere = sql`
   i."createdAt" > now() - INTERVAL '2 days'
@@ -147,8 +169,10 @@ const permanentScanFailure = sql`
  * `permanent OR NULL` is NULL whenever the class is not permanent, which a WHERE treats as false on
  * BOTH sides of the split, dropping the row out of the review queue and the missing-media queue at
  * once. Same shape as the `IS NOT DISTINCT FROM` trap one predicate up, in the other operator. The
- * NOT NULL constraint itself is pinned by this module's test, so if it ever goes away that is a
- * visible failure rather than a silent re-partition.
+ * DECLARED NOT NULL constraint is pinned by this module's test, so if it goes away in the repo that
+ * is a visible failure rather than a silent re-partition. Only the declaration, though — migrations
+ * here are applied by hand, so a live column that has drifted from the schema is not caught by
+ * anything, which is the residual reason the COALESCE stays.
  */
 const unrenderableMediaUrl = sql`
   COALESCE(i.url, '') LIKE ${`${UNRENDERABLE_MEDIA_URL_PREFIX}%`}
@@ -384,8 +408,28 @@ export async function countMissingMediaImages(): Promise<number> {
  * the client is built inside the probe rather than at module scope: every one of them has to land
  * on `unknown` and allow, and `assertMediaPresentForPublish` runs this inside its own try.
  *
- * Every image lives in the `b2Image` backend — the same assumption the image-deletion path makes,
- * where `Image.url` is passed straight through as the object key.
+ * Every image lives in the `b2Image` backend — the same assumption the image-deletion path in this
+ * app makes, where `Image.url` is passed straight through as the object key.
+ *
+ * 🔴 `'b2Image'` IS AN ALIAS, NOT A BUCKET — AND IT IS A DIFFERENT SOURCE OF TRUTH FROM THE MAIN
+ * APP'S. It is a member of `@civitai/storage`'s wire enum (`packages/civitai-storage/src/schema.ts`)
+ * that the `apps/storage` service resolves in its own process
+ * (`apps/storage/src/lib/server/backends.ts`) from its own `S3_IMAGE_B2_ENDPOINT` /
+ * `S3_IMAGE_B2_BUCKET` — same variable NAMES as the main app's, but a different deployment and a
+ * different Secret. The main app's probe resolves through `getImageUploadBackend()`, i.e. the
+ * function its uploader uses, so there it cannot ask a different store from the one that wrote the
+ * key. Here there is no such function to route through: the two agree today because the two
+ * deployments are configured to the same bucket, which is a fact about config, not about code.
+ *
+ * That matters only if the upload store MOVES, and the two ways it would then break are NOT the
+ * same. A live endpoint on the WRONG bucket 404s for every key, i.e. `absent`, which refuses every
+ * publish — fail-closed, no broken image reaches the site, but indistinguishable from a real run of
+ * misses (the `onRefused` counter at `resolveIngestionError` exists for exactly that). An endpoint
+ * left UNCONFIGURED instead THROWS, which lands on `unknown`, and `unknown` ALLOWS — the silent
+ * direction. Neither is caught by anything in this repo, because both are config.
+ *
+ * Recorded so the next person moving that store knows this is a third place to change and not a
+ * copy of the main app's resolver.
  */
 async function probeImageMediaPresence(key: string) {
   // 🔴 No key check here, deliberately. `assertMediaPresentForPublish` classifies the url and only

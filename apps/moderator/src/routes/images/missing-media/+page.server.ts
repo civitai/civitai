@@ -26,10 +26,11 @@ const LIMIT_OPTIONS = [10, 25, 50, 100];
  * 🔴 It is NOT the reachable action behind EVERY refusal, and the exceptions are named rather than
  * implied. `absent` is a probe verdict and cannot be selected on in SQL, so a row with a transient
  * or unclassified failure whose object is genuinely gone is refused on the rating queue and not
- * listed here; and both queues carry a 2-day window this page inherits, so an older row is deletable
- * by this action but rendered by no page. Both gaps, why widening the predicate is the wrong fix for
- * the first, and the query that would settle the second, are written out on `unpublishableMedia` and
- * `ingestionErrorBaseWhere` in `$lib/server/ingestion.service`.
+ * listed here; and both queues carry a window this page inherits — `createdAt` BETWEEN two days and
+ * one hour ago, so a row on EITHER side of it (older than two days, or younger than an hour) is
+ * deletable by this action but rendered by no page. Both gaps, why widening the predicate is the
+ * wrong fix for the first, and the query that would settle the second, are written out on
+ * `unpublishableMedia` and `ingestionErrorBaseWhere` in `$lib/server/ingestion.service`.
  */
 export const load: PageServerLoad = async ({ url }) => {
   const limitParam = Number(url.searchParams.get('limit'));
@@ -55,8 +56,14 @@ export const actions: Actions = {
      * without this re-selection through the SAME shared predicate the page is an arbitrary
      * delete-any-image-by-id endpoint that merely happens to render the missing-media queue.
      */
+    // 🔴 The message names the STATE, not the QUEUE. `isMissingMediaImage` deliberately drops the
+    // display window (see `missingMediaScope`), so "not in the missing-media queue" was false in
+    // the one direction that matters: a row outside the window IS refused by no gate here and
+    // WOULD be deleted, while a row this refusal actually rejects may well have been on screen.
     if (!(await isMissingMediaImage(id)))
-      return fail(400, { error: 'That image is not in the missing-media queue.' });
+      return fail(400, {
+        error: 'That image cannot be deleted here — it is not an unpublishable ingestion error.',
+      });
 
     // Kept as insurance if the collaborator ever starts throwing, but it is UNREACHABLE today —
     // `deleteImagesByIds` catches per image and its one un-caught statement is a `void`-ed async

@@ -44,13 +44,20 @@
     first: images whose media could not be fetched or decoded, and images whose url is a
     browser-session `blob:` handle that can never render for anyone. Neither can be scanned, so
     there is nothing to rate; the only useful action is removing the row. Membership is
-    `missingMediaWhere` in `$lib/server/ingestion.service` — keep this wording in step with it. -->
+    `missingMediaWhere` in `$lib/server/ingestion.service` — keep this wording in step with it.
+
+    🔴 THE WINDOW HAS TWO BOUNDS AND THE COPY NAMES BOTH. `ingestionErrorBaseWhere` is
+    `createdAt > now() - '2 days' AND createdAt < now() - '1 hour'`, so a row younger than an hour
+    is as absent from this page as one older than two days. Naming only the lower bound is the same
+    defect this queue exists to close one bound over: copy promising a listing that may not contain
+    the row the reader is looking for. -->
   <p class="mt-1 text-xs text-muted-foreground">
     These images can never be scanned, so there is nothing to rate: either the media behind them
     could not be fetched or decoded, or the url is a browser-session <code>blob:</code> handle that
     can never load for anyone else. Publishing one would put a permanently broken image on the site.
-    Delete them, or ask the uploader to upload again. Only images created in the last 2 days are
-    listed here.
+    Delete them, or ask the uploader to upload again. Only images created between 2 days and 1 hour
+    ago are listed here — anything newer or older will not appear, even though it can still be
+    deleted.
   </p>
   <div class="mt-1 flex items-center gap-1">
     <span class="text-xs text-muted-foreground">Per page:</span>

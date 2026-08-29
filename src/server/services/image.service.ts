@@ -8081,8 +8081,30 @@ const RESOLVE_INGESTION_MEDIA_PROBE_TIMEOUT_MS = 5_000;
  * uploads land and the probe keeps asking the old bucket, which answers 404 for every key — and on
  * this path an `absent` is a PERMANENT publish refusal, so the whole queue would fail closed while
  * looking exactly like a real run of misses. Resolving through the same function the uploader uses
- * makes that class impossible rather than merely unlikely. (The sibling probe at
+ * removes that class WITHIN THIS PROCESS. (The sibling probe at
  * `src/server/utils/stored-image-probe.ts` already resolves this way.)
+ *
+ * 🔴 SCOPE OF THAT CLAIM — IT IS ABOUT THIS RUNTIME ONLY, AND THE SPOKE IS NOT COVERED. Today this
+ * refactor is a pure no-op: `getImageUploadBackend()` (`src/utils/s3-utils.ts`) returns exactly the
+ * `getB2ImageS3Client()` + `env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads'` pair it replaces.
+ * Its whole value is that a future move of the upload store moves the probe with it, here.
+ *
+ * The moderator spoke's copy of this probe (`apps/moderator/src/lib/server/ingestion.service.ts`)
+ * still names a fixed backend — `getMediaProbeStorage().headObject({ backend: 'b2Image', key })` —
+ * and that is NOT the same asymmetry it looks like, so it is written out rather than filed as a
+ * TODO. `'b2Image'` is not a bucket literal; it is an alias in `@civitai/storage`'s wire enum
+ * (`packages/civitai-storage/src/schema.ts`) that the `apps/storage` service resolves in ITS OWN
+ * process (`apps/storage/src/lib/server/backends.ts`) from ITS OWN `S3_IMAGE_B2_*` env — a
+ * different deployment and a different Secret from this app's. So the spoke already resolves
+ * through an indirection; it just lands on a SECOND source of truth rather than this one. There is
+ * no `getImageUploadBackend()` equivalent to route it through, and adding one is not a rename.
+ *
+ * The consequence, stated so nobody re-derives it as symmetry: moving the upload store needs THREE
+ * coordinated changes, not one — this app's `S3_IMAGE_B2_*`, the storage service's `S3_IMAGE_B2_*`
+ * (or a new alias in that enum plus every `backend: 'b2Image'` call site), and the Go
+ * storage-resolver's `B2_MEDIA_BUCKET_NAME`, whose `media_locations` rows are already stamped
+ * `backend='backblaze'`. This change removes one of the three from the list of things that can be
+ * forgotten silently. It does not remove the other two.
  *
  * Calling it is deliberately INSIDE the caller's try (see `assertMediaPresentForPublish`), because
  * it builds the S3 client, which throws when credentials are absent — that must land on `unknown`,

@@ -128,14 +128,23 @@ describe('ingestion-error queue predicates', () => {
     expect(missing.parameters).toEqual(['permanent', 'blob:%']);
   });
 
-  it('keeps Image.url NOT NULL, which is what actually makes the url half a partition', () => {
+  it('keeps Image.url NOT NULL in the DECLARED schema, which is what the query assumes', () => {
     /**
-     * 🔴 THE REAL INVARIANT, PINNED AT ITS SOURCE — and it is NOT the COALESCE below.
+     * 🔴 THE INVARIANT, PINNED AT THE ONLY SOURCE THIS TEST CAN READ — and it is NOT the COALESCE
+     * below.
      *
      * The story this suite used to tell was that `COALESCE(i.url, '')` was load-bearing against a
-     * NULL url. It is not: `Image.url` is NOT NULL, so the row it defends against cannot exist and
-     * removing the COALESCE changes no result. What keeps the url half of the split a partition is
-     * the column constraint, so the constraint is what gets a guard.
+     * NULL url. It is not: `Image.url` is declared NOT NULL, so the row it defends against cannot
+     * exist and removing the COALESCE changes no result. What keeps the url half of the split a
+     * partition is the column constraint, so the constraint is what gets a guard.
+     *
+     * 🔴 BE EXACT ABOUT WHAT IS CHECKED: `schema.full.prisma` and the generated Kysely types are
+     * the DECLARED schema, not the database. Migrations in this org are applied BY HAND per
+     * environment — `_prisma_migrations` is not the source of truth — so a database whose column
+     * has drifted from the declaration satisfies this guard while the invariant it names is false
+     * of the live table. This is a declaration guard: it catches the change landing in the repo,
+     * which is where the change is made, and it cannot catch drift. That is exactly why the
+     * COALESCE is retained below rather than simplified away.
      *
      * Read from BOTH the defining schema and the generated Kysely types, which fail differently: a
      * hand-edit to one without regenerating the other is caught, and so is a regeneration that

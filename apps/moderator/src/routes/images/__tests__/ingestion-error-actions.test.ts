@@ -112,7 +112,7 @@ describe('missing-media delete action', () => {
 });
 
 describe('missing-media delete action — scoping', () => {
-  it('refuses an id that is not in the missing-media queue, and deletes nothing', async () => {
+  it('refuses an id that is not an unpublishable ingestion error, and deletes nothing', async () => {
     // The action takes an id off a form and `deleteImagesByIds` is permanent and cascading. Without
     // this re-selection the page is an arbitrary delete-any-image-by-id endpoint.
     isMissingMediaImage.mockResolvedValue(false);
@@ -123,7 +123,13 @@ describe('missing-media delete action — scoping', () => {
     } as never)) as { status: number; data: { error: string } };
 
     expect(result.status).toBe(400);
-    expect(result.data.error).toBe('That image is not in the missing-media queue.');
+    // Pinned WHOLE, and it must NOT name the queue: the gate is `missingMediaScope`, which drops
+    // the display window on purpose, so a refusal phrased as "not in the queue" describes a
+    // different set from the one it actually rejects.
+    expect(result.data.error).toBe(
+      'That image cannot be deleted here — it is not an unpublishable ingestion error.'
+    );
+    expect(result.data.error).not.toContain('queue');
     expect(deleteImagesByIds).not.toHaveBeenCalled();
     expect(recordModActivity).not.toHaveBeenCalled();
   });
