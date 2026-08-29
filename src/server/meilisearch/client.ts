@@ -99,7 +99,7 @@ export const FETCH_DOCUMENTS_TIMEOUT_MESSAGE = 'meili-fetch-timeout';
  *  - `local-timeout`     — the local 5s deadline fired before the upstream
  *                          responded (PR #2370 — the original behaviour;
  *                          preserved for backward-compat dashboards)
- *  - `upstream-overload` — upstream returned HTTP 503 (civitai-feeds-proxy
+ *  - `upstream-overload` — upstream returned HTTP 503 (the feeds proxy
  *                          shed because MEILI_MAX_CONCURRENT was hit)
  *  - `upstream-timeout`  — upstream returned HTTP 408 (Meilisearch backend
  *                          page-cache thrashing past its own timeout)
@@ -208,7 +208,7 @@ export const TRANSIENT_STATUSTEXT_TO_STATUS: Readonly<Record<string, number>> = 
 };
 
 /**
- * Classify an error caught from a Meilisearch SDK call (or the civitai-feeds
+ * Classify an error caught from a Meilisearch SDK call (or the feeds
  * proxy in front of it) as a genuinely-transient upstream failure that should
  * surface to the client as a retryable 503, NOT a hard 500.
  *
@@ -425,7 +425,7 @@ export const meiliFetchFailfastTotal = registerCounterWithLabels({
 
 /**
  * Typed error thrown by fetchDocumentsAbortable() when the upstream Meili
- * backend (or the civitai-feeds-proxy in front of it) returns a non-ok HTTP
+ * backend (or the feeds proxy in front of it) returns a non-ok HTTP
  * status code. Carries the status + response body verbatim so callers can
  * pattern-match on `instanceof MeilisearchFetchError` + `.status` instead of
  * string-matching the message.
@@ -588,7 +588,7 @@ export class MeiliCallTimeoutError extends Error {
 
 /**
  * Backends are limited independently because they fail independently:
- *   - 'search'        → SEARCH_HOST    (civitai-feeds / searchClient / feed inline client)
+ *   - 'search'        → SEARCH_HOST    (feeds proxy / searchClient / feed inline client)
  *   - 'metricsSearch' → METRICS_SEARCH_HOST (search-meilisearch / metricsSearchClient)
  *
  * A single shared limiter would let one bad backend exhaust the budget for

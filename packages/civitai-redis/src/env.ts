@@ -16,7 +16,7 @@ export const redisEnvSchema = z
     REDIS_CLUSTER_REFRESH_INTERVAL: z.coerce.number().default(30000),
     // sysRedis HA (Phase 1): when REDIS_SYS_SENTINELS is set the system client is built
     // via Sentinel discovery instead of the single REDIS_SYS_URL connection. Comma-separated
-    // host:port list, e.g. "civitai-app-sysredis-sentinel...:26379".
+    // host:port list, e.g. "<sentinel-service>.<namespace>.svc.cluster.local:26379".
     REDIS_SYS_SENTINELS: z.string().optional(),
     // Required whenever REDIS_SYS_SENTINELS is set (cluster uses "sysmaster") — see superRefine.
     REDIS_SYS_SENTINEL_NAME: z.string().optional(),

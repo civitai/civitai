@@ -5950,7 +5950,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       //
       // Status-code rationale:
       //   - 408 (upstream-timeout)  → Meilisearch backend page-cache thrash
-      //   - 503 (upstream-overload) → civitai-feeds-proxy shed (MEILI_MAX_CONCURRENT)
+      //   - 503 (upstream-overload) → the feeds proxy shed (MEILI_MAX_CONCURRENT)
       //   - other 5xx               → upstream brownout / Traefik 504 / etc.
       //   - 4xx-other (400/401/403) → real client error, MUST bubble up
       let results: ImageMetricsSearchIndexRecord[];

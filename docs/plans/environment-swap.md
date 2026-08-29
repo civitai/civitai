@@ -17,7 +17,7 @@ Verify article images are NSFW-scanned. If not, implement scanning so articles o
 - [x] Add article image scanning
 - [x]     Add article content scanning
     - [x] Hook up text scanning to use XGuard [@Manuel Emilio](#user_mention#16807894) (Talk with Briant about how to use XGuard)
-    - [ ] Add PG-XXX ratings to Text Scan category [@Sebastian Widlund](#user_mention#63130867)
+    - [ ] Add PG-XXX ratings to Text Scan category [@team-member](#user_mention#63130867)
 - [x]     Scan all articles to apply content and image ratings
     - [x] Images
     - [x] Content
