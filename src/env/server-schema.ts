@@ -49,7 +49,7 @@ export const serverSchema = z
     // switches the system client to `createSentinel(...)` against this Sentinel
     // pool. See claudedocs/sysredis-ha-migration-runbook.md (datapacket-talos)
     // for the rollout sequence.
-    REDIS_SYS_SENTINELS: z.string().optional(), // comma-separated host:port list, e.g. "civitai-app-sysredis-sentinel.civitai-app-sysredis.svc.cluster.local:26379"
+    REDIS_SYS_SENTINELS: z.string().optional(), // comma-separated host:port list, e.g. "<sentinel-service>.<namespace>.svc.cluster.local:26379"
     // Master group name. No default — the cluster uses "sysmaster", and the
     // historical Sentinel default ("mymaster") would silently fail every lookup.
     // The superRefine below makes this required whenever REDIS_SYS_SENTINELS is set.
@@ -837,7 +837,7 @@ export const serverSchema = z
     // APPS_TEKTON_TRIGGER_URL   HTTP endpoint that creates PipelineRuns on
     //                           dc-02-a (the app-blocks-trigger receiver,
     //                           reached via the VPN proxy on dp-1). Example:
-    //                           http://wireguard-proxy-service.civitai-submodel-proxy.svc.cluster.local:8088/trigger-build
+    //                           http://<proxy-service>.<namespace>.svc.cluster.local:8088/trigger-build
     // APPS_TEKTON_TRIGGER_SECRET   HMAC shared secret between civitai-web and
     //                           the app-blocks-trigger receiver. 32-byte hex.
     // APPS_KUBE_NAMESPACE       civitai-apps (where apply Jobs are created
@@ -883,7 +883,7 @@ export const serverSchema = z
     // (no new secret). OPTIONAL — when unset, triggerReviewBuild derives it from
     // APPS_TEKTON_TRIGGER_URL by swapping the trailing `/trigger-build` segment
     // for `/trigger-review-build`, so a typical deploy needs no extra env. Example:
-    // http://wireguard-proxy-service.civitai-submodel-proxy.svc.cluster.local:8088/trigger-review-build
+    // http://<proxy-service>.<namespace>.svc.cluster.local:8088/trigger-review-build
     APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
     APPS_DOMAIN: z.string().default('civit.ai'),
@@ -924,19 +924,19 @@ export const serverSchema = z
     // the callback falls back to NEXTAUTH_URL (the public origin) so the feature
     // keeps working before infra sets the in-cluster value ahead of un-dark.
     AGENT_REVIEW_CALLBACK_BASE_URL: z.string().optional(),
-    // Base URL of the verify-runner screenshot service (warm Playwright Chromium)
+    // Base URL of the screenshot-runner service (warm Playwright Chromium)
     // used to autogenerate a marketplace screenshot for an approved App Block that
-    // shipped no publisher screenshots. In-cluster service (devpod-devops ns), e.g.
-    // http://verify-runner.devpod-devops.svc.cluster.local:8080. OPTIONAL — when
+    // shipped no publisher screenshots. In-cluster service, e.g.
+    // http://<service>.<namespace>.svc.cluster.local:8080. OPTIONAL — when
     // unset, autogeneration is silently skipped (best-effort; never blocks deploy).
     BLOCK_SCREENSHOT_RUNNER_URL: z.string().url().optional(),
 
     // App Blocks W1 (publish-request flow). S3-compatible storage for
-    // dev-uploaded ZIP bundles. Production points at ssd-minio-backups
-    // MinIO with credentials scoped to the app-block-bundles bucket only.
+    // dev-uploaded ZIP bundles. Production points at an in-cluster MinIO
+    // tenant with credentials scoped to the app-block-bundles bucket only.
     // All optional so envs without the publish-request feature still boot.
     //
-    // BUNDLE_S3_ENDPOINT             e.g. http://minio.minio-ssd-backups.svc.cluster.local
+    // BUNDLE_S3_ENDPOINT             e.g. http://<minio-service>.<namespace>.svc.cluster.local
     // BUNDLE_S3_BUCKET               e.g. app-block-bundles
     // BUNDLE_S3_ACCESS_KEY_ID        scoped service-account key
     // BUNDLE_S3_SECRET_ACCESS_KEY    matching secret

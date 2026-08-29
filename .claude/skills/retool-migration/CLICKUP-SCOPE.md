@@ -79,7 +79,8 @@ Add anything new to this checklist and to
 
 - [ ] Apply [the moderator id mapping](../../../docs/moderator-app/retool-exports/moderator-id-mapping.md)
       — 72% exact, 21% variants to confirm, 6% unmapped.
-- [ ] Decide the fate of `Brittany Widlund`'s 3,888 unmapped notes.
+- [ ] Decide the fate of the largest unmapped identifier's 3,888 notes (a former moderator — named in
+      the private mapping, not here).
 - [ ] `TimedMutes.userId` is `text` where the others are `integer` — cast, after checking for
       non-numeric values.
 - [ ] Rotate the Retool credentials once the migration is done.

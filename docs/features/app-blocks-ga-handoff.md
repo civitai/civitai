@@ -125,8 +125,8 @@ migrations to hand-apply.**
   longer forwarded). Optional cleanup of the producer computation + the `ModelSlotContext` field.
 
 **Infra (need cluster write access — see the datapacket-talos handoff doc):**
-- HPA `FailedGetResourceMetric`: node pressure on `talos-uvh-ow7` (over the 110-pod cap) and
-  Tekton completed-pod bloat on `talos-x3r-mnv`; the `pipelinerun-pruner` was recently un-broken —
+- HPA `FailedGetResourceMetric`: node pressure on a search-pool node (over the 110-pod cap) and
+  Tekton completed-pod bloat on a build node; the `pipelinerun-pruner` was recently un-broken —
   confirm it's draining the backlog.
 - `workflow-completed.ts` still uses the non-atomic `incrBy`+`expire` dedup (the same wedge class
   fixed in `build-callback`) — align it to `setNxKeepTtlWithEx`.
