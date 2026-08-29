@@ -126,6 +126,21 @@ export enum FLIPT_FEATURE_FLAGS {
   // context, so a segment rule here returns the flag default and looks exactly like "blurbs are
   // off". The site is recorded in ENTITY_WITHOUT_CONTEXT_LEDGER (flipt-eval-context.test.ts).
   TEXT_BLURBS = 'text-blurbs',
+  // Arms the "hold this model for moderator review" action when the scanner reports that a
+  // file's declared container format is contradicted by its bytes (skipReason
+  // "format-mismatch"). Default-off: the mismatch is RECORDED as a non-clean scan result
+  // regardless — that part needs no flag and is what actually closes the bypass — and this
+  // gates only the unpublish-and-notify side effect, so it can be flipped once the moderator
+  // queue has been watched for a day.
+  SCAN_FORMAT_MISMATCH_HOLD = 'scan-format-mismatch-hold',
+  // 🔴 DO NOT ENABLE BEFORE THE SPINE-CONTROLLER SCANNER CHANGE IS DEPLOYED EVERYWHERE.
+  //
+  // Makes a pickle-scan SKIP count as a pass only when the scanner verified the container from
+  // its magic bytes ("safetensors-magic" / "gguf-magic"). Older workers report other skip
+  // reasons, which this treats as unverified, so turning it on while any of them are still
+  // serving would mark a large share of normal uploads Error. It stays off until the fleet is
+  // on the new build.
+  SCAN_STRICT_SKIP_VERIFICATION = 'scan-strict-skip-verification',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

@@ -26,7 +26,7 @@ import { constants } from '~/server/common/constants';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
+import { ModelHashType, ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import type { ModelFileType } from '~/server/common/constants';
 import { addLinkedComponent } from '~/server/services/model-version.service';
@@ -55,6 +55,12 @@ export type ScanOutcome = {
   hashes?: Partial<Record<ModelHashType, string>>;
   /** Parsed safetensors header. May be unset if the file isn't safetensors. */
   headerData?: unknown;
+  /**
+   * The file's declared container format is contradicted by its bytes — it is not the kind of
+   * file it claims to be. Distinct from a generic scan Error: this one names a deliberate
+   * disguise, so it is the signal the moderator-hold path keys on.
+   */
+  formatMismatch?: boolean;
   /** Full upstream payload (orchestrator step outputs or legacy ScanResult) for forensics. */
   rawScanResult?: unknown;
 };
@@ -322,6 +328,30 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     });
   }
 
+  // A file that is not the kind of file it claims to be. The scan result above already records
+  // this as non-clean, so the model cannot show a Verified shield either way; this adds the
+  // human-in-the-loop step. Gated, and deliberately AFTER the result is persisted, so a failure
+  // here can never swallow the recorded verdict.
+  if (outcome.formatMismatch && file.modelVersion?.modelId) {
+    await holdModelForFormatMismatch({
+      modelId: file.modelVersion.modelId,
+      fileId,
+      detail: outcome.pickleScan?.message ?? null,
+    }).catch((err) =>
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'apply-scan-outcome',
+          message: 'format-mismatch hold failed',
+          fileId,
+          modelId: file.modelVersion?.modelId,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        'webhooks'
+      ).catch()
+    );
+  }
+
   // Search index + cache invalidation. modelId comes from the initial lookup so
   // there's no second round-trip per webhook callback.
   const modelVersionId = outcome.modelVersionId ?? file.modelVersionId;
@@ -335,6 +365,92 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     // D5: refresh (proactive re-warm) matches legacy behavior.
     await dataForModelsCache.refresh(modelId);
   }
+}
+
+/**
+ * Puts a model whose file contradicts its declared format in front of a moderator.
+ *
+ * Uses the existing Hold semantics (`unpublishModelById` + `meta.needsReview`), the same path a
+ * ModerationRuleAction.Hold takes: reversible, non-punitive, surfaced in the moderator review
+ * queue, and the uploader is told it is under review rather than accused of anything. It is not
+ * an UnpublishedViolation — an automated format check should not issue a strike on its own.
+ *
+ * The model does come down while it waits. That is deliberate: leaving it published pending
+ * review is precisely the window in which a disguised file is still reachable by users.
+ *
+ * Expected volume is small — the magic-byte check separates legitimate containers that simply
+ * carry no `__metadata__` key from genuine mismatches, so only the latter reach this path.
+ * Sizing measurements are in the internal incident ticket.
+ */
+async function holdModelForFormatMismatch({
+  modelId,
+  fileId,
+  detail,
+}: {
+  modelId: number;
+  fileId: number;
+  detail: string | null;
+}) {
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.SCAN_FORMAT_MISMATCH_HOLD))) return;
+
+  const model = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: { id: true, name: true, meta: true, userId: true, status: true },
+  });
+  // Nothing to hold if a moderator already took it down, or it never went up.
+  if (
+    !model ||
+    model.status === ModelStatus.Unpublished ||
+    model.status === ModelStatus.UnpublishedViolation ||
+    model.status === ModelStatus.Deleted
+  ) {
+    return;
+  }
+
+  await unpublishModelById({
+    id: modelId,
+    userId: -1,
+    reason: 'other',
+    customMessage: `Model held for review: uploaded file does not match its declared format${
+      detail ? ` (${detail})` : ''
+    }`,
+    meta: { ...(model.meta as ModelMeta), needsReview: true },
+    isModerator: true,
+  });
+
+  logToAxiom(
+    {
+      type: 'warning',
+      name: 'scan-format-mismatch-hold',
+      message: `Model ${modelId} held: file ${fileId} does not match its declared format`,
+      modelId,
+      fileId,
+      detail,
+    },
+    'webhooks'
+  ).catch();
+
+  await createNotification({
+    category: NotificationCategory.System,
+    key: `model-format-mismatch:${modelId}:${fileId}`,
+    type: 'system-message',
+    userId: model.userId,
+    details: {
+      message: `Your model "${model.name}" has been put on hold because an uploaded file does not appear to be the file type it claims to be. A moderator will review it shortly.`,
+      url: `/models/${modelId}`,
+    },
+  }).catch((error) =>
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'scan-format-mismatch-hold',
+        message: 'Could not notify uploader of format-mismatch hold',
+        modelId,
+        error: error.message,
+      },
+      'webhooks'
+    ).catch()
+  );
 }
 
 async function notifyHashFix(modelVersionId: number, fileId: number) {
@@ -377,6 +493,15 @@ type ModelClamScanStep = {
     infected?: boolean | null;
     infectedFileCount?: number | null;
     scannedFileCount?: number | null;
+    /**
+     * ClamAV refused the file for exceeding its size limits, so nothing was inspected.
+     * Reported by the scanner as status "Error" (NOT a new status string — the orchestrator
+     * parses that field with Enum.TryParse and an unknown value becomes null, which sends the
+     * web app to the raw exit code, and a limits bail-out exits 1 exactly like a real
+     * detection). This flag carries the true cause for forensics and dashboards.
+     */
+    limitsExceeded?: boolean | null;
+    maxScanSizeMb?: number | null;
   };
 };
 
@@ -488,6 +613,10 @@ export function normalizeScanHashes(
 // in-flight workflows that pre-date the orchestrator update.
 function deriveClamScanResult(output: NonNullable<ModelClamScanStep['output']>): ScanResultCode {
   if (output.infected === true) return ScanResultCode.Danger;
+  // Nothing was inspected, so this is neither clean nor infected. Terminal (Error), not
+  // Pending: Pending would put the file back in scan-files-fallback's queue to be retried
+  // forever, and the retry cannot succeed — the file is simply larger than ClamAV can scan.
+  if (output.limitsExceeded === true) return ScanResultCode.Error;
   const status = output.status?.toLowerCase();
   if (status) {
     if (status === 'clean') return ScanResultCode.Success;
@@ -498,14 +627,58 @@ function deriveClamScanResult(output: NonNullable<ModelClamScanStep['output']>):
   return exitCodeToScanResult(output.exitCode);
 }
 
+/**
+ * Marker the scanner writes to `skipReason` when a file's declared container format is
+ * contradicted by its bytes — e.g. a shell script uploaded as `.safetensors`.
+ *
+ * Cross-repo contract with spine-controller's ModelPickleScanMiddleware.FormatMismatchReason.
+ * The scanner reports the mismatch as ParseError with `skipped: false` and exit code 2, so
+ * this string is NOT what makes the result non-clean — it is what tells us the cause was a
+ * disguised file rather than a transient scanner fault, which is the difference between
+ * "retry it" and "put it in front of a moderator".
+ */
+export const FORMAT_MISMATCH_SKIP_REASON = 'format-mismatch';
+
+/**
+ * The only skip reasons that represent a container verified from its MAGIC BYTES. A skip for
+ * any other reason means the scanner decided from uploader-controlled metadata (the AIR, the
+ * resource registry, the filename) and never looked inside the file.
+ */
+const BYTE_VERIFIED_SKIP_REASONS = new Set(['safetensors-magic', 'gguf-magic']);
+
+export function isFormatMismatch(
+  output: NonNullable<ModelPickleScanStep['output']> | undefined
+): boolean {
+  return output?.skipReason === FORMAT_MISMATCH_SKIP_REASON;
+}
+
 function derivePickleScanResult(
-  output: NonNullable<ModelPickleScanStep['output']>
+  output: NonNullable<ModelPickleScanStep['output']>,
+  { strictSkipVerification }: { strictSkipVerification: boolean }
 ): ScanResultCode {
   if (output.dangerousImportsFound === true) return ScanResultCode.Danger;
-  if (output.skipped === true) return ScanResultCode.Success;
+
+  // 🔴 A SKIP IS NOT A PASS. A skip means the scanner did not inspect the file; mapping that
+  // non-answer to an affirmative clean result is wrong however the skip arose.
+  //
+  // Under strict verification only a byte-verified skip passes. Left off until every worker is
+  // on the new scanner build: older workers emit skip reasons this treats as unverified, and
+  // flipping it early would mark a large share of normal uploads Error.
+  if (output.skipped === true) {
+    if (!strictSkipVerification) return ScanResultCode.Success;
+    return output.skipReason && BYTE_VERIFIED_SKIP_REASONS.has(output.skipReason)
+      ? ScanResultCode.Success
+      : ScanResultCode.Error;
+  }
+
   const status = output.status?.toLowerCase();
   if (status) {
-    if (status === 'clean' || status.startsWith('skipped')) return ScanResultCode.Success;
+    // `startsWith('skipped')` is deliberately NOT treated as clean here any more. It is
+    // reachable with `skipped` unset, and it is the same "we did not look" answer.
+    if (status === 'clean') return ScanResultCode.Success;
+    if (status.startsWith('skipped')) {
+      return strictSkipVerification ? ScanResultCode.Error : ScanResultCode.Success;
+    }
     if (status.includes('danger') || status.includes('infect')) return ScanResultCode.Danger;
     if (status.includes('error') || status.includes('fail')) return ScanResultCode.Error;
     return ScanResultCode.Pending;
@@ -600,6 +773,7 @@ export async function processModelFileScanResult(req: NextApiRequest) {
 
   if (pickleScan?.output) {
     const pickleOut = pickleScan.output;
+    const strictSkipVerification = await isFlipt(FLIPT_FEATURE_FLAGS.SCAN_STRICT_SKIP_VERIFICATION);
     // Skipped (e.g. safetensors) means picklescan never inspected imports —
     // don't synthesize a "No Pickle imports" message; the Success result code
     // is the source of truth.
@@ -614,13 +788,16 @@ export async function processModelFileScanResult(req: NextApiRequest) {
           globalImports: pickleOut.globalImports,
         });
 
-    const baseResult = derivePickleScanResult(pickleOut);
+    const baseResult = derivePickleScanResult(pickleOut, { strictSkipVerification });
     const hasDanger = pickleOut.dangerousImportsFound === true || importsDanger;
     outcome.pickleScan = {
       result: hasDanger ? ScanResultCode.Danger : baseResult,
-      message: pickleScanMessage,
+      // A format mismatch carries no import list, so examinePickleImports produces nothing to
+      // show. Give the moderator the scanner's own explanation instead of a blank message.
+      message: isFormatMismatch(pickleOut) ? pickleOut.output ?? null : pickleScanMessage,
       dangerousImports: pickleOut.dangerousImports ?? undefined,
     };
+    outcome.formatMismatch = isFormatMismatch(pickleOut);
   }
 
   if (hashStep?.output) {

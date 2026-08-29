@@ -110,10 +110,22 @@ vi.mock('~/server/services/minor-hash.service', () => ({
 
 // Default ON so the existing wiring tests exercise the real path; the gate's
 // off-state is asserted explicitly below.
+// Flag VALUES must be real here, not a single-key stub. The service gates three independent
+// things on Flipt (minor-hash auto-flag, strict skip verification, format-mismatch hold), and
+// with only one key in this map the others resolve to `undefined` — every gate would then be
+// asking about the same flag and a test could not turn one on while leaving another off.
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: mockIsFlipt,
-  FLIPT_FEATURE_FLAGS: { MINOR_HASH_AUTO_FLAG: 'minor-hash-auto-flag' },
+  FLIPT_FEATURE_FLAGS: {
+    MINOR_HASH_AUTO_FLAG: 'minor-hash-auto-flag',
+    SCAN_STRICT_SKIP_VERIFICATION: 'scan-strict-skip-verification',
+    SCAN_FORMAT_MISMATCH_HOLD: 'scan-format-mismatch-hold',
+  },
 }));
+
+/** Turn named flags on and leave every other flag off. */
+const onlyFlags = (...on: string[]) =>
+  mockIsFlipt.mockImplementation(async (flag: string) => on.includes(flag));
 
 import {
   applyScanOutcome,
@@ -840,7 +852,13 @@ describe('model-file-scan.service', () => {
       expect(updateCall.data.virusScanMessage).toBe('EICAR signature detected');
     });
 
-    it('treats pickleScan skipped=true (safetensors) as Success with null message', async () => {
+    // skipReason was 'safetensors-extension' until 2026-08-28. That is an extension-based
+    // skip — the scanner trusting the filename — and it is the behaviour the format-conformance
+    // fix removes, so it no longer belongs in a test asserting a PASS. The case this test
+    // actually exists for (a genuine safetensors skip yields Success and a null message) is
+    // preserved by moving it to the byte-verified reason. Both legacy-skip regimes are covered
+    // explicitly in the 'scan format conformance' block below.
+    it('treats a byte-verified pickleScan skip (safetensors) as Success with null message', async () => {
       mockGetWorkflow.mockResolvedValue({
         data: {
           metadata: { fileId: 1 },
@@ -855,7 +873,7 @@ describe('model-file-scan.service', () => {
                 status: 'skippedSafetensors',
                 dangerousImportsFound: false,
                 skipped: true,
-                skipReason: 'safetensors-extension',
+                skipReason: 'safetensors-magic',
               },
             },
           ],
@@ -1436,6 +1454,214 @@ describe('model-file-scan.service', () => {
       });
 
       expect(mockCheckMinorHashOnScan).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------------------
+  // Regression cover for an upload-scanner bypass in which a file whose contents did not
+  // match its declared container format was recorded as having passed both scans.
+  //
+  // The web app's half of the defect is here: `skipped === true` was mapped straight to
+  // Success, so the scanner saying "I did not look at this file" became "this file is clean".
+  // Incident record and measurements are in the internal ticket.
+  // -------------------------------------------------------------------------------------
+  describe('scan format conformance', () => {
+    function makeReq(body: unknown) {
+      return { body } as unknown as Parameters<typeof processModelFileScanResult>[0];
+    }
+
+    const pickleStep = (output: Record<string, unknown>) => ({
+      $type: 'modelPickleScan',
+      output,
+    });
+
+    /** The pickle step exactly as the scanner emits it for a declared/actual disagreement. */
+    const formatMismatchOutput = {
+      exitCode: 2,
+      status: 'ParseError',
+      skipped: false,
+      skipReason: 'format-mismatch',
+      output:
+        "Declared format 'Safetensors' does not match file contents (detected: Unknown). " +
+        'The file does not carry a valid header for the container type it claims to be.',
+      globalImports: [],
+      dangerousImports: [],
+      dangerousImportsFound: false,
+    };
+
+    async function runWithSteps(steps: unknown[]) {
+      mockGetWorkflow.mockResolvedValue({
+        data: { metadata: { fileId: 1, modelVersionId: 100 }, steps },
+      });
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-fmt', type: 'workflow', status: 'succeeded' })
+      );
+      return mockDbWrite.modelFile.update.mock.calls[0][0];
+    }
+
+    beforeEach(() => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 1,
+        modelVersionId: 100,
+        modelVersion: { modelId: 200, model: { userId: 42 } },
+      });
+      mockDbWrite.modelFile.update.mockResolvedValue({});
+      mockDbWrite.$transaction.mockResolvedValue([]);
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      mockDbWrite.model.findUnique.mockResolvedValue({
+        id: 200,
+        name: 'Test Model',
+        meta: {},
+        userId: 42,
+        status: 'Published',
+      });
+      mockSetNxKeepTtlWithEx.mockResolvedValue(true);
+    });
+
+    it('a format mismatch is never recorded as a clean pickle scan', async () => {
+      const updateCall = await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(updateCall.data.pickleScanResult).not.toBe(ScanResultCode.Success);
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
+    });
+
+    it('surfaces the scanner explanation as the message a moderator reads', async () => {
+      const updateCall = await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(updateCall.data.pickleScanMessage).toContain('does not match file contents');
+    });
+
+    it('holds the model for moderator review, without issuing a violation strike', async () => {
+      onlyFlags('scan-format-mismatch-hold');
+
+      await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(mockUnpublishModelById).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 200,
+          isModerator: true,
+          // Hold, not a strike: reversible and queued for a human.
+          reason: 'other',
+          meta: expect.objectContaining({ needsReview: true }),
+        })
+      );
+      expect(mockCreateNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: 42, key: 'model-format-mismatch:200:1' })
+      );
+    });
+
+    it('does not hold when the kill switch is off', async () => {
+      onlyFlags(); // every flag off
+
+      const updateCall = await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(mockUnpublishModelById).not.toHaveBeenCalled();
+      // The recorded verdict is independent of the flag — that is what closes the bypass.
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
+    });
+
+    it('does not re-hold a model a moderator has already taken down', async () => {
+      onlyFlags('scan-format-mismatch-hold');
+      mockDbWrite.model.findUnique.mockResolvedValue({
+        id: 200,
+        name: 'Test Model',
+        meta: {},
+        userId: 42,
+        status: 'UnpublishedViolation',
+      });
+
+      await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(mockUnpublishModelById).not.toHaveBeenCalled();
+    });
+
+    it('leaves a byte-verified safetensors skip passing, and does not hold it', async () => {
+      // The false-positive control. 99.2% of metadata-skipped files measured on 2026-08-28
+      // were genuine safetensors; under the new scanner they arrive with this skipReason.
+      const updateCall = await runWithSteps([
+        pickleStep({
+          exitCode: 0,
+          status: 'SkippedSafetensors',
+          skipped: true,
+          skipReason: 'safetensors-magic',
+          globalImports: [],
+          dangerousImports: [],
+          dangerousImportsFound: false,
+        }),
+      ]);
+
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Success);
+      expect(mockUnpublishModelById).not.toHaveBeenCalled();
+    });
+
+    it('a legacy metadata-based skip still passes while strict verification is off', async () => {
+      // Deployment-ordering guard: older workers emit "safetensors-resource-info" for a large
+      // share of uploads. Until SCAN_STRICT_SKIP_VERIFICATION is flipped on those must keep
+      // passing, or shipping the web app ahead of the scanner fleet would flag many of them.
+      onlyFlags(); // strict verification OFF
+
+      const updateCall = await runWithSteps([
+        pickleStep({
+          exitCode: 0,
+          status: 'SkippedSafetensors',
+          skipped: true,
+          skipReason: 'safetensors-resource-info',
+          globalImports: [],
+          dangerousImports: [],
+          dangerousImportsFound: false,
+        }),
+      ]);
+
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Success);
+    });
+
+    it('a legacy metadata-based skip stops passing once strict verification is on', async () => {
+      onlyFlags('scan-strict-skip-verification');
+
+      const updateCall = await runWithSteps([
+        pickleStep({
+          exitCode: 0,
+          status: 'SkippedSafetensors',
+          skipped: true,
+          skipReason: 'safetensors-resource-info',
+          globalImports: [],
+          dangerousImports: [],
+          dangerousImportsFound: false,
+        }),
+      ]);
+
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
+    });
+
+    it('ClamAV limits-exceeded is Error, never Success and never Danger', async () => {
+      // A >4 GB file ClamAV refused to open. Not clean (nothing was read) and not infected
+      // (nothing was found) — and NOT Pending, which would re-queue it to be retried forever.
+      const updateCall = await runWithSteps([
+        {
+          $type: 'modelClamScan',
+          output: {
+            exitCode: 2,
+            status: 'Error',
+            infected: false,
+            limitsExceeded: true,
+            maxScanSizeMb: 4000,
+            output: 'Heuristics.Limits.Exceeded FOUND',
+          },
+        },
+      ]);
+
+      expect(updateCall.data.virusScanResult).toBe(ScanResultCode.Error);
+    });
+
+    it('a normal clean ClamAV pass is still Success', async () => {
+      const updateCall = await runWithSteps([
+        {
+          $type: 'modelClamScan',
+          output: { exitCode: 0, status: 'clean', infected: false, limitsExceeded: false },
+        },
+      ]);
+
+      expect(updateCall.data.virusScanResult).toBe(ScanResultCode.Success);
     });
   });
 });
