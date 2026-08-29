@@ -839,3 +839,25 @@ describe("audit r4/r5 — the corpus's OWN Authorization serialisation", () => {
     });
   });
 });
+
+describe('audit r6 🟡F1 — secret-assignment must reach the corpus escaping depth too', () => {
+  // `Q` was widened to 0-3 backslashes, but this rule hardcoded `\\?` for the
+  // VALUE quote, so it stayed capped at depth 1 while its own comment claimed to
+  // cover "the dominant serialisation" — which is depth 3. Latent (no corpus
+  // instance today) but the comment was wider than the code, which is the exact
+  // defect this whole gate exists to prevent.
+  it.each([
+    [0, ''],
+    [1, '\\'],
+    [2, '\\\\'],
+    [3, '\\\\\\'],
+  ])('catches a quoted secret assignment at escaping depth %i', (_d, e) => {
+    const sample = `{"a":1, ${e}"apiKey${e}": ${e}"abcdefghij1234${e}"}`;
+    expect(findCredentialShapes(sample).map((f) => f.rule)).toContain('secret-assignment');
+  });
+
+  it('still ignores an already-redacted value at depth 3', () => {
+    const e = '\\\\\\';
+    expect(findCredentialShapes(`{${e}"apiKey${e}": ${e}"<REDACTED>${e}"}`)).toEqual([]);
+  });
+});

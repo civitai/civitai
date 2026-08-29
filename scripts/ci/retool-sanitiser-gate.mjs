@@ -218,6 +218,13 @@ const SECRET_WORD = String.raw`API[_-]?KEY|API[_-]?Key|Api[_-]?Key|Api[_-]?key|a
  * zero. The rule matched nothing at all on the file it was written for, and the
  * spec passed anyway because its fixture used single escaping — the fake and the
  * code encoded the same wrong assumption, so neither could see the other's error.
+ *
+ * 🔴 Every quote in every rule must use this, including ones spelled inline. The
+ * first version of this widening reached only one of `Q`'s two consumers:
+ * `secret-assignment` hardcoded `\\?` for its VALUE quote and so stayed capped at
+ * depth 1, while a comment on that same rule claimed to cover "the dominant
+ * serialisation" — which is depth 3. A shared constant does not help if a caller
+ * writes the thing out by hand instead.
  */
 const Q = String.raw`\\{0,3}["']`;
 /** A value body that cannot contain a quote, an escaped quote, or a newline. */
@@ -283,9 +290,9 @@ export const CREDENTIAL_RULES = [
         SECRET_WORD +
         String.raw`)s?(?![a-z])[\w$]*` +
         Q +
-        String.raw`?\s*[:=]\s*\\?(["'])(` +
+        String.raw`?\s*[:=]\s*\\{0,3}(["'])(` +
         VALUE_BODY +
-        String.raw`)\\?\1`,
+        String.raw`)\\{0,3}\1`,
       'g'
     ),
     describe: 'a secret-named variable assigned a literal value',
