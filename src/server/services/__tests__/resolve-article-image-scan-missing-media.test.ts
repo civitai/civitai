@@ -30,7 +30,6 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   getImageUploadBackend,
 }));
 
-const recomputeArticleIngestion = vi.hoisted(() => vi.fn());
 const queueUpdate = vi.hoisted(() => vi.fn());
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -47,7 +46,7 @@ const IMAGE_ID = 4242;
 const run = () =>
   resolveArticleImageScan({ articleId: ARTICLE_ID, imageId: IMAGE_ID, nsfwLevel: 1, userId: 7 });
 
-const ownMocks = [headObject, getImageUploadBackend, queueUpdate, recomputeArticleIngestion];
+const ownMocks = [headObject, getImageUploadBackend, queueUpdate];
 
 beforeEach(() => {
   // clear globally (the canonical dbMock/loggingMock defaults installed by setup.ts must survive),

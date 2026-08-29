@@ -36,7 +36,33 @@ import { isProbeableMediaKey } from './media-key';
 export const MediaPresence = {
   /** The store answered: the object is there. */
   Present: 'present',
-  /** The store answered: the object is NOT there. Refuses the publish. */
+  /**
+   * The store answered: the object is NOT there. Refuses the publish.
+   *
+   * 🔴 THIS VERDICT CANNOT DISTINGUISH A MISSING OBJECT FROM A MISSING BUCKET, AND NO CHECK ON THE
+   * ERROR NAME CAN FIX THAT — do not add one, it will be dead code.
+   *
+   * Both runtimes probe with a `HeadObject`. HTTP forbids a body on a HEAD response, so the AWS
+   * SDK has nothing to parse an error `Code` out of and falls back to the status alone
+   * (`loadRestXmlErrorCode` in `@aws-sdk/core`: `if (output.statusCode == 404) return 'NotFound'`).
+   * Measured against the installed SDK at a local origin, with a GET control to prove the
+   * instrument can observe the name at all:
+   *
+   *     HEAD, 404, empty body ............................ err.name = 'NotFound'
+   *     HEAD, 404, <Error><Code>NoSuchBucket</Code> ...... err.name = 'NotFound'
+   *     HEAD, 404, x-amz-error-code: NoSuchBucket ........ err.name = 'NotFound'
+   *     GET,  404, <Error><Code>NoSuchBucket</Code> ...... err.name = 'NoSuchBucket'   ← control
+   *
+   * So a mistyped or moved bucket answers 404 for EVERY key and lands here, which refuses every
+   * publish while emitting `onRefused` lines identical to a genuine run of misses. That hazard is
+   * OPEN and is not closed by anything in this module. It is stated rather than papered over,
+   * because the version of this comment that claimed it was handled was worse than none: a
+   * maintainer would have believed the guard existed.
+   *
+   * Closing it needs a discriminator a HEAD actually carries — a separate bucket-reachability
+   * check, or a rate test (a run of `absent` across DISTINCT keys in a window is a bucket problem,
+   * not N missing objects). Both are more than this module should decide alone.
+   */
   Absent: 'absent',
   /** The store could not be consulted (threw, timed out, unconfigured, 403). Never a refusal. */
   Unknown: 'unknown',
