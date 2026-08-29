@@ -336,7 +336,14 @@ export function AppListingsModerationTable({
               appBlockId: row.appBlockId,
               // NOT `pendingRequest != null` — that reads the AppListingPublishRequest
               // relation, which is structurally null for an on-site pre-approval draft.
-              hasPendingBlockRequest: row.hasPendingBlockRequest,
+              //
+              // `?? true` because ABSENT MUST MEAN "assume under review". The field is new, so
+              // a client holding a bundle from either side of a deploy — or any future producer
+              // of this DTO — can hand us `undefined`, and `!undefined` is truthy, i.e. the
+              // permissive direction on the input to a DESTRUCTIVE affordance. The service
+              // makes the same choice one boundary in (its empty-set default is documented as
+              // permissive and restricted to this caller); this is that reasoning applied here.
+              hasPendingBlockRequest: row.hasPendingBlockRequest ?? true,
             });
             return (
               <Fragment key={row.id}>

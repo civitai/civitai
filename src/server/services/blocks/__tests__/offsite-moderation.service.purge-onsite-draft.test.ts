@@ -265,9 +265,15 @@ describe('purgeListing — refuses every on-site shape that is NOT an orphan dra
     mockRead.appListing.findUnique.mockResolvedValueOnce(orphanDraft());
     stageLiveSubmission(true);
 
-    await expect(
-      purgeListing({ input: { appListingId: APP_ID, reason: REASON }, reviewerUserId: REVIEWER })
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    // 🔴 NOT the generic NOT_FOUND the other refusals use. This surface is mod-only and the mod
+    // table already shows this exact fact, so hiding it conceals nothing and would leave the
+    // moderator at "not found" for a row visibly on screen. The message must say what to do.
+    const err = await purgeListing({
+      input: { appListingId: APP_ID, reason: REASON },
+      reviewerUserId: REVIEWER,
+    }).catch((e: Error & { code?: string }) => e);
+    expect(err).toMatchObject({ code: 'NOT_TRANSITIONABLE' });
+    expect((err as Error).message).toMatch(/reject or withdraw/i);
 
     // Refused at the replica classify — no tx, no event, no delete, no notification.
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
@@ -292,7 +298,7 @@ describe('purgeListing — refuses every on-site shape that is NOT an orphan dra
 
     await expect(
       purgeListing({ input: { appListingId: APP_ID, reason: REASON }, reviewerUserId: REVIEWER })
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    ).rejects.toMatchObject({ code: 'NOT_TRANSITIONABLE' });
 
     // The tx opened, then rolled back BEFORE the audit event — zero events on a guarded refusal.
     expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();

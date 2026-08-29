@@ -390,6 +390,18 @@ function isPurgeableListing(row: {
  * not by the delete's own predicate. That is a genuinely weaker guarantee than the other terms
  * have, and it is stated here rather than papered over.
  *
+ * 🔴 RESIDUAL RACE, KNOWN AND NOT CLOSED. This is a plain read under READ COMMITTED with no row
+ * lock, so a `submitVersion` that commits between this check and the `deleteMany` yields exactly
+ * the state the check exists to prevent: a pending request whose listing is gone and whose slug
+ * is released. Window is milliseconds.
+ *
+ * 🔴 And the obvious fix does NOT work as a one-sided change. A slug-scoped
+ * `pg_advisory_xact_lock` taken here excludes nothing unless `submitVersion` takes the SAME
+ * lock — a lock is mutual exclusion only between parties that both acquire it, and that path
+ * currently takes none. Closing this properly means touching the submit path too, which is why
+ * it is disclosed rather than half-fixed: a lock added on this side alone would read like a fix
+ * and change nothing, which is the failure mode this whole guard already had once.
+ *
  * Off-site is exempt by construction: an off-site draft's request DOES carry `appListingId`,
  * its purge arm is reachable only at `status:'removed'`, and the pre-existing behaviour there
  * is deliberately unchanged.
@@ -404,9 +416,19 @@ async function assertNoLivePendingSubmission(
     select: { id: true },
   });
   if (live) {
-    // Same generic NOT_FOUND as every other purge refusal — a mod caller must not be able to
-    // probe whether a slug has a live submission through this surface.
-    throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
+    // 🔴 ACTIONABLE, not the generic NOT_FOUND the other refusals use — and the difference is
+    // deliberate. The generic message exists so a caller cannot PROBE a listing's kind or
+    // status; that rationale does not apply here, because this surface is
+    // `moderatorProcedure` + an `isModerator` recheck and the mod table now ships this very
+    // fact to that very audience as `ModerationListingRow.hasPendingBlockRequest`. Hiding it
+    // in the error would conceal nothing and would leave the moderator staring at "not found"
+    // for a listing visibly on their screen — reachable from ordinary replica lag between the
+    // table read and the click. Mirrors `resetOnsiteListingToPending`'s wording for the same
+    // condition.
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'A review is already pending for this app — reject or withdraw it before purging.'
+    );
   }
 }
 

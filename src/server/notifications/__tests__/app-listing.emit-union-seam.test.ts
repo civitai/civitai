@@ -33,9 +33,22 @@ const NOTIFY_SRC = path.resolve(__dirname, '../../services/blocks/app-listing-no
  * nothing would yield an empty union, every `⊆` check would pass vacuously, and the guard would
  * report success while comparing nothing. That is the failure mode this whole file exists to
  * prevent, so it must not be the failure mode of the file.
+ *
+ * 🔴 COMMENTS ARE STRIPPED BEFORE THE MATCH, AND THAT IS NOT TIDINESS. The first version
+ * terminated on the first `;`, which a `//` comment inside the union can contain — the union
+ * already carries multi-line commentary between members, so a semicolon there is an ordinary
+ * authoring act. Measured: a `;` in a trailing comment immediately before a newly appended,
+ * processor-less member truncated the parse to drop exactly that member, and ALL FOUR tests
+ * passed — including the positive control, which only checks the union is non-empty and
+ * contains a long-standing member. The guard read as coverage for the case most likely to
+ * arise (a member appended at the end) while providing none. The two-sided count assertion
+ * below is the second half of the fix: a truncated parse now disagrees with the processor
+ * count even when both `⊆` directions pass.
  */
 function parseEmitUnion(): string[] {
-  const src = readFileSync(NOTIFY_SRC, 'utf8');
+  const src = readFileSync(NOTIFY_SRC, 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '');
   const decl = /export type AppListingOwnerNotificationType\s*=([\s\S]*?);/.exec(src);
   if (!decl) throw new Error(`could not locate the union declaration in ${NOTIFY_SRC}`);
   return [...decl[1].matchAll(/'([a-z0-9-]+)'/g)].map((m) => m[1]);
@@ -58,13 +71,21 @@ describe('app-listing owner notifications — the emit union and the processor k
 
   it('every PROCESSOR key is emittable (else it is dead, or its emitter was renamed)', () => {
     const union = new Set(parseEmitUnion());
-    // `appListingNotifications` is the app-listing FAMILY only; `new-app-listing-comment`
-    // lives in comment.notifications.ts and is emitted through a different helper, so it is
-    // legitimately outside this union.
-    const orphaned = Object.keys(appListingNotifications).filter(
-      (k) => !union.has(k) && k !== 'new-app-listing-comment'
-    );
+    // 🔴 NO EXCLUSION LIST. An earlier revision carved out `new-app-listing-comment` on the
+    // belief that it lived in this processor set; it does not — it is registered in
+    // `comment.notifications.ts` — so the carve-out was DEAD, and a dead exclusion is a
+    // permanent hole for whichever key it names.
+    const orphaned = Object.keys(appListingNotifications).filter((k) => !union.has(k));
     expect(orphaned, 'processor entries nothing is allowed to emit').toEqual([]);
+  });
+
+  /**
+   * 🔴 THE TWO-SIDED COUNT. Both `⊆` checks above can pass while the parse silently dropped
+   * members — a truncated union is a SUBSET of the processors, and every surviving member
+   * still has an entry. Only comparing the sizes catches it.
+   */
+  it('the two sets are the same SIZE — a silently truncated parse cannot pass', () => {
+    expect(parseEmitUnion().length).toBe(Object.keys(appListingNotifications).length);
   });
 
   it('every processor renders a non-empty message and a url for a minimal payload', () => {
