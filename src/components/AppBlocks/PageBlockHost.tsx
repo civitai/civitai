@@ -2922,8 +2922,11 @@ export function PageBlockHost({
   // SHARED_REPORT → apps.shared.report → SHARED_REPORT_RESULT (mutation). A user
   // reports a posted row for mod review; the server already trust-gates + rate-
   // limits + files the report (endpoint pre-exists). Reply is SHARED_WITHDRAW-
-  // style `{ ok, error? }` — the error path MUST carry ok:false or the SDK drops
-  // it (→ hang). reviewMode NACK: report is a shared:write-trust op, never granted
+  // style `{ ok, error? }`. The SDK accepts an error reply whether or not it
+  // carries `ok` (every `{ ok, error }` validator early-accepts on a PRESENT
+  // `error`), so we send `ok: false` because it is the clearer signal, NOT
+  // because omitting it would hang. reviewMode NACK: report is a
+  // shared:write-trust op, never granted
   // in run-for-real (mirrors the other shared writes).
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown; reason?: unknown } | undefined>(
