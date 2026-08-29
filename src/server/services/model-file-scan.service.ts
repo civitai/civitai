@@ -61,6 +61,15 @@ export type ScanOutcome = {
    * disguise, so it is the signal the moderator-hold path keys on.
    */
   formatMismatch?: boolean;
+  /**
+   * The scanner's own explanation of the mismatch, for the operator log ONLY.
+   *
+   * Kept separate from `pickleScan.message` on purpose: that field is served by the public v1
+   * API and is therefore a fixed string. An earlier revision passed the public constant to the
+   * log as well, which left a moderator working the queue with no idea which format was
+   * declared or what was actually detected.
+   */
+  formatMismatchDetail?: string | null;
   /** Full upstream payload (orchestrator step outputs or legacy ScanResult) for forensics. */
   rawScanResult?: unknown;
 };
@@ -336,7 +345,7 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     await holdModelForFormatMismatch({
       modelId: file.modelVersion.modelId,
       fileId,
-      detail: outcome.pickleScan?.message ?? null,
+      detail: outcome.formatMismatchDetail ?? null,
     }).catch((err) =>
       logToAxiom(
         {
@@ -407,24 +416,48 @@ async function holdModelForFormatMismatch({
     where: { id: modelId },
     select: { id: true, name: true, meta: true, userId: true, status: true },
   });
-  // 🔴 ALLOW-LIST, NOT A DENY-LIST. Only a model that is actually reachable by users can be
-  // "held" in any meaningful sense, and holding anything else does real harm.
+  if (!model) return;
+
+  // 🔴 LOGGED BEFORE ANY STATUS BRANCH, DELIBERATELY. An earlier revision returned above this
+  // line for every non-published model, which meant the single most common case — a mismatch
+  // found while the model is still a Draft — produced NO hold, NO queue entry and NO log. It
+  // was invisible. Whatever we decide to do about the model, the detection itself is always
+  // recorded.
+  logToAxiom(
+    {
+      type: 'warning',
+      name: 'scan-format-mismatch',
+      message: `File ${fileId} on model ${modelId} does not match its declared format`,
+      modelId,
+      fileId,
+      modelStatus: model.status,
+      detail,
+    },
+    'webhooks'
+  ).catch();
+
+  // 🔴 UNPUBLISHING IS ONLY MEANINGFUL FOR SOMETHING THAT IS PUBLISHED, and doing it to
+  // anything else causes real harm — a never-published Draft would be pushed to
+  // UnpublishedViolation, which its own creator cannot undo (mod-only republish).
   //
-  // A deny-list of {Unpublished, UnpublishedViolation, Deleted} looks equivalent and is not:
-  // it lets `Draft` through, and Draft is the COMMON case here, not an edge case. Files are
-  // scanned by scan-files.ts, whose WHERE clause is virusScanResult/exists/scanRequestedAt with
-  // NO model-status predicate, and models are created Draft with files attached during the
-  // upload wizard — so a brand-new upload is normally scanned while still a draft, minutes
-  // before it is ever published. Holding one would push a never-published draft to
-  // UnpublishedViolation, lock its own creator out of it (mod-only republish), and fire the
-  // generic "your version was unpublished" notification — which selects on meta alone, with no
-  // status predicate — about a version that was never published, on top of the message below.
+  // But "don't unpublish a Draft" must not become "ignore a Draft". Files are scanned by
+  // scan-files.ts, which has NO model-status predicate, and models are created Draft with
+  // files attached during the upload wizard — so the FIRST upload of a disguised file is
+  // normally scanned while still a draft. Nothing re-scans it later, and the publish path does
+  // not consult scan results, so simply returning here would let it be published afterwards
+  // with no further checks. That is the mirror of the bug this branch was added to fix.
   //
-  // Published and Scheduled are the only states where a hold both means something and is safe.
-  if (
-    !model ||
-    (model.status !== ModelStatus.Published && model.status !== ModelStatus.Scheduled)
-  ) {
+  // (For the record: the per-VERSION unpublish notification is already status-scoped in
+  // model.service.ts and would not fire for a draft's versions. The harm that motivates this
+  // branch is the model-level UnpublishedViolation lockout, not that notification.)
+  //
+  // So a non-published model is FLAGGED but not unpublished: meta.needsReview is what the
+  // moderator queue keys on, and setting it costs the creator nothing.
+  if (model.status !== ModelStatus.Published && model.status !== ModelStatus.Scheduled) {
+    await dbWrite.model.update({
+      where: { id: modelId },
+      data: { meta: { ...(model.meta as ModelMeta), needsReview: true } as Prisma.InputJsonValue },
+    });
     return;
   }
 
@@ -433,7 +466,8 @@ async function holdModelForFormatMismatch({
     userId: -1,
     reason: 'other',
     // Same reasoning as FORMAT_MISMATCH_PUBLIC_MESSAGE — this reaches the uploader, who is the
-    // one party we must not hand a detector readout to. `detail` is logged, not echoed.
+    // one party we must not hand a detector readout to. The scanner's text goes to the log
+    // above via `detail`; it is never echoed to the creator or to the public API.
     customMessage:
       'Model held for review: an uploaded file could not be verified as the file type it declares.',
     meta: { ...(model.meta as ModelMeta), needsReview: true },
@@ -665,7 +699,8 @@ export const FORMAT_MISMATCH_SKIP_REASON = 'format-mismatch';
  * What a mismatch shows publicly. Deliberately says nothing about what the scanner detected:
  * this string is served by the public v1 model-versions API, so anything specific here is an
  * oracle an uploader can iterate against. The scanner's full explanation stays in
- * `rawScanResult` and in the moderator-facing log.
+ * `rawScanResult` and reaches the operator log via ScanOutcome.formatMismatchDetail, which is
+ * deliberately a different field from this one.
  */
 export const FORMAT_MISMATCH_PUBLIC_MESSAGE =
   'File format could not be verified. This file is under review.';
@@ -832,6 +867,8 @@ export async function processModelFileScanResult(req: NextApiRequest) {
       dangerousImports: pickleOut.dangerousImports ?? undefined,
     };
     outcome.formatMismatch = isFormatMismatch(pickleOut);
+    // The scanner's text, never the public constant — see formatMismatchDetail.
+    outcome.formatMismatchDetail = isFormatMismatch(pickleOut) ? pickleOut.output ?? null : null;
   }
 
   if (hashStep?.output) {

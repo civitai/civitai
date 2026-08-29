@@ -1466,6 +1466,10 @@ describe('model-file-scan.service', () => {
       return { body } as unknown as Parameters<typeof processModelFileScanResult>[0];
     }
 
+    // Any skip reason NOT in the byte-verified set. The specific legacy strings are an
+    // implementation detail of the scanner build and are deliberately not named here.
+    const LEGACY_UNVERIFIED_SKIP_REASON = 'legacy-unverified-skip';
+
     const pickleStep = (output: Record<string, unknown>) => ({
       $type: 'modelPickleScan',
       output,
@@ -1597,9 +1601,9 @@ describe('model-file-scan.service', () => {
     });
 
     it('a legacy metadata-based skip still passes while strict verification is off', async () => {
-      // Deployment-ordering guard: older workers emit "safetensors-resource-info" for a large
-      // share of uploads. Until SCAN_STRICT_SKIP_VERIFICATION is flipped on those must keep
-      // passing, or shipping the web app ahead of the scanner fleet would flag many of them.
+      // Deployment-ordering guard: until SCAN_STRICT_SKIP_VERIFICATION is flipped on, a skip
+      // reason this build does not recognize must keep passing, or shipping the web app ahead
+      // of the scanner fleet would flag ordinary uploads. See the flag's note.
       onlyFlags(); // strict verification OFF
 
       const updateCall = await runWithSteps([
@@ -1607,7 +1611,7 @@ describe('model-file-scan.service', () => {
           exitCode: 0,
           status: 'SkippedSafetensors',
           skipped: true,
-          skipReason: 'safetensors-resource-info',
+          skipReason: LEGACY_UNVERIFIED_SKIP_REASON,
           globalImports: [],
           dangerousImports: [],
           dangerousImportsFound: false,
@@ -1625,7 +1629,7 @@ describe('model-file-scan.service', () => {
           exitCode: 0,
           status: 'SkippedSafetensors',
           skipped: true,
-          skipReason: 'safetensors-resource-info',
+          skipReason: LEGACY_UNVERIFIED_SKIP_REASON,
           globalImports: [],
           dangerousImports: [],
           dangerousImportsFound: false,
@@ -1713,7 +1717,73 @@ describe('model-file-scan.service', () => {
       expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
     });
 
-    it('does not hold a Draft model — the common state when a file is scanned', async () => {
+    it('flags a Draft model for review instead of unpublishing it, and always logs', async () => {
+      // 🔴 The mirror-bug guard. An earlier revision returned early for any non-published
+      // model, which meant the MOST COMMON case — a mismatch found while the model is still a
+      // draft — produced no hold, no queue entry and no log at all, and the creator could then
+      // publish it with nothing re-checking. Draft must be flagged (needsReview) without being
+      // unpublished, and the detection must always be recorded.
+      onlyFlags('scan-format-mismatch-hold');
+      mockDbWrite.model.findUnique.mockResolvedValue({
+        id: 200,
+        name: 'Test Model',
+        meta: {},
+        userId: 42,
+        status: 'Draft',
+      });
+      mockDbWrite.model.update.mockResolvedValue({});
+
+      await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(mockUnpublishModelById).not.toHaveBeenCalled();
+      expect(mockDbWrite.model.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 200 },
+          data: expect.objectContaining({ meta: expect.objectContaining({ needsReview: true }) }),
+        })
+      );
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'scan-format-mismatch', modelStatus: 'Draft' }),
+        'webhooks'
+      );
+    });
+
+    it('holds a Scheduled model, not only a Published one', async () => {
+      // KILLING FIXTURE for the Scheduled arm of the allow-list. Every other fixture in this
+      // block uses Published/Draft/UnpublishedViolation, so dropping `|| Scheduled` previously
+      // left the suite fully green while silently ceasing to hold scheduled models.
+      onlyFlags('scan-format-mismatch-hold');
+      mockDbWrite.model.findUnique.mockResolvedValue({
+        id: 200,
+        name: 'Test Model',
+        meta: {},
+        userId: 42,
+        status: 'Scheduled',
+      });
+
+      await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(mockUnpublishModelById).toHaveBeenCalled();
+    });
+
+    it('sends the scanner explanation to the operator log, not the public constant', async () => {
+      // The log is the only place a moderator can see WHICH format was declared and what was
+      // detected. An earlier revision passed the public fixed string here, leaving the queue
+      // with nothing actionable.
+      onlyFlags('scan-format-mismatch-hold');
+
+      await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'scan-format-mismatch',
+          detail: expect.stringContaining('does not match file contents'),
+        }),
+        'webhooks'
+      );
+    });
+
+    it('does not hold a Draft model', async () => {
       // Scans are driven with no model-status predicate and models are Draft during the upload
       // wizard, so this is the ordinary case. Holding one would push a never-published draft to
       // a mod-only status and lock its own creator out of it.
