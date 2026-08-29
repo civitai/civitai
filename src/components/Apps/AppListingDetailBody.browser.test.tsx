@@ -5,6 +5,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as RecentsMod from '~/components/Apps/recentlyOpenedAppsStore';
 import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
+import type * as NotificationsMod from '~/utils/notifications';
 import type { ListingCard, ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -38,7 +39,10 @@ const WIDE: [number, number] = [1440, 900];
 const NARROW: [number, number] = [390, 844];
 
 const mocks = vi.hoisted(() => ({
-  currentUser: null as null | { id: number; username: string },
+  // `isModerator` is what `isAppReviewer` reads — the gate on the menu's moderator
+  // section. Optional so every pre-existing fixture keeps its exact meaning (absent →
+  // falsy → not a moderator).
+  currentUser: null as null | { id: number; username: string; isModerator?: boolean },
   // Items the mocked `appListings.listAvailable` returns to the related rail.
   relatedItems: [] as unknown[],
   // Every `recordRecentlyOpenedApp(...)` CALL seen this test, in order —
@@ -48,6 +52,12 @@ const mocks = vi.hoisted(() => ({
   creator: null as null | Record<string, unknown>,
   reportMutate: vi.fn(),
   upsertMutate: vi.fn(),
+  // The three MODERATOR procs the `⋮` menu's mod section reaches. The two reset procs
+  // are recorded SEPARATELY on purpose: they are kind-routed, a mis-route is a flat
+  // NOT_FOUND on a live listing, and a single shared spy could not tell the two apart.
+  messageOwnerMutate: vi.fn(),
+  resetOffsiteMutate: vi.fn(),
+  resetOnsiteMutate: vi.fn(),
   // Store-visibility flags, MUTABLE per test. Previously a fixed literal inside the
   // provider mock, which meant this suite could only ever construct a `full`-scope
   // viewer — and so was structurally unable to see the `public-external` seam the
@@ -136,6 +146,40 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           isPending: false,
         }),
       },
+      // The moderator section's three procs. The REAL `MessageAppOwnerModal` and
+      // `UnpublishListingModal` are mounted (not stubbed) — the menu → modal wiring is
+      // the seam this change introduces, so it is exercised end to end exactly as the
+      // review/report pair above is.
+      messageAppOwner: {
+        useMutation: (opts?: {
+          onSuccess?: (r: { recipientCount: number }) => void | Promise<void>;
+        }) => ({
+          mutate: (input: unknown) => {
+            mocks.messageOwnerMutate(input);
+            void opts?.onSuccess?.({ recipientCount: 1 });
+          },
+          mutateAsync: vi.fn(),
+          isPending: false,
+        }),
+      },
+      resetListingToPending: {
+        useMutation: (opts?: { onSuccess?: () => void | Promise<void> }) => ({
+          mutate: (input: unknown) => {
+            mocks.resetOffsiteMutate(input);
+            void opts?.onSuccess?.();
+          },
+          isPending: false,
+        }),
+      },
+      resetOnsiteListingToPending: {
+        useMutation: (opts?: { onSuccess?: () => void | Promise<void> }) => ({
+          mutate: (input: unknown) => {
+            mocks.resetOnsiteMutate(input);
+            void opts?.onSuccess?.();
+          },
+          isPending: false,
+        }),
+      },
     },
     // The SmartCreatorCard's own fetch. 🔴 VERIFIED PUBLIC: `user.getCreator` is a
     // `publicProcedure` in `src/server/routers/user.router.ts`, which is why this page
@@ -191,6 +235,18 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
   UserProfileLink: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
 }));
 
+// The two moderator modals report their outcome through the shared notification
+// helpers. Spread the REAL module and override only the two writers
+// (local-rules/no-wholesale-module-mock) so every other importer keeps working, and so
+// the success path is observable rather than a toast nobody can see.
+const showSuccess = vi.fn();
+const showError = vi.fn();
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsMod>()),
+  showSuccessNotification: (...a: unknown[]) => showSuccess(...a),
+  showErrorNotification: (...a: unknown[]) => showError(...a),
+}));
+
 // Import AFTER the mocks are declared (vi.mock is hoisted, imports are not).
 const { AppListingDetailBody } = await import('./AppListingDetailBody');
 // The store itself, through the same partial mock (the readers are the REAL
@@ -208,6 +264,9 @@ beforeEach(async () => {
   mocks.creator = null;
   mocks.reportMutate.mockClear();
   mocks.upsertMutate.mockClear();
+  mocks.messageOwnerMutate.mockClear();
+  mocks.resetOffsiteMutate.mockClear();
+  mocks.resetOnsiteMutate.mockClear();
   // 🔴 Restore the WIDE viewport before every test. The viewport is browser-global
   // state, so without this a narrow-layout test silently re-runs every later test at
   // 390px — the "config pins a dimension" trap, arriving by leakage instead of config.
@@ -457,10 +516,16 @@ describe('AppListingDetailBody', () => {
   });
 
   test('🔴 the Review menu item opens the review modal (menu → modal wiring)', async () => {
-    // The structural reason this test exists: a Mantine Menu.Dropdown UNMOUNTS on
-    // close, so a modal rendered as a sibling of the Menu.Item would be destroyed by
-    // the very click meant to open it. The modals are mounted outside the menu; this
-    // is the assertion that says so.
+    // The structural reason the modals are mounted outside the menu: a Mantine
+    // Menu.Dropdown UNMOUNTS on close, so a modal rendered as a sibling of the Menu.Item
+    // would be destroyed by the very click meant to open it.
+    //
+    // 🔴 CORRECTED — this test does NOT verify that placement, though it used to say it
+    // did. Measured: moving `<ReviewListingModal>` inside `<Menu.Dropdown>` left this
+    // suite green at 86/86, because Mantine keeps the dropdown mounted through its close
+    // transition and the portalled modal opens synchronously. This test pins the WIRING
+    // (item → real modal); the PLACEMENT is pinned in the blocking node project by
+    // `__tests__/appListingDetailModalPlacement.test.ts`.
     mocks.currentUser = { id: 999, username: 'bob' };
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     const dropdown = (await openMenu(within)) as HTMLElement;
@@ -1741,5 +1806,180 @@ describe('AppListingDetailBody — description / screenshot order', () => {
     );
     expect(container.querySelector('[data-testid="apps-listing-description"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="apps-listing-screenshot-grid"]')).toBeNull();
+  });
+});
+
+// ── the `⋮` menu's MODERATOR section ─────────────────────────────────────────
+//
+// The action SET is derived by the pure `appListingDetailModActions`, whose correctness
+// (including "relist can never appear here") is pinned in the BLOCKING node project by
+// `__tests__/appListingDetailModActions.test.ts`. What this block pins is the part only
+// a rendered component can answer: that the items appear for a moderator and not for
+// anyone else, that each opens its modal ACROSS the dropdown's unmount, and that the
+// unpublish fires the proc for the listing's own KIND with the id and the typed reason.
+describe('AppListingDetailBody — moderator menu section', () => {
+  const MOD = { id: 999, username: 'mod', isModerator: true };
+  const NON_MOD = { id: 999, username: 'bob' };
+  const MESSAGE_ITEM = 'apps-listing-mod-message-owner';
+  const UNPUBLISH_ITEM = 'apps-listing-mod-unpublish';
+  const MANAGE_ITEM = 'apps-listing-mod-manage';
+
+  /** An off-site fixture — the OTHER arm of the kind routing. */
+  const offsite: Partial<ListingDetail> = {
+    kind: 'offsite',
+    kindData: { kind: 'offsite', externalUrl: 'https://ext.app', connectClientId: null },
+  };
+
+  // Distinctive and comfortably over `OFFSITE_MOD_REASON_MIN`, and distinct from every
+  // other string in this file so a payload assertion cannot match by accident.
+  const REASON = 'screenshots do not match the shipped app';
+
+  test('🔴 a MODERATOR gets Contact app owner, Unpublish, and the review-queue link', async () => {
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${UNPUBLISH_ITEM}"]`)).not.toBeNull();
+    // The INVERSE affordance. There is no Relist button because a removed listing 404s
+    // on this route; the link is where a removed listing can actually be acted on.
+    expect(dropdown.querySelector(`[data-testid="${MANAGE_ITEM}"]`)?.getAttribute('href')).toBe(
+      '/apps/review'
+    );
+    // Asserted on the STATE, not on a word: no lifecycle action here may be a relist.
+    expect(dropdown.textContent).not.toContain('Relist');
+  });
+
+  test('🔴 a signed-in NON-moderator gets NONE of them', async () => {
+    mocks.currentUser = NON_MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    // POSITIVE CONTROL from the same dropdown: the USER items are present, so the three
+    // zeros below are about the moderator gate and not about an empty menu.
+    expect(dropdown.querySelector('[data-testid="apps-listing-review-action"]')).not.toBeNull();
+    expect(dropdown.querySelector('[data-testid="apps-listing-report-action"]')).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${UNPUBLISH_ITEM}"]`)).toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${MANAGE_ITEM}"]`)).toBeNull();
+  });
+
+  test('the Contact app owner item opens the composer (menu → modal wiring)', async () => {
+    // 🔴 THIS DOES **NOT** PIN THE "mounted outside Menu.Dropdown" RULE, and the
+    // neighbouring review-item test's comment claiming that role for itself is wrong.
+    // MEASURED on this change: moving `<ReviewListingModal>` — and separately
+    // `<MessageAppOwnerModal>` — INSIDE `<Menu.Dropdown>`, i.e. exactly the placement the
+    // rule forbids, left this whole suite green at 86/86. Mantine keeps the dropdown's
+    // subtree mounted through its close transition and the modal is portalled and opens
+    // synchronously, so this assertion resolves inside that window and cannot tell the
+    // two placements apart.
+    //
+    // What this test IS: the menu item is wired to the composer and the composer is the
+    // real component. The PLACEMENT rule is pinned structurally, in the blocking node
+    // project, by `__tests__/appListingDetailModalPlacement.test.ts` — which was watched
+    // to go red on both of those mutants.
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    await userEvent.click(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`) as HTMLElement);
+    // Portalled to the body, and it is the REAL composer.
+    await expect
+      .element(page.getByTestId('apps-mod-message-subject').first())
+      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mod-message-body').first()).toBeInTheDocument();
+  });
+
+  test('🔴 the Unpublish item opens the reason-gated confirm, naming the ON-SITE runtime stop', async () => {
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    await userEvent.click(
+      dropdown.querySelector(`[data-testid="${UNPUBLISH_ITEM}"]`) as HTMLElement
+    );
+    const consequences = page.getByTestId('apps-listing-unpublish-consequences').first();
+    await expect.element(consequences).toBeInTheDocument();
+    // The on-site proc suspends the backing block — the app stops serving, not merely
+    // stops being listed. The exact sentence is pinned in the blocking tier; here the
+    // claim is that the ON-SITE one is the one this fixture gets.
+    await expect.element(consequences).toHaveTextContent(/stops serving/);
+  });
+
+  test('🔴 an ON-SITE unpublish calls the ON-SITE proc with the listing id + reason, and NOT the off-site one', async () => {
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    await userEvent.click(
+      dropdown.querySelector(`[data-testid="${UNPUBLISH_ITEM}"]`) as HTMLElement
+    );
+    await page.getByTestId('apps-listing-unpublish-reason').first().fill(REASON);
+    await page.getByTestId('apps-listing-unpublish-submit').first().click();
+
+    expect(mocks.resetOnsiteMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.resetOnsiteMutate).toHaveBeenCalledWith({ appListingId: 'l1', reason: REASON });
+    // 🔴 The MIS-ROUTE arm. Each proc answers NOT_FOUND for the other kind, so calling
+    // the wrong one is a flat failure on a live listing, not a degraded outcome.
+    expect(mocks.resetOffsiteMutate).not.toHaveBeenCalled();
+  });
+
+  test('🔴 an OFF-SITE unpublish calls the OFF-SITE proc, and NOT the on-site one', async () => {
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base(offsite)} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    await userEvent.click(
+      dropdown.querySelector(`[data-testid="${UNPUBLISH_ITEM}"]`) as HTMLElement
+    );
+    // Same fixture arm as above, so the copy difference is a fact about the kind: an
+    // off-site listing has no block to suspend and must not claim one.
+    await expect
+      .element(page.getByTestId('apps-listing-unpublish-consequences').first())
+      .not.toHaveTextContent(/stops serving/);
+    await page.getByTestId('apps-listing-unpublish-reason').first().fill(REASON);
+    await page.getByTestId('apps-listing-unpublish-submit').first().click();
+
+    expect(mocks.resetOffsiteMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.resetOffsiteMutate).toHaveBeenCalledWith({ appListingId: 'l1', reason: REASON });
+    expect(mocks.resetOnsiteMutate).not.toHaveBeenCalled();
+  });
+
+  test('🔴 the submit is GATED on the reason — an empty reason fires nothing', async () => {
+    // The reason is not a confirmation ritual: both procs require it, write it into the
+    // audit event, and DELIVER it to the owner. A submit that fired without one would
+    // send a developer a takedown notice with no explanation in it.
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    await userEvent.click(
+      dropdown.querySelector(`[data-testid="${UNPUBLISH_ITEM}"]`) as HTMLElement
+    );
+    const submit = document.querySelector(
+      '[data-testid="apps-listing-unpublish-submit"]'
+    ) as HTMLButtonElement;
+    expect(submit).not.toBeNull();
+    expect(submit.disabled).toBe(true);
+    expect(mocks.resetOnsiteMutate).not.toHaveBeenCalled();
+
+    // POSITIVE CONTROL on the same button: it opens once the floor is cleared, so the
+    // disabled state above is about the gate and not about how the button renders.
+    await page.getByTestId('apps-listing-unpublish-reason').first().fill(REASON);
+    await expect
+      .element(page.getByTestId('apps-listing-unpublish-submit').first())
+      .toBeEnabled();
+  });
+
+  test('🔴 preview renders NO moderator items for a MODERATOR — with its live positive control', async () => {
+    // In preview `detail.id` is not guaranteed to be an `AppListing` id at all (the
+    // fallback builder sets `id: row.appListingId ?? row.id`), so every one of these
+    // procs could answer NOT_FOUND. The whole menu is suppressed there.
+    mocks.currentUser = MOD;
+    const live = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(live.within.getByText('My App')).toBeInTheDocument();
+    expect(live.container.querySelectorAll(`[data-testid="${MENU}"]`)).toHaveLength(1);
+
+    const prev = await renderScoped(<AppListingDetailBody detail={base({})} preview />);
+    await expect.element(prev.within.getByText('My App')).toBeInTheDocument();
+    expect(prev.container.querySelectorAll(`[data-testid="${MENU}"]`)).toHaveLength(0);
+    // 🔴 NOT asserted here: a `querySelectorAll` for the mod ITEMS. With no menu opened
+    // in either arm that count is 0 on BOTH sides, so it could never fail — a vacuous
+    // assertion dressed as coverage. The trigger's absence entails the items' absence,
+    // and `appListingDetailModActions` returning `[]` in preview is pinned in the
+    // blocking tier.
   });
 });

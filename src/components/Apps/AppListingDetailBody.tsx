@@ -23,10 +23,13 @@ import {
   IconArrowLeft,
   IconDotsVertical,
   IconDownload,
+  IconEyeOff,
   IconFlag,
   IconInfoCircle,
+  IconMail,
   IconPencil,
   IconPlugConnected,
+  IconShieldCheck,
   IconThumbUp,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
@@ -49,6 +52,13 @@ import {
   shouldShowConnectCapability,
   shouldShowOffsiteDisclosure,
 } from '~/components/Apps/appListingDetailView';
+import {
+  appListingDetailModActions,
+  detailModActionLabel,
+} from '~/components/Apps/appListingDetailModActions';
+import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
+import { UnpublishListingModal } from '~/components/Apps/UnpublishListingModal';
+import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { AppListingScreenshotViewer } from '~/components/Apps/AppListingScreenshotViewer';
@@ -818,8 +828,15 @@ export interface AppListingDetailBodyProps {
    *   - the header STAT CHIPS (recommendations + installs are usage aggregates a
    *     shadow listing structurally does not have — zeros there would read as facts
    *     about the app rather than about the posture),
-   *   - the `⋮` overflow MENU and everything in it (owner edit, review, report) —
-   *     every item is a live action on an UN-APPROVED listing,
+   *   - the `⋮` overflow MENU and everything in it (owner edit, review, report, and
+   *     the moderator section) — every item is a live action on an UN-APPROVED
+   *     listing. 🔴 The MODERATOR items are omitted for a second, independent reason
+   *     that survives even though this posture's only viewer IS a moderator: in
+   *     preview `detail.id` is not guaranteed to be an `AppListing` id at all. The
+   *     fallback builder (`buildListingDetailPreview`) sets `id: row.appListingId ??
+   *     row.id`, so on the fallback path it is the publish REQUEST's id, and every
+   *     mod proc keyed on it would answer NOT_FOUND. That derivation lives in
+   *     `appListingDetailModActions.detailListingStatus`, not here,
    *   - the right-rail ACTION CARD (primary action) and the clickable hero, for the
    *     same reason,
    *   - the `SmartCreatorCard` (a live tRPC surface; the read-only `CreatorChip`
@@ -883,6 +900,32 @@ export function AppListingDetailBody({
   const report = useReportListingAffordance();
   const [reviewOpened, reviewModal] = useDisclosure(false);
 
+  // MODERATOR section of the same menu. The action SET is derived, never hand-rolled:
+  // `appListingDetailModActions` intersects the shared lifecycle state machine
+  // (`listingModActions`, which the /apps/review mgmt table also depends on) with the
+  // subset this surface implements, and answers empty for a non-moderator and in
+  // preview. See that module for why `relist` can never appear here.
+  //
+  // 🔴 The gate is `isAppReviewer` — the existing named predicate the /apps/review page
+  // and `IframeHost` already use — NOT an inlined `isModerator`. It is COSMETIC: every
+  // proc behind these items is `moderatorProcedure` plus an inner `isModerator` recheck,
+  // which is the actual boundary.
+  const isModerator = isAppReviewer(currentUser);
+  const modActions = appListingDetailModActions({
+    isModerator,
+    preview,
+    kind: detail.kind,
+  });
+
+  // 🔴 Both mod modals are owned HERE for the same structural reason the review/report
+  // pair above is: a Mantine `Menu.Dropdown` UNMOUNTS when the menu closes, so a modal
+  // rendered as a sibling of its `Menu.Item` is destroyed by the click that opens it.
+  // Each holds the LISTING (nullable) rather than a boolean, matching the contract
+  // `MessageAppOwnerModal` already defines for its one other call site.
+  const modListing = { appListingId: detail.id, slug: detail.slug, kind: detail.kind };
+  const [messageOpened, messageModal] = useDisclosure(false);
+  const [unpublishOpened, unpublishModal] = useDisclosure(false);
+
   // Hero click-to-launch — the banner is an affordance for the SAME destination
   // as the primary CTA, derived FROM that CTA (`getDetailPrimaryAction`) rather
   // than by re-deriving the kind matrix, so the two cannot drift apart.
@@ -906,7 +949,10 @@ export function AppListingDetailBody({
       ? primaryAction.href
       : null;
 
-  const showMenu = !preview && (showEdit || canReview || canReport);
+  // `modActions` is already empty in preview, so the leading `!preview` is not what
+  // suppresses the mod section — it is the pre-existing clause that suppresses the whole
+  // menu, kept verbatim.
+  const showMenu = !preview && (showEdit || canReview || canReport || modActions.length > 0);
 
   return (
     <Stack gap="lg">
@@ -1037,6 +1083,53 @@ export function AppListingDetailBody({
                     >
                       {report.label}
                     </Menu.Item>
+                  )}
+                  {/* MODERATOR section — divided and labelled so a mod action is never
+                      one slot away from a reader's "Leave a review". The set comes from
+                      `appListingDetailModActions`; the ORDER is that function's
+                      (Contact before the lifecycle action), and the review-queue link
+                      is last because it navigates away rather than acting. */}
+                  {modActions.length > 0 && (
+                    <>
+                      <Menu.Divider />
+                      <Menu.Label>Moderator</Menu.Label>
+                      {modActions.includes('message-owner') && (
+                        <Menu.Item
+                          leftSection={<IconMail size={14} stroke={1.5} />}
+                          onClick={messageModal.open}
+                          data-testid="apps-listing-mod-message-owner"
+                        >
+                          {detailModActionLabel('message-owner')}
+                        </Menu.Item>
+                      )}
+                      {modActions.includes('reset-to-pending') && (
+                        <Menu.Item
+                          color="red"
+                          leftSection={<IconEyeOff size={14} stroke={1.5} />}
+                          onClick={unpublishModal.open}
+                          data-testid="apps-listing-mod-unpublish"
+                        >
+                          {detailModActionLabel('reset-to-pending')}
+                        </Menu.Item>
+                      )}
+                      {/* 🔴 THE INVERSE AFFORDANCE, AND IT IS A LINK RATHER THAN A
+                          BUTTON ON PURPOSE. There is no relist/republish control here
+                          because there cannot be one: `relistListing` acts on a
+                          `removed` listing, this page's read is approved-only, and a
+                          removed listing 404s before the body mounts. So the honest way
+                          back is the surface that CAN see a removed listing — the
+                          /apps/review mgmt table, which already carries Relist (and
+                          Claim/Purge) for exactly that state. See
+                          `appListingDetailModActions.detailListingStatus`. */}
+                      <Menu.Item
+                        component={Link}
+                        href="/apps/review"
+                        leftSection={<IconShieldCheck size={14} stroke={1.5} />}
+                        data-testid="apps-listing-mod-manage"
+                      >
+                        Manage in review queue
+                      </Menu.Item>
+                    </>
                   )}
                 </Menu.Dropdown>
               </Menu>
@@ -1247,6 +1340,26 @@ export function AppListingDetailBody({
       )}
       {!preview && canReport && (
         <ReportListingModal appListingId={detail.id} {...report.modalProps} />
+      )}
+      {/* The two MODERATOR modals, mounted outside the menu for the same reason. Gated
+          on the same derived set as their menu items — `modActions` is empty for a
+          non-moderator and in preview, so neither form is mounted for a viewer who
+          cannot act. `MessageAppOwnerModal` is REUSED, not forked: it names no
+          recipient by design (the owner is resolved server-side, and for an on-site
+          listing that resolution can disagree with the listing's own `userId` column),
+          and its call-site ledger in `__tests__/appModeratorMessageForm.callSites.test.ts`
+          now enumerates this file. */}
+      {modActions.includes('message-owner') && (
+        <MessageAppOwnerModal
+          listing={messageOpened ? modListing : null}
+          onClose={messageModal.close}
+        />
+      )}
+      {modActions.includes('reset-to-pending') && (
+        <UnpublishListingModal
+          listing={unpublishOpened ? modListing : null}
+          onClose={unpublishModal.close}
+        />
       )}
     </Stack>
   );
