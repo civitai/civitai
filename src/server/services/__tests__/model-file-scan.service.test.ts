@@ -852,12 +852,11 @@ describe('model-file-scan.service', () => {
       expect(updateCall.data.virusScanMessage).toBe('EICAR signature detected');
     });
 
-    // skipReason was 'safetensors-extension' until 2026-08-28. That is an extension-based
-    // skip — the scanner trusting the filename — and it is the behaviour the format-conformance
-    // fix removes, so it no longer belongs in a test asserting a PASS. The case this test
-    // actually exists for (a genuine safetensors skip yields Success and a null message) is
-    // preserved by moving it to the byte-verified reason. Both legacy-skip regimes are covered
-    // explicitly in the 'scan format conformance' block below.
+    // This previously used an extension-derived skipReason, which the format-conformance change
+    // no longer treats as verified, so it no longer belongs in a test asserting a PASS. The case
+    // this test exists for — a genuine skip yields Success with a null message — is preserved by
+    // moving it to the byte-verified reason. Both regimes are covered in the
+    // 'scan format conformance' block below.
     it('treats a byte-verified pickleScan skip (safetensors) as Success with null message', async () => {
       mockGetWorkflow.mockResolvedValue({
         data: {
@@ -1458,12 +1457,9 @@ describe('model-file-scan.service', () => {
   });
 
   // -------------------------------------------------------------------------------------
-  // Regression cover for an upload-scanner bypass in which a file whose contents did not
-  // match its declared container format was recorded as having passed both scans.
-  //
-  // The web app's half of the defect is here: `skipped === true` was mapped straight to
-  // Success, so the scanner saying "I did not look at this file" became "this file is clean".
-  // Incident record and measurements are in the internal ticket.
+  // Regression cover: a file whose contents do not match its declared container format must
+  // never be recorded as having passed the scans. Incident record, mechanism and measurements
+  // are in the internal ticket — deliberately not restated here.
   // -------------------------------------------------------------------------------------
   describe('scan format conformance', () => {
     function makeReq(body: unknown) {
@@ -1525,10 +1521,16 @@ describe('model-file-scan.service', () => {
       expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
     });
 
-    it('surfaces the scanner explanation as the message a moderator reads', async () => {
+    it('keeps the scanner explanation in rawScanResult, not in the public message', async () => {
+      // The detail must survive for forensics and for the moderator-facing log, but NOT in
+      // pickleScanMessage, which the public v1 API serves. Both halves asserted together so a
+      // future change cannot quietly move it from one to the other.
       const updateCall = await runWithSteps([pickleStep(formatMismatchOutput)]);
 
-      expect(updateCall.data.pickleScanMessage).toContain('does not match file contents');
+      expect(JSON.stringify(updateCall.data.rawScanResult)).toContain(
+        'does not match file contents'
+      );
+      expect(updateCall.data.pickleScanMessage).not.toContain('does not match file contents');
     });
 
     it('holds the model for moderator review, without issuing a violation strike', async () => {
@@ -1576,8 +1578,8 @@ describe('model-file-scan.service', () => {
     });
 
     it('leaves a byte-verified safetensors skip passing, and does not hold it', async () => {
-      // The false-positive control. 99.2% of metadata-skipped files measured on 2026-08-28
-      // were genuine safetensors; under the new scanner they arrive with this skipReason.
+      // The false-positive control: the overwhelming majority of real uploads are genuine
+      // safetensors, and under the new scanner they arrive with this skipReason.
       const updateCall = await runWithSteps([
         pickleStep({
           exitCode: 0,
@@ -1651,6 +1653,98 @@ describe('model-file-scan.service', () => {
       ]);
 
       expect(updateCall.data.virusScanResult).toBe(ScanResultCode.Error);
+    });
+
+    it('ClamAV limits-exceeded is Error even when the status is unrecognized', async () => {
+      // KILLING FIXTURE for the limitsExceeded guard. The other limits test also sets
+      // status:'Error', which independently reaches Error via status.includes('error') — so
+      // deleting the guard leaves that test green and the guard untested. This payload has NO
+      // status, which is exactly the case the guard exists for: an unrecognized status becomes
+      // null at the orchestrator, the code falls through to exitCodeToScanResult, and a limits
+      // bail-out exits 1 — which would score as Danger, a false virus detection.
+      const updateCall = await runWithSteps([
+        {
+          $type: 'modelClamScan',
+          output: { exitCode: 1, infected: false, limitsExceeded: true },
+        },
+      ]);
+
+      expect(updateCall.data.virusScanResult).toBe(ScanResultCode.Error);
+      expect(updateCall.data.virusScanResult).not.toBe(ScanResultCode.Danger);
+    });
+
+    it('a byte-verified GGUF skip passes under strict verification', async () => {
+      // KILLING FIXTURE for the gguf-magic member of BYTE_VERIFIED_SKIP_REASONS. Without this,
+      // narrowing the set to just safetensors-magic marks every legitimate GGUF upload Error
+      // and no test notices.
+      onlyFlags('scan-strict-skip-verification');
+
+      const updateCall = await runWithSteps([
+        pickleStep({
+          exitCode: 0,
+          status: 'SkippedGguf',
+          skipped: true,
+          skipReason: 'gguf-magic',
+          globalImports: [],
+          dangerousImports: [],
+          dangerousImportsFound: false,
+        }),
+      ]);
+
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Success);
+    });
+
+    it('a skipped-* STATUS with no skipped flag is not a pass under strict verification', async () => {
+      // KILLING FIXTURE for the status.startsWith('skipped') branch. Reachable on in-flight
+      // legacy workflows where `skipped` is unset but the status string still says skipped —
+      // the same "we did not look" answer, and previously always Success.
+      onlyFlags('scan-strict-skip-verification');
+
+      const updateCall = await runWithSteps([
+        pickleStep({
+          exitCode: 0,
+          status: 'skippedSafetensors',
+          globalImports: [],
+          dangerousImports: [],
+          dangerousImportsFound: false,
+        }),
+      ]);
+
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
+    });
+
+    it('does not hold a Draft model — the common state when a file is scanned', async () => {
+      // Scans are driven with no model-status predicate and models are Draft during the upload
+      // wizard, so this is the ordinary case. Holding one would push a never-published draft to
+      // a mod-only status and lock its own creator out of it.
+      onlyFlags('scan-format-mismatch-hold');
+      mockDbWrite.model.findUnique.mockResolvedValue({
+        id: 200,
+        name: 'Test Model',
+        meta: {},
+        userId: 42,
+        status: 'Draft',
+      });
+
+      const updateCall = await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(mockUnpublishModelById).not.toHaveBeenCalled();
+      expect(mockCreateNotification).not.toHaveBeenCalled();
+      // The verdict is still recorded — only the side effect is withheld.
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
+    });
+
+    it('does not leak the detector verdict into the public scan message', async () => {
+      // pickleScanMessage is served by the public v1 model-versions API. Echoing the scanner's
+      // "detected: X" text there gives an uploader a per-attempt readout to tune a disguise
+      // against — and it is reachable while the hold flag is off and the model stays published.
+      const updateCall = await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(updateCall.data.pickleScanMessage).not.toContain('detected');
+      expect(updateCall.data.pickleScanMessage).not.toContain('Safetensors');
+      expect(updateCall.data.pickleScanMessage).toBe(
+        'File format could not be verified. This file is under review.'
+      );
     });
 
     it('a normal clean ClamAV pass is still Success', async () => {

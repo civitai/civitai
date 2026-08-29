@@ -370,17 +370,27 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
 /**
  * Puts a model whose file contradicts its declared format in front of a moderator.
  *
- * Uses the existing Hold semantics (`unpublishModelById` + `meta.needsReview`), the same path a
- * ModerationRuleAction.Hold takes: reversible, non-punitive, surfaced in the moderator review
- * queue, and the uploader is told it is under review rather than accused of anything. It is not
- * an UnpublishedViolation — an automated format check should not issue a strike on its own.
+ * Uses the existing Hold semantics (`unpublishModelById` + `meta.needsReview`) — the same path
+ * `ModerationRuleAction.Hold` takes, so the uploader gets the "under review" banner.
+ *
+ * 🔴 BE PRECISE ABOUT WHAT THIS DOES. `unpublishModelById` sets `UnpublishedViolation` whenever
+ * a `reason` is passed — ANY truthy reason, `'other'` included; see the
+ * `status: reason ? UnpublishedViolation : …` ternary in model.service.ts — and it applies to
+ * the model AND every one of its versions. `UnpublishedViolation` is in
+ * `constants.modPublishOnlyStatuses`, so the CREATOR CANNOT REPUBLISH; only a moderator can.
+ * An earlier revision of this comment claimed this was "not an UnpublishedViolation" and
+ * "non-punitive". That was simply false.
+ *
+ * It is worth naming, because the obvious correction is worse than the defect: dropping
+ * `reason` to obtain a plain `Unpublished` would remove the model from the moderator queue at
+ * /moderator/models, which selects on `[UnpublishedViolation, Published]` — it would be held
+ * where no reviewer can find it. The mod-only status and the review queue are one mechanism.
  *
  * The model does come down while it waits. That is deliberate: leaving it published pending
  * review is precisely the window in which a disguised file is still reachable by users.
  *
- * Expected volume is small — the magic-byte check separates legitimate containers that simply
- * carry no `__metadata__` key from genuine mismatches, so only the latter reach this path.
- * Sizing measurements are in the internal incident ticket.
+ * Expected volume is small — the magic-byte check distinguishes legitimate containers from
+ * genuine mismatches, so only the latter reach this path. Sizing is in the internal ticket.
  */
 async function holdModelForFormatMismatch({
   modelId,
@@ -397,12 +407,23 @@ async function holdModelForFormatMismatch({
     where: { id: modelId },
     select: { id: true, name: true, meta: true, userId: true, status: true },
   });
-  // Nothing to hold if a moderator already took it down, or it never went up.
+  // 🔴 ALLOW-LIST, NOT A DENY-LIST. Only a model that is actually reachable by users can be
+  // "held" in any meaningful sense, and holding anything else does real harm.
+  //
+  // A deny-list of {Unpublished, UnpublishedViolation, Deleted} looks equivalent and is not:
+  // it lets `Draft` through, and Draft is the COMMON case here, not an edge case. Files are
+  // scanned by scan-files.ts, whose WHERE clause is virusScanResult/exists/scanRequestedAt with
+  // NO model-status predicate, and models are created Draft with files attached during the
+  // upload wizard — so a brand-new upload is normally scanned while still a draft, minutes
+  // before it is ever published. Holding one would push a never-published draft to
+  // UnpublishedViolation, lock its own creator out of it (mod-only republish), and fire the
+  // generic "your version was unpublished" notification — which selects on meta alone, with no
+  // status predicate — about a version that was never published, on top of the message below.
+  //
+  // Published and Scheduled are the only states where a hold both means something and is safe.
   if (
     !model ||
-    model.status === ModelStatus.Unpublished ||
-    model.status === ModelStatus.UnpublishedViolation ||
-    model.status === ModelStatus.Deleted
+    (model.status !== ModelStatus.Published && model.status !== ModelStatus.Scheduled)
   ) {
     return;
   }
@@ -411,9 +432,10 @@ async function holdModelForFormatMismatch({
     id: modelId,
     userId: -1,
     reason: 'other',
-    customMessage: `Model held for review: uploaded file does not match its declared format${
-      detail ? ` (${detail})` : ''
-    }`,
+    // Same reasoning as FORMAT_MISMATCH_PUBLIC_MESSAGE — this reaches the uploader, who is the
+    // one party we must not hand a detector readout to. `detail` is logged, not echoed.
+    customMessage:
+      'Model held for review: an uploaded file could not be verified as the file type it declares.',
     meta: { ...(model.meta as ModelMeta), needsReview: true },
     isModerator: true,
   });
@@ -629,7 +651,7 @@ function deriveClamScanResult(output: NonNullable<ModelClamScanStep['output']>):
 
 /**
  * Marker the scanner writes to `skipReason` when a file's declared container format is
- * contradicted by its bytes — e.g. a shell script uploaded as `.safetensors`.
+ * contradicted by its bytes.
  *
  * Cross-repo contract with spine-controller's ModelPickleScanMiddleware.FormatMismatchReason.
  * The scanner reports the mismatch as ParseError with `skipped: false` and exit code 2, so
@@ -640,9 +662,17 @@ function deriveClamScanResult(output: NonNullable<ModelClamScanStep['output']>):
 export const FORMAT_MISMATCH_SKIP_REASON = 'format-mismatch';
 
 /**
- * The only skip reasons that represent a container verified from its MAGIC BYTES. A skip for
- * any other reason means the scanner decided from uploader-controlled metadata (the AIR, the
- * resource registry, the filename) and never looked inside the file.
+ * What a mismatch shows publicly. Deliberately says nothing about what the scanner detected:
+ * this string is served by the public v1 model-versions API, so anything specific here is an
+ * oracle an uploader can iterate against. The scanner's full explanation stays in
+ * `rawScanResult` and in the moderator-facing log.
+ */
+export const FORMAT_MISMATCH_PUBLIC_MESSAGE =
+  'File format could not be verified. This file is under review.';
+
+/**
+ * The only skip reasons that represent a container verified from its MAGIC BYTES. Any other
+ * skip reason is one the scanner produced without verifying the file's contents.
  */
 const BYTE_VERIFIED_SKIP_REASONS = new Set(['safetensors-magic', 'gguf-magic']);
 
@@ -658,12 +688,11 @@ function derivePickleScanResult(
 ): ScanResultCode {
   if (output.dangerousImportsFound === true) return ScanResultCode.Danger;
 
-  // 🔴 A SKIP IS NOT A PASS. A skip means the scanner did not inspect the file; mapping that
-  // non-answer to an affirmative clean result is wrong however the skip arose.
+  // 🔴 A SKIP IS NOT A PASS. A skip means the scanner did not inspect the file, and that
+  // non-answer must not be recorded as an affirmative clean result.
   //
   // Under strict verification only a byte-verified skip passes. Left off until every worker is
-  // on the new scanner build: older workers emit skip reasons this treats as unverified, and
-  // flipping it early would mark a large share of normal uploads Error.
+  // on the new scanner build — see the flag's own note for the ordering constraint.
   if (output.skipped === true) {
     if (!strictSkipVerification) return ScanResultCode.Success;
     return output.skipReason && BYTE_VERIFIED_SKIP_REASONS.has(output.skipReason)
@@ -793,8 +822,13 @@ export async function processModelFileScanResult(req: NextApiRequest) {
     outcome.pickleScan = {
       result: hasDanger ? ScanResultCode.Danger : baseResult,
       // A format mismatch carries no import list, so examinePickleImports produces nothing to
-      // show. Give the moderator the scanner's own explanation instead of a blank message.
-      message: isFormatMismatch(pickleOut) ? pickleOut.output ?? null : pickleScanMessage,
+      // show — but the scanner's own explanation must NOT go here. `pickleScanMessage` is
+      // returned by the PUBLIC v1 model-versions API, and the scanner's text names what it
+      // detected ("detected: Unknown"), which hands an uploader a per-attempt readout of the
+      // detector's verdict — a free oracle for tuning a disguise, and one that is reachable
+      // while SCAN_FORMAT_MISMATCH_HOLD is off and the model therefore stays published.
+      // A fixed string here; the detail is already preserved in rawScanResult for forensics.
+      message: isFormatMismatch(pickleOut) ? FORMAT_MISMATCH_PUBLIC_MESSAGE : pickleScanMessage,
       dangerousImports: pickleOut.dangerousImports ?? undefined,
     };
     outcome.formatMismatch = isFormatMismatch(pickleOut);
