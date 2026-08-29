@@ -14,7 +14,11 @@ import { describe, it, expect, vi } from 'vitest';
  * in prod (405 on the CORS preflight).
  *
  * This test captures the exact opts each endpoint module passes to
- * `withBlockScope` at import time and asserts the opaque-origin opt is present.
+ * `withBlockScope` at import time and asserts THREE things about them: the
+ * opaque-origin opt is present, no `requiredScope` is declared, and each route
+ * carries its OWN `endpoint` label. The last one is here for the same reason as
+ * the first — it is invisible to the endpoint-behavior tests (which mock
+ * `withBlockScope` away entirely) and would degrade only in prod telemetry.
  */
 
 // Capture the opts each endpoint hands to withBlockScope at module-eval time.
@@ -55,7 +59,7 @@ describe('block catalog endpoints — opaque-origin CORS wiring (PR #2681)', () 
   // loaded box) — right at the 10s global default, so worker-pool contention pushed
   // it over and flaked. Give this import-bound test a generous explicit budget.
   it(
-    'all of /api/v1/blocks/{models,images,tools} opt into allowOpaqueOrigin',
+    'all of /api/v1/blocks/{models,images,tools} opt into allowOpaqueOrigin, declare no requiredScope, and carry their own endpoint label',
     { timeout: 60000 },
     async () => {
       // Import order: models, images, tools → captured in that order.
@@ -78,6 +82,22 @@ describe('block catalog endpoints — opaque-origin CORS wiring (PR #2681)', () 
       for (const opts of captured) {
         expect(opts.requiredScope).toBeUndefined();
       }
+      // 🔴 EACH ENDPOINT DECLARES ITS OWN `endpoint` LABEL, asserted per-route
+      // rather than in the loops above — the loops check a property they SHARE,
+      // this checks the one thing that must DIFFER between them.
+      //
+      // Why it is pinned here and not left to the endpoint tests: a delta audit
+      // found `endpoint: 'tools'` → `'models'` typechecks (`AppBlockEndpoint` is
+      // a union containing both) and survived all ~23.9k tests — the sole
+      // surviving mutant in the suite. The blast radius is narrow but real and
+      // SILENT: the audit row takes its endpoint from `normalizeEndpoint(req.url)`
+      // in the middleware, NOT from these opts, so the rows stay correct; what
+      // breaks is the Prometheus RED pair (`civitai_app_block_requests_total` /
+      // `_request_duration_seconds`), which would merge tool traffic into
+      // `models` with nothing anywhere reporting a fault.
+      //
+      // Index order is the import order above: models, images, tools.
+      expect(captured.map((opts) => opts.endpoint)).toEqual(['models', 'images', 'tools']);
     }
   );
 });

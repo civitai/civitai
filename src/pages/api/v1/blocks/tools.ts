@@ -88,6 +88,16 @@ const callSchema = z
     // Same pattern the chat step enforces on a declared tool name, IMPORTED
     // rather than re-spelled: `registry.ts` already documented the coupling in
     // prose, and a second copy is how the two drift.
+    //
+    // ⚠️ THE LENGTH BOUND IS STILL A SECOND COPY — the same class this line's
+    // `.regex` just closed, one axis over. `64` here is the chat step's
+    // `MAX_TOOL_NAME_CHARS` (`~/server/services/blocks/steps/chat-completion.step`),
+    // which is module-private, so it cannot be imported today and the two agree
+    // only by inspection. Nothing is broken: the values match, and a drift would
+    // narrow or widen only what this wire accepts before the registry lookup
+    // rejects an unknown name anyway. Closing it means EXPORTING that constant —
+    // a source change to a file merged in #4472 — so it is left deliberate and
+    // named rather than done as a drive-by here.
     name: z.string().min(1).max(64).regex(TOOL_NAME_PATTERN),
     arguments: z.unknown().optional(),
   })
@@ -104,7 +114,13 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     // redundant check, it serves the tool declarations unauthenticated:
     //
     //   1. no bearer token present;
-    //   2. a bearer that is NOT a 3-part JWS — the legacy opaque API-key path.
+    //   2. a bearer `isBlockJwt` rejects. READ THAT FUNCTION, it is wider than
+    //      "not a 3-part JWS": it returns false for anything that is not three
+    //      NON-EMPTY dot-separated segments, for a header that fails to
+    //      base64url-decode or JSON.parse, AND for a decodable header whose
+    //      `alg` is not `RS256` or whose `typ` is not `JWT`. So a well-formed
+    //      JWS signed with the wrong alg falls through here too — the legacy
+    //      opaque API-key path is one instance of this case, not its definition.
     //      (1) and (2) are one branch, `if (!bearer || !isBlockJwt(bearer))`,
     //      which is why they are easy to count as one;
     //   3. `app-blocks-runtime-enabled` off — including absent, and Flipt down,
