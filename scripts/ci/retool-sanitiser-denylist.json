@@ -15,7 +15,16 @@
     "and paste the digest below. Never paste the value.",
     "",
     "While this list is empty the denylist check reports SKIPPED and the other three",
-    "checks still run and still block. It is not a silent pass."
+    "checks still run. It is not a silent pass: the gate's PASS line names the",
+    "reduced scope, and CI renders a warning annotation.",
+    "",
+    "SENTINEL: set it in the SAME command that populates the hashes --",
+    "  node scripts/ci/retool-sanitiser-gate.mjs --sentinel",
+    "It is the digest of a public, meaningless string under the real salt, and it is",
+    "the ONLY thing that detects a salt/hash desync. Without it a rotated salt or a",
+    "trailing newline in the CI secret leaves every hash matching nothing, printing",
+    "nothing, and exiting 0. Leave it null while `hashes` is empty."
   ],
+  "sentinel": null,
   "hashes": []
 }

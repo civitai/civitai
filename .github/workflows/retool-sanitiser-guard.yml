@@ -13,14 +13,24 @@ name: Retool Sanitiser Guard
 # exactly why both got through the original pass. Read the gate's header before
 # treating this check as coverage.
 
+# 🔴 BOTH triggers, deliberately. `lint.yml` documents at length that this repo had
+# no CI verdict on `main` for two months because its jobs were pull_request-only,
+# and names a real commit pushed straight to `main`. Every base-relative job there
+# is exempt from the push path because a push has no base to diff against — but
+# THIS gate scans the directory absolutely, so a push trigger costs nothing and
+# closes the hole. `release` is pushed to directly by the deploy flow, so it needs
+# the same cover.
 on:
   pull_request:
     branches: [main, release]
-    paths:
+    paths: &guarded
       - 'docs/moderator-app/retool-exports/**'
       - 'scripts/ci/retool-sanitiser-gate.mjs'
       - 'scripts/ci/retool-sanitiser-denylist.json'
       - '.github/workflows/retool-sanitiser-guard.yml'
+  push:
+    branches: [main, release]
+    paths: *guarded
 
 permissions:
   contents: read
@@ -40,13 +50,22 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
 
       - name: Run the sanitiser gate
         env:
           # Not committed: a person's name is a tiny search space, so a public salt
-          # would make the committed hashes dictionary-crackable. Absent (e.g. on a
-          # fork PR) the denylist check reports SKIPPED and the IPv4, credential and
-          # placeholder checks still run and still block.
+          # would make the committed hashes dictionary-crackable.
+          #
+          # 🔴 When this is absent the denylist check does NOT run. The IPv4,
+          # credential and placeholder checks still do, and the gate's PASS line
+          # says so explicitly rather than claiming a scope it did not cover.
+          # Absent cases: the secret does not exist yet, and any FORK PR — where
+          # this workflow does not run AT ALL, so it is no cover there whatsoever.
+          #
+          # 🔴 And a red check here does not BLOCK: this repo has no required
+          # status checks (`branches/main/protection` → required_status_checks:
+          # null), so a failing run renders red and merges anyway. It is a signal
+          # for a human, not an enforcement boundary. Do not describe it as one.
           RETOOL_SANITISER_SALT: ${{ secrets.RETOOL_SANITISER_SALT }}
         run: node scripts/ci/retool-sanitiser-gate.mjs

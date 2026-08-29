@@ -80,15 +80,17 @@ like nothing in particular. It was caught before the commit was ever pushed. Any
 ## Part of this is now a gate, and part of it can never be
 
 Everything above is a checklist, and a checklist is only as good as the person running
-it. `scripts/ci/retool-sanitiser-gate.mjs` (CI: **Retool Sanitiser Guard**) now enforces
-the mechanical half on every PR touching this directory:
+it. `scripts/ci/retool-sanitiser-gate.mjs` (CI: **Retool Sanitiser Guard**) now checks the
+mechanical half on every PR **and every direct push** touching this directory:
 
 - known-bad values that must never come back, matched against **salted hashes** — the
   plaintext is deliberately not in this repo, and neither is the salt;
-- every IPv4 literal must be an RFC5737/RFC1918 address, so a real one blocks;
+- every IP literal must be an RFC5737/RFC1918 address (v6 is rejected outright);
 - the credential shapes above, as code rather than prose;
-- the redaction **placeholders must still be present** — which is what catches the
-  headline risk, a wholesale re-download silently overwriting a sanitised file.
+- the redaction **placeholders must still be present, at their expected counts** —
+  which is what catches the headline risk, a wholesale re-download silently
+  overwriting a sanitised file. Counts, not mere presence: one surviving token would
+  otherwise make a partial re-introduction read as clean.
 
 🔴 **A green run is NOT "no personal data".** The gate cannot see a *novel* staff real
 name or a *novel* bare account id: neither has a shape to match on, which is exactly
@@ -96,9 +98,25 @@ why both walked through the pass described above. That half is still yours. When
 sanitise a fresh export, work the three-class checklist by hand and treat the gate as a
 backstop against regressions, never as the check itself.
 
+🔴 **Three more things it does not do, stated because the first draft of this section
+claimed otherwise:**
+
+1. **It does not BLOCK.** This repo has no required status checks, so a red run renders
+   red and the PR merges anyway. It is a signal for a human, not an enforcement
+   boundary.
+2. **It does not run on fork PRs at all** — not "runs with the denylist skipped".
+   Workflows do not execute for outside contributors here, so a fork PR touching these
+   files gets no coverage whatsoever.
+3. **Without the `RETOOL_SANITISER_SALT` secret the denylist does not run.** The gate's
+   PASS line names the reduced scope when that happens, rather than asserting a scope
+   it did not cover.
+
 Add a newly-found bad value to the denylist with the salt exported locally:
 `node scripts/ci/retool-sanitiser-gate.mjs --hash '<value>'`, then commit the digest
-only.
+only. Populating `hashes` for the first time? Set `sentinel` in the same pass
+(`--sentinel`) — it is the only thing that detects a salt/hash desync, which otherwise
+leaves every hash matching nothing, silently. Note `--hash` refuses a value longer than
+four word-tokens, because the matcher could never find it.
 
 ## Read the whole file, not just the SQL
 

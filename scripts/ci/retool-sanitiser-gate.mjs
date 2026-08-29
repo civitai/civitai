@@ -83,7 +83,37 @@ const ALLOWED_V4 = [
   [[169, 254], 16], // link-local
 ];
 
-const V4_RE = /\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\b/g;
+// The negative look-around rejects a dotted quad that is part of a LONGER dotted
+// run — `1.2.3.4.5` is a version string, not an address. Without it `1.2.3.4.5.6`
+// reported a bogus "IPv4 literal 1.2.3.4".
+const V4_RE = /(?<![\d.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?![\d.])/g;
+
+/**
+ * IPv6, deliberately narrow: at least three groups and one `::` or five `:`, so
+ * ordinary text with colons cannot match. There is no documentation-range dance
+ * here — the exports have never legitimately carried an IPv6 literal, so ANY of
+ * them is a finding.
+ *
+ * WHY: the risk this gate exists for is "end-user IP addresses", which is not a
+ * v4-only statement. A re-download carrying real v6 addresses passed every check.
+ */
+// The tail alternation must try `:<group>` FIRST, or a `::1` suffix is truncated to
+// `::` and the address is reported without its final group.
+const V6_RE = /(?:[0-9a-f]{1,4}:){2,7}(?::[0-9a-f]{1,4}|[0-9a-f]{1,4}|:)(?:%[0-9a-z]+)?/gi;
+
+/** ::1 and :: are loopback/unspecified — never a person. */
+const ALLOWED_V6 = new Set(['::', '::1']);
+
+export function findIPv6(text) {
+  const found = [];
+  for (const match of text.matchAll(V6_RE)) {
+    const literal = match[0];
+    if (!literal.includes('::') && literal.split(':').length !== 8) continue;
+    if (ALLOWED_V6.has(literal.toLowerCase())) continue;
+    found.push(literal);
+  }
+  return [...new Set(found)];
+}
 
 export function isAllowedIPv4(ip) {
   const octets = ip.split('.').map(Number);
@@ -123,7 +153,9 @@ const REDACTED_RE = /^(?:<[^>]*>|__[A-Z0-9_]+__|\{\{[^}]*\}\}|\$\{[^}]*\}|x{3,}|
 export const CREDENTIAL_RULES = [
   {
     name: 'bearer-token',
-    re: /\bBearer\s+([A-Za-z0-9._~+/=-]{12,})/g,
+    // `i`: the auth scheme is case-insensitive per RFC 7235, so `bearer …` and
+    // `BEARER …` are equally valid and were both walking past this rule.
+    re: /\bBearer\s+([A-Za-z0-9._~+/=-]{12,})/gi,
     describe: 'an Authorization: Bearer value that is not redacted',
   },
   {
@@ -145,28 +177,75 @@ export const CREDENTIAL_RULES = [
     // The rule the first sanitiser pass was MISSING: match on the assignment, not
     // on the shape of the value. A `const apiKey = '…'` inside a Retool Function
     // body looks like nothing in particular.
+    //
+    // 🔴 The first version of this rule only covered `ident = '…'` — the SINGLE-quoted
+    // JS form. But the corpus it scans is eleven Retool JSON exports, where the
+    // dominant serialisations are `"apiKey": "…"` (quoted key) and the transit pair
+    // `"KEY","value"`, and neither was caught. A rule that misses the dominant shape
+    // of the files it scans is a false-negative surface, not a guard.
+    //
+    // So: the identifier may be quoted, the separator may be `:`/`=`/`,`, and the
+    // value may be single, double or backtick quoted, with `\"` escapes allowed
+    // inside (escaped JS embedded in JSON is exactly how the original miss happened).
+    // 🔴 The value body must exclude BOTH quote characters and newlines, and be
+    // length-bounded. A first attempt used `(?:\\.|[^\\])*?` with a backreference
+    // and included backticks in the quote class: in an 11-file JSON corpus where
+    // backticks are rare, one opener ran to end-of-file and reported a 646,934-char
+    // "secret" in three files. A guard that matches everything is not a guard.
     name: 'secret-assignment',
-    re: /\b(?:api[_-]?key|apikey|token|secret|password|passwd|auth)\w*\s*[:=]\s*(['"])([^'"\\]{8,})\1/gi,
+    // `[\w$]*?` before the keyword, because the secret-named identifier is usually a
+    // COMPONENT of a longer name — `WEBHOOK_TOKEN`, `stripeSecretKey`. A leading `\b`
+    // cannot match `TOKEN` there: the character before it is `_`, which is a word
+    // character, so there is no boundary and the dominant Retool config-var shape
+    // walked straight past.
+    re: /(?:^|[^\w$])\\?["']?[\w$]*?(?:api[_-]?key|apikey|token|secret|password|passwd|auth)\w*\\?["']?\s*[:=,]\s*\\?(["'])((?:\\[^"'\n]|[^"'\\\n]){8,200}?)\\?\1/gi,
     describe: 'a secret-named variable assigned a literal value',
     valueGroup: 2,
+    minValueLength: 8,
+  },
+  {
+    // Template literals, separately and bounded for the same reason.
+    name: 'secret-assignment-template',
+    re: /\b(?:api[_-]?key|apikey|token|secret|password|passwd|auth)\w*\s*[:=]\s*`([^`\n]{8,200})`/gi,
+    describe: 'a secret-named variable assigned a template-literal value',
+    valueGroup: 1,
+    minValueLength: 8,
   },
 ];
+
+/** Strips the escaping that survives a JSON-embedded JS string. */
+function unescapeValue(raw) {
+  return raw.replace(/\\(["'`\\])/g, '$1');
+}
 
 export function findCredentialShapes(text) {
   const found = [];
   for (const rule of CREDENTIAL_RULES) {
     for (const match of text.matchAll(rule.re)) {
-      const value = rule.valueGroup ? match[rule.valueGroup] : match[1] ?? match[0];
+      const raw = rule.valueGroup ? match[rule.valueGroup] : match[1] ?? match[0];
+      const value = raw ? unescapeValue(raw) : raw;
       if (value && REDACTED_RE.test(value.trim())) continue;
-      found.push({ rule: rule.name, describe: rule.describe, sample: truncate(match[0]) });
+      if (rule.minValueLength && (!value || value.length < rule.minValueLength)) continue;
+      found.push({ rule: rule.name, describe: rule.describe, sample: mask(value ?? match[0]) });
     }
   }
   return found;
 }
 
-function truncate(s) {
-  const flat = s.replace(/\s+/g, ' ');
-  return flat.length > 48 ? `${flat.slice(0, 45)}…` : flat;
+/**
+ * 🔴 NEVER print a matched value. This repo is PUBLIC, so an Actions log is
+ * world-readable and outlives any force-push that removes the value from the
+ * branch — and a banned-user IP is exactly the class this gate exists to keep out.
+ *
+ * The first version of this file withheld the DENYLIST value for precisely this
+ * reason and then printed IPs and Bearer tokens one branch up. A length plus a
+ * salt-free digest prefix identifies the finding for whoever has the file open,
+ * without republishing it.
+ */
+export function mask(value) {
+  const flat = String(value).replace(/\s+/g, ' ');
+  const digest = createHash('sha256').update(flat).digest('hex').slice(0, 8);
+  return `${flat.length} chars, sha256:${digest}…`;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,10 +269,40 @@ export function tokenize(text) {
     .filter(Boolean);
 }
 
+/**
+ * 🔴 Refuses a value the MATCHER structurally cannot find.
+ *
+ * `findDenylistHits` only builds 1..MAX_NGRAM_WORDS windows, but nothing stopped
+ * `--hash` emitting a digest for a longer value. The operator would paste it,
+ * commit it, and the denylist would silently never fire for that value — the
+ * reassuring-zero shape, inside the very tool that populates the gate.
+ */
 export function hashValue(salt, value) {
-  const normalized = tokenize(value).join(' ');
+  const words = tokenize(value);
+  if (words.length === 0) {
+    throw new Error('refusing to hash a value with no word tokens');
+  }
+  if (words.length > MAX_NGRAM_WORDS) {
+    throw new Error(
+      `refusing to hash a ${words.length}-token value: findDenylistHits only builds ` +
+        `1..${MAX_NGRAM_WORDS}-word windows, so this digest could never match. Hash a ` +
+        `distinctive ${MAX_NGRAM_WORDS}-token-or-shorter substring instead.`
+    );
+  }
+  const normalized = words.join(' ');
   return createHash('sha256').update(`${salt}\u0000${normalized}`).digest('hex');
 }
+
+/**
+ * Public, meaningless string whose digest UNDER THE REAL SALT proves that the salt
+ * CI supplies is the one the committed hashes were generated with.
+ *
+ * 🔴 Nothing else detects a desync. A rotated salt, a regenerated denylist, or a
+ * trailing newline in the secret (GitHub preserves it) each leave the check
+ * "active", matching nothing, printing nothing, and exiting 0 — under a PASS line
+ * asserting "no known-bad value", which it has not established.
+ */
+export const SENTINEL_VALUE = 'retool sanitiser sentinel';
 
 /** Every 1..MAX_NGRAM_WORDS word window, hashed. */
 export function findDenylistHits(text, { salt, hashes }) {
@@ -217,23 +326,51 @@ export function findDenylistHits(text, { salt, hashes }) {
 
 /**
  * A wholesale re-download overwrites a sanitised file with a raw one, so the
- * placeholders disappear. That is the exact headline risk, and this check catches
- * it without needing any secret.
+ * placeholders disappear. That is the headline risk, and this check catches it
+ * without needing any secret.
+ *
+ * 🔴 THE LEDGER MUST BE AS WIDE AS THE CLAIM. The first version listed three
+ * entries — `__MODERATOR_A__` once and `203.0.113.` twice — while PR #4476 wrote
+ * FIVE token classes across 10 occurrences. `__MODERATOR_B__`, `__MODERATOR_C__`
+ * and `<accountId>` were guarded by nothing, and `<accountId>` is the one
+ * documented class with no other check behind it: a real IP is caught by check 2,
+ * but a bare account id is an ordinary integer that only this ledger can see.
+ * Restoring two staff names and five account ids passed the whole gate, rc=0.
+ *
+ * EXPECTED COUNTS, not mere presence. Presence is satisfied by one surviving
+ * token, so a PARTIAL re-introduction — some occurrences reverted, one left —
+ * reads as clean. Counts make that visible. A count that legitimately changes is
+ * a deliberate edit to these exports, which is exactly when a human should look.
  */
 export const REQUIRED_PLACEHOLDERS = [
-  { file: 'raw/user-lookup-v2.json', token: '__MODERATOR_A__' },
-  { file: 'raw/bulk-ban.json', token: '203.0.113.' },
-  { file: 'bulk-ban.md', token: '203.0.113.' },
+  { file: 'raw/user-lookup-v2.json', token: '__MODERATOR_A__', count: 2 },
+  { file: 'raw/user-lookup-v2.json', token: '__MODERATOR_B__', count: 2 },
+  { file: 'raw/user-lookup-v2.json', token: '__MODERATOR_C__', count: 2 },
+  { file: 'raw/bulk-ban.json', token: '<accountId>', count: 5 },
+  { file: 'raw/bulk-ban.json', token: '203.0.113.', count: 4 },
+  { file: 'bulk-ban.md', token: '<accountId>', count: 5 },
+  { file: 'bulk-ban.md', token: '203.0.113.', count: 4 },
 ];
+
+const countOccurrences = (haystack, needle) => haystack.split(needle).length - 1;
 
 export function findMissingPlaceholders(readFile) {
   const missing = [];
-  for (const { file, token } of REQUIRED_PLACEHOLDERS) {
+  for (const { file, token, count } of REQUIRED_PLACEHOLDERS) {
     const text = readFile(file);
     if (text === null) {
       missing.push({ file, token, reason: 'file is absent' });
-    } else if (!text.includes(token)) {
+      continue;
+    }
+    const seen = countOccurrences(text, token);
+    if (seen === 0) {
       missing.push({ file, token, reason: 'redaction placeholder is gone' });
+    } else if (seen !== count) {
+      missing.push({
+        file,
+        token,
+        reason: `expected ${count} occurrence(s) of this redaction placeholder, found ${seen}`,
+      });
     }
   }
   return missing;
@@ -257,9 +394,12 @@ export function listFiles(root, rel) {
 
 export function loadDenylist(root) {
   const abs = path.join(root, DENYLIST_PATH);
-  if (!existsSync(abs)) return { hashes: [] };
+  if (!existsSync(abs)) return { hashes: [], sentinel: null };
   const parsed = JSON.parse(readFileSync(abs, 'utf8'));
-  return { hashes: Array.isArray(parsed.hashes) ? parsed.hashes : [] };
+  return {
+    hashes: Array.isArray(parsed.hashes) ? parsed.hashes : [],
+    sentinel: typeof parsed.sentinel === 'string' && parsed.sentinel ? parsed.sentinel : null,
+  };
 }
 
 export function runGate({ root = REPO_ROOT, salt = process.env.RETOOL_SANITISER_SALT } = {}) {
@@ -276,12 +416,31 @@ export function runGate({ root = REPO_ROOT, salt = process.env.RETOOL_SANITISER_
     };
   }
 
-  const { hashes } = loadDenylist(root);
-  const denylistActive = Boolean(salt) && hashes.length > 0;
-  if (!salt) {
+  const { hashes, sentinel } = loadDenylist(root);
+  // A trailing newline is the commonest way a pasted CI secret differs from the
+  // salt the hashes were built with; GitHub preserves it. Trim, then PROVE it.
+  const effectiveSalt = typeof salt === 'string' ? salt.trim() : salt;
+  let denylistActive = Boolean(effectiveSalt) && hashes.length > 0;
+
+  if (!effectiveSalt) {
     notes.push('denylist SKIPPED — $RETOOL_SANITISER_SALT is not set. Checks 2-4 still ran.');
   } else if (hashes.length === 0) {
     notes.push(`denylist SKIPPED — ${DENYLIST_PATH} lists no hashes yet. Checks 2-4 still ran.`);
+  } else if (!sentinel) {
+    notes.push(
+      `denylist ACTIVE but UNVERIFIED — ${DENYLIST_PATH} carries no "sentinel", so a ` +
+        'salt/hash desync would be undetectable. Regenerate it with --sentinel.'
+    );
+  } else if (hashValue(effectiveSalt, SENTINEL_VALUE) !== sentinel) {
+    // 🔴 Fail, never skip. The hashes are real, the salt is wrong, and every one
+    // of them would silently match nothing — a PASS asserting "no known-bad
+    // value" it never established.
+    denylistActive = false;
+    failures.push(
+      `${DENYLIST_PATH}: the salt in $RETOOL_SANITISER_SALT does not match the one these ` +
+        'hashes were generated with (sentinel digest mismatch), so the denylist would ' +
+        'silently match nothing. Fix the secret or regenerate the denylist.'
+    );
   }
 
   for (const rel of files) {
@@ -290,11 +449,14 @@ export function runGate({ root = REPO_ROOT, salt = process.env.RETOOL_SANITISER_
     for (const ip of findOutOfRangeIPv4(text)) {
       failures.push(`${rel}: IPv4 literal ${ip} is outside the documentation/private ranges`);
     }
+    for (const ip of findIPv6(text)) {
+      failures.push(`${rel}: IPv6 literal ${mask(ip)} — these exports carry no legitimate IPv6`);
+    }
     for (const hit of findCredentialShapes(text)) {
       failures.push(`${rel}: ${hit.describe} [${hit.rule}] — ${hit.sample}`);
     }
     if (denylistActive) {
-      for (const digest of findDenylistHits(text, { salt, hashes })) {
+      for (const digest of findDenylistHits(text, { salt: effectiveSalt, hashes })) {
         // Never print the value; printing it here would undo the redaction.
         failures.push(
           `${rel}: a denylisted known-bad value is present (digest ${digest.slice(0, 12)}…)`
@@ -316,10 +478,30 @@ export function runGate({ root = REPO_ROOT, salt = process.env.RETOOL_SANITISER_
   return { ok: failures.length === 0, failures, notes, files, denylistActive };
 }
 
+/**
+ * GitHub renders `::error` / `::warning` as annotations on the PR. A bare
+ * console.log is invisible on a green check, which is how "reports SKIPPED
+ * loudly" turned out to mean "buried in a log nobody opens".
+ */
+const annotate = (level, message) =>
+  process.env.GITHUB_ACTIONS === 'true'
+    ? `::${level} file=${DENYLIST_PATH}::${message}`
+    : `retool-sanitiser-gate: ${level.toUpperCase()} ${message}`;
+
 function main(argv) {
+  const salt = process.env.RETOOL_SANITISER_SALT?.trim();
+
+  if (argv.includes('--sentinel')) {
+    if (!salt) {
+      console.error('--sentinel needs $RETOOL_SANITISER_SALT exported.');
+      return 2;
+    }
+    console.log(hashValue(salt, SENTINEL_VALUE));
+    return 0;
+  }
+
   const hashIdx = argv.indexOf('--hash');
   if (hashIdx !== -1) {
-    const salt = process.env.RETOOL_SANITISER_SALT;
     const value = argv[hashIdx + 1];
     if (!salt) {
       console.error('--hash needs $RETOOL_SANITISER_SALT exported.');
@@ -329,24 +511,30 @@ function main(argv) {
       console.error('usage: --hash "<value to denylist>"');
       return 2;
     }
-    console.log(hashValue(salt, value));
+    try {
+      console.log(hashValue(salt, value));
+    } catch (error) {
+      console.error(`retool-sanitiser-gate: ${error.message}`);
+      return 2;
+    }
     return 0;
   }
 
   const result = runGate({});
-  for (const note of result.notes) console.log(`retool-sanitiser-gate: NOTE ${note}`);
+  for (const note of result.notes) console.log(annotate('warning', note));
   console.log(`retool-sanitiser-gate: scanned ${result.files.length} file(s) under ${SCAN_DIR}`);
   if (result.ok) {
-    console.log(
-      'retool-sanitiser-gate: PASS — no known-bad value, out-of-range IP, credential shape or missing placeholder.'
-    );
+    const scope = result.denylistActive
+      ? 'no known-bad value, out-of-range IP, credential shape or missing placeholder'
+      : 'no out-of-range IP, credential shape or missing placeholder (THE DENYLIST DID NOT RUN)';
+    console.log(`retool-sanitiser-gate: PASS — ${scope}.`);
     console.log(
       'retool-sanitiser-gate: this does NOT mean the exports are free of personal data — a novel name or bare account id has no shape to match on. See the header.'
     );
     return 0;
   }
   console.error(`retool-sanitiser-gate: FAIL — ${result.failures.length} finding(s):`);
-  for (const failure of result.failures) console.error(`  - ${failure}`);
+  for (const failure of result.failures) console.error(annotate('error', failure));
   return 1;
 }
 

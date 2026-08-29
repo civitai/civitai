@@ -5,13 +5,19 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   CREDENTIAL_RULES,
   DENYLIST_PATH,
+  MAX_NGRAM_WORDS,
+  REPO_ROOT,
+  REQUIRED_PLACEHOLDERS,
   SCAN_DIR,
+  SENTINEL_VALUE,
   findCredentialShapes,
   findDenylistHits,
+  findIPv6,
   findMissingPlaceholders,
   findOutOfRangeIPv4,
   hashValue,
   isAllowedIPv4,
+  mask,
   runGate,
   tokenize,
 } from '../ci/retool-sanitiser-gate.mjs';
@@ -43,20 +49,42 @@ const DENIED_NAME = 'Ada Lovelace';
 
 let root: string;
 
-/** A minimal but STRUCTURALLY REAL export tree: placeholders present, IPs in RFC5737. */
+/**
+ * A minimal but STRUCTURALLY REAL export tree.
+ *
+ * 🔴 The placeholder COUNTS here must equal `REQUIRED_PLACEHOLDERS`, because check 4
+ * now asserts counts rather than presence. Building the fixture from the ledger
+ * itself would make the test vacuous — it would agree with any ledger, including a
+ * wrong one — so the counts are written out literally and a separate test asserts
+ * the ledger matches the REAL exports.
+ */
 function seedCleanTree(dir: string) {
   const raw = path.join(dir, SCAN_DIR, 'raw');
   mkdirSync(raw, { recursive: true });
   writeFileSync(
     path.join(raw, 'user-lookup-v2.json'),
-    JSON.stringify({ gate: "current_user.fullName === '__MODERATOR_A__'" }, null, 2)
+    JSON.stringify(
+      {
+        a1: "current_user.fullName === '__MODERATOR_A__'",
+        a2: '__MODERATOR_A__',
+        b1: '__MODERATOR_B__',
+        b2: '__MODERATOR_B__',
+        c1: '__MODERATOR_C__',
+        c2: '__MODERATOR_C__',
+      },
+      null,
+      2
+    )
   );
+  const banBody =
+    'WHERE ip IN (203.0.113.1, 203.0.113.2, 203.0.113.3, 203.0.113.4) ' +
+    'AND toAccountId IN (<accountId>, <accountId>, <accountId>, <accountId>, <accountId>)';
+  writeFileSync(path.join(raw, 'bulk-ban.json'), JSON.stringify({ sql: banBody }, null, 2));
+  writeFileSync(path.join(dir, SCAN_DIR, 'bulk-ban.md'), `| query |\n| ${banBody} |\n`);
   writeFileSync(
-    path.join(raw, 'bulk-ban.json'),
-    JSON.stringify({ sql: 'WHERE ip IN (203.0.113.1, 203.0.113.2)' }, null, 2)
+    path.join(dir, DENYLIST_PATH),
+    JSON.stringify({ version: 1, sentinel: null, hashes: [] }, null, 2)
   );
-  writeFileSync(path.join(dir, SCAN_DIR, 'bulk-ban.md'), '| ip |\n| 203.0.113.1 |\n');
-  writeFileSync(path.join(dir, DENYLIST_PATH), JSON.stringify({ version: 1, hashes: [] }, null, 2));
 }
 
 beforeAll(() => {
@@ -158,6 +186,7 @@ describe('check 3 — credential shapes', () => {
       'postgres-dsn',
       'stripe-key',
       'secret-assignment',
+      'secret-assignment-template',
     ]);
     expect(CREDENTIAL_RULES.map((r) => r.name).sort()).toEqual([...covered].sort());
   });
@@ -261,5 +290,224 @@ describe('check 4 — redaction placeholders survive', () => {
   it('reports every missing placeholder, not just the first', () => {
     const missing = findMissingPlaceholders(() => '');
     expect(missing.length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+// ===========================================================================
+// Regressions from the round-1 adversarial audit of #4486.
+// Each of these pins a defect that was EXECUTED against the gate, not imagined.
+// ===========================================================================
+
+describe('audit 🔴1 — the placeholder ledger must be as wide as its claim', () => {
+  /**
+   * 🔴 This is the test that stops the ledger silently narrowing again. It reads the
+   * REAL exports, not a fixture: a fixture built from the ledger agrees with any
+   * ledger, including the 3-of-10 one that shipped and passed everything.
+   */
+  it('every ledger entry matches the real exports at the count it declares', () => {
+    for (const { file, token, count } of REQUIRED_PLACEHOLDERS) {
+      const abs = path.join(REPO_ROOT, SCAN_DIR, file);
+      const text = readFileSync(abs, 'utf8');
+      expect(`${file}:${token}=${text.split(token).length - 1}`).toBe(`${file}:${token}=${count}`);
+    }
+  });
+
+  it('guards all three documented classes, not just the moderator-A token', () => {
+    const tokens = new Set(REQUIRED_PLACEHOLDERS.map((p) => p.token));
+    // #4476 documents three personal-data classes; `<accountId>` is the only one
+    // with NO other check behind it — a bare integer has no shape.
+    expect(tokens).toContain('__MODERATOR_A__');
+    expect(tokens).toContain('__MODERATOR_B__');
+    expect(tokens).toContain('__MODERATOR_C__');
+    expect(tokens).toContain('<accountId>');
+    expect(tokens).toContain('203.0.113.');
+  });
+
+  it("the audit's executed scenario now FAILS: 2 staff names + 5 account ids restored", () => {
+    mutate((dir) => {
+      const ul = path.join(dir, SCAN_DIR, 'raw', 'user-lookup-v2.json');
+      writeFileSync(
+        ul,
+        readFileSync(ul, 'utf8')
+          .replace(/__MODERATOR_B__/g, 'Grace Hopper')
+          .replace(/__MODERATOR_C__/g, 'Alan Turing')
+      );
+      for (const rel of [['raw', 'bulk-ban.json'], ['bulk-ban.md']]) {
+        const abs = path.join(dir, SCAN_DIR, ...rel);
+        writeFileSync(abs, readFileSync(abs, 'utf8').replace(/<accountId>/g, '8675309'));
+      }
+    });
+    const result = runGate({ root, salt: undefined });
+    expect(result.ok).toBe(false);
+    expect(result.failures.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('catches a PARTIAL re-introduction — presence alone would read as clean', () => {
+    mutate((dir) => {
+      const ul = path.join(dir, SCAN_DIR, 'raw', 'user-lookup-v2.json');
+      // One of two occurrences reverted: the token is still present.
+      writeFileSync(ul, readFileSync(ul, 'utf8').replace('__MODERATOR_B__', 'Grace Hopper'));
+    });
+    const result = runGate({ root, salt: undefined });
+    expect(result.ok).toBe(false);
+    expect(result.failures.join(' ')).toMatch(/expected 2 occurrence\(s\).*found 1/);
+  });
+});
+
+describe('audit 🔴2 — a salt/hash desync must fail, never pass silently', () => {
+  const seedActive = (saltForHashes: string) => (dir: string) =>
+    writeFileSync(
+      path.join(dir, DENYLIST_PATH),
+      JSON.stringify(
+        {
+          version: 1,
+          sentinel: hashValue(saltForHashes, SENTINEL_VALUE),
+          hashes: [hashValue(saltForHashes, DENIED_NAME)],
+        },
+        null,
+        2
+      )
+    );
+
+  const plantName = (dir: string) => {
+    const ul = path.join(dir, SCAN_DIR, 'raw', 'user-lookup-v2.json');
+    writeFileSync(ul, readFileSync(ul, 'utf8').replace('__MODERATOR_B__', DENIED_NAME));
+  };
+
+  it('positive control — the CORRECT salt finds the planted value', () => {
+    mutate((dir) => {
+      seedActive(SALT)(dir);
+      plantName(dir);
+    });
+    const result = runGate({ root, salt: SALT });
+    expect(result.denylistActive).toBe(true);
+    expect(result.failures.join(' ')).toMatch(/denylisted known-bad value/);
+  });
+
+  it('a ROTATED salt fails loudly instead of matching nothing and passing', () => {
+    mutate((dir) => {
+      seedActive(SALT)(dir);
+      plantName(dir);
+    });
+    const result = runGate({ root, salt: 'a-different-salt' });
+    expect(result.ok).toBe(false);
+    expect(result.failures.join(' ')).toMatch(/does not match the one these hashes/);
+    expect(result.denylistActive).toBe(false);
+  });
+
+  it('a trailing newline in the CI secret is trimmed, not silently fatal', () => {
+    mutate((dir) => {
+      seedActive(SALT)(dir);
+      plantName(dir);
+    });
+    const result = runGate({ root, salt: `${SALT}\n` });
+    expect(result.failures.join(' ')).toMatch(/denylisted known-bad value/);
+  });
+
+  it('hashes with NO sentinel run but say they are unverified', () => {
+    mutate((dir) =>
+      writeFileSync(
+        path.join(dir, DENYLIST_PATH),
+        JSON.stringify({ version: 1, hashes: [hashValue(SALT, DENIED_NAME)] }, null, 2)
+      )
+    );
+    const result = runGate({ root, salt: SALT });
+    expect(result.notes.join(' ')).toMatch(/ACTIVE but UNVERIFIED/);
+  });
+});
+
+describe('audit 🟡5 — the credential rule must cover the corpus it scans', () => {
+  it.each([
+    ['quoted JSON key', '"apiKey": "AKIAQQQ12345678ZZ"'],
+    ['transit key,value pair', '"WEBHOOK_TOKEN","ghp_abcdefghij0123456789"'],
+    ['escaped double-quoted JS in JSON', '\\"const apiKey = \\"AKIAQQQ12345678ZZ\\"\\"'],
+    ['template literal', 'const apiKey = `AKIAQQQ12345678ZZ`'],
+    ['lowercase bearer', 'authorization: bearer ghp_abcdefghij0123456789'],
+    ['uppercase BEARER', 'AUTHORIZATION: BEARER ghp_abcdefghij0123456789'],
+  ])('catches %s', (_label, sample) => {
+    expect(findCredentialShapes(sample).length).toBeGreaterThan(0);
+  });
+
+  it('does not run away across a large JSON blob (the 646KB over-match)', () => {
+    // The first widened regex included backticks in the quote class, so one opener
+    // consumed the rest of the file and reported a 646,934-char "secret".
+    const blob = `{"token":"${'a'.repeat(400)}","other":${JSON.stringify('x'.repeat(50_000))}}`;
+    for (const hit of findCredentialShapes(blob)) {
+      const chars = Number(/^(\d+) chars/.exec(hit.sample)?.[1] ?? 0);
+      expect(chars).toBeLessThanOrEqual(200);
+    }
+  });
+});
+
+describe('audit 🟡6 — findings must not republish the value', () => {
+  it('masks a credential value rather than printing it', () => {
+    const found = findCredentialShapes("const apiKey = 'AKIAQQQ12345678ZZ'");
+    expect(found).toHaveLength(1);
+    expect(found[0].sample).not.toContain('AKIAQQQ12345678ZZ');
+    expect(found[0].sample).toMatch(/^\d+ chars, sha256:[0-9a-f]{8}…$/);
+  });
+
+  it('mask leaks neither the value nor a usable prefix of it', () => {
+    expect(mask('109.236.62.211')).not.toContain('109.236');
+  });
+});
+
+describe('audit 🟡7 — --hash refuses what the matcher cannot find', () => {
+  it(`throws above ${MAX_NGRAM_WORDS} word tokens`, () => {
+    expect(() => hashValue(SALT, 'Maria Anna Sophia Von Habsburg')).toThrow(/could never match/);
+  });
+
+  it('accepts exactly MAX_NGRAM_WORDS, and that digest really does match', () => {
+    const digest = hashValue(SALT, 'Anna Sophia Von Habsburg');
+    expect(
+      findDenylistHits('signed off by Anna Sophia Von Habsburg today', {
+        salt: SALT,
+        hashes: [digest],
+      })
+    ).toEqual([digest]);
+  });
+
+  it('throws on a value with no word tokens', () => {
+    expect(() => hashValue(SALT, '!!! ---')).toThrow(/no word tokens/);
+  });
+});
+
+describe('audit nits — IPv6 and dotted-quad adjacency', () => {
+  it('flags a real IPv6 address', () => {
+    expect(findIPv6('client 2a01:4f8:c17:1234::1 banned')).toEqual(['2a01:4f8:c17:1234::1']);
+  });
+
+  it('allows loopback/unspecified', () => {
+    expect(findIPv6('bound ::1 and ::')).toEqual([]);
+  });
+
+  it('does not flag ordinary colon-separated text', () => {
+    expect(findIPv6('12:30:45 duration, key:value')).toEqual([]);
+  });
+
+  it('does not flag a dotted quad inside a longer version string', () => {
+    expect(findOutOfRangeIPv4('version 1.2.3.4.5.6 shipped')).toEqual([]);
+    expect(findOutOfRangeIPv4('build 10.20.30.40.1')).toEqual([]);
+  });
+
+  it('still flags a standalone routable address', () => {
+    expect(findOutOfRangeIPv4('from 109.236.62.211 today')).toEqual(['109.236.62.211']);
+  });
+});
+
+describe('real-corpus regressions the synthetic cases did not catch', () => {
+  it('an EMPTY secret-named value does not run across into the next JSON key', () => {
+    // Found by running the widened rule against the real exports: the workflow
+    // files carry `\"databasePasswordOverride\",\"\",\"functionParameters\"` — the
+    // override is EMPTY, which is the safe state, but a value body that allowed
+    // `\"` swallowed the empty string and reported a 21-char "secret".
+    const sample = String.raw`,\"databasePasswordOverride\",\"\",\"functionParameters\"`;
+    expect(findCredentialShapes(sample)).toEqual([]);
+  });
+
+  it('the real exports pass — the corpus IS the false-positive control', () => {
+    const result = runGate({ root: REPO_ROOT, salt: undefined });
+    expect(result.failures).toEqual([]);
+    expect(result.files.length).toBeGreaterThan(20);
   });
 });
