@@ -2017,9 +2017,11 @@ export function IframeHost({
 
   // SHARED_UPDATE → apps.shared.update → SHARED_UPDATE_RESULT (author-scoped
   // in-place edit; #3146). Reply is `{ ok, error? }` (SHARED_WITHDRAW-style, NOT
-  // SHARED_APPEND's `{ key }`) — the SDK 0.24 hook rejects on `!ok || error` and
-  // its isValidSharedUpdateResult REQUIRES a boolean `ok`, so BOTH paths send one
-  // (the error path MUST carry `ok: false` or the reply is dropped → block hangs).
+  // SHARED_APPEND's `{ key }`) — the SDK hook rejects on `!ok || error !== undefined`
+  // and isValidSharedUpdateResult accepts an error reply whether or not it carries
+  // `ok` (every `{ ok, error }` validator early-accepts on a PRESENT `error`), so
+  // an error reply is never dropped. Both paths still send `ok` because it is the
+  // clearer signal, NOT because omitting it would hang.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown; value?: unknown } | undefined>(
       'SHARED_UPDATE',
@@ -2152,8 +2154,10 @@ export function IframeHost({
 
   // SHARED_REPORT → apps.shared.report → SHARED_REPORT_RESULT. User reports a
   // posted row for mod review (server trust-gates + rate-limits + files it).
-  // Reply is SHARED_WITHDRAW-style `{ ok, error? }` — the error path MUST carry
-  // ok:false or the SDK drops it (→ hang).
+  // Reply is SHARED_WITHDRAW-style `{ ok, error? }`. The SDK accepts an error reply
+  // whether or not it carries `ok` (every `{ ok, error }` validator early-accepts on
+  // a PRESENT `error`), so we send `ok: false` because it is the clearer signal, NOT
+  // because omitting it would hang.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown; reason?: unknown } | undefined>(
       'SHARED_REPORT',
