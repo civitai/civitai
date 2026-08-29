@@ -96,8 +96,35 @@ describe('block catalog endpoints — opaque-origin CORS wiring (PR #2681)', () 
       // `_request_duration_seconds`), which would merge tool traffic into
       // `models` with nothing anywhere reporting a fault.
       //
+      // 🔴 `endpoint` MAY BE A RESOLVER, so this reads the RESOLVED label rather
+      // than the raw opt. `/api/v1/blocks/tools` serves two materially different
+      // workloads on one path — a static declarations GET and a catalog-search
+      // POST — and passes a per-request function so the RED series can tell them
+      // apart. Comparing the raw opt against a string would compare a Function
+      // to `'tools'` and fail while the wiring is correct.
+      //
+      // Resolving does NOT weaken the guard: the mutant this line exists for
+      // (`'tools'` → `'models'`, which typechecks because `AppBlockEndpoint`
+      // contains both, and once survived all ~23.9k tests) is still caught,
+      // because a resolver returning `'models'` resolves to `'models'` here.
+      const resolveLabel = (endpoint: unknown, method: string) =>
+        typeof endpoint === 'function'
+          ? (endpoint as (req: { method: string }) => string)({ method })
+          : endpoint;
+
       // Index order is the import order above: models, images, tools.
-      expect(captured.map((opts) => opts.endpoint)).toEqual(['models', 'images', 'tools']);
+      expect(captured.map((opts) => resolveLabel(opts.endpoint, 'GET'))).toEqual([
+        'models',
+        'images',
+        'tools',
+      ]);
+
+      // 🔴 AND THE SPLIT ITSELF, pinned HERE because this is the file that
+      // enumerates the catalog routes' labels — a future edit that collapsed the
+      // resolver back to a bare `'tools'` would silently re-merge a free
+      // declarations read with a Meilisearch query in the same RED series, and
+      // the assertion above alone would still pass.
+      expect(resolveLabel(captured[2].endpoint, 'POST')).toBe('tools_call');
     }
   );
 });
