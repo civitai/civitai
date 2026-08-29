@@ -10,6 +10,7 @@ import {
   MAX_TOOL_RESULT_CHARS,
   MAX_TOOL_RESULT_ITEMS,
   neutralizeAirLiterals,
+  NEUTRALIZE_DEPTH_PLACEHOLDER,
   projectModelForTool,
   type ProjectedModel,
 } from '~/server/services/blocks/tools/registry';
@@ -510,5 +511,97 @@ describe('projectModelForTool — per-field length bounds', () => {
     expect(hasLoneSurrogate('ab\ud83d')).toBe(true);
     expect(hasLoneSurrogate('ab\udd25')).toBe(true);
     expect(hasLoneSurrogate('ab🔥')).toBe(false);
+  });
+});
+
+/**
+ * Follow-ups from clawgate #426 — the couplings that were named but unpinned.
+ */
+describe('#426 — constants that must not drift', () => {
+  it('🔴 item 3: the route bounds a tool name with the chat step\'s OWN constant', async () => {
+    // The route used to spell `64` as a literal while `MAX_TOOL_NAME_CHARS` was
+    // module-private. The values agreed only by inspection — the same drift the
+    // neighbouring `.regex(TOOL_NAME_PATTERN)` had already closed by importing.
+    const { MAX_TOOL_NAME_CHARS } = await import(
+      '~/server/services/blocks/steps/chat-completion.step'
+    );
+    expect(typeof MAX_TOOL_NAME_CHARS).toBe('number');
+
+    // Read the route's source and assert it does not re-spell the number.
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(
+      new URL('../../../../../pages/api/v1/blocks/tools.ts', import.meta.url),
+      'utf8'
+    );
+    expect(
+      src,
+      'the wire `name` bound must be the imported constant, not a literal'
+    ).toContain('.max(MAX_TOOL_NAME_CHARS)');
+    expect(src).not.toMatch(/name:\s*z\.string\(\)\.min\(1\)\.max\(\d+\)/);
+  });
+
+  it('🔴 item 5: the DEFAULT the model is TOLD is the default the route APPLIES', async () => {
+    // The declaration served to the model said "default 5" as a literal while
+    // the route held its own `DEFAULT_LIMIT = 5`. Two copies of one number, and
+    // the declaration is the model's only source of truth about the contract —
+    // so a change to the route's default would leave the model confidently
+    // misinformed, with nothing failing.
+    const { DEFAULT_TOOL_RESULT_ITEMS } = await import(
+      '~/server/services/blocks/tools/registry'
+    );
+    const decl = blockToolDeclarations().find((d) => d.function.name === 'search_models');
+    expect(decl, 'search_models must be declared').toBeTruthy();
+
+    const limitDesc = (
+      decl!.function.parameters as { properties: { limit?: { description?: string } } }
+    ).properties.limit?.description;
+    expect(limitDesc, 'the limit parameter must carry a description').toBeTruthy();
+    expect(
+      limitDesc,
+      'the declared default must be the constant the route applies'
+    ).toContain(`default ${DEFAULT_TOOL_RESULT_ITEMS}`);
+
+    // Positive control: the assertion above must be able to FAIL. A description
+    // that named a different number must not satisfy it.
+    expect(limitDesc).not.toContain(`default ${DEFAULT_TOOL_RESULT_ITEMS + 1}`);
+  });
+});
+
+describe('#426 item 4 — neutralizeAirLiterals is depth-bounded', () => {
+  /** Build `depth` levels of `{ a: { a: … { a: leaf } } }`. */
+  function nest(depth: number, leaf: unknown): unknown {
+    let out = leaf;
+    for (let i = 0; i < depth; i += 1) out = { a: out };
+    return out;
+  }
+
+  it('🔴 does not blow the stack on a deeply nested value', () => {
+    // Pre-change this recursed without a budget. At ~5k levels — which a small
+    // JSON body reaches trivially — that is a RangeError, i.e. a 500 from a
+    // scrubber whose whole job is to make a 400 body safe to return.
+    expect(() => neutralizeAirLiterals(nest(50_000, 'urn:air:leaf'))).not.toThrow();
+  });
+
+  it('🔴 the over-depth substitute carries NO caller content, so nothing survives unscrubbed', () => {
+    // The fail direction is the opposite of `containsAirReference`'s. That is a
+    // DETECTOR, so past its cap it returns TRUE (fail-closed). This is a
+    // SCRUBBER: merely stopping the recursion would RETURN the over-deep
+    // subtree untouched — fail-OPEN, the literal surviving because the input was
+    // nested. So the cap substitutes a first-party constant instead.
+    const scrubbed = neutralizeAirLiterals(nest(50_000, 'urn:air:deep-secret'));
+    expect(JSON.stringify(scrubbed).toLowerCase()).not.toContain('urn:air:');
+    expect(JSON.stringify(scrubbed)).toContain(NEUTRALIZE_DEPTH_PLACEHOLDER);
+  });
+
+  it('positive control: shallow values are still scrubbed normally, not replaced', () => {
+    // Without this, a cap set to 0 would pass both tests above while destroying
+    // the function's actual job.
+    expect(neutralizeAirLiterals('see urn:air:model@1')).toBe('see urn-air-model@1');
+    expect(neutralizeAirLiterals({ 'urn:air:k': ['urn:air:v'] })).toEqual({
+      'urn-air-k': ['urn-air-v'],
+    });
+    expect(JSON.stringify(neutralizeAirLiterals(nest(10, 'urn:air:x')))).not.toContain(
+      NEUTRALIZE_DEPTH_PLACEHOLDER
+    );
   });
 });

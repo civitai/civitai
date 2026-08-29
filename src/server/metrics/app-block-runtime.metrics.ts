@@ -55,12 +55,21 @@ export type AppBlockEndpoint =
   | 'shared_storage_top'
   | 'shared_storage_increment'
   | 'generation_resources'
-  // The read-only chat-tool surface (#398 AC5): GET returns the tool
-  // declarations, POST executes one. It is a model-shaped view of the SAME
-  // clamped catalog path 'models' serves, and it shares that endpoint's
-  // per-token rate-limit budget deliberately — so it gets its own label for
-  // attribution, not its own allowance.
-  | 'tools';
+  // The read-only chat-tool surface (#398 AC5). It is a model-shaped view of
+  // the SAME clamped catalog path 'models' serves, and it shares that
+  // endpoint's per-token rate-limit budget deliberately — so it gets its own
+  // label for attribution, not its own allowance.
+  //
+  // 🔴 TWO LABELS FOR ONE PATH, BECAUSE ONE PATH SERVES TWO DIFFERENT
+  // WORKLOADS. `GET /api/v1/blocks/tools` returns static declarations from an
+  // in-process registry; `POST` runs a Meilisearch query and a catalog read.
+  // Labelling both 'tools' merged a free constant-time read with the only
+  // request on this route that can be slow, rate-limited or 503 — so the RED
+  // series could not answer "are tool CALLS degrading", which is the question
+  // it exists for. The p95 of the merged series is dominated by whichever
+  // outnumbers the other, and the declarations GET outnumbers the calls.
+  | 'tools'
+  | 'tools_call';
 // NOTE: buzz self-reads (balance/transactions/accounts/daily-compensation) are
 // NOT here — they are host-mediated tRPC MUTATIONS (blocks.getMyBuzz*), not
 // withBlockScope REST routes, so they are not metered via this per-endpoint

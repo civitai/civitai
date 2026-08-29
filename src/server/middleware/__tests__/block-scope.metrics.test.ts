@@ -247,3 +247,92 @@ describe('withBlockScope — per-app REST RED metric', () => {
     expect(await counterValue('model_detail', 'success', APP_BLOCK_ID)).toBe(before + 1);
   });
 });
+
+/**
+ * A per-request `endpoint` resolver (clawgate #426 item 2).
+ *
+ * `/api/v1/blocks/tools` serves two materially different workloads on one path:
+ * GET returns static declarations from an in-process registry, POST runs a
+ * Meilisearch query and a catalog read. A single label merged them, so the RED
+ * series could not answer "are tool CALLS degrading" — and because the cheap GET
+ * outnumbers the POST, the merged p95 tracked the wrong half.
+ *
+ * 🔴 THESE ASSERT THE LABEL THE METRIC ACTUALLY CARRIES, not that the route
+ * exports a function. A test that only checked the resolver in isolation would
+ * pass while the middleware ignored it — the defect being guarded against is
+ * precisely a resolver that is never called.
+ */
+describe('endpoint label — per-request resolver', () => {
+  function makeReqWithMethod(token: string, method: string): NextApiRequest {
+    return {
+      method,
+      headers: { authorization: `Bearer ${token}` },
+      query: { id: String(MODEL_ID) },
+      socket: { remoteAddress: '127.0.0.1' },
+    } as unknown as NextApiRequest;
+  }
+
+  const toolsResolver = (req: NextApiRequest): AppBlockEndpoint =>
+    req.method === 'POST' ? 'tools_call' : 'tools';
+
+  it('🔴 resolves a DIFFERENT label per method on the same route', async () => {
+    const beforeGet = await counterValue('tools', 'success');
+    const beforePost = await counterValue('tools_call', 'success');
+
+    const route = withBlockScope(statusHandler(200) as never, {
+      endpoint: toolsResolver,
+      requiredScope: REQUIRED_SCOPE,
+    });
+
+    const getRes = makeRes();
+    await route(makeReqWithMethod(await mintToken(), 'GET') as never, getRes as never);
+    getRes._finish();
+
+    const postRes = makeRes();
+    await route(makeReqWithMethod(await mintToken(), 'POST') as never, postRes as never);
+    postRes._finish();
+
+    // Each landed on its OWN series...
+    expect(await counterValue('tools', 'success')).toBe(beforeGet + 1);
+    expect(await counterValue('tools_call', 'success')).toBe(beforePost + 1);
+    // ...and the duration histogram is split too, which is the half that
+    // matters: a merged p95 is the reason this exists.
+    expect(await histogramCount('tools_call')).toBeGreaterThan(0);
+  });
+
+  it('🔴 positive control: two GETs both land on `tools`, so the split is BY METHOD', async () => {
+    // Without this, a resolver that returned a fresh label every call would
+    // satisfy the test above while being just as wrong.
+    const before = await counterValue('tools', 'success');
+    const route = withBlockScope(statusHandler(200) as never, {
+      endpoint: toolsResolver,
+      requiredScope: REQUIRED_SCOPE,
+    });
+
+    for (const _ of [0, 1]) {
+      const res = makeRes();
+      await route(makeReqWithMethod(await mintToken(), 'GET') as never, res as never);
+      res._finish();
+    }
+
+    expect(await counterValue('tools', 'success')).toBe(before + 2);
+    expect(await counterValue('tools_call', 'success')).toBe(
+      await counterValue('tools_call', 'success')
+    );
+  });
+
+  it('a plain string endpoint still works — the resolver form is ADDITIVE', async () => {
+    // Every other route in the codebase passes a string. If this regressed,
+    // the change would break the whole block REST surface's metrics at once.
+    const before = await counterValue('model_detail', 'success');
+    const route = withBlockScope(statusHandler(200) as never, {
+      endpoint: 'model_detail',
+      requiredScope: REQUIRED_SCOPE,
+    });
+    const res = makeRes();
+    await route(makeReqWithMethod(await mintToken(), 'GET') as never, res as never);
+    res._finish();
+
+    expect(await counterValue('model_detail', 'success')).toBe(before + 1);
+  });
+});

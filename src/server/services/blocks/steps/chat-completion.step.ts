@@ -417,7 +417,17 @@ export const MAX_TOOL_ROUNDS = 3;
  * error say what is actually wrong.
  */
 const MAX_TOOLS = 8;
-const MAX_TOOL_NAME_CHARS = 64;
+/**
+ * The longest a tool NAME may be, on every surface that accepts one.
+ *
+ * 🔴 EXPORTED BECAUSE IT IS SHARED, NOT BECAUSE IT IS INTERESTING. The block
+ * tool route (`~/pages/api/v1/blocks/tools`) bounds its wire `name` with the
+ * same number. While this was module-private that route spelled `64` as a
+ * literal and the two agreed only by inspection — the identical drift class its
+ * neighbouring `.regex(TOOL_NAME_PATTERN)` had just closed by importing rather
+ * than re-spelling. Import this; do not write the number again.
+ */
+export const MAX_TOOL_NAME_CHARS = 64;
 const MAX_TOOL_DESCRIPTION_CHARS = 1_024;
 const MAX_TOOL_PARAMETERS_CHARS = 4_096;
 const MAX_TOOL_PARAMETERS_DEPTH = 8;

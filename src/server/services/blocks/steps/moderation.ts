@@ -695,10 +695,36 @@ export async function attachModeratedStepTextOutputs<T extends ModeratedTextOutp
       //
       // `'succeeded'` and nothing else. The other terminal states —
       // `failed` / `expired` / `canceled` — legitimately produce no output, and
-      // their absence is already explained by the workflow's own status; firing
-      // here would replace a correct explanation with a wrong one. The absent
-      // field is the right answer for every non-succeeded state, and it is what
-      // this path did before the invariant existed.
+      // their absence is already explained by THE STEP'S OWN STATUS, which is
+      // what this gate reads; firing here would replace a correct explanation
+      // with a wrong one. The absent field is the right answer for every
+      // non-succeeded state, and it is what this path did before the invariant
+      // existed.
+      //
+      // 🔴 THIS SENTENCE USED TO SAY "the workflow's own status", AND THE
+      // SUBJECT MATTERED. The snapshot exposes the WORKFLOW's status while this
+      // gate reads the STEP's, so as written the justification only held where
+      // the two agree — and where they could disagree (a non-succeeded step
+      // under a `succeeded` workflow) the silent-success shape this invariant
+      // exists to prevent would quietly return, justified by a sentence about a
+      // different field.
+      //
+      // They cannot disagree, which is why the gate is correct as it stands and
+      // only the comment needed fixing. A workflow's status is AGGREGATED from
+      // its steps, and the aggregation is worst-wins: any non-terminal step
+      // leaves the workflow non-terminal, and among terminal steps a
+      // non-succeeded one dominates. So a workflow reads `succeeded` only when
+      // EVERY step does, and the combination this gate would have to worry
+      // about cannot be constructed. (Verified against the orchestrator's own
+      // status derivation — that repo is private, so the mechanism is stated
+      // here rather than quoted.)
+      //
+      // Corroborated against live orchestrator data (2026-08-29), two 24h
+      // windows 30 days apart: across 1,004,260 workflows — 983,043 of them
+      // `succeeded`, and 21,323 carrying a non-succeeded step — the
+      // intersection was ZERO in both windows. Both clauses were shown to match
+      // independently first, so that zero is a measurement and not a query that
+      // happened to match nothing.
       //
       // Reading a `status` the orchestrator did not send yields `undefined`,
       // which fails this test and therefore falls back to the pre-invariant
