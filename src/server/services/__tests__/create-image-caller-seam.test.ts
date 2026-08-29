@@ -246,7 +246,10 @@ describe('repo-wide ledger — every file that writes an Image row outside `crea
    *
    * 🔴 STILL NOT A PROOF OF COMPLETENESS, and the names above say only what is checked.
    * Out of reach by construction, ALL of them measured at zero occurrences in `src/` today
-   * rather than assumed, so nothing is currently hidden behind this list:
+   * rather than assumed, so nothing is currently hidden behind this list. Method: a GNU
+   * `grep -E` over the same file set this walk covers (non-test `.ts`/`.tsx` under `src/`,
+   * `__tests__` excluded), one pattern per shape, on 2026-08-28. Re-run those before
+   * trusting the zero — it is a dated measurement, not an invariant.
    *
    *   - ARM 1. A dynamic member access (`db['image']['create']`); a destructured handle
    *     (`const { image } = dbWrite; image.create(...)` — the receiver is then a bare
