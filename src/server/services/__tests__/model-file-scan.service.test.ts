@@ -1537,51 +1537,7 @@ describe('model-file-scan.service', () => {
       expect(updateCall.data.pickleScanMessage).not.toContain('does not match file contents');
     });
 
-    it('holds the model for moderator review, without issuing a violation strike', async () => {
-      onlyFlags('scan-format-mismatch-hold');
-
-      await runWithSteps([pickleStep(formatMismatchOutput)]);
-
-      expect(mockUnpublishModelById).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: 200,
-          isModerator: true,
-          // Hold, not a strike: reversible and queued for a human.
-          reason: 'other',
-          meta: expect.objectContaining({ needsReview: true }),
-        })
-      );
-      expect(mockCreateNotification).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: 42, key: 'model-format-mismatch:200:1' })
-      );
-    });
-
-    it('does not hold when the kill switch is off', async () => {
-      onlyFlags(); // every flag off
-
-      const updateCall = await runWithSteps([pickleStep(formatMismatchOutput)]);
-
-      expect(mockUnpublishModelById).not.toHaveBeenCalled();
-      // The recorded verdict is independent of the flag — that is what closes the bypass.
-      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
-    });
-
-    it('does not re-hold a model a moderator has already taken down', async () => {
-      onlyFlags('scan-format-mismatch-hold');
-      mockDbWrite.model.findUnique.mockResolvedValue({
-        id: 200,
-        name: 'Test Model',
-        meta: {},
-        userId: 42,
-        status: 'UnpublishedViolation',
-      });
-
-      await runWithSteps([pickleStep(formatMismatchOutput)]);
-
-      expect(mockUnpublishModelById).not.toHaveBeenCalled();
-    });
-
-    it('leaves a byte-verified safetensors skip passing, and does not hold it', async () => {
+    it('leaves a byte-verified safetensors skip passing', async () => {
       // The false-positive control: the overwhelming majority of real uploads are genuine
       // safetensors, and under the new scanner they arrive with this skipReason.
       const updateCall = await runWithSteps([
@@ -1597,7 +1553,6 @@ describe('model-file-scan.service', () => {
       ]);
 
       expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Success);
-      expect(mockUnpublishModelById).not.toHaveBeenCalled();
     });
 
     it('a legacy metadata-based skip still passes while strict verification is off', async () => {
@@ -1717,30 +1672,6 @@ describe('model-file-scan.service', () => {
       expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
     });
 
-    it('blocks a Draft model from being published, via a flag that is actually enforced', async () => {
-      // 🔴 The guard against writing an INERT flag. A previous revision set meta.needsReview and
-      // called that "putting it in front of a moderator". It was neither: /moderator/models
-      // filters status [UnpublishedViolation, Published] so a Draft never appears, AND the
-      // publish handler destructures needsReview out of meta before writing it back — the flag
-      // was erased by the very action it was meant to guard. `cannotPublish` is the one the
-      // publish path actually throws on.
-      onlyFlags('scan-format-mismatch-hold');
-      mockDbWrite.model.findUnique.mockResolvedValue({
-        id: 200,
-        name: 'Test Model',
-        meta: {},
-        userId: 42,
-        status: 'Draft',
-      });
-
-      await runWithSteps([pickleStep(formatMismatchOutput)]);
-
-      expect(mockUnpublishModelById).not.toHaveBeenCalled();
-      const sql = mockDbWrite.$executeRaw.mock.calls[0][0];
-      expect(sql.join('?')).toContain('cannotPublish');
-      expect(sql.join('?')).not.toContain('needsReview');
-    });
-
     it('logs a mismatch even when the enforcement flag is OFF', async () => {
       // The rollout plan is "flip the flag, then watch". That is impossible without telemetry
       // from BEFORE the flip. Detection is ungated; only enforcement is gated.
@@ -1756,58 +1687,16 @@ describe('model-file-scan.service', () => {
       expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
     });
 
-    it('does not touch meta on an already-unpublished model', async () => {
-      // 🔴 Stamping needsReview on an UnpublishedViolation model DISABLES the creator's
-      // "Request a Review" button, so a background rescan of an already-actioned model would
-      // silently remove its owner's only route of appeal. The log is the whole action here.
-      onlyFlags('scan-format-mismatch-hold');
-      mockDbWrite.model.findUnique.mockResolvedValue({
-        id: 200,
-        name: 'Test Model',
-        meta: {},
-        userId: 42,
-        status: 'UnpublishedViolation',
-      });
+    it('records a mismatch as telemetry regardless of any flag, and touches no model', async () => {
+      // 🔴 The scope guard for this PR. Four audit rounds went into an automated hold and each
+      // found the lever attached to something unchecked — a queue excluding the flagged status,
+      // a publish handler stripping the field, and finally a flag the model's OWNER can clear.
+      // The hold moved to a follow-up; what stays is the recorded verdict plus the population
+      // signal needed to size the problem before any enforcement is switched on. If a later
+      // change reintroduces a model mutation here, this test is what should stop it.
+      onlyFlags(); // every flag off — the shipping state
 
-      await runWithSteps([pickleStep(formatMismatchOutput)]);
-
-      expect(mockUnpublishModelById).not.toHaveBeenCalled();
-      expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
-      expect(mockDbWrite.model.update).not.toHaveBeenCalled();
-      expect(mockLogToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: 'scan-format-mismatch',
-          modelStatus: 'UnpublishedViolation',
-        }),
-        'webhooks'
-      );
-    });
-
-    it('holds a Scheduled model, not only a Published one', async () => {
-      // KILLING FIXTURE for the Scheduled arm of the allow-list. Every other fixture in this
-      // block uses Published/Draft/UnpublishedViolation, so dropping `|| Scheduled` previously
-      // left the suite fully green while silently ceasing to hold scheduled models.
-      onlyFlags('scan-format-mismatch-hold');
-      mockDbWrite.model.findUnique.mockResolvedValue({
-        id: 200,
-        name: 'Test Model',
-        meta: {},
-        userId: 42,
-        status: 'Scheduled',
-      });
-
-      await runWithSteps([pickleStep(formatMismatchOutput)]);
-
-      expect(mockUnpublishModelById).toHaveBeenCalled();
-    });
-
-    it('sends the scanner explanation to the operator log, not the public constant', async () => {
-      // The log is the only place a moderator can see WHICH format was declared and what was
-      // detected. An earlier revision passed the public fixed string here, leaving the queue
-      // with nothing actionable.
-      onlyFlags('scan-format-mismatch-hold');
-
-      await runWithSteps([pickleStep(formatMismatchOutput)]);
+      const updateCall = await runWithSteps([pickleStep(formatMismatchOutput)]);
 
       expect(mockLogToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1816,27 +1705,13 @@ describe('model-file-scan.service', () => {
         }),
         'webhooks'
       );
-    });
-
-    it('does not hold a Draft model', async () => {
-      // Scans are driven with no model-status predicate and models are Draft during the upload
-      // wizard, so this is the ordinary case. Holding one would push a never-published draft to
-      // a mod-only status and lock its own creator out of it.
-      onlyFlags('scan-format-mismatch-hold');
-      mockDbWrite.model.findUnique.mockResolvedValue({
-        id: 200,
-        name: 'Test Model',
-        meta: {},
-        userId: 42,
-        status: 'Draft',
-      });
-
-      const updateCall = await runWithSteps([pickleStep(formatMismatchOutput)]);
-
+      // The verdict is recorded...
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
+      // ...and nothing is done TO the model.
       expect(mockUnpublishModelById).not.toHaveBeenCalled();
       expect(mockCreateNotification).not.toHaveBeenCalled();
-      // The verdict is still recorded — only the side effect is withheld.
-      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
+      expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
     });
 
     it('does not leak the detector verdict into the public scan message', async () => {
