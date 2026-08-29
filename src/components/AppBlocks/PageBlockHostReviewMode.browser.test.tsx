@@ -7,6 +7,10 @@ import { renderWithProviders } from '../../../test/component-setup';
 // `importOriginal` generic below be written without an inline `import()` type,
 // which the repo's `consistent-type-imports` rule forbids.
 import type * as MantineNotifications from '@mantine/notifications';
+// Type-only too (erased, so it cannot defeat vi.mock hoisting) — the repo's local
+// mirror of the SDK's `BlockWildcardPackErrorCode` union, used below so the
+// permitted-code list in this file cannot silently drift from the union.
+import type { WildcardPackErrorCode } from '~/components/AppBlocks/wildcardPackParse';
 
 /**
  * MOD REVIEW SANDBOX (#2831) — PageBlockHost `reviewMode` read-only gate.
@@ -144,6 +148,17 @@ function listenForReply() {
     stop: () => cw.removeEventListener('message', handler),
   };
 }
+
+// The closed set WILDCARD_PACK_RESULT.error is validated against block-side.
+// `satisfies` ties it to the union: adding/removing a member of
+// `WildcardPackErrorCode` without updating this list is a compile error.
+const WILDCARD_PACK_ERROR_CODES = [
+  'not-found',
+  'forbidden',
+  'too-large',
+  'parse-failed',
+  'busy',
+] as const satisfies readonly WildcardPackErrorCode[];
 
 const SAME_ORIGIN_SRC = `${window.location.origin}/`;
 const REVIEW_TOKEN = 'review.jwt.self-bound';
@@ -285,7 +300,7 @@ describe('PageBlockHost reviewMode — side-effecting handlers fail-fast NACK, n
     l.stop();
   });
 
-  test('GET_WILDCARD_PACK (session-authed, token-INDEPENDENT) → NACK, resolveWildcardPack NOT called', async () => {
+  test('GET_WILDCARD_PACK (session-authed, token-INDEPENDENT) → NACK with an IN-SET enum code, resolveWildcardPack NOT called', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} reviewMode onConsentGranted={vi.fn()} />);
     await driveToReady();
     const l = listenForReply();
@@ -295,7 +310,15 @@ describe('PageBlockHost reviewMode — side-effecting handlers fail-fast NACK, n
     await vi.waitFor(() => expect(l.last('WILDCARD_PACK_RESULT')).toBeTruthy());
     const reply = l.last('WILDCARD_PACK_RESULT')!.payload as { requestId: string; error: string };
     expect(reply.requestId).toBe('wp1');
-    expect(reply.error).toBe('not available in review preview');
+    // 🔴 REGRESSION GUARD. Unlike every other reviewMode NACK, this reply's `error`
+    // is a DISCRIMINATED ENUM the block-side `isValidWildcardPackResult` checks
+    // against a closed set. A free-text NACK (e.g. REVIEW_NACK_MESSAGE) is rejected
+    // by that validator and DROPPED by the transport, so the block's pending
+    // request never settles — a spinner until the transport timeout, which is the
+    // opposite of the fail-fast this handler promises. Assert BOTH: membership in
+    // the five permitted codes, and the specific code we chose.
+    expect(WILDCARD_PACK_ERROR_CODES).toContain(reply.error);
+    expect(reply.error).toBe('forbidden');
     // The mod's session-authed download entitlement is NEVER exercised in review.
     expect(mocks.wildcard).not.toHaveBeenCalled();
     l.stop();
