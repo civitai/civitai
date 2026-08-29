@@ -92,8 +92,23 @@ import { ProfileImageUpload } from '~/components/ProfileImageUpload/ProfileImage
 const overlay = () => document.querySelector('.mantine-LoadingOverlay-root');
 const preview = () => document.querySelector('[data-testid="preview"]') as HTMLImageElement | null;
 
-/** A pre-existing avatar, in the string form `value` accepts. */
-const EXISTING = 'https://cdn.example.com/existing-avatar.png';
+/**
+ * The two string shapes `value` accepts, BOTH of them.
+ *
+ * 🔴 `value` is typed `string | { url: string }`, and the string half has two real
+ * inhabitants: a legacy absolute URL, and a bare media key — which is what `onChange`
+ * emits and what `Image.url` stores, i.e. the shape a saved avatar actually round-trips
+ * as. An earlier draft of the restore test used the URL alone, which is the one string
+ * shape that worked: `valuePreview` gated a string on `isValidURL`, so with a bare key it
+ * returned `undefined` and the restore rendered an empty circle. Fixing that meant
+ * consolidating the derivation; keeping this guard honest means driving both.
+ */
+const EXISTING_URL = 'https://cdn.example.com/existing-avatar.png';
+const EXISTING_KEY = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
+const EXISTING_SHAPES: ReadonlyArray<[label: string, value: string]> = [
+  ['a full url', EXISTING_URL],
+  ['a bare media key', EXISTING_KEY],
+];
 
 async function dropFile() {
   await expect
@@ -173,26 +188,36 @@ describe('ProfileImageUpload — a refused PUT', () => {
     expect(preview()).toBeNull();
   });
 
-  test('a refused PUT leaves the EXISTING avatar on screen, not the refused one', async () => {
-    /**
-     * 🔴 THE SAME DEFECT WITH A NON-EMPTY FORM VALUE, which is the shape a real user hits.
-     *
-     * Two ways to be wrong and this pins both: painting `new-key` claims an upload that
-     * did not happen, and painting nothing claims the avatar was removed. `onChange` never
-     * fired, so the form still holds `EXISTING` and that is what has to be on screen.
-     */
-    mocks.behavior = 'fail';
-    const onChange = vi.fn();
-    renderWithProviders(<ProfileImageUpload label="Avatar" value={EXISTING} onChange={onChange} />);
+  test.each(EXISTING_SHAPES)(
+    'a refused PUT leaves the EXISTING avatar on screen when `value` is %s',
+    async (_label, existing) => {
+      /**
+       * 🔴 THE SAME DEFECT WITH A NON-EMPTY FORM VALUE, which is the shape a real user hits.
+       *
+       * Two ways to be wrong and this pins both: painting `new-key` claims an upload that
+       * did not happen, and painting nothing claims the avatar was removed. `onChange` never
+       * fired, so the form still holds `existing` and that is what has to be on screen.
+       *
+       * 🔴 RUN OVER BOTH STRING SHAPES. With the bare key this went red before the
+       * derivations were consolidated — preview present before the drop (the effect set
+       * it), `null` after (the restore's `valuePreview` returned `undefined` for a
+       * non-URL string, and the effect could not re-run because `value` never changed).
+       */
+      mocks.behavior = 'fail';
+      const onChange = vi.fn();
+      renderWithProviders(
+        <ProfileImageUpload label="Avatar" value={existing} onChange={onChange} />
+      );
 
-    await vi.waitFor(() => expect(preview()?.getAttribute('src')).toBe(EXISTING));
-    await dropFile();
-    await vi.waitFor(() =>
-      expect(document.body.textContent).toContain('Upload failed (status 403)')
-    );
-    await vi.waitFor(() => expect(preview()?.getAttribute('src')).toBe(EXISTING));
-    expect(onChange).not.toHaveBeenCalled();
-  });
+      await vi.waitFor(() => expect(preview()?.getAttribute('src')).toBe(existing));
+      await dropFile();
+      await vi.waitFor(() =>
+        expect(document.body.textContent).toContain('Upload failed (status 403)')
+      );
+      await vi.waitFor(() => expect(preview()?.getAttribute('src')).toBe(existing));
+      expect(onChange).not.toHaveBeenCalled();
+    }
+  );
 
   test('the refused PUT does not produce an unhandled rejection', async () => {
     mocks.behavior = 'fail';

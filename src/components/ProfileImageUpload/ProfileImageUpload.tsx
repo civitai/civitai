@@ -10,7 +10,6 @@ import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
 import { formatBytes } from '~/utils/number-helpers';
 import { IconUser } from '@tabler/icons-react';
-import { isValidURL } from '~/utils/type-guards';
 import { isUploadInFlight } from '~/utils/upload-status';
 import { isAndroidDevice } from '~/utils/device-helpers';
 
@@ -23,15 +22,29 @@ type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> &
 };
 
 /**
- * The preview the CURRENT form value implies, or `undefined` when the form holds nothing.
+ * 🔴 THE ONE DERIVATION OF "what preview does the CURRENT form value imply?", used by all
+ * three places that need it: the initial state, the reconciling effect, and the restore
+ * after a refused upload.
  *
- * Used both for the initial state and to put the preview back after a refused upload —
- * `handleDrop` clears it optimistically, and on failure the form value is unchanged, so
- * the honest render is the one that value describes.
+ * There used to be two, and they disagreed. This one gated a STRING `value` on
+ * `isValidURL`; the effect below took `typeof value === 'string' ? { url: value } : value`
+ * with no gate. A bare media key — the exact shape `onChange` emits and `Image.url`
+ * stores — therefore RENDERED on mount via the effect but returned `undefined` here, so
+ * the refused-upload restore cleared the circle and the effect could not put it back
+ * (`value` never changed, so it never re-ran). Measured with
+ * `value="7c9e6679-7425-40de-944b-e07fc1f90ae7"` and a refused PUT: preview present before
+ * the drop, `null` after — precisely the "your avatar was removed" render this component's
+ * restore path exists to prevent.
+ *
+ * The permissive reading wins, because it is the one that was already observable: the
+ * effect runs after the first render, so on `main` a bare key rendered anyway. It is also
+ * what the OBJECT branch always did (`{ url: value.url }`, never gated), and `EdgeMedia`
+ * resolves a bare key perfectly well. Empty string stays `undefined` — that is "the form
+ * holds nothing", not "the form holds a key".
  */
 function valuePreview(value: SimpleImageUploadProps['value']) {
-  if (typeof value === 'string') return isValidURL(value) ? { url: value } : undefined;
-  return value ? { url: value.url } : undefined;
+  if (!value) return undefined;
+  return typeof value === 'string' ? { url: value } : { url: value.url };
 }
 
 export function ProfileImageUpload({
@@ -97,7 +110,9 @@ export function ProfileImageUpload({
   }, [imageFile]);
 
   useEffect(() => {
-    const currentValue = value ? (typeof value === 'string' ? { url: value } : value) : undefined;
+    // Same derivation as the initial state and the refused-upload restore — see
+    // `valuePreview`. Open-coding it here is what let the three disagree.
+    const currentValue = valuePreview(value);
     if (currentValue && image?.url !== currentValue.url) {
       setImage(currentValue);
     }
