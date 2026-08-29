@@ -136,9 +136,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // 🔴 DO NOT ENABLE BEFORE THE SPINE-CONTROLLER SCANNER CHANGE IS DEPLOYED EVERYWHERE.
   //
   // Makes a pickle-scan SKIP count as a pass only when the scanner verified the container from
-  // its magic bytes ("safetensors-magic" / "gguf-magic"). Turning it on before the worker fleet
-  // is fully updated would mark ordinary uploads Error, so it stays off until the fleet is on
-  // the new build. Ordering detail is in the internal ticket.
+  // its magic bytes ("safetensors-magic" / "gguf-magic"). Deployment ordering against the
+  // worker fleet matters here; the constraint and its reasoning are in the internal ticket.
   SCAN_STRICT_SKIP_VERIFICATION = 'scan-strict-skip-verification',
 }
 

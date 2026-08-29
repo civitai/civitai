@@ -410,19 +410,19 @@ async function holdModelForFormatMismatch({
   fileId: number;
   detail: string | null;
 }) {
-  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.SCAN_FORMAT_MISMATCH_HOLD))) return;
-
   const model = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: { id: true, name: true, meta: true, userId: true, status: true },
   });
-  if (!model) return;
 
-  // 🔴 LOGGED BEFORE ANY STATUS BRANCH, DELIBERATELY. An earlier revision returned above this
-  // line for every non-published model, which meant the single most common case — a mismatch
-  // found while the model is still a Draft — produced NO hold, NO queue entry and NO log. It
-  // was invisible. Whatever we decide to do about the model, the detection itself is always
-  // recorded.
+  // 🔴 LOGGED FIRST — ABOVE THE FEATURE FLAG AND ABOVE EVERY STATUS BRANCH.
+  //
+  // Two earlier revisions buried this. One returned above it for any non-published model, so
+  // the most common case produced no record at all; the next left it below the flag gate, so
+  // in the shipping state (flag off) a mismatch emitted nothing anywhere. The rollout plan is
+  // "flip the flag, then watch" — which is impossible without telemetry from BEFORE the flip,
+  // both to size the population and to see whether the detector is right. Detection and
+  // enforcement are separate concerns; only enforcement is gated.
   logToAxiom(
     {
       type: 'warning',
@@ -430,11 +430,14 @@ async function holdModelForFormatMismatch({
       message: `File ${fileId} on model ${modelId} does not match its declared format`,
       modelId,
       fileId,
-      modelStatus: model.status,
+      modelStatus: model?.status ?? 'unknown',
       detail,
     },
     'webhooks'
   ).catch();
+
+  if (!model) return;
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.SCAN_FORMAT_MISMATCH_HOLD))) return;
 
   // 🔴 UNPUBLISHING IS ONLY MEANINGFUL FOR SOMETHING THAT IS PUBLISHED, and doing it to
   // anything else causes real harm — a never-published Draft would be pushed to
@@ -443,21 +446,39 @@ async function holdModelForFormatMismatch({
   // But "don't unpublish a Draft" must not become "ignore a Draft". Files are scanned by
   // scan-files.ts, which has NO model-status predicate, and models are created Draft with
   // files attached during the upload wizard — so the FIRST upload of a disguised file is
-  // normally scanned while still a draft. Nothing re-scans it later, and the publish path does
-  // not consult scan results, so simply returning here would let it be published afterwards
-  // with no further checks. That is the mirror of the bug this branch was added to fix.
+  // normally scanned while still a draft, and nothing re-scans it later.
   //
-  // (For the record: the per-VERSION unpublish notification is already status-scoped in
-  // model.service.ts and would not fire for a draft's versions. The harm that motivates this
-  // branch is the model-level UnpublishedViolation lockout, not that notification.)
+  // 🔴 THE FLAG WRITTEN HERE MUST BE ONE SOMETHING ACTUALLY BRANCHES ON. A previous revision
+  // wrote `meta.needsReview` and described it as putting the model in front of a moderator. It
+  // did neither: /moderator/models filters `status: [UnpublishedViolation, Published]`, which
+  // excludes Draft before `needsReview` is ever evaluated, AND publishModelHandler destructures
+  // `needsReview` out of meta before writing it back — so the flag was erased by the very
+  // action it was supposed to guard against. A field that exists is not a guard; only a branch
+  // on it is.
   //
-  // So a non-published model is FLAGGED but not unpublished: meta.needsReview is what the
-  // moderator queue keys on, and setting it costs the creator nothing.
+  // `cannotPublish` is that branch, and it already exists: publishModelById throws
+  // ("This model cannot be published due to moderation restrictions") when it is set, and the
+  // publish handler's destructure preserves it. So a disguised file uploaded as a draft cannot
+  // be published until a moderator clears the flag — which is the human-in-the-loop this path
+  // is for, achieved through an enforced mechanism rather than an advisory one.
+  if (model.status === ModelStatus.Draft || model.status === ModelStatus.Training) {
+    // Raw jsonb merge rather than a read-modify-write of the whole column: this fires per
+    // scanned file and would otherwise silently drop any concurrent meta write (a moderator
+    // setting cannotPromote, a text-moderation stamp) landing between the read above and here.
+    await dbWrite.$executeRaw`
+      UPDATE "Model"
+      SET meta = COALESCE(meta, '{}'::jsonb) || '{"cannotPublish":true}'::jsonb
+      WHERE id = ${modelId}
+    `;
+    return;
+  }
+
+  // Unpublished / UnpublishedViolation / Deleted: already down, and a moderator owns them.
+  // 🔴 Deliberately NO meta write here. Stamping `needsReview` on an UnpublishedViolation model
+  // DISABLES the creator's "Request a Review" button (ModelVersionDetails gates it on
+  // `model.meta?.needsReview`), so a background rescan of an already-actioned model would
+  // silently remove its owner's only route of appeal. The log above is the whole action.
   if (model.status !== ModelStatus.Published && model.status !== ModelStatus.Scheduled) {
-    await dbWrite.model.update({
-      where: { id: modelId },
-      data: { meta: { ...(model.meta as ModelMeta), needsReview: true } as Prisma.InputJsonValue },
-    });
     return;
   }
 
@@ -696,11 +717,10 @@ function deriveClamScanResult(output: NonNullable<ModelClamScanStep['output']>):
 export const FORMAT_MISMATCH_SKIP_REASON = 'format-mismatch';
 
 /**
- * What a mismatch shows publicly. Deliberately says nothing about what the scanner detected:
- * this string is served by the public v1 model-versions API, so anything specific here is an
- * oracle an uploader can iterate against. The scanner's full explanation stays in
- * `rawScanResult` and reaches the operator log via ScanOutcome.formatMismatchDetail, which is
- * deliberately a different field from this one.
+ * What a mismatch shows publicly. Deliberately says nothing about what the scanner detected —
+ * this string is served by the public v1 model-versions API. The scanner's full explanation
+ * stays in `rawScanResult` and reaches the operator log via ScanOutcome.formatMismatchDetail,
+ * which is deliberately a different field from this one.
  */
 export const FORMAT_MISMATCH_PUBLIC_MESSAGE =
   'File format could not be verified. This file is under review.';
@@ -858,11 +878,9 @@ export async function processModelFileScanResult(req: NextApiRequest) {
       result: hasDanger ? ScanResultCode.Danger : baseResult,
       // A format mismatch carries no import list, so examinePickleImports produces nothing to
       // show — but the scanner's own explanation must NOT go here. `pickleScanMessage` is
-      // returned by the PUBLIC v1 model-versions API, and the scanner's text names what it
-      // detected ("detected: Unknown"), which hands an uploader a per-attempt readout of the
-      // detector's verdict — a free oracle for tuning a disguise, and one that is reachable
-      // while SCAN_FORMAT_MISMATCH_HOLD is off and the model therefore stays published.
-      // A fixed string here; the detail is already preserved in rawScanResult for forensics.
+      // returned by the PUBLIC v1 model-versions API, and operator-facing detail does not
+      // belong on a public surface. A fixed string here; the detail is preserved in
+      // rawScanResult for forensics and reaches the log via formatMismatchDetail.
       message: isFormatMismatch(pickleOut) ? FORMAT_MISMATCH_PUBLIC_MESSAGE : pickleScanMessage,
       dangerousImports: pickleOut.dangerousImports ?? undefined,
     };
