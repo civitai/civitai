@@ -23,6 +23,13 @@ export type TrackedFileStatus =
  * `catch` called `resetFiles()` to clear the stuck tracked file, and the fifth needed a
  * second term to compensate.
  *
+ * 🔴 FIVE IS THE HISTORICAL COUNT, NOT THE CALL-SITE COUNT — grep finds FOUR callers.
+ * `ImageUpload` is the fifth: it got a different remedy (drop the placeholder entry on
+ * error, which clears `image.file`), and an `isUploadInFlight(match) ||` added on top of
+ * that turned out to be DEAD — `match` is only ever defined when `image.file` is already
+ * truthy, so the term could not change the result. It was removed rather than left
+ * standing as a claim this rule governs that spinner. See the comment at its `showLoading`.
+ *
  * (The other `progress < 100` hits in the repo are progress-BAR colour — "is the bar
  * full" is a legitimate question about `progress`. This one is not.)
  *
