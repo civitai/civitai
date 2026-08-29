@@ -173,6 +173,10 @@ function offsiteListing(status: string, kind = 'offsite') {
     name: 'Cool App',
     userId: OWNER,
     appBlockId: null,
+    // Purge's predicate reads `revisionOfId` (a shadow revision must never be purgeable
+    // through the on-site arm) — a fixture that left it `undefined` would be asserting
+    // against a shape the DB cannot produce.
+    revisionOfId: null,
     externalUrl: EXTERNAL_URL,
     connectClientId: null,
   };
@@ -1229,7 +1233,19 @@ describe('purgeListing', () => {
       before: { status: 'removed' },
     });
     expect(mockWrite.appListing.deleteMany).toHaveBeenCalledWith({
-      where: { id: APP_ID, kind: 'offsite' },
+      where: {
+        id: APP_ID,
+        // 🔴 LITERAL, not the service's own exported constant — an assertion built from
+        // the implementation cannot notice the implementation changing. The delete is
+        // guarded to the two purgeable shapes: any off-site row, or an on-site ORPHAN
+        // PRE-APPROVAL DRAFT. `revisionOfId: null` is the term that keeps a shadow media
+        // revision of a LIVE app out of it (a shadow is also kind-of-parent + draft +
+        // appBlockId:null); see offsite-moderation.service.purge-onsite-draft.test.ts.
+        OR: [
+          { kind: 'offsite' },
+          { kind: 'onsite', status: 'draft', appBlockId: null, revisionOfId: null },
+        ],
+      },
     });
   });
 
@@ -1258,22 +1274,38 @@ describe('purgeListing', () => {
       status: 'removed',
       slug: 'fresh-slug',
       kind: 'offsite',
+      appBlockId: null,
+      revisionOfId: null,
     });
     await purgeListing({
       input: { appListingId: APP_ID, reason: 'confirmed impersonation' },
       reviewerUserId: REVIEWER,
     });
-    // The in-tx primary read is what feeds the snapshot.
+    // The in-tx primary read is what feeds the snapshot. It must SELECT every field the
+    // purgeability predicate reads — a select that omitted `appBlockId`/`revisionOfId`
+    // would hand `isPurgeableListing` `undefined` for them, so an on-site row would fail
+    // the guard for the wrong reason (or pass it, if the terms were ever inverted).
     expect(mockWrite.appListing.findUnique).toHaveBeenCalledWith({
       where: { id: APP_ID },
-      select: { status: true, slug: true, kind: true },
+      select: {
+        status: true,
+        slug: true,
+        kind: true,
+        appBlockId: true,
+        revisionOfId: true,
+      },
     });
     const data = mockWrite.appListingModerationEvent.create.mock.calls[0][0].data;
     expect(data.before).toEqual({ status: 'removed' });
     expect(data.slug).toBe('fresh-slug');
   });
 
-  it('the kind guard rejects an on-site listing at the replica classify (no tx)', async () => {
+  // An `approved`/`removed` on-site listing has a backing AppBlock whose runtime serving
+  // gate reads `app_blocks.status` — deleting the listing row would hide the store card
+  // while leaving the hosted app serving. `delistListing` is the correct action for those.
+  // Only an on-site ORPHAN PRE-APPROVAL DRAFT is purgeable; that arm is covered in
+  // offsite-moderation.service.purge-onsite-draft.test.ts.
+  it('rejects a NON-DRAFT on-site listing at the replica classify (no tx)', async () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteListing('removed', 'onsite'));
     await expect(
       purgeListing({ input: { appListingId: APP_ID, reason: 'spam expunge' }, reviewerUserId: REVIEWER })

@@ -1419,8 +1419,16 @@ export const appListingsRouter = router({
   }),
 
   /**
-   * MOD hard-delete (purge) an off-site listing — the final expunge + the
-   * self-clean primitive. Writes the audit event BEFORE the delete so the event row
+   * MOD hard-delete (purge) a listing — the final expunge + the self-clean primitive.
+   * Valid targets are any OFF-SITE listing, or an ON-SITE **orphan pre-approval draft**
+   * (never approved, not a shadow revision). The on-site arm exists because
+   * `rejectRequest` no longer deletes that draft as a side-effect (clawgate #302), so a
+   * mod who genuinely wants a rejected submission's slug and media gone asks for it here
+   * — with a reason and an audit event — instead of it riding on every reject.
+   * Anything else (an approved/removed on-site listing, a shadow revision, a missing
+   * row) raises the same generic NOT_FOUND, so a caller cannot probe kind or status.
+   *
+   * Writes the audit event BEFORE the delete so the event row
    * survives at the ROW level for audit/compliance (SetNull FK + slug snapshot). It
    * is NOT retrievable via the per-listing history read (`listModerationEvents`)
    * once purged — the FK is nulled, so post-purge it's reachable only via the actor
