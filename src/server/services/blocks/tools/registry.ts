@@ -88,12 +88,24 @@ export const MAX_TOOL_RESULT_ITEMS = 10;
  * `str()`'s truncation branch outright — because every fixture in the suite sat
  * comfortably UNDER each bound, so the truncation never executed and the
  * docstring's "one pathological field cannot eat the budget" had zero coverage.
- * A test that builds its fixture from the constant is the only kind that stays
- * reaching when the constant moves.
+ *
+ * 🔴 ALL FIVE PROJECTED STRING FIELDS ARE NAMED HERE, and that is the point of
+ * the list rather than tidiness. A LATER audit found `type` and `baseModel` had
+ * been left on a bare `40` while the other three were converted — so two of the
+ * five sat outside the block whose docstring claimed to cover "individual
+ * projected strings", and widening either survived the suite. A bound that is a
+ * magic number at its call site cannot be reached from a test by name.
+ *
+ * The fixtures do NOT derive their length from these constants — they overshoot
+ * by a literal, and the drift guard in the test file is what keeps them reaching
+ * if a constant moves. See that file's own note for why a constant-derived
+ * fixture is the weaker choice: it moves WITH the mutant and stops discriminating.
  */
 export const MAX_PROJECTED_NAME_CHARS = 120;
 export const MAX_PROJECTED_TAG_CHARS = 40;
 export const MAX_PROJECTED_CREATOR_CHARS = 60;
+export const MAX_PROJECTED_TYPE_CHARS = 40;
+export const MAX_PROJECTED_BASE_MODEL_CHARS = 40;
 export const MAX_PROJECTED_TAGS = 8;
 
 /**
@@ -247,9 +259,11 @@ export function projectModelForTool(raw: unknown): ProjectedModel | null {
   const projected: ProjectedModel = {
     id,
     name,
-    ...(str(row.type, 40) !== undefined ? { type: str(row.type, 40) } : {}),
-    ...(latest && str(latest.baseModel, 40) !== undefined
-      ? { baseModel: str(latest.baseModel, 40) }
+    ...(str(row.type, MAX_PROJECTED_TYPE_CHARS) !== undefined
+      ? { type: str(row.type, MAX_PROJECTED_TYPE_CHARS) }
+      : {}),
+    ...(latest && str(latest.baseModel, MAX_PROJECTED_BASE_MODEL_CHARS) !== undefined
+      ? { baseModel: str(latest.baseModel, MAX_PROJECTED_BASE_MODEL_CHARS) }
       : {}),
     ...(creatorRecord && str(creatorRecord.username, MAX_PROJECTED_CREATOR_CHARS) !== undefined
       ? { creator: str(creatorRecord.username, MAX_PROJECTED_CREATOR_CHARS) }

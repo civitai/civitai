@@ -410,27 +410,103 @@ describe('🔴 /api/v1/blocks/tools — guards that were unpinned', () => {
     expect(res.body.error).toBe('Model search is temporarily overloaded — please retry.');
   });
 
-  it('🔴 the wire body is STRICT — an unknown top-level key is rejected', async () => {
+  // 🔴 THE UNKNOWN KEY IS AN AIR LITERAL, AND THAT IS THE POINT OF THIS FIXTURE.
+  // This test drives the WIRE 400 (`invalid request body: …`), which is the only
+  // path that reaches the scrub on that body. With a benign key (`extra`) the
+  // mutant that DELETES `neutralizeAirLiterals` from the wire 400 survived the
+  // whole suite — nothing else in the file ever put an AIR into that message.
+  // Measured: zod's `unrecognized_keys` echoes the offending KEY verbatim
+  // (`Unrecognized key: "urn:air:…"`), so this fixture reaches the scrub where an
+  // invalid VALUE would not have.
+  it('🔴 the wire body is STRICT, and its 400 is replayable', async () => {
     const res = await invoke('POST', {
       name: 'search_models',
       arguments: { query: 'x' },
-      extra: 'nope',
+      'urn:air:sd1:checkpoint:civitai:4384@128713': 1,
     });
     expect(res.statusCode).toBe(400);
     expect(mockRunModelSearch).not.toHaveBeenCalled();
+
+    const body = JSON.stringify(res.body).toLowerCase();
+    // POSITIVE CONTROL — the key WAS echoed, so the reflection path is live and
+    // the scrub assertion below is not passing merely because nothing reflected.
+    expect(body).toContain('unrecognized key');
+    expect(body).toContain('checkpoint:civitai:4384');
+    // …and the prefix is neutralised, so a block can replay this body as a
+    // `role:'tool'` message without tripping `containsAirReference`.
+    expect(body).not.toContain('urn:air:');
   });
 
   // nit 8: both 400 bodies reflect caller input, and the block hands our reply to
   // a chat model as a `role:'tool'` message — where `containsAirReference` throws
   // FORBIDDEN on the literal `urn:air:`. The wire pattern makes the `name`
   // reflection structurally inert; the scrub covers the free-text argument path.
-  it('🔴 a tool NAME carrying an AIR literal is rejected, and the reply is replayable', async () => {
+  // 🔴 PINNED AS A LITERAL, AND THE LIMIT OF THIS TEST IS STATED RATHER THAN
+  // IMPLIED. Next enforces `bodyParser.sizeLimit` in its own request pipeline,
+  // which `node-mocks-http` does not run — so NO unit test in this repo can
+  // observe the limit actually rejecting an oversized body, and a previous round
+  // reported this branch as "covered" when nothing mentioned `sizeLimit`
+  // anywhere in the suite (enumerated across every `*.test.ts(x)`, not sampled).
+  //
+  // What this DOES buy: widening the value becomes a deliberate test edit rather
+  // than a silent change. The route is an unauthenticated-until-`!claims`,
+  // iframe-facing POST, and dropping the field reverts it to Next's 1 MB default.
+  // That is worth a tripwire even though the enforcement itself is untested here.
+  it("🔴 the POST body limit is pinned at 8kb (enforcement is Next's, not exercised)", async () => {
+    const mod = await import('~/pages/api/v1/blocks/tools');
+    expect(mod.config).toEqual({ api: { bodyParser: { sizeLimit: '8kb' } } });
+  });
+
+  // 🔴 ASSERTS THE LENGTH BOUND'S OWN ERROR, NOT THE STATUS. A first version of
+  // this test asserted only `statusCode === 400`, and the mutant that widens
+  // `.max(64)` to `.max(640)` SURVIVED: a 65-char name then PARSES, falls through
+  // to the allowlist, and 400s as an unknown tool. Both arms returned 400, so the
+  // assertion fired identically on its own control and attributed nothing.
+  //
+  // The discriminator is the zod issue: HEAD emits `too_big` with `"maximum": 64`;
+  // under the mutant the body says `unknown tool` instead.
+  it('🔴 an over-long tool NAME is rejected BY THE LENGTH BOUND', async () => {
+    const res = await invoke('POST', {
+      name: 'a'.repeat(65),
+      arguments: { query: 'x' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+
+    // 🔴 THE RAW FIELD, not `JSON.stringify(res.body)` — stringifying escapes the
+    // inner quotes of the embedded zod issue (`\"maximum\": 64`), so a substring
+    // match against the un-escaped form silently never fires. Caught by watching
+    // this assertion fail on UNMUTATED code.
+    const err = String(res.body.error);
+    expect(err).toContain('too_big');
+    expect(err).toContain('"maximum": 64');
+    // …and NOT the next gate's message, which is what a widened bound would give.
+    expect(err).not.toContain('unknown tool');
+  });
+
+  // ⚠️ WHAT THIS PINS IS THE PATTERN, NOT THE SCRUB — and saying so matters,
+  // because an earlier version of this test was cited as covering the scrub and
+  // did not. `name` fails `.regex(TOOL_NAME_PATTERN)`, and zod's `invalid_format`
+  // does NOT echo the offending input (measured), so no AIR ever enters the body
+  // and `not.toContain('urn:air:')` would hold with the scrub deleted. The scrub
+  // is covered by the two unrecognized-key tests, which do echo.
+  //
+  // It is kept because the property it DOES pin is real and load-bearing: the
+  // wire pattern makes this reflection structurally inert, so the scrub is not
+  // the only thing standing between a caller-chosen name and a 400 body the
+  // block cannot replay.
+  it('🔴 a tool NAME carrying an AIR literal is rejected by the PATTERN, unreflected', async () => {
     const res = await invoke('POST', {
       name: 'urn:air:sd1:checkpoint:civitai:4384@128713',
       arguments: { query: 'x' },
     });
     expect(res.statusCode).toBe(400);
-    expect(JSON.stringify(res.body).toLowerCase()).not.toContain('urn:air:');
+    const body = JSON.stringify(res.body).toLowerCase();
+    // The pattern rejected it, and zod did not echo the value — so the body is
+    // free of the literal WITHOUT the scrub having been involved.
+    expect(body).toContain('must match pattern');
+    expect(body).not.toContain('urn:air:');
+    expect(body).not.toContain('checkpoint:civitai:4384');
     expect(mockRunModelSearch).not.toHaveBeenCalled();
   });
 

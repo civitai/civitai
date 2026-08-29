@@ -17,6 +17,7 @@ import { AIR_URN_PREFIX, containsAirReference } from '~/server/services/blocks/s
 import {
   chatCompletionStep,
   MAX_MESSAGE_CHARS,
+  TOOL_NAME_PATTERN,
 } from '~/server/services/blocks/steps/chat-completion.step';
 
 /**
@@ -77,10 +78,15 @@ function rawSearchRow(over: Record<string, unknown> = {}): Record<string, unknow
 describe('block tool registry — the allowlist', () => {
   it('registers exactly the read-only catalog tools, and every name is chat-tool legal', () => {
     expect(BLOCK_TOOL_NAMES).toEqual(['search_models']);
-    // The name must satisfy the chat step's own tool-name pattern, or a block
-    // could never declare it in the first place.
+    // 🔴 THE PATTERN IS IMPORTED, NOT RE-SPELLED, and this assertion is the only
+    // thing standing between a registered tool name and a wire schema that would
+    // reject it. `tools.ts` validates the POSTed `name` against this same
+    // `TOOL_NAME_PATTERN`. With a local copy of the regex, a future tightening of
+    // the real pattern would make a registered tool unreachable over POST while
+    // GET happily kept declaring it — and this test would stay green, because it
+    // would be checking the old shape.
     for (const name of BLOCK_TOOL_NAMES) {
-      expect(name).toMatch(/^[a-zA-Z0-9_-]+$/);
+      expect(name).toMatch(TOOL_NAME_PATTERN);
     }
   });
 
@@ -366,10 +372,13 @@ describe('block tool registry — the result is bounded so it can be replayed', 
 // UNDER each bound, so the truncation never executed. The docstring's claim
 // ("one pathological field cannot eat the budget") had zero coverage.
 //
-// 🔴 EACH FIXTURE IS BUILT FROM THE EXPORTED CONSTANT, not from a magic number,
-// so it stays REACHING if the bound is later retuned. A fixture with a hardcoded
-// length silently stops reaching the branch the moment the constant grows — which
-// is exactly how these came to be uncovered.
+// 🔴 THE FIXTURES ARE NOT BUILT FROM THE CONSTANTS — an earlier version of this
+// note claimed they were, and that was false in the shipped commit. They
+// overshoot by a LITERAL (`OVERSHOOT` below) and a drift guard keeps them
+// reaching. That is the deliberate choice, for the reason spelled out on
+// `OVERSHOOT`: a constant-derived fixture moves WITH a widen-the-bound mutant
+// and stops discriminating, which is how these came to be uncovered in the first
+// place.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('projectModelForTool — per-field length bounds', () => {
   // 🔴 THE EXPECTED LENGTHS ARE LITERALS, NOT THE CONSTANTS. A first version of
@@ -406,11 +415,37 @@ describe('projectModelForTool — per-field length bounds', () => {
     expect(p.tags?.[0].endsWith('…')).toBe(true);
   });
 
+  it('🔴 truncates an over-long TYPE to 40', () => {
+    const p = projectModelForTool({
+      id: 1,
+      name: 'ok',
+      type: 'Y'.repeat(OVERSHOOT),
+    }) as ProjectedModel;
+    expect(p.type).toHaveLength(40);
+    expect(p.type?.endsWith('…')).toBe(true);
+  });
+
+  it('🔴 truncates an over-long BASE MODEL to 40', () => {
+    const p = projectModelForTool({
+      id: 1,
+      name: 'ok',
+      modelVersions: [{ baseModel: 'B'.repeat(OVERSHOOT) }],
+    }) as ProjectedModel;
+    expect(p.baseModel).toHaveLength(40);
+    expect(p.baseModel?.endsWith('…')).toBe(true);
+  });
+
+  // 🔴 ALL FIVE, not the three that were exported first. `type` and `baseModel`
+  // were left as a bare `40` at their call sites while the other three were
+  // converted, so an audit widened either to 100000 and the suite stayed green.
+  // A bound that is a magic number at its call site cannot be reached by name.
   it('the literals above ARE the shipped constants (drift guard)', async () => {
     const m = await import('~/server/services/blocks/tools/registry');
     expect(m.MAX_PROJECTED_NAME_CHARS).toBe(120);
     expect(m.MAX_PROJECTED_CREATOR_CHARS).toBe(60);
     expect(m.MAX_PROJECTED_TAG_CHARS).toBe(40);
+    expect(m.MAX_PROJECTED_TYPE_CHARS).toBe(40);
+    expect(m.MAX_PROJECTED_BASE_MODEL_CHARS).toBe(40);
   });
 
   it('POSITIVE CONTROL — a field UNDER its bound is passed through untouched', () => {
@@ -426,12 +461,54 @@ describe('projectModelForTool — per-field length bounds', () => {
   // cut between them emits a LONE SURROGATE — valid JSON (`\udXXX`), nothing
   // throws, and the model just reads mojibake. Catalog names are user-authored
   // and routinely emoji-laden, so this is the ordinary case.
+  const hasLoneSurrogate = (s: string) =>
+    /[\ud800-\udbff](?![\udc00-\udfff])/.test(s) || /(?<![\ud800-\udbff])[\udc00-\udfff]/.test(s);
+
   it('🔴 never cuts through a surrogate pair', () => {
     const p = projectModelForTool({ id: 1, name: '🔥'.repeat(OVERSHOOT) }) as ProjectedModel;
     expect(p.name.length).toBeLessThanOrEqual(120);
-    // A lone surrogate does not survive a JSON round trip intact.
-    expect(JSON.parse(JSON.stringify(p.name))).toBe(p.name);
-    expect(/[\ud800-\udbff](?![\udc00-\udfff])/.test(p.name)).toBe(false);
-    expect(/(?<![\ud800-\udbff])[\udc00-\udfff]/.test(p.name)).toBe(false);
+    expect(hasLoneSurrogate(p.name)).toBe(false);
+  });
+
+  // 🔴 A PURE-ASTRAL FIXTURE CANNOT REACH HALF OF THE GUARD, and the case above
+  // is pure astral. `str()` tests `charCodeAt(cut - 1)` against the HIGH range
+  // `0xd800..0xdbff`; in an all-emoji string the high surrogates always land on
+  // even indices, so that read is ALWAYS a high surrogate and the range's UPPER
+  // bound never executes. An audit widened it to `0xdfff` — admitting LOW
+  // surrogates, which retreats a unit that did not need retreating — and the
+  // mutant SURVIVED the whole suite.
+  //
+  // One leading BMP character shifts the parity and makes the upper bound
+  // load-bearing. Measured on this fixture: HEAD yields length 120 with no lone
+  // surrogate; the widened mutant yields 119 ending in an orphaned high
+  // surrogate. Same discrimination at the 40-char tag bound.
+  //
+  // The lesson generalises past this guard: a fixture whose constants put the
+  // guarded branch exactly on its own boundary proves nothing about the branch.
+  it('🔴 the surrogate RANGE is bounded on both ends — odd-parity astral input', () => {
+    const shifted = `A${'🔥'.repeat(OVERSHOOT)}`;
+
+    const p = projectModelForTool({ id: 1, name: shifted }) as ProjectedModel;
+    expect(p.name).toHaveLength(120);
+    expect(hasLoneSurrogate(p.name)).toBe(false);
+
+    const t = projectModelForTool({ id: 1, name: 'ok', tags: [shifted] }) as ProjectedModel;
+    expect(t.tags?.[0]).toHaveLength(40);
+    expect(hasLoneSurrogate(t.tags?.[0] ?? '')).toBe(false);
+  });
+
+  // 🔴 NOT a JSON round-trip assertion. An earlier version asserted
+  // `JSON.parse(JSON.stringify(name)) === name` under the comment "a lone
+  // surrogate does not survive a JSON round trip intact". That comment is FALSE
+  // — measured: ES2019 well-formed `JSON.stringify` escapes a lone surrogate as
+  // `\udXXX` and `JSON.parse` restores it exactly, so the assertion held for
+  // EVERY string and carried no information. It also contradicted the source
+  // comment on `str()`, which correctly says the lone surrogate is valid JSON and
+  // that the harm is mojibake rather than a serialization failure. The regex
+  // checks above are what do the work.
+  it('POSITIVE CONTROL — the detector fires on a deliberately broken string', () => {
+    expect(hasLoneSurrogate('ab\ud83d')).toBe(true);
+    expect(hasLoneSurrogate('ab\udd25')).toBe(true);
+    expect(hasLoneSurrogate('ab🔥')).toBe(false);
   });
 });

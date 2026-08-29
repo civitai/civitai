@@ -98,16 +98,26 @@ const DEFAULT_LIMIT = 5;
 const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   const claims = (req as BlockScopedNextApiRequest).blockClaims;
   if (!claims) {
-    // 🔴 THIS IS THE GATE, NOT A BACKSTOP — the previous comment here said
-    // "defense in depth", and that was wrong in the direction that matters.
-    // `withBlockScope` does NOT reject and return on its own in two cases: when
-    // no bearer token is present, and when the `app-blocks-runtime-enabled`
-    // flag is off. In BOTH it FALLS THROUGH to the wrapped handler with
-    // `blockClaims` unset. So deleting these five lines does not lose a
-    // redundant check — it serves the tool declarations unauthenticated.
+    // 🔴 THIS IS THE GATE, NOT A BACKSTOP. `withBlockScope` does NOT reject and
+    // return on its own in THREE cases — in each it FALLS THROUGH to the wrapped
+    // handler with `blockClaims` unset, so deleting these lines does not lose a
+    // redundant check, it serves the tool declarations unauthenticated:
+    //
+    //   1. no bearer token present;
+    //   2. a bearer that is NOT a 3-part JWS — the legacy opaque API-key path.
+    //      (1) and (2) are one branch, `if (!bearer || !isBlockJwt(bearer))`,
+    //      which is why they are easy to count as one;
+    //   3. `app-blocks-runtime-enabled` off — including absent, and Flipt down,
+    //      which the middleware resolves as false by design.
+    //
+    // 🔴 COUNT THEM IN THE MIDDLEWARE, NOT HERE. This comment has now been wrong
+    // TWICE about this same gate: first calling it "defense in depth", then
+    // naming two of the three fall-throughs. Both times the error was restating
+    // a remembered shape instead of reading `withBlockScope`. If you touch this,
+    // go read the branches.
     //
     // Pinned by its own test; a mutant that removes it previously survived the
-    // whole suite, which is why the comment is now explicit about what it holds.
+    // whole suite, which is why the comment is explicit about what it holds.
     res.status(401).json({ error: 'Block token required' });
     return;
   }
