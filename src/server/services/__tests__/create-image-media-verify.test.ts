@@ -8,9 +8,11 @@ import '~/__tests__/setup';
  *
  * An `Image` row is written from client-supplied JSON: `url` (the media key), `width`,
  * `height`, `name`, `mimeType` and `sizeKB` all arrive over the wire and none of them
- * was checked against storage. Measured over a ~24 h window (~22,800 rows sampled), 10 rows
- * referenced media that was never stored — 7 where an upload had been attempted
+ * was checked against storage. Measured over a ~24 h window of 92,759 image creations,
+ * 10 rows referenced media that was never stored — 7 where an upload had been attempted
  * seconds earlier and silently failed, 3 where no upload was ever attempted at all.
+ * (The derivation, and why ~22,846 is a DIFFERENT population with a different finding,
+ * is in `src/server/utils/created-image-media-probe.ts`.)
  * Both populations produce a complete, healthy-looking row whose media 404s forever.
  *
  * 🔴 Which is why this is an EXISTENCE check and not a "was this key ever signed"

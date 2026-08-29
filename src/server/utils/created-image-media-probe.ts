@@ -10,18 +10,39 @@ import { getImageUploadBackend, headObject } from '~/utils/s3-utils';
  * none of them is checked against storage, so any key a caller invents produces a
  * complete, healthy-looking row whose media 404s forever.
  *
- * Measured in production: over a ~24 h window of **~92,000 image creations, 10 rows**
- * referenced media that was never stored — **~0.011%**, about 1 in 9,000. Numerator
- * and denominator are one query over one population, and it is the same population
- * the observe-only log counts (one line per `createImage` call), so the historical
- * rate and the live rate are the same quantity.
+ * Measured in production: over a ~24 h window of **92,759 image creations, 10 rows**
+ * referenced media that was never stored — **10 / 92,759 = 0.0108%**, about 1 in 9,000.
  *
- * 🔴 Two other figures are in circulation and neither is this denominator: ~22,800
- * was the SAMPLE SIZE an early query examined (dividing by it gave ~0.04%, retired),
- * and ~101k–105k/day is the KEY-MINT rate (`POST /api/v1/image-upload/multipart/
- * index` + `.../index`, spanmetrics x10, measured 2026-08-28) — a different
- * population, upload requests rather than image creations, useful only as an
- * order-of-magnitude cross-check on the 92,000.
+ * 🔴 THE DERIVATION, WRITTEN HERE SO THE NEXT READER CAN CHECK IT WITHOUT ASKING.
+ * Numerator and denominator are one query over one population:
+ *
+ *     Image WHERE id BETWEEN 141000000 AND 141100000
+ *       AND scanJobs->'error'->>'reason' = 'Input image failed to download from URL.'
+ *
+ * That id range holds **92,759** rows spanning `2026-08-27 14:28` → `2026-08-28 14:29`
+ * (~24 h). All 10 defects came from inside it. It is also the same population the
+ * observe-only log counts — one line per `createImage` call — so the historical rate and
+ * the live rate are the same quantity, and condition 3 of the rollout gate below can be
+ * read straight off the log.
+ *
+ * 🔴 PROVENANCE, AND ITS LIMIT. The 92,759 and the 10 come from that one query, run once,
+ * on 2026-08-28. **It has not been re-run since, and the id-range window has since
+ * advanced** — so treat the figure as a dated measurement, not a live rate. Re-derive it
+ * (same query, a current 100k id range) before using it to grade anything; a threshold is
+ * only as fresh as the number under it. This caveat used to live in the PR description,
+ * which nobody reads at the moment they act on the threshold.
+ *
+ * 🔴 TWO OTHER FIGURES ARE IN CIRCULATION AND NEITHER IS THIS DENOMINATOR:
+ *   - **~22,846** (872 + 3,568 + 18,406) was a set of three `media_locations`
+ *     REGISTRY-COVERAGE samples, run to establish that a missing registry row means a key
+ *     was never signed. **Different population, different finding: 3 unregistered rows,
+ *     not 10.** The 10 did NOT come from it. Dividing 10 by 22,800 gave ~0.04%, which is a
+ *     number about no population at all; it is retired, and this is why.
+ *   - **~101k–105k/day** is the KEY-MINT rate (`POST /api/v1/image-upload/multipart/
+ *     index` + `.../index`, spanmetrics x10, measured 2026-08-28) — a different
+ *     population, upload requests rather than image creations, useful only as an
+ *     order-of-magnitude cross-check on the 92,759. Spread against it is 10% at 24 h
+ *     and 14% at 7 d.
  *
  * The 10 split into two distinct populations:
  *   - 7 had a key that WAS issued by an upload endpoint 2.0–23.3s before the row

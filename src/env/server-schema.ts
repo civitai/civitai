@@ -671,6 +671,13 @@ export const serverSchema = z
     //      mostly failing open, so the `absent` count is not a rate.
     //   3. The `absent` rate is at or below ~0.011%.
     //
+    // 🔴 CONDITION 3'S NUMBER IS A DATED MEASUREMENT, NOT A LIVE RATE. It was taken once,
+    // on 2026-08-28, and has not been re-run; the id-range window it used has since
+    // advanced. Re-derive it before grading anything against it — the derivation is
+    // written out in `src/server/utils/created-image-media-probe.ts`, including the exact
+    // query. This caveat used to live only in the PR description, where nobody reads it at
+    // the moment they act on the threshold.
+    //
     // 🔴 CONDITION 3'S DENOMINATOR IS THE LOG'S OWN LINE COUNT, and that is the whole
     // reason a line is emitted on EVERY call rather than only on a bad verdict:
     //
@@ -679,19 +686,24 @@ export const serverSchema = z
     //
     // One line per `createImage` call, so the denominator is "image creations" — which is
     // exactly the population the numerator was measured against: **10 defective rows over
-    // ~92,000 image creations in the same ~24 h window ⇒ ~0.011%**, about 1 in 9,000.
-    // Numerator and denominator come from one query over one population; nothing here is
-    // reconciled across two.
+    // 92,759 image creations in the same ~24 h window ⇒ 0.0108%**, about 1 in 9,000. Both
+    // come from ONE query over ONE population — `Image` rows in the id range
+    // 141000000–141100000, spanning 2026-08-27 14:28 → 2026-08-28 14:29 — so nothing here
+    // is reconciled across two. The full derivation is in
+    // `src/server/utils/created-image-media-probe.ts`.
     //
     // 🔴 TWO OTHER FIGURES ARE IN CIRCULATION AND NEITHER IS THIS DENOMINATOR:
-    //   - **~22,800** was the SAMPLE SIZE an early defect query examined, not a rate and
-    //     not a population count. Dividing by it produced ~0.04%; that number is retired.
+    //   - **~22,846** was a set of three `media_locations` REGISTRY-COVERAGE samples
+    //     (872 + 3,568 + 18,406), run for a different question and with a different
+    //     finding: 3 unregistered rows, not 10. The 10 did NOT come from it, so
+    //     `10 / 22,800` divides a numerator by a denominator it was never measured
+    //     against. That produced ~0.04%; it is retired, and this is why.
     //   - **~101k–105k/day** is the KEY-MINT rate (`POST /api/v1/image-upload[/multipart]
     //     /index`, spanmetrics x10). Different population: browser-originated upload
-    //     requests, not image creations. It is quoted in the PR body only as an
-    //     order-of-magnitude cross-check — it lands within ~10% of 92,000, which is what
-    //     you would expect given abandoned uploads on one side and server-side creation
-    //     paths on the other. Do NOT use it as the threshold's denominator.
+    //     requests, not image creations. It is quoted only as an order-of-magnitude
+    //     cross-check — spread against 92,759 is **10% at 24 h and 14% at 7 d**, which is
+    //     what you would expect given abandoned uploads on one side and server-side
+    //     creation paths on the other. Do NOT use it as the threshold's denominator.
     //
     // Materially above ~0.011% and the excess is false rejects. Settle "defect or false
     // reject" per-verdict by taking a logged `absent` key and HEADing the bucket by hand —

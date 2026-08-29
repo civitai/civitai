@@ -174,8 +174,9 @@ export const useCFImageUpload: UseCFImageUpload = () => {
          * lands HERE, on `load` → `loadend`. That is the whole gap: over a ~24 h
          * window 10 rows referenced media that was never stored, and 7 of those had
          * a real upload attempted seconds earlier that failed silently down this
-         * path. (~22,800 was the sample size that query examined, not a rate — see
-         * `created-image-media-probe.ts` for the corrected denominator.)
+         * path. (The denominator is 92,759 image creations over that window;
+         * ~22,846 is a DIFFERENT population — a registry-coverage sample whose own
+         * finding was 3, not 10. See `created-image-media-probe.ts`.)
          *
          * The status is in the message deliberately: the consumers that surface
          * `error.message` then say which failure it was, and the ones that swallow
