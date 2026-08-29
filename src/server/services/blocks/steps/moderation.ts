@@ -695,36 +695,37 @@ export async function attachModeratedStepTextOutputs<T extends ModeratedTextOutp
       //
       // `'succeeded'` and nothing else. The other terminal states —
       // `failed` / `expired` / `canceled` — legitimately produce no output, and
-      // their absence is already explained by THE STEP'S OWN STATUS, which is
-      // what this gate reads; firing here would replace a correct explanation
-      // with a wrong one. The absent field is the right answer for every
-      // non-succeeded state, and it is what this path did before the invariant
-      // existed.
+      // their absence is already explained by the workflow's own status; firing
+      // here would replace a correct explanation with a wrong one. The absent
+      // field is the right answer for every non-succeeded state, and it is what
+      // this path did before the invariant existed.
       //
-      // 🔴 THIS SENTENCE USED TO SAY "the workflow's own status", AND THE
-      // SUBJECT MATTERED. The snapshot exposes the WORKFLOW's status while this
-      // gate reads the STEP's, so as written the justification only held where
-      // the two agree — and where they could disagree (a non-succeeded step
-      // under a `succeeded` workflow) the silent-success shape this invariant
-      // exists to prevent would quietly return, justified by a sentence about a
-      // different field.
+      // 🔴 THAT SENTENCE NAMES THE WORKFLOW'S STATUS WHILE THIS GATE READS THE
+      // STEP'S, AND THAT IS DELIBERATE — the two are answering different
+      // questions. "Explained to whom?" is the app author, and the WORKFLOW's
+      // status is the only one they can see: both block-facing surfaces
+      // (`BlockWorkflowSnapshot`, `AppWorkflow`) carry exactly one `status`,
+      // derived from the workflow's, and neither exposes a per-step status at
+      // all. Naming the step's status here would point the reader at a field
+      // that does not exist on the wire.
       //
-      // They cannot disagree, which is why the gate is correct as it stands and
-      // only the comment needed fixing. A workflow's status is AGGREGATED from
-      // its steps, and the aggregation is worst-wins: any non-terminal step
-      // leaves the workflow non-terminal, and among terminal steps a
-      // non-succeeded one dominates. So a workflow reads `succeeded` only when
-      // EVERY step does, and the combination this gate would have to worry
-      // about cannot be constructed. (Verified against the orchestrator's own
-      // status derivation — that repo is private, so the mechanism is stated
-      // here rather than quoted.)
+      // 🔴 WHY THE MISMATCH IS SAFE, since a gate justified by a field it does
+      // not read deserves an argument rather than a shrug. The two cannot
+      // disagree: a workflow's status is AGGREGATED from its steps worst-wins —
+      // any non-terminal step leaves the workflow non-terminal, and among
+      // terminal steps a non-succeeded one dominates — so a workflow reads
+      // `succeeded` only when EVERY step does. Verified against the
+      // orchestrator's own status derivation (that repo is private, so the
+      // mechanism is stated here rather than quoted) and corroborated against
+      // live workflow data over two 24h windows 30 days apart, where the
+      // intersection — `succeeded` workflow AND a non-succeeded step — was
+      // EMPTY in both. Each clause was confirmed to match on its own first, so
+      // that emptiness is a measurement rather than a query wired to nothing.
       //
-      // Corroborated against live orchestrator data (2026-08-29), two 24h
-      // windows 30 days apart: across 1,004,260 workflows — 983,043 of them
-      // `succeeded`, and 21,323 carrying a non-succeeded step — the
-      // intersection was ZERO in both windows. Both clauses were shown to match
-      // independently first, so that zero is a measurement and not a query that
-      // happened to match nothing.
+      // Note the gate does NOT depend on that premise: it reads `step.status`
+      // directly, so worst-wins aggregation only widens its reach. If the
+      // aggregation ever changed, this gate would still be correct — it is the
+      // COMMENT that rests on the premise, not the code.
       //
       // Reading a `status` the orchestrator did not send yields `undefined`,
       // which fails this test and therefore falls back to the pre-invariant

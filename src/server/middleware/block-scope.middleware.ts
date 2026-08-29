@@ -130,9 +130,11 @@ export interface WithBlockScopeOpts {
    * Low-cardinality LOGICAL name for this endpoint (e.g. 'tip', 'me',
    * 'model_detail', 'collections', 'shared_storage_top'). Used as the `endpoint` label on the
    * per-app REST-RED metrics (`civitai_app_block_requests_total` /
-   * `civitai_app_block_request_duration_seconds`). Derived from the HANDLER, so
-   * ids in the path can never leak into the label. Strictly enumerated — see
-   * AppBlockEndpoint in ~/server/metrics/app-block-runtime.metrics.
+   * `civitai_app_block_request_duration_seconds`). Never derived from `req.url`,
+   * so ids in the path can never leak into the label. Strictly enumerated — see
+   * AppBlockEndpoint in ~/server/metrics/app-block-runtime.metrics. (A call site
+   * may pass a resolver — see below — so this is no longer purely
+   * handler-derived; what holds is that the value set stays enumerated.)
    *
    * A FUNCTION may be passed when one path serves two materially different
    * workloads and merging them would make the RED series unreadable — today

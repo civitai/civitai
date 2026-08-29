@@ -180,13 +180,33 @@ const NEUTRALIZE_MAX_DEPTH = 128;
  */
 export const NEUTRALIZE_DEPTH_PLACEHOLDER = '[omitted: nested too deeply to scrub]';
 
-export function neutralizeAirLiterals<T>(value: T, depth = 0): T {
+export function neutralizeAirLiterals<T>(value: T): T {
+  return scrubAirLiterals(value, 0);
+}
+
+/**
+ * 🔴 THE DEPTH PARAMETER IS PRIVATE, AND THAT IS NOT STYLE — IT IS THE WHOLE
+ * REASON THIS HELPER EXISTS.
+ *
+ * An exported `neutralizeAirLiterals(value, depth = 0)` is arity-2 with a
+ * `number` second parameter, which is EXACTLY `Array.prototype.map`'s callback
+ * shape. So `names.map(neutralizeAirLiterals)` passes the INDEX as `depth`, and
+ * every element from index 129 on is replaced by the placeholder instead of
+ * being scrubbed — measured on a 200-element array: 129 scrubbed, 71 destroyed.
+ * `tsc` reports zero errors on it, because the signature genuinely matches.
+ *
+ * The damage is destructive rather than leaky (content is replaced, not
+ * exposed), but it is silent, un-typechecked, and the point-free `.map(fn)` form
+ * is the most natural way anyone would ever call this over a projected row set.
+ * Keeping the public signature single-arg makes the hazard unwritable.
+ */
+function scrubAirLiterals<T>(value: T, depth: number): T {
   if (depth > NEUTRALIZE_MAX_DEPTH) return NEUTRALIZE_DEPTH_PLACEHOLDER as unknown as T;
   if (typeof value === 'string') {
     return value.replace(/urn:air:/gi, 'urn-air-') as unknown as T;
   }
   if (Array.isArray(value)) {
-    return value.map((v) => neutralizeAirLiterals(v, depth + 1)) as unknown as T;
+    return value.map((v) => scrubAirLiterals(v, depth + 1)) as unknown as T;
   }
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = {};
@@ -194,7 +214,7 @@ export function neutralizeAirLiterals<T>(value: T, depth = 0): T {
       // Keys are scrubbed too: `containsAirReference` scans object KEYS, because
       // the orchestrator's own `additionalNetworks` / `WorkflowCost.fees` shapes
       // are AIR-keyed maps.
-      out[neutralizeAirLiterals(k, depth + 1)] = neutralizeAirLiterals(v, depth + 1);
+      out[scrubAirLiterals(k, depth + 1)] = scrubAirLiterals(v, depth + 1);
     }
     return out as unknown as T;
   }

@@ -564,6 +564,13 @@ describe('#426 — constants that must not drift', () => {
     // Positive control: the assertion above must be able to FAIL. A description
     // that named a different number must not satisfy it.
     expect(limitDesc).not.toContain(`default ${DEFAULT_TOOL_RESULT_ITEMS + 1}`);
+
+    // 🔴 AND THE DEFAULT MUST FIT UNDER THE CAP — the same drift class one axis
+    // over. A default above `MAX_TOOL_RESULT_ITEMS` would have the declaration
+    // tell the model "default 20, max 10" while `Math.min` in the route silently
+    // applies 10: the model is misinformed about the contract, and nothing else
+    // fails.
+    expect(DEFAULT_TOOL_RESULT_ITEMS).toBeLessThanOrEqual(MAX_TOOL_RESULT_ITEMS);
   });
 });
 
@@ -588,9 +595,37 @@ describe('#426 item 4 — neutralizeAirLiterals is depth-bounded', () => {
     // SCRUBBER: merely stopping the recursion would RETURN the over-deep
     // subtree untouched — fail-OPEN, the literal surviving because the input was
     // nested. So the cap substitutes a first-party constant instead.
-    const scrubbed = neutralizeAirLiterals(nest(50_000, 'urn:air:deep-secret'));
+    //
+    // 🔴 A MODEST OVER-DEPTH, NOT 50_000, AND THE DIFFERENCE IS THE WHOLE TEST.
+    // At 50_000 this assertion never evaluates against the fail-open mutant
+    // (`return value` past the cap): `JSON.stringify` blows the stack on the
+    // ~49.9k-deep subtree first, so the test goes red with a `RangeError` and
+    // cannot distinguish "returned unscrubbed" from "returned something
+    // un-stringifiable". At 200 the mutant is caught on the literal itself,
+    // which is what this test claims to check. The 50_000 case still has a home
+    // — the no-stack-blowout test above, where a RangeError IS the signal.
+    const scrubbed = neutralizeAirLiterals(nest(200, 'urn:air:deep-secret'));
     expect(JSON.stringify(scrubbed).toLowerCase()).not.toContain('urn:air:');
     expect(JSON.stringify(scrubbed)).toContain(NEUTRALIZE_DEPTH_PLACEHOLDER);
+  });
+
+  it('🔴 is safe under `.map()` — the depth parameter must not be reachable from a callback', () => {
+    // An exported `(value, depth = 0)` is arity-2 with a numeric second
+    // parameter, i.e. exactly `Array.prototype.map`'s callback shape — so
+    // `arr.map(neutralizeAirLiterals)` would pass the INDEX as the depth and
+    // silently replace every element past the cap with the placeholder, while
+    // `tsc` reports zero errors because the signature genuinely matches.
+    // Measured before the fix on a 200-element array: 129 scrubbed, 71
+    // destroyed. The public signature is single-arg so this cannot be written.
+    const arr = Array.from({ length: 200 }, () => 'urn:air:leak');
+    const mapped = arr.map(neutralizeAirLiterals);
+
+    expect(mapped).toHaveLength(200);
+    expect(
+      mapped.filter((v) => v === NEUTRALIZE_DEPTH_PLACEHOLDER),
+      'no element may be replaced by the depth placeholder — a flat array has no depth',
+    ).toHaveLength(0);
+    expect(mapped.every((v) => v === 'urn-air-leak')).toBe(true);
   });
 
   it('positive control: shallow values are still scrubbed normally, not replaced', () => {

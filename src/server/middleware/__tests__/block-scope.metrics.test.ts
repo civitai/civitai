@@ -304,6 +304,13 @@ describe('endpoint label — per-request resolver', () => {
     // Without this, a resolver that returned a fresh label every call would
     // satisfy the test above while being just as wrong.
     const before = await counterValue('tools', 'success');
+    // 🔴 CAPTURED BEFORE THE CALLS. The earlier version of this line compared
+    // `counterValue('tools_call')` against ITSELF — `X === X`, which cannot
+    // fail and asserted nothing, while reading as coverage. The control's whole
+    // point is that two GETs leave `tools_call` UNTOUCHED, and that needs a
+    // baseline taken beforehand.
+    const beforeCall = await counterValue('tools_call', 'success');
+
     const route = withBlockScope(statusHandler(200) as never, {
       endpoint: toolsResolver,
       requiredScope: REQUIRED_SCOPE,
@@ -316,9 +323,10 @@ describe('endpoint label — per-request resolver', () => {
     }
 
     expect(await counterValue('tools', 'success')).toBe(before + 2);
-    expect(await counterValue('tools_call', 'success')).toBe(
-      await counterValue('tools_call', 'success')
-    );
+    expect(
+      await counterValue('tools_call', 'success'),
+      'two GETs must not touch the POST series — the split is by METHOD',
+    ).toBe(beforeCall);
   });
 
   it('a plain string endpoint still works — the resolver form is ADDITIVE', async () => {
