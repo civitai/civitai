@@ -52,9 +52,20 @@ export type MediaPresence = (typeof MediaPresence)[keyof typeof MediaPresence];
  * Shown to a moderator, verbatim, by both runtimes — the spoke renders it into its form error and
  * the main app puts it on a BAD_REQUEST. So it has to explain what happened and what to do instead,
  * not read like a stack trace.
+ *
+ * 🔴 IT MUST NOT NAME AN ACTION THE SURFACE DOES NOT OFFER. An earlier wording said "Delete it",
+ * and no surface this message reaches has a delete: the spoke's ingestion-errors page exposes
+ * exactly one action, `resolve` (pinned by that route's own test), and the spoke's
+ * `deleteImagesByIds` is wired only into article moderation. A refusal that instructs an impossible
+ * action is a dead end wearing the costume of a remedy — the moderator re-clicks, which costs
+ * another existence probe per click and changes nothing.
+ *
+ * So it names only what is TRUE on every surface: the file is gone, re-uploading is the fix, and
+ * the row stays hidden until then. Whoever can act on that is not necessarily the person reading
+ * it, and the message does not pretend otherwise.
  */
 export const MISSING_MEDIA_PUBLISH_MESSAGE =
-  'The media file for this image is missing from storage, so it cannot be published — publishing it would put a permanently broken image on the site. Delete it, or ask the uploader to upload it again.';
+  'The media file for this image is missing from storage, so it cannot be published — publishing it would put a permanently broken image on the site. Re-uploading the file is the only fix; until then the image stays hidden.';
 
 /** Thrown when the publish is refused. Never thrown for a verdict that allows. */
 export class MissingMediaError extends Error {
@@ -63,15 +74,6 @@ export class MissingMediaError extends Error {
     this.name = 'MissingMediaError';
   }
 }
-
-/**
- * The stored classification a scan failure carries when the media itself can never be fetched or
- * decoded. It is a classification written at scan time, NOT a match on the scanner's prose: keying
- * a queue off the reason text would be walked past by a single scanner reword. The class is the
- * TRIGGER for treating an image as missing-media; an existence check against the store is the
- * VERDICT.
- */
-export const IMAGE_SCAN_FAILURE_CLASS_PERMANENT = 'permanent';
 
 /**
  * "Is this `Image.url` a key we can ask the store about?" — re-exported, not defined here.

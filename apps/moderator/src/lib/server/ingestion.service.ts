@@ -1,11 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
-import {
-  assertMediaPresentForPublish,
-  IMAGE_SCAN_FAILURE_CLASS_PERMANENT,
-  MediaPresence,
-  summarizeProbeError,
-} from '@civitai/shared';
+import { assertMediaPresentForPublish, MediaPresence, summarizeProbeError } from '@civitai/shared';
 import { dbRead, dbWrite } from './db';
 import { bustCachedObject } from './cache';
 import { syncSearchIndex } from './search-index';
@@ -60,70 +55,12 @@ export async function countImagesPendingIngestion(): Promise<number> {
   return Number(row?.count ?? 0);
 }
 
-/**
- * The window + state the ingestion-error queue selects on, split out from the publishability
- * predicate below so the two cannot drift into each other.
- *
- * The two `createdAt` bounds predate this app — they arrived with the original main-app query in
- * `3575ab0413` and again in the cutover `e4104d5bf1`, in both cases with NO comment — so the reason
- * for the 1-hour lower bound is not recorded anywhere and is not invented here. What matters for
- * the page is the effect: a row younger than an hour, or older than two days, is not listed.
- */
-const ingestionErrorBaseWhere = sql`
+/** Shared by the queue and its badge: a divergence here is a count that never reaches zero. */
+const ingestionErrorWhere = sql`
   i."createdAt" > now() - INTERVAL '2 days'
   AND i."createdAt" < now() - INTERVAL '1 hour'
   AND i.ingestion = 'Error'::"ImageIngestionStatus"
   AND i."nsfwLevel" = 0
-`;
-
-/**
- * The scan pipeline's own stored classification of an unfetchable/undecodable input.
- *
- * 🔴 Deliberately NOT a match on the scanner's reason text HERE. A `reason ILIKE '%download%'`
- * predicate in this query would be a spelled guard: one scanner reword and every permanently-broken
- * image walks back into the review queue, silently, at query time.
- *
- * Being honest about what that does and does not buy: the stored CLASS is a fixed enum, but the
- * classification that produces it is itself a substring match on the scanner's prose, one layer up
- * in the main app's `image-scan-failure.ts`. So a reword still moves images between the two sides —
- * it just does so at SCAN time, on new rows, where it is visible in that module's own tests, rather
- * than silently re-partitioning every historical row the next time this query runs.
- *
- * The string is imported from `@civitai/shared`, not spelled here: the main app WRITES it into
- * `scanJobs.error.failureClass` and this SQL selects on it, across two runtimes that cannot see
- * each other. Two literals that must agree is how they stop agreeing.
- *
- * `IS [NOT] DISTINCT FROM` rather than `= / <>`: the JSON path yields NULL for an image with no
- * stored scan error at all, and `NULL <> 'permanent'` is NULL — which a WHERE treats as false, so a
- * plain `<>` would silently drop every image whose failure was never classified out of the review
- * queue. Those are exactly the ordinary failures moderators are here to clear.
- */
-const permanentScanFailure = sql`
-  i."scanJobs"->'error'->>'failureClass' IS NOT DISTINCT FROM ${IMAGE_SCAN_FAILURE_CLASS_PERMANENT}
-`;
-
-/**
- * The human review queue: ingestion errors a moderator can still usefully rate — timeouts,
- * container churn, unclassified failures. Images whose media the scanner classified as permanently
- * unfetchable are carved out, because rating one publishes a permanent 404.
- *
- * 🔴 THIS IS A TRIGGER, NOT THE VERDICT, and the two are deliberately different mechanisms. The
- * authority is the write-side guard in `resolveIngestionError` below, which asks the media store
- * whether the object is actually there; a stored failure class is only the best SQL-side correlate
- * of that, and it is a strictly smaller set (a row classified `transient`/`unknown`/NULL whose
- * object really is gone still reaches this queue, and is refused by the guard when a moderator acts
- * on it). Carving them out here is what stops a moderator being handed work they cannot complete;
- * the guard is what stops the 404.
- *
- * 🔴 THE PARENTHESES ARE LOAD-BEARING even with a single conjunct today: `NOT a AND b` and
- * `NOT (a AND b)` differ, so a second predicate added inside without them silently inverts the
- * partition. The queue-partition suite pins the grouping for that reason.
- *
- * Shared by the queue and its badge: a divergence here is a count that never reaches zero.
- */
-const ingestionErrorWhere = sql`
-  ${ingestionErrorBaseWhere}
-  AND NOT ( ${permanentScanFailure} )
 `;
 
 export type IngestionErrorImage = {

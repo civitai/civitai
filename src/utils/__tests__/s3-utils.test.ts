@@ -470,6 +470,30 @@ describe('headObject — presence AND size, as a three-state result', () => {
     });
   });
 
+  it('maps a missing BUCKET to unknown, not absent — it is a 404 about the wrong question', async () => {
+    /**
+     * 🔴 The case the `a bare 404` row above would otherwise swallow, and the reason that row and
+     * this one must both exist: `NoSuchBucket` carries `httpStatusCode: 404`, so the status
+     * catch-all classifies it `absent` unless the NAME is checked first.
+     *
+     * Why it matters enough to have its own case: the missing-media publish guard turns `absent`
+     * into a PERMANENT, un-overridable refusal. A single mistyped or moved bucket answers 404 for
+     * EVERY key, so classifying this as absent fails the whole moderator queue CLOSED while
+     * emitting log lines identical to a genuine run of misses. `unknown` fails open, which is the
+     * honest answer to a question we could not ask.
+     *
+     * The fixture keeps the 404 status deliberately — a fixture without it would pass even with
+     * the name check deleted, i.e. it could not see the mutant it exists to catch.
+     */
+    await expect(
+      headObject(
+        BUCKET,
+        KEY,
+        s3Throwing({ name: 'NoSuchBucket', $metadata: { httpStatusCode: 404 } })
+      )
+    ).resolves.toEqual({ status: 'unknown' });
+  });
+
   // 🔴 The bound is the only thing stopping this probe from hanging a finished upload
   // against a degraded backend: the client has SDK-default retries and no request
   // timeout. Asserting the signal REACHES the send is what makes removing it fail —

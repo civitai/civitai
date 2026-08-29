@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   assertMediaPresentForPublish,
   decideMediaPublish,
-  IMAGE_SCAN_FAILURE_CLASS_PERMANENT,
   MEDIA_PROBE_ERROR_MAX_LENGTH,
   MediaPresence,
   MISSING_MEDIA_PUBLISH_MESSAGE,
@@ -48,16 +47,27 @@ describe('decideMediaPublish', () => {
     expect(MediaPresence.NotApplicable).toBe('not-applicable');
   });
 
-  it('exports the stored scan-failure class the review queue partitions on', () => {
-    expect(IMAGE_SCAN_FAILURE_CLASS_PERMANENT).toBe('permanent');
-  });
-
   it('gives the moderator a message that says what to do instead', () => {
     // Pinned whole, not by keyword: a guard on WORDS is walkable by rewording. This is the string
     // a moderator sees, so the test owns it and a copy change has to come here.
     expect(MISSING_MEDIA_PUBLISH_MESSAGE).toBe(
-      'The media file for this image is missing from storage, so it cannot be published — publishing it would put a permanently broken image on the site. Delete it, or ask the uploader to upload it again.'
+      'The media file for this image is missing from storage, so it cannot be published — publishing it would put a permanently broken image on the site. Re-uploading the file is the only fix; until then the image stays hidden.'
     );
+  });
+
+  it('never instructs an action no surface offers', () => {
+    /**
+     * 🔴 A REGRESSION GUARD ON A SHIPPED DEFECT, not a style rule. The first wording said
+     * "Delete it", and neither surface this message reaches has a delete: the spoke's
+     * ingestion-errors page exposes exactly one action, `resolve`, and `deleteImagesByIds` is
+     * wired only into article moderation. The moderator was told to do something impossible and
+     * re-clicked, spending one existence probe per click.
+     *
+     * Keyed on the verb rather than the whole string on purpose — the pin above already owns the
+     * exact text, so this stays REACHABLE when someone rewrites the copy, which is precisely when
+     * the old instruction is most likely to come back.
+     */
+    expect(MISSING_MEDIA_PUBLISH_MESSAGE).not.toMatch(/\bdelete\b/i);
   });
 });
 
