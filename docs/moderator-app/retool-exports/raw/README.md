@@ -77,6 +77,29 @@ live key because it looked only for vendor prefixes and `Bearer` headers: User L
 like nothing in particular. It was caught before the commit was ever pushed. Anything matching
 `(apikey|token|secret|password|auth)\w*\s*=\s*['"]…` is now redacted regardless of what follows.
 
+## Part of this is now a gate, and part of it can never be
+
+Everything above is a checklist, and a checklist is only as good as the person running
+it. `scripts/ci/retool-sanitiser-gate.mjs` (CI: **Retool Sanitiser Guard**) now enforces
+the mechanical half on every PR touching this directory:
+
+- known-bad values that must never come back, matched against **salted hashes** — the
+  plaintext is deliberately not in this repo, and neither is the salt;
+- every IPv4 literal must be an RFC5737/RFC1918 address, so a real one blocks;
+- the credential shapes above, as code rather than prose;
+- the redaction **placeholders must still be present** — which is what catches the
+  headline risk, a wholesale re-download silently overwriting a sanitised file.
+
+🔴 **A green run is NOT "no personal data".** The gate cannot see a *novel* staff real
+name or a *novel* bare account id: neither has a shape to match on, which is exactly
+why both walked through the pass described above. That half is still yours. When you
+sanitise a fresh export, work the three-class checklist by hand and treat the gate as a
+backstop against regressions, never as the check itself.
+
+Add a newly-found bad value to the denylist with the salt exported locally:
+`node scripts/ci/retool-sanitiser-gate.mjs --hash '<value>'`, then commit the digest
+only.
+
 ## Read the whole file, not just the SQL
 
 Two misses came out of trusting the query list alone, both found in review rather than in the build:

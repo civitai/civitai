@@ -1,0 +1,52 @@
+name: Retool Sanitiser Guard
+
+# Blocks a PR that puts personal data back into `docs/moderator-app/retool-exports/**`.
+#
+# WHY: PR #4476 removed three classes of personal data from these exports — staff
+# real names, banned-user IP addresses and end-user account ids. The sanitisation
+# rules that were supposed to prevent that live in `raw/README.md` as PROSE, and
+# prose is not a gate. A fresh Retool re-download would have put all three back with
+# nothing to stop it.
+#
+# 🔴 A green run here does NOT mean "no personal data". The gate cannot see a NOVEL
+# staff name or a NOVEL bare account id — neither has a shape to match on, which is
+# exactly why both got through the original pass. Read the gate's header before
+# treating this check as coverage.
+
+on:
+  pull_request:
+    branches: [main, release]
+    paths:
+      - 'docs/moderator-app/retool-exports/**'
+      - 'scripts/ci/retool-sanitiser-gate.mjs'
+      - 'scripts/ci/retool-sanitiser-denylist.json'
+      - '.github/workflows/retool-sanitiser-guard.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retool-sanitiser-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: retool export sanitiser
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Run the sanitiser gate
+        env:
+          # Not committed: a person's name is a tiny search space, so a public salt
+          # would make the committed hashes dictionary-crackable. Absent (e.g. on a
+          # fork PR) the denylist check reports SKIPPED and the IPv4, credential and
+          # placeholder checks still run and still block.
+          RETOOL_SANITISER_SALT: ${{ secrets.RETOOL_SANITISER_SALT }}
+        run: node scripts/ci/retool-sanitiser-gate.mjs

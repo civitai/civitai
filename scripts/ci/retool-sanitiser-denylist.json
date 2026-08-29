@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "algorithm": "sha256(salt + NUL + whitespace-normalised-lowercased-value)",
+  "note": [
+    "Salted hashes of KNOWN-BAD values that must never return to the Retool exports.",
+    "Plaintext must never appear here: this repo is public, and a plaintext denylist",
+    "of staff names re-publishes exactly what it exists to protect.",
+    "",
+    "The salt is NOT committed either. A person's name is a tiny search space, so a",
+    "committed salt would be dictionary-crackable in seconds. Supply it as the CI",
+    "secret $RETOOL_SANITISER_SALT.",
+    "",
+    "Add an entry with the salt exported locally:",
+    "  node scripts/ci/retool-sanitiser-gate.mjs --hash '<value>'",
+    "and paste the digest below. Never paste the value.",
+    "",
+    "While this list is empty the denylist check reports SKIPPED and the other three",
+    "checks still run and still block. It is not a silent pass."
+  ],
+  "hashes": []
+}
