@@ -335,30 +335,70 @@ async function classifyOffsiteListing(
  * so deleting the listing row would hide the store card while leaving the hosted app
  * serving. `delistListing` is the correct action for those, and it is deliberately
  * status-guarded to `{approved, removed}` — the two sets do not overlap.
+ *
+ * 🔴 `publishRequests: { none: { status: 'pending' } }` is the ORPHAN half of "orphan draft",
+ * and it is not decoration either. A first-version draft whose request is still `pending` is
+ * a submission UNDER REVIEW, not an abandoned one: purging it deletes the listing out from
+ * under a live request that has no FK to it (the two are joined by slug alone), so the slug
+ * is released while the request still points at it. Approving that request afterwards falls
+ * back to the legacy approve-time create path and re-mints the listing — on a slug another
+ * user may have taken in the meantime, which is the collision this whole predicate exists to
+ * avoid. The correct order is reject-or-withdraw first, THEN purge, and this term enforces
+ * it. It also makes the predicate agree exactly with what the mod table already calls a
+ * "draft" (`moderationStatusWhere`: `status:'draft'` + no pending request).
  */
 const PURGEABLE_LISTING_WHERE = {
   OR: [
     { kind: 'offsite' },
-    { kind: 'onsite', status: 'draft', appBlockId: null, revisionOfId: null },
+    {
+      kind: 'onsite',
+      status: 'draft',
+      appBlockId: null,
+      revisionOfId: null,
+      publishRequests: { none: { status: 'pending' } },
+    },
   ],
 } satisfies Prisma.AppListingWhereInput;
 
-/** Does an already-loaded row satisfy {@link PURGEABLE_LISTING_WHERE}? Kept beside it so
- * the in-memory guard and the SQL guard can only drift together. */
+/**
+ * Does an already-loaded row satisfy {@link PURGEABLE_LISTING_WHERE}? Kept beside it so the
+ * in-memory guard and the SQL guard can only drift together.
+ *
+ * `pendingRequestCount` is the caller's projection of the relation term above — both reads
+ * select `publishRequests` filtered to `status:'pending'` with `take: 1`, so a non-empty
+ * array means "under review". It is a REQUIRED field rather than an optional one on purpose:
+ * an optional would default to "no pending request" for a caller that forgot to select it,
+ * which is the permissive direction on a destructive op.
+ */
 function isPurgeableListing(row: {
   kind: string;
   status: string;
   appBlockId: string | null;
   revisionOfId: string | null;
+  pendingRequestCount: number;
 }): boolean {
   if (row.kind === 'offsite') return true;
   return (
     row.kind === 'onsite' &&
     row.status === 'draft' &&
     row.appBlockId === null &&
-    row.revisionOfId === null
+    row.revisionOfId === null &&
+    row.pendingRequestCount === 0
   );
 }
+
+/** The `select` both purge reads use — every field {@link isPurgeableListing} inspects, so
+ * neither call site can hand it an `undefined` the guard would then judge. */
+const PURGE_CLASSIFY_SELECT = {
+  kind: true,
+  status: true,
+  slug: true,
+  userId: true,
+  appBlockId: true,
+  revisionOfId: true,
+  name: true,
+  publishRequests: { where: { status: 'pending' }, take: 1, select: { id: true } },
+} satisfies Prisma.AppListingSelect;
 
 /**
  * Load + classify a listing for PURGE. A missing listing, and any listing outside
@@ -368,22 +408,18 @@ function isPurgeableListing(row: {
  */
 async function classifyPurgeableListing(
   appListingId: string
-): Promise<{ id: string; kind: string; status: string; slug: string }> {
+): Promise<{ kind: string; status: string; slug: string }> {
   const listing = await dbRead.appListing.findUnique({
     where: { id: appListingId },
-    select: {
-      id: true,
-      kind: true,
-      status: true,
-      slug: true,
-      appBlockId: true,
-      revisionOfId: true,
-    },
+    select: PURGE_CLASSIFY_SELECT,
   });
-  if (!listing || !isPurgeableListing(listing)) {
+  if (
+    !listing ||
+    !isPurgeableListing({ ...listing, pendingRequestCount: listing.publishRequests.length })
+  ) {
     throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
   }
-  return { id: listing.id, kind: listing.kind, status: listing.status, slug: listing.slug };
+  return { kind: listing.kind, status: listing.status, slug: listing.slug };
 }
 
 /**
@@ -936,7 +972,11 @@ export async function purgeListing(opts: {
   // opened. The authoritative snapshot is re-read on the primary inside the tx below.
   await classifyPurgeableListing(input.appListingId);
 
-  await dbWrite.$transaction(async (tx) => {
+  // RETURNED by the tx (rather than captured in a `let`) when the purged row was an ON-SITE
+  // orphan draft; drives the post-commit owner notification below. Null for the off-site arm
+  // — see the 🔴 note there. Returning it also means a tx that THROWS yields no value at all,
+  // so a rolled-back purge can never reach the notification.
+  const purgedOnsiteDraft = await dbWrite.$transaction(async (tx) => {
     // Authoritative pre-delete snapshot from the PRIMARY (not the replica classify),
     // so `before.status` + `slug` reflect the true current row and the purgeability
     // guard is re-checked on the primary. A row that vanished (or moved out of the
@@ -950,17 +990,21 @@ export async function purgeListing(opts: {
     // predicate is re-evaluated here and AGAIN in the `deleteMany` below.
     const current = await tx.appListing.findUnique({
       where: { id: input.appListingId },
-      select: {
-        status: true,
-        slug: true,
-        kind: true,
-        appBlockId: true,
-        revisionOfId: true,
-      },
+      select: PURGE_CLASSIFY_SELECT,
     });
-    if (!current || !isPurgeableListing(current)) {
+    if (
+      !current ||
+      !isPurgeableListing({ ...current, pendingRequestCount: current.publishRequests.length })
+    ) {
       throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
     }
+    // Read INSIDE the tx, from the row we are about to delete, for the post-commit
+    // notification below — after the delete there is nothing left to read it from. Held in a
+    // local and returned at the end of the callback, AFTER the delete has been confirmed.
+    const onsiteDraftOwner =
+      current.kind === 'onsite'
+        ? { userId: current.userId, slug: current.slug, name: current.name }
+        : null;
     // Event FIRST (so the slug/state snapshot is captured before the row is gone).
     await tx.appListingModerationEvent.create({
       data: {
@@ -986,7 +1030,45 @@ export async function purgeListing(opts: {
       // Raced (concurrently purged between the snapshot and here) → roll the event back.
       throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
     }
+    return onsiteDraftOwner;
   });
+
+  // POST-COMMIT, best-effort — tell the owner their pre-approval draft was removed.
+  //
+  // 🔴 ON-SITE ARM ONLY, and the asymmetry is deliberate rather than an oversight. An
+  // off-site purge is only ever offered on an already-`removed` listing, i.e. AFTER a
+  // `delistListing` that notified the owner itself — so notifying again would double up on
+  // an event they have already been told about. The on-site orphan-draft arm has no such
+  // predecessor: it is reachable directly from a `draft` row, so without this the
+  // developer's listing, its media and their slug would vanish with nothing sent at all.
+  // (They were told their SUBMISSION was rejected — `app-block-rejected` — which is a
+  // different event about a different object, and says nothing about the listing going away.)
+  //
+  // Best-effort and post-commit, mirroring every other notify in this file: the purge has
+  // already committed, so a notification failure must never affect the outcome.
+  if (purgedOnsiteDraft) {
+    try {
+      await notifyAppListingOwner({
+        type: 'app-listing-purged',
+        userId: purgedOnsiteDraft.userId,
+        // Keyed by LISTING id, not slug: the slug is released by this very delete and can
+        // legitimately belong to someone else later, so a slug key could dedup a different
+        // developer's notification away.
+        key: `app-listing-purged:${input.appListingId}`,
+        details: {
+          slug: purgedOnsiteDraft.slug,
+          name: purgedOnsiteDraft.name,
+          reason,
+        },
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[purgeListing] owner notification failed (id=${input.appListingId}); purge STANDS: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
 
   return { appListingId: input.appListingId, purged: true };
 }

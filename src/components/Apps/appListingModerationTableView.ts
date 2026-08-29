@@ -84,6 +84,8 @@ export function listingModActions(input: {
   status: string;
   kind: string;
   hasPendingRequest: boolean;
+  /** `null` ⇒ never approved. Only used to identify an on-site orphan draft (see below). */
+  appBlockId: string | null;
 }): ListingModAction[] {
   const offsite = input.kind === 'offsite';
   const actions: ListingModAction[] = [];
@@ -106,6 +108,30 @@ export function listingModActions(input: {
       actions.push('claim');
       actions.push('purge');
     }
+  }
+
+  // 🔴 ON-SITE ORPHAN PRE-APPROVAL DRAFT — the ONLY on-site shape `purgeListing` accepts, and
+  // the only way a moderator can reclaim its slug.
+  //
+  // A `rejectRequest` no longer deletes this row (clawgate #302), so a rejected-and-abandoned
+  // first submission sits here holding `app_listings_slug_key` forever. `delistListing` is
+  // status-guarded to `{approved, removed}` and cannot touch a `draft`, so WITHOUT this branch
+  // the row is visible in this table with no action but "message owner" — which is exactly the
+  // state the reject-time delete used to prevent. The service arm existing is not enough; the
+  // operator has to be able to reach it.
+  //
+  // The three terms mirror the service predicate. `appBlockId === null` means never approved;
+  // `!hasPendingRequest` means not under review (purging a live submission would release the
+  // slug out from under a request joined to it only by slug). Shadow revisions need no term
+  // here — `listAllListingsForModeration` already filters `revisionOfId: null`, so one can
+  // never be a row in this table.
+  if (
+    !offsite &&
+    input.status === 'draft' &&
+    input.appBlockId === null &&
+    !input.hasPendingRequest
+  ) {
+    actions.push('purge');
   }
   return actions;
 }

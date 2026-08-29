@@ -1142,11 +1142,18 @@ export const appListingsRouter = router({
    *
    * 🔴 THE ONE DELIBERATELY SUBMITTER-SCOPED READ ON THIS PAGE, and the exception proves
    * the rule. Every other read here is ownership∪seat because an app exists to key on; a
-   * first version that was rejected or withdrawn had its pre-approval DRAFT listing
-   * DELETED (the slug release), so there is no app row left and `submitted_by_user_id` is
-   * the only identity the surviving record carries. Without this proc that population is
-   * unreachable from anywhere in the product — including from the "your app was rejected"
-   * notification, which now points here.
+   * first version whose pre-approval DRAFT listing was DELETED leaves no app row, so
+   * `submitted_by_user_id` is the only identity the surviving record carries. Without this
+   * proc that population is unreachable from anywhere in the product.
+   *
+   * 🔴 A REJECT NO LONGER PUTS A SUBMISSION HERE (clawgate #302). `rejectRequest` keeps the
+   * draft, so a newly rejected first version has a listing the caller owns and renders on the
+   * APP-KEYED table instead, via `blockRequestWhereForListing`'s null-FK slug branch — the
+   * de-dup in `listMyOrphanedSubmissions` excludes it from this read on purpose. The
+   * population that still lands here: first versions the developer WITHDREW (which does
+   * delete the draft), anything a mod `purgeListing`d, and the rows rejected before that
+   * change. The "your app was rejected" notification points at `/apps/mine`, which renders
+   * both surfaces, so it is correct either way.
    *
    * Same `appBlocksAuthor`-only gate as the page and `listingHistory`.
    */

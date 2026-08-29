@@ -333,6 +333,7 @@ export function AppListingsModerationTable({
               status: row.status,
               kind: row.kind,
               hasPendingRequest: row.pendingRequest != null,
+              appBlockId: row.appBlockId,
             });
             return (
               <Fragment key={row.id}>

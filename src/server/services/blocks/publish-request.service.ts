@@ -5200,6 +5200,21 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
   //
   // `withdrawRequest` KEEPS its delete: that is the developer's own act of abandoning the
   // submission, so releasing their slug is what they asked for.
+  //
+  // ⚠ KNOWN AND NOT FIXED HERE: the OFF-SITE reject still deletes its draft
+  // (`offsite-listing.service.ts` → `closeTerminalListing`'s `draft` branch). Every word of
+  // the argument above applies there verbatim — `rejectExternalRequest` is that reviewer's
+  // only rejection verb too — so an off-site developer rejected over a fixable problem still
+  // loses their listing and their slug. That is scope, not a justification for the
+  // divergence, and it is the obvious follow-up.
+  //
+  // ⚠ ALSO KNOWN: a reused draft keeps the scalars minted from the REJECTED manifest until the
+  // re-submit is approved. `submitVersion`'s reuse branch writes nothing, so if name/tagline/
+  // description/category/contentRating changed between the two submits, `/apps/mine` shows the
+  // old copy for the re-review window. Bounded and cosmetic — `approveRequest`'s draft→approved
+  // transition re-syncs every manifest-governed scalar and re-floors the rating, so the
+  // APPROVED card is correct, and the asset-attach path does not gate on the listing's
+  // `contentRating`, so a stale rating is NOT an NSFW-gate bypass.
 
   // MOD REVIEW SANDBOX (#2831) — tear down any review env the mod spun up.
   // Best-effort + non-blocking: the reject has landed, so a teardown failure

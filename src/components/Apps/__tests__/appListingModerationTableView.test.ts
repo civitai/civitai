@@ -30,34 +30,64 @@ const pendingReq = {
 describe('listingModActions — off-site rows', () => {
   it('pending (with a pending request) → Review + Message owner', () => {
     expect(
-      listingModActions({ status: 'pending', kind: 'offsite', hasPendingRequest: true })
+      listingModActions({
+        status: 'pending',
+        kind: 'offsite',
+        hasPendingRequest: true,
+        appBlockId: null,
+      })
     ).toEqual(['review', 'message-owner']);
   });
 
   it('approved → Reset to pending + Hide', () => {
     expect(
-      listingModActions({ status: 'approved', kind: 'offsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'approved',
+        kind: 'offsite',
+        hasPendingRequest: false,
+        appBlockId: null,
+      })
     ).toEqual(['message-owner', 'reset-to-pending', 'hide']);
   });
 
   it('removed → Relist + Claim + Purge', () => {
     expect(
-      listingModActions({ status: 'removed', kind: 'offsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'removed',
+        kind: 'offsite',
+        hasPendingRequest: false,
+        appBlockId: null,
+      })
     ).toEqual(['message-owner', 'relist', 'claim', 'purge']);
   });
 
   it('draft → no lifecycle action (unless a pending request offers Review)', () => {
     expect(
-      listingModActions({ status: 'draft', kind: 'offsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'draft',
+        kind: 'offsite',
+        hasPendingRequest: false,
+        appBlockId: null,
+      })
     ).toEqual(['message-owner']);
     expect(
-      listingModActions({ status: 'draft', kind: 'offsite', hasPendingRequest: true })
+      listingModActions({
+        status: 'draft',
+        kind: 'offsite',
+        hasPendingRequest: true,
+        appBlockId: null,
+      })
     ).toEqual(['review', 'message-owner']);
   });
 
   it('rejected → read-only apart from Message owner', () => {
     expect(
-      listingModActions({ status: 'rejected', kind: 'offsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'rejected',
+        kind: 'offsite',
+        hasPendingRequest: false,
+        appBlockId: null,
+      })
     ).toEqual(['message-owner']);
   });
 });
@@ -65,20 +95,98 @@ describe('listingModActions — off-site rows', () => {
 describe('listingModActions — on-site rows hide the off-site-only actions', () => {
   it('approved on-site → Reset to pending + Hide (reset is now dual-kind, #3165)', () => {
     expect(
-      listingModActions({ status: 'approved', kind: 'onsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'approved',
+        kind: 'onsite',
+        hasPendingRequest: false,
+        appBlockId: 'ablk_live',
+      })
     ).toEqual(['message-owner', 'reset-to-pending', 'hide']);
   });
 
   it('removed on-site → Relist ONLY (no claim / purge)', () => {
     expect(
-      listingModActions({ status: 'removed', kind: 'onsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'removed',
+        kind: 'onsite',
+        hasPendingRequest: false,
+        appBlockId: 'ablk_live',
+      })
     ).toEqual(['message-owner', 'relist']);
   });
 
   it('pending on-site → NO Review (approve/reject is off-site only; onsite uses its own queue)', () => {
     expect(
-      listingModActions({ status: 'pending', kind: 'onsite', hasPendingRequest: true })
+      listingModActions({
+        status: 'pending',
+        kind: 'onsite',
+        hasPendingRequest: true,
+        appBlockId: null,
+      })
     ).toEqual(['message-owner']);
+  });
+});
+
+/**
+ * 🔴 THE ON-SITE ORPHAN PRE-APPROVAL DRAFT — the one on-site shape that DOES offer Purge, and
+ * the reason this branch exists at all (clawgate #302).
+ *
+ * `rejectRequest` no longer deletes the pre-approval draft, so a rejected-and-abandoned first
+ * submission sits in this table holding its slug forever. `delistListing` is status-guarded to
+ * `{approved, removed}` and cannot touch a `draft`, so Purge here is the ONLY way a moderator
+ * can reclaim that slug. A row offering nothing but "message owner" is the state the
+ * reject-time delete used to prevent — the service arm existing is not enough if the operator
+ * cannot reach it.
+ *
+ * The three refusals below are one-term-off from the purgeable shape, so each pins its own term.
+ */
+describe('listingModActions — on-site orphan pre-approval draft offers Purge', () => {
+  it('draft + never approved + no pending request → Purge', () => {
+    expect(
+      listingModActions({
+        status: 'draft',
+        kind: 'onsite',
+        hasPendingRequest: false,
+        appBlockId: null,
+      })
+    ).toEqual(['message-owner', 'purge']);
+  });
+
+  it('NOT while a request is still pending — that submission is under review', () => {
+    expect(
+      listingModActions({
+        status: 'draft',
+        kind: 'onsite',
+        hasPendingRequest: true,
+        appBlockId: null,
+      })
+    ).toEqual(['message-owner']);
+  });
+
+  it('NOT once it has a backing AppBlock — it reached approve', () => {
+    expect(
+      listingModActions({
+        status: 'draft',
+        kind: 'onsite',
+        hasPendingRequest: false,
+        appBlockId: 'ablk_live',
+      })
+    ).toEqual(['message-owner']);
+  });
+
+  it('NOT for an off-site draft — that arm is unchanged and gated on `removed`', () => {
+    expect(
+      listingModActions({
+        status: 'draft',
+        kind: 'offsite',
+        hasPendingRequest: false,
+        appBlockId: null,
+      })
+    ).toEqual(['message-owner']);
+  });
+
+  it('Purge stays the confirm-gated destructive action', () => {
+    expect(isDestructiveListingModAction('purge')).toBe(true);
   });
 });
 
@@ -100,21 +208,29 @@ describe('listingModActions — the owner-message action is offered on EVERY row
   const STATUSES = ['draft', 'pending', 'approved', 'rejected', 'removed'] as const;
   const KINDS = ['onsite', 'offsite'] as const;
 
-  it('appears for every status × kind × pending-request combination', () => {
+  it('appears for every status × kind × pending-request × backing-block combination', () => {
     const missing: string[] = [];
+    let walked = 0;
     for (const status of STATUSES) {
       for (const kind of KINDS) {
         for (const hasPendingRequest of [true, false]) {
-          const actions = listingModActions({ status, kind, hasPendingRequest });
-          if (!actions.includes('message-owner')) {
-            missing.push(`${kind}/${status}/pending=${hasPendingRequest}`);
+          // `appBlockId` joined the input for the orphan-draft Purge branch, so it is now
+          // part of the cross product too — otherwise the sweep would pin only one of the
+          // two shapes the new branch distinguishes.
+          for (const appBlockId of [null, 'ablk_live']) {
+            walked++;
+            const actions = listingModActions({ status, kind, hasPendingRequest, appBlockId });
+            if (!actions.includes('message-owner')) {
+              missing.push(`${kind}/${status}/pending=${hasPendingRequest}/block=${appBlockId}`);
+            }
           }
         }
       }
     }
-    // Positive control on the enumeration itself: 5 statuses × 2 kinds × 2 = 20 cases
+    // Positive control on the enumeration itself: 5 statuses × 2 kinds × 2 × 2 = 40 cases
     // were actually walked, so an empty `missing` is a real sweep and not an empty loop.
-    expect(STATUSES.length * KINDS.length * 2).toBe(20);
+    expect(walked).toBe(40);
+    expect(STATUSES.length * KINDS.length * 2 * 2).toBe(40);
     expect(missing).toEqual([]);
   });
 

@@ -39,7 +39,10 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  * is indistinguishable from a real registration and fails the build. (It did.)
  */
 
-const { ids } = vi.hoisted(() => ({ ids: { n: 0 } }));
+const { ids, mockNotify } = vi.hoisted(() => ({
+  ids: { n: 0 },
+  mockNotify: vi.fn(async () => undefined),
+}));
 
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingReportId: () => `alrp_test_${++ids.n}`,
@@ -48,7 +51,7 @@ vi.mock('~/server/utils/app-block-ids', () => ({
   newAppOwnershipEventId: () => `aoe_test_${++ids.n}`,
 }));
 vi.mock('~/server/services/blocks/app-listing-notify', () => ({
-  notifyAppListingOwner: vi.fn(async () => undefined),
+  notifyAppListingOwner: mockNotify,
 }));
 
 const mockRead = dbMock.dbRead;
@@ -59,16 +62,26 @@ const APP_ID = 'apl_target';
 const SLUG = 'cool-app';
 const REASON = 'confirmed spam submission, expunging';
 
-/** The purgeable on-site shape: never approved, not a shadow. */
+const OWNER = 77;
+const APP_NAME = 'Cool App';
+
+/**
+ * The purgeable on-site shape: never approved, not a shadow, not under review.
+ *
+ * `publishRequests` is the relation term's projection — the reads select it filtered to
+ * `status:'pending'` with `take: 1`, so `[]` means "no live submission".
+ */
 function orphanDraft(over: Record<string, unknown> = {}) {
   return {
     id: APP_ID,
     kind: 'onsite',
     status: 'draft',
     slug: SLUG,
+    name: APP_NAME,
     appBlockId: null,
     revisionOfId: null,
-    userId: 77,
+    userId: OWNER,
+    publishRequests: [],
     ...over,
   };
 }
@@ -84,6 +97,7 @@ beforeEach(() => {
   mockWrite.appListing.findUnique.mockReset();
   mockWrite.appListing.deleteMany.mockReset().mockResolvedValue({ count: 1 });
   mockWrite.appListingModerationEvent.create.mockReset().mockResolvedValue({});
+  mockNotify.mockReset().mockResolvedValue(undefined);
   // `$transaction` is deliberately NOT reset — that would discard the canonical default
   // (run the callback against `dbWrite`), which is the behaviour these tests rely on.
 });
@@ -127,10 +141,62 @@ describe('purgeListing — on-site orphan pre-approval draft (the purgeable shap
         id: APP_ID,
         OR: [
           { kind: 'offsite' },
-          { kind: 'onsite', status: 'draft', appBlockId: null, revisionOfId: null },
+          {
+            kind: 'onsite',
+            status: 'draft',
+            appBlockId: null,
+            revisionOfId: null,
+            publishRequests: { none: { status: 'pending' } },
+          },
         ],
       },
     });
+  });
+
+  /**
+   * 🔴 The developer's listing, its media and their slug are being hard-deleted. Unlike the
+   * off-site arm — only reachable on an already-`removed` listing, i.e. after a `delistListing`
+   * that notified — this arm fires straight off a `draft`, so without this it is a silent
+   * deletion of a user's content.
+   */
+  it('notifies the OWNER, post-commit, carrying the mod reason', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(orphanDraft());
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(orphanDraft());
+    await purgeListing({
+      input: { appListingId: APP_ID, reason: REASON },
+      reviewerUserId: REVIEWER,
+    });
+
+    expect(mockNotify).toHaveBeenCalledTimes(1);
+    expect(mockNotify.mock.calls[0][0]).toMatchObject({
+      type: 'app-listing-purged',
+      userId: OWNER,
+      // Keyed by LISTING id, never slug: this delete RELEASES the slug, so a slug key could
+      // dedup a later, different developer's notification away.
+      key: `app-listing-purged:${APP_ID}`,
+      details: { slug: SLUG, name: APP_NAME, reason: REASON },
+    });
+  });
+
+  it('the purge STANDS if the notification throws (post-commit, best-effort)', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(orphanDraft());
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(orphanDraft());
+    mockNotify.mockRejectedValueOnce(new Error('notification backend down'));
+    await expect(
+      purgeListing({ input: { appListingId: APP_ID, reason: REASON }, reviewerUserId: REVIEWER })
+    ).resolves.toEqual({ appListingId: APP_ID, purged: true });
+    expect(mockWrite.appListing.deleteMany).toHaveBeenCalled();
+  });
+
+  it('an OFF-SITE purge still notifies NOBODY — that arm follows a delist that already did', async () => {
+    const offsiteRow = orphanDraft({ kind: 'offsite', status: 'removed' });
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteRow);
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(offsiteRow);
+    await purgeListing({
+      input: { appListingId: APP_ID, reason: REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(mockNotify).not.toHaveBeenCalled();
   });
 });
 
@@ -160,6 +226,11 @@ describe('purgeListing — refuses every on-site shape that is NOT an orphan dra
       what: 'a REMOVED on-site listing',
       row: orphanDraft({ status: 'removed' }),
       why: 'already delisted; still not purgeable through the on-site arm',
+    },
+    {
+      what: 'a draft whose submission is still PENDING review',
+      row: orphanDraft({ publishRequests: [{ id: 'pubreq_live' }] }),
+      why: 'the request is joined to the listing by SLUG only, so purging releases the slug out from under a live review',
     },
   ];
 
