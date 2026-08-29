@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { purgeListing } from '~/server/services/blocks/offsite-moderation.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+
 /**
  * `purgeListing` — the ON-SITE ORPHAN PRE-APPROVAL DRAFT arm (clawgate #302 / ClickUp
  * 868kuam02).
@@ -24,27 +27,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * media revision of a LIVE, approved on-site app — which is why the refusal cases below
  * are the point of this file, not the happy path.
  *
- * DB fully mocked. `$transaction` runs its callback against the same write mock, so a
- * test can assert that a guarded refusal throws BEFORE any audit event is written.
+ * DB deps come from the canonical `dbMock` — no real Prisma, and no per-file mock of the db
+ * client, which `no-direct-shared-module-mock` forbids: under `isolate: false` a per-file db
+ * mock freezes its own shape into every later file in the same worker. `$transaction`'s
+ * canonical default runs its callback against `dbWrite`, which is exactly the tx client these
+ * assertions read — so a test can assert that a guarded refusal throws BEFORE any audit event
+ * is written.
+ *
+ * 🔴 Do not name that specifier inside a `vi.mock(...)` call shape ANYWHERE in this file,
+ * prose included. The guard is a regex over the file's source text, so a mention in a comment
+ * is indistinguishable from a real registration and fails the build. (It did.)
  */
 
-const { mockRead, mockWrite, ids } = vi.hoisted(() => {
-  const ids = { n: 0 };
-  const mockWrite = {
-    $transaction: vi.fn(),
-    appListing: {
-      findUnique: vi.fn(),
-      deleteMany: vi.fn(),
-    },
-    appListingModerationEvent: { create: vi.fn() },
-    appListingReport: { updateMany: vi.fn() },
-  };
-  const mockRead = { appListing: { findUnique: vi.fn() } };
-  return { mockRead, mockWrite, ids };
-});
+const { ids } = vi.hoisted(() => ({ ids: { n: 0 } }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingReportId: () => `alrp_test_${++ids.n}`,
   newAppListingModerationEventId: () => `alme_test_${++ids.n}`,
@@ -55,7 +51,8 @@ vi.mock('~/server/services/blocks/app-listing-notify', () => ({
   notifyAppListingOwner: vi.fn(async () => undefined),
 }));
 
-const { purgeListing } = await import('~/server/services/blocks/offsite-moderation.service');
+const mockRead = dbMock.dbRead;
+const mockWrite = dbMock.dbWrite;
 
 const REVIEWER = 1001;
 const APP_ID = 'apl_target';
@@ -79,11 +76,16 @@ function orphanDraft(over: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   ids.n = 0;
-  mockWrite.$transaction.mockImplementation(async (fn: unknown) =>
-    typeof fn === 'function' ? (fn as (tx: unknown) => unknown)(mockWrite) : undefined
-  );
-  mockWrite.appListing.deleteMany.mockResolvedValue({ count: 1 });
-  mockWrite.appListingModerationEvent.create.mockResolvedValue({});
+  // 🔴 `mockReset()`, not just `clearAllMocks()`. `clearAllMocks` clears CALLS but leaves a
+  // queued `mockResolvedValueOnce` in place, and the refusal tests below deliberately throw
+  // BEFORE reaching the in-tx read — so an unconsumed `Once` value would survive into the
+  // next test and decide it. Reset then re-apply, so every default is set explicitly here.
+  mockRead.appListing.findUnique.mockReset();
+  mockWrite.appListing.findUnique.mockReset();
+  mockWrite.appListing.deleteMany.mockReset().mockResolvedValue({ count: 1 });
+  mockWrite.appListingModerationEvent.create.mockReset().mockResolvedValue({});
+  // `$transaction` is deliberately NOT reset — that would discard the canonical default
+  // (run the callback against `dbWrite`), which is the behaviour these tests rely on.
 });
 
 describe('purgeListing — on-site orphan pre-approval draft (the purgeable shape)', () => {
