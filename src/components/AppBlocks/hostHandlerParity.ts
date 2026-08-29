@@ -518,8 +518,10 @@ export const INVENTORY = {
   // User report of a posted shared row (Batch-D item 5) — the server procedure
   // `apps.shared.report` already exists; this is the postMessage seam. Same both-
   // host placement as SHARED_WITHDRAW (its reply is the SHARED_WITHDRAW-style
-  // `{ ok, error? }`: the error path MUST carry `ok: false` or the SDK drops it →
-  // hang). Ahead of the published SDK dist union — forward-looking coverage.
+  // `{ ok, error? }`: the validator accepts an error reply with or without `ok`,
+  // and the hosts send `ok: false` because it is the clearer signal, not because
+  // omitting it would hang). Ahead of the published SDK dist union — forward-
+  // looking coverage.
   SHARED_REPORT: {
     request: true,
     reply: 'SHARED_REPORT_RESULT',
