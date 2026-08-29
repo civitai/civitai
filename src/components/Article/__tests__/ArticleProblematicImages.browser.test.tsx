@@ -203,6 +203,106 @@ describe('ArticleProblematicImages — what a reader actually sees for an unrend
     await expect.element(page.getByText(UNRENDERABLE_ARTICLE_IMAGE_NOTE)).toBeVisible();
   });
 
+  test('an ORDINARY locked image shows the STATUS and no action — the two are exclusive', async () => {
+    /**
+     * 🔴 THE FIXTURE THAT MAKES `!image.nsfwLevelLocked` REACHABLE, AND THE ONLY ONE THAT DOES.
+     *
+     * The refactor split the control and the badge into two independent booleans. Before it, they
+     * were one component with `if (locked) return <Badge/>`, so "control AND badge at once" was
+     * UNREPRESENTABLE; now the only thing preventing it is the `!image.nsfwLevelLocked` term on
+     * `showOverride`/`showRetry`. Every other locked fixture in this file pairs the lock with a
+     * `blob:` url, where `remedy.offerOverride`/`offerRetry` are ALREADY false — so the term does
+     * nothing there and deleting it left the whole suite green. Measured, not inferred.
+     *
+     * An ordinary url makes both `remedy` fields true, so the lock term is the sole surviving
+     * reason each control is withdrawn, and removing it from either definition renders that
+     * control NEXT TO the "Overridden" badge — the state the old shape could not express.
+     *
+     * The badge assertion is also this case's positive control: a component that rendered nothing
+     * at all would fail it, so the two absences below are not vacuous.
+     */
+    renderErrors([errorImage({ url: ORDINARY_URL, nsfwLevelLocked: true })]);
+
+    await expect.element(page.getByText('Overridden')).toBeVisible();
+    // Named, so a mutant on either term fails with THAT term's own message rather than an
+    // anonymous "expected 0, got 1" that could have come from either definition.
+    expect(
+      page.getByRole('button', { name: 'Override' }).elements(),
+      'showOverride must drop the lock term: Override cannot render beside Overridden'
+    ).toHaveLength(0);
+    expect(
+      page.getByRole('button', { name: 'Retry scan' }).elements(),
+      'showRetry must drop the lock term: Retry cannot render beside Overridden'
+    ).toHaveLength(0);
+    // ...and this is NOT the blob: path — the url is ordinary, so the remedy note must be absent.
+    // Without this the case would pass for the wrong reason if the fixture's url ever drifted.
+    expect(page.getByText(UNRENDERABLE_ARTICLE_IMAGE_NOTE).elements()).toHaveLength(0);
+  });
+
+  test('an ORDINARY locked image in the BLOCKED section is exclusive the same way', async () => {
+    // The blocked list carries its own `showOverride` definition, so the term is spelled twice and
+    // has to be killed twice. Same fixture shape, other section.
+    renderWithProviders(
+      <ArticleProblematicImages
+        articleId={7}
+        blockedImages={[
+          {
+            id: 11,
+            url: ORDINARY_URL,
+            ingestion: 'Blocked' as never,
+            blockedFor: 'Policy violation',
+            nsfwLevelLocked: true,
+          },
+        ]}
+        errorImages={[]}
+        canOverride
+        canRetry
+        canRescan
+      />
+    );
+
+    await expect.element(page.getByText('Overridden')).toBeVisible();
+    expect(
+      page.getByRole('button', { name: 'Override' }).elements(),
+      "the BLOCKED section's showOverride must drop the lock term too"
+    ).toHaveLength(0);
+    expect(page.getByText(UNRENDERABLE_ARTICLE_IMAGE_NOTE).elements()).toHaveLength(0);
+  });
+
+  test('a blob: BLOCKED image that is locked shows the badge beside the blocking note', async () => {
+    /**
+     * A state that did not exist before this change: `showOverridden` drops the
+     * `remedy.offerOverride` term the old single component carried, so the badge now renders in the
+     * blocked section for an unrenderable url too — previously nothing rendered there at all.
+     *
+     * Deliberate, and covered here rather than left to inference: the badge is a STATUS, and the
+     * status is true regardless of whether the url can ever render. The note is what tells the
+     * reader the override it reports cannot save the image.
+     */
+    renderWithProviders(
+      <ArticleProblematicImages
+        articleId={7}
+        blockedImages={[
+          {
+            id: 12,
+            url: UNRENDERABLE_URL,
+            ingestion: 'Blocked' as never,
+            blockedFor: 'Policy violation',
+            nsfwLevelLocked: true,
+          },
+        ]}
+        errorImages={[]}
+        canOverride
+        canRetry
+        canRescan
+      />
+    );
+
+    await expect.element(page.getByText('Overridden')).toBeVisible();
+    await expect.element(page.getByText(UNRENDERABLE_ARTICLE_IMAGE_NOTE)).toBeVisible();
+    expect(page.getByRole('button', { name: 'Override' }).elements()).toHaveLength(0);
+  });
+
   test('CONTROL: the badge is a moderator affordance and stays behind canOverride', async () => {
     // The mirror of the case above: making the badge unconditional would leak an internal
     // moderation state to every reader of the article.
