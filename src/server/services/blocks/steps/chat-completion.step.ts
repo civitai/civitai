@@ -327,7 +327,18 @@ export const CHAT_COMPLETION_ASSUMED_CHARS_PER_TOKEN = 4;
  * additive; narrowing is breaking.
  */
 const MAX_MESSAGES = 32;
-const MAX_MESSAGE_CHARS = 8_000;
+/**
+ * EXPORTED so the tool surface's result budget can be asserted against it.
+ *
+ * `~/server/services/blocks/tools/registry` bounds a tool RESULT to a value that
+ * must stay strictly below this, because the block replays that result as a
+ * `role: 'tool'` message whose `content` this cap bounds — a larger result is
+ * un-replayable and therefore useless. That module is deliberately
+ * server-import-free and so cannot import this one; the link is asserted in its
+ * test instead, which imports BOTH and goes red if either constant moves. Same
+ * technique this file already uses for its link to `MAX_SCANNED_CONTENT_CHARS`.
+ */
+export const MAX_MESSAGE_CHARS = 8_000;
 
 /** Sampling temperature bounds, taken from `ChatCompletionInput.temperature`'s own documented range. */
 const TEMPERATURE_MIN = 0;
@@ -423,7 +434,7 @@ const MAX_TOOL_PARAMETERS_DEPTH = 8;
  * one OpenAI documents for function names, so a bounded name is not a
  * civitai-specific restriction a caller has to discover.
  */
-const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+export const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
 /**
  * A tool's JSON-Schema `parameters` object — bounded, and NORMALISED THROUGH
