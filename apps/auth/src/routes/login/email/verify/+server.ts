@@ -2,6 +2,7 @@ import { error, redirect } from '@sveltejs/kit';
 import { dev } from '$app/environment';
 import { SYNC_PARAM } from '@civitai/auth';
 import type { RequestHandler } from './$types';
+import { normalizeEmailAddress } from '$lib/server/auth/blocklist';
 import { consumeVerificationToken } from '$lib/server/auth/email-tokens';
 import { findOrCreateUserByEmail } from '$lib/server/auth/users';
 import { establishSession } from '$lib/server/auth/session';
@@ -12,7 +13,10 @@ import { loginsTotal } from '$lib/server/metrics';
 // Magic-link landing: validate + consume the token, establish the session, honor returnUrl/sync.
 export const GET: RequestHandler = async ({ url, cookies }) => {
   const token = url.searchParams.get('token');
-  const email = url.searchParams.get('email')?.toLowerCase();
+  // Must be the same normalizer the send path stores with: `VerificationToken.identifier` is plain
+  // text, so lowercasing a local part the sender preserved makes every such link unmatchable.
+  const emailParam = url.searchParams.get('email');
+  const email = emailParam ? normalizeEmailAddress(emailParam) : undefined;
   const returnUrl = url.searchParams.get('returnUrl') ?? '/';
   const sync = url.searchParams.get(SYNC_PARAM);
 
