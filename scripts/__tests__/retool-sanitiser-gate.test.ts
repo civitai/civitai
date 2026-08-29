@@ -647,3 +647,82 @@ describe('audit r2 \u{1F7E2}F11 — guards the fix round left unguarded', () => 
     expect(passScope(false)).toContain('THE DENYLIST DID NOT RUN');
   });
 });
+
+// ===========================================================================
+// Round-3 delta audit. Two of these restore tests an earlier scripted edit of
+// mine DELETED (it replaced from a marker to end-of-file); the audit caught the
+// loss by noticing no test named the defect the commit claimed to have pinned.
+// ===========================================================================
+
+describe('audit r3 — IPv6 must not fire on a Postgres cast (restored)', () => {
+  it.each([
+    'SELECT id::date FROM bans',
+    'SELECT userId::text, createdAt::timestamptz FROM t',
+    'WHERE amount::decimal > 0',
+    'SELECT payload::jsonb, ref::uuid, ok::boolean FROM t',
+    'SELECT count(*)::int FROM bans',
+  ])('does not flag %s', (sql) => {
+    expect(findIPv6(sql)).toEqual([]);
+  });
+});
+
+describe('audit r3 — the comma separator stays reverted (restored)', () => {
+  it('does NOT catch the transit "KEY","value" pair, by measured decision', () => {
+    expect(findCredentialShapes('"WEBHOOK_TOKEN","ghp_abcdefghij0123456789"')).toEqual([]);
+  });
+});
+
+describe('audit r3 🟡1 — IPv6 at the end of a sentence', () => {
+  it.each([
+    ['client 2a01:4f8:c17:1234::1.', '2a01:4f8:c17:1234::1'],
+    ['Banned the account at fe80::1.', 'fe80::1'],
+    ['Banned fe80::a00:27ff:fe4e:66a1. Ban applied.', 'fe80::a00:27ff:fe4e:66a1'],
+    ['from 2001:db8::1...', '2001:db8::1'],
+    ['ip:2001:db8::1', '2001:db8::1'],
+    ['(2001:db8::1)', '2001:db8::1'],
+  ])('finds the address in %s', (text, addr) => {
+    expect(findIPv6(text)).toEqual([addr]);
+  });
+});
+
+describe('audit r3 🟡2 — no single-group IPv6 exemption; ALLOWED_V6 is live', () => {
+  it.each(['fe80::', '::dead', '::beef'])('flags the single-group address %s', (addr) => {
+    expect(findIPv6(`host ${addr} down`)).toEqual([addr]);
+  });
+
+  it('still exempts loopback and unspecified — and now really via ALLOWED_V6', () => {
+    expect(findIPv6('bound ::1 and :: today')).toEqual([]);
+  });
+});
+
+describe('audit r3 🟡3 — dropping the i flag must not lose real identifiers', () => {
+  it.each([
+    '{"Authorization": "Basic ZGVtbzpwYXNzd29yZDEyMw=="}',
+    '{"authorization": "Basic ZGVtbzpwYXNzd29yZDEyMw=="}',
+    '{"AUTHORIZATION": "Basic ZGVtbzpwYXNzd29yZDEyMw=="}',
+    '{"authentication": "Basic ZGVtbzpwYXNzd29yZDEyMw=="}',
+    '{"X-API-Key": "abcdef1234567890"}',
+    '{"X-API-KEY": "abcdef1234567890"}',
+    '{"Api_key": "abcdef1234567890"}',
+    '{"Apikey": "abcdef1234567890"}',
+    '{"tokens": "abcdef1234567890"}',
+    '{"secrets": "abcdef1234567890"}',
+    '{"passwords": "abcdef1234567890"}',
+    '{"secretkey": "abcdef1234567890"}',
+  ])('catches %s', (sample) => {
+    // `Authorization` appears 12 times in raw/user-lookup-v2.json — the dominant
+    // credential identifier in the corpus this gate scans. A `Basic` credential is
+    // caught by NO other rule, so losing this loses the class entirely.
+    expect(findCredentialShapes(sample).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    '{"author": "Jane Quinn Public"}',
+    '{"authorName": "Jane Q Public"}',
+    '{"authorEmail": "jane@example.com"}',
+    '{"authorized": "yes-by-moderator"}',
+    '{"tokenizer": "whitespace-basic"}',
+  ])('still does not flag %s', (sample) => {
+    expect(findCredentialShapes(sample)).toEqual([]);
+  });
+});

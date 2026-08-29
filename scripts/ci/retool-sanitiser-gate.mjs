@@ -94,52 +94,51 @@ const ALLOWED_V4 = [
 const V4_RE = /(?<![\d.])(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})(?!\.?\d)/g;
 
 /**
- * IPv6, deliberately narrow: at least three groups and one `::` or five `:`, so
- * ordinary text with colons cannot match. There is no documentation-range dance
- * here — the exports have never legitimately carried an IPv6 literal, so ANY of
- * them is a finding.
+ * IPv6. The exports have never legitimately carried one, so any real address is a
+ * finding — the risk this gate exists for is "end-user IP addresses", which was
+ * never a v4-only statement.
  *
- * WHY: the risk this gate exists for is "end-user IP addresses", which is not a
- * v4-only statement. A re-download carrying real v6 addresses passed every check.
+ * The pattern is deliberately LOOSE and `findIPv6` decides; three revisions tried
+ * to be precise here and each traded one defect for another:
+ *
+ *  - EMPTY groups (`{0,4}`) are what let `::` appear anywhere and let a match
+ *    absorb a multi-group tail. Requiring non-empty groups missed the entire
+ *    `X::Y` family (`fe80::1`, `fe80::a00:27ff:fe4e:66a1`) while three separate
+ *    places claimed no IPv6 survives.
+ *  - The BOUNDARIES are what reject a Postgres cast: `id::date` yields `d::da`,
+ *    a perfectly well-formed "address", and these exports are full of SQL. The
+ *    character before the candidate is a word character, so the cast is dropped
+ *    while a standalone address is not.
+ *  - The trailing boundary must still permit a SENTENCE PERIOD. `(?![\w:.])`
+ *    rejected it, so `Banned the account from fe80::1.` went undetected — the
+ *    exact mirror of the V4 defect, and 21 of the 32 scanned files are prose.
+ *  - The leading boundary omits `:` so a bare `ip:2001:db8::1` still matches.
  */
-// The tail alternation must try `:<group>` FIRST, or a `::1` suffix is truncated to
-// `::` and the address is reported without its final group.
-//
-// 🔴 `{1,7}`, not `{2,7}`. Requiring TWO `group:` repetitions missed the entire
-// `X::Y` family at every start offset — including `fe80::1` and
-// `fe80::a00:27ff:fe4e:66a1`, the standard link-local form — while the docstring,
-// the README and the PR all claimed no IPv6 literal survives. The only v6 test
-// used a 4-group address, so nothing covered the gap.
-// Allowing EMPTY groups (`{0,4}`) is what makes `::` work at any position and lets
-// the match absorb a multi-group tail. The previous `(?:[0-9a-f]{1,4}:){1,7}` plus a
-// single-group tail truncated `fe80::a00:27ff:fe4e:66a1` to `fe80::a00`, and a
-// `{2,7}` version before that missed the whole `X::Y` family outright.
-// Over-matching is handled by the post-filter, not by the pattern.
-// 🔴 The surrounding boundaries are load-bearing, not tidiness. Allowing empty
-// groups is what lets `::` match anywhere, but it also matches inside a POSTGRES
-// CAST: `id::date` yields `d::da` — two hex groups either side of `::`, i.e. a
-// perfectly well-formed "address". These exports are full of SQL, and the corpus
-// reported four such literals. Requiring the match not to touch a word character
-// rejects every cast while leaving a standalone address untouched.
-const V6_RE = /(?<![\w:.])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:.])/gi;
+const V6_RE = /(?<![\w.])(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}(?![\w:])(?!\.[0-9a-f])/gi;
 
 /** `::` and `::1` are unspecified/loopback — never a person. */
 const ALLOWED_V6 = new Set(['::', '::1']);
 
 /**
  * A match is a real address only if it is compressed (`::`) or full-length (8
- * groups), AND carries at least two actual hex groups. Everything else the
- * pattern can reach — `12:30:45`, a bare `::`, a truncated cast — is not an
- * address. The pattern is deliberately loose and this is where it is decided.
+ * groups). Everything else the pattern can reach — `12:30:45`, `17:28:00Z` — is
+ * ordinary colon-separated text.
+ *
+ * 🔴 There is NO `groups.length < 2` filter, and adding one was a mistake worth
+ * recording. It was introduced to stop Postgres casts, but the BOUNDARIES alone
+ * already do that — measured: with the filter removed, `select id::date from t`
+ * still yields `[]` and the real corpus still passes. Its only observable effects
+ * were bad ones: it silently exempted every single-group address (`fe80::`,
+ * `::dead` went unreported while the README said any IPv6 is rejected), and it
+ * consumed `::1` before `ALLOWED_V6` could see it — making that Set dead code
+ * whose docstring read as live coverage, and making its test vacuous. Deleting
+ * three separate things left the suite green, which is how it was found.
  */
 export function findIPv6(text) {
   const found = [];
   for (const match of text.matchAll(V6_RE)) {
     const literal = match[0];
-    const compressed = literal.includes('::');
-    const groups = literal.split(':').filter(Boolean);
-    if (!compressed && literal.split(':').length !== 8) continue;
-    if (groups.length < 2) continue;
+    if (!literal.includes('::') && literal.split(':').length !== 8) continue;
     if (ALLOWED_V6.has(literal.toLowerCase())) continue;
     found.push(literal);
   }
@@ -223,14 +222,15 @@ export const CREDENTIAL_RULES = [
     // and included backticks in the quote class: in an 11-file JSON corpus where
     // backticks are rare, one opener ran to end-of-file and reported a 646,934-char
     // "secret" in three files. A guard that matches everything is not a guard.
-    name: 'secret-assignment',
+    //
     // `[\w$]*?` before the keyword, because the secret-named identifier is usually a
     // COMPONENT of a longer name — `WEBHOOK_TOKEN`, `stripeSecretKey`. A leading `\b`
     // cannot match `TOKEN` there: the character before it is `_`, which is a word
     // character, so there is no boundary and the dominant Retool config-var shape
     // walked straight past.
     //
-    // 🔴 But the keyword must END the identifier — `(?![a-z0-9])`. Without it the
+    // 🔴 But the keyword must END the identifier — `(?![a-z])`, plus an optional
+    // plural `s`. Without it the
     // prefix widener flagged `author`, `authorName`, `authorEmail`, `authorized`
     // and `tokenizer`, a false-positive class the narrower rule never had. These
     // exports will carry `author*` keys on the next re-download of any app that
@@ -252,12 +252,12 @@ export const CREDENTIAL_RULES = [
     // nothing real while adding a false-positive class. The JSON key form
     // `"token": "…"` is still covered by `:`.
     name: 'secret-assignment',
-    // 🔴 NO `i` FLAG, deliberately. `(?![a-z0-9])` under `i` also rejects UPPERCASE,
+    // 🔴 NO `i` FLAG, deliberately. `(?![a-z])` under `i` would also reject UPPERCASE,
     // so the anchor killed `stripeSecretKey` via its own `K` — the rule was
     // narrowed on exactly the compound names the widening existed for. Case-based
     // boundary logic and a case-insensitive flag cannot coexist, so the casings are
     // enumerated and the anchor is genuinely case-sensitive.
-    re: /(?:^|[^\w$])\\?["']?[\w$]*?(?:api[_-]?key|apiKey|API[_-]?KEY|APIKEY|ApiKey|Api[_-]?Key|token|Token|TOKEN|secret|Secret|SECRET|password|Password|PASSWORD|passwd|Passwd|PASSWD|auth|Auth|AUTH)(?![a-z])[\w$]*\\?["']?\s*[:=]\s*\\?(["'])((?:\\[^"'\n]|[^"'\\\n]){8,4096}?)\\?\1/g,
+    re: /(?:^|[^\w$])\\?["']?[\w$]*?(?:API[_-]?KEY|API[_-]?Key|Api[_-]?Key|Api[_-]?key|api[_-]?Key|api[_-]?key|APIKEY|APIKey|ApiKey|Apikey|apiKey|apikey|AUTHORIZATION|Authorization|authorization|AUTHENTICATION|Authentication|authentication|SECRETKEY|SecretKey|secretKey|secretkey|TOKEN|Token|token|SECRET|Secret|secret|PASSWORD|Password|password|PASSWD|Passwd|passwd|AUTH|Auth|auth)s?(?![a-z])[\w$]*\\?["']?\s*[:=]\s*\\?(["'])((?:\\[^"'\n]|[^"'\\\n]){8,4096}?)\\?\1/g,
     describe: 'a secret-named variable assigned a literal value',
     valueGroup: 2,
   },
@@ -266,7 +266,7 @@ export const CREDENTIAL_RULES = [
     // by BOTH rules, so the compound-name case this round justified only worked
     // for quoted values.
     name: 'secret-assignment-template',
-    re: /(?:^|[^\w$])[\w$]*?(?:api[_-]?key|apiKey|API[_-]?KEY|APIKEY|ApiKey|Api[_-]?Key|token|Token|TOKEN|secret|Secret|SECRET|password|Password|PASSWORD|passwd|Passwd|PASSWD|auth|Auth|AUTH)(?![a-z])[\w$]*\s*[:=]\s*`([^`\n]{8,4096})`/g,
+    re: /(?:^|[^\w$])[\w$]*?(?:API[_-]?KEY|API[_-]?Key|Api[_-]?Key|Api[_-]?key|api[_-]?Key|api[_-]?key|APIKEY|APIKey|ApiKey|Apikey|apiKey|apikey|AUTHORIZATION|Authorization|authorization|AUTHENTICATION|Authentication|authentication|SECRETKEY|SecretKey|secretKey|secretkey|TOKEN|Token|token|SECRET|Secret|secret|PASSWORD|Password|password|PASSWD|Passwd|passwd|AUTH|Auth|auth)s?(?![a-z])[\w$]*\s*[:=]\s*`([^`\n]{8,4096})`/g,
     describe: 'a secret-named variable assigned a template-literal value',
     valueGroup: 1,
   },
@@ -278,12 +278,21 @@ function unescapeValue(raw) {
 }
 
 /**
- * There is deliberately no separate minimum-length filter. One was added and
- * proved UNREACHABLE: the `{8,4096}` quantifier counts REPETITIONS of the value
- * alternation, and each repetition unescapes to at least one character, so the
- * unescaped value can never be shorter than the floor. A guard no input can reach
- * reads as coverage while providing none. The floor is the quantifier; the tests
- * pin it at its boundary.
+ * There is deliberately no separate minimum-length filter, and the reasoning is
+ * NOT uniform across the two rules — the earlier version of this comment claimed
+ * it was, which was wrong for one of them:
+ *
+ *  - `secret-assignment` — genuinely unreachable. `{8,4096}` counts REPETITIONS of
+ *    the value alternation and each repetition unescapes to at least one
+ *    character, so the unescaped value can never fall below the floor.
+ *  - `secret-assignment-template` — the quantifier counts CHARACTERS inside
+ *    `[^`\n]`, backslashes included, so an 8-char match can unescape to fewer. A
+ *    floor would therefore fire here. It is still omitted: the effect is at most a
+ *    slightly over-eager finding on a contrived value, and an over-eager
+ *    credential finding is the safe direction.
+ *
+ * A guard no input can reach reads as coverage while providing none, which is why
+ * the first one was deleted rather than left in place.
  */
 export function findCredentialShapes(text) {
   const found = [];
