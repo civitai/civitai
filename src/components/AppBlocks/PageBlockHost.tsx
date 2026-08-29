@@ -53,6 +53,7 @@ import {
   exceedsPreDownloadCap,
   resolveGetWildcardPackRequest,
   WILDCARD_MAX_CONCURRENT,
+  type WildcardPackErrorCode,
 } from './wildcardPackParse';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
@@ -209,6 +210,22 @@ type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
 // understands why a side-effect refused, rather than the block silently hanging
 // (gotcha #73). Module-scope so referencing it in a handler adds no effect dep.
 const REVIEW_NACK_MESSAGE = 'not available in review preview';
+
+// 🔴 The ONE reviewMode NACK that must NOT use REVIEW_NACK_MESSAGE.
+// WILDCARD_PACK_RESULT's `error` is a DISCRIMINATED ENUM, not free text: the
+// block-side `isValidWildcardPackResult` rejects any value outside
+// not-found | forbidden | too-large | parse-failed | busy, and a rejected reply
+// is DROPPED by the SDK transport (console.warn only) — so a free-text NACK here
+// never settles the block's pending request and the caller hangs until the
+// transport timeout, the exact opposite of the fail-fast the handler promises.
+// `forbidden` is the in-set code: review preview genuinely is a permission
+// context, and it is the closest member semantically.
+//
+// The annotation is the GUARD — `WildcardPackErrorCode` is the repo's local
+// mirror of the SDK's `BlockWildcardPackErrorCode` (see wildcardPackParse.ts;
+// the pinned @civitai/app-sdk dist does not export the wildcard union yet), so
+// tsc rejects any future edit that swaps in a non-member string.
+const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
 
 /**
  * The floor a `fit="fill"` host will not shrink below, in px.
@@ -2705,17 +2722,19 @@ export function PageBlockHost({
   // Author-scoped in-place edit of an OWN row: the auth/author-gate/belt/quota all
   // live in apps.shared.update (server, #3146); the host only forwards {key, value}
   // and relays the result. Reply is `{ ok, error? }` (SHARED_WITHDRAW-style, NOT
-  // SHARED_APPEND's `{ key }`) — the SDK 0.24 hook treats `!ok || error` as reject,
-  // and its isValidSharedUpdateResult REQUIRES a boolean `ok`, so BOTH paths send
-  // one (the error path MUST carry `ok: false` or the reply is dropped → hang).
+  // SHARED_APPEND's `{ key }`) — the SDK hook treats `!ok || error` as reject.
+  // isValidSharedUpdateResult now ACCEPTS an error reply with or without `ok`, so
+  // omitting it would no longer be dropped; both paths still send `ok` because an
+  // explicit `ok: false` is the clearer signal, not because it is required.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown; value?: unknown } | undefined>(
       'SHARED_UPDATE',
       async (raw) => {
         if (reviewMode) {
           // Cross-user shared datastore WRITE (author-scoped edit) — NACK even in
-          // run-for-real (never a cross-user write). Reply MUST carry ok:false or the
-          // SDK drops it (→ hang). See handler doc.
+          // run-for-real (never a cross-user write). The validator accepts an error
+          // reply with or without `ok`; we send `ok: false` as the clearer signal.
+          // See handler doc.
           if (raw && typeof raw.requestId === 'string') {
             send('SHARED_UPDATE_RESULT', {
               requestId: raw.requestId,
@@ -3454,8 +3473,11 @@ export function PageBlockHost({
         // pending block could drive the MOD's real download entitlements to
         // resolve+fetch+unzip+parse an arbitrary modelVersionId's wildcard pack and
         // read the contents into the sandboxed iframe. NACK before resolving or
-        // downloading anything (fail-fast, never a hang).
-        send('WILDCARD_PACK_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
+        // downloading anything (fail-fast, never a hang) — with the ENUM code, not
+        // REVIEW_NACK_MESSAGE: this reply's `error` is validated against a closed
+        // set block-side, so free text would be dropped and hang. See
+        // WILDCARD_REVIEW_NACK_CODE.
+        send('WILDCARD_PACK_RESULT', { requestId, error: WILDCARD_REVIEW_NACK_CODE });
         return;
       }
       // Concurrency cap (host-side backpressure): bound the per-tab memory. The
