@@ -401,16 +401,26 @@ function ReferenceUpload() {
      * One notification naming how many of how many failed, and which files — not one toast
      * per file, which over a ten-file drop buries the UI it is reporting on.
      *
-     * 🔴 THE COST, SO IT IS A DECISION AND NOT AN ACCIDENT: failure feedback is now
-     * DEFERRED TO THE END OF THE BATCH. Previously each failure toasted the moment it
-     * happened. On a ten-file drop with a slow tail, a user whose FIRST file was refused
-     * now waits for every remaining upload to finish before being told anything — the loop
-     * is sequential (`await` per file, plus an `img.onload`/`onerror` round-trip each), so
-     * that wait is the whole batch, not a scheduling artefact. Judged the better trade at
-     * ten files, where per-file toasts stack over the grid they describe; it is the worse
-     * trade at two files with a 30 s tail. If that shape shows up, the fix is to surface
-     * failures incrementally in-place (a marker on the tile) rather than to go back to a
-     * toast per file.
+     * 🔴 THE COST, SO IT IS A DECISION AND NOT AN ACCIDENT — AND NAME THE BASELINE, because
+     * the two available ones give opposite verdicts:
+     *
+     * - vs `88d3ec9c12`, an EARLIER COMMIT OF THIS SAME PR, this is a regression in latency:
+     *   that commit toasted each failure the moment it happened, and feedback is now
+     *   DEFERRED TO THE END OF THE BATCH. On a ten-file drop with a slow tail, a user whose
+     *   FIRST file was refused waits for every remaining upload before being told anything —
+     *   the loop is sequential (`await` per file, plus an `img.onload`/`onerror` round-trip
+     *   each), so that wait is the whole batch, not a scheduling artefact.
+     * - vs `main` (`ed0b0b04e3`), i.e. SHIPPED behaviour, this is a strict improvement:
+     *   `handleRefImageDrop` had no `catch` at all there, so the first refused PUT threw out
+     *   of the async handler into Mantine's `onDrop`, which discards the promise. Files
+     *   2..N were never attempted and the user was told NOTHING, ever.
+     *
+     * So nothing a user has today gets worse. The trade being weighed is only between two
+     * candidate designs inside this PR, and per-file toasts were judged the worse of the two
+     * at ten files, where they stack over the grid they describe; they are the better one at
+     * two files with a 30 s tail. If that shape shows up, the fix is to surface failures
+     * incrementally in-place (a marker on the tile) rather than to go back to a toast per
+     * file.
      *
      * 🔴 AND THIS LOOP IS MOUNTED BY NO TEST. `PanelModal`'s twin was extracted into
      * `bulk-panel-upload.ts` precisely so it could be driven; this one was not, so its

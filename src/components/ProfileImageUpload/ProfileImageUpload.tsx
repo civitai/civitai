@@ -28,19 +28,25 @@ type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> &
  *
  * There used to be two, and they disagreed. This one gated a STRING `value` on
  * `isValidURL`; the effect below took `typeof value === 'string' ? { url: value } : value`
- * with no gate. A bare media key — the exact shape `onChange` emits and `Image.url`
- * stores — therefore RENDERED on mount via the effect but returned `undefined` here, so
- * the refused-upload restore cleared the circle and the effect could not put it back
- * (`value` never changed, so it never re-ran). Measured with
- * `value="7c9e6679-7425-40de-944b-e07fc1f90ae7"` and a refused PUT: preview present before
- * the drop, `null` after — precisely the "your avatar was removed" render this component's
- * restore path exists to prevent.
+ * with no gate. A bare media key — the shape `Image.url` stores — therefore RENDERED on
+ * mount via the effect but returned `undefined` here, so the refused-upload restore
+ * cleared the circle and the effect could not put it back (`value` never changed, so it
+ * never re-ran). Measured with `value="7c9e6679-7425-40de-944b-e07fc1f90ae7"` and a refused
+ * PUT: preview present before the drop, `null` after — precisely the "your avatar was
+ * removed" render this component's restore path exists to prevent.
  *
- * The permissive reading wins, because it is the one that was already observable: the
- * effect runs after the first render, so on `main` a bare key rendered anyway. It is also
- * what the OBJECT branch always did (`{ url: value.url }`, never gated), and `EdgeMedia`
- * resolves a bare key perfectly well. Empty string stays `undefined` — that is "the form
- * holds nothing", not "the form holds a key".
+ * 🔴 WHY THE PERMISSIVE READING IS THE ONE TO KEEP, stated at the strength the evidence
+ * actually supports. It is NOT that a bare string is what callers pass: `onChange` emits an
+ * OBJECT (`{ status, ...file }` minus `status`, below), and the sole consumer —
+ * `UserProfileEditModal`'s `InputProfileImageUpload`, typed `profilePictureSchema.nullish()`
+ * — passes an object or null. No caller in the repo passes a string at all. The reason is
+ * that the permissive branch is the one that was already OBSERVABLE: the effect runs after
+ * the first render, so on `main` a bare key rendered regardless of what this function said.
+ * Consolidating on the strict reading would therefore have DELETED a render that ships
+ * today, on the strength of a type nobody currently produces. It is also what the OBJECT
+ * branch always did (`{ url: value.url }`, never gated), and `EdgeMedia` resolves a bare key
+ * perfectly well. Empty string stays `undefined` — that is "the form holds nothing", not
+ * "the form holds a key".
  */
 function valuePreview(value: SimpleImageUploadProps['value']) {
   if (!value) return undefined;
