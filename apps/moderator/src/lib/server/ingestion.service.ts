@@ -171,9 +171,9 @@ export async function resolveIngestionError({
    * This is the call site that caused the incident. Everything below makes the image visible —
    * `ingestion = 'Scanned'` plus a locked nsfwLevel — and it ran unconditionally, so an image whose
    * file can never be fetched was rated by a human exactly like a scan that merely timed out, and
-   * publishing it put a permanent 404 on the site. The `failureClass` split above keeps most of
-   * these off the queue; this is the write-side guard, and it is the authority: the queue predicate
-   * is a trigger, an existence check against the store is the verdict.
+   * publishing it put a permanent 404 on the site. This is the ONLY thing standing between that
+   * image and the site — the queue above lists every unpublished ingestion error without regard to
+   * why it failed, deliberately, so an existence check against the store is the whole verdict.
    *
    * Only `absent` refuses — an unconsultable store must not block moderation, and a url that is not
    * a key this store issues is not asked about at all. The thrown message reaches the moderator

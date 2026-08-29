@@ -55,7 +55,7 @@ describe('decideMediaPublish', () => {
     );
   });
 
-  it('never instructs an action no surface offers', () => {
+  it('does not tell the moderator to DELETE the image, which no surface offers', () => {
     /**
      * 🔴 A REGRESSION GUARD ON A SHIPPED DEFECT, not a style rule. The first wording said
      * "Delete it", and neither surface this message reaches has a delete: the spoke's
@@ -66,6 +66,11 @@ describe('decideMediaPublish', () => {
      * Keyed on the verb rather than the whole string on purpose — the pin above already owns the
      * exact text, so this stays REACHABLE when someone rewrites the copy, which is precisely when
      * the old instruction is most likely to come back.
+     *
+     * 🔴 The NAME says exactly what the body checks — one verb — because it used to claim the
+     * general property ("never instructs an action no surface offers") while testing a single
+     * word. A title wider than its assertion reads as coverage and provides none, which stops the
+     * next person looking.
      */
     expect(MISSING_MEDIA_PUBLISH_MESSAGE).not.toMatch(/\bdelete\b/i);
   });

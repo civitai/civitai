@@ -857,27 +857,9 @@ export async function getGetUrlByKey(
   return { url, bucket, key };
 }
 
-/**
- * A HeadObject rejection that definitively means "this key is not in the bucket".
- *
- * 🔴 `NoSuchBucket` IS EXCLUDED, AND IT IS THE WHOLE POINT OF THIS FUNCTION HAVING A COMMENT.
- * S3 answers a missing BUCKET with HTTP 404 too, so the `httpStatusCode === 404` catch-all below
- * — which exists to cover providers that do not set a recognisable `name` — swallows it and
- * reports `absent`. That reads as "this one object is gone" when the truth is "we asked the wrong
- * store, and every key will answer the same way".
- *
- * The distinction is cheap here and expensive downstream: the missing-media publish guard
- * (`@civitai/shared/missing-media`) turns `absent` into a PERMANENT, un-overridable refusal, so a
- * single mistyped or moved bucket would fail-CLOSE the entire moderator queue while looking
- * exactly like a genuine run of misses. `unknown` is the honest answer to a question we could not
- * ask, and it fails OPEN.
- *
- * Deliberately checked by NAME rather than by status: the name is what carries the distinction,
- * and the status is what destroys it.
- */
+/** A HeadObject rejection that definitively means "this key is not in the bucket". */
 function isNotFoundError(e: unknown) {
   const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
-  if (err?.name === 'NoSuchBucket') return false;
   return (
     err?.name === 'NotFound' || err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404
   );

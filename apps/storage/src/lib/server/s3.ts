@@ -214,13 +214,6 @@ export function createS3Client(config: S3BackendConfig, options: S3ClientOptions
       };
     } catch (error) {
       const err = error as { name?: string; $metadata?: { httpStatusCode?: number } };
-      // 🔴 A missing BUCKET also answers 404, and the status catch-all below would report it as
-      // `exists: false` — "this object is gone" when the truth is "we asked the wrong store, and
-      // every key answers the same way". Rethrowing makes it a StorageClientError, which the
-      // missing-media publish guard reads as `unknown` and FAILS OPEN; classifying it as absent
-      // would fail-CLOSE every moderator publish while looking like a genuine run of misses.
-      // Checked by NAME, because the name carries the distinction and the status destroys it.
-      if (err?.name === 'NoSuchBucket') throw error;
       if (
         err?.name === 'NotFound' ||
         err?.name === 'NoSuchKey' ||
