@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Button, Center, Group, Loader, Paper, Stack } from '@mantine/core';
+import { Badge, Button, Center, Group, Loader, Paper } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { Fragment, useMemo, useRef, useState } from 'react';
 import { AdUnitTop } from '~/components/Ads/AdUnit';
@@ -23,7 +23,6 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { CollectionItemStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
 import type { PostContestCollectionItem } from '~/types/router';
-import classes from './PostImages.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
@@ -80,11 +79,6 @@ export function PostImages({
               isModerator ||
               imageCollectionItem.status === CollectionItemStatus.ACCEPTED);
           const vimeoVideoId = (image.metadata as VideoMetadata)?.vimeoVideoId;
-          // One predicate for both the prop that asks for a control strip and the
-          // class that moves the reaction bar clear of one. Spelling it twice is
-          // how the reaction bar came to sit top-left over still images:
-          // `nativeVideoControls` is a site-wide user preference, and EdgeMedia
-          // only forwards `html5Controls` to EdgeVideo.
           const showsControlStrip =
             image.type === MediaType.video &&
             (features.nativeVideoControls || shouldDisplayHtmlControls(image));
@@ -106,126 +100,123 @@ export function PostImages({
                 style={{
                   maxWidth: '100%',
                   width: width < maxWidth ? width : maxWidth,
-                  aspectRatio:
-                    image.width && image.height ? `${image.width}/${image.height}` : undefined,
                 }}
               >
                 <ImageGuard2 image={image} connectType="post" connectId={postId}>
                   {(safe) => (
                     <>
-                      <Group gap={4} className="absolute left-2 top-2 z-10">
-                        <ImageGuard2.BlurToggle />
-                        {/* Beside the blur toggle rather than the reactions, where
-                          a feed card puts it: this bar moves to three different
-                          corners depending on video controls. */}
-                        {features.stickerPlacement && (
-                          <StickerPlacementCardBadge imageId={image.id} />
-                        )}
-                        {showImageCollectionBadge && (
-                          <Badge variant="filled" color="gray">
-                            {imageCollectionItem?.tag?.name}
-                          </Badge>
-                        )}
-                      </Group>
                       <div
-                        className={clsx('absolute right-2 top-2 z-10 flex flex-col gap-2', {
-                          'right-10 top-2.5': !!vimeoVideoId,
-                        })}
+                        className="relative"
+                        style={{
+                          aspectRatio:
+                            image.width && image.height
+                              ? `${image.width}/${image.height}`
+                              : undefined,
+                        }}
                       >
-                        <ImageContextMenu image={image} />
-                        {features.imageGeneration && isRemixMenuVisible(image) && (
-                          <RemixMenu image={image} source="remix:post-image-card">
-                            <HoverActionButton
-                              label="Remix"
-                              size={30}
-                              color="white"
-                              variant="filled"
-                              data-activity="remix:post-image-card"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
+                        <Group gap={4} className="absolute left-2 top-2 z-10">
+                          <ImageGuard2.BlurToggle />
+                          {features.stickerPlacement && (
+                            <StickerPlacementCardBadge imageId={image.id} />
+                          )}
+                          {showImageCollectionBadge && (
+                            <Badge variant="filled" color="gray">
+                              {imageCollectionItem?.tag?.name}
+                            </Badge>
+                          )}
+                        </Group>
+                        <div
+                          className={clsx('absolute right-2 top-2 z-10 flex flex-col gap-2', {
+                            'right-10 top-2.5': !!vimeoVideoId,
+                          })}
+                        >
+                          <ImageContextMenu image={image} />
+                          {features.imageGeneration && isRemixMenuVisible(image) && (
+                            <RemixMenu image={image} source="remix:post-image-card">
+                              <HoverActionButton
+                                label="Remix"
+                                size={30}
+                                color="white"
+                                variant="filled"
+                                data-activity="remix:post-image-card"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }}
+                              >
+                                <IconBrush stroke={2.5} size={16} />
+                              </HoverActionButton>
+                            </RemixMenu>
+                          )}
+                        </div>
+                        <RoutedDialogLink
+                          name="imageDetail"
+                          state={{
+                            imageId: image.id,
+                            images,
+                            collectionId: imageCollectionItem?.collection?.id,
+                          }}
+                          onClick={() => {
+                            if (videoRef.current) videoRef.current.stop();
+                          }}
+                        >
+                          {!safe ? (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                top: 0,
+                                bottom: 0,
+                                aspectRatio: (image.width ?? 1) / (image.height ?? 1),
                               }}
                             >
-                              <IconBrush stroke={2.5} size={16} />
-                            </HoverActionButton>
-                          </RemixMenu>
+                              <MediaHash {...image} />
+                            </div>
+                          ) : (
+                            <EdgeMedia
+                              src={image.url}
+                              name={image.name}
+                              alt={image.name ?? undefined}
+                              type={image.type}
+                              imageId={image.id}
+                              width={width < maxWidth ? width : maxWidth}
+                              original={image.type === 'video'}
+                              anim={safe}
+                              html5Controls={showsControlStrip}
+                              videoRef={videoRef}
+                              vimeoVideoId={vimeoVideoId}
+                            />
+                          )}
+                        </RoutedDialogLink>
+                        {safe && features.stickerPlacement && (
+                          <PostStickerOverlay imageId={image.id} />
                         )}
                       </div>
-                      <RoutedDialogLink
-                        name="imageDetail"
-                        state={{
-                          imageId: image.id,
-                          images,
-                          collectionId: imageCollectionItem?.collection?.id,
-                        }}
-                        onClick={() => {
-                          if (videoRef.current) videoRef.current.stop();
-                        }}
-                      >
-                        {!safe ? (
-                          <div
-                            style={{
-                              position: 'absolute',
-                              top: 0,
-                              bottom: 0,
-                              aspectRatio: (image.width ?? 1) / (image.height ?? 1),
-                            }}
-                          >
-                            <MediaHash {...image} />
+                      <div className="flex items-center justify-between gap-2 p-2 empty:hidden">
+                        <Reactions
+                          entityId={image.id}
+                          entityType="image"
+                          reactions={image.reactions}
+                          metrics={{
+                            likeCount: image.stats?.likeCountAllTime,
+                            dislikeCount: image.stats?.dislikeCountAllTime,
+                            heartCount: image.stats?.heartCountAllTime,
+                            laughCount: image.stats?.laughCountAllTime,
+                            cryCount: image.stats?.cryCountAllTime,
+                          }}
+                          targetUserId={image.user.id}
+                          readonly={!safe}
+                          disableBuzzTip={image.poi}
+                        />
+                        {image.hasMeta && (
+                          <div className="ml-auto">
+                            <ImageMetaPopover2 imageId={image.id} type={image.type}>
+                              <LegacyActionIcon size="md" component="span">
+                                <IconInfoCircle strokeWidth={2.5} size={20} />
+                              </LegacyActionIcon>
+                            </ImageMetaPopover2>
                           </div>
-                        ) : (
-                          <EdgeMedia
-                            src={image.url}
-                            name={image.name}
-                            alt={image.name ?? undefined}
-                            type={image.type}
-                            imageId={image.id}
-                            width={width < maxWidth ? width : maxWidth}
-                            original={image.type === 'video'}
-                            anim={safe}
-                            html5Controls={showsControlStrip}
-                            videoRef={videoRef}
-                            vimeoVideoId={vimeoVideoId}
-                          />
                         )}
-                      </RoutedDialogLink>
-                      {safe && features.stickerPlacement && (
-                        <PostStickerOverlay imageId={image.id} />
-                      )}
-                      <Reactions
-                        className={clsx(classes.reactions, {
-                          [classes.reactionsWithControls]: !vimeoVideoId && showsControlStrip,
-                          [classes.vimeoReactions]: !!vimeoVideoId,
-                        })}
-                        entityId={image.id}
-                        entityType="image"
-                        reactions={image.reactions}
-                        metrics={{
-                          likeCount: image.stats?.likeCountAllTime,
-                          dislikeCount: image.stats?.dislikeCountAllTime,
-                          heartCount: image.stats?.heartCountAllTime,
-                          laughCount: image.stats?.laughCountAllTime,
-                          cryCount: image.stats?.cryCountAllTime,
-                        }}
-                        targetUserId={image.user.id}
-                        readonly={!safe}
-                        disableBuzzTip={image.poi}
-                      />
-                      {image.hasMeta && (
-                        <div className="absolute bottom-2 right-2">
-                          <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                            <LegacyActionIcon variant="transparent" size="lg" component="span">
-                              <IconInfoCircle
-                                color="white"
-                                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                opacity={0.8}
-                                strokeWidth={2.5}
-                                size={26}
-                              />
-                            </LegacyActionIcon>
-                          </ImageMetaPopover2>
-                        </div>
-                      )}
+                      </div>
                     </>
                   )}
                 </ImageGuard2>
