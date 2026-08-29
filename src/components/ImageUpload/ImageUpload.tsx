@@ -54,7 +54,6 @@ import styles from './ImageUpload.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
-import { isUploadInFlight } from '~/utils/upload-status';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   hasPrimaryImage?: boolean;
@@ -88,7 +87,9 @@ export function ImageUpload({
   const colorScheme = useComputedColorScheme('dark');
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
-  const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
+  // `files` is no longer destructured: the only consumer was the dead
+  // `isUploadInFlight(match)` term removed below.
+  const { uploadToCF, removeImage } = useCFImageUpload();
   const [files, filesHandler] = useListState<CustomFile>(Array.isArray(value) ? value : []);
   const [activeId, setActiveId] = useState<UniqueIdentifier>();
   const [error, setError] = useState('');
@@ -223,22 +224,26 @@ export function ImageUpload({
                   }}
                 >
                   {files.map((image, index) => {
-                    const match = imageFiles.find((file) => image.file === file.file);
                     /**
-                     * 🔴 THE FIFTH COPY OF THE SPINNER PREDICATE, now on the shared rule.
+                     * 🔴 THIS SITE IS GOVERNED BY `image.file`, NOT BY THE SHARED STATUS
+                     * RULE — and saying otherwise here was worse than saying nothing.
                      *
-                     * It used to be `(match && progress < 100) || image.file`. Round 1 gave
-                     * this file a DIFFERENT remedy from the other four — dropping the
-                     * placeholder entry on error, which clears `image.file` and so does
-                     * prevent the latch — and that remedy is kept, because it is also what
-                     * makes the tile disappear so the user can retry. But leaving the
-                     * predicate open-coded here left the rule spelled two ways in one repo,
-                     * which is the exact thing `isUploadInFlight` exists to stop. The
-                     * `|| image.file` half stays: an entry queued for upload has no tracked
-                     * file yet, so `match` is undefined and only that half can show its
-                     * spinner.
+                     * It used to be `(match && progress < 100) || image.file`, which is the
+                     * latch `isUploadInFlight` exists to remove. Round 1 gave this file a
+                     * DIFFERENT remedy from the other four — dropping the placeholder entry
+                     * on error, which clears `image.file` — and that remedy is kept, because
+                     * it is also what makes the tile disappear so the user can retry.
+                     *
+                     * Round 2 then added `isUploadInFlight(match) ||` in front, on the
+                     * reasoning that one rule should be spelled one way. It is DEAD: `match`
+                     * comes from `imageFiles.find((f) => image.file === f.file)` and a
+                     * `TrackedFile.file` is always a `File`, so `match !== undefined` implies
+                     * `image.file` is truthy and the whole expression is identically
+                     * `!!image.file`. Leaving it in told a reader the status rule governs
+                     * this spinner when the placeholder-drop is what actually protects it —
+                     * a comment claiming coverage that stops anyone looking. Removed.
                      */
-                    const showLoading = isUploadInFlight(match) || !!image.file;
+                    const showLoading = !!image.file;
 
                     if (showLoading)
                       return (

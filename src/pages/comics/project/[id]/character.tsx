@@ -397,8 +397,26 @@ function ReferenceUpload() {
       });
     }
 
-    // One notification naming how many of how many failed, and which files — not one
-    // toast per file, which over a ten-file drop buries the UI it is reporting on.
+    /**
+     * One notification naming how many of how many failed, and which files — not one toast
+     * per file, which over a ten-file drop buries the UI it is reporting on.
+     *
+     * 🔴 THE COST, SO IT IS A DECISION AND NOT AN ACCIDENT: failure feedback is now
+     * DEFERRED TO THE END OF THE BATCH. Previously each failure toasted the moment it
+     * happened. On a ten-file drop with a slow tail, a user whose FIRST file was refused
+     * now waits for every remaining upload to finish before being told anything — the loop
+     * is sequential (`await` per file, plus an `img.onload`/`onerror` round-trip each), so
+     * that wait is the whole batch, not a scheduling artefact. Judged the better trade at
+     * ten files, where per-file toasts stack over the grid they describe; it is the worse
+     * trade at two files with a 30 s tail. If that shape shows up, the fix is to surface
+     * failures incrementally in-place (a marker on the tile) rather than to go back to a
+     * toast per file.
+     *
+     * 🔴 AND THIS LOOP IS MOUNTED BY NO TEST. `PanelModal`'s twin was extracted into
+     * `bulk-panel-upload.ts` precisely so it could be driven; this one was not, so its
+     * continue-on-failure policy and this aggregation are reviewed-by-reading only. That is
+     * the honest label for it.
+     */
     const report = batchUploadFailureNotification(failed, files.length);
     if (report) showErrorNotification(report);
   };

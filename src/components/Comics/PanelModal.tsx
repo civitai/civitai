@@ -479,27 +479,40 @@ export function PanelModal({
   const handleBulkImageDrop = async (files: File[]) => {
     if (files.length === 0) return;
     setBulkUploading(true);
+    /**
+     * 🔴 DECLARED OUTSIDE THE `try`, AND COMMITTED IN THE `finally`. RESTORED.
+     *
+     * This invariant was established deliberately: the commit used to sit at the end of
+     * the `try`, so one throw past it discarded the WHOLE batch — the panels that had
+     * already uploaded fine included. Extracting the loop into `uploadBulkPanels` moved
+     * `items` back inside the `try` and deleted the comment saying why it must not be
+     * there, which silently weakened the invariant. No reachable thrower was found between
+     * the upload and the commit today, so this was not a live regression — but "no
+     * reachable thrower today" is exactly the claim that stops being true when someone adds
+     * a line here, and the failure mode is silent data loss the user already saw succeed.
+     *
+     * 🔴 NOT PINNED BY A TEST, and it cannot cheaply be: driving it needs `PanelModal`
+     * mounted, which takes ~40 required props plus the Buzz hooks, feature flags, a tRPC
+     * query, dnd-kit and `dialogStore` — the very reason the loop was extracted. The loop's
+     * own failure policy IS pinned, in `bulk-panel-upload.browser.test.tsx`; this ordering
+     * is held by the shape of the code and by this comment.
+     */
+    let landed: BulkPanelItem[] = [];
     try {
       /**
        * 🔴 THE LOOP LIVES IN `bulk-panel-upload.ts`, AND ITS FAILURE POLICY IS DECIDED
        * THERE — read that file, not this handler, for why one refused PUT does not end
-       * the batch. It was moved out because it is the half of this component that needed
-       * an executed test and could not have one while it was inline: `PanelModal` takes
-       * ~40 required props and pulls in the Buzz hooks, feature flags, a tRPC query,
-       * dnd-kit and `dialogStore`.
+       * the batch.
        *
        * `uploadBulkPanels` does not throw on a refused upload — it returns the panels that
        * landed and the files that did not. The `try` here is for the unexpected only.
        */
       const { items, failed } = await uploadBulkPanels({ files, uploadToCF: uploadBulkToCF });
-
-      // Commit BEFORE reporting: the panels that uploaded are kept whatever else happened.
-      // A first-file failure leaves `items` empty, so this is a no-op rather than a
-      // spurious state write.
-      if (items.length > 0) setBulkItems((prev) => [...prev, ...items].slice(0, 20));
+      landed = items;
 
       // 🔴 Names the files and the count. The whole-loop `catch` this replaces showed one
-      // "Failed to upload image" naming neither, over a batch of up to 20.
+      // "Failed to upload image" naming neither, over a batch of up to 20. Reporting sits
+      // INSIDE the try on purpose: if it throws, the `finally` still commits `landed`.
       const report = batchUploadFailureNotification(failed, files.length);
       if (report) showErrorNotification(report);
     } catch (err) {
@@ -507,6 +520,9 @@ export function PanelModal({
       // reaches here; a genuine defect still should be surfaced rather than swallowed.
       showErrorNotification({ error: err as Error, title: 'Failed to upload image' });
     } finally {
+      // 🔴 The panels that DID upload are kept, on every path. `landed` is empty when the
+      // first file failed, so this is a no-op rather than a spurious state write.
+      if (landed.length > 0) setBulkItems((prev) => [...prev, ...landed].slice(0, 20));
       setBulkUploading(false);
     }
   };
