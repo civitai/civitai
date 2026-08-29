@@ -757,38 +757,85 @@ describe('audit r4 🟡F1 — no lookahead may suppress IPv4-embedded IPv6', () 
   });
 });
 
-describe("audit r4 🟡F2 — the corpus's OWN Authorization serialisation", () => {
-  // All 12 Authorization entries in raw/user-lookup-v2.json are written as a
-  // Retool transit pair: \"key\":\"Authorization\",\"value\":\"Basic …\". The
-  // identifier is a VALUE and the separator is `,`, so neither assignment rule
-  // can see it. `Bearer` was caught incidentally by bearer-token; `Basic` was
-  // caught by NOTHING, while a test comment claimed the class was covered.
-  const kv = (key: string, value: string) => String.raw`\"key\":\"${key}\",\"value\":\"${value}\"`;
+describe("audit r4/r5 — the corpus's OWN Authorization serialisation", () => {
+  // All 12 Authorization entries in raw/user-lookup-v2.json are Retool transit
+  // pairs: \"key\":\"Authorization\",\"value\":\"Basic …\". The identifier is a
+  // VALUE and the separator is `,`, so neither assignment rule can see it.
+  //
+  // 🔴 ESCAPING DEPTH IS PARAMETERISED, and that is the whole point. The first
+  // version of these tests hardcoded ONE backslash. The corpus uses THREE (181 of
+  // 191 `key` occurrences; the rest use one, none use zero) because Retool nests
+  // JSON inside JSON inside a string. So the rule was inert on the only file it
+  // was written for, and this spec passed anyway — the fixture and the code
+  // encoded the same wrong assumption, and neither could see the other's error.
+  const ESCAPES = ['', '\\', '\\\\\\'];
+  const kv = (key: string, value: string, e: string) =>
+    `${e}"key${e}"${e}:${e}"${key}${e}"${e},${e}"value${e}"${e}:${e}"${value}${e}"`
+      .replace(new RegExp(`${e ? e.replace(/\\/g, '\\\\') : '(?!)'}:`, 'g'), ':')
+      .replace(new RegExp(`${e ? e.replace(/\\/g, '\\\\') : '(?!)'},`, 'g'), ',');
 
-  it('catches a live Basic credential in the transit shape', () => {
-    const found = findCredentialShapes(kv('Authorization', 'Basic ZGVtbzpzdXBlcnNlY3JldDEyMw=='));
-    expect(found.map((f) => f.rule)).toContain('retool-kv-credential');
+  describe.each(ESCAPES.map((e) => [e.length, e] as const))('at escaping depth %i', (_depth, e) => {
+    it('catches a live Basic credential', () => {
+      const found = findCredentialShapes(
+        kv('Authorization', 'Basic ZGVtbzpzdXBlcnNlY3JldDEyMw==', e)
+      );
+      expect(found.map((f) => f.rule)).toContain('retool-kv-credential');
+    });
+
+    it.each(['X-API-Key', 'token', 'WEBHOOK_TOKEN', 'password'])(
+      'catches credential-named key %s',
+      (key) => {
+        expect(findCredentialShapes(kv(key, 'abcdef1234567890', e)).length).toBeGreaterThan(0);
+      }
+    );
+
+    it('does NOT fire on the redacted placeholder the corpus actually holds', () => {
+      expect(
+        findCredentialShapes(kv('Authorization', 'Basic {{ FreshdeskCredentials.value }}', e))
+      ).toEqual([]);
+    });
+
+    it.each(['author', 'authorName', 'authorEmail', 'authorized', 'tokenizer'])(
+      'does NOT fire on the non-credential key %s',
+      (key) => {
+        // The kv key needs the same end-of-identifier anchor the assignment
+        // rules carry; without it this whole class came back.
+        expect(findCredentialShapes(kv(key, 'Jane Q Public xyz', e))).toEqual([]);
+      }
+    );
   });
 
-  it.each(['X-API-Key', 'token', 'WEBHOOK_TOKEN', 'password'])(
-    'catches a credential-named key %s',
-    (key) => {
-      expect(findCredentialShapes(kv(key, 'abcdef1234567890')).length).toBeGreaterThan(0);
-    }
-  );
-
-  it("does NOT fire on the corpus's redacted placeholder value", () => {
-    expect(
-      findCredentialShapes(kv('Authorization', 'Basic {{ FreshdeskCredentials.value }}'))
-    ).toEqual([]);
-  });
-
-  it('does NOT fire on an ordinary array — the reason the bare comma rule was reverted', () => {
+  it('does NOT fire on an ordinary array — why the bare comma rule was reverted', () => {
     expect(findCredentialShapes('{"tags": ["auth","authentication"]}')).toEqual([]);
     expect(findCredentialShapes('{"columns": ["password","created_at_utc"]}')).toEqual([]);
   });
 
   it('does not fire when the key is not credential-named', () => {
-    expect(findCredentialShapes(kv('Content-Type', 'application/json-x'))).toEqual([]);
+    expect(findCredentialShapes(kv('Content-Type', 'application/json-x', '\\'))).toEqual([]);
+  });
+
+  // 🔴 THE CONTROL THAT WOULD HAVE CAUGHT THE INERT RULE: drive the REAL file,
+  // not a fixture whose shape I chose. A fake can encode the same mistake as the
+  // code; the corpus cannot.
+  describe('driven by the real export, not a fixture', () => {
+    const REAL = path.join(REPO_ROOT, SCAN_DIR, 'raw/user-lookup-v2.json');
+    const REDACTED_VALUE = 'Basic {{ FreshdeskCredentials.value }}';
+
+    it('the real file is clean', () => {
+      const text = readFileSync(REAL, 'utf8');
+      expect(text).toContain(REDACTED_VALUE); // the substitution below is anchored on this
+      expect(findCredentialShapes(text).filter((f) => f.rule === 'retool-kv-credential')).toEqual(
+        []
+      );
+    });
+
+    it('a live credential substituted into it IS caught', () => {
+      const text = readFileSync(REAL, 'utf8');
+      const live = text.replace(REDACTED_VALUE, 'Basic ZGVtbzpzdXBlcnNlY3JldDEyMw==');
+      expect(live).not.toEqual(text); // positive control: the substitution happened
+      const found = findCredentialShapes(live).filter((f) => f.rule === 'retool-kv-credential');
+      expect(found.length).toBeGreaterThan(0);
+      expect(found[0].sample).not.toContain('ZGVtbz'); // still masked
+    });
   });
 });

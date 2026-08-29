@@ -208,8 +208,18 @@ const REDACTED_RE =
  */
 const SECRET_WORD = String.raw`API[_-]?KEY|API[_-]?Key|Api[_-]?Key|Api[_-]?key|api[_-]?Key|api[_-]?key|APIKEY|APIKey|ApiKey|Apikey|apiKey|apikey|AUTHORIZATION|Authorization|authorization|AUTHENTICATION|Authentication|authentication|SECRETKEY|SecretKey|secretKey|secretkey|TOKEN|Token|token|SECRET|Secret|secret|PASSWORD|Password|password|PASSWD|Passwd|passwd|AUTH|Auth|auth`;
 
-/** A quote that may be backslash-escaped, as it is inside JSON-embedded JS. */
-const Q = String.raw`\\?["']`;
+/**
+ * A quote at any escaping depth these exports actually use.
+ *
+ * 🔴 `\\?` — at most ONE backslash — was wrong, and wrong in a way that made the
+ * rule below completely INERT. Retool nests JSON inside JSON inside a string, so
+ * the corpus writes `\\\"key\\\"`: measured in `raw/user-lookup-v2.json`, 181 of
+ * the 191 `key` occurrences carry THREE backslashes and 10 carry one. None carry
+ * zero. The rule matched nothing at all on the file it was written for, and the
+ * spec passed anyway because its fixture used single escaping — the fake and the
+ * code encoded the same wrong assumption, so neither could see the other's error.
+ */
+const Q = String.raw`\\{0,3}["']`;
 /** A value body that cannot contain a quote, an escaped quote, or a newline. */
 const VALUE_BODY = String.raw`(?:\\[^"'\n]|[^"'\\\n]){8,4096}?`;
 
@@ -315,7 +325,7 @@ export const CREDENTIAL_RULES = [
         Q +
         String.raw`[\w$-]*?(?:` +
         SECRET_WORD +
-        String.raw`)s?[\w$-]*` +
+        String.raw`)s?(?![a-z])[\w$-]*` +
         Q +
         String.raw`\s*,\s*` +
         Q +
