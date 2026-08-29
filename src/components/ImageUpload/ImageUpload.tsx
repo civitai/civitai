@@ -234,7 +234,7 @@ export function ImageUpload({
                      * on error, which clears `image.file` — and that remedy is kept, because
                      * it is also what makes the tile disappear so the user can retry.
                      *
-                     * Round 2 then added `isUploadInFlight(match) ||` in front, on the
+                     * A later pass then added `isUploadInFlight(match) ||` in front, on the
                      * reasoning that one rule should be spelled one way. It is DEAD: `match`
                      * comes from `imageFiles.find((f) => image.file === f.file)` and a
                      * `TrackedFile.file` is always a `File`, so `match !== undefined` implies
