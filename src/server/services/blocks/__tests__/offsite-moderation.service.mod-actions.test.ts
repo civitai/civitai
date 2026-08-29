@@ -177,11 +177,6 @@ function offsiteListing(status: string, kind = 'offsite') {
     // through the on-site arm) — a fixture that left it `undefined` would be asserting
     // against a shape the DB cannot produce.
     revisionOfId: null,
-    // …and `publishRequests`, filtered to `status:'pending'` with `take: 1`, which is how the
-    // "not under review" half of "orphan draft" is projected. Empty = no live submission.
-    // Omitting it does not fail OPEN: the guard reads `.length` and throws, so a malformed
-    // fixture refuses the destructive op rather than permitting it.
-    publishRequests: [],
     externalUrl: EXTERNAL_URL,
     connectClientId: null,
   };
@@ -1248,13 +1243,7 @@ describe('purgeListing', () => {
         // appBlockId:null); see offsite-moderation.service.purge-onsite-draft.test.ts.
         OR: [
           { kind: 'offsite' },
-          {
-            kind: 'onsite',
-            status: 'draft',
-            appBlockId: null,
-            revisionOfId: null,
-            publishRequests: { none: { status: 'pending' } },
-          },
+          { kind: 'onsite', status: 'draft', appBlockId: null, revisionOfId: null },
         ],
       },
     });
@@ -1282,7 +1271,6 @@ describe('purgeListing', () => {
       slug: 'stale-slug',
       appBlockId: null,
       revisionOfId: null,
-      publishRequests: [],
     });
     mockWrite.appListing.findUnique.mockResolvedValueOnce({
       status: 'removed',
@@ -1291,7 +1279,6 @@ describe('purgeListing', () => {
       name: null,
       appBlockId: null,
       revisionOfId: null,
-      publishRequests: [],
     });
     await purgeListing({
       input: { appListingId: APP_ID, reason: 'confirmed impersonation' },
@@ -1314,7 +1301,6 @@ describe('purgeListing', () => {
         // The relation term's projection. Without it `isPurgeableListing` would read
         // `undefined` for the pending-request count — which THROWS rather than defaulting
         // to "not under review", so the destructive op refuses instead of proceeding.
-        publishRequests: { where: { status: 'pending' }, take: 1, select: { id: true } },
       },
     });
     const data = mockWrite.appListingModerationEvent.create.mock.calls[0][0].data;

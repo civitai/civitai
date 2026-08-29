@@ -843,6 +843,20 @@ export type ModerationListingRow = {
     changelog: string | null;
     submittedBy: ModerationUserChip | null;
   } | null;
+  /**
+   * 🔴 ON-SITE ONLY, AND NOT THE SAME THING AS `pendingRequest`.
+   *
+   * `pendingRequest` above comes from the `AppListingPublishRequest` relation, whose
+   * `appListingId` the schema documents as "On-site: NULL until approve". So for an on-site
+   * PRE-APPROVAL DRAFT it is `null` no matter what — the live submission behind that row is an
+   * `AppBlockPublishRequest`, joined to the listing by the shared `@unique` SLUG and by no
+   * foreign key at all.
+   *
+   * This flag is that missing signal, resolved by a slug-keyed lookup. Without it the table
+   * cannot tell an ABANDONED draft from one under active review, and offered the destructive
+   * Purge action on both. Always `false` for an off-site row (whose requests do carry the FK).
+   */
+  hasPendingBlockRequest: boolean;
 };
 
 /**
@@ -879,10 +893,22 @@ type HydratedModerationRow = Prisma.AppListingGetPayload<{
   select: typeof moderationListingSelect;
 }>;
 
-/** Project a hydrated moderation row → the {@link ModerationListingRow} DTO. */
-export function projectModerationListing(row: HydratedModerationRow): ModerationListingRow {
+/**
+ * Project a hydrated moderation row → the {@link ModerationListingRow} DTO.
+ *
+ * `pendingBlockRequestSlugs` is the set of slugs with a live `AppBlockPublishRequest`,
+ * resolved by the caller in one batched query (there is no FK to include). A caller that
+ * cannot resolve it passes an empty set — see the 🔴 note on `hasPendingBlockRequest`, and
+ * note that an empty set is the PERMISSIVE direction, so only the mod-table read (which does
+ * resolve it) may drive a destructive affordance from this field.
+ */
+export function projectModerationListing(
+  row: HydratedModerationRow,
+  pendingBlockRequestSlugs: ReadonlySet<string> = new Set()
+): ModerationListingRow {
   const pending = row.publishRequests[0] ?? null;
   return {
+    hasPendingBlockRequest: row.kind === 'onsite' && pendingBlockRequestSlugs.has(row.slug),
     id: row.id,
     slug: row.slug,
     name: row.name,
@@ -984,6 +1010,24 @@ export async function listAllListingsForModeration(
 
   const hasNext = rows.length > limit;
   const page = hasNext ? rows.slice(0, limit) : rows;
-  const items = page.map(projectModerationListing);
+
+  // 🔴 The on-site "is this draft under review?" signal, which no `include` can supply: an
+  // on-site `AppBlockPublishRequest` is joined to its listing by the shared `@unique` SLUG
+  // and carries no FK (`AppListingPublishRequest.appListingId` is "On-site: NULL until
+  // approve"). One batched query over just this page's on-site slugs, so it stays O(1) reads
+  // regardless of page size and costs nothing on an all-off-site page.
+  const onsiteSlugs = page.filter((r) => r.kind === 'onsite').map((r) => r.slug);
+  const pendingBlockRequestSlugs = new Set<string>(
+    onsiteSlugs.length
+      ? (
+          await dbRead.appBlockPublishRequest.findMany({
+            where: { slug: { in: onsiteSlugs }, status: 'pending' },
+            select: { slug: true },
+          })
+        ).map((r: { slug: string }) => r.slug)
+      : []
+  );
+
+  const items = page.map((r) => projectModerationListing(r, pendingBlockRequestSlugs));
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }

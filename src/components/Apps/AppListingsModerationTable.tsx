@@ -334,6 +334,9 @@ export function AppListingsModerationTable({
               kind: row.kind,
               hasPendingRequest: row.pendingRequest != null,
               appBlockId: row.appBlockId,
+              // NOT `pendingRequest != null` — that reads the AppListingPublishRequest
+              // relation, which is structurally null for an on-site pre-approval draft.
+              hasPendingBlockRequest: row.hasPendingBlockRequest,
             });
             return (
               <Fragment key={row.id}>
@@ -682,8 +685,9 @@ function ListingModActionModal({
       destructive={destructive}
       destructiveWarning={
         <Text size="sm">
-          Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit event
-          (with the slug snapshot) is kept. This cannot be undone.
+          Purge PERMANENTLY deletes this listing and its screenshots + reports, and{' '}
+          <b>releases the store address &quot;{row.slug}&quot; for anyone else to claim</b>. The
+          audit event (with the slug snapshot) is kept. This cannot be undone.
         </Text>
       }
       confirmSlug={destructive ? row.slug : undefined}

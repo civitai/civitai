@@ -34,6 +34,7 @@ describe('listingModActions — off-site rows', () => {
         status: 'pending',
         kind: 'offsite',
         hasPendingRequest: true,
+        hasPendingBlockRequest: false,
         appBlockId: null,
       })
     ).toEqual(['review', 'message-owner']);
@@ -45,6 +46,7 @@ describe('listingModActions — off-site rows', () => {
         status: 'approved',
         kind: 'offsite',
         hasPendingRequest: false,
+        hasPendingBlockRequest: false,
         appBlockId: null,
       })
     ).toEqual(['message-owner', 'reset-to-pending', 'hide']);
@@ -56,6 +58,7 @@ describe('listingModActions — off-site rows', () => {
         status: 'removed',
         kind: 'offsite',
         hasPendingRequest: false,
+        hasPendingBlockRequest: false,
         appBlockId: null,
       })
     ).toEqual(['message-owner', 'relist', 'claim', 'purge']);
@@ -67,6 +70,7 @@ describe('listingModActions — off-site rows', () => {
         status: 'draft',
         kind: 'offsite',
         hasPendingRequest: false,
+        hasPendingBlockRequest: false,
         appBlockId: null,
       })
     ).toEqual(['message-owner']);
@@ -75,6 +79,7 @@ describe('listingModActions — off-site rows', () => {
         status: 'draft',
         kind: 'offsite',
         hasPendingRequest: true,
+        hasPendingBlockRequest: false,
         appBlockId: null,
       })
     ).toEqual(['review', 'message-owner']);
@@ -86,6 +91,7 @@ describe('listingModActions — off-site rows', () => {
         status: 'rejected',
         kind: 'offsite',
         hasPendingRequest: false,
+        hasPendingBlockRequest: false,
         appBlockId: null,
       })
     ).toEqual(['message-owner']);
@@ -99,6 +105,7 @@ describe('listingModActions — on-site rows hide the off-site-only actions', ()
         status: 'approved',
         kind: 'onsite',
         hasPendingRequest: false,
+        hasPendingBlockRequest: false,
         appBlockId: 'ablk_live',
       })
     ).toEqual(['message-owner', 'reset-to-pending', 'hide']);
@@ -110,6 +117,7 @@ describe('listingModActions — on-site rows hide the off-site-only actions', ()
         status: 'removed',
         kind: 'onsite',
         hasPendingRequest: false,
+        hasPendingBlockRequest: false,
         appBlockId: 'ablk_live',
       })
     ).toEqual(['message-owner', 'relist']);
@@ -121,6 +129,7 @@ describe('listingModActions — on-site rows hide the off-site-only actions', ()
         status: 'pending',
         kind: 'onsite',
         hasPendingRequest: true,
+        hasPendingBlockRequest: false,
         appBlockId: null,
       })
     ).toEqual(['message-owner']);
@@ -147,20 +156,50 @@ describe('listingModActions — on-site orphan pre-approval draft offers Purge',
         status: 'draft',
         kind: 'onsite',
         hasPendingRequest: false,
+        hasPendingBlockRequest: false,
         appBlockId: null,
       })
     ).toEqual(['message-owner', 'purge']);
   });
 
-  it('NOT while a request is still pending — that submission is under review', () => {
+  /**
+   * 🔴 THE TERM THAT WAS INERT. `hasPendingRequest` comes from the
+   * `AppListingPublishRequest` relation, whose `appListingId` is "On-site: NULL until
+   * approve" — so for an on-site pre-approval draft it is ALWAYS false, and an earlier
+   * revision of this branch gated on it. That guard could never fire, and the mod table
+   * offered Purge on submissions under active review. The real signal is
+   * `hasPendingBlockRequest`, hydrated by a slug-keyed lookup against
+   * `AppBlockPublishRequest`.
+   *
+   * The two cases below are the proof: gating on the WRONG field would let case 1 through.
+   */
+  it('NOT while the BLOCK request is still pending — that submission is under review', () => {
+    expect(
+      listingModActions({
+        status: 'draft',
+        kind: 'onsite',
+        // The inert field says "nothing pending"…
+        hasPendingRequest: false,
+        // …while the real one says otherwise. Purge must be withheld.
+        hasPendingBlockRequest: true,
+        appBlockId: null,
+      })
+    ).toEqual(['message-owner']);
+  });
+
+  it('`hasPendingRequest` alone does NOT withhold purge — it is the wrong table', () => {
+    // Not an endorsement of the state (it is unreachable for this shape); it pins that the
+    // branch keys on `hasPendingBlockRequest` and nothing else, so a future edit that swaps
+    // the fields back is a red test rather than a silent regression.
     expect(
       listingModActions({
         status: 'draft',
         kind: 'onsite',
         hasPendingRequest: true,
+        hasPendingBlockRequest: false,
         appBlockId: null,
       })
-    ).toEqual(['message-owner']);
+    ).toEqual(['message-owner', 'purge']);
   });
 
   it('NOT once it has a backing AppBlock — it reached approve', () => {
@@ -169,6 +208,7 @@ describe('listingModActions — on-site orphan pre-approval draft offers Purge',
         status: 'draft',
         kind: 'onsite',
         hasPendingRequest: false,
+        hasPendingBlockRequest: false,
         appBlockId: 'ablk_live',
       })
     ).toEqual(['message-owner']);
@@ -180,6 +220,7 @@ describe('listingModActions — on-site orphan pre-approval draft offers Purge',
         status: 'draft',
         kind: 'offsite',
         hasPendingRequest: false,
+        hasPendingBlockRequest: false,
         appBlockId: null,
       })
     ).toEqual(['message-owner']);
@@ -208,7 +249,7 @@ describe('listingModActions — the owner-message action is offered on EVERY row
   const STATUSES = ['draft', 'pending', 'approved', 'rejected', 'removed'] as const;
   const KINDS = ['onsite', 'offsite'] as const;
 
-  it('appears for every status × kind × pending-request × backing-block combination', () => {
+  it('appears for every status × kind × pending-request × block-request × backing-block combination', () => {
     const missing: string[] = [];
     let walked = 0;
     for (const status of STATUSES) {
@@ -218,19 +259,29 @@ describe('listingModActions — the owner-message action is offered on EVERY row
           // part of the cross product too — otherwise the sweep would pin only one of the
           // two shapes the new branch distinguishes.
           for (const appBlockId of [null, 'ablk_live']) {
-            walked++;
-            const actions = listingModActions({ status, kind, hasPendingRequest, appBlockId });
-            if (!actions.includes('message-owner')) {
-              missing.push(`${kind}/${status}/pending=${hasPendingRequest}/block=${appBlockId}`);
+            for (const hasPendingBlockRequest of [true, false]) {
+              walked++;
+              const actions = listingModActions({
+                status,
+                kind,
+                hasPendingRequest,
+                hasPendingBlockRequest,
+                appBlockId,
+              });
+              if (!actions.includes('message-owner')) {
+                missing.push(
+                  `${kind}/${status}/pending=${hasPendingRequest}/blockReq=${hasPendingBlockRequest}/block=${appBlockId}`
+                );
+              }
             }
           }
         }
       }
     }
-    // Positive control on the enumeration itself: 5 statuses × 2 kinds × 2 × 2 = 40 cases
+    // Positive control on the enumeration itself: 5 statuses × 2 kinds × 2 × 2 × 2 = 80 cases
     // were actually walked, so an empty `missing` is a real sweep and not an empty loop.
-    expect(walked).toBe(40);
-    expect(STATUSES.length * KINDS.length * 2 * 2).toBe(40);
+    expect(walked).toBe(80);
+    expect(STATUSES.length * KINDS.length * 2 * 2 * 2).toBe(80);
     expect(missing).toEqual([]);
   });
 

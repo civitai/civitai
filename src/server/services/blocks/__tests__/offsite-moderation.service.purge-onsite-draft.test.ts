@@ -66,10 +66,8 @@ const OWNER = 77;
 const APP_NAME = 'Cool App';
 
 /**
- * The purgeable on-site shape: never approved, not a shadow, not under review.
- *
- * `publishRequests` is the relation term's projection — the reads select it filtered to
- * `status:'pending'` with `take: 1`, so `[]` means "no live submission".
+ * The purgeable on-site shape: never approved, not a shadow. "Not under review" is NOT a field
+ * on this row — it is a separate slug-keyed lookup, staged by {@link stageLiveSubmission}.
  */
 function orphanDraft(over: Record<string, unknown> = {}) {
   return {
@@ -81,9 +79,32 @@ function orphanDraft(over: Record<string, unknown> = {}) {
     appBlockId: null,
     revisionOfId: null,
     userId: OWNER,
-    publishRequests: [],
     ...over,
   };
+}
+
+/**
+ * 🔴 STAGE THE "UNDER REVIEW" SIGNAL ON THE RIGHT TABLE.
+ *
+ * The live submission behind an on-site pre-approval draft is an `AppBlockPublishRequest`
+ * joined to the listing by the shared `@unique` SLUG — there is NO foreign key.
+ * `AppListing.publishRequests` is the `AppListingPublishRequest` relation, whose `appListingId`
+ * the schema documents as "On-site: NULL until approve", so for this shape it is provably
+ * always empty.
+ *
+ * An earlier revision of this file staged `publishRequests: [{ id: 'pubreq_live' }]` on the
+ * listing fixture and asserted the purge was refused. That state cannot exist in the database,
+ * so the test certified a guard that was a tautology — it passed, and a mutation of the guard
+ * "died" against it, while the production path deleted listings under active review. Fixtures
+ * that can only produce the shape the guard already assumes prove nothing.
+ */
+function stageLiveSubmission(present: boolean) {
+  mockRead.appBlockPublishRequest.findFirst.mockResolvedValue(
+    present ? { id: 'pubreq_live' } : null
+  );
+  mockWrite.appBlockPublishRequest.findFirst.mockResolvedValue(
+    present ? { id: 'pubreq_live' } : null
+  );
 }
 
 beforeEach(() => {
@@ -98,6 +119,8 @@ beforeEach(() => {
   mockWrite.appListing.deleteMany.mockReset().mockResolvedValue({ count: 1 });
   mockWrite.appListingModerationEvent.create.mockReset().mockResolvedValue({});
   mockNotify.mockReset().mockResolvedValue(undefined);
+  mockRead.appBlockPublishRequest.findFirst.mockReset().mockResolvedValue(null);
+  mockWrite.appBlockPublishRequest.findFirst.mockReset().mockResolvedValue(null);
   // `$transaction` is deliberately NOT reset — that would discard the canonical default
   // (run the callback against `dbWrite`), which is the behaviour these tests rely on.
 });
@@ -141,13 +164,7 @@ describe('purgeListing — on-site orphan pre-approval draft (the purgeable shap
         id: APP_ID,
         OR: [
           { kind: 'offsite' },
-          {
-            kind: 'onsite',
-            status: 'draft',
-            appBlockId: null,
-            revisionOfId: null,
-            publishRequests: { none: { status: 'pending' } },
-          },
+          { kind: 'onsite', status: 'draft', appBlockId: null, revisionOfId: null },
         ],
       },
     });
@@ -227,11 +244,6 @@ describe('purgeListing — refuses every on-site shape that is NOT an orphan dra
       row: orphanDraft({ status: 'removed' }),
       why: 'already delisted; still not purgeable through the on-site arm',
     },
-    {
-      what: 'a draft whose submission is still PENDING review',
-      row: orphanDraft({ publishRequests: [{ id: 'pubreq_live' }] }),
-      why: 'the request is joined to the listing by SLUG only, so purging releases the slug out from under a live review',
-    },
   ];
 
   for (const { what, row, why } of cases) {
@@ -244,6 +256,60 @@ describe('purgeListing — refuses every on-site shape that is NOT an orphan dra
       expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
     });
   }
+
+  /**
+   * 🔴 THE ONE THAT WAS VACUOUS. See {@link stageLiveSubmission} — the refusal is driven by an
+   * `AppBlockPublishRequest` looked up BY SLUG, not by anything on the listing row.
+   */
+  it('refuses an on-site draft whose block request is still PENDING — by slug, on the right table', async () => {
+    mockRead.appListing.findUnique.mockResolvedValueOnce(orphanDraft());
+    stageLiveSubmission(true);
+
+    await expect(
+      purgeListing({ input: { appListingId: APP_ID, reason: REASON }, reviewerUserId: REVIEWER })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+    // Refused at the replica classify — no tx, no event, no delete, no notification.
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
+    expect(mockNotify).not.toHaveBeenCalled();
+
+    // 🔴 Pins WHICH TABLE and WHICH PREDICATE. A guard that queried the listing relation
+    // instead would satisfy "refuses when a request is pending" against an impossible fixture
+    // while permitting the real case — which is exactly what shipped before.
+    expect(mockRead.appBlockPublishRequest.findFirst).toHaveBeenCalledWith({
+      where: { slug: SLUG, status: 'pending' },
+      select: { id: true },
+    });
+  });
+
+  it('re-checks it on the PRIMARY inside the tx, not only on the replica', async () => {
+    // Replica says no live submission; the primary sees one that landed in between.
+    mockRead.appListing.findUnique.mockResolvedValueOnce(orphanDraft());
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(orphanDraft());
+    mockRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    mockWrite.appBlockPublishRequest.findFirst.mockResolvedValue({ id: 'pubreq_raced' });
+
+    await expect(
+      purgeListing({ input: { appListingId: APP_ID, reason: REASON }, reviewerUserId: REVIEWER })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+    // The tx opened, then rolled back BEFORE the audit event — zero events on a guarded refusal.
+    expect(mockWrite.appListingModerationEvent.create).not.toHaveBeenCalled();
+    expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('does NOT run the slug lookup for an OFF-SITE purge (its requests carry a real FK)', async () => {
+    const offsiteRow = orphanDraft({ kind: 'offsite', status: 'removed' });
+    mockRead.appListing.findUnique.mockResolvedValueOnce(offsiteRow);
+    mockWrite.appListing.findUnique.mockResolvedValueOnce(offsiteRow);
+    await purgeListing({
+      input: { appListingId: APP_ID, reason: REASON },
+      reviewerUserId: REVIEWER,
+    });
+    expect(mockRead.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
+    expect(mockWrite.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
+  });
 
   it('gives a MISSING row and a non-purgeable row the SAME message (no kind/status probing)', async () => {
     mockRead.appListing.findUnique.mockResolvedValueOnce(null);
