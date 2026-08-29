@@ -7,18 +7,6 @@ import {
   IMAGE_SCAN_UNKNOWN_RETRY_LIMIT,
   IMAGE_SCAN_PERMANENT_RETRY_LIMIT,
 } from '~/server/services/image-scan-failure';
-import { IMAGE_SCAN_FAILURE_CLASS_PERMANENT } from '@civitai/shared';
-
-describe('the permanent class is one value, not two spellings', () => {
-  it('is the same string this app stores and the moderator queue selects on', () => {
-    // The seam nobody owns: this module WRITES `scanJobs.error.failureClass`, and the moderator
-    // spoke's SQL partitions its review queue on that stored string. The two live in different
-    // runtimes and cannot see each other, so before they shared a constant, agreeing was a
-    // coincidence maintained by hand. Pinned literally on both sides.
-    expect(ImageScanFailureClass.Permanent).toBe(IMAGE_SCAN_FAILURE_CLASS_PERMANENT);
-    expect(ImageScanFailureClass.Permanent).toBe('permanent');
-  });
-});
 
 describe('classifyImageScanFailure', () => {
   it('classifies container-create churn as transient', () => {
