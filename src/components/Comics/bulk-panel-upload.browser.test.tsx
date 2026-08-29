@@ -124,4 +124,63 @@ describe('uploadBulkPanels — one refused PUT must not end the batch', () => {
       height: BULK_PANEL_FALLBACK_DIMENSIONS.height,
     });
   });
+
+  test('a throw from OUTSIDE the upload call keeps the panels that already landed', async () => {
+    /**
+     * 🔴 THE INVARIANT `PanelModal` USED TO HOLD IN A `finally`, NOW HELD HERE.
+     *
+     * The handler assigns its `landed` only once `uploadBulkPanels` has returned as a
+     * whole, so anything that escapes this loop discards every panel that already uploaded
+     * — uploads the user watched succeed. The per-file `try` therefore spans the whole loop
+     * body, not just `uploadToCF`.
+     *
+     * Driven through a REAL escape hatch rather than an invented one: `readDimensions`
+     * calls `URL.createObjectURL` outside every `try` in that helper, so a synchronous
+     * throw from it rejects the awaited promise. Stubbing it for exactly one file's name
+     * reproduces that without touching the module under test.
+     *
+     * The failure is on the FIRST of three files on purpose — `items` is empty at that
+     * point, so the case also pins that a wide `try` does not simply mean "swallow": the
+     * loop must go on to upload b and c and must report a.
+     */
+    const realCreateObjectURL = URL.createObjectURL.bind(URL);
+    const createObjectURL = vi
+      .spyOn(URL, 'createObjectURL')
+      .mockImplementation((blob: Blob | MediaSource) => {
+        if ((blob as File).name === 'a.png') throw new Error('createObjectURL refused a.png');
+        return realCreateObjectURL(blob);
+      });
+
+    try {
+      const uploadToCF = vi
+        .fn<(file: File) => Promise<{ id: string }>>()
+        .mockImplementation(async (file) => ({ id: `key-${file.name}` }));
+
+      const { items, failed } = await uploadBulkPanels({
+        files: [png('a.png'), png('b.png'), png('c.png')],
+        uploadToCF,
+      }).catch((err: unknown) => {
+        // The mutant's signature. `uploadBulkPanels` returns partials by contract; when it
+        // throws instead, the caller's `landed` stays `[]` and b + c are lost silently.
+        throw new Error(
+          'uploadBulkPanels must not throw on a mid-loop failure — the panels that already ' +
+            `uploaded are discarded when it does. It threw: ${(err as Error).message}`
+        );
+      });
+
+      // b and c still uploaded, and their panels came back.
+      expect(uploadToCF).toHaveBeenCalledTimes(2);
+      expect(items.map((item) => item.sourceImage?.cfId)).toEqual(['key-b.png', 'key-c.png']);
+
+      // …and a was REPORTED, not silently dropped.
+      expect(failed).toEqual([
+        {
+          name: 'a.png',
+          error: expect.objectContaining({ message: 'createObjectURL refused a.png' }),
+        },
+      ]);
+    } finally {
+      createObjectURL.mockRestore();
+    }
+  });
 });

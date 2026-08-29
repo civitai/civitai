@@ -480,22 +480,24 @@ export function PanelModal({
     if (files.length === 0) return;
     setBulkUploading(true);
     /**
-     * 🔴 DECLARED OUTSIDE THE `try`, AND COMMITTED IN THE `finally`. RESTORED.
+     * 🔴 "PANELS THAT UPLOADED ARE KEPT" IS GUARANTEED IN TWO PLACES, AND THIS IS THE
+     * SECOND, NARROWER ONE. Read both before moving either.
      *
-     * This invariant was established deliberately: the commit used to sit at the end of
-     * the `try`, so one throw past it discarded the WHOLE batch — the panels that had
-     * already uploaded fine included. Extracting the loop into `uploadBulkPanels` moved
-     * `items` back inside the `try` and deleted the comment saying why it must not be
-     * there, which silently weakened the invariant. No reachable thrower was found between
-     * the upload and the commit today, so this was not a live regression — but "no
-     * reachable thrower today" is exactly the claim that stops being true when someone adds
-     * a line here, and the failure mode is silent data loss the user already saw succeed.
+     * The batch can be lost at two different points, and only one of them is here:
      *
-     * 🔴 NOT PINNED BY A TEST, and it cannot cheaply be: driving it needs `PanelModal`
-     * mounted, which takes ~40 required props plus the Buzz hooks, feature flags, a tRPC
-     * query, dnd-kit and `dialogStore` — the very reason the loop was extracted. The loop's
-     * own failure policy IS pinned, in `bulk-panel-upload.browser.test.tsx`; this ordering
-     * is held by the shape of the code and by this comment.
+     * - INSIDE the loop, i.e. a throw while file N is being processed. `landed` cannot help
+     *   there: it is assigned only after `uploadBulkPanels` returns as a WHOLE, so a throw
+     *   that escaped the loop would leave it `[]` and the finally would commit nothing.
+     *   That case is owned by `bulk-panel-upload.ts`, whose per-file `try` spans the whole
+     *   loop body so the function always returns the panels that landed — pinned by
+     *   `bulk-panel-upload.browser.test.tsx`.
+     * - AFTER the loop, i.e. a throw between `uploadBulkPanels` returning and the commit —
+     *   today only the reporting call below. That is what declaring `landed` outside the
+     *   `try` and committing it in the `finally` buys, and it is why the commit must not be
+     *   moved back to the end of the `try`. It is held by the shape of the code and by this
+     *   comment, not by a test: driving it needs `PanelModal` mounted, which takes ~40
+     *   required props plus the Buzz hooks, feature flags, a tRPC query, dnd-kit and
+     *   `dialogStore` — the very reason the loop was extracted in the first place.
      */
     let landed: BulkPanelItem[] = [];
     try {
@@ -520,8 +522,10 @@ export function PanelModal({
       // reaches here; a genuine defect still should be surfaced rather than swallowed.
       showErrorNotification({ error: err as Error, title: 'Failed to upload image' });
     } finally {
-      // 🔴 The panels that DID upload are kept, on every path. `landed` is empty when the
-      // first file failed, so this is a no-op rather than a spurious state write.
+      // 🔴 The panels that DID upload are kept whether the reporting above threw or not.
+      // A throw from INSIDE the loop is not covered here — `uploadBulkPanels` owns that,
+      // see the block above. `landed` is empty when every file failed, so this is a no-op
+      // rather than a spurious state write.
       if (landed.length > 0) setBulkItems((prev) => [...prev, ...landed].slice(0, 20));
       setBulkUploading(false);
     }
