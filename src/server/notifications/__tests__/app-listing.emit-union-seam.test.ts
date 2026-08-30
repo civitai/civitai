@@ -41,17 +41,24 @@ const NOTIFY_SRC = path.resolve(__dirname, '../../services/blocks/app-listing-no
  * processor-less member truncated the parse to drop exactly that member, and ALL FOUR tests
  * passed — including the positive control, which only checks the union is non-empty and
  * contains a long-standing member. The guard read as coverage for the case most likely to
- * arise (a member appended at the end) while providing none. The two-sided count assertion
- * below is the second half of the fix: a truncated parse now disagrees with the processor
- * count even when both `⊆` directions pass.
+ * arise (a member appended at the end) while providing none.
+ *
+ * ⚠ NOTHING DOWNSTREAM CAN CATCH THAT — a claim an earlier revision of this comment got wrong
+ * in the same way. A truncated parse is a SUBSET of the processor set, so both `⊆` tests pass;
+ * set equality being forced, the size comparison passes too. Measured green against exactly
+ * that scenario. **The stripping IS the guard**, so it is pinned directly by
+ * `parseUnionFrom`'s own tests at the bottom of this file, against synthetic sources whose
+ * answer is known without reading the file under audit.
  */
-function parseEmitUnion(): string[] {
-  const src = readFileSync(NOTIFY_SRC, 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/\/\/[^\n]*/g, '');
+export function parseUnionFrom(source: string): string[] {
+  const src = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
   const decl = /export type AppListingOwnerNotificationType\s*=([\s\S]*?);/.exec(src);
-  if (!decl) throw new Error(`could not locate the union declaration in ${NOTIFY_SRC}`);
+  if (!decl) throw new Error('could not locate the union declaration');
   return [...decl[1].matchAll(/'([a-z0-9-]+)'/g)].map((m) => m[1]);
+}
+
+function parseEmitUnion(): string[] {
+  return parseUnionFrom(readFileSync(NOTIFY_SRC, 'utf8'));
 }
 
 describe('app-listing owner notifications — the emit union and the processor keys agree', () => {
@@ -80,12 +87,20 @@ describe('app-listing owner notifications — the emit union and the processor k
   });
 
   /**
-   * 🔴 THE TWO-SIDED COUNT. Both `⊆` checks above can pass while the parse silently dropped
-   * members — a truncated union is a SUBSET of the processors, and every surviving member
-   * still has an entry. Only comparing the sizes catches it.
+   * ⚠ THIS CATCHES DUPLICATES, NOT TRUNCATION — and the name says so because an earlier
+   * revision claimed the opposite and was wrong.
+   *
+   * The two `⊆` tests above already force `set(parsed) === set(processors)`. Given that,
+   * comparing sizes can only fail when `parsed` holds a DUPLICATE — a truncation removes
+   * members and never creates one, so this assertion is structurally incapable of seeing it.
+   * The comment that used to sit here said it was "the second half of the fix" for truncation;
+   * it was measured as green against exactly that scenario. Truncation is caught by the
+   * comment-stripping in the parser, which is why the parser now has its own tests below
+   * instead of being trusted through this one.
    */
-  it('the two sets are the same SIZE — a silently truncated parse cannot pass', () => {
-    expect(parseEmitUnion().length).toBe(Object.keys(appListingNotifications).length);
+  it('no DUPLICATE union member (this does NOT catch a truncated parse — see below)', () => {
+    const union = parseEmitUnion();
+    expect(new Set(union).size).toBe(union.length);
   });
 
   it('every processor renders a non-empty message and a url for a minimal payload', () => {
@@ -98,5 +113,47 @@ describe('app-listing owner notifications — the emit union and the processor k
       expect(prepared?.message?.length, `${type} rendered an empty message`).toBeGreaterThan(0);
       expect(prepared?.url, `${type} rendered no url`).toBeTruthy();
     }
+  });
+});
+
+/**
+ * 🔴 THE PARSER GETS ITS OWN TESTS, because every assertion above is downstream of it and
+ * therefore cannot see it fail in the direction that matters.
+ *
+ * A parse that silently DROPS a member produces a union that is a subset of the processor set —
+ * so both `⊆` checks pass, and (set equality being forced) so does the size comparison. Measured:
+ * with the comment-stripping reverted, round 3's exact scenario left all five tests above green.
+ * The only thing standing between that and a shipped, unrenderable notification type is the
+ * stripping, so the stripping is what has to be pinned — directly, against synthetic sources,
+ * where the expected answer is known independently of the file under audit.
+ */
+describe('parseUnionFrom — the parse itself, against sources with known answers', () => {
+  const union = (members: string, extra = '') =>
+    `export type AppListingOwnerNotificationType =\n${extra}${members};\n`;
+
+  it('POSITIVE CONTROL: reads a plain union', () => {
+    expect(parseUnionFrom(union(`  | 'a-one'\n  | 'a-two'`))).toEqual(['a-one', 'a-two']);
+  });
+
+  it('🔴 a semicolon inside a // comment does NOT truncate the union', () => {
+    const src = union(`  | 'a-one'\n  // NOTE: emitted by the new sweep; see #1234.\n  | 'a-two'`);
+    // Pre-fix this returned ['a-one'] — dropping exactly the appended member, which is the
+    // member most likely to be the new, processor-less one.
+    expect(parseUnionFrom(src)).toEqual(['a-one', 'a-two']);
+  });
+
+  it('🔴 a semicolon inside a block comment does NOT truncate it either', () => {
+    const src = union(`  | 'a-one'\n  /* first; second */\n  | 'a-two'`);
+    expect(parseUnionFrom(src)).toEqual(['a-one', 'a-two']);
+  });
+
+  it('a // inside a string elsewhere in the file does not corrupt the parse', () => {
+    const src = `const DOCS = 'https://civitai.com/docs';\n` + union(`  | 'a-one'\n  | 'a-two'`);
+    expect(parseUnionFrom(src)).toEqual(['a-one', 'a-two']);
+  });
+
+  it('throws loudly when the declaration is absent, rather than returning []', () => {
+    // An empty return would make every ⊆ check above vacuously true.
+    expect(() => parseUnionFrom('export type Something = string;')).toThrow(/union declaration/);
   });
 });

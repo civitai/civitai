@@ -9,6 +9,7 @@ import {
   listingKindChip,
   listingModActionLabel,
   listingModActions,
+  listingModActionsForRow,
   type ListingModAction,
 } from '~/components/Apps/appListingModerationTableView';
 
@@ -435,5 +436,65 @@ describe('effectiveModerationStatus', () => {
     expect(effectiveModerationStatus({ status: 'removed', pendingRequest: pendingReq })).toBe(
       'removed'
     );
+  });
+});
+
+/**
+ * 🔴 `listingModActionsForRow` — the DTO→args mapping and its SAFE DEFAULT.
+ *
+ * This lived inline in `AppListingsModerationTable.tsx` and was untestable there: the browser
+ * tier is the only suite that renders that component, it has no on-site orphan-draft fixture,
+ * and on this host it cannot run at all. Measured — inverting the default to the permissive
+ * direction left 1601 files / 25,069 tests green. These are the tests that make the mutation die.
+ */
+describe('listingModActionsForRow — DTO mapping and the fail-safe default', () => {
+  const draftRow = (over: Record<string, unknown> = {}) => ({
+    status: 'draft',
+    kind: 'onsite',
+    appBlockId: null,
+    pendingRequest: null,
+    hasPendingBlockRequest: false,
+    ...over,
+  });
+
+  it('offers Purge for an orphan draft with the flag explicitly FALSE', () => {
+    expect(listingModActionsForRow(draftRow())).toEqual(['message-owner', 'purge']);
+  });
+
+  it('withholds it when the flag is TRUE', () => {
+    expect(listingModActionsForRow(draftRow({ hasPendingBlockRequest: true }))).toEqual([
+      'message-owner',
+    ]);
+  });
+
+  /**
+   * 🔴 THE DEFAULT, and the only case that distinguishes `?? true` from `?? false`. A client
+   * bundle from either side of a deploy can hand us a row without this field; `!undefined` is
+   * truthy, so an unnormalized read would OFFER the destructive action on a listing that may be
+   * under live review.
+   */
+  it('withholds it when the flag is ABSENT — absent means assume under review', () => {
+    expect(listingModActionsForRow(draftRow({ hasPendingBlockRequest: undefined }))).toEqual([
+      'message-owner',
+    ]);
+  });
+
+  it('withholds it when the flag is NULL (a DTO that serialised the absence)', () => {
+    expect(listingModActionsForRow(draftRow({ hasPendingBlockRequest: null }))).toEqual([
+      'message-owner',
+    ]);
+  });
+
+  it('derives hasPendingRequest from the pendingRequest object, not a boolean field', () => {
+    // Off-site pending row: the mapping must turn a non-null object into `true` so Review shows.
+    expect(
+      listingModActionsForRow({
+        status: 'pending',
+        kind: 'offsite',
+        appBlockId: null,
+        pendingRequest: { id: 'alpr_1' },
+        hasPendingBlockRequest: false,
+      })
+    ).toEqual(['review', 'message-owner']);
   });
 });

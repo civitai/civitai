@@ -28,7 +28,7 @@ import {
   isDestructiveListingModAction,
   listingKindChip,
   listingModActionLabel,
-  listingModActions,
+  listingModActionsForRow,
   type ListingModAction,
 } from '~/components/Apps/appListingModerationTableView';
 import {
@@ -329,22 +329,10 @@ export function AppListingsModerationTable({
             // Badge reads the EFFECTIVE status ("Pending" for a draft-with-pending),
             // matching the bucket. Actions below intentionally keep the REAL status.
             const statusChip = listingStatusChip(effectiveModerationStatus(row));
-            const actions = listingModActions({
-              status: row.status,
-              kind: row.kind,
-              hasPendingRequest: row.pendingRequest != null,
-              appBlockId: row.appBlockId,
-              // NOT `pendingRequest != null` — that reads the AppListingPublishRequest
-              // relation, which is structurally null for an on-site pre-approval draft.
-              //
-              // `?? true` because ABSENT MUST MEAN "assume under review". The field is new, so
-              // a client holding a bundle from either side of a deploy — or any future producer
-              // of this DTO — can hand us `undefined`, and `!undefined` is truthy, i.e. the
-              // permissive direction on the input to a DESTRUCTIVE affordance. The service
-              // makes the same choice one boundary in (its empty-set default is documented as
-              // permissive and restricted to this caller); this is that reasoning applied here.
-              hasPendingBlockRequest: row.hasPendingBlockRequest ?? true,
-            });
+            // Row-shaped so the field mapping and its safe defaults live in a PURE function the
+            // unit tier can reach — inline here, nothing could test them (see the 🔴 note on
+            // `listingModActionsForRow`).
+            const actions = listingModActionsForRow(row);
             return (
               <Fragment key={row.id}>
                 <Table.Tr data-testid={`apps-mod-listing-row-${row.slug}`}>

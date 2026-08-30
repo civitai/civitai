@@ -152,6 +152,40 @@ export function listingModActions(input: {
   return actions;
 }
 
+/**
+ * 🔴 THE ROW-SHAPED ENTRY POINT, and the reason it exists is testability, not convenience.
+ *
+ * The normalization below used to live inline in `AppListingsModerationTable.tsx`. Nothing could
+ * test it there: the browser tier is the only suite that renders that component, it has no
+ * on-site orphan-draft fixture, and (on this host) it cannot run at all. Measured — inverting
+ * the default to the PERMISSIVE direction left the entire unit tier, 1601 files and 25,069
+ * tests, green. A guard nothing can kill is not a guard.
+ *
+ * Moving it here makes it a pure function the unit tier reaches, so the mutation dies.
+ *
+ * 🔴 ABSENT MEANS "ASSUME UNDER REVIEW". `hasPendingBlockRequest` is newer than some clients
+ * that will call this — a bundle from either side of a deploy, or any future producer of the
+ * DTO — and `!undefined` is truthy, i.e. the permissive direction on the input to a DESTRUCTIVE
+ * affordance. Defaulting to `true` withholds Purge when we cannot tell, which is the only safe
+ * direction: the cost of a wrongly-withheld Purge is a moderator retrying after a refresh; the
+ * cost of a wrongly-offered one is a hard delete of a listing under live review.
+ */
+export function listingModActionsForRow(row: {
+  status: string;
+  kind: string;
+  appBlockId: string | null;
+  pendingRequest: unknown | null;
+  hasPendingBlockRequest?: boolean | null;
+}): ListingModAction[] {
+  return listingModActions({
+    status: row.status,
+    kind: row.kind,
+    hasPendingRequest: row.pendingRequest != null,
+    appBlockId: row.appBlockId,
+    hasPendingBlockRequest: row.hasPendingBlockRequest ?? true,
+  });
+}
+
 /** Whether an action is the destructive one that must be confirmed before firing. */
 export function isDestructiveListingModAction(action: ListingModAction): boolean {
   return action === 'purge';
