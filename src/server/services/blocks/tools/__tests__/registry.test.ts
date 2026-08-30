@@ -674,3 +674,56 @@ describe('#426 item 4 — neutralizeAirLiterals is depth-bounded', () => {
     );
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 CLAIMS THIS MODULE MAKES IN PROSE, PINNED. Each of these was an UNGUARDED
+// assertion an audit could falsify by reading — which is exactly the class that
+// rots silently, because prose does not go red.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 block tool registry — the module\'s own claims', () => {
+  it('🔴 `sort` offers the WHOLE ModelSort enum, not a curated subset', async () => {
+    const { ModelSort } = await import('~/server/common/enums');
+    const decl = blockToolDeclarations().find((t) => t.function.name === 'search_models')!;
+    const params = decl.function.parameters as { properties: Record<string, { enum?: string[] }> };
+
+    // 🔴 EQUALITY, NOT `toContain`. The field's comment argues that a curated
+    // subset here "would be a second rule that can drift from the one
+    // `models.ts` already enforces" — and a `toContain` spot-check is satisfied
+    // by a hand-listed three-value subset, so the claim would be unguarded.
+    expect(new Set(params.properties.sort.enum)).toEqual(new Set(Object.values(ModelSort)));
+  });
+
+  it('🔴 the declared default sort MATCHES the one the route applies', async () => {
+    const { constants } = await import('~/server/common/constants');
+    const decl = blockToolDeclarations().find((t) => t.function.name === 'search_models')!;
+    const params = decl.function.parameters as {
+      properties: Record<string, { description?: string }>;
+    };
+
+    // The describe string hardcodes the default rather than importing it (that
+    // import would put a server module on this file's load path), so the link
+    // is asserted HERE instead — the same trade this module makes for
+    // MAX_MESSAGE_CHARS.
+    expect(params.properties.sort.description).toContain(
+      `default "${constants.modelFilterDefaults.sort}"`
+    );
+  });
+
+  it('🔴 no Prisma client on this module\'s load path', async () => {
+    // The header's rule is "does this pull Prisma or a service onto the load
+    // path", NOT "is it under ~/server" — the wording used to say
+    // server-import-free, which stopped being true. Assert the PROPERTY.
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(
+      new URL('../registry.ts', import.meta.url).pathname,
+      'utf8'
+    );
+    const imports = [...src.matchAll(/^import[^;]*?from '([^']+)';/gm)].map((m) => m[1]);
+
+    // Everything imported must be zod or a pure enum module. A service, a
+    // client, or `~/server/db/*` would break the property the header protects.
+    expect(imports.sort()).toEqual(
+      ['zod', '~/server/common/enums', '~/shared/utils/prisma/enums'].sort()
+    );
+  });
+});

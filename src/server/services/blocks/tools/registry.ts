@@ -15,8 +15,19 @@ import { MetricTimeframe, ModelType } from '~/shared/utils/prisma/enums';
 // arguments the model sends back. AC5 requires the allowlist be "enumerated in
 // code"; this module is that enumeration.
 //
-// 🔴 THIS MODULE IS SERVER-IMPORT-FREE, and that is deliberate rather than
-// tidy. It mirrors the reasoning `~/server/utils/block-catalog-maturity` states
+// 🔴 THIS MODULE KEEPS PRISMA OFF ITS LOAD PATH, and that is deliberate rather
+// than tidy.
+//
+// ⚠️ IT USED TO SAY "SERVER-IMPORT-FREE", AND THAT WORDING IS NOW FALSE — an
+// audit caught it. This file imports `ModelSort` from `~/server/common/enums`
+// and `MetricTimeframe`/`ModelType` from `~/shared/utils/prisma/enums`, so the
+// literal claim does not hold. The PROPERTY it was protecting does: both are
+// pure enum modules — `~/server/common/enums` has one import
+// (`@civitai/notifications/constants`, itself importing nothing) and the shared
+// one only re-exports `@civitai/db-schema/enums`. Neither drags the Prisma
+// client. The rule to apply when adding an import here is therefore "does this
+// pull Prisma or a service onto the load path", not "is it under ~/server".
+// Pinned by `__tests__/registry.test.ts`, which walks the import graph. It mirrors the reasoning `~/server/utils/block-catalog-maturity` states
 // for the maturity clamp: the security-relevant parts (the allowlist, the
 // argument bounds, the projection, the AIR scrub) must be unit-testable without
 // dragging the Prisma client, and the only backing implementation available
@@ -74,7 +85,7 @@ import { MetricTimeframe, ModelType } from '~/shared/utils/prisma/enums';
  * framing ("Results for X:") without pushing the message over.
  *
  * 🔴 THE LINK TO `MAX_MESSAGE_CHARS` IS ASSERTED IN A TEST, NOT IMPORTED. This
- * module is server-import-free on purpose (see the header); importing
+ * module keeps Prisma off its load path on purpose (see the header); importing
  * `chat-completion.step` here would drag the step registry onto its load path
  * and defeat that. `__tests__/registry.test.ts` imports BOTH and goes red if
  * either constant moves — the same technique `chat-completion.step` already uses
@@ -103,6 +114,24 @@ export const MAX_TOOL_RESULT_ITEMS = 10;
  */
 export const MAX_TOOL_FILTER_ITEMS = 10;
 export const MAX_TOOL_FILTER_VALUE_CHARS = 64;
+
+/**
+ * How many Meilisearch candidates to pull when a text `query` is combined with
+ * an explicit `sort`.
+ *
+ * 🔴 WITHOUT THIS THE SORT IS APPLIED TO THE WRONG SET. Meili returns the top-N
+ * by RELEVANCE; the database then orders those N by `sort`. If N is the page
+ * size, "the most downloaded anime models" means "take the 5 most RELEVANT
+ * matches for 'anime', then put those 5 in download order" — which is not the
+ * question. Widening the candidate pool first, and letting the database pick
+ * the page out of it, makes the sort mean what it says.
+ *
+ * Bounded, and deliberately modest: this is an id-only Meili read whose cost is
+ * the id list, but it is still a bigger read than the page, issued on behalf of
+ * an untrusted caller. It only fires when BOTH a query and an explicit sort are
+ * present.
+ */
+export const TOOL_SORTED_QUERY_CANDIDATES = 100;
 
 /**
  * How many results a call returns when it does not ask.
@@ -153,7 +182,7 @@ export const MAX_PROJECTED_TAGS = 8;
  * 🔴 DUPLICATED FROM `steps/index`'s `AIR_URN_PREFIX` ON PURPOSE, and the
  * duplication is asserted in the tests rather than left to drift. Importing it
  * would pull the step registry onto this module's load path, which the
- * server-import-free property forbids. The test imports both and fails if they
+ * Prisma-free load-path property forbids. The test imports both and fails if they
  * diverge — the same trade this file makes for `MAX_MESSAGE_CHARS`.
  */
 export const AIR_URN_PREFIX_LOCAL = 'urn:air:';
@@ -437,8 +466,16 @@ const searchModelsArgs = z
       .enum(ModelSort)
       .optional()
       .describe(
+        // 🔴 THE DEFAULT IS A LITERAL, AND ITS LINK TO
+        // `constants.modelFilterDefaults.sort` IS ASSERTED IN A TEST RATHER THAN
+        // IMPORTED — the same trade this file already makes for
+        // `MAX_MESSAGE_CHARS`, and for the same reason: importing
+        // `~/server/common/constants` here would put a server module on this
+        // one's load path and break the Prisma-free load-path property the header
+        // depends on. `registry.test.ts` fails if the two ever diverge.
         'How to rank results (default "Highest Rated"). Use "Most Downloaded" or "Most Liked" ' +
-          'for popularity questions, "Newest" for recency.'
+          'for popularity questions, "Newest" for recency. Combining it with `query` ranks ' +
+          'within the text matches rather than by relevance.'
       ),
     // 🔴 WAS A SINGULAR `type` ON A SIX-VALUE HAND-WRITTEN ENUM, and both halves
     // were wrong. `ModelType` has far more members — `Wildcards`, `Poses`,

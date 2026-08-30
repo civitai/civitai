@@ -58,6 +58,14 @@ export type RunModelSearchInput = Partial<Omit<GetAllModelsOutput, 'browsingLeve
   collectionId?: number;
   /** supportsGeneration filter (forwarded from `data.supportsGeneration`). */
   supportsGeneration?: boolean;
+  /**
+   * Keep Meilisearch's relevance order for a text search (default `true`).
+   *
+   * Pass `false` when the caller has an EXPLICIT, user-chosen `sort` that must
+   * win over relevance — otherwise the restore below silently discards it. See
+   * the comment at the `orderedItems` assignment.
+   */
+  preserveRelevanceOrder?: boolean;
 };
 
 export type RunModelSearchContext = {
@@ -182,6 +190,9 @@ export async function runModelSearch(
     primaryFileOnly,
     collectionId,
     searchIds,
+    // Destructured so it does NOT reach `...data` and get spread into the
+    // catalog query as an unknown column filter.
+    preserveRelevanceOrder,
     // Dropped, never forwarded: the ctx value is the only authority. The input
     // type excludes it, but callers spread parsed query data in through a cast,
     // and `browsingLevel` now decides the minor gate as well as the level filter.
@@ -214,8 +225,22 @@ export async function runModelSearch(
 
   // Meilisearch returns ids in relevance order, but getModelsWithVersions
   // re-sorts by lastVersionAt/modelId. For text search, restore relevance.
+  //
+  // 🔴 UNLESS THE CALLER EXPLICITLY ASKED FOR AN ORDER. This restore is
+  // unconditional-on-`query` by default, which silently DISCARDS `sort`
+  // whenever a text query is present: `getModelsRaw` builds its `orderBy`
+  // purely from `sort` (`model.service`, the `ModelSort` ladder), the rows come
+  // back correctly ordered, and this line then reimposes relevance over the top.
+  // The caller cannot tell — nothing errors, and the result is a plausible list
+  // in the wrong order. That is how "the most popular ANIME models" returns
+  // relevance-ranked results while "the most popular models" ranks correctly.
+  //
+  // Opt-out rather than a behaviour change: `preserveRelevanceOrder` defaults to
+  // the historical behaviour, so every existing caller — the public endpoint and
+  // `blocks/models` included — is untouched. Only a caller that has a real
+  // user-chosen sort AND wants it to win passes `false`.
   const orderedItems =
-    query && searchIds
+    query && searchIds && preserveRelevanceOrder !== false
       ? searchIds.map((id) => items.find((m) => m.id === id)).filter(isDefined)
       : items;
 

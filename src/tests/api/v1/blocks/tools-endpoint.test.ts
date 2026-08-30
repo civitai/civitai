@@ -750,3 +750,100 @@ describe('🔴 /api/v1/blocks/tools — the catalog filters the public API has',
     expect(mockRunModelSearch).not.toHaveBeenCalled();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 `sort` + `query` TOGETHER. Found by an adversarial audit of the first
+// commit: `runModelSearch` restores Meilisearch's RELEVANCE order whenever a
+// `query` is present, which silently overwrote the database's `sort` ordering.
+// So this PR fixed "the most popular models" and NOT "the most popular ANIME
+// models" — the same question, scoped, and the phrasing the schema most invites.
+// Nothing errored; the list was plausible and in the wrong order.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 /api/v1/blocks/tools — an explicit sort must WIN over relevance', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('query + explicit sort opts OUT of the relevance restore', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { query: 'anime', sort: 'Most Downloaded' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.preserveRelevanceOrder).toBe(false);
+    expect(args.sort).toBe('Most Downloaded');
+  });
+
+  // 🔴 POSITIVE CONTROL. Without it, passing `preserveRelevanceOrder: false`
+  // unconditionally — which would silently degrade every plain text search from
+  // relevance to lastVersionAt order — satisfies the assertion above.
+  it('🔴 POSITIVE CONTROL — a query with NO sort keeps relevance order', async () => {
+    await invoke('POST', { name: 'search_models', arguments: { query: 'anime' } });
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.preserveRelevanceOrder).toBeUndefined();
+  });
+
+  // 🔴 SORTING THE WRONG SET IS STILL WRONG. Meili ranks by relevance and the DB
+  // then orders whatever ids it is given, so pulling only the page size would
+  // mean "take the 5 most RELEVANT anime models, then put those 5 in download
+  // order" — not the question asked.
+  it('🔴 widens the Meili candidate pool when a sort has to win', async () => {
+    const { TOOL_SORTED_QUERY_CANDIDATES } = await import(
+      '~/server/services/blocks/tools/registry'
+    );
+    await invoke('POST', {
+      name: 'search_models',
+      arguments: { query: 'anime', sort: 'Most Downloaded', limit: 5 },
+    });
+    expect(mockResolveModelSearchIds.mock.calls[0][0].limit).toBe(TOOL_SORTED_QUERY_CANDIDATES);
+  });
+
+  it('🔴 POSITIVE CONTROL — an unsorted query pulls only the page size', async () => {
+    await invoke('POST', { name: 'search_models', arguments: { query: 'anime', limit: 5 } });
+    expect(mockResolveModelSearchIds.mock.calls[0][0].limit).toBe(5);
+  });
+});
+
+// 🔴 COVERAGE HOLE NAMED BY THE AUDIT: every clamp assertion in this file sends
+// `query:'x'`, and one asserts the clamp via `resolveModelSearchIds` — which the
+// no-query path no longer calls. The clamp is computed BEFORE the branch so it
+// is structurally safe, but nothing asserted it on the path this PR added.
+describe('🔴 /api/v1/blocks/tools — the clamp binds on the NO-QUERY path too', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('a GREEN token clamps a no-query sorted read, and Meili is never consulted', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { sort: 'Most Downloaded' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockResolveModelSearchIds).not.toHaveBeenCalled();
+    const [args, ctx] = mockRunModelSearch.mock.calls[0];
+    expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
+    expect(ctx.nsfwImagePassthrough).toBe(false);
+    expect(args.disableMinor).toBe(true);
+  });
+
+  it('🔴 POSITIVE CONTROL — a RED token yields a DIFFERENT level on the same path', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: allBrowsingLevelsFlag });
+    await invoke('POST', { name: 'search_models', arguments: { sort: 'Most Downloaded' } });
+    const [, ctx] = mockRunModelSearch.mock.calls[0];
+    expect(ctx.browsingLevel).toBe(allBrowsingLevelsFlag);
+    expect(ctx.browsingLevel).not.toBe(sfwBrowsingLevelsFlag);
+  });
+});

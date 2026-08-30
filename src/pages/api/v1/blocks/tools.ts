@@ -25,6 +25,7 @@ import {
   projectModelForTool,
   DEFAULT_TOOL_RESULT_ITEMS,
   MAX_TOOL_RESULT_ITEMS,
+  TOOL_SORTED_QUERY_CANDIDATES,
 } from '~/server/services/blocks/tools/registry';
 import {
   MAX_TOOL_NAME_CHARS,
@@ -277,18 +278,38 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       // is the same split that file already uses for dispatch.
       const slugifiedUsername = username ? postgresSlugify(username) : undefined;
 
-      // 🔴 THE MEILI HOP IS NOW CONDITIONAL, mirroring `blocks/models.ts`. With
-      // no `query` there is no text relevance to resolve, and running it anyway
-      // would hand `runModelSearch` an EMPTY `searchIds` from a search for
-      // nothing rather than the "no text filter" it means. `searchIds: []` plus
-      // `query: undefined` is exactly the pure-sorted-read shape that route
-      // already relies on.
+      // 🔴 A TEXT QUERY SILENTLY DISCARDED `sort` UNTIL THIS EXISTED.
+      // `runModelSearch` restores Meilisearch's relevance order whenever a
+      // `query` is present, which overwrites the database's `sort` ordering.
+      // So "the most popular models" ranked correctly while "the most popular
+      // ANIME models" — the same question, scoped — came back in relevance
+      // order, with nothing to indicate the sort had been dropped. Only an
+      // EXPLICIT sort opts out: without one there is no user intent to honour
+      // and relevance is the better default.
+      const sortedQuery = Boolean(query && sort);
+
+      // 🔴 THE MEILI HOP IS NOW CONDITIONAL, mirroring `blocks/models.ts`.
+      //
+      // ⚠️ CORRECTED: an earlier version of this comment claimed an
+      // unconditional hop "would hand `runModelSearch` an EMPTY `searchIds`
+      // rather than the 'no text filter' it means" — i.e. that it would produce
+      // a WRONG RESULT SET. That is false, and an audit caught it.
+      // `runModelSearch` gates BOTH id paths on `query` (`ids: query ? searchIds
+      // ?? [] : queryIds`, and the relevance restore), so with `query`
+      // undefined the empty `searchIds` is never consulted and the result would
+      // have been identical. What the condition actually saves is a pointless
+      // Meilisearch round-trip and the 503 exposure that comes with it. Worth
+      // doing, but for that reason and not the scary one.
       let searchIds: number[] = [];
       try {
         if (query) {
           const meili = await resolveModelSearchIds({
             query,
-            limit: effectiveLimit,
+            // 🔴 WIDER WHEN A SORT MUST WIN. Meili ranks by relevance; the
+            // database then orders whatever ids it is handed. Pulling only the
+            // page size would sort the 5 most RELEVANT matches, not the top of
+            // the matching set — see TOOL_SORTED_QUERY_CANDIDATES.
+            limit: sortedQuery ? TOOL_SORTED_QUERY_CANDIDATES : effectiveLimit,
             browsingLevel,
             types,
           });
@@ -331,6 +352,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           // popular models" unanswerable: the only lever left was `query`, so
           // the ranking word became the search term.
           sort: (sort ?? constants.modelFilterDefaults.sort) as never,
+          ...(sortedQuery ? { preserveRelevanceOrder: false } : {}),
           // Same shape as `sort`, and for the same reason: a hardcoded AllTime
           // makes "most downloaded THIS MONTH" unaskable. `blocks/models.ts`
           // still hardcodes this one, so the tool is deliberately WIDER than the
