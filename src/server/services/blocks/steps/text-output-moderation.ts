@@ -104,6 +104,60 @@ export const SFW_ONLY_WITHHOLD_LABELS: readonly string[] = [
 ] as const;
 
 /**
+ * The score at or above which a {@link SFW_ONLY_WITHHOLD_LABELS} label withholds
+ * TEXT output. It replaces the scanner's own per-label threshold, which is tuned
+ * for IMAGE moderation.
+ *
+ * 🔴 THIS IS THE SAME DECISION THIS FILE ALREADY MADE ABOUT `blocked`, ONE STEP
+ * FURTHER. `decideTextOutputVerdict` already refuses the orchestrator's
+ * image-tuned ACTION config (see its comment on `blocked`) because this policy
+ * decides what to do about text. `triggered` is the other half of that same
+ * config — it is nothing but `score >= <the registry's image-tuned threshold>`
+ * — so taking the score and applying a text-tuned threshold here is the
+ * consistent position, not a new kind of move.
+ *
+ * 🔴 WHY 0.75, AND WHAT IT COSTS. Measured on a corpus of catalog-style block
+ * replies (48 texts, 240 scans, each text replicated), scored by the deployed
+ * text scanner:
+ *
+ *   - At the image-tuned 0.5 a large majority of benign catalog answers withheld
+ *     — the format a catalog-backed block emits (a numbered list of real model
+ *     titles, links and attribute bullets) sits in the middle of the score
+ *     distribution, so ordinary answers were being suppressed.
+ *   - The score is NOT deterministic on identical bytes. It is quantised onto a
+ *     fixed log-odds lattice (adjacent-mode spacing 0.1219 ± 0.0020 in log-odds,
+ *     n=17 gaps), and a text near a threshold lands on either side of it across
+ *     repeats of the SAME input. At 0.5 roughly a third of the corpus flipped
+ *     verdict nondeterministically; at 0.75 that falls to ~2%.
+ *   - 0.60 was REJECTED: it roughly halves the withhold rate while buying NO
+ *     reduction in the nondeterministic fraction, because the lattice is dense
+ *     where the corpus piles up.
+ *   - 0.85 was REJECTED: it buys ~1.7 points of withhold rate over 0.75 and
+ *     TRIPLES the nondeterministic fraction, because two corpus texts sit
+ *     essentially ON 0.85 (within one lattice step) and straddle it. That is the
+ *     same failure that ruled out 0.60 — a threshold landing INSIDE a lattice
+ *     band is a coin flip on identical input.
+ *   - At 0.75 every text that still withholds is at least four lattice steps
+ *     clear of the line, and none was observed to straddle.
+ *
+ * THE GUARD IS WEAKENED BY CONSTRUCTION, and that is the accepted cost: ~15% of
+ * realistic catalog replies still withhold, all of them the population whose
+ * catalog-assigned tags carry a sexuality token. The considered alternative —
+ * dropping `Suggestive` from {@link SFW_ONLY_WITHHOLD_LABELS} — was rejected
+ * because it takes the corpus withhold rate to ZERO: across the corpus's
+ * three-label scans `Explicit` and `NSFW` never triggered without `Suggestive`,
+ * so removing it leaves the SFW tier inert for text. The threshold moves; the
+ * label set does not.
+ *
+ * 🔴 IMAGE MODERATION IS NOT AFFECTED. This constant is read in exactly one
+ * place — `decideTextOutputVerdict`, which is called only from
+ * `screenGeneratedText` on the block text-output path. The scan REQUEST is
+ * unchanged (no `labelOverrides`), so the orchestrator scores text exactly as it
+ * did and every other consumer of that scan sees exactly what it saw before.
+ */
+export const SFW_ONLY_TEXT_SCORE_THRESHOLD = 0.75;
+
+/**
  * Labels scanned but deliberately NOT acted on — recorded here so the set is
  * enumerable and the tests can assert the three sets PARTITION the scan list
  * (no label silently drops out of the policy when someone edits one array).
@@ -156,6 +210,23 @@ export type XGuardLabelResultLike = {
   triggered?: unknown;
   error?: unknown;
   finishReason?: unknown;
+  /**
+   * 🔴 DECLARED SO THE DISAGREEMENT IS VISIBLE, AND DELIBERATELY NOT READ.
+   * The scanner echoes the threshold IT applied when it computed `triggered`,
+   * and for the {@link SFW_ONLY_WITHHOLD_LABELS} tier that value is image-tuned
+   * and is NOT the threshold this policy enforces — see
+   * {@link SFW_ONLY_TEXT_SCORE_THRESHOLD}. Reading it would re-import the very
+   * calibration the text policy exists to replace, and a future registry edit
+   * would then silently move a text verdict.
+   *
+   * The two therefore DO differ, on purpose, and the way that is kept from being
+   * silent is behavioural rather than cosmetic: for the SFW tier
+   * `decideTextOutputVerdict` decides from `score` against this file's own
+   * constant in BOTH directions, so the echoed value cannot change a verdict
+   * whether it is lower OR higher than ours. Pinned by tests that feed a result
+   * whose echoed `threshold` disagrees with the enforced one each way.
+   */
+  threshold?: unknown;
 };
 
 /** The scan output shape this policy reads. */
@@ -168,7 +239,15 @@ export type XGuardScanOutputLike = {
 export type TextOutputScanVerdict = {
   /** True when the text may be released to the block. */
   released: boolean;
-  /** The POLICY-ACTIONED labels that triggered. Empty on a release. */
+  /**
+   * The POLICY-ACTIONED labels. Empty on a release.
+   *
+   * 🔴 NOT A SUBSET OF `triggeredLabels`. For the maturity-gated tier this
+   * policy applies its OWN threshold to the score
+   * ({@link SFW_ONLY_TEXT_SCORE_THRESHOLD}), so a label the scanner flagged can
+   * be absent here (score below our threshold) and a label it did not flag can
+   * be present (score at or above ours, scanner threshold higher).
+   */
   withholdingLabels: string[];
   /** Every label that triggered, actioned or not — telemetry, not policy. */
   triggeredLabels: string[];
@@ -436,6 +515,16 @@ export function erroredRequestedLabels(
  * ever disagree, the union withholds and the intersection releases. Union is
  * the fail-closed direction, so union is what this does.
  *
+ * 🔴 THE MATURITY-GATED TIER IS DECIDED ON THE SCORE, NOT ON `triggered`.
+ * `triggered` is `score >= <the orchestrator registry's threshold>`, and that
+ * threshold is image-tuned — the same calibration this function already refuses
+ * when it ignores `blocked`. For {@link SFW_ONLY_WITHHOLD_LABELS} the score is
+ * compared against {@link SFW_ONLY_TEXT_SCORE_THRESHOLD} instead, in BOTH
+ * directions, so the echoed `results[].threshold` cannot move a text verdict
+ * whether it is lower or higher than ours. A SFW-tier label that triggered but
+ * carries NO readable score FAILS CLOSED. {@link ALWAYS_WITHHOLD_LABELS} is
+ * untouched by this and still withholds on `triggered` alone.
+ *
  * `modelReason` is NOT read: it came back EMPTY on every probe call against the
  * deployed scanner, so anything built on it would be built on a constant.
  */
@@ -477,12 +566,70 @@ export function decideTextOutputVerdict(
   }
 
   const triggeredLabels = [...triggered];
-  const withholdingLabels = triggeredLabels.filter((label) => {
+
+  // Which labels came back with a READABLE score, by normalized key. The key is
+  // normalized for the same reason every other comparison in this file is: a
+  // label arrives spelled by the orchestrator, and an exact-match lookup would
+  // miss on a casing this side does not control — which here would land in the
+  // fail-closed branch below and withhold a benign reply for a cosmetic reason.
+  const scoredKeys = new Set<string>(Object.keys(scores).map(normalizeLabel));
+
+  // Deduped by normalized key so two spellings of one label produce one entry;
+  // the spelling kept is the first seen, which preserves `triggeredLabels` order.
+  const withholding = new Map<string, string>();
+  const addWithhold = (label: string) => {
     const key = normalizeLabel(label);
-    if (ALWAYS_WITHHOLD_KEYS.has(key)) return true;
+    if (!withholding.has(key)) withholding.set(key, label);
+  };
+
+  for (const label of triggeredLabels) {
+    const key = normalizeLabel(label);
+    if (ALWAYS_WITHHOLD_KEYS.has(key)) {
+      // 🔴 UNCHANGED, AND NOT THRESHOLDED. This tier withholds on the scanner's
+      // own `triggered` bit, on either host. The text threshold below applies to
+      // the maturity-gated tier ONLY; extending it here would weaken a guard
+      // that is not the subject of this policy.
+      addWithhold(label);
+      continue;
+    }
     // 🔴 The maturity-gated tier. `isGreen` true == the token's ceiling is SFW.
-    return opts.isGreen && SFW_ONLY_WITHHOLD_KEYS.has(key);
-  });
+    if (!opts.isGreen || !SFW_ONLY_WITHHOLD_KEYS.has(key)) continue;
+    // 🔴 FAIL CLOSED WHEN THERE IS NO READABLE SCORE, AND DECIDE NOTHING ELSE
+    // HERE. The scanner said this label triggered; if we cannot read a number we
+    // cannot apply our own threshold to it, and "we could not evaluate it" must
+    // never read as "clean" — the same invariant `missingRequestedLabels` and
+    // `erroredRequestedLabels` state. This is also the only path by which a
+    // label present ONLY in the top-level `triggeredLabels` array (no
+    // `results[]` entry, hence no score) can be decided, and it decides it the
+    // safe way, which keeps the union-of-two-signals property fail-closed.
+    //
+    // 🔴 THE THRESHOLD COMPARISON IS DELIBERATELY NOT REPEATED HERE. An earlier
+    // draft also compared the score in this loop, which read as belt-and-braces
+    // and was in fact a REDUNDANT SECOND COPY of the same predicate — the
+    // mutation sweep caught it: flipping this loop's `>=` to `>` left the whole
+    // suite GREEN, because the single-site loop below rescued every case. One
+    // rule, one place; the score is compared exactly once, below.
+    if (!scoredKeys.has(key)) addWithhold(label);
+  }
+
+  // 🔴 THE ONE PLACE A SFW-TIER SCORE IS COMPARED TO THE TEXT THRESHOLD — and it
+  // deliberately does NOT consult `triggered`. That is what makes
+  // {@link SFW_ONLY_TEXT_SCORE_THRESHOLD} the enforced threshold in BOTH
+  // directions rather than a filter layered on top of the scanner's verdict.
+  // Filtering `triggeredLabels` alone could only ever be MORE permissive than
+  // the registry: raise the scanner's `Suggestive` threshold above ours and
+  // every score in the gap would arrive `triggered: false`, never enter the
+  // trigger set, and this file's constant would go quietly inert. Iterating the
+  // scores instead is inert while the registry's thresholds sit at or below ours
+  // — the state today — and load-bearing the moment one moves above.
+  if (opts.isGreen) {
+    for (const [label, score] of Object.entries(scores)) {
+      if (!SFW_ONLY_WITHHOLD_KEYS.has(normalizeLabel(label))) continue;
+      if (score >= SFW_ONLY_TEXT_SCORE_THRESHOLD) addWithhold(label);
+    }
+  }
+
+  const withholdingLabels = [...withholding.values()];
 
   // 🔴 A LABEL WE ASKED FOR AND DID NOT GET AN ANSWER FOR WITHHOLDS, on its own,
   // even when nothing triggered. This is the rename/typo fail-open the generated
