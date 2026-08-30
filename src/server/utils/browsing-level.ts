@@ -6,8 +6,15 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 
 /**
- * SSR equivalent of the client's effective browsing level
- * (`BrowsingLevelProvider` → `useBrowsingLevelDebounced`). Use when SSR code
+ * SSR equivalent of the client's effective browsing level.
+ *
+ * 🔴 It takes no page override, so its client twin is
+ * `useViewerBrowsingLevelDebounced` (`forced ?? user`), NOT
+ * `useBrowsingLevelDebounced` (`forced ?? override ?? user`). The "keep in sync"
+ * below means that one. Syncing it against the page-scoped hook would teach SSR
+ * to reproduce an override it has no way to know about.
+ *
+ * Use when SSR code
  * must reproduce a browsing-level-dependent client query key — e.g. resolving
  * the browsing-settings addons to prefetch `image.getInfinite` so a feed/carousel
  * hydrates without a layout shift.

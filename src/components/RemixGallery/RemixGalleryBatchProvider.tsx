@@ -43,6 +43,16 @@ export function RemixGalleryBatchProvider({
   // filled in `allBrowsingLevelsFlag` and the thumbnails, which render as bare
   // `EdgeMedia` with no ImageGuard, came back at every level the viewer had
   // turned off.
+  //
+  // ⚠️ The PAGE level, while `RemixGalleryCard` reads the VIEWER's. They agree
+  // wherever no page sets an override, which is every ordinary feed. Where one
+  // does — the site root, the home blocks, a collection — this count is scoped
+  // to the page and the gallery it opens is scoped to the viewer, so the two can
+  // disagree. Deliberate for now rather than overlooked: this is a count on a
+  // card inside a page-scoped feed, and widening it would show a number for
+  // content the page narrowed on purpose. Raised with Justin 2026-08-30; if he
+  // decides the count should follow the viewer instead, the change is this one
+  // line and the reasoning above is what has to be re-argued.
   const browsingLevel = useBrowsingLevelDebounced();
 
   // The sticker batch's chunker, not a third copy of it. Its own tests pin the
