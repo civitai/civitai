@@ -1,6 +1,6 @@
 # Turbopack "assets emitted to the same output path" — root cause and options
 
-**Date:** 2026-08-18 · **Status (corrected 2026-08-21):** diagnosed, not fixed. Repo is on `^16.3.1`; the doc's "Next: 16.3.0" was a forward-looking expectation, not the current version. 16.3.1 re-rolls the collision but does not fix the mechanism (see §Next 16.3.1 is a re-roll, not a fix).
+**Date:** 2026-08-18 · **Status (updated 2026-08-30):** diagnosed, not fixed — and **option 1 is now closed, measured, at `ebb84fffd6`**. Repo is on `^16.3.1`; the doc's "Next: 16.3.0" was a forward-looking expectation, not the current version. 16.3.1 re-rolls the collision but does not fix the mechanism (see §Next 16.3.1 is a re-roll, not a fix). The peak-RSS gate on option 1 was the one thing this doc left open; it has since been measured on 16.3.1 and **the flag does not fit the builder's memory ceiling** (see §Option 1 is closed).
 
 ## Symptom
 
@@ -119,24 +119,86 @@ not, and the failures will return.
    `experimental.turbopackServerSideNestedAsyncChunking: true` takes the tree above from 24,552
    to 7,122 server chunks (-71%). Since P(collision) grows with the square of the chunk count,
    that is roughly a 9x reduction in expected collisions.
-   **Two blockers, both real:** it is broken on Next 16.3.0 (19 `__turbopack_context__.a is not
-a function` PostCSS errors — run 3; fixed by 16.3.1, run 5), so it depends on the 16.3.1 bump
-   landing first; and this flag was turned off deliberately because it costs ~+33% peak builder
-   RSS against an enforced memory ceiling. That RSS cost has **not** been re-measured here and
-   is the thing to check before flipping it.
+   **Two blockers were named here. The first cleared; the second closed the option.** It is
+   broken on Next 16.3.0 (19 `__turbopack_context__.a is not a function` PostCSS errors — run 3;
+   fixed by 16.3.1, run 5), so it depended on the 16.3.1 bump landing first — that landed in
+   civitai#4075 and the repo is on 16.3.1. The second blocker was the peak builder RSS this flag
+   costs against an enforced memory ceiling. **That has now been measured on 16.3.1 and it does
+   not fit.** See §Option 1 is closed. 🔴 **Do not flip this flag.**
 2. **Re-file upstream with a public minimal reproduction.** The only route to an actual fix
    (a wider or configurable hash). The existing issue died on the missing-repro bot, so this is
    unblocked work, not a wait.
 3. **Do nothing and retry failed builds** — this does not work, and is worth stating plainly so
    nobody spends time on it. The failure is deterministic per tree.
 
+## Option 1 is closed — the flag does not fit the memory ceiling
+
+_Added 2026-08-30. This section supersedes the "not verified" peak-RSS bullet below._
+
+The gate on option 1 was: does the flag's peak builder RSS fit under the enforced 40 GiB build
+container limit? **It does not.** Three independent lines of evidence agree, and two of them
+already existed in this repo when the doc above was written:
+
+1. **Production evidence, in this repo's own history.** civitai#3458 (`0801071370`, 2026-07-30)
+   enabled this flag. civitai#3807 (`c771513011`, 2026-08-11) turned it back off, and says why:
+   _"the release build OOMKilled three times at 37-39 GiB"_ against the newly-enforced 40 GiB
+   builder limit. So the flag had already been tried in production and had already failed. The
+   only open question was whether 16.3.1 changed that.
+
+2. **A same-commit A/B on Next 16.3.1** (2026-08-18, cold `.next`, every arm a complete `rc=0`
+   build, two runs per arm, sampled externally at 4 Hz). It does not change it — the cost is
+   **larger** than the ~+33% previously on record:
+
+   | metric                | base (mean of 2) | `serverchunk` (mean of 2) |          Δ |
+   | --------------------- | ---------------: | ------------------------: | ---------: |
+   | `next-build` max RSS  |        15.53 GiB |                 22.20 GiB | **+43.0%** |
+   | build-container peak  |        22.18 GiB |                 28.91 GiB | **+30.3%** |
+   | server chunks (`.js`) |           24,596 |                 **7,177** | **−70.8%** |
+   | server chunk bytes    |      530,006,443 |               297,943,127 |     −43.8% |
+   | wall                  |            155 s |                     218 s |     +41.0% |
+
+   Baseline spread was 1.4% and the `serverchunk` spread 0.5%, so the +43% effect is ~30x the
+   noise floor; the two baseline runs emitted byte-identical output, which is an independent
+   determinism control. The −70.8% chunk reduction reproduces this doc's run 5 and is real:
+   `(7177/24596)² = 0.085`, i.e. **~11.7x fewer expected collisions**. The benefit is not in
+   doubt. The cost is what closes the option.
+
+3. **The current builder distribution, re-measured 2026-08-30** over the trailing 7 days
+   (n=67 `main` builds): median **24.11 GiB**, p90 **27.72 GiB**, worst observed **28.59 GiB**
+   against the 40 GiB limit. Applying the measured multiplier to the worst observed build puts
+   it at **37.3–39.8 GiB** — inside the 37–39 GiB band in which the release build was OOMKilled
+   three times the last time this flag was on. There is no headroom to spend.
+
+**Also closed: dropping source maps to pay for it.** Combining the flag with
+`turbopackSourceMaps: false` keeps the full −70.8% chunk reduction for roughly the noise floor
+of build memory, which looks like the way out. It is not: server `.js.map` files have three
+consumers in this repo, one of them a hard gate.
+
+- `scripts/assert-compiled-branches.mjs` — a hard CI gate (made hard by civitai#4075) that
+  errors out when it finds no `.js.map` under the server dir.
+- `src/server/utils/errorHandling.ts` — de-minifies production server error stacks at runtime.
+- `scripts/resolve-cpuprofile.mjs` — the CPU-profile de-minification path.
+
+And the knob cannot be split: under Turbopack `experimental.serverSourceMaps` is inert
+(webpack-only, per the rationale at `next.config.mjs:133-139`), so `turbopackSourceMaps` is a
+single switch covering client _and_ server. There is no "keep server maps, drop the memory"
+setting.
+
+**What is left**, therefore, is option 2 (file the hash-space defect upstream — the only real
+fix) plus containment: exempt this error signature from build retry, since the collision is
+deterministic per tree and a retry burns a second and third full build to fail identically.
+
+**Not the nearest risk.** Builds today sit at a worst observed 28.59 GiB against 40 GiB with the
+flag off, and the module graph grows every week. Ordinary graph growth reaching the ceiling will
+bite before the collision does.
+
 ## Not verified
 
-- The **+33% peak builder RSS** figure for option 1, against the enforced ceiling. Local peak RSS
-  is dominated by the `--max_old_space_size` cap and measured ~5.6-5.7 GB for every run, so the
-  local box cannot settle this. **This is the gate on option 1.**
-- Whether output produced with `nestedAsyncChunking: true` is correct beyond compiling — the
-  runs above were not exercised past the build.
+- Whether output produced with `nestedAsyncChunking: true` is correct beyond compiling. Still
+  **not** exercised — not by the runs above, not by the 08-18 A/B (which asserted `rc=0` full
+  builds, i.e. compile + page data + static generation, but never ran the emitted server), and
+  not by the 2026-08-30 review that closed option 1. Since the flag is not being enabled, this
+  never became load-bearing; it would have to be answered before any future attempt.
 - The absolute collision _rate_. A per-namespace birthday model over the measured chunk counts
   puts one build at roughly 1%, but distinct branches have been failing at a visibly higher rate
   than that. So either CI emits more chunks than this local build or the effective hash space is
