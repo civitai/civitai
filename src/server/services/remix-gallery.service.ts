@@ -39,6 +39,7 @@ import {
   isRemixGalleryPlacementData,
   REMIX_GALLERY_MAX_PENDING_PER_OWNER,
   REMIX_GALLERY_MAX_PINNED,
+  REMIX_GALLERY_DEFAULT_CONTENT_RULE,
   REMIX_GALLERY_MINOR_HOST_MAX_LEVEL,
   REMIX_GALLERY_PAGE_SIZE,
   REMIX_GALLERY_QUEUE_LIMIT,
@@ -1162,6 +1163,54 @@ const minorHostCeiling = (host: Prisma.Sql) => Prisma.sql`
         )`;
 
 /**
+ * The display-side half of the creator's content rule.
+ *
+ * 🔴 This used to be enforced by accident and the accident was removed. The
+ * detail page wrapped its sidebar in a provider set to the HOST image's rating,
+ * so an entry above the host could not intersect the level and did not render.
+ * That scoping was wrong for other reasons — it hid entries from the very viewer
+ * who was allowed to see them, 161 of 488 approved on 2026-08-29 — and removing
+ * it left the band enforced at submit, at approve and on the decline sweep, but
+ * nowhere on read.
+ *
+ * Which matters because a host's rating can move AFTER entries are approved, and
+ * approval is irreversible for a week (`REMIX_GALLERY_REMOVAL_LOCK_HOURS`). A
+ * moderator re-rating a host down would otherwise leave R entries rendering on
+ * what is now a PG page, past the band its owner set. Same argument as
+ * `minorHostCeiling` above; that one got its display half and this one did not.
+ *
+ * The rule is resolved across all three placement scopes, image then post then
+ * user, because `resolvePlacementSpace` merges `settings` PER KEY — an image
+ * with no row of its own still inherits its owner's rule. Querying only the
+ * image scope reports "no row, so the default" and is wrong: measured on prod
+ * 2026-08-30, 280 of 548 approved entries resolve to `any` through a user-scope
+ * row, and 80 of those sit above their host. Under `any` they are exactly what
+ * the creator opted into, so they must keep rendering.
+ *
+ * Deliberately NOT applying the minor cap: `minorHostCeiling` already does, and
+ * it applies under both rules. Repeating it here would be a second copy of a
+ * ceiling that is allowed to change.
+ */
+const hostContentBand = (host: Prisma.Sql) => Prisma.sql`
+        AND (
+          COALESCE(
+            (SELECT s.settings ->> 'contentRule' FROM "PlacementSpace" s
+              WHERE s.surface = ${SURFACE} AND s."entityType" = 'image'
+                AND s."entityId" = ${host}),
+            (SELECT s.settings ->> 'contentRule' FROM "PlacementSpace" s
+              JOIN "Image" hp ON hp.id = ${host}
+              WHERE s.surface = ${SURFACE} AND s."entityType" = 'post'
+                AND s."entityId" = hp."postId"),
+            (SELECT s.settings ->> 'contentRule' FROM "PlacementSpace" s
+              JOIN "Image" hu ON hu.id = ${host}
+              WHERE s.surface = ${SURFACE} AND s."entityType" = 'user'
+                AND s."entityId" = hu."userId"),
+            ${REMIX_GALLERY_DEFAULT_CONTENT_RULE}
+          ) = 'any'
+          OR i."nsfwLevel" <= (SELECT h."nsfwLevel" FROM "Image" h WHERE h.id = ${host})
+        )`;
+
+/**
  * Which approved entries a viewer may see, as one fragment.
  *
  * 🔴 There is no second copy of this. It was written out by hand in the ordering
@@ -1222,7 +1271,7 @@ const entryIsVisible = (levels: number, host: Prisma.Sql) => Prisma.sql`
         AND (
           (i."nsfwLevel" & ${nsfwBrowsingLevelsFlag}) = 0
           OR NOT i."modelRestricted"
-        )${minorHostCeiling(host)}`;
+        )${minorHostCeiling(host)}${hostContentBand(host)}`;
 
 export function parseGalleryCursor(cursor?: string | null) {
   if (!cursor) return null;
