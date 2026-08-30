@@ -1324,14 +1324,28 @@ export const appListingsRouter = router({
   // whole boundary).
   //
   // 🔴 KIND SCOPE, CORRECTED — this block used to end "All offsite-only", and that is
-  // FALSE for two of these and has been for some time. `delistListing` and
-  // `relistListing` are DUAL-KIND: they resolve the listing through
-  // `classifyListingForAction`, which applies NO kind filter, and then flip the backing
-  // `app_blocks.status` (approved↔suspended) for an on-site listing in the same tx —
-  // that block flip IS the runtime stop, so the on-site path is the whole point rather
-  // than an accident. `claimListing` and `purgeListing` genuinely ARE off-site only
-  // (they classify through `classifyOffsiteListing` and raise NOT_FOUND otherwise), and
-  // that is what the retired sentence was describing when it was written.
+  // FALSE for FOUR of the six named above. Per proc, measured rather than summarised:
+  //
+  //   - `delistListing` / `relistListing` — DUAL-KIND. They resolve the listing through
+  //     `classifyListingForAction`, which applies NO kind filter, and then flip the
+  //     backing `app_blocks.status` (approved↔suspended) for an on-site listing in the
+  //     same tx. That block flip IS the runtime stop, so the on-site path is the whole
+  //     point rather than an accident.
+  //   - `resolveReport` / `dismissReport` — KIND-AGNOSTIC. Both route through
+  //     `closeReport`, which looks the report up BY REPORT ID with no kind filter at all;
+  //     upstream, `reportListing` gates only on the listing being `approved` and
+  //     `listListingReports` filters only on report status. So an ON-SITE listing is
+  //     reportable and its report is closeable, and any sentence here implying otherwise
+  //     describes a path that demonstrably exists.
+  //   - `claimListing` / `purgeListing` — genuinely OFF-SITE ONLY (they classify through
+  //     `classifyOffsiteListing` and raise NOT_FOUND otherwise). These two are what the
+  //     retired sentence was describing when it was written.
+  //
+  // 🔴 THE COUNT IS STATED EXACTLY BECAUSE AN EARLIER VERSION OF *THIS* CORRECTION SAID
+  // "two of these", which asserts the other four are off-site only and re-committed the
+  // error it was written to remove — the same failure, one revision later, now asserted
+  // rather than inherited. If a proc's kind scope changes, edit the list above; do not
+  // re-summarise it as a count with no per-proc backing.
   //
   // The correction is load-bearing, not tidying: `ListingTakedownModal` deliberately does
   // NOT kind-branch its `hide` call precisely because ONE proc serves both kinds, so a
@@ -1502,7 +1516,17 @@ export const appListingsRouter = router({
     }),
 
   // -------------------------------------------------------------------------
-  // W13 POST-APPROVAL LISTING MANAGEMENT (Phase 1) — DARK.
+  // W13 POST-APPROVAL LISTING MANAGEMENT (Phase 1).
+  //
+  // 🔴 THIS HEADING USED TO END "— DARK", and it was false for ALL FIVE procs below:
+  // `unpublishOwnListing`, `republishOwnListing` and `listMyListingModerationEvents` are
+  // reached from the owner-facing publishing surface, and both reset procs from the
+  // moderator surfaces (the /apps/review management table, and the store listing detail
+  // page's `⋮` menu via `components/Apps/ListingTakedownModal.tsx`). The per-proc note on
+  // `resetOnsiteListingToPending` below already said so; this heading — the thing anyone
+  // scanning the file reads first — still announced the opposite 50 lines earlier. Same
+  // shape as the kind-scope correction above: the detail was right and the summary was
+  // wrong, which is exactly why a summary must be re-read whenever the detail changes.
   //
   // `resetListingToPending` is a MOD action (`moderatorProcedure` + `isModerator`
   // recheck, same posture as delist/relist/claim/purge). The three owner procs

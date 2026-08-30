@@ -368,19 +368,70 @@ describe('takedownConsequenceCopy', () => {
     }
   });
 
+  /**
+   * The double-quoted phrase a consequence sentence uses to point at the other action.
+   * Throws rather than returning `''` when there is none, so a copy that stops quoting
+   * anything fails by name instead of making every comparison below vacuously pass.
+   */
+  function quotedPointer(copy: string): string {
+    const m = /"([^"]+)"/.exec(copy);
+    if (!m) throw new Error('the consequence copy quotes no action name');
+    return m[1];
+  }
+
   it('each arm points at the OTHER action by its exact menu label', () => {
     // The contrast is only usable if the sentence names something the moderator can find
-    // in the menu they just came from. Derived from `detailModActionLabel` so a relabel
-    // that forgets the copy fails here rather than shipping a pointer to a name that no
-    // longer exists on screen.
+    // in the menu they just came from — so the pointer is compared against
+    // `detailModActionLabel`, not against a hard-coded string.
+    //
+    // 🔴 COMPARED IN THE DIRECTION A PREFIX CANNOT SATISFY, and that is the fix for a
+    // measured blind spot rather than a stylistic preference. This used to be
+    // `expect(copy).toContain(detailModActionLabel(...))`, with the needle on the LABEL
+    // side — so shortening the label to a prefix of itself ("Unpublish and send back to
+    // review" → "Unpublish from the store" … or simply "Unpublish") left a shorter needle
+    // that the copy's unchanged full literal still contains, and the assertion stayed
+    // green while shipping exactly the dangling on-screen pointer its own comment promised
+    // to catch. Measured: a TRUNCATING relabel survived here (a non-prefix relabel did
+    // kill it, so it was reachable and specifically blind to truncation).
+    //
+    // The relationship is now stated the other way round — the phrase the copy quotes is
+    // read out of the copy and matched against the label — so a label that shrinks fails,
+    // a label that grows fails, and a copy that stops quoting anything throws.
     for (const kind of KINDS) {
-      expect(takedownConsequenceCopy('hide', kind)).toContain(
+      // The hide arm quotes the reset label IN FULL, so the pin is equality.
+      expect(quotedPointer(takedownConsequenceCopy('hide', kind))).toBe(
         detailModActionLabel('reset-to-pending')
       );
-      // The hide label carries a parenthetical the prose does not repeat verbatim, so the
-      // reset arm points at its distinctive stem rather than the whole chip.
-      expect(takedownConsequenceCopy('reset-to-pending', kind)).toContain('Hide from store');
-      expect(detailModActionLabel('hide')).toContain('Hide from store');
+      // The reset arm quotes only the hide label's distinctive STEM — the hide label
+      // carries a parenthetical the prose deliberately does not repeat. `startsWith` is
+      // the truncation-safe spelling of that: the quoted stem must open the real label, so
+      // a label shortened below it fails, and only the parenthetical tail may differ.
+      const stem = quotedPointer(takedownConsequenceCopy('reset-to-pending', kind));
+      expect(detailModActionLabel('hide').startsWith(stem)).toBe(true);
+      // …and the tail that is allowed to differ must be the parenthetical, not more words
+      // of a longer name — otherwise `startsWith` would re-admit an arbitrary rename.
+      expect(detailModActionLabel('hide').slice(stem.length).trim()).toMatch(/^\(.*\)$/);
+    }
+  });
+
+  /**
+   * 🔴 THE TRUNCATION CLASS, SWEPT RATHER THAN SPOT-CHECKED. The blind spot above was not
+   * a one-off: any `toContain` whose needle is the value under test is satisfiable by
+   * shortening that value. This drives the specific mutant — every proper prefix of each
+   * menu label — through the pointer check, and asserts the check refuses all of them.
+   * It fails if someone re-spells the assertion in the blind direction later.
+   */
+  it('a TRUNCATED menu label is rejected by the pointer check, at every prefix length', () => {
+    const real = detailModActionLabel('reset-to-pending');
+    const copy = takedownConsequenceCopy('hide', 'onsite');
+    // Positive control: the real label passes, so the refusals below are about truncation.
+    expect(quotedPointer(copy)).toBe(real);
+    for (let n = 1; n < real.length; n++) {
+      const truncated = real.slice(0, n);
+      // The blind spelling — needle on the label side — would accept every one of these.
+      expect(copy.includes(truncated)).toBe(true);
+      // The spelling actually used refuses them all.
+      expect(quotedPointer(copy)).not.toBe(truncated);
     }
   });
 
