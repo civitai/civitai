@@ -334,7 +334,9 @@ const MAX_MESSAGES = 32;
  * must stay strictly below this, because the block replays that result as a
  * `role: 'tool'` message whose `content` this cap bounds — a larger result is
  * un-replayable and therefore useless. That module is deliberately
- * server-import-free and so cannot import this one; the link is asserted in its
+ * kept free of Prisma on its load path (it used to say "server-import-free",
+ * which an audit showed is no longer literally true — it imports pure enum
+ * modules) and so cannot import this one; the link is asserted in its
  * test instead, which imports BOTH and goes red if either constant moves. Same
  * technique this file already uses for its link to `MAX_SCANNED_CONTENT_CHARS`.
  */

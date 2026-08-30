@@ -6,6 +6,7 @@ import {
   allBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
+import { constants } from '~/server/common/constants';
 
 /**
  * Endpoint-wiring tests for /api/v1/blocks/tools (#398 AC5).
@@ -532,5 +533,342 @@ describe('🔴 /api/v1/blocks/tools — guards that were unpinned', () => {
     // …and the AIR prefix within that echo is neutralised, so the block can
     // replay this body as a `role:'tool'` message without a FORBIDDEN.
     expect(body).not.toContain('urn:air:');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 RANKING. Until this block existed the tool could not express a ranking
+// question at ALL: `sort` did not exist and `query` was REQUIRED, so "the most
+// popular models" left the model one lever and it used it — `query: "popular"`,
+// which text-matches model NAMES. Live on 2026-08-30 that returned models
+// literally called "Popular …" with 2,168 / 1,910 / 224 downloads, against a
+// real top-of-catalog above 2,300,000. Reproduce the wrong arm outside this
+// suite with `civitai models search --query "popular"`.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("🔴 /api/v1/blocks/tools — the model can RANK, not just text-match", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it("the model's `sort` REACHES runModelSearch", async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { sort: 'Most Downloaded' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.sort).toBe('Most Downloaded');
+  });
+
+  // 🔴 POSITIVE CONTROL, and it is the half that makes the test above mean
+  // something. Without it a handler that hardcoded 'Most Downloaded' — the
+  // mirror of the defect being fixed — would satisfy the assertion above.
+  it('🔴 POSITIVE CONTROL — omitting `sort` still yields the DEFAULT, not the last value', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { query: 'dreamshaper' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.sort).toBe(constants.modelFilterDefaults.sort);
+    expect(args.sort).not.toBe('Most Downloaded');
+  });
+
+  // 🔴 THE OTHER HALF OF THE DEFECT. A ranking question must be able to carry NO
+  // text at all; while `query` was required, "most popular" HAD to become a
+  // search term. Meili must not run for a query that does not exist — an empty
+  // `searchIds` from a search for nothing is not the same as no text filter.
+  it('🔴 omitting `query` skips Meilisearch and does a pure sorted read', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { sort: 'Most Liked' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockResolveModelSearchIds).not.toHaveBeenCalled();
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.query).toBeUndefined();
+    expect(args.searchIds).toEqual([]);
+    expect(args.sort).toBe('Most Liked');
+  });
+
+  it('🔴 POSITIVE CONTROL — a request WITH `query` still resolves ids through Meili', async () => {
+    // Proves the skip above is conditional on the argument rather than a Meili
+    // hop that was simply deleted.
+    await invoke('POST', { name: 'search_models', arguments: { query: 'dreamshaper' } });
+
+    expect(mockResolveModelSearchIds).toHaveBeenCalledTimes(1);
+    expect(mockResolveModelSearchIds.mock.calls[0][0].query).toBe('dreamshaper');
+  });
+
+  // 🔴 THIS ONE PASSES IN BOTH ARMS, FOR DIFFERENT REASONS — labelled so nobody
+  // counts it as regression coverage. Before the change every `sort` was
+  // rejected because the key itself was unknown to a `.strict()` object; after
+  // it, only an unknown VALUE is rejected, by the enum. It is a contract guard
+  // on the new surface, not evidence the defect was fixed.
+  //
+  // Red-then-green matrix for this describe, measured rather than assumed:
+  // RED at `origin/main` — "`sort` REACHES runModelSearch" (400), "omitting
+  // `query`" (400), "the DECLARATION advertises sort" (undefined). The two
+  // POSITIVE CONTROLs and this test PASSED at `origin/main`; they are controls.
+  it('an unknown sort is REJECTED by the strict contract, not silently defaulted', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { sort: 'Most Popular' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+
+  it('the served DECLARATION advertises sort, so the model can discover it', async () => {
+    const res = await invoke('GET');
+
+    expect(res.statusCode).toBe(200);
+    const decl = res.body.tools.find((t: any) => t.function.name === 'search_models');
+    const params = decl.function.parameters as any;
+    expect(params.properties.sort).toBeDefined();
+    expect(params.properties.sort.enum).toContain('Most Downloaded');
+    // `query` must NOT be advertised as required, or the model keeps inventing
+    // a search term for a ranking question.
+    expect(params.required ?? []).not.toContain('query');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 PARITY WITH THE PUBLIC CATALOG, MINUS THE TWO FILTERS THAT FAIL OPEN.
+// `search_models` was narrower than BOTH the public `/api/v1/models` schema and
+// its own sibling `/api/v1/blocks/models`: no `baseModels`, no
+// `supportsGeneration`, a hardcoded `period`, and a SINGULAR `type` over a
+// hand-written six-value enum while `ModelType` has far more members. `tag` and
+// `username` were added here too and then REMOVED — see the fail-open describe
+// below; parity is deliberately NOT total. Measured consequence: a live answer cited a
+// `Wildcards` model — a type the tool could return but could not ask for.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 /api/v1/blocks/tools — the catalog filters the public API has', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('forwards baseModels and supportsGeneration to runModelSearch', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: {
+        sort: 'Most Downloaded',
+        baseModels: ['Illustrious', 'Pony'],
+        supportsGeneration: true,
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.baseModels).toEqual(['Illustrious', 'Pony']);
+    expect(args.supportsGeneration).toBe(true);
+  });
+
+  // 🔴 A TYPE THE TOOL COULD RETURN BUT NOT REQUEST. `Wildcards` is not in the
+  // old six-value enum, and a live answer cited one.
+  it('🔴 accepts a ModelType the old six-value enum could not express', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { types: ['Wildcards', 'Poses'], sort: 'Most Downloaded' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.types).toEqual(['Wildcards', 'Poses']);
+  });
+
+  it('forwards `period`, instead of the hardcoded AllTime', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { sort: 'Most Downloaded', period: 'Month' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockRunModelSearch.mock.calls[0][0].period).toBe('Month');
+  });
+
+  // 🔴 POSITIVE CONTROL for the line above — omitting `period` must still yield
+  // AllTime. Without this, hardcoding 'Month' would satisfy the assertion above.
+  it('🔴 POSITIVE CONTROL — omitting `period` still yields AllTime', async () => {
+    await invoke('POST', { name: 'search_models', arguments: { sort: 'Most Downloaded' } });
+    expect(mockRunModelSearch.mock.calls[0][0].period).toBe('AllTime');
+  });
+
+
+  // 🔴 PASSES IN BOTH ARMS, FOR DIFFERENT REASONS — labelled, not counted as
+  // regression coverage. Before `baseModels` existed it was an unknown key and a
+  // `.strict()` object 400'd on the KEY; now it is known and the 400 comes from
+  // the BOUND. It guards the surface; it is not evidence the widening was safe.
+  //
+  // ⚠️ CORRECTED: this comment used to cite `tag` here, and to list "tag
+  // forwarding" and "`username` slugification" in the matrix below as red-at-
+  // `d9bbc5e5b8` evidence. Those two tests were DELETED when both fields were
+  // removed for failing open, so the matrix was advertising coverage that no
+  // longer exists — the same rot the description guard in registry.test.ts now
+  // catches mechanically.
+  //
+  // Red-then-green matrix for this describe, measured at d9bbc5e5b8 (the
+  // sort-only commit): RED — `baseModels`/`supportsGeneration` forwarding, the
+  // `Wildcards` type, `period` forwarding, and the projection field-set in
+  // registry.test.ts. PASSED at that commit, and so are CONTROLS — the `period`
+  // AllTime default and this bounds test.
+  it('rejects an over-long filter array and an over-long filter value', async () => {
+    const tooMany = await invoke('POST', {
+      name: 'search_models',
+      arguments: { baseModels: Array.from({ length: 11 }, (_, i) => `bm${i}`) },
+    });
+    expect(tooMany.statusCode).toBe(400);
+
+    const tooLong = await invoke('POST', {
+      name: 'search_models',
+      arguments: { baseModels: ['x'.repeat(65)] },
+    });
+    expect(tooLong.statusCode).toBe(400);
+
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 `sort` + `query` TOGETHER. Found by an adversarial audit of the first
+// commit: `runModelSearch` restores Meilisearch's RELEVANCE order whenever a
+// `query` is present, which silently overwrote the database's `sort` ordering.
+// So this PR fixed "the most popular models" and NOT "the most popular ANIME
+// models" — the same question, scoped, and the phrasing the schema most invites.
+// Nothing errored; the list was plausible and in the wrong order.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 /api/v1/blocks/tools — an explicit sort must WIN over relevance', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('query + explicit sort opts OUT of the relevance restore', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { query: 'anime', sort: 'Most Downloaded' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.preserveRelevanceOrder).toBe(false);
+    expect(args.sort).toBe('Most Downloaded');
+  });
+
+  // 🔴 POSITIVE CONTROL. Without it, passing `preserveRelevanceOrder: false`
+  // unconditionally — which would silently degrade every plain text search from
+  // relevance to lastVersionAt order — satisfies the assertion above.
+  it('🔴 POSITIVE CONTROL — a query with NO sort keeps relevance order', async () => {
+    await invoke('POST', { name: 'search_models', arguments: { query: 'anime' } });
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.preserveRelevanceOrder).toBeUndefined();
+  });
+
+  // 🔴 SORTING THE WRONG SET IS STILL WRONG. Meili ranks by relevance and the DB
+  // then orders whatever ids it is given, so pulling only the page size would
+  // mean "take the 5 most RELEVANT anime models, then put those 5 in download
+  // order" — not the question asked.
+  it('🔴 widens the Meili candidate pool when a sort has to win', async () => {
+    const { TOOL_SORTED_QUERY_CANDIDATES } = await import(
+      '~/server/services/blocks/tools/registry'
+    );
+    await invoke('POST', {
+      name: 'search_models',
+      arguments: { query: 'anime', sort: 'Most Downloaded', limit: 5 },
+    });
+    expect(mockResolveModelSearchIds.mock.calls[0][0].limit).toBe(TOOL_SORTED_QUERY_CANDIDATES);
+  });
+
+  it('🔴 POSITIVE CONTROL — an unsorted query pulls only the page size', async () => {
+    await invoke('POST', { name: 'search_models', arguments: { query: 'anime', limit: 5 } });
+    expect(mockResolveModelSearchIds.mock.calls[0][0].limit).toBe(5);
+  });
+});
+
+// 🔴 COVERAGE HOLE NAMED BY THE AUDIT: every clamp assertion in this file sends
+// `query:'x'`, and one asserts the clamp via `resolveModelSearchIds` — which the
+// no-query path no longer calls. The clamp is computed BEFORE the branch so it
+// is structurally safe, but nothing asserted it on the path this PR added.
+describe('🔴 /api/v1/blocks/tools — the clamp binds on the NO-QUERY path too', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('a GREEN token clamps a no-query sorted read, and Meili is never consulted', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { sort: 'Most Downloaded' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockResolveModelSearchIds).not.toHaveBeenCalled();
+    const [args, ctx] = mockRunModelSearch.mock.calls[0];
+    expect(ctx.browsingLevel).toBe(sfwBrowsingLevelsFlag);
+    expect(ctx.nsfwImagePassthrough).toBe(false);
+    expect(args.disableMinor).toBe(true);
+  });
+
+  it('🔴 POSITIVE CONTROL — a RED token yields a DIFFERENT level on the same path', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: allBrowsingLevelsFlag });
+    await invoke('POST', { name: 'search_models', arguments: { sort: 'Most Downloaded' } });
+    const [, ctx] = mockRunModelSearch.mock.calls[0];
+    expect(ctx.browsingLevel).toBe(allBrowsingLevelsFlag);
+    expect(ctx.browsingLevel).not.toBe(sfwBrowsingLevelsFlag);
+  });
+});
+
+// 🔴 `tag` and `username` were added and then REMOVED because both FAIL OPEN in
+// the shared catalog service (an unknown tag, or a username that slugifies to
+// empty, drops the filter and returns the whole catalog). Pinned so a future
+// "restore parity" edit has to confront that rather than re-add a schema line.
+describe('🔴 /api/v1/blocks/tools — the fail-open filters stay OUT', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('rejects `tag` and `username`, and never reaches the catalog', async () => {
+    for (const args of [{ tag: 'anime' }, { username: 'Lykon' }]) {
+      const res = await invoke('POST', { name: 'search_models', arguments: args });
+      expect(res.statusCode, JSON.stringify(args)).toBe(400);
+    }
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+
+  // POSITIVE CONTROL — the filters that DID survive still work, so the test
+  // above is about these two fields and not about a schema that rejects all.
+  it('POSITIVE CONTROL — the retained filters are still accepted', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { baseModels: ['Pony'], supportsGeneration: true, sort: 'Most Liked' },
+    });
+    expect(res.statusCode).toBe(200);
   });
 });
