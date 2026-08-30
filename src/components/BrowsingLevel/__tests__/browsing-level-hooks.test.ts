@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
-import { act, createElement } from 'react';
+import { act, createElement, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 import {
   BrowsingLevelProvider,
   BrowsingModeOverrideCtx,
+  useBrowsingLevelContext,
   useBrowsingLevelDebounced,
   useViewerBrowsingLevelDebounced,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -198,5 +199,139 @@ describe('BrowsingLevelProvider caps', () => {
     canViewNsfw.value = true;
 
     expect(renderUnderProvider({}).viewer).toBe(allBrowsingLevelsFlag);
+  });
+
+  /**
+   * 🔴 A CAP THAT FAILS OPEN. Do not "simplify" the provider by seeding
+   * `useState` from the `forcedBrowsingLevel` prop — that is what this pins.
+   *
+   * `Collection.tsx` keeps the provider mounted across a refetch of the same
+   * collection, so a moderator raising the ceiling only ever reaches viewers
+   * through a re-render with a new prop. Seeded state freezes the cap at first
+   * mount, and every direction of that staleness is toward WIDER: a ceiling set
+   * for the first time never applies at all.
+   *
+   * Read off the context rather than a hook because `useDebouncedValue` holds
+   * the previous value for 500ms after a change; the cap itself is not debounced.
+   */
+  it('applies a ceiling that arrives after mount, and every later change to it', () => {
+    currentUser.value = { id: 1 };
+    canViewNsfw.value = true;
+
+    const seen: (number | undefined)[] = [];
+    const container = document.createElement('div');
+    const root = createRoot(container);
+
+    function Probe() {
+      seen.push(useBrowsingLevelContext().forcedBrowsingLevel);
+      return null;
+    }
+
+    const render = (forcedBrowsingLevel?: number) =>
+      act(() => {
+        root.render(
+          createElement(BrowsingLevelProvider, { forcedBrowsingLevel }, createElement(Probe))
+        );
+      });
+
+    render(undefined);
+    render(sfwBrowsingLevelsFlag);
+    render(publicBrowsingLevelsFlag);
+    // 🔴 WIDENING, and then clearing. Without these two a cap that only ever
+    // ratchets tighter — `intersect(previous, prop)` held in a ref — passes,
+    // and a moderator RAISING a ceiling still never reaches a mounted viewer,
+    // which is the direction that motivated the whole case.
+    render(sfwBrowsingLevelsFlag);
+    render(undefined);
+    act(() => root.unmount());
+
+    // One equality over the whole sequence rather than per-index reads: `.at(0)`
+    // is satisfied by an empty array, and an extra render pass would shift every
+    // index and report the wrong assertion.
+    expect(seen).toEqual([
+      undefined,
+      sfwBrowsingLevelsFlag,
+      publicBrowsingLevelsFlag,
+      sfwBrowsingLevelsFlag,
+      undefined,
+    ]);
+  });
+
+  /**
+   * 🔴 The OTHER half of the cap, and the one a rename can drop silently.
+   *
+   * `PostDetail.tsx:110-115` pushes a contest collection's ceiling into the
+   * ancestor provider imperatively rather than as a prop. Nothing else in these
+   * files calls the setter, so removing that argument from the intersect list
+   * leaves every other case green while the ceiling stops applying.
+   */
+  it('applies a ceiling set through setForcedBrowsingLevel, intersected with the prop', () => {
+    currentUser.value = { id: 1 };
+    canViewNsfw.value = true;
+
+    const seen: (number | undefined)[] = [];
+    const container = document.createElement('div');
+    const root = createRoot(container);
+
+    function Probe() {
+      const { forcedBrowsingLevel, setForcedBrowsingLevel } = useBrowsingLevelContext();
+      seen.push(forcedBrowsingLevel);
+      useEffect(() => {
+        setForcedBrowsingLevel?.(publicBrowsingLevelsFlag);
+      }, [setForcedBrowsingLevel]);
+      return null;
+    }
+
+    act(() => {
+      root.render(
+        createElement(
+          BrowsingLevelProvider,
+          { forcedBrowsingLevel: sfwBrowsingLevelsFlag },
+          createElement(Probe)
+        )
+      );
+    });
+    act(() => root.unmount());
+
+    expect(seen.at(0), 'the prop ceiling applies before the setter runs').toBe(
+      sfwBrowsingLevelsFlag
+    );
+    expect(seen.at(-1), 'an imperative ceiling must tighten the prop ceiling').toBe(
+      publicBrowsingLevelsFlag
+    );
+  });
+
+  /**
+   * 🔴 A ceiling from an OUTER provider. `Collection.tsx:650` sets one with
+   * `BrowsingLevelProviderOptional` and the image-detail providers nested below
+   * it, and an inner provider recomputes the domain cap from scratch — so
+   * dropping `ctx.forcedBrowsingLevel` from the merge loses the collection's
+   * ceiling everywhere it is nested, with nothing else red.
+   */
+  it('keeps an outer provider ceiling through a nested provider', () => {
+    currentUser.value = { id: 1 };
+    canViewNsfw.value = true;
+
+    let inner: number | undefined;
+    const container = document.createElement('div');
+    const root = createRoot(container);
+
+    function Probe() {
+      inner = useBrowsingLevelContext().forcedBrowsingLevel;
+      return null;
+    }
+
+    act(() => {
+      root.render(
+        createElement(
+          BrowsingLevelProvider,
+          { forcedBrowsingLevel: sfwBrowsingLevelsFlag },
+          createElement(BrowsingLevelProvider, {}, createElement(Probe))
+        )
+      );
+    });
+    act(() => root.unmount());
+
+    expect(inner, 'a nested provider must not drop the outer ceiling').toBe(sfwBrowsingLevelsFlag);
   });
 });

@@ -36,6 +36,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { decorationFrameStyle } from '~/components/UserAvatar/decoration-frame.util';
 import { UserHoverCard } from '~/components/UserAvatar/UserHoverCard';
 import { isBlobUrl } from '~/utils/type-guards';
+import { Flags } from '~/shared/utils/flags';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
@@ -154,7 +155,7 @@ export function UserAvatar({
   const blockedProfilePicture =
     avatarUser.profilePicture?.ingestion === 'Blocked' ||
     (!isPendingOwnerPreview &&
-      (!features.canViewNsfw ? !passesSfwGate : nsfwLevel > browsingLevel));
+      (!features.canViewNsfw ? !passesSfwGate : !Flags.hasFlag(browsingLevel, nsfwLevel)));
   const avatarBgColor = colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
   const image = avatarUser.profilePicture;

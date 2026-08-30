@@ -1,4 +1,5 @@
 import { NsfwLevel } from '~/server/common/enums';
+import { Flags } from '~/shared/utils/flags';
 
 /**
  * Which browsing level a read should run at, given the three the provider holds.
@@ -68,7 +69,7 @@ export function resolveViewerBrowsingLevel({
 export function intersectBrowsingCaps(...caps: (number | undefined)[]) {
   const present = caps.filter((cap): cap is number => cap != null);
   if (!present.length) return undefined;
-  return present.reduce((a, b) => a & b);
+  return present.reduce((a, b) => Flags.intersection(a, b));
 }
 
 /** What both hooks fall back to once debouncing has settled on nothing. */

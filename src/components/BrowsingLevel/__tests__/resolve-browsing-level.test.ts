@@ -184,18 +184,20 @@ const VIEWER_SCOPED = [
   },
 ];
 
-describe.each(VIEWER_SCOPED)('$file reads the viewer, not the page', ({ file, why }) => {
-  // Throws rather than passing if the file moves. A guard whose subject has
-  // vanished must go red, not quietly become vacuous.
-  const source = readFileSync(path.resolve(__dirname, ...file), 'utf-8');
+// Throws rather than passing if the file moves. A guard whose subject has
+// vanished must go red, not quietly become vacuous — read inside each `it` so
+// that red is one failing guard rather than a collection error that also stops
+// the resolver tests in this file from reporting.
+const read = (...file: string[]) => readFileSync(path.resolve(__dirname, ...file), 'utf-8');
 
+describe.each(VIEWER_SCOPED)('$file reads the viewer, not the page', ({ file, why }) => {
   it('uses the viewer hook', () => {
-    expect(source, why).toContain('useViewerBrowsingLevelDebounced()');
+    expect(read(...file), why).toContain('useViewerBrowsingLevelDebounced()');
   });
 
   it('does NOT inherit a page override', () => {
     expect(
-      source.includes('useBrowsingLevelDebounced()'),
+      read(...file).includes('useBrowsingLevelDebounced()'),
       `${file.join('/')} must not inherit a page browsing-level override: ${why}`
     ).toBe(false);
   });
@@ -207,19 +209,44 @@ describe.each(VIEWER_SCOPED)('$file reads the viewer, not the page', ({ file, wh
  * applying to each component above the moment they adopted the viewer hook.
  */
 describe('a collection ceiling is a cap, not an override', () => {
-  const source = readFileSync(
-    path.resolve(__dirname, '..', '..', 'Collections', 'Collection.tsx'),
-    'utf-8'
-  );
+  const collection = () => read('..', '..', 'Collections', 'Collection.tsx');
 
   it('passes it as forcedBrowsingLevel', () => {
-    expect(source).toContain('forcedBrowsingLevel={collection.metadata.forcedBrowsingLevel');
+    expect(collection()).toContain('forcedBrowsingLevel={collection.metadata.forcedBrowsingLevel');
   });
 
   it('does not pass it through the override slot', () => {
     expect(
-      source.includes('browsingLevel={collection.metadata.forcedBrowsingLevel'),
+      collection().includes('browsingLevel={collection.metadata.forcedBrowsingLevel'),
       'the override slot is one any component may decline to read'
+    ).toBe(false);
+  });
+});
+
+/**
+ * 🔴 A cap that is SET imperatively must also be CLEARED imperatively.
+ *
+ * `PostDetail` pushes a contest collection's ceiling into the ancestor provider
+ * rather than passing it as a prop, and `resolvePageBrowsingLevel` puts `forced`
+ * AHEAD of the viewer's preference rather than intersecting with it. So a
+ * ceiling left behind after the collection goes away does not merely linger, it
+ * REPLACES a narrower viewer preference — an escalated contest cap including R
+ * outliving the post that carried it, for a viewer who never opted in.
+ *
+ * The truthy guard this pins the absence of looks protective and is not. Do not
+ * restore it: with it, the only way the cap ever drops is a full remount.
+ */
+describe('a post ceiling is cleared when the post has none', () => {
+  const postDetail = () => read('..', '..', 'Post', 'Detail', 'PostDetail.tsx');
+
+  it('sets the cap unconditionally', () => {
+    expect(postDetail()).toContain('setForcedBrowsingLevel?.(forcedBrowsingLevel);');
+  });
+
+  it('does not skip the call when there is no ceiling', () => {
+    expect(
+      postDetail().includes('if (forcedBrowsingLevel) {'),
+      'guarding the set means a stale ceiling outlives the collection that set it'
     ).toBe(false);
   });
 });

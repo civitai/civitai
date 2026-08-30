@@ -65,7 +65,11 @@ export function BrowsingLevelProvider({
   );
   const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
   const [childBrowsingLevelOverride, setBrowsingLevelOverride] = useState<number | undefined>();
-  const [forcedBrowsingLevel, setForcedBrowsingLevel] = useState(parentForcedBrowsingLevel);
+  // 🔴 State holds ONLY what `setForcedBrowsingLevel` put there. Seeding it from
+  // the prop froze the cap at first mount, so a collection whose ceiling was
+  // raised left mounted viewers on the older, WIDER one — the prop is read live
+  // below instead.
+  const [imperativeForcedBrowsingLevel, setForcedBrowsingLevel] = useState<number | undefined>();
 
   // Cap rules mirror the server middleware (src/server/trpc.ts applyDomainFeature):
   //   anonymous (any domain)     → publicBrowsingLevelsFlag (PG)
@@ -88,7 +92,8 @@ export function BrowsingLevelProvider({
         // took whichever was set first, which let a wider cap from a nearer
         // provider erase a tighter one further out.
         forcedBrowsingLevel: intersectBrowsingCaps(
-          forcedBrowsingLevel,
+          imperativeForcedBrowsingLevel,
+          parentForcedBrowsingLevel,
           domainForcedLevel,
           ctx.forcedBrowsingLevel
         ),
