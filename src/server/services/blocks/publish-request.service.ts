@@ -1187,7 +1187,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // status='draft', appBlockId=NULL) so the author can set listing media
   // (icon/cover/screenshots) WHILE the app is still pending review (they carry
   // forward on approve). Mirrors the proven off-site `submitExternalListing` shape (a
-  // draft listing minted at submit, deleted on reject/withdraw). Only a first-version
+  // draft listing minted at submit, deleted on withdraw — NOT on reject, which keeps it
+  // so a rejected developer can fix and re-submit; see `rejectRequest`). Only a first-version
   // submit (`existingApp == null`) is meaningful: a subsequent version already has an
   // approved listing whose media edits go through the shadow-revision path.
   //
@@ -1195,8 +1196,15 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // already taken in `app_listings` by a NON-reusable listing — the draft reserves
   // `AppListing.slug @unique`, and the friendly error mirrors `submitExternalListing`'s
   // slug pre-check. An existing on-site pre-approval DRAFT for this slug (no backing
-  // AppBlock) is a REUSABLE orphan (a prior submit whose reject/withdraw cleanup didn't
-  // run) — reuse it idempotently rather than error, so a re-submit never duplicates.
+  // AppBlock) is a REUSABLE orphan — reuse it idempotently rather than error, so a
+  // re-submit never duplicates.
+  //
+  // 🔴 THIS REUSE IS NOW THE LOAD-BEARING HALF OF THE REJECT→RE-SUBMIT LOOP, not just a
+  // tidy-up for a cleanup that didn't run. `rejectRequest` deliberately LEAVES the draft
+  // standing (clawgate #302), so the ordinary path for a developer rejected over a
+  // fixable problem is: fix it, re-submit the same slug, land HERE, and get their own
+  // listing back with its media intact. Narrowing this predicate — or restoring the
+  // reject-time delete — silently reintroduces "rejected once ⇒ lost your listing".
   //
   // 🔴 Reuse is OWNER-SCOPED (`userId === submittedByUserId`). An orphan draft keeps its
   // original owner, and the approve transition carries that `userId` FORWARD untouched —
@@ -1556,10 +1564,19 @@ async function closeOnsiteResetListingOnWithdraw(opts: {
 }
 
 /**
- * W13 draft-at-submit cleanup — on REJECT or WITHDRAW of a first-version on-site
- * publish request, delete the pre-approval DRAFT `AppListing` minted at submit so the
- * store slug is released and the unreviewed media is discarded. Mirrors the off-site
- * `closeTerminalListing` draft branch: a status-guarded `deleteMany` (`status:'draft'`)
+ * W13 draft-at-submit cleanup — on WITHDRAW of a first-version on-site publish request,
+ * delete the pre-approval DRAFT `AppListing` minted at submit so the store slug is
+ * released and the unreviewed media is discarded.
+ *
+ * 🔴 WITHDRAW ONLY. A REJECT no longer calls this — see the 🔴 block in `rejectRequest`
+ * (clawgate #302). Withdraw is the DEVELOPER abandoning their own submission, so
+ * releasing their slug is what they asked for; a reject is a MODERATOR verdict on a
+ * submission the developer still wants, and destroying their listing as a side-effect of
+ * "please fix your screenshot" is the harm that change removed. The deliberate,
+ * mod-initiated version of this delete is `purgeListing`'s on-site orphan-draft branch.
+ *
+ * Mirrors the off-site `closeTerminalListing` draft branch: a status-guarded
+ * `deleteMany` (`status:'draft'`)
  * can never remove an approved/removed row; `AppListingScreenshot` is
  * `onDelete: Cascade` so screenshots go with it, and the underlying `Image` rows are
  * `onDelete: SetNull` (DETACHED, not hard-deleted — same as off-site). Resolved BY SLUG
@@ -5158,20 +5175,46 @@ export async function rejectRequest(params: RejectRequestParams): Promise<void> 
     },
   });
 
-  // W13 draft-at-submit — a first-version REJECT discards the pre-approval DRAFT
-  // listing (release the slug + drop unreviewed media), mirroring the off-site
-  // `closeTerminalListing` draft branch. No-op for a subsequent version (no draft) or a
-  // legacy pre-ship pending request. Best-effort: the reject has already committed, so a
-  // cleanup failure must never fail the outcome.
-  try {
-    await deleteOnsiteDraftListingForSlug({ slug: row.slug });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `[rejectRequest] pre-approval draft cleanup failed (id=${params.publishRequestId}, slug=${row.slug}); ` +
-        `reject STANDS: ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
+  // 🔴 A REJECT DELIBERATELY DOES **NOT** DELETE THE PRE-APPROVAL DRAFT LISTING.
+  //
+  // It used to (`deleteOnsiteDraftListingForSlug`, released the slug + dropped the
+  // unreviewed media, mirroring the off-site `closeTerminalListing` draft branch). That
+  // made a FIRST-version reject destructive in a way reviewers could not see: rejecting a
+  // first-time developer for a fixable problem — a missing screenshot was the reported
+  // case — deleted the store listing they had built AND released the slug they chose for
+  // anyone else to take. Reject is the only "please fix this" signal the review path has
+  // (there is no `changes-requested` outcome), so the destructive branch fired precisely
+  // on the fixable cases it should not have. See clawgate #302 / ClickUp 868kuam02.
+  //
+  // Keeping the draft is what makes a re-submit whole: `submitVersion`'s pre-check REUSES
+  // an existing on-site pre-approval draft for the slug, OWNER-SCOPED
+  // (`userId === submittedByUserId`), so the rejected developer fixes the problem,
+  // re-submits, and lands on the same listing with its media intact. Neither submit
+  // pre-check blocks them — the rejected request is no longer `pending`, and no listing
+  // review is open.
+  //
+  // The destructive action did not disappear, it became EXPLICIT: `purgeListing` now
+  // accepts an on-site ORPHAN DRAFT, so a mod who genuinely wants the slug and media gone
+  // ("this app is not welcome") purges it deliberately, with a required reason and an
+  // audit event — instead of it happening as an invisible side-effect of every reject.
+  //
+  // `withdrawRequest` KEEPS its delete: that is the developer's own act of abandoning the
+  // submission, so releasing their slug is what they asked for.
+  //
+  // ⚠ KNOWN AND NOT FIXED HERE: the OFF-SITE reject still deletes its draft
+  // (`offsite-listing.service.ts` → `closeTerminalListing`'s `draft` branch). Every word of
+  // the argument above applies there verbatim — `rejectExternalRequest` is that reviewer's
+  // only rejection verb too — so an off-site developer rejected over a fixable problem still
+  // loses their listing and their slug. That is scope, not a justification for the
+  // divergence, and it is the obvious follow-up.
+  //
+  // ⚠ ALSO KNOWN: a reused draft keeps the scalars minted from the REJECTED manifest until the
+  // re-submit is approved. `submitVersion`'s reuse branch writes nothing, so if name/tagline/
+  // description/category/contentRating changed between the two submits, `/apps/mine` shows the
+  // old copy for the re-review window. Bounded and cosmetic — `approveRequest`'s draft→approved
+  // transition re-syncs every manifest-governed scalar and re-floors the rating, so the
+  // APPROVED card is correct, and the asset-attach path does not gate on the listing's
+  // `contentRating`, so a stale rating is NOT an NSFW-gate bypass.
 
   // MOD REVIEW SANDBOX (#2831) — tear down any review env the mod spun up.
   // Best-effort + non-blocking: the reject has landed, so a teardown failure

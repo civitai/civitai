@@ -1574,8 +1574,9 @@ function ReportActionModal({
       destructive={destructive}
       destructiveWarning={
         <Text size="sm">
-          Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit event
-          (with the slug snapshot) is kept. This cannot be undone.
+          Purge PERMANENTLY deletes this listing and its screenshots + reports, and{' '}
+          <b>releases its store address for anyone else to claim</b>. The audit event (with the slug
+          snapshot) is kept. This cannot be undone.
         </Text>
       }
       extraSlot={
