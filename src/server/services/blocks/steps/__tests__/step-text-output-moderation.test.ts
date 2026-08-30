@@ -94,7 +94,9 @@ import {
   VERDICT_CACHE_MAX_ENTRIES,
   __clearTextOutputVerdictCacheForTests,
 } from '~/server/services/blocks/steps/text-output-moderation';
-// 🔴 A NAMESPACE IMPORT, ON PURPOSE, AND ONLY FOR `erroredRequestedLabels`.
+// 🔴 A NAMESPACE IMPORT, ON PURPOSE, FOR `erroredRequestedLabels` AND
+// `SFW_ONLY_TEXT_SCORE_THRESHOLD` — the two symbols this suite asserts on that
+// did not exist on the commit each was written against.
 // A NAMED import of a symbol the module does not export is a LINK-TIME failure
 // under vitest's ESM transform: the whole file fails to COLLECT and reports
 // `Tests no tests`, which reads as "nothing to see" rather than as a failure.
@@ -734,6 +736,262 @@ describe('textOutput — the approved label policy', () => {
       requestedLabels: NONE,
     });
     expect(verdict.released).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('textOutput — the SFW-tier TEXT score threshold', () => {
+  /**
+   * A minimal one-label fixture with FULL control of the three fields that
+   * decide this tier: the SCORE, the `triggered` bit the scanner computed, and
+   * the THRESHOLD it echoes back. `scanOutput` cannot express the cases below —
+   * it derives `triggered` from membership and always echoes `0.5` — and the
+   * whole point here is to drive those three apart.
+   *
+   * `requestedLabels: NONE` throughout, so the drift guard is vacuous and every
+   * assertion reads the tier logic rather than a label-drift withhold. See the
+   * `ALL` / `NONE` note above for why picking the wrong one makes a test pass
+   * for the wrong reason.
+   */
+  function labelResult(over: {
+    label: string;
+    score?: number | string | null;
+    triggered?: boolean;
+    threshold?: number;
+  }) {
+    const { label, score = 0, triggered = true, threshold = 0.5 } = over;
+    return {
+      triggeredLabels: triggered ? [label] : [],
+      results: [{ label, action: 'Scan', threshold, score, triggered, modelReason: '' }],
+    };
+  }
+  const onSfwHost = { isGreen: true, requestedLabels: NONE };
+
+  /**
+   * Two real measured scores, used as the below/above pair everywhere here.
+   * BELOW sits between the scanner's image-tuned threshold and the text one —
+   * the band this change moves — and ABOVE is several lattice steps clear of the
+   * text threshold, so neither is a value the scorer's replicate spread could
+   * push across the line.
+   */
+  const BELOW_TEXT_THRESHOLD = 0.6311;
+  const ABOVE_TEXT_THRESHOLD = 0.918;
+  /**
+   * 🔴 A LITERAL, NOT THE MODULE'S OWN CONSTANT. Building the fixtures out of
+   * the value under test would make every case below tautological — and, on the
+   * pre-change tree where the export does not exist, would feed each fixture a
+   * `NaN` score and send it down the fail-closed branch, so the cases would go
+   * red for a reason that has nothing to do with the threshold. The module's
+   * export is compared against this literal in one place, below.
+   */
+  const TEXT_THRESHOLD = 0.75;
+
+  it('the TEXT threshold is 0.75 — the value the corpus measurement selected', () => {
+    // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE. It pins a chosen number so a
+    // drift has to be deliberate. The behavioural cases below are what catch the
+    // defect. Read through the NAMESPACE so a tree without the export fails HERE
+    // rather than failing to collect the whole file.
+    expect(TextOutputModeration.SFW_ONLY_TEXT_SCORE_THRESHOLD).toBe(TEXT_THRESHOLD);
+    // …and it is STRICTLY ABOVE the image-tuned threshold the scanner echoes for
+    // this tier, which is the entire content of the change.
+    expect(TEXT_THRESHOLD).toBeGreaterThan(0.5);
+    expect(BELOW_TEXT_THRESHOLD).toBeLessThan(TEXT_THRESHOLD);
+    expect(ABOVE_TEXT_THRESHOLD).toBeGreaterThan(TEXT_THRESHOLD);
+  });
+
+  it('🔴 RELEASES a SFW-tier trigger whose score is below the TEXT threshold', () => {
+    // The reply that produced this policy: a catalog-backed answer scoring
+    // `Suggestive` over the scanner's image-tuned threshold and under the text
+    // one. Before the change this withheld.
+    const verdict = decideTextOutputVerdict(
+      labelResult({ label: 'Suggestive', score: BELOW_TEXT_THRESHOLD }),
+      onSfwHost
+    );
+    expect(verdict.released).toBe(true);
+    expect(verdict.withholdingLabels).toEqual([]);
+    // …and the trigger is still REPORTED. The telemetry must not go quiet just
+    // because the policy stopped acting on it.
+    expect(verdict.triggeredLabels).toEqual(['Suggestive']);
+    expect(verdict.scores.Suggestive).toBe(BELOW_TEXT_THRESHOLD);
+  });
+
+  it('🔴 still WITHHOLDS a SFW-tier trigger whose score is above the TEXT threshold', () => {
+    // 🔴 THE OTHER DIRECTION, AND IT IS NOT OPTIONAL. A suite asserting only the
+    // release above passes with the threshold set to anything up to 1, i.e. with
+    // the maturity-gated tier switched off entirely.
+    const verdict = decideTextOutputVerdict(
+      labelResult({ label: 'Suggestive', score: ABOVE_TEXT_THRESHOLD }),
+      onSfwHost
+    );
+    expect(verdict.released).toBe(false);
+    expect(verdict.withholdingLabels).toEqual(['Suggestive']);
+  });
+
+  it.each(SFW_ONLY_WITHHOLD_LABELS.map((l) => [l]))(
+    "'%s' releases BELOW and withholds ABOVE the text threshold — the whole tier moved, not one label",
+    (label) => {
+      expect(
+        decideTextOutputVerdict(labelResult({ label, score: BELOW_TEXT_THRESHOLD }), onSfwHost)
+          .released
+      ).toBe(true);
+      expect(
+        decideTextOutputVerdict(labelResult({ label, score: ABOVE_TEXT_THRESHOLD }), onSfwHost)
+          .released
+      ).toBe(false);
+    }
+  );
+
+  it('🔴 the comparison is `>=` — a score EXACTLY on the threshold withholds', () => {
+    // Pins the OPERATOR; the literal value is pinned separately above. A `>`
+    // would release a score sitting on the line.
+    expect(
+      decideTextOutputVerdict(
+        labelResult({ label: 'Suggestive', score: TEXT_THRESHOLD }),
+        onSfwHost
+      ).released
+    ).toBe(false);
+    expect(
+      decideTextOutputVerdict(
+        labelResult({ label: 'Suggestive', score: TEXT_THRESHOLD - 0.0001 }),
+        onSfwHost
+      ).released
+    ).toBe(true);
+  });
+
+  it('🔴 the ENFORCED threshold governs when the scanner echoes a LOWER one', () => {
+    // The scanner states, in the same payload, that it applied its own threshold
+    // and that the label triggered. Both are true, and both are ignored — the
+    // echoed value and the enforced value disagree ON PURPOSE, and this is where
+    // that stops being silent.
+    const output = labelResult({
+      label: 'Suggestive',
+      score: BELOW_TEXT_THRESHOLD,
+      triggered: true,
+      threshold: 0.5,
+    });
+    expect(output.results[0].threshold).toBeLessThan(TEXT_THRESHOLD);
+    expect(output.results[0].triggered).toBe(true);
+    expect(decideTextOutputVerdict(output, onSfwHost).released).toBe(true);
+  });
+
+  it('🔴 the ENFORCED threshold governs when the scanner echoes a HIGHER one', () => {
+    // The direction that would let this file's constant go quietly INERT: raise
+    // the orchestrator registry's threshold above ours and every score in the gap
+    // arrives `triggered: false` and never enters the trigger set. Our threshold
+    // must still bite, or the policy silently reverts to the scanner's.
+    const output = labelResult({
+      label: 'Suggestive',
+      score: 0.9,
+      triggered: false,
+      threshold: 0.99,
+    });
+    expect(output.results[0].threshold).toBeGreaterThan(TEXT_THRESHOLD);
+    expect(output.results[0].triggered).toBe(false);
+    expect(output.triggeredLabels).toEqual([]);
+    const verdict = decideTextOutputVerdict(output, onSfwHost);
+    expect(verdict.released).toBe(false);
+    expect(verdict.withholdingLabels).toEqual(['Suggestive']);
+    // …and it is NOT reported as triggered, because the scanner did not say so.
+    // `withholdingLabels` is deliberately not a subset of `triggeredLabels`.
+    expect(verdict.triggeredLabels).toEqual([]);
+  });
+
+  it.each([
+    ['no `results[]` entry at all', [] as unknown[]],
+    ['an entry with no `score` field', [{ label: 'Suggestive', triggered: true }]],
+    ['a non-numeric `score`', [{ label: 'Suggestive', triggered: true, score: 'high' }]],
+    ['a NaN `score`', [{ label: 'Suggestive', triggered: true, score: Number.NaN }]],
+  ])('🔴 FAILS CLOSED on a SFW-tier trigger with %s', (_name, results) => {
+    // The threshold cannot be applied to a score we cannot read, and "we could
+    // not evaluate it" must never read as "clean". This is also the only branch
+    // that can decide a label present ONLY in the top-level array, which is what
+    // keeps the union-of-two-signals property fail-closed.
+    const verdict = decideTextOutputVerdict(
+      { triggeredLabels: ['Suggestive'], results },
+      onSfwHost
+    );
+    expect(verdict.released).toBe(false);
+    expect(verdict.withholdingLabels).toEqual(['Suggestive']);
+  });
+
+  it.each(ALWAYS_WITHHOLD_LABELS.map((l) => [l]))(
+    "🔴 '%s' is NOT thresholded — the always-withhold tier withholds at a LOW score, on either host",
+    (label) => {
+      // 🔴 THE GUARD THAT MUST NOT MOVE. The text threshold is scoped to the
+      // maturity-gated tier. A change that applied it to this tier would release
+      // a low-scoring `Young` / `Grooming` / `Sex Trafficking` trigger.
+      for (const isGreen of [true, false]) {
+        const verdict = decideTextOutputVerdict(labelResult({ label, score: 0.1 }), {
+          isGreen,
+          requestedLabels: NONE,
+        });
+        expect(verdict.released).toBe(false);
+        expect(verdict.withholdingLabels).toEqual([label]);
+      }
+    }
+  );
+
+  it('a MATURE-allowed host releases the SFW tier at ANY score', () => {
+    // The threshold is a change to WHEN the maturity-gated tier bites, never to
+    // WHETHER the gate applies. The mature side is untouched.
+    for (const score of [BELOW_TEXT_THRESHOLD, ABOVE_TEXT_THRESHOLD, 0.9999]) {
+      expect(
+        decideTextOutputVerdict(labelResult({ label: 'Suggestive', score }), {
+          isGreen: false,
+          requestedLabels: NONE,
+        }).released
+      ).toBe(true);
+    }
+  });
+
+  it('looks the score up CASE-INSENSITIVELY', () => {
+    // Label spelling is orchestrator-side config. An exact-match score lookup
+    // would miss, fall into the fail-closed branch and withhold a benign reply —
+    // the change would be inert for a purely cosmetic reason.
+    const verdict = decideTextOutputVerdict(
+      {
+        triggeredLabels: ['suggestive'],
+        results: [{ label: 'Suggestive', score: BELOW_TEXT_THRESHOLD, triggered: true }],
+      },
+      onSfwHost
+    );
+    expect(verdict.released).toBe(true);
+    expect(verdict.withholdingLabels).toEqual([]);
+  });
+
+  it('🔴 END TO END — a below-threshold SFW trigger releases the text through `screenGeneratedText`', async () => {
+    // The pure decision function is where the logic lives, but the defect users
+    // saw was a withheld reply on the read path. Drive it.
+    scannerReturns(scanOutput(['Suggestive'], { Suggestive: BELOW_TEXT_THRESHOLD }));
+    const released = await screenGeneratedText({
+      ...CTX,
+      isGreen: true,
+      texts: [GENERATED_TEXT],
+      stepId: 'fixture-chat',
+      model: CHAT_TYPE,
+    });
+    expect(released).toEqual({ released: true, texts: [GENERATED_TEXT] });
+    // No `stage: 'withheld'` line, because nothing was withheld.
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('🔴 END TO END — an above-threshold SFW trigger still withholds through `screenGeneratedText`', async () => {
+    // The positive control for the pair above. Without it the end-to-end release
+    // is indistinguishable from a scan that never ran.
+    scannerReturns(scanOutput(['Suggestive'], { Suggestive: ABOVE_TEXT_THRESHOLD }));
+    const withheld = await screenGeneratedText({
+      ...CTX,
+      isGreen: true,
+      texts: [GENERATED_TEXT],
+      stepId: 'fixture-chat',
+      model: CHAT_TYPE,
+    });
+    expect(withheld).toEqual({ released: false, reason: TEXT_OUTPUT_WITHHELD_MESSAGE });
+    expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
+    expect(mockLogToAxiom.mock.calls[0][0]).toMatchObject({
+      stage: 'withheld',
+      withholdingLabels: ['Suggestive'],
+    });
   });
 });
 
