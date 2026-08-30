@@ -297,9 +297,17 @@ function requireModReason(raw: string): string {
 
 /**
  * Load + classify an off-site listing for a mod action. A missing listing AND an
- * on-site (kind!=='offsite') listing BOTH raise the SAME generic NOT_FOUND — the
- * kind guard (delist/relist/purge are offsite-only, §8 of the scope doc) must not
- * let a mod caller probe a listing's kind or existence through this surface.
+ * on-site (kind!=='offsite') listing BOTH raise the SAME generic NOT_FOUND — the kind
+ * guard must not let a mod caller probe a listing's kind or existence through this
+ * surface.
+ *
+ * 🔴 CALLERS, CORRECTED — this used to say the guard covered "delist/relist/purge", and
+ * delist/relist have not gone through here for some time: they are DUAL-KIND and use
+ * {@link classifyListingForAction} instead (see its header). Grepping the real callers
+ * gives `claimListing`, `purgeListing` and the off-site `resetListingToPending`, all
+ * three genuinely off-site only. Naming a caller that does not call it is how the
+ * "everything here is offsite-only" reading survived — and clients now depend on
+ * delist/relist being dual-kind, so the sentence was actively misleading.
  */
 async function classifyOffsiteListing(
   appListingId: string
@@ -1040,16 +1048,25 @@ export async function listModerationEvents(opts: ListModerationEventsInput) {
 // ---------------------------------------------------------------------------
 // W13 post-approval listing management (Phase 1).
 //   resetListingToPending  — MOD bounce an approved off-site listing back to review.
-//   unpublishOwnListing    — OWNER self-hide an approved off-site listing.
-//   republishOwnListing    — OWNER restore an OWNER-unpublished off-site listing
-//                            (forbidden if the last event was a mod takedown).
+//   unpublishOwnListing    — OWNER self-hide an approved listing (DUAL-KIND).
+//   republishOwnListing    — OWNER restore an OWNER-unpublished listing (DUAL-KIND;
+//                            forbidden if the last event was a mod takedown).
 //   listMyListingModerationEvents — OWNER-scoped per-listing audit history.
 //
-// resetListingToPending is offsite-only + `moderatorProcedure`; the three owner
-// procs are offsite-only + `appDeveloperProcedure`, and every owner proc is bound to
-// the caller (`AppListing.userId === callerUserId`, else NOT_OWNED → FORBIDDEN). All
-// write exactly one `AppListingModerationEvent` in the same tx as their mutation
-// (a guarded 0-count rolls the whole tx — incl. the event — back).
+// resetListingToPending is offsite-only + `moderatorProcedure`; the three owner procs
+// are `appDeveloperProcedure` and every owner proc is bound to the caller
+// (`AppListing.userId === callerUserId`, else NOT_OWNED → FORBIDDEN). All write exactly
+// one `AppListingModerationEvent` in the same tx as their mutation (a guarded 0-count
+// rolls the whole tx — incl. the event — back).
+//
+// 🔴 THE OWNER PROCS ARE **NOT** OFFSITE-ONLY, though this block said so. Their own
+// function headers already describe the on-site behaviour correctly —
+// `unpublishOwnListing` is marked "DUAL-KIND (W13 P4)" and flips the backing AppBlock
+// approved → suspended, i.e. a FULL takedown — so it was only this SUMMARY that was
+// stale, which is the shape that survives review: the detail is right and the heading
+// everyone reads first is wrong. `resetListingToPending` genuinely IS offsite-only (its
+// in-tx re-read raises NOT_FOUND on `kind !== 'offsite'`; the on-site path is the
+// separate `resetOnsiteListingToPending`).
 // ---------------------------------------------------------------------------
 
 export type ResetListingToPendingResult = {
