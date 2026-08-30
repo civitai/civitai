@@ -3040,8 +3040,10 @@ export function PageBlockHost({
   // ── OPEN_RESOURCE_PICKER → RESOURCE_PICKER_RESULT (Design 1 host-chrome) ────
   //
   // Generalizes the model-slot OPEN_CHECKPOINT_PICKER (IframeHost) to the page
-  // surface and widens it from Checkpoint-only to a typed allowlist (v1:
-  // Checkpoint + LoRA only). The block asks the HOST to open its OWN native
+  // surface and widens it from Checkpoint-only to a typed allowlist (Checkpoint
+  // plus the generator's LoRA family: LORA, LoCon, DoRA — the exact set the
+  // spend-time page-LoRA gate already accepts, so the picker offers nothing
+  // submit would refuse). The block asks the HOST to open its OWN native
   // ResourceSelectModal as host chrome; the viewer searches in host chrome (NOT
   // the iframe); the host posts back ONLY the single chosen resource. The
   // untrusted iframe NEVER receives a list, the search API, or the catalog — it
@@ -3079,10 +3081,13 @@ export function PageBlockHost({
   // (resource-select.types.ts) exposes NO browsing-level / sfwOnly / nsfw
   // constraint — only `canGenerate`, `resources`, `excludeIds`. NSFW filtering
   // is done purely client-side in the SHARED `ResourceHitList` via
-  // `useApplyHiddenPreferences`, which defaults to the site-wide
-  // `useBrowsingLevelDebounced()` context (the Meili query in
-  // useResourceSelectFilters doesn't filter by browsing level at all). Passing a
-  // block-SFW ceiling in would require adding a new option to
+  // `useApplyHiddenPreferences`, which is passed NO `browsingLevel` override and
+  // so defaults to the site-wide `useBrowsingLevelDebounced()` context (the
+  // server-side list query behind it — the tRPC `model.getResourceSelect`
+  // procedure, service `resource-select.service.ts` — doesn't filter by browsing
+  // level at all; the older `useResourceSelectFilters` hook this note used to
+  // name no longer exists). Passing a block-SFW ceiling in would require adding
+  // a new option to
   // `ResourceSelectOptions`, threading it through `ResourceSelectProvider` /
   // `useResourceSelectContext`, and feeding it to that `useApplyHiddenPreferences`
   // call — i.e. modifying the shared modal's filtering internals (higher blast

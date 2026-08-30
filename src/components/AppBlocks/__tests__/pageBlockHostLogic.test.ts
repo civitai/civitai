@@ -421,6 +421,27 @@ describe('resolveResourcePickerRequest (OPEN_RESOURCE_PICKER — type allowlist 
     });
   });
 
+  // The picker's allowlist is widened from {Checkpoint, LORA} to the generator's
+  // whole LoRA family {LORA, LoCon, DoRA}. This closes a gap that already
+  // existed rather than opening a new one: the SPEND-time gate
+  // (`PAGE_LORA_MODEL_TYPES` in workflow.service, enforced by
+  // `resolvePageLoraGates`) has always accepted LoCon + DoRA, so those two types
+  // were already spend-legal while being unpickable — an author could only reach
+  // them by hard-coding a version id. Nothing about the spend gate moves here.
+  it('accepts a LoCon request (LoRA family) and returns the canonical token', () => {
+    expect(resolveResourcePickerRequest({ requestId: 'r8', resourceType: 'LoCon' })).toEqual({
+      requestId: 'r8',
+      resourceType: 'LoCon',
+    });
+  });
+
+  it('accepts a DoRA request (LoRA family) and returns the canonical token', () => {
+    expect(resolveResourcePickerRequest({ requestId: 'r9', resourceType: 'DoRA' })).toEqual({
+      requestId: 'r9',
+      resourceType: 'DoRA',
+    });
+  });
+
   it('is case-insensitive on the wire but returns the canonical token', () => {
     expect(
       resolveResourcePickerRequest({ requestId: 'r3', resourceType: 'lora' })?.resourceType
@@ -431,6 +452,12 @@ describe('resolveResourcePickerRequest (OPEN_RESOURCE_PICKER — type allowlist 
     expect(
       resolveResourcePickerRequest({ requestId: 'r5', resourceType: '  LoRA  ' })?.resourceType
     ).toBe('LORA');
+    expect(
+      resolveResourcePickerRequest({ requestId: 'r5a', resourceType: 'locon' })?.resourceType
+    ).toBe('LoCon');
+    expect(
+      resolveResourcePickerRequest({ requestId: 'r5b', resourceType: '  DORA ' })?.resourceType
+    ).toBe('DoRA');
   });
 
   it('passes through an optional baseModelGroup family hint', () => {
@@ -454,15 +481,7 @@ describe('resolveResourcePickerRequest (OPEN_RESOURCE_PICKER — type allowlist 
   });
 
   it('REJECTS an unsupported type (VAE / embeddings / wildcards) → null (modal never opens)', () => {
-    for (const t of [
-      'VAE',
-      'TextualInversion',
-      'Wildcards',
-      'Upscaler',
-      'LoCon',
-      'DoRA',
-      'Hypernetwork',
-    ]) {
+    for (const t of ['VAE', 'TextualInversion', 'Wildcards', 'Upscaler', 'Hypernetwork']) {
       expect(resolveResourcePickerRequest({ requestId: 'r', resourceType: t })).toBeNull();
     }
   });
@@ -486,8 +505,40 @@ describe('resolveResourcePickerRequest (OPEN_RESOURCE_PICKER — type allowlist 
     expect(resolveResourcePickerRequest(123)).toBeNull();
   });
 
-  it('the v1 allowlist is exactly Checkpoint + LoRA (guards against scope creep)', () => {
-    expect([...PAGE_RESOURCE_PICKER_TYPES].sort()).toEqual(['Checkpoint', 'LORA']);
+  // Scope-creep guard. UPDATED (not deleted) when the allowlist widened from
+  // {Checkpoint, LORA} to Checkpoint + the whole LoRA family. It still asserts an
+  // EXACT set, so adding a type this list does not name — VAE, TextualInversion,
+  // Wildcards, Upscaler, Hypernetwork, anything — goes red here, in BOTH
+  // directions (a growth AND a silent removal).
+  it('the allowlist is exactly Checkpoint + the LoRA family (guards against scope creep)', () => {
+    expect([...PAGE_RESOURCE_PICKER_TYPES].sort()).toEqual(['Checkpoint', 'DoRA', 'LORA', 'LoCon']);
+  });
+
+  // The widening must change WHICH TYPES are offered and nothing else. The
+  // resolved request is the entire payload the host derives from an untrusted
+  // iframe message, and it is what the caller turns into the native modal's
+  // filter — so pinning its whole key set is what proves no maturity /
+  // browsing-level / sfwOnly knob was smuggled in alongside the new types.
+  it('a resolved request carries ONLY {requestId, resourceType, baseModelGroup?} — no maturity knob', () => {
+    for (const resourceType of PAGE_RESOURCE_PICKER_TYPES) {
+      const bare = resolveResourcePickerRequest({ requestId: 'rk', resourceType });
+      expect(Object.keys(bare ?? {}).sort()).toEqual(['requestId', 'resourceType']);
+
+      const hinted = resolveResourcePickerRequest({
+        requestId: 'rk',
+        resourceType,
+        baseModelGroup: 'SDXL',
+        // Fields an untrusted block might try to smuggle through. None is read.
+        browsingLevel: 28,
+        sfwOnly: false,
+        nsfw: true,
+      });
+      expect(Object.keys(hinted ?? {}).sort()).toEqual([
+        'baseModelGroup',
+        'requestId',
+        'resourceType',
+      ]);
+    }
   });
 });
 
