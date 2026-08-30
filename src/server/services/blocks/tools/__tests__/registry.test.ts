@@ -742,6 +742,32 @@ describe('🔴 block tool registry — the module\'s own claims', () => {
 // hand-written prose, so it can, and nothing checked it. This is the mechanical
 // check, because four rounds of careful prose did not hold.
 // ─────────────────────────────────────────────────────────────────────────────
+// 🔴 ONE EXTRACTOR, USED BY BOTH ARMS BELOW — and that is the whole point.
+// This regex was written TWICE: once in the assertion and once in its own
+// "positive control". An audit broke ONLY the assertion's copy and the control
+// stayed green, so the defect the control exists to make impossible could ship
+// with every test passing. A control built from a DUPLICATE of the step you
+// doubt is a second sample, not a control.
+//
+// 🔴 THE TERMINATOR IS [`|:] AND NOT ` ALONE, because the text this guards
+// already uses the other idiom: the tool description writes `query: "anime"`
+// and `sort: "Most Downloaded"`. With a bare-` terminator those are invisible,
+// so an author extending the description in the SAME style it already uses —
+// `username: "Lykon"` — sails straight past the guard. Verified: that exact
+// mutation passed 92/92 before this widening, and the widening produces zero
+// false positives against the current descriptions.
+//
+// ⚠️ WHAT IT STILL CANNOT DO: it checks that a cited parameter EXISTS, not that
+// what the sentence SAYS about it is true. `period` is a real parameter, so a
+// description claiming it re-ranks would pass — and that truthfulness class is
+// the one that has actually recurred. Do not read a green here as "the prose is
+// correct".
+const CITED_PARAM_RE = /`([a-z][a-zA-Z0-9_]*)[`:]/g;
+
+function citedParams(text: string): string[] {
+  return [...text.matchAll(CITED_PARAM_RE)].map((m) => m[1]);
+}
+
 describe('🔴 block tool registry — the DESCRIPTION cannot name a field the schema lacks', () => {
   it('every backticked identifier in a tool description is a real parameter', () => {
     for (const entry of blockToolDeclarations()) {
@@ -759,7 +785,7 @@ describe('🔴 block tool registry — the DESCRIPTION cannot name a field the s
         // Only tokens that LOOK like a parameter name: backticked, bare
         // identifier, no spaces or dots. That deliberately ignores prose values
         // like `"Most Downloaded"` and paths.
-        const cited = [...text.matchAll(/`([a-z][a-zA-Z0-9_]*)`/g)].map((m) => m[1]);
+        const cited = citedParams(text);
         for (const name of cited) {
           expect(
             known.has(name),
@@ -775,9 +801,7 @@ describe('🔴 block tool registry — the DESCRIPTION cannot name a field the s
   // loop above is vacuous and would pass on a description citing anything.
   it('🔴 POSITIVE CONTROL — the scan really does extract parameter names', () => {
     const decl = blockToolDeclarations().find((t) => t.function.name === 'search_models')!;
-    const cited = [...decl.function.description.matchAll(/`([a-z][a-zA-Z0-9_]*)`/g)].map(
-      (m) => m[1]
-    );
+    const cited = citedParams(decl.function.description);
     // A zero-length extraction would satisfy the test above no matter what the
     // description said.
     expect(cited.length).toBeGreaterThan(0);

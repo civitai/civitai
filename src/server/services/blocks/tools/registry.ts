@@ -576,7 +576,14 @@ const TOOLS: readonly BlockToolDefinition[] = [
       "Search or rank Civitai's model catalog. Returns models with their id, name, type, " +
       'base model, creator, download count and like count, restricted to what this viewer is ' +
       'allowed to see. Filter with `types`, `baseModels` or `supportsGeneration`; rank with ' +
-      '`sort` and `period`. ' +
+      // 🔴 `period` IS NOT A RANKING DIMENSION AND MUST NOT BE LISTED AS ONE.
+      // This sentence said "rank with `sort` and `period`" for three rounds. It
+      // is false in the same way the field's own text was before it was
+      // corrected: `getModelsRaw` builds its orderBy purely from all-time
+      // counts and never reads `period` (the period-aware ranking is commented
+      // out), so `period` only narrows by `lastVersionAt`. The document was
+      // serving the model two contradictory statements about the same field.
+      '`sort`; narrow by `period`. ' +
       'For a NAMED model pass `query` ALONE — adding `sort` there ranks a hundred fuzzy ' +
       'matches and can push the exact model out of the results. For a POPULARITY question ' +
       'pass `sort`: with no `query` to rank the whole catalog, or WITH one to rank within ' +
