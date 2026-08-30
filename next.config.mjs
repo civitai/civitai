@@ -291,10 +291,20 @@ export default defineNextConfig(
       // Turning this flag ON is the only lever here that attacks the mechanism, because
       // P(collision) grows with the SQUARE of the chunk count. Measured on one tree:
       // 24,552 server chunks with the flag off vs 7,122 with it on (-71%).
-      // See claudedocs/turbopack-chunk-hash-collision-2026-08-18.md before flipping it —
-      // in particular, this flag is BROKEN on Next 16.3.0 (it fails the build with 19
-      // `__turbopack_context__.a is not a function` PostCSS errors) and only usable from
-      // 16.3.1 onward.
+      // 🔴 DO NOT FLIP IT ANYWAY — measured on 16.3.1, it does not fit the builder's
+      // memory ceiling. Two blockers were on record here. The first cleared: the flag is
+      // BROKEN on Next 16.3.0 (19 `__turbopack_context__.a is not a function` PostCSS
+      // errors) and compiles from 16.3.1 onward, which the repo is now on. The second
+      // closed the option: a same-commit A/B on 16.3.1 measured +43.0% peak `next-build`
+      // RSS / +30.3% build-container peak — LARGER than the ~+33% quoted above, not
+      // smaller. Projected onto the worst observed production build that lands at
+      // 37-39 GiB against the enforced 40 GiB limit, which is the exact band where the
+      // release build OOMKilled three times when this flag was last on (#3807).
+      // Dropping source maps to pay for it is also closed: it works, but server `.js.map`
+      // has three consumers including the hard `scripts/assert-compiled-branches.mjs`
+      // gate, and `turbopackSourceMaps` cannot be split client/server.
+      // Full evidence: claudedocs/turbopack-chunk-hash-collision-2026-08-18.md
+      // (§Option 1 is closed). The live fix is upstream, not this flag.
       turbopackServerSideNestedAsyncChunking: false,
       // Not the same as omitting it: Next 16.3.0 defaults this to true, and turbopack-build
       // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
