@@ -27,6 +27,20 @@ import {
 
 const KINDS = ['onsite', 'offsite'] as const;
 
+/**
+ * The first whitespace-delimited word of a label — the half a confirm button's verb is
+ * supposed to reproduce.
+ *
+ * Throws on an empty or whitespace-only input rather than returning `''`, so a label that
+ * disappears fails by name instead of making an equality comparison quietly pass against
+ * an equally-empty verb.
+ */
+function openingWord(label: string): string {
+  const first = label.trim().split(/\s+/)[0];
+  if (!first) throw new Error('label has no opening word');
+  return first;
+}
+
 describe('detailListingStatus — what this surface can honestly claim', () => {
   it('the live arm is approved by construction (the read is approved-only)', () => {
     expect(detailListingStatus({ preview: false })).toBe('approved');
@@ -231,14 +245,31 @@ describe('the confirm strings and the review-queue destination', () => {
     expect(reset).not.toContain('Relist');
   });
 
-  it('each submit verb matches its own menu label and not the other action’s', () => {
-    // The button is the last thing read before an irreversible-from-here action, so it
-    // must agree with the item that was clicked. A one-sided mutant fails here on the arm
-    // it changed, whichever arm that is.
+  it('each submit verb IS the opening word of its own menu label, and of no other', () => {
+    // The button is the last thing read before an action that cannot be undone from this
+    // page, so it must agree with the item that was clicked.
+    //
+    // 🔴 STATED AS AN EQUALITY AGAINST A VALUE DERIVED FROM THE LABEL, and that is the fix
+    // for a measured blind spot — the same one this file's pointer check had. This used to
+    // be `expect(detailModActionLabel(action)).toContain(takedownSubmitLabel(action))`,
+    // with the needle on the VERB side, so shortening the verb left a shorter needle the
+    // unchanged label still contains. Measured: truncating
+    // `takedownSubmitLabel('reset-to-pending')` to `'Unpub'` SURVIVED this assertion (it
+    // died only on the whole-string pin two cases up), while the assertion's NAME claimed
+    // it checked the verb-to-label relationship. A guard that reads as coverage while
+    // providing none is worse than none, because it stops the next person looking.
+    //
+    // The relationship is now the other way round: the label's opening word is read OUT of
+    // the label and compared for EQUALITY with the verb. A verb that shrinks fails, a verb
+    // that grows fails, and the claim in the test's name is the claim the body makes.
     for (const action of DETAIL_TAKEDOWN_ACTIONS) {
       const other = DETAIL_TAKEDOWN_ACTIONS.find((a) => a !== action)!;
-      expect(detailModActionLabel(action)).toContain(takedownSubmitLabel(action));
-      expect(detailModActionLabel(action)).not.toContain(takedownSubmitLabel(other));
+      expect(openingWord(detailModActionLabel(action))).toBe(takedownSubmitLabel(action));
+      // Cross-arm: the verb must not also open the OTHER item's label, or the button would
+      // be ambiguous about which menu entry it belongs to. Kept as `startsWith` because
+      // this one is a NEGATIVE — the hazard is a verb that opens both, and a shortened
+      // verb cannot create that without also failing the equality above.
+      expect(detailModActionLabel(other).startsWith(takedownSubmitLabel(action))).toBe(false);
     }
   });
 
@@ -432,6 +463,34 @@ describe('takedownConsequenceCopy', () => {
       expect(copy.includes(truncated)).toBe(true);
       // The spelling actually used refuses them all.
       expect(quotedPointer(copy)).not.toBe(truncated);
+    }
+  });
+
+  /**
+   * The SAME sweep over the other surface that had the same blind spelling: the confirm
+   * button's verb against its menu label. Kept as a second case rather than folded into an
+   * abstract table, because the two checks are genuinely different relationships — the
+   * pointer is a quoted phrase inside prose, the verb is the label's opening word — and a
+   * shared harness would have to encode both anyway.
+   */
+  it('a TRUNCATED submit verb is rejected by the opening-word check, at every prefix length', () => {
+    for (const action of DETAIL_TAKEDOWN_ACTIONS) {
+      const label = detailModActionLabel(action);
+      const real = takedownSubmitLabel(action);
+      // Positive control: the real verb passes, so the refusals below are about truncation
+      // and not about a check that rejects everything.
+      expect(openingWord(label)).toBe(real);
+      for (let n = 1; n < real.length; n++) {
+        const truncated = real.slice(0, n);
+        // The blind spelling — `label.toContain(verb)`, needle on the VERB side — would
+        // accept every one of these. This is the assertion that used to ship.
+        expect(label.includes(truncated)).toBe(true);
+        // `startsWith` in the tempting direction is ALSO blind here, which is why the fix
+        // is an equality rather than a re-anchored prefix test.
+        expect(label.startsWith(truncated)).toBe(true);
+        // The spelling actually used refuses them all.
+        expect(openingWord(label)).not.toBe(truncated);
+      }
     }
   });
 
