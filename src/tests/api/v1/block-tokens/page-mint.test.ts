@@ -872,3 +872,146 @@ describe('POST /api/v1/block-tokens — DEPLOY-GATE (never-deployed refusal)', (
     expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// APPROVED-SCOPE SNAPSHOT GATE — the zero-scope app must MINT, the
+// nothing-approved app must still 403.
+//
+// An app whose manifest declares `"scopes": []` is a legitimate, fully
+// approvable app: it asks for no capabilities and its approved snapshot is
+// therefore legitimately empty. The mint used to reject `approvedScopes.size
+// === 0` unconditionally, so such an app could never obtain a token at all and
+// its run page rendered the "Couldn't authenticate this app" fallback (a 403 is
+// terminal for the client's mint retry, so it failed instantly and forever).
+//
+// That contradicted the mint's own documented intent one screen above the gate:
+// filtering to an EMPTY scope set is supposed to sign a valid ZERO-scope token,
+// because "a useless-but-valid token is the right graceful outcome, not a 403".
+//
+// The fail-closed case the gate exists for — a manifest that DOES declare
+// capability-bearing scopes against an empty approved snapshot — must keep
+// 403ing. That is the invariant these tests pin in both directions.
+// ───────────────────────────────────────────────────────────────────────────
+describe('POST /api/v1/block-tokens — approved-scope snapshot gate', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSession.value = MOD;
+    mockBlockRegistry.resolveBlockInstance.mockReset();
+    mockBlockRegistry.resolvePageBlock.mockReset();
+    mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['apps:storage:read', 'apps:storage:write'],
+      revokedAt: null,
+    });
+    mockRedis.incrBy.mockResolvedValue(1);
+    mockTokenService.checkRateLimit.mockResolvedValue(true);
+    (mockFlags.getFeatureFlags as any).mockImplementation(
+      ({ user }: { user?: { isModerator?: boolean } }) => ({
+        appBlocks: !!user?.isModerator,
+        appBlocksPages: !!user?.isModerator,
+      })
+    );
+  });
+
+  // REGRESSION (the bug): manifest `scopes: []` ⇒ approved snapshot `[]`.
+  // Nothing is being withheld and nothing is unapproved — the app simply wants
+  // no capabilities — so the mint must succeed and sign an empty scope array.
+  it('MINTS (200) a zero-scope token for an approved app whose manifest declares scopes: []', async () => {
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BLOCK([], [], 0));
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
+    const signArg = mockTokenService.sign.mock.calls[0][0];
+    // A VALID token that grants nothing: every scope-gated endpoint still fails
+    // closed at the runtime scope gate because the claim is empty.
+    expect(signArg.scopes).toEqual([]);
+    expect(signArg.ctx).toEqual({ slotId: 'app.page', entityType: 'none' });
+    expect(signArg.buzzBudget).toBeUndefined();
+    // Nothing was withheld, so the host must NOT be told to prompt for consent.
+    expect(res._body.needsConsent).toBe(false);
+    expect(res._body.missingScopes).toEqual([]);
+  });
+
+  // The SECOND producer of `knownManifestScopes.length === 0`, and the one the
+  // graceful-deprecation block above the gate exists for: a manifest that
+  // declares only scopes that have since been RETIRED. `catalog:read` is a real
+  // retired scope (dropped when catalog reads moved to "any valid block token"),
+  // so it survives in an old approved manifest but no longer passes
+  // `isKnownBlockScope` — it is filtered out, leaving an empty known set. Before
+  // this fix that whole class of app was unmintable: retiring a scope silently
+  // bricked every block whose manifest named only that scope.
+  it('MINTS (200) when the manifest declares ONLY retired scopes (deprecation path)', async () => {
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BLOCK(['catalog:read'], [], 0));
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
+    // The retired scope is DROPPED, not carried into the token.
+    expect(mockTokenService.sign.mock.calls[0][0].scopes).toEqual([]);
+  });
+
+  // Same for the MODEL-slot path — the gate is shared, so the fix must not be
+  // page-only.
+  it('MINTS (200) a zero-scope token on the MODEL-slot path too (shared gate)', async () => {
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: [],
+      revokedAt: null,
+    });
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...MODEL_INSTALL,
+      appBlock: {
+        ...MODEL_INSTALL.appBlock,
+        manifest: { scopes: [] },
+        approvedScopes: [],
+        app: { allowedScopes: 0 },
+      },
+    });
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: modelBody() }), res);
+
+    expect(res._status).toBe(200);
+    expect(mockTokenService.sign).toHaveBeenCalledTimes(1);
+    expect(mockTokenService.sign.mock.calls[0][0].scopes).toEqual([]);
+  });
+
+  // FAIL-CLOSED (the invariant the gate exists for, and which the fix must not
+  // break): the manifest DOES declare a capability-bearing scope but the
+  // approved snapshot is empty ⇒ nothing about that scope was ever approved, so
+  // the mint must refuse. This case passes before AND after the fix — it is an
+  // invariant guard, not regression coverage.
+  it('still 403s (no token) when the manifest DECLARES a scope but the approved snapshot is EMPTY', async () => {
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(PAGE_BLOCK(['apps:storage:read'], [], 0));
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+    expect(res._status).toBe(403);
+    expect((res._body as { error: string }).error).toBe('block has no approved scopes');
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+
+  // Adjacent fail-closed direction, unchanged by the fix: a NON-empty approved
+  // snapshot that does not cover a declared scope is caught by the intersection
+  // check immediately after the gate above.
+  it('still 403s (no token) when a declared scope is absent from a NON-empty approved snapshot', async () => {
+    mockBlockRegistry.resolvePageBlock.mockResolvedValue(
+      PAGE_BLOCK(['apps:storage:read', 'apps:storage:write'], ['apps:storage:read'], 0)
+    );
+    const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: pageBody() }), res);
+
+    expect(res._status).toBe(403);
+    expect((res._body as { error: string }).error).toBe(
+      'block manifest carries scopes outside the approved snapshot'
+    );
+    expect((res._body as { rejected: string[] }).rejected).toEqual(['apps:storage:write']);
+    expect(mockTokenService.sign).not.toHaveBeenCalled();
+  });
+});

@@ -955,12 +955,35 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // H-2: intersect requested scopes with the approved-scope snapshot. An
   // approved manifest re-published with added scopes already loses approval
   // (status → 'pending', filtered above), but the approved_scopes column is
-  // the authoritative pinning. Empty array = fail-closed. Checked on the
-  // known-scope subset — an unknown scope was dropped above (capability-less),
-  // so an anti-swap check on it would only mislead; a KNOWN scope added outside
-  // the approved snapshot is still caught here.
+  // the authoritative pinning. An empty snapshot is fail-closed ONLY against a
+  // manifest that actually asks for something. Checked on the known-scope
+  // subset — an unknown scope was dropped above (capability-less), so an
+  // anti-swap check on it would only mislead; a KNOWN scope added outside the
+  // approved snapshot is still caught here.
+  //
+  // ZERO-SCOPE APPS: an app whose manifest declares `scopes: []` (or only
+  // removed/unknown scopes — see the INTENTIONAL note above) is legitimately
+  // approved with an EMPTY snapshot. It is asking for no capabilities, so there
+  // is nothing to fail closed on and it must mint a valid zero-scope token
+  // rather than be locked out of running at all. Guarding this branch on the
+  // manifest actually declaring known scopes is what restores that: with an
+  // empty manifest there is nothing to intersect, and the token that gets
+  // signed grants nothing (every scope-gated endpoint fails closed at the
+  // deny-by-default runtime gate).
+  //
+  // The dangerous shape — a manifest that DOES declare known scopes against an
+  // empty snapshot — is unchanged, and is in fact caught twice: this branch
+  // reports it as "no approved scopes", and the intersection immediately below
+  // would independently reject every one of those scopes as outside the
+  // snapshot. This branch is kept as the more precise diagnostic (and as a belt
+  // if the intersection is ever refactored) — but ONLY for the empty-snapshot
+  // half. It does NOT cover the PARTIAL-snapshot case: a manifest declaring
+  // `A`+`B` against a snapshot holding only `A` reaches this branch with
+  // `approvedScopes.size === 1`, passes it, and is caught solely by the
+  // intersection below. Deleting that intersection on the strength of this
+  // "belt" would sign `B` into the token. Both checks are load-bearing.
   const approvedScopes = new Set(block.approvedScopes ?? []);
-  if (approvedScopes.size === 0) {
+  if (knownManifestScopes.length > 0 && approvedScopes.size === 0) {
     res.status(403).json({ error: 'block has no approved scopes' });
     return;
   }
