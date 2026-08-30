@@ -38,7 +38,7 @@ import {
   trimToWholeRows,
   type RemixGalleryItem,
 } from '~/components/RemixGallery/remix-gallery.utils';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -156,7 +156,16 @@ export function RemixGalleryCard({ imageId }: { imageId: number }) {
   // level has to travel with the request. It is also what resolves their
   // content addons server-side, so omitting it silently disables `disableMinor`
   // and their blocked-tag list as well as the level filter itself.
-  const browsingLevel = useBrowsingLevelDebounced();
+  //
+  // 🔴 The VIEWER's level, not `useBrowsingLevelDebounced`. `ImageDetail2` wraps
+  // this whole sidebar in a `BrowsingLevelProvider` set to the host image's own
+  // rating, and the ordinary hook would inherit that — scoping a list of other
+  // people's images to the rating of the image they are attached to. An entry
+  // above the host can never intersect it, so it was dropped for every viewer
+  // including the owner who approved and was paid for it, while the feed card's
+  // count (no override there) still counted it. That is the mismatch reported on
+  // 2026-08-29. Domain caps still apply; only the page override is skipped.
+  const browsingLevel = useViewerBrowsingLevelDebounced();
 
   const { data: visibility } = trpc.placement.getRemixGalleryVisibility.useQuery(
     { imageId, browsingLevel },
