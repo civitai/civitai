@@ -301,13 +301,28 @@ export function buildReviewConsentNotification(opts: {
 // RESOURCE_PICKER_RESULT. This generalizes the model-slot OPEN_CHECKPOINT_PICKER
 // (IframeHost) from Checkpoint-only to a typed allowlist.
 //
-// v1 type allowlist: Checkpoint + LoRA ONLY (matches the page-LoRA v1 body
-// contract — model.type LORA → additionalResources, Checkpoint → modelVersionId).
-// Any other requested type is REJECTED (the request is dropped, the modal never
-// opens) so a block can't open an embeddings/VAE/wildcards picker on a page.
+// Type allowlist: Checkpoint + the generator's LoRA FAMILY (LORA, LoCon, DoRA).
+// Matches the page-LoRA body contract — a LoRA-family model.type goes to
+// additionalResources, Checkpoint to modelVersionId. Any other requested type is
+// REJECTED (the request is dropped, the modal never opens) so a block can't open
+// an embeddings/VAE/wildcards picker on a page.
+//
+// Why LoCon + DoRA belong here and nothing else does — this CLOSES a gap rather
+// than opening one. The SPEND-time gate `PAGE_LORA_MODEL_TYPES`
+// (server/services/blocks/workflow.service, enforced by `resolvePageLoraGates`)
+// has always been {LORA, LoCon, DoRA} — the same set the platform's
+// compatibility model groups as the LoRA family (basemodel.constants'
+// `fullAddonTypes` / `sdxlCrossAddonTypes` / `sdxlSiblingAddonTypes` each list
+// all three side by side). So LoCon and DoRA were already spend-legal while
+// being unpickable: an author could only reach them by hard-coding a version id.
+// Widening the picker to exactly that set adds no type the submit path would
+// then reject, and moves NO gate — the spend-time set is untouched by this
+// change. Adding a type OUTSIDE the LoRA family (VAE, TextualInversion,
+// Wildcards, Upscaler, Hypernetwork, …) would be the opposite: a picker offering
+// resources `resolvePageLoraGates` refuses with BAD_REQUEST.
 
-/** Canonical model-type tokens the page resource picker accepts in v1. */
-export const PAGE_RESOURCE_PICKER_TYPES = ['Checkpoint', 'LORA'] as const;
+/** Canonical model-type tokens the page resource picker accepts. */
+export const PAGE_RESOURCE_PICKER_TYPES = ['Checkpoint', 'LORA', 'LoCon', 'DoRA'] as const;
 export type PageResourcePickerType = (typeof PAGE_RESOURCE_PICKER_TYPES)[number];
 
 export type ResourcePickerRequest = {
@@ -326,8 +341,13 @@ export type ResourcePickerRequest = {
  * whether to, and with what type/family filter.
  *
  * Type acceptance is case-insensitive on the wire (a block may send 'lora' or
- * 'LoRA'); the returned `resourceType` is the canonical token the native modal
- * filter expects ('Checkpoint' | 'LORA').
+ * 'LoRA'); the returned `resourceType` is the canonical `ModelType` token the
+ * native modal filter expects ('Checkpoint' | 'LORA' | 'LoCon' | 'DoRA').
+ *
+ * The returned shape is deliberately CLOSED: requestId, the canonical type and
+ * an optional family hint. There is no maturity / browsing-level / sfwOnly knob
+ * here and none is read off the raw payload, so widening the TYPE allowlist
+ * cannot widen what a viewer is shown.
  */
 export function resolveResourcePickerRequest(raw: unknown): ResourcePickerRequest | null {
   if (!raw || typeof raw !== 'object') return null;

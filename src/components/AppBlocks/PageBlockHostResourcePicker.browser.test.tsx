@@ -15,7 +15,8 @@ import { renderWithProviders } from '../../../test/component-setup';
  * ResourceSelectModal as host chrome (the iframe never sees the catalog), and
  * posts back ONLY the single picked resource via RESOURCE_PICKER_RESULT. This
  * generalizes the model-slot OPEN_CHECKPOINT_PICKER to pages + widens it from
- * Checkpoint-only to a typed allowlist (v1: Checkpoint + LoRA).
+ * Checkpoint-only to a typed allowlist (Checkpoint + the LoRA family: LORA,
+ * LoCon, DoRA — the same set the spend-time page-LoRA gate already accepted).
  *
  * These tests mount the REAL PageBlockHost and drive the actual postMessage
  * bridge, asserting:
@@ -26,9 +27,12 @@ import { renderWithProviders } from '../../../test/component-setup';
  *      user-picked resource, plus the body-building IDs; NO catalog, NO list,
  *      NO private/early-access/availability internals;
  *   3. on cancel (close without pick) it posts a cancelled result (no `selected`);
- *   4. an UNSUPPORTED requested type (not Checkpoint/LoRA) is rejected — the
+ *   4. an UNSUPPORTED requested type (outside the allowlist) is rejected — the
  *      modal never opens and no reply is posted;
- *   5. concurrent requestIds don't cross.
+ *   5. concurrent requestIds don't cross;
+ *   6. every allowlisted type passes the SAME options bag to the shared modal —
+ *      only the `type` filter varies — so widening the allowlist changes WHICH
+ *      types are offered and NOT what maturity a viewer can be shown.
  *
  * The native modal is a dynamic import that needs real providers, so — exactly
  * like the OPEN_BUZZ_PURCHASE test — we assert against the shared dialogStore
@@ -337,6 +341,66 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
     );
     expect(all).toHaveLength(1);
     replies.stop();
+  });
+
+  test('a LoRA-family type (LoCon) opens the native modal filtered to THAT type', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    postFromBlock('OPEN_RESOURCE_PICKER', { requestId: 'rq_locon', resourceType: 'LoCon' });
+
+    await vi.waitFor(() => {
+      expect(useDialogStore.getState().dialogs).toHaveLength(1);
+    });
+    const props = lastResourceModalProps();
+    expect(props.options?.resources).toHaveLength(1);
+    expect(props.options?.resources?.[0].type).toBe('LoCon');
+    expect(props.options?.canGenerate).toBe(true);
+  });
+
+  // The widening changes WHICH TYPES are offered — and nothing about maturity.
+  //
+  // This is the seam between the host (which decides the filter) and the SHARED
+  // ResourceSelectModal (which decides what a viewer is shown). The host's only
+  // lever over that modal is the `options` bag, and `ResourceSelectOptions`
+  // carries no maturity control at all: NSFW filtering happens client-side in
+  // the shared `ResourceHitList` via `useApplyHiddenPreferences`, which is handed
+  // no `browsingLevel` override and therefore falls through to the site-wide
+  // `useBrowsingLevelDebounced()` ceiling.
+  //
+  // So the guard that means something is a WHOLE-SET assertion on the bag the
+  // host actually passes, evaluated for EVERY allowlisted type: the only thing
+  // that varies across types is `resources[0].type`. A maturity/browsing/sfwOnly
+  // key introduced here — for the new types or for the old ones — goes red.
+  test('every allowlisted type passes the SAME options bag — only `type` varies, no maturity knob', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    const seen: Record<string, unknown>[] = [];
+    for (const [i, resourceType] of ['Checkpoint', 'LORA', 'LoCon', 'DoRA'].entries()) {
+      useDialogStore.getState().closeAll();
+      postFromBlock('OPEN_RESOURCE_PICKER', { requestId: `rq_opt_${i}`, resourceType });
+      await vi.waitFor(() => {
+        expect(useDialogStore.getState().dialogs).toHaveLength(1);
+      });
+      const options = lastResourceModalProps().options as Record<string, unknown>;
+      // The bag itself: exactly the UX floor + the type filter. Nothing else.
+      expect(Object.keys(options).sort()).toEqual(['canGenerate', 'resources']);
+      const resources = options.resources as Record<string, unknown>[];
+      expect(resources).toHaveLength(1);
+      expect(Object.keys(resources[0]).sort()).toEqual(['baseModels', 'type']);
+      expect(resources[0].type).toBe(resourceType);
+      seen.push(options);
+    }
+
+    // ...and the ONLY difference across the four is the type token: every other
+    // field is byte-identical, so the widened set cannot have changed what a
+    // viewer is shown for any of them.
+    const withoutType = seen.map((o) => ({
+      ...o,
+      resources: (o.resources as Record<string, unknown>[]).map(({ type: _type, ...rest }) => rest),
+    }));
+    for (const o of withoutType) expect(o).toEqual(withoutType[0]);
   });
 
   test('an UNSUPPORTED requested type (VAE) is rejected — modal never opens, no reply', async () => {
