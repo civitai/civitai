@@ -102,8 +102,7 @@ export const MAX_TOOL_RESULT_CHARS = 6_000;
 export const MAX_TOOL_RESULT_ITEMS = 10;
 
 /**
- * Bounds on the ARRAY-valued and free-text FILTERS (`types`, `baseModels`,
- * `tag`, `username`).
+ * Bounds on the ARRAY-valued FILTERS (`types`, `baseModels`).
  *
  * 🔴 THESE BOUND A SQL `IN` LIST, NOT A RESPONSE. Every other cap in this file
  * exists to keep a RESULT replayable; these exist because the values are
@@ -114,8 +113,8 @@ export const MAX_TOOL_RESULT_ITEMS = 10;
  * quietly.
  *
  * The per-value length is generous enough for real base-model names
- * ("Stable Diffusion XL 1.0", "Illustrious") and real usernames, and nowhere
- * near enough to smuggle a payload.
+ * ("Stable Diffusion XL 1.0", "Illustrious") and nowhere near enough to smuggle
+ * a payload.
  */
 export const MAX_TOOL_FILTER_ITEMS = 10;
 export const MAX_TOOL_FILTER_VALUE_CHARS = 64;
@@ -576,8 +575,8 @@ const TOOLS: readonly BlockToolDefinition[] = [
     description:
       "Search or rank Civitai's model catalog. Returns models with their id, name, type, " +
       'base model, creator, download count and like count, restricted to what this viewer is ' +
-      'allowed to see. Filter with `types`, `baseModels`, `tag`, `username` or ' +
-      '`supportsGeneration`; rank with `sort` and `period`. ' +
+      'allowed to see. Filter with `types`, `baseModels` or `supportsGeneration`; rank with ' +
+      '`sort` and `period`. ' +
       'For a NAMED model pass `query` ALONE — adding `sort` there ranks a hundred fuzzy ' +
       'matches and can push the exact model out of the results. For a POPULARITY question ' +
       'pass `sort`: with no `query` to rank the whole catalog, or WITH one to rank within ' +

@@ -643,11 +643,13 @@ describe("🔴 /api/v1/blocks/tools — the model can RANK, not just text-match"
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 🔴 PARITY WITH THE PUBLIC CATALOG. `search_models` was narrower than BOTH the
-// public `/api/v1/models` schema and its own sibling `/api/v1/blocks/models`:
-// no `baseModels`, no `supportsGeneration`, no `tag`/`username`, a hardcoded
-// `period`, and a SINGULAR `type` over a hand-written six-value enum while
-// `ModelType` has far more members. Measured consequence: a live answer cited a
+// 🔴 PARITY WITH THE PUBLIC CATALOG, MINUS THE TWO FILTERS THAT FAIL OPEN.
+// `search_models` was narrower than BOTH the public `/api/v1/models` schema and
+// its own sibling `/api/v1/blocks/models`: no `baseModels`, no
+// `supportsGeneration`, a hardcoded `period`, and a SINGULAR `type` over a
+// hand-written six-value enum while `ModelType` has far more members. `tag` and
+// `username` were added here too and then REMOVED — see the fail-open describe
+// below; parity is deliberately NOT total. Measured consequence: a live answer cited a
 // `Wildcards` model — a type the tool could return but could not ask for.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('🔴 /api/v1/blocks/tools — the catalog filters the public API has', () => {
@@ -708,16 +710,22 @@ describe('🔴 /api/v1/blocks/tools — the catalog filters the public API has',
 
 
   // 🔴 PASSES IN BOTH ARMS, FOR DIFFERENT REASONS — labelled, not counted as
-  // regression coverage. Before the filters existed, `baseModels` and `tag` were
-  // unknown keys and a `.strict()` object 400'd on the KEY. Now they are known
-  // and the 400 comes from the BOUND. It guards the new surface; it is not
-  // evidence the widening was safe.
+  // regression coverage. Before `baseModels` existed it was an unknown key and a
+  // `.strict()` object 400'd on the KEY; now it is known and the 400 comes from
+  // the BOUND. It guards the surface; it is not evidence the widening was safe.
+  //
+  // ⚠️ CORRECTED: this comment used to cite `tag` here, and to list "tag
+  // forwarding" and "`username` slugification" in the matrix below as red-at-
+  // `d9bbc5e5b8` evidence. Those two tests were DELETED when both fields were
+  // removed for failing open, so the matrix was advertising coverage that no
+  // longer exists — the same rot the description guard in registry.test.ts now
+  // catches mechanically.
   //
   // Red-then-green matrix for this describe, measured at d9bbc5e5b8 (the
-  // sort-only commit): RED — baseModels/supportsGeneration/tag forwarding, the
-  // `Wildcards` type, `period` forwarding, `username` slugification, and the
-  // projection field-set in registry.test.ts. PASSED at that commit, and so are
-  // CONTROLS — the `period` AllTime default and this bounds test.
+  // sort-only commit): RED — `baseModels`/`supportsGeneration` forwarding, the
+  // `Wildcards` type, `period` forwarding, and the projection field-set in
+  // registry.test.ts. PASSED at that commit, and so are CONTROLS — the `period`
+  // AllTime default and this bounds test.
   it('rejects an over-long filter array and an over-long filter value', async () => {
     const tooMany = await invoke('POST', {
       name: 'search_models',

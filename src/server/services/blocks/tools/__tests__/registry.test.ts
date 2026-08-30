@@ -727,3 +727,60 @@ describe('🔴 block tool registry — the module\'s own claims', () => {
     );
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 THE DESCRIPTION IS A CONTRACT THE MODEL READS, AND IT HAD DRIFTED FROM THE
+// SCHEMA. Three audit rounds each found a claim the implementation contradicted;
+// the fourth found it in the highest-consequence place — the text handed to the
+// LLM. After `tag` and `username` were removed from the schema, the description
+// still said "Filter with `types`, `baseModels`, `tag`, `username`", so a model
+// asking for "models by Lykon" emitted an argument that `.strict()` rejects with
+// a 400, or folded the creator name into `query` and searched for models NAMED
+// Lykon — the exact fabrication this tool's `sort` work exists to stop.
+//
+// `parameters` is DERIVED from the schema so it cannot drift. The description is
+// hand-written prose, so it can, and nothing checked it. This is the mechanical
+// check, because four rounds of careful prose did not hold.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 block tool registry — the DESCRIPTION cannot name a field the schema lacks', () => {
+  it('every backticked identifier in a tool description is a real parameter', () => {
+    for (const entry of blockToolDeclarations()) {
+      const params = entry.function.parameters as { properties: Record<string, unknown> };
+      const known = new Set(Object.keys(params.properties));
+
+      const texts = [
+        entry.function.description,
+        ...Object.values(params.properties as Record<string, { description?: string }>).map(
+          (p) => p.description ?? ''
+        ),
+      ];
+
+      for (const text of texts) {
+        // Only tokens that LOOK like a parameter name: backticked, bare
+        // identifier, no spaces or dots. That deliberately ignores prose values
+        // like `"Most Downloaded"` and paths.
+        const cited = [...text.matchAll(/`([a-z][a-zA-Z0-9_]*)`/g)].map((m) => m[1]);
+        for (const name of cited) {
+          expect(
+            known.has(name),
+            `${entry.function.name}: description cites \`${name}\`, which is not a parameter ` +
+              `(schema has: ${[...known].join(', ')})`
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  // 🔴 POSITIVE CONTROL — the matcher must actually FIND identifiers, or the
+  // loop above is vacuous and would pass on a description citing anything.
+  it('🔴 POSITIVE CONTROL — the scan really does extract parameter names', () => {
+    const decl = blockToolDeclarations().find((t) => t.function.name === 'search_models')!;
+    const cited = [...decl.function.description.matchAll(/`([a-z][a-zA-Z0-9_]*)`/g)].map(
+      (m) => m[1]
+    );
+    // A zero-length extraction would satisfy the test above no matter what the
+    // description said.
+    expect(cited.length).toBeGreaterThan(0);
+    expect(cited).toContain('sort');
+  });
+});

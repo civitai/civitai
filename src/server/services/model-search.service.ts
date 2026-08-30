@@ -253,7 +253,14 @@ export async function runModelSearch(
   // So the empty case is now its own branch, ahead of the flag, and says what it
   // means. Also covers the SFW-clamped shape where Meili's own nsfwLevel filter
   // is what leaves the hit list empty.
-  const noTextMatches = Boolean(query) && Array.isArray(searchIds) && searchIds.length === 0;
+  // `!searchIds?.length` rather than an Array.isArray + length check: it covers
+  // `undefined` as well as `[]`. Both degrade identically at
+  // `ids: query ? searchIds ?? [] : queryIds` — an absent id list is no id
+  // predicate, which is the same fail-open. No caller passes `undefined` today
+  // (all three declare `let searchIds: number[] = []`), so this closes a shape
+  // that is currently unreachable rather than fixing a live bug — but the type
+  // permits it, and the cost is one character.
+  const noTextMatches = Boolean(query) && !searchIds?.length;
   const orderedItems = noTextMatches
     ? []
     : query && searchIds && preserveRelevanceOrder !== false
