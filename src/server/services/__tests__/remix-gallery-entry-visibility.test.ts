@@ -98,6 +98,43 @@ describe('remix gallery entry visibility', () => {
     expect(sql).toContain('i."nsfwLevel"');
   });
 
+  /**
+   * 🔴 The creator's content rule, enforced on READ.
+   *
+   * It used to be enforced by accident: the detail page scoped the gallery to
+   * the HOST image's rating, so an entry above the host could not intersect the
+   * level. That scoping was removed because it also hid entries from viewers
+   * entitled to see them — 161 of 488 approved on prod, 160 paid — and nothing
+   * replaced it. A host re-rated down after approval would then keep rendering
+   * entries above the band its owner set, for the week approval is locked.
+   *
+   * ⚠️ Like the rest of this file, this pins the SPELLING of a clause and not
+   * its effect: prod has ZERO approved entries that the band would hide today
+   * (measured 2026-08-30 by running this exact predicate against the replica),
+   * so no data-driven check can distinguish present from absent. The nonzero
+   * control that the predicate is not a constant is the other direction — 280
+   * of 575 approved entries resolve to `any`, and 80 of those sit above their
+   * host and must keep rendering.
+   */
+  it('applies the host content band, resolved across all three placement scopes', async () => {
+    const sql = await render();
+
+    // The comparison itself. Scoped to the ENTRY alias against a host lookup —
+    // a bare `nsfwLevel` match would pass on the level filter alone.
+    expect(sql).toContain('i."nsfwLevel" <= (SELECT h."nsfwLevel"');
+    // The `any` escape hatch, without which a creator who opted into anything
+    // goes has their own gallery filtered.
+    expect(sql).toContain("= 'any'");
+
+    // 🔴 All three scopes. `resolvePlacementSpace` merges settings PER KEY, so an
+    // image with no row of its own inherits its owner's rule — resolving only
+    // the image scope reports "no row, so the default" and is wrong for 280 of
+    // 575 approved entries on prod.
+    for (const scope of ['image', 'post', 'user']) {
+      expect(sql, `the ${scope} scope must be resolved`).toContain(`s."entityType" = '${scope}'`);
+    }
+  });
+
   it('excludes entries on private posts', async () => {
     expect(await render()).toContain('"availability"');
   });

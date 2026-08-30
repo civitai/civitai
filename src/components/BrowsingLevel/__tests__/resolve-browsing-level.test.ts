@@ -84,9 +84,17 @@ describe('resolveViewerBrowsingLevel', () => {
   });
 
   /**
-   * The two resolutions must agree wherever no page set an override — that is
-   * what makes the gallery on a detail page show the same entries as the flyout
-   * on a feed card, which is the behaviour that was asked for.
+   * The two resolutions agree wherever no page set an override.
+   *
+   * ⚠️ Narrower than it looks, said plainly so nobody cites it as more: with
+   * `override` omitted, `resolvePageBrowsingLevel` reduces to this function's
+   * own body, so two of these rows compare an implementation against a copy of
+   * itself. The 'green domain' row is the one that earns its place — it fails a
+   * one-sided `user ?? forced`.
+   *
+   * It says NOTHING about the gallery and the feed flyout agreeing. That is a
+   * claim about two React trees and two providers, and no test here touches
+   * either; `browsing-level-hooks.test.ts` is as close as this gets.
    */
   it.each([
     ['anonymous', { forced: publicBrowsingLevelsFlag, user: publicBrowsingLevelsFlag }],

@@ -23,7 +23,14 @@ type BrowsingModeProviderState = {
   blurLevels: number;
 };
 
-const BrowsingModeOverrideCtx = createContext<
+/**
+ * Exported for `__tests__/browsing-level-hooks.test.ts`, which renders the two
+ * hooks under a hand-built value. The precedence they encode is a safety rule —
+ * the domain cap must beat both the page override and the viewer's preference —
+ * and it lives in how each hook MAPS this context onto the resolver, which no
+ * test of the resolver alone can reach.
+ */
+export const BrowsingModeOverrideCtx = createContext<
   BrowsingModeProviderState & {
     setBrowsingLevelOverride?: React.Dispatch<React.SetStateAction<number | undefined>>;
     setForcedBrowsingLevel?: React.Dispatch<React.SetStateAction<number | undefined>>;
