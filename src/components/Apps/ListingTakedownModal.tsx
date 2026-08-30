@@ -150,7 +150,9 @@ export function ListingTakedownModal({
       reasonTestId={`${stem}-reason`}
       submitLabel={takedownSubmitLabel(action)}
       submitTestId={`${stem}-submit`}
-      onSubmit={() => mutation.mutate({ appListingId: listing.appListingId, reason: reason.trim() })}
+      onSubmit={() =>
+        mutation.mutate({ appListingId: listing.appListingId, reason: reason.trim() })
+      }
     />
   );
 }

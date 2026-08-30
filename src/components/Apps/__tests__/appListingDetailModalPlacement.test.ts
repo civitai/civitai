@@ -126,10 +126,9 @@ describe('the detail body mounts every menu-opened modal OUTSIDE Menu.Dropdown',
     expect(at >= start && at < end).toBe(true);
 
     // …and it does NOT fire when the same modal sits after the dropdown closes.
-    const correct = planted.replace(
-      '  <ReviewListingModal appListingId={detail.id} />\n',
-      ''
-    ).concat('\n<ReviewListingModal appListingId={detail.id} />');
+    const correct = planted
+      .replace('  <ReviewListingModal appListingId={detail.id} />\n', '')
+      .concat('\n<ReviewListingModal appListingId={detail.id} />');
     const [s2, e2] = dropdownSpan(correct);
     const at2 = correct.indexOf('<ReviewListingModal');
     expect(at2 >= s2 && at2 < e2).toBe(false);

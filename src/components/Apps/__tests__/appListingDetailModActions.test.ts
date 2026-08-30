@@ -150,7 +150,11 @@ describe('appListingDetailModActions', () => {
 
   it('never offers an action outside the declared surface subset', () => {
     for (const kind of KINDS) {
-      for (const action of appListingDetailModActions({ isModerator: true, preview: false, kind })) {
+      for (const action of appListingDetailModActions({
+        isModerator: true,
+        preview: false,
+        kind,
+      })) {
         expect(DETAIL_SURFACE_MOD_ACTIONS).toContain(action);
       }
     }
@@ -310,10 +314,7 @@ describe('detailModActionLabel', () => {
   });
 
   it('the two takedown labels are not confusable with each other', () => {
-    const [reset, hide] = [
-      detailModActionLabel('reset-to-pending'),
-      detailModActionLabel('hide'),
-    ];
+    const [reset, hide] = [detailModActionLabel('reset-to-pending'), detailModActionLabel('hide')];
     expect(reset).not.toBe(hide);
     // Neither may be a prefix of the other: in a narrow dropdown a truncated label is
     // what the moderator actually reads, and two items truncating to the same string is
