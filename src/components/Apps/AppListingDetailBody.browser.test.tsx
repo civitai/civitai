@@ -52,10 +52,13 @@ const mocks = vi.hoisted(() => ({
   creator: null as null | Record<string, unknown>,
   reportMutate: vi.fn(),
   upsertMutate: vi.fn(),
-  // The three MODERATOR procs the `⋮` menu's mod section reaches. The two reset procs
-  // are recorded SEPARATELY on purpose: they are kind-routed, a mis-route is a flat
-  // NOT_FOUND on a live listing, and a single shared spy could not tell the two apart.
+  // The four MODERATOR procs the `⋮` menu's mod section reaches. Each is recorded
+  // SEPARATELY on purpose: the reset pair is kind-routed and a mis-route is a flat
+  // NOT_FOUND on a live listing, and the two TAKEDOWNS now render through one shared
+  // component — so a single spy could not tell "hid it" from "sent it back to review",
+  // which is the whole distinction the two menu items exist to draw.
   messageOwnerMutate: vi.fn(),
+  delistMutate: vi.fn(),
   resetOffsiteMutate: vi.fn(),
   resetOnsiteMutate: vi.fn(),
   // Store-visibility flags, MUTABLE per test. Previously a fixed literal inside the
@@ -162,6 +165,19 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           isPending: false,
         }),
       },
+      // 🔴 ONE proc for BOTH kinds — `delistListing` classifies the listing itself and
+      // suspends the backing block for an on-site one. There is deliberately no second
+      // on-site delist proc to mock, and a client that kind-branched `hide` would be
+      // reaching for one that does not exist.
+      delistListing: {
+        useMutation: (opts?: { onSuccess?: () => void | Promise<void> }) => ({
+          mutate: (input: unknown) => {
+            mocks.delistMutate(input);
+            void opts?.onSuccess?.();
+          },
+          isPending: false,
+        }),
+      },
       resetListingToPending: {
         useMutation: (opts?: { onSuccess?: () => void | Promise<void> }) => ({
           mutate: (input: unknown) => {
@@ -265,6 +281,7 @@ beforeEach(async () => {
   mocks.reportMutate.mockClear();
   mocks.upsertMutate.mockClear();
   mocks.messageOwnerMutate.mockClear();
+  mocks.delistMutate.mockClear();
   mocks.resetOffsiteMutate.mockClear();
   mocks.resetOnsiteMutate.mockClear();
   // 🔴 Restore the WIDE viewport before every test. The viewport is browser-global
@@ -1812,19 +1829,22 @@ describe('AppListingDetailBody — description / screenshot order', () => {
 // ── the `⋮` menu's MODERATOR section ─────────────────────────────────────────
 //
 // The action SET is derived by the pure `appListingDetailModActions`, whose correctness
-// (including "relist can never appear here") is pinned in the BLOCKING node project by
-// `__tests__/appListingDetailModActions.test.ts`. What this block pins is the part only
-// a rendered component can answer: that the items appear for a moderator and not for
-// anyone else, that each opens its modal ACROSS the dropdown's unmount, and that the
-// unpublish fires the proc for the listing's own KIND with the id and the typed reason.
+// (including "relist can never appear here" and the hide/reset copy contrast) is pinned in
+// the BLOCKING node project by `__tests__/appListingDetailModActions.test.ts`. What this
+// block pins is the part only a rendered component can answer: that the items appear for a
+// moderator and not for anyone else, that each opens ITS OWN confirm, and that each
+// takedown fires the right proc — with the mis-route arm, which matters more here than
+// usual because both confirms are now the SAME component parameterised by action.
 describe('AppListingDetailBody — moderator menu section', () => {
   const MOD = { id: 999, username: 'mod', isModerator: true };
   const NON_MOD = { id: 999, username: 'bob' };
   const MESSAGE_ITEM = 'apps-listing-mod-message-owner';
-  const UNPUBLISH_ITEM = 'apps-listing-mod-unpublish';
   const MANAGE_ITEM = 'apps-listing-mod-manage';
+  // Menu items and confirm fields share a stem per action — see `TAKEDOWN_TESTID_STEM`.
+  const UNPUBLISH = 'apps-listing-unpublish';
+  const HIDE = 'apps-listing-hide';
 
-  /** An off-site fixture — the OTHER arm of the kind routing. */
+  /** An off-site fixture — the OTHER arm of the reset pair's kind routing. */
   const offsite: Partial<ListingDetail> = {
     kind: 'offsite',
     kindData: { kind: 'offsite', externalUrl: 'https://ext.app', connectClientId: null },
@@ -1834,12 +1854,30 @@ describe('AppListingDetailBody — moderator menu section', () => {
   // other string in this file so a payload assertion cannot match by accident.
   const REASON = 'screenshots do not match the shipped app';
 
-  test('🔴 a MODERATOR gets Contact app owner, Unpublish, and the review-queue link', async () => {
+  /** Open the `⋮` menu and click one of its items, returning once the click has landed. */
+  async function clickMenuItem(
+    within: ReturnType<typeof page.elementLocator>,
+    testid: string
+  ): Promise<void> {
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    const item = dropdown.querySelector(`[data-testid="${testid}"]`) as HTMLElement | null;
+    expect(item, `menu item ${testid} must exist`).not.toBeNull();
+    await userEvent.click(item as HTMLElement);
+  }
+
+  /** Fill a takedown confirm's reason and submit it. */
+  async function confirmTakedown(stem: string): Promise<void> {
+    await page.getByTestId(`${stem}-reason`).first().fill(REASON);
+    await page.getByTestId(`${stem}-submit`).first().click();
+  }
+
+  test('🔴 a MODERATOR gets Contact app owner, BOTH takedowns, and the review-queue link', async () => {
     mocks.currentUser = MOD;
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     const dropdown = (await openMenu(within)) as HTMLElement;
     expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).not.toBeNull();
-    expect(dropdown.querySelector(`[data-testid="${UNPUBLISH_ITEM}"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)).not.toBeNull();
     // The INVERSE affordance. There is no Relist button because a removed listing 404s
     // on this route; the link is where a removed listing can actually be acted on.
     expect(dropdown.querySelector(`[data-testid="${MANAGE_ITEM}"]`)?.getAttribute('href')).toBe(
@@ -1849,16 +1887,36 @@ describe('AppListingDetailBody — moderator menu section', () => {
     expect(dropdown.textContent).not.toContain('Relist');
   });
 
+  test('🔴 the two takedown items are TELLABLE APART in the rendered menu', async () => {
+    // 🔴 The defect this exists for is not a missing button, it is two adjacent buttons a
+    // moderator cannot choose between. They have the same immediate effect and differ
+    // only in what it costs to undo, so the rendered text — not the source constant — has
+    // to carry that. The label strings themselves are pinned in the blocking tier; this
+    // asserts the DOM actually shows two distinct, non-truncating-to-identical items.
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    const unpublishText = dropdown
+      .querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)!
+      .textContent!.trim();
+    const hideText = dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)!.textContent!.trim();
+    expect(unpublishText).not.toBe(hideText);
+    expect(unpublishText.toLowerCase()).toContain('review');
+    expect(hideText.toLowerCase()).toContain('reversible');
+    expect(hideText.toLowerCase()).not.toContain('review');
+  });
+
   test('🔴 a signed-in NON-moderator gets NONE of them', async () => {
     mocks.currentUser = NON_MOD;
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     const dropdown = (await openMenu(within)) as HTMLElement;
-    // POSITIVE CONTROL from the same dropdown: the USER items are present, so the three
-    // zeros below are about the moderator gate and not about an empty menu.
+    // POSITIVE CONTROL from the same dropdown: the USER items are present, so the zeros
+    // below are about the moderator gate and not about an empty menu.
     expect(dropdown.querySelector('[data-testid="apps-listing-review-action"]')).not.toBeNull();
     expect(dropdown.querySelector('[data-testid="apps-listing-report-action"]')).not.toBeNull();
     expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).toBeNull();
-    expect(dropdown.querySelector(`[data-testid="${UNPUBLISH_ITEM}"]`)).toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)).toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)).toBeNull();
     expect(dropdown.querySelector(`[data-testid="${MANAGE_ITEM}"]`)).toBeNull();
   });
 
@@ -1867,8 +1925,8 @@ describe('AppListingDetailBody — moderator menu section', () => {
     // neighbouring review-item test's comment claiming that role for itself is wrong.
     // MEASURED on this change: moving `<ReviewListingModal>` — and separately
     // `<MessageAppOwnerModal>` — INSIDE `<Menu.Dropdown>`, i.e. exactly the placement the
-    // rule forbids, left this whole suite green at 86/86. Mantine keeps the dropdown's
-    // subtree mounted through its close transition and the modal is portalled and opens
+    // rule forbids, left this whole suite green. Mantine keeps the dropdown's subtree
+    // mounted through its close transition and the modal is portalled and opens
     // synchronously, so this assertion resolves inside that window and cannot tell the
     // two placements apart.
     //
@@ -1878,91 +1936,149 @@ describe('AppListingDetailBody — moderator menu section', () => {
     // to go red on both of those mutants.
     mocks.currentUser = MOD;
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
-    const dropdown = (await openMenu(within)) as HTMLElement;
-    await userEvent.click(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`) as HTMLElement);
+    await clickMenuItem(within, MESSAGE_ITEM);
     // Portalled to the body, and it is the REAL composer.
-    await expect
-      .element(page.getByTestId('apps-mod-message-subject').first())
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mod-message-subject').first()).toBeInTheDocument();
     await expect.element(page.getByTestId('apps-mod-message-body').first()).toBeInTheDocument();
   });
 
-  test('🔴 the Unpublish item opens the reason-gated confirm, naming the ON-SITE runtime stop', async () => {
+  test('🔴 each takedown item opens ITS OWN confirm, not the other one', async () => {
+    // 🔴 The two confirms are the SAME component parameterised by action, so "a modal
+    // opened" is not evidence that the right one did. The per-action testid stem is what
+    // makes them distinguishable, and this is the assertion that reads it.
     mocks.currentUser = MOD;
-    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
-    const dropdown = (await openMenu(within)) as HTMLElement;
-    await userEvent.click(
-      dropdown.querySelector(`[data-testid="${UNPUBLISH_ITEM}"]`) as HTMLElement
-    );
-    const consequences = page.getByTestId('apps-listing-unpublish-consequences').first();
-    await expect.element(consequences).toBeInTheDocument();
-    // The on-site proc suspends the backing block — the app stops serving, not merely
-    // stops being listed. The exact sentence is pinned in the blocking tier; here the
-    // claim is that the ON-SITE one is the one this fixture gets.
-    await expect.element(consequences).toHaveTextContent(/stops serving/);
+    const first = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await clickMenuItem(first.within, `${HIDE}-menu-item`);
+    await expect.element(page.getByTestId(`${HIDE}-consequences`).first()).toBeInTheDocument();
+    expect(document.querySelectorAll(`[data-testid="${UNPUBLISH}-consequences"]`)).toHaveLength(0);
+    // 🔴 The two things a moderator reads at the point of no return — the confirm's TITLE
+    // and its SUBMIT VERB — must name the action they picked. Both come from per-action
+    // maps in the modal, and a swapped map is invisible to every assertion that only
+    // checks "a confirm opened": the shell, the reason field and the gate are identical.
+    await expect.element(page.getByTestId(`${HIDE}-submit`).first()).toHaveTextContent('Hide');
+    await expect
+      .element(page.getByTestId(`${HIDE}-submit`).first())
+      .not.toHaveTextContent('Unpublish');
+    expect(document.body.textContent).toContain('Hide from store (reversible) — my-app');
   });
 
-  test('🔴 an ON-SITE unpublish calls the ON-SITE proc with the listing id + reason, and NOT the off-site one', async () => {
+  // 🔴 ONE RENDER PER TEST, and that is not stylistic. An earlier version opened the
+  // unpublish confirm, then mounted a SECOND body in the same test and tried to click its
+  // menu item — through the first Modal's overlay, which blocks pointer events. It passed
+  // twice and then timed out at 15 s on the third run: an order-dependent test that is
+  // green until it is not. Each arm now starts from a clean mount.
+  test('🔴 the Unpublish confirm names the runtime stop, the re-review, AND the other action', async () => {
     mocks.currentUser = MOD;
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
-    const dropdown = (await openMenu(within)) as HTMLElement;
-    await userEvent.click(
-      dropdown.querySelector(`[data-testid="${UNPUBLISH_ITEM}"]`) as HTMLElement
-    );
-    await page.getByTestId('apps-listing-unpublish-reason').first().fill(REASON);
-    await page.getByTestId('apps-listing-unpublish-submit').first().click();
+    await clickMenuItem(within, `${UNPUBLISH}-menu-item`);
+    const copy = page.getByTestId(`${UNPUBLISH}-consequences`).first();
+    await expect.element(copy).toBeInTheDocument();
+    // On-site fixture, so both the runtime stop and the re-approval requirement apply.
+    await expect.element(copy).toHaveTextContent(/stops serving/);
+    await expect.element(copy).toHaveTextContent(/approves that request/);
+    // …and it points the moderator at the OTHER action, by its exact menu label.
+    await expect.element(copy).toHaveTextContent(/Hide from store/);
+  });
 
-    expect(mocks.resetOnsiteMutate).toHaveBeenCalledTimes(1);
-    expect(mocks.resetOnsiteMutate).toHaveBeenCalledWith({ appListingId: 'l1', reason: REASON });
-    // 🔴 The MIS-ROUTE arm. Each proc answers NOT_FOUND for the other kind, so calling
-    // the wrong one is a flat failure on a live listing, not a degraded outcome.
+  test('🔴 the Hide confirm names the one-click way back and claims NO re-review', async () => {
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await clickMenuItem(within, `${HIDE}-menu-item`);
+    const copy = page.getByTestId(`${HIDE}-consequences`).first();
+    await expect.element(copy).toBeInTheDocument();
+    // Same on-site fixture, so the runtime stop is the CONTROL: the difference between
+    // the two confirms is the undo story, not whether the app stops serving.
+    await expect.element(copy).toHaveTextContent(/stops serving/);
+    await expect.element(copy).toHaveTextContent(/nothing is re-reviewed/);
+    await expect.element(copy).not.toHaveTextContent(/approves that request/);
+    await expect.element(copy).toHaveTextContent(/Unpublish and send back to review/);
+  });
+
+  test('🔴 HIDE calls delistListing with the listing id + reason, and NO reset proc', async () => {
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await clickMenuItem(within, `${HIDE}-menu-item`);
+    await confirmTakedown(HIDE);
+
+    expect(mocks.delistMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.delistMutate).toHaveBeenCalledWith({ appListingId: 'l1', reason: REASON });
+    // 🔴 The WRONG-ACTION arm: hide and reset have the same immediate effect on the store
+    // but completely different undo costs, so firing the other one is not a degraded
+    // outcome — it is a takedown the moderator did not choose.
+    expect(mocks.resetOnsiteMutate).not.toHaveBeenCalled();
     expect(mocks.resetOffsiteMutate).not.toHaveBeenCalled();
   });
 
-  test('🔴 an OFF-SITE unpublish calls the OFF-SITE proc, and NOT the on-site one', async () => {
+  test('🔴 HIDE is NOT kind-routed — an off-site listing calls the SAME single proc', async () => {
+    // `delistListing` is dual-kind in ONE proc: it classifies the listing itself and
+    // suspends the backing block for an on-site one. A client that kind-branched `hide`
+    // would be reaching for a second delist proc that does not exist.
     mocks.currentUser = MOD;
     const { within } = await renderScoped(<AppListingDetailBody detail={base(offsite)} />);
-    const dropdown = (await openMenu(within)) as HTMLElement;
-    await userEvent.click(
-      dropdown.querySelector(`[data-testid="${UNPUBLISH_ITEM}"]`) as HTMLElement
-    );
+    await clickMenuItem(within, `${HIDE}-menu-item`);
+    await confirmTakedown(HIDE);
+
+    expect(mocks.delistMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.delistMutate).toHaveBeenCalledWith({ appListingId: 'l1', reason: REASON });
+    expect(mocks.resetOffsiteMutate).not.toHaveBeenCalled();
+  });
+
+  test('🔴 an ON-SITE unpublish calls the ON-SITE reset proc, and NOT the off-site one or delist', async () => {
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await clickMenuItem(within, `${UNPUBLISH}-menu-item`);
+    await confirmTakedown(UNPUBLISH);
+
+    expect(mocks.resetOnsiteMutate).toHaveBeenCalledTimes(1);
+    expect(mocks.resetOnsiteMutate).toHaveBeenCalledWith({ appListingId: 'l1', reason: REASON });
+    // 🔴 The MIS-ROUTE arm. Each reset proc answers NOT_FOUND for the other kind, so
+    // calling the wrong one is a flat failure on a live listing.
+    expect(mocks.resetOffsiteMutate).not.toHaveBeenCalled();
+    expect(mocks.delistMutate).not.toHaveBeenCalled();
+  });
+
+  test('🔴 an OFF-SITE unpublish calls the OFF-SITE reset proc, and NOT the on-site one or delist', async () => {
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base(offsite)} />);
+    await clickMenuItem(within, `${UNPUBLISH}-menu-item`);
     // Same fixture arm as above, so the copy difference is a fact about the kind: an
     // off-site listing has no block to suspend and must not claim one.
     await expect
-      .element(page.getByTestId('apps-listing-unpublish-consequences').first())
+      .element(page.getByTestId(`${UNPUBLISH}-consequences`).first())
       .not.toHaveTextContent(/stops serving/);
-    await page.getByTestId('apps-listing-unpublish-reason').first().fill(REASON);
-    await page.getByTestId('apps-listing-unpublish-submit').first().click();
+    await confirmTakedown(UNPUBLISH);
 
     expect(mocks.resetOffsiteMutate).toHaveBeenCalledTimes(1);
     expect(mocks.resetOffsiteMutate).toHaveBeenCalledWith({ appListingId: 'l1', reason: REASON });
     expect(mocks.resetOnsiteMutate).not.toHaveBeenCalled();
+    expect(mocks.delistMutate).not.toHaveBeenCalled();
   });
 
-  test('🔴 the submit is GATED on the reason — an empty reason fires nothing', async () => {
-    // The reason is not a confirmation ritual: both procs require it, write it into the
-    // audit event, and DELIVER it to the owner. A submit that fired without one would
-    // send a developer a takedown notice with no explanation in it.
-    mocks.currentUser = MOD;
-    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
-    const dropdown = (await openMenu(within)) as HTMLElement;
-    await userEvent.click(
-      dropdown.querySelector(`[data-testid="${UNPUBLISH_ITEM}"]`) as HTMLElement
-    );
-    const submit = document.querySelector(
-      '[data-testid="apps-listing-unpublish-submit"]'
-    ) as HTMLButtonElement;
-    expect(submit).not.toBeNull();
-    expect(submit.disabled).toBe(true);
-    expect(mocks.resetOnsiteMutate).not.toHaveBeenCalled();
+  for (const [what, stem] of [
+    ['unpublish', 'apps-listing-unpublish'],
+    ['hide', 'apps-listing-hide'],
+  ] as const) {
+    test(`🔴 the ${what} submit is GATED on the reason — an empty reason fires nothing`, async () => {
+      // The reason is not a confirmation ritual: every proc here requires it, writes it
+      // into the audit event, and DELIVERS it to the owner. A submit that fired without
+      // one would send a developer a takedown notice with no explanation in it.
+      mocks.currentUser = MOD;
+      const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+      await clickMenuItem(within, `${stem}-menu-item`);
+      const submit = document.querySelector(
+        `[data-testid="${stem}-submit"]`
+      ) as HTMLButtonElement | null;
+      expect(submit).not.toBeNull();
+      expect(submit!.disabled).toBe(true);
+      expect(mocks.delistMutate).not.toHaveBeenCalled();
+      expect(mocks.resetOnsiteMutate).not.toHaveBeenCalled();
 
-    // POSITIVE CONTROL on the same button: it opens once the floor is cleared, so the
-    // disabled state above is about the gate and not about how the button renders.
-    await page.getByTestId('apps-listing-unpublish-reason').first().fill(REASON);
-    await expect
-      .element(page.getByTestId('apps-listing-unpublish-submit').first())
-      .toBeEnabled();
-  });
+      // POSITIVE CONTROL on the same button: it opens once the floor is cleared, so the
+      // disabled state above is about the gate and not about how the button renders.
+      await page.getByTestId(`${stem}-reason`).first().fill(REASON);
+      await expect.element(page.getByTestId(`${stem}-submit`).first()).toBeEnabled();
+    });
+  }
 
   test('🔴 preview renders NO moderator items for a MODERATOR — with its live positive control', async () => {
     // In preview `detail.id` is not guaranteed to be an `AppListing` id at all (the

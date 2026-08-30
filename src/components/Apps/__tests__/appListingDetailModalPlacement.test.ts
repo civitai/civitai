@@ -51,7 +51,7 @@ const MENU_MODALS = [
   'ReviewListingModal',
   'ReportListingModal',
   'MessageAppOwnerModal',
-  'UnpublishListingModal',
+  'ListingTakedownModal',
 ] as const;
 
 /** A `data-testid` known to live INSIDE the dropdown — the extractor's positive control. */

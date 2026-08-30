@@ -29,6 +29,7 @@ import {
   IconMail,
   IconPencil,
   IconPlugConnected,
+  IconRefresh,
   IconShieldCheck,
   IconThumbUp,
 } from '@tabler/icons-react';
@@ -53,11 +54,14 @@ import {
   shouldShowOffsiteDisclosure,
 } from '~/components/Apps/appListingDetailView';
 import {
+  DETAIL_TAKEDOWN_ACTIONS,
+  TAKEDOWN_TESTID_STEM,
   appListingDetailModActions,
   detailModActionLabel,
+  type DetailTakedownAction,
 } from '~/components/Apps/appListingDetailModActions';
 import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
-import { UnpublishListingModal } from '~/components/Apps/UnpublishListingModal';
+import { ListingTakedownModal } from '~/components/Apps/ListingTakedownModal';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
@@ -922,9 +926,15 @@ export function AppListingDetailBody({
   // rendered as a sibling of its `Menu.Item` is destroyed by the click that opens it.
   // Each holds the LISTING (nullable) rather than a boolean, matching the contract
   // `MessageAppOwnerModal` already defines for its one other call site.
+  //
+  // 🔴 The TAKEDOWN pair shares ONE piece of state holding WHICH action is open, rather
+  // than a boolean each. Two booleans can both be true; this cannot, so "the hide confirm
+  // and the unpublish confirm are open at once" is unrepresentable instead of merely
+  // unlikely — and the two confirms differ only in which mutation they fire, so a viewer
+  // seeing both would have no way to tell which one they were about to submit.
   const modListing = { appListingId: detail.id, slug: detail.slug, kind: detail.kind };
   const [messageOpened, messageModal] = useDisclosure(false);
-  const [unpublishOpened, unpublishModal] = useDisclosure(false);
+  const [takedown, setTakedown] = useState<DetailTakedownAction | null>(null);
 
   // Hero click-to-launch — the banner is an affordance for the SAME destination
   // as the primary CTA, derived FROM that CTA (`getDetailPrimaryAction`) rather
@@ -1102,15 +1112,29 @@ export function AppListingDetailBody({
                           {detailModActionLabel('message-owner')}
                         </Menu.Item>
                       )}
-                      {modActions.includes('reset-to-pending') && (
-                        <Menu.Item
-                          color="red"
-                          leftSection={<IconEyeOff size={14} stroke={1.5} />}
-                          onClick={unpublishModal.open}
-                          data-testid="apps-listing-mod-unpublish"
-                        >
-                          {detailModActionLabel('reset-to-pending')}
-                        </Menu.Item>
+                      {/* The TAKEDOWN pair, rendered by mapping the canonical order
+                          rather than as two hand-written branches: the two items differ
+                          only in which action they carry, so writing them out twice is
+                          how one of them ends up wired to the other's label or testid.
+                          Each still renders only if `modActions` admits it. */}
+                      {DETAIL_TAKEDOWN_ACTIONS.filter((a) => modActions.includes(a)).map(
+                        (action) => (
+                          <Menu.Item
+                            key={action}
+                            color="red"
+                            leftSection={
+                              action === 'hide' ? (
+                                <IconEyeOff size={14} stroke={1.5} />
+                              ) : (
+                                <IconRefresh size={14} stroke={1.5} />
+                              )
+                            }
+                            onClick={() => setTakedown(action)}
+                            data-testid={`${TAKEDOWN_TESTID_STEM[action]}-menu-item`}
+                          >
+                            {detailModActionLabel(action)}
+                          </Menu.Item>
+                        )
                       )}
                       {/* 🔴 THE INVERSE AFFORDANCE, AND IT IS A LINK RATHER THAN A
                           BUTTON ON PURPOSE. There is no relist/republish control here
@@ -1355,10 +1379,14 @@ export function AppListingDetailBody({
           onClose={messageModal.close}
         />
       )}
-      {modActions.includes('reset-to-pending') && (
-        <UnpublishListingModal
-          listing={unpublishOpened ? modListing : null}
-          onClose={unpublishModal.close}
+      {/* ONE takedown confirm, for whichever of the pair is open. It is mounted only when
+          `modActions` still admits that action, so the state alone cannot open a confirm
+          for something this viewer or this listing state does not offer. */}
+      {takedown && modActions.includes(takedown) && (
+        <ListingTakedownModal
+          action={takedown}
+          listing={modListing}
+          onClose={() => setTakedown(null)}
         />
       )}
     </Stack>

@@ -34,23 +34,56 @@ import {
 /**
  * The actions the DETAIL body implements, of the seven {@link ListingModAction}s.
  *
- * 🔴 THE FIVE OMISSIONS ARE DECISIONS, NOT GAPS, and each has a reason that is about this
+ * 🔴 THE FOUR OMISSIONS ARE DECISIONS, NOT GAPS, and each has a reason that is about this
  * surface rather than about effort:
  *
  *   - `review` — opens the off-site publish-request review modal, which needs an
  *     `OffsitePendingRow` (a publish REQUEST). The detail body holds a `ListingDetail`
  *     and no request, and `listingModActions` only offers it when one exists anyway.
- *   - `hide` (delist) / `relist` / `claim` / `purge` — all reachable on `/apps/review`,
- *     which is where a moderator can also SEE a removed listing. This page cannot: its
- *     read (`appListings.getAppDetail`) is approved-only, so a listing in any state those
- *     four apply to renders as a 404 here. `relist` in particular is the one this
+ *   - `relist` / `claim` / `purge` — all reachable on `/apps/review`, which is where a
+ *     moderator can also SEE a removed listing. This page cannot: its read
+ *     (`appListings.getAppDetail`) is approved-only, so a listing in any state those
+ *     three apply to renders as a 404 here. `relist` in particular is the one this
  *     surface can never offer — see the note on {@link detailListingStatus}.
  *
- * Both omitted lifecycle actions are still reachable, one click away, via the menu's
- * link to the review queue.
+ * Every omitted lifecycle action is still reachable, one click away, via the menu's link
+ * to the review queue.
  */
-export const DETAIL_SURFACE_MOD_ACTIONS = ['message-owner', 'reset-to-pending'] as const;
+export const DETAIL_SURFACE_MOD_ACTIONS = ['message-owner', 'reset-to-pending', 'hide'] as const;
 export type DetailSurfaceModAction = (typeof DETAIL_SURFACE_MOD_ACTIONS)[number];
+
+/**
+ * The two TAKEDOWN actions — the ones that put an approved listing off the store, take a
+ * mod `reason`, and open the shared reason-gated confirm. `message-owner` is excluded
+ * because it changes no listing state and routes to its own composer.
+ *
+ * 🔴 KEEPING BOTH IS THE POINT, and they are not redundant. `hide` (delist) is a pure
+ * visibility flip that a moderator reverses in one click with `relist`. `reset-to-pending`
+ * re-queues the app for REVIEW, so it comes back only when someone approves it again.
+ * Same immediate effect on the store, completely different cost to undo — which is why
+ * {@link takedownConsequenceCopy} makes each one name the other.
+ */
+export const DETAIL_TAKEDOWN_ACTIONS = ['reset-to-pending', 'hide'] as const;
+export type DetailTakedownAction = (typeof DETAIL_TAKEDOWN_ACTIONS)[number];
+
+/** Narrowing predicate for the takedown pair — used to route a menu click to the modal. */
+export function isDetailTakedownAction(action: string): action is DetailTakedownAction {
+  return (DETAIL_TAKEDOWN_ACTIONS as readonly string[]).includes(action);
+}
+
+/**
+ * The `data-testid` stem each takedown owns, single-sourced.
+ *
+ * 🔴 SHARED BY THE MENU ITEM AND ITS CONFIRM, and that is the point: the two confirms are
+ * one component parameterised by action, so a hand-typed id in either place is how a test
+ * ends up opening `hide` and asserting against `reset-to-pending`'s modal — which would
+ * pass, because both render the same shell. Menu item = `<stem>-menu-item`; the confirm's
+ * fields = `<stem>-reason` / `<stem>-submit` / `<stem>-consequences`.
+ */
+export const TAKEDOWN_TESTID_STEM: Record<DetailTakedownAction, string> = {
+  'reset-to-pending': 'apps-listing-unpublish',
+  hide: 'apps-listing-hide',
+};
 
 /**
  * The listing's lifecycle status as this surface can honestly claim it, or `null` when
@@ -129,37 +162,63 @@ export function detailModActionLabel(action: DetailSurfaceModAction): string {
     case 'message-owner':
       return 'Contact app owner';
     case 'reset-to-pending':
-      return 'Unpublish (send back to review)';
+      return 'Unpublish and send back to review';
+    case 'hide':
+      // 🔴 The label carries the UNDO cost, because that is the only thing that
+      // distinguishes this from the item directly above it in the menu. Both take the app
+      // off the store; only this one comes back without a re-review. A moderator picking
+      // between two items that both read "Unpublish" would be choosing at random.
+      return 'Hide from store (reversible)';
   }
 }
 
 /**
- * What a reviewer is told will happen, per kind, before they confirm the unpublish.
+ * What a reviewer is told will happen before they confirm a takedown — for BOTH actions
+ * and BOTH kinds, in one place, so the two are written against each other rather than
+ * separately.
  *
- * 🔴 WRITTEN FROM WHAT THE SERVER DOES, not from what the action is called. The two kinds
- * route to two DIFFERENT procs over two different re-queue mechanics, and the difference
- * is exactly the part a moderator needs to know:
+ * 🔴 WRITTEN FROM WHAT THE SERVER DOES, not from what the action is called.
  *
- *   - on-site (`resetOnsiteListingToPending`) additionally SUSPENDS the backing app block,
- *     which is the real runtime stop — the app stops serving, not merely stops being
- *     listed — and clones the latest APPROVED block publish request into a fresh pending
- *     one, so the owner does not resubmit anything;
- *   - off-site (`resetListingToPending`) flips the listing to `pending` and mints a fresh
- *     pending publish request for it.
+ * The KIND axis is the runtime stop. An on-site listing is 1:1 with a backing app block
+ * and the block's serving gate reads the BLOCK's status, so every action that hides an
+ * on-site listing also suspends the block (`flipBackingBlockStatus`, approved→suspended)
+ * — the app stops serving, not merely stops being listed. An off-site listing has no
+ * block, so there is nothing to stop; claiming otherwise would be asserting a consequence
+ * that does not happen.
  *
- * Both notify the owner and both write a `reset-to-pending` audit event carrying the
- * reason. Neither is undoable from this page: the way back is a moderator approving the
- * queued request.
+ * The ACTION axis is the cost of undoing it, and it is the whole reason both items exist:
+ *
+ *   - `hide` → `delistListing` flips the listing approved→removed and stops there. A
+ *     moderator puts it straight back with `relist`, unchanged, in one click.
+ *   - `reset-to-pending` → `resetListingToPending` / `resetOnsiteListingToPending` also
+ *     queue a FRESH review request carrying the current version (the owner resubmits
+ *     nothing), so it returns only when a moderator approves that request.
+ *
+ * Both notify the owner and both write one audit event carrying the reason. NEITHER is
+ * undoable from this page — the read here is approved-only, so the listing 404s the
+ * moment it lands — which is why both sentences point at the review queue rather than
+ * implying a way back on screen.
+ *
+ * 🔴 EACH ARM NAMES THE OTHER ACTION. A moderator choosing between two menu items that
+ * both take the app down needs the contrast at the point of decision, not in a runbook.
  */
-export function unpublishConsequenceCopy(kind: string): string {
+export function takedownConsequenceCopy(action: DetailTakedownAction, kind: string): string {
   const stop =
     kind === 'onsite'
       ? 'The app stops serving immediately and its listing leaves the store.'
       : 'The listing leaves the store.';
+  const outcome =
+    action === 'hide'
+      ? 'Nothing is re-queued and nothing is re-reviewed: a moderator puts it back exactly ' +
+        'as it is, in one click, with Relist in the review queue. Choose "Unpublish and ' +
+        'send back to review" instead if the app has to CHANGE before it returns.'
+      : 'A fresh review request is queued with the current version — the owner resubmits ' +
+        'nothing — and it goes back up only when a moderator approves that request. ' +
+        'Choose "Hide from store" instead if you expect to put it back unchanged.';
   return (
-    `${stop} A fresh review request is queued with the current version — the owner does ` +
-    'not resubmit anything — and they are notified, with the reason you give below. It ' +
-    'goes back up when a moderator approves that request; it cannot be restored from ' +
-    'this page.'
+    `${stop} ${outcome} The owner is notified with the reason you give below, and it is ` +
+    'recorded in this listing’s moderation history. Neither action can be undone from ' +
+    'this page — the store detail is approved-only, so this listing will 404 here as soon ' +
+    'as you confirm.'
   );
 }
