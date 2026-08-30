@@ -6,6 +6,7 @@ import {
   allBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import type { BlockTokenClaims } from '~/server/middleware/block-scope.middleware';
+import { constants } from '~/server/common/constants';
 
 /**
  * Endpoint-wiring tests for /api/v1/blocks/tools (#398 AC5).
@@ -532,5 +533,111 @@ describe('🔴 /api/v1/blocks/tools — guards that were unpinned', () => {
     // …and the AIR prefix within that echo is neutralised, so the block can
     // replay this body as a `role:'tool'` message without a FORBIDDEN.
     expect(body).not.toContain('urn:air:');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 RANKING. Until this block existed the tool could not express a ranking
+// question at ALL: `sort` did not exist and `query` was REQUIRED, so "the most
+// popular models" left the model one lever and it used it — `query: "popular"`,
+// which text-matches model NAMES. Live on 2026-08-30 that returned models
+// literally called "Popular …" with 2,168 / 1,910 / 224 downloads, against a
+// real top-of-catalog above 2,300,000. Reproduce the wrong arm outside this
+// suite with `civitai models search --query "popular"`.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("🔴 /api/v1/blocks/tools — the model can RANK, not just text-match", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it("the model's `sort` REACHES runModelSearch", async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { sort: 'Most Downloaded' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.sort).toBe('Most Downloaded');
+  });
+
+  // 🔴 POSITIVE CONTROL, and it is the half that makes the test above mean
+  // something. Without it a handler that hardcoded 'Most Downloaded' — the
+  // mirror of the defect being fixed — would satisfy the assertion above.
+  it('🔴 POSITIVE CONTROL — omitting `sort` still yields the DEFAULT, not the last value', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { query: 'dreamshaper' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.sort).toBe(constants.modelFilterDefaults.sort);
+    expect(args.sort).not.toBe('Most Downloaded');
+  });
+
+  // 🔴 THE OTHER HALF OF THE DEFECT. A ranking question must be able to carry NO
+  // text at all; while `query` was required, "most popular" HAD to become a
+  // search term. Meili must not run for a query that does not exist — an empty
+  // `searchIds` from a search for nothing is not the same as no text filter.
+  it('🔴 omitting `query` skips Meilisearch and does a pure sorted read', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { sort: 'Most Liked' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockResolveModelSearchIds).not.toHaveBeenCalled();
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.query).toBeUndefined();
+    expect(args.searchIds).toEqual([]);
+    expect(args.sort).toBe('Most Liked');
+  });
+
+  it('🔴 POSITIVE CONTROL — a request WITH `query` still resolves ids through Meili', async () => {
+    // Proves the skip above is conditional on the argument rather than a Meili
+    // hop that was simply deleted.
+    await invoke('POST', { name: 'search_models', arguments: { query: 'dreamshaper' } });
+
+    expect(mockResolveModelSearchIds).toHaveBeenCalledTimes(1);
+    expect(mockResolveModelSearchIds.mock.calls[0][0].query).toBe('dreamshaper');
+  });
+
+  // 🔴 THIS ONE PASSES IN BOTH ARMS, FOR DIFFERENT REASONS — labelled so nobody
+  // counts it as regression coverage. Before the change every `sort` was
+  // rejected because the key itself was unknown to a `.strict()` object; after
+  // it, only an unknown VALUE is rejected, by the enum. It is a contract guard
+  // on the new surface, not evidence the defect was fixed.
+  //
+  // Red-then-green matrix for this describe, measured rather than assumed:
+  // RED at `origin/main` — "`sort` REACHES runModelSearch" (400), "omitting
+  // `query`" (400), "the DECLARATION advertises sort" (undefined). The two
+  // POSITIVE CONTROLs and this test PASSED at `origin/main`; they are controls.
+  it('an unknown sort is REJECTED by the strict contract, not silently defaulted', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { sort: 'Most Popular' },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+
+  it('the served DECLARATION advertises sort, so the model can discover it', async () => {
+    const res = await invoke('GET');
+
+    expect(res.statusCode).toBe(200);
+    const decl = res.body.tools.find((t: any) => t.function.name === 'search_models');
+    const params = decl.function.parameters as any;
+    expect(params.properties.sort).toBeDefined();
+    expect(params.properties.sort.enum).toContain('Most Downloaded');
+    // `query` must NOT be advertised as required, or the model keeps inventing
+    // a search term for a ranking question.
+    expect(params.required ?? []).not.toContain('query');
   });
 });

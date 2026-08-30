@@ -242,10 +242,11 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
   try {
     if (tool.name === 'search_models') {
-      const { query, type, limit } = args.data as {
-        query: string;
+      const { query, type, limit, sort } = args.data as {
+        query?: string;
         type?: string;
         limit?: number;
+        sort?: string;
       };
       // The `Math.min` is redundant TODAY — `searchModelsArgs.limit` is already
       // `.max(MAX_TOOL_RESULT_ITEMS)`, so a larger value is rejected before it
@@ -258,15 +259,23 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       const effectiveLimit = Math.min(limit ?? DEFAULT_LIMIT, MAX_TOOL_RESULT_ITEMS);
       const types = type ? [type] : undefined;
 
+      // 🔴 THE MEILI HOP IS NOW CONDITIONAL, mirroring `blocks/models.ts`. With
+      // no `query` there is no text relevance to resolve, and running it anyway
+      // would hand `runModelSearch` an EMPTY `searchIds` from a search for
+      // nothing rather than the "no text filter" it means. `searchIds: []` plus
+      // `query: undefined` is exactly the pure-sorted-read shape that route
+      // already relies on.
       let searchIds: number[] = [];
       try {
-        const meili = await resolveModelSearchIds({
-          query,
-          limit: effectiveLimit,
-          browsingLevel,
-          types,
-        });
-        searchIds = meili.searchIds;
+        if (query) {
+          const meili = await resolveModelSearchIds({
+            query,
+            limit: effectiveLimit,
+            browsingLevel,
+            types,
+          });
+          searchIds = meili.searchIds;
+        }
       } catch (e) {
         if (e instanceof ModelSearchMeiliTimeoutError) {
           res.setHeader('Retry-After', '2');
@@ -294,7 +303,12 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       const { items } = await runModelSearch(
         {
           types: types as never,
-          sort: constants.modelFilterDefaults.sort as never,
+          // 🔴 THE MODEL'S CHOICE, FALLING BACK TO THE SAME DEFAULT THIS LINE
+          // USED TO HARDCODE — the identical `sort ?? default` expression
+          // `blocks/models.ts` uses. Hardcoding it here is what made "the most
+          // popular models" unanswerable: the only lever left was `query`, so
+          // the ranking word became the search term.
+          sort: (sort ?? constants.modelFilterDefaults.sort) as never,
           period: MetricTimeframe.AllTime,
           limit: effectiveLimit,
           query,

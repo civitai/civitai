@@ -136,12 +136,38 @@ describe('block tool registry — the argument contract is strict', () => {
     }
   });
 
-  it('rejects a missing query, an empty query, and an over-cap limit', () => {
-    expect(tool.argsSchema.safeParse({}).success).toBe(false);
+  // 🔴 THE MISSING-QUERY ARM WAS DELIBERATELY INVERTED, NOT DELETED — and the
+  // distinction matters, because "a test broke, weaken it" is how a contract
+  // quietly goes missing. A REQUIRED `query` was the defect: it left a ranking
+  // question with one lever, so "the most popular models" went out as
+  // `query: "popular"` and text-matched model NAMES. Omitting `query` is now the
+  // supported way to rank the whole catalog, so it MUST parse.
+  //
+  // Everything else this test guarded is kept and still asserted below: an
+  // EMPTY string is still rejected (`.min(1)` applies whenever the field is
+  // present, so the model cannot send `query: ""` and silently mean "no
+  // filter"), and the over-cap limit is untouched.
+  it('ACCEPTS a missing query, and still rejects an empty one and an over-cap limit', () => {
+    expect(tool.argsSchema.safeParse({}).success).toBe(true);
+    expect(tool.argsSchema.safeParse({ sort: 'Most Downloaded' }).success).toBe(true);
+
     expect(tool.argsSchema.safeParse({ query: '' }).success).toBe(false);
     expect(
       tool.argsSchema.safeParse({ query: 'x', limit: MAX_TOOL_RESULT_ITEMS + 1 }).success
     ).toBe(false);
+  });
+
+  // 🔴 STRENGTHENING, added with the field: the enum is the whole point of
+  // `sort`. Without this, widening it to `z.string()` — which would let the
+  // model send a value `runModelSearch` does not understand — passes every
+  // other assertion in this file.
+  it('🔴 `sort` accepts a real ModelSort and REJECTS anything else', () => {
+    expect(tool.argsSchema.safeParse({ sort: 'Most Downloaded' }).success).toBe(true);
+    expect(tool.argsSchema.safeParse({ sort: 'Most Liked' }).success).toBe(true);
+    expect(tool.argsSchema.safeParse({ sort: 'Highest Rated' }).success).toBe(true);
+    // The phrasing a model is most likely to invent, and it is NOT a ModelSort.
+    expect(tool.argsSchema.safeParse({ sort: 'Most Popular' }).success).toBe(false);
+    expect(tool.argsSchema.safeParse({ sort: 'popular' }).success).toBe(false);
   });
 });
 

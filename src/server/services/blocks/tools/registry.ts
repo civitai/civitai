@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { ModelSort } from '~/server/common/enums';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks READ-ONLY TOOL REGISTRY (#398 AC5).
@@ -373,7 +374,38 @@ export function boundToolResult(items: ProjectedModel[]): {
 
 const searchModelsArgs = z
   .object({
-    query: z.string().min(1).max(200).describe('Free-text search over model names and keywords'),
+    // 🔴 OPTIONAL, AND THAT IS THE WHOLE POINT OF THIS FIELD'S SHAPE. While
+    // `query` was REQUIRED the model had exactly one lever, so a ranking
+    // question it could not express became a TEXT SEARCH FOR THE RANKING WORD:
+    // "most popular models" went out as `query: "popular"` and came back with
+    // models literally NAMED "Popular …" — 2,168 downloads against a real
+    // top-of-catalog of 2.3M. Reproduce with
+    // `civitai models search --query "popular"`. Absent `query`, the route
+    // skips Meilisearch entirely and `runModelSearch` does a pure sorted
+    // catalog read, exactly as `blocks/models.ts` already does.
+    query: z
+      .string()
+      .min(1)
+      .max(200)
+      .optional()
+      .describe(
+        'Free-text search over model names and keywords. OMIT it to rank the whole catalog — ' +
+          'do not put a ranking word like "popular" or "best" here, that searches for the word itself.'
+      ),
+    // 🔴 THE RANKING LEVER, PREVIOUSLY ABSENT. The route hardcoded
+    // `constants.modelFilterDefaults.sort` (Highest Rated), so no phrasing could
+    // ask for most-downloaded. `blocks/models.ts` — the route a block calls
+    // DIRECTLY — has exposed `z.enum(ModelSort).optional()` all along, so tool
+    // calling was strictly LESS capable than the REST surface it replaced. Same
+    // enum deliberately: a curated subset here would be a second rule that can
+    // drift from the one `models.ts` already enforces.
+    sort: z
+      .enum(ModelSort)
+      .optional()
+      .describe(
+        'How to rank results (default "Highest Rated"). Use "Most Downloaded" or "Most Liked" ' +
+          'for popularity questions, "Newest" for recency.'
+      ),
     type: z
       .enum(['Checkpoint', 'LORA', 'LoCon', 'TextualInversion', 'VAE', 'Controlnet'])
       .optional()
@@ -405,9 +437,11 @@ const TOOLS: readonly BlockToolDefinition[] = [
   {
     name: 'search_models',
     description:
-      "Search Civitai's model catalog by free text. Returns matching models with their id, " +
-      'name, type, base model, creator and download count. Results are restricted to what ' +
-      'this viewer is allowed to see.',
+      "Search or rank Civitai's model catalog. Returns models with their id, name, type, " +
+      'base model, creator and download count, restricted to what this viewer is allowed to see. ' +
+      'For a NAMED model pass `query`. For a POPULARITY or RECENCY question pass `sort` and ' +
+      'OMIT `query` — e.g. the most popular models overall is `sort: "Most Downloaded"` with no ' +
+      'query. Putting a ranking word in `query` searches for that word in model names instead.',
     argsSchema: searchModelsArgs,
   },
 ] as const;
