@@ -27,8 +27,13 @@ type BrowsingModeProviderState = {
  * Exported for `__tests__/browsing-level-hooks.test.ts`, which renders the two
  * hooks under a hand-built value. The precedence they encode is a safety rule —
  * the domain cap must beat both the page override and the viewer's preference —
- * and it lives in how each hook MAPS this context onto the resolver, which no
- * test of the resolver alone can reach.
+ * and the ORDER of that precedence lives in how each hook MAPS this context
+ * onto the resolver, which no test of the resolver alone can reach.
+ *
+ * ⚠️ What that test does NOT cover: the cap's VALUE, computed below from
+ * `features.canViewNsfw` and `currentUser`. Supplying the context by hand is
+ * what makes the hooks testable at all, and it is exactly what makes that
+ * computation invisible to them.
  */
 export const BrowsingModeOverrideCtx = createContext<
   BrowsingModeProviderState & {

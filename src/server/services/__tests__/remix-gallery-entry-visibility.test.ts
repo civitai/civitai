@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { getRemixGalleryCardSummaries } from '~/server/services/remix-gallery.service';
+import { REMIX_GALLERY_DEFAULT_CONTENT_RULE } from '~/shared/utils/remix-gallery';
 
 /**
  * The gates on a remix-gallery entry, pinned because production data cannot pin
@@ -116,23 +117,64 @@ describe('remix gallery entry visibility', () => {
    * of 575 approved entries resolve to `any`, and 80 of those sit above their
    * host and must keep rendering.
    */
-  it('applies the host content band, resolved across all three placement scopes', async () => {
+  it('applies the host content band, correlated to the host and joined with AND', async () => {
     const sql = await render();
+    // Whitespace-normalised so the assertions below can span the fragment rather
+    // than match clauses in isolation. Every survivor review found was a change
+    // BETWEEN clauses that each individual `toContain` waved through.
+    const flat = sql.replace(/\s+/g, ' ');
 
-    // The comparison itself. Scoped to the ENTRY alias against a host lookup —
-    // a bare `nsfwLevel` match would pass on the level filter alone.
-    expect(sql).toContain('i."nsfwLevel" <= (SELECT h."nsfwLevel"');
-    // The `any` escape hatch, without which a creator who opted into anything
-    // goes has their own gallery filtered.
-    expect(sql).toContain("= 'any'");
+    // The two arms AND the OR between them, as one contiguous slice. `AND` in
+    // place of that `OR` leaves both arms intact and hides the 80 above-host
+    // entries whose creators opted into `any` - re-creating the regression this
+    // fragment was added after. It also rules out `!= 'any'`, which the bare
+    // `= 'any'` substring does not.
+    // 🔴 The `)` before the `=` is load-bearing: `!= 'any'` ENDS with `= 'any'`,
+    // so a bare match on that substring passes with the escape hatch inverted —
+    // measured, it did.
+    expect(flat).toContain(`) = 'any' OR i."nsfwLevel" <=`);
 
-    // 🔴 All three scopes. `resolvePlacementSpace` merges settings PER KEY, so an
-    // image with no row of its own inherits its owner's rule — resolving only
-    // the image scope reports "no row, so the default" and is wrong for 280 of
-    // 575 approved entries on prod.
-    for (const scope of ['image', 'post', 'user']) {
-      expect(sql, `the ${scope} scope must be resolved`).toContain(`s."entityType" = '${scope}'`);
-    }
+    // Correlated to THIS row's host, not to the entry and not to a bound id.
+    // `WHERE h.id = i.id` renders `i."nsfwLevel" <= i."nsfwLevel"`, always true,
+    // and the band goes inert while every clause assertion stays green. The
+    // minor-ceiling case above measured that exact failure; this inherits the
+    // lesson rather than re-discovering it.
+    // 🔴 Scoped to the BAND's own subquery, not to the bare correlation.
+    // `minorHostCeiling` renders `FROM "Image" h WHERE h.id = pl."targetId"` too,
+    // so the unscoped version passed with this comparison repointed at the entry
+    // — measured, 8/8 green while the band was inert. Same trap the
+    // `acceptableMinor` case above records.
+    expect(flat, 'the level comparison must read this row’s host').toContain(
+      `<= (SELECT h."nsfwLevel" FROM "Image" h WHERE h.id = pl."targetId")`
+    );
+
+    // The band is ANDed onto the predicate. Leading with OR would make
+    // `entryIsVisible` permissive in its entirety, and every `toContain` in this
+    // file would still pass - none of them pins a conjunction.
+    expect(flat).toContain('AND ( COALESCE(');
+
+    // Scope order IS precedence. `resolvePlacementSpace` merges settings per key
+    // with the IMAGE most specific, so resolving user first lets an owner's
+    // account-level `any` beat a per-image `atOrBelow` - backwards, and silent.
+    const at = (scope: string) => {
+      const index = flat.indexOf(`s."entityType" = '${scope}'`);
+      expect(index, `the ${scope} scope must be resolved`).toBeGreaterThan(-1);
+      return index;
+    };
+    expect(at('image'), 'image must be resolved before post').toBeLessThan(at('post'));
+    expect(at('post'), 'post must be resolved before user').toBeLessThan(at('user'));
+
+    // Each scope correlated to the host as well, not to some other row.
+    expect(flat).toContain(`s."entityId" = pl."targetId"`);
+    expect(flat).toContain(`JOIN "Image" hp ON hp.id = pl."targetId"`);
+    expect(flat).toContain(`JOIN "Image" hu ON hu.id = pl."targetId"`);
+
+    // The fallback is BOUND, so no string assertion can see it. Asserted by
+    // value, with a fixture guard beside it: if the product ever flips the
+    // default to `any`, the band silently stops applying to every host without a
+    // stored rule, and a spelling-only test would stay green.
+    expect(REMIX_GALLERY_DEFAULT_CONTENT_RULE, 'a default of any disarms the band').not.toBe('any');
+    expect(boundValues(queryRaw.mock.calls[0])).toContain(REMIX_GALLERY_DEFAULT_CONTENT_RULE);
   });
 
   it('excludes entries on private posts', async () => {
