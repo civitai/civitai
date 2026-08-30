@@ -11,8 +11,12 @@
  *     `resetListingToPending`, on-site through `resetOnsiteListingToPending` (which
  *     suspends the backing block + re-queues the block review). The caller routes by
  *     kind; the action is offered for an approved listing of EITHER kind.
- *   - `claim` / `purge` are OFF-SITE ONLY (the service raises NOT_FOUND for an
- *     on-site listing).
+ *   - `claim` is OFF-SITE ONLY (the service raises NOT_FOUND for an on-site listing).
+ *   - `purge` is OFF-SITE at `removed`, PLUS one on-site shape: an ORPHAN PRE-APPROVAL
+ *     DRAFT (never approved, not a shadow, no live block request). That arm exists
+ *     because `rejectRequest` no longer deletes the draft (clawgate #302), so it is the
+ *     only way to reclaim an abandoned submission's slug. Every OTHER on-site listing
+ *     still raises NOT_FOUND.
  *   - `hide` (delist) / `relist` are DUAL-KIND (they flip the on-site AppBlock too).
  *   - `review` opens the existing off-site review modal (approve/reject the pending
  *     request) → off-site only, and only when a pending request exists.
@@ -62,9 +66,11 @@ export type ListingModAction =
  *   - `message-owner`: EVERY row, EVERY status, BOTH kinds. See below.
  *   - `approved` → `reset-to-pending` (dual-kind — off-site + on-site re-queue) +
  *     `hide` (delist, dual-kind).
- *   - `removed`  → `relist` (dual-kind) + `claim` + `purge` (both off-site only).
- *   - `draft` / `rejected` → no LIFECYCLE action (read-only) beyond `message-owner`,
- *     unless a pending request makes `review` available.
+ *   - `removed`  → `relist` (dual-kind) + `claim` + `purge` (both off-site only here).
+ *   - `draft` → `purge` for an ON-SITE orphan pre-approval draft (never approved, no live
+ *     block request); otherwise no LIFECYCLE action beyond `message-owner`, unless a
+ *     pending request makes `review` available.
+ *   - `rejected` → no LIFECYCLE action beyond `message-owner`.
  *
  * 🔴 `message-owner` IS UNCONDITIONAL, and that is a claim about the SERVER, not a
  * preference. `appListings.messageAppOwner` resolves its recipient through
@@ -84,6 +90,13 @@ export function listingModActions(input: {
   status: string;
   kind: string;
   hasPendingRequest: boolean;
+  /** `null` ⇒ never approved. Only used to identify an on-site orphan draft (see below). */
+  appBlockId: string | null;
+  /**
+   * A live `AppBlockPublishRequest` for this slug — the ON-SITE "under review" signal, which
+   * `hasPendingRequest` structurally cannot carry. See the 🔴 note at the purge branch.
+   */
+  hasPendingBlockRequest: boolean;
 }): ListingModAction[] {
   const offsite = input.kind === 'offsite';
   const actions: ListingModAction[] = [];
@@ -107,7 +120,70 @@ export function listingModActions(input: {
       actions.push('purge');
     }
   }
+
+  // 🔴 ON-SITE ORPHAN PRE-APPROVAL DRAFT — the ONLY on-site shape `purgeListing` accepts, and
+  // the only way a moderator can reclaim its slug.
+  //
+  // A `rejectRequest` no longer deletes this row (clawgate #302), so a rejected-and-abandoned
+  // first submission sits here holding `app_listings_slug_key` forever. `delistListing` is
+  // status-guarded to `{approved, removed}` and cannot touch a `draft`, so WITHOUT this branch
+  // the row is visible in this table with no action but "message owner" — which is exactly the
+  // state the reject-time delete used to prevent. The service arm existing is not enough; the
+  // operator has to be able to reach it.
+  //
+  // The terms mirror the service. `appBlockId === null` means never approved. Shadow
+  // revisions need no term — `listAllListingsForModeration` already filters
+  // `revisionOfId: null`, so one can never be a row in this table.
+  //
+  // 🔴 "NOT UNDER REVIEW" READS `hasPendingBlockRequest`, **NOT** `hasPendingRequest`, and the
+  // difference is the whole guard. `hasPendingRequest` is derived from the
+  // `AppListingPublishRequest` relation, whose `appListingId` is "On-site: NULL until approve"
+  // — so for an on-site pre-approval draft it is ALWAYS false, and gating on it offered Purge
+  // on submissions that were actively under review. The live submission behind such a row is
+  // an `AppBlockPublishRequest` joined by SLUG, which is what `hasPendingBlockRequest` carries.
+  if (
+    !offsite &&
+    input.status === 'draft' &&
+    input.appBlockId === null &&
+    !input.hasPendingBlockRequest
+  ) {
+    actions.push('purge');
+  }
   return actions;
+}
+
+/**
+ * 🔴 THE ROW-SHAPED ENTRY POINT, and the reason it exists is testability, not convenience.
+ *
+ * The normalization below used to live inline in `AppListingsModerationTable.tsx`. Nothing could
+ * test it there: the browser tier is the only suite that renders that component, it has no
+ * on-site orphan-draft fixture, and (on this host) it cannot run at all. Measured — inverting
+ * the default to the PERMISSIVE direction left the entire unit tier, 1601 files and 25,069
+ * tests, green. A guard nothing can kill is not a guard.
+ *
+ * Moving it here makes it a pure function the unit tier reaches, so the mutation dies.
+ *
+ * 🔴 ABSENT MEANS "ASSUME UNDER REVIEW". `hasPendingBlockRequest` is newer than some clients
+ * that will call this — a bundle from either side of a deploy, or any future producer of the
+ * DTO — and `!undefined` is truthy, i.e. the permissive direction on the input to a DESTRUCTIVE
+ * affordance. Defaulting to `true` withholds Purge when we cannot tell, which is the only safe
+ * direction: the cost of a wrongly-withheld Purge is a moderator retrying after a refresh; the
+ * cost of a wrongly-offered one is a hard delete of a listing under live review.
+ */
+export function listingModActionsForRow(row: {
+  status: string;
+  kind: string;
+  appBlockId: string | null;
+  pendingRequest: unknown | null;
+  hasPendingBlockRequest?: boolean | null;
+}): ListingModAction[] {
+  return listingModActions({
+    status: row.status,
+    kind: row.kind,
+    hasPendingRequest: row.pendingRequest != null,
+    appBlockId: row.appBlockId,
+    hasPendingBlockRequest: row.hasPendingBlockRequest ?? true,
+  });
 }
 
 /** Whether an action is the destructive one that must be confirmed before firing. */

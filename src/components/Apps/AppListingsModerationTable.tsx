@@ -28,7 +28,7 @@ import {
   isDestructiveListingModAction,
   listingKindChip,
   listingModActionLabel,
-  listingModActions,
+  listingModActionsForRow,
   type ListingModAction,
 } from '~/components/Apps/appListingModerationTableView';
 import {
@@ -329,11 +329,10 @@ export function AppListingsModerationTable({
             // Badge reads the EFFECTIVE status ("Pending" for a draft-with-pending),
             // matching the bucket. Actions below intentionally keep the REAL status.
             const statusChip = listingStatusChip(effectiveModerationStatus(row));
-            const actions = listingModActions({
-              status: row.status,
-              kind: row.kind,
-              hasPendingRequest: row.pendingRequest != null,
-            });
+            // Row-shaped so the field mapping and its safe defaults live in a PURE function the
+            // unit tier can reach — inline here, nothing could test them (see the 🔴 note on
+            // `listingModActionsForRow`).
+            const actions = listingModActionsForRow(row);
             return (
               <Fragment key={row.id}>
                 <Table.Tr data-testid={`apps-mod-listing-row-${row.slug}`}>
@@ -681,8 +680,9 @@ function ListingModActionModal({
       destructive={destructive}
       destructiveWarning={
         <Text size="sm">
-          Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit event
-          (with the slug snapshot) is kept. This cannot be undone.
+          Purge PERMANENTLY deletes this listing and its screenshots + reports, and{' '}
+          <b>releases the store address &quot;{row.slug}&quot; for anyone else to claim</b>. The
+          audit event (with the slug snapshot) is kept. This cannot be undone.
         </Text>
       }
       confirmSlug={destructive ? row.slug : undefined}

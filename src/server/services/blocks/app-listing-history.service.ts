@@ -101,9 +101,13 @@ export const LISTING_HISTORY_LIMIT = 50;
  * 🔴 THE FALLBACK IS `slug`, AND IT MUST BE OWNER-SCOPED. `slug` is the identity that
  * carries a first request across its whole lifecycle (it is NOT NULL on the request and
  * `app_listings_slug_key` is unconditionally UNIQUE), so it is the only join left when the
- * FK is null. But a slug is RELEASED when a first version is rejected or withdrawn — the
- * draft listing is deleted — so the same slug can later belong to a DIFFERENT user. An
- * unscoped slug match would hand that new owner the previous applicant's rejection reason.
+ * FK is null. But a slug can be RELEASED — a first version that is WITHDRAWN deletes its
+ * draft listing, and a mod `purgeListing` on an orphan draft does the same — so the slug
+ * can later belong to a DIFFERENT user. An unscoped slug match would hand that new owner
+ * the previous applicant's rejection reason.
+ *
+ * (A REJECT no longer releases the slug — clawgate #302 — but that shrinks the population
+ * this guard protects, it does not retire the guard: withdraw and purge still do.)
  * Scoping to the listing's CANONICAL OWNER (never to the viewer) closes that without
  * re-introducing the submitter-scoping bug: an accepted collaborator still sees the
  * owner's history, because the scope names the owner and not the caller.
@@ -348,13 +352,23 @@ export const ORPHAN_SCAN_LIMIT = ORPHANED_SUBMISSIONS_LIMIT * 4;
  *
  * 🔴 WHY A SECOND, SUBMITTER-SCOPED READ EXISTS AT ALL, in a PR whose whole point is that
  * submitter-scoping is the bug. Because for THIS population there is no app to key on. A
- * first version that is rejected or withdrawn has its pre-approval DRAFT listing DELETED —
- * `deleteOnsiteDraftListingForSlug` runs in both `rejectRequest` and `withdrawRequest` — so
- * the row `/apps/mine` would hang the history off is gone, while the request itself
- * survives with its `slug`, `status`, `rejection_reason` and `submitted_by_user_id` intact.
- * Measured on production 2026-08-20: **3 of 3 rejected** and **27 of 33 withdrawn** block
- * requests are in exactly this state. Submitter-scoping is not a policy choice here; it is
- * the only identity left on the record.
+ * first version whose pre-approval DRAFT listing was DELETED leaves no row for `/apps/mine`
+ * to hang the history off, while the request itself survives with its `slug`, `status`,
+ * `rejection_reason` and `submitted_by_user_id` intact. Measured on production 2026-08-20:
+ * **3 of 3 rejected** and **27 of 33 withdrawn** block requests were in exactly this state.
+ * Submitter-scoping is not a policy choice here; it is the only identity left on the record.
+ *
+ * 🔴 THE REJECTED HALF OF THAT POPULATION STOPS GROWING (clawgate #302). `rejectRequest` no
+ * longer runs `deleteOnsiteDraftListingForSlug`, so a NEWLY rejected first version keeps its
+ * draft — its slug then resolves to a listing the caller owns, the de-dup below EXCLUDES it,
+ * and it renders on the app-keyed table instead via {@link blockRequestWhereForListing}'s
+ * null-FK slug branch (which matches it: `kind:'onsite'`, owner === submitter). That is a
+ * strictly better home — it hangs off the listing they can now fix and re-submit.
+ *
+ * This function is NOT dead as a result, and must not be deleted on that reasoning: the 3
+ * historically-rejected rows above have no listing to come back to, WITHDRAWN first versions
+ * still delete their draft (27 of 33, the larger half), and a mod `purgeListing` on an orphan
+ * draft creates a fresh one every time it is used.
  *
  * 🔴 THE DELETION IS DELIBERATELY LEFT ALONE. `app_listings_slug_key` is an UNCONDITIONAL
  * UNIQUE index, so deleting the draft is the cleanest slug release available; a partial

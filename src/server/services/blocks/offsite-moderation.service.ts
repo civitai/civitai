@@ -323,8 +323,161 @@ async function classifyOffsiteListing(
 }
 
 /**
- * Load + classify a listing for the DUAL-KIND delist/relist actions (which apply to
- * BOTH kinds, unlike claim/purge which stay offsite-only via `classifyOffsiteListing`).
+ * The Prisma predicate for "a listing a mod may PURGE".
+ *
+ * Two disjoint shapes:
+ *   - any OFF-SITE listing (unchanged — purge has always been the off-site final expunge);
+ *   - an ON-SITE **orphan pre-approval draft**: `status:'draft'` + `appBlockId: null`
+ *     (never approved, so no backing `AppBlock`) + `revisionOfId: null`.
+ *
+ * 🔴 `revisionOfId: null` IS LOAD-BEARING — it is the whole difference between this and
+ * `deleteOnsiteDraftListingForSlug`'s clause, which looks identical and is NOT safe to
+ * reuse here. A SHADOW media revision (`beginListingRevision`) is created with the
+ * PARENT's `kind`, `status:'draft'` and `appBlockId: null` — so it matches every other
+ * term. That clause gets away with it only because it resolves BY SLUG and a shadow's
+ * slug is a synthetic `rev-<ulid>`; a purge resolves BY ID, so without this term a mod
+ * could hard-delete an in-flight media revision of a LIVE, approved on-site app.
+ *
+ * 🔴 And the on-site arm must NEVER widen past `draft`: an `approved`/`removed` on-site
+ * listing has a backing `AppBlock` whose runtime serving gate reads `app_blocks.status`,
+ * so deleting the listing row would hide the store card while leaving the hosted app
+ * serving. `delistListing` is the correct action for those, and it is deliberately
+ * status-guarded to `{approved, removed}` — the two sets do not overlap.
+ *
+ * 🔴 "NOT UNDER REVIEW" IS **NOT** IN THIS PREDICATE, AND CANNOT BE. It is enforced
+ * separately by {@link assertNoLivePendingSubmission}. An earlier revision of this code put
+ * `publishRequests: { none: { status: 'pending' } }` right here, which reads correctly and is
+ * INERT: `AppListing.publishRequests` is the `AppListingPublishRequest` relation, whose
+ * `appListingId` is documented in the schema as "On-site: NULL until approve". The live
+ * submission behind an on-site pre-approval draft is an **`AppBlockPublishRequest`**, joined to
+ * the listing by the shared `@unique` SLUG and by nothing else — there is no FK for a Prisma
+ * relation filter to traverse. So on the one shape this arm accepts, that relation is provably
+ * always empty, `none` is trivially true, and the guard permitted exactly what it claimed to
+ * forbid. Do not "restore" it here.
+ */
+const PURGEABLE_LISTING_WHERE = {
+  OR: [
+    { kind: 'offsite' },
+    { kind: 'onsite', status: 'draft', appBlockId: null, revisionOfId: null },
+  ],
+} satisfies Prisma.AppListingWhereInput;
+
+/** Does an already-loaded row satisfy {@link PURGEABLE_LISTING_WHERE}? Kept beside it so the
+ * in-memory guard and the SQL guard can only drift together. The "not under review" half is
+ * NOT here — see {@link assertNoLivePendingSubmission}. */
+function isPurgeableListing(row: {
+  kind: string;
+  status: string;
+  appBlockId: string | null;
+  revisionOfId: string | null;
+}): boolean {
+  if (row.kind === 'offsite') return true;
+  return (
+    row.kind === 'onsite' &&
+    row.status === 'draft' &&
+    row.appBlockId === null &&
+    row.revisionOfId === null
+  );
+}
+
+/**
+ * 🔴 THE ORPHAN HALF OF "ORPHAN DRAFT", and the reason it is a separate READ rather than a
+ * term of {@link PURGEABLE_LISTING_WHERE}.
+ *
+ * A first-version on-site draft whose `AppBlockPublishRequest` is still `pending` is a
+ * submission UNDER REVIEW, not an abandoned one. Purging it hard-deletes the listing out from
+ * under a live request and RELEASES THE SLUG, while the request still names it; approving that
+ * request afterwards falls back to the legacy approve-time create path and re-mints the listing
+ * on a slug another developer may have taken in between. The correct order is
+ * reject-or-withdraw first, THEN purge.
+ *
+ * It cannot live in the `where`: the join is `AppBlockPublishRequest.slug === AppListing.slug`
+ * with no foreign key, and Prisma relation filters can only traverse declared relations. So
+ * this is an explicit query, and the consequence is that the `deleteMany` guard CANNOT carry
+ * this term — the delete is protected by this check running earlier in the SAME transaction,
+ * not by the delete's own predicate. That is a genuinely weaker guarantee than the other terms
+ * have, and it is stated here rather than papered over.
+ *
+ * 🔴 RESIDUAL RACE, KNOWN AND NOT CLOSED. This is a plain read under READ COMMITTED with no row
+ * lock, so a `submitVersion` that commits between this check and the `deleteMany` yields exactly
+ * the state the check exists to prevent: a pending request whose listing is gone and whose slug
+ * is released. Window is milliseconds.
+ *
+ * 🔴 And the obvious fix does NOT work as a one-sided change. A slug-scoped
+ * `pg_advisory_xact_lock` taken here excludes nothing unless `submitVersion` takes the SAME
+ * lock — a lock is mutual exclusion only between parties that both acquire it, and that path
+ * currently takes none. Closing this properly means touching the submit path too, which is why
+ * it is disclosed rather than half-fixed: a lock added on this side alone would read like a fix
+ * and change nothing, which is the failure mode this whole guard already had once.
+ *
+ * Off-site is exempt by construction: an off-site draft's request DOES carry `appListingId`,
+ * its purge arm is reachable only at `status:'removed'`, and the pre-existing behaviour there
+ * is deliberately unchanged.
+ */
+async function assertNoLivePendingSubmission(
+  client: Pick<typeof dbWrite, 'appBlockPublishRequest'>,
+  listing: { kind: string; slug: string }
+): Promise<void> {
+  if (listing.kind !== 'onsite') return;
+  const live = await client.appBlockPublishRequest.findFirst({
+    where: { slug: listing.slug, status: 'pending' },
+    select: { id: true },
+  });
+  if (live) {
+    // 🔴 ACTIONABLE, not the generic NOT_FOUND the other refusals use — and the difference is
+    // deliberate. The generic message exists so a caller cannot PROBE a listing's kind or
+    // status; that rationale does not apply here, because this surface is
+    // `moderatorProcedure` + an `isModerator` recheck and the mod table now ships this very
+    // fact to that very audience as `ModerationListingRow.hasPendingBlockRequest`. Hiding it
+    // in the error would conceal nothing and would leave the moderator staring at "not found"
+    // for a listing visibly on their screen — reachable from ordinary replica lag between the
+    // table read and the click. Mirrors `resetOnsiteListingToPending`'s wording for the same
+    // condition.
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'A review is already pending for this app — reject or withdraw it before purging.'
+    );
+  }
+}
+
+/** The `select` both purge reads use — every field {@link isPurgeableListing} inspects, so
+ * neither call site can hand it an `undefined` the guard would then judge. */
+const PURGE_CLASSIFY_SELECT = {
+  kind: true,
+  status: true,
+  slug: true,
+  userId: true,
+  appBlockId: true,
+  revisionOfId: true,
+  name: true,
+} satisfies Prisma.AppListingSelect;
+
+/**
+ * Load + classify a listing for PURGE. A missing listing, and any listing outside
+ * {@link PURGEABLE_LISTING_WHERE}, BOTH raise the SAME generic NOT_FOUND — same
+ * info-leak parity as `classifyOffsiteListing`, so a mod caller cannot probe a
+ * listing's kind, status or existence through this surface.
+ */
+async function classifyPurgeableListing(
+  appListingId: string
+): Promise<{ kind: string; status: string; slug: string }> {
+  const listing = await dbRead.appListing.findUnique({
+    where: { id: appListingId },
+    select: PURGE_CLASSIFY_SELECT,
+  });
+  if (!listing || !isPurgeableListing(listing)) {
+    throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
+  }
+  // Fail-fast on the replica. The authoritative repeat runs inside the tx on the PRIMARY.
+  await assertNoLivePendingSubmission(dbRead, listing);
+  return { kind: listing.kind, status: listing.status, slug: listing.slug };
+}
+
+/**
+ * Load + classify a listing for the DUAL-KIND delist/relist actions (which apply to BOTH
+ * kinds at any status, unlike `claim` — still offsite-only via `classifyOffsiteListing` —
+ * and `purge`, which takes any off-site listing but only ONE on-site shape, the orphan
+ * pre-approval draft, via `classifyPurgeableListing`).
  * Returns the fields those actions need: kind (to branch the on-site dual-table flip),
  * status/slug, the backing `appBlockId` (on-site: flip the block's status too), and
  * the owner `userId` (the hide-notification target, for either kind). A missing listing →
@@ -824,8 +977,20 @@ export async function claimListing(opts: {
 export type PurgeListingResult = { appListingId: string; purged: true };
 
 /**
- * MOD hard-delete (purge) an off-site listing — the genuine final expunge that
- * also makes the delist round-trip self-cleaning.
+ * MOD hard-delete (purge) a listing — the genuine final expunge that also makes the
+ * delist round-trip self-cleaning. Targets are {@link PURGEABLE_LISTING_WHERE}: any
+ * OFF-SITE listing, or an ON-SITE orphan pre-approval draft.
+ *
+ * 🔴 THE ON-SITE ARM IS THE DELIBERATE REPLACEMENT FOR A SILENT SIDE-EFFECT, NOT NEW
+ * DESTRUCTIVE POWER. `rejectRequest` used to run `deleteOnsiteDraftListingForSlug` on
+ * every reject, so rejecting a first-time developer over a fixable problem destroyed the
+ * store listing they had built and released their slug — invisibly, with no reason
+ * recorded and no way for a reviewer to decline it. That call is gone (clawgate #302).
+ * The same delete now happens only when a mod ASKS for it, through this path: explicit
+ * target, required reason, and an `action:'purge'` audit event. Same bytes removed, but
+ * chosen and attributable. Removing this arm without restoring some other on-site
+ * removal path would leave an orphan draft holding its slug with NO recourse —
+ * `delistListing` is status-guarded to `{approved, removed}` and cannot touch a draft.
  *
  * 🔴 ORDER MATTERS: the audit event is written FIRST (capturing the slug snapshot +
  * the pre-delete status), THEN the `AppListing` row is deleted. The event's
@@ -853,23 +1018,46 @@ export async function purgeListing(opts: {
 }): Promise<PurgeListingResult> {
   const { input, reviewerUserId } = opts;
   const reason = requireModReason(input.reason);
-  // Fail-fast + info-leak parity (replica): a missing OR on-site listing throws the
-  // same generic NOT_FOUND before any tx is opened. The authoritative snapshot is
-  // re-read on the primary inside the tx below.
-  await classifyOffsiteListing(input.appListingId);
+  // Fail-fast + info-leak parity (replica): a missing listing, and any listing outside
+  // PURGEABLE_LISTING_WHERE, both throw the same generic NOT_FOUND before any tx is
+  // opened. The authoritative snapshot is re-read on the primary inside the tx below.
+  await classifyPurgeableListing(input.appListingId);
 
-  await dbWrite.$transaction(async (tx) => {
+  // RETURNED by the tx (rather than captured in a `let`) when the purged row was an ON-SITE
+  // orphan draft; drives the post-commit owner notification below. Null for the off-site arm
+  // — see the 🔴 note there. Returning it also means a tx that THROWS yields no value at all,
+  // so a rolled-back purge can never reach the notification.
+  const purgedOnsiteDraft = await dbWrite.$transaction(async (tx) => {
     // Authoritative pre-delete snapshot from the PRIMARY (not the replica classify),
-    // so `before.status` + `slug` reflect the true current row and the kind guard is
-    // re-checked on the primary. A row that vanished (or turned non-offsite) between
-    // classify and here → generic NOT_FOUND, tx rolls back with no event written.
+    // so `before.status` + `slug` reflect the true current row and the purgeability
+    // guard is re-checked on the primary. A row that vanished (or moved out of the
+    // purgeable set) between classify and here → generic NOT_FOUND, tx rolls back with
+    // no event written.
+    //
+    // 🔴 RE-CHECKING ON THE PRIMARY IS NOT REDUNDANT FOR THE ON-SITE ARM — it is the
+    // race that matters. `approveRequest` turns exactly this row from an orphan draft
+    // into an APPROVED listing with a backing AppBlock, so a purge that classified
+    // against a lagging replica could otherwise delete a live app's store card. The
+    // predicate is re-evaluated here and AGAIN in the `deleteMany` below.
     const current = await tx.appListing.findUnique({
       where: { id: input.appListingId },
-      select: { status: true, slug: true, kind: true },
+      select: PURGE_CLASSIFY_SELECT,
     });
-    if (!current || current.kind !== 'offsite') {
+    if (!current || !isPurgeableListing(current)) {
       throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
     }
+    // 🔴 AUTHORITATIVE, on the PRIMARY, inside the tx — and this is the ONLY place the
+    // "not under review" rule is actually enforced against the delete, because it cannot be
+    // expressed in the `deleteMany` predicate below (no FK to traverse; see the fn's note).
+    // A throw here rolls the tx back before the audit event is written.
+    await assertNoLivePendingSubmission(tx, current);
+    // Read INSIDE the tx, from the row we are about to delete, for the post-commit
+    // notification below — after the delete there is nothing left to read it from. Held in a
+    // local and returned at the end of the callback, AFTER the delete has been confirmed.
+    const onsiteDraftOwner =
+      current.kind === 'onsite'
+        ? { userId: current.userId, slug: current.slug, name: current.name }
+        : null;
     // Event FIRST (so the slug/state snapshot is captured before the row is gone).
     await tx.appListingModerationEvent.create({
       data: {
@@ -883,18 +1071,63 @@ export async function purgeListing(opts: {
       },
     });
     // THEN the hard delete (nulls the event's appListingId via SetNull; cascades
-    // screenshots + reports). The inline `kind: 'offsite'` guard mirrors delist/relist
-    // for defense-in-depth on a DESTRUCTIVE op — a 0-count delete (raced, or a
-    // non-offsite row slipping past classify) throws → the tx (incl. the event) rolls
-    // back.
+    // screenshots + reports). The inline purgeability guard mirrors delist/relist for
+    // defense-in-depth on a DESTRUCTIVE op — a 0-count delete (raced, or a row slipping
+    // past both classify AND the primary re-read) throws → the tx (incl. the event)
+    // rolls back. This is the SQL twin of `isPurgeableListing` above; they are kept
+    // next to each other so they can only drift together.
     const deleted = await tx.appListing.deleteMany({
-      where: { id: input.appListingId, kind: 'offsite' },
+      where: { id: input.appListingId, ...PURGEABLE_LISTING_WHERE },
     });
     if (deleted.count === 0) {
       // Raced (concurrently purged between the snapshot and here) → roll the event back.
       throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
     }
+    return onsiteDraftOwner;
   });
+
+  // POST-COMMIT, best-effort — tell the owner their pre-approval draft was removed.
+  //
+  // 🔴 ON-SITE ARM ONLY, and the asymmetry is deliberate rather than an oversight. An
+  // off-site purge is only ever offered on an already-`removed` listing, i.e. AFTER a
+  // `delistListing` that notified the owner itself — so notifying again would double up on
+  // an event they have already been told about. The on-site orphan-draft arm has no such
+  // predecessor: it is reachable directly from a `draft` row, so without this the
+  // developer's listing, its media and their slug would vanish with nothing sent at all.
+  // (They were told their SUBMISSION was rejected — `app-block-rejected` — which is a
+  // different event about a different object, and says nothing about the listing going away.)
+  //
+  // Best-effort and post-commit, mirroring every other notify in this file: the purge has
+  // already committed, so a notification failure must never affect the outcome.
+  if (purgedOnsiteDraft) {
+    try {
+      await notifyAppListingOwner({
+        type: 'app-listing-purged',
+        userId: purgedOnsiteDraft.userId,
+        // Keyed by LISTING id, not slug: the slug is released by this very delete and can
+        // legitimately belong to someone else later, so a slug key could dedup a different
+        // developer's notification away.
+        key: `app-listing-purged:${input.appListingId}`,
+        details: {
+          slug: purgedOnsiteDraft.slug,
+          name: purgedOnsiteDraft.name,
+          reason,
+          // 🔴 CARRIED FOR THE SAME REASON THE KEY IS ID-SCOPED, and it matters more here
+          // than at the sibling call sites: this delete RELEASES the slug, so `slug` above
+          // can legitimately belong to a DIFFERENT developer later. `details` is written
+          // once and never repaired, so a payload whose only identifier is a recycled slug
+          // would resolve to a stranger's listing the moment anything reads it.
+          listingId: input.appListingId,
+        },
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[purgeListing] owner notification failed (id=${input.appListingId}); purge STANDS: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
 
   return { appListingId: input.appListingId, purged: true };
 }
