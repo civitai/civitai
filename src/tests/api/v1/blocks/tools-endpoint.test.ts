@@ -641,3 +641,112 @@ describe("🔴 /api/v1/blocks/tools — the model can RANK, not just text-match"
     expect(params.required ?? []).not.toContain('query');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 PARITY WITH THE PUBLIC CATALOG. `search_models` was narrower than BOTH the
+// public `/api/v1/models` schema and its own sibling `/api/v1/blocks/models`:
+// no `baseModels`, no `supportsGeneration`, no `tag`/`username`, a hardcoded
+// `period`, and a SINGULAR `type` over a hand-written six-value enum while
+// `ModelType` has far more members. Measured consequence: a live answer cited a
+// `Wildcards` model — a type the tool could return but could not ask for.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 /api/v1/blocks/tools — the catalog filters the public API has', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('forwards baseModels, supportsGeneration and tag to runModelSearch', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: {
+        sort: 'Most Downloaded',
+        baseModels: ['Illustrious', 'Pony'],
+        supportsGeneration: true,
+        tag: 'anime',
+      },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.baseModels).toEqual(['Illustrious', 'Pony']);
+    expect(args.supportsGeneration).toBe(true);
+    expect(args.tag).toBe('anime');
+  });
+
+  // 🔴 A TYPE THE TOOL COULD RETURN BUT NOT REQUEST. `Wildcards` is not in the
+  // old six-value enum, and a live answer cited one.
+  it('🔴 accepts a ModelType the old six-value enum could not express', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { types: ['Wildcards', 'Poses'], sort: 'Most Downloaded' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.types).toEqual(['Wildcards', 'Poses']);
+  });
+
+  it('forwards `period`, instead of the hardcoded AllTime', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { sort: 'Most Downloaded', period: 'Month' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(mockRunModelSearch.mock.calls[0][0].period).toBe('Month');
+  });
+
+  // 🔴 POSITIVE CONTROL for the line above — omitting `period` must still yield
+  // AllTime. Without this, hardcoding 'Month' would satisfy the assertion above.
+  it('🔴 POSITIVE CONTROL — omitting `period` still yields AllTime', async () => {
+    await invoke('POST', { name: 'search_models', arguments: { sort: 'Most Downloaded' } });
+    expect(mockRunModelSearch.mock.calls[0][0].period).toBe('AllTime');
+  });
+
+  // 🔴 THE SILENT-EMPTY-RESULT ONE. The catalog matches on a SLUGIFIED username,
+  // so forwarding the raw string returns nothing and reads to the model as "that
+  // creator has no models" rather than as an error.
+  it('🔴 `username` is SLUGIFIED before it reaches the catalog', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { username: 'Some User', sort: 'Most Downloaded' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    const [args] = mockRunModelSearch.mock.calls[0];
+    expect(args.username).toBe('some_user');
+    expect(args.username).not.toBe('Some User');
+  });
+
+  // 🔴 PASSES IN BOTH ARMS, FOR DIFFERENT REASONS — labelled, not counted as
+  // regression coverage. Before the filters existed, `baseModels` and `tag` were
+  // unknown keys and a `.strict()` object 400'd on the KEY. Now they are known
+  // and the 400 comes from the BOUND. It guards the new surface; it is not
+  // evidence the widening was safe.
+  //
+  // Red-then-green matrix for this describe, measured at d9bbc5e5b8 (the
+  // sort-only commit): RED — baseModels/supportsGeneration/tag forwarding, the
+  // `Wildcards` type, `period` forwarding, `username` slugification, and the
+  // projection field-set in registry.test.ts. PASSED at that commit, and so are
+  // CONTROLS — the `period` AllTime default and this bounds test.
+  it('rejects an over-long filter array and an over-long filter value', async () => {
+    const tooMany = await invoke('POST', {
+      name: 'search_models',
+      arguments: { baseModels: Array.from({ length: 11 }, (_, i) => `bm${i}`) },
+    });
+    expect(tooMany.statusCode).toBe(400);
+
+    const tooLong = await invoke('POST', {
+      name: 'search_models',
+      arguments: { tag: 'x'.repeat(65) },
+    });
+    expect(tooLong.statusCode).toBe(400);
+
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+});

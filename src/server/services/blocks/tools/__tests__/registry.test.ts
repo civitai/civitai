@@ -209,6 +209,14 @@ describe('block tool registry — projection is an ALLOWLIST', () => {
       baseModel: 'SD 1.5',
       creator: 'Lykon',
       downloads: 1_700_000,
+      // 🔴 ADDED WITH `sort: "Most Liked"`, and this exact-object assertion is
+      // what makes it meaningful: `likes` and `downloads` are pairwise distinct
+      // in the fixture (42 vs 1,700,000), so a projection that swapped the two
+      // stats keys — the obvious mutant once BOTH are read off `row.stats` —
+      // fails here rather than passing on a coincidence. The fixture also
+      // carries `favoriteCount: 7`, which must NOT appear: this is an allowlist,
+      // and adding one field is not licence to leak its neighbours.
+      likes: 42,
       tags: ['photorealistic', 'woman', 'base model', 'portraits', 'art style', 'a', 'b', 'c'],
       url: 'https://civitai.com/models/4384',
     });

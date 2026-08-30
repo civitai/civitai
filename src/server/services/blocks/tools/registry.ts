@@ -1,5 +1,10 @@
 import * as z from 'zod';
+// 🔴 BOTH ARE PURE ENUM MODULES — CHECKED, NOT ASSUMED. This file's header
+// forbids server imports so it stays unit-testable without dragging Prisma:
+// `~/server/common/enums` has NO imports at all, and `~/shared/utils/prisma/enums`
+// only re-exports `@civitai/db-schema/enums`. Neither pulls the Prisma client.
 import { ModelSort } from '~/server/common/enums';
+import { MetricTimeframe, ModelType } from '~/shared/utils/prisma/enums';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks READ-ONLY TOOL REGISTRY (#398 AC5).
@@ -79,6 +84,25 @@ export const MAX_TOOL_RESULT_CHARS = 6_000;
 
 /** Hard cap on results returned in one call, independent of the char budget. */
 export const MAX_TOOL_RESULT_ITEMS = 10;
+
+/**
+ * Bounds on the ARRAY-valued and free-text FILTERS (`types`, `baseModels`,
+ * `tag`, `username`).
+ *
+ * 🔴 THESE BOUND A SQL `IN` LIST, NOT A RESPONSE. Every other cap in this file
+ * exists to keep a RESULT replayable; these exist because the values are
+ * forwarded into the catalog query itself — `model.service` joins `baseModels`
+ * straight into an `IN (…)` — and the caller is an untrusted sandboxed iframe
+ * relaying a language model's output. An unbounded array is an unbounded query,
+ * which is a cost problem rather than a correctness one and therefore fails
+ * quietly.
+ *
+ * The per-value length is generous enough for real base-model names
+ * ("Stable Diffusion XL 1.0", "Illustrious") and real usernames, and nowhere
+ * near enough to smuggle a payload.
+ */
+export const MAX_TOOL_FILTER_ITEMS = 10;
+export const MAX_TOOL_FILTER_VALUE_CHARS = 64;
 
 /**
  * How many results a call returns when it does not ask.
@@ -260,6 +284,7 @@ export type ProjectedModel = {
   baseModel?: string;
   creator?: string;
   downloads?: number;
+  likes?: number;
   tags?: string[];
   url: string;
 };
@@ -329,6 +354,15 @@ export function projectModelForTool(raw: unknown): ProjectedModel | null {
       : {}),
     ...(statsRecord && num(statsRecord.downloadCount) !== undefined
       ? { downloads: num(statsRecord.downloadCount) }
+      : {}),
+    // 🔴 PROJECTED *BECAUSE* `sort` NOW OFFERS "Most Liked". Without it the tool
+    // could rank by likes and then hand the model only a DOWNLOAD count to
+    // explain the ranking with — so the answer would either cite the wrong
+    // number or be unable to justify its own order. A sort key the result cannot
+    // evidence is worse than no sort key. `thumbsUpCount` is already on the row;
+    // one number per item is a negligible slice of MAX_TOOL_RESULT_CHARS.
+    ...(statsRecord && num(statsRecord.thumbsUpCount) !== undefined
+      ? { likes: num(statsRecord.thumbsUpCount) }
       : {}),
     ...(tags && tags.length > 0 ? { tags } : {}),
     url: `https://civitai.com/models/${id}`,
@@ -406,10 +440,52 @@ const searchModelsArgs = z
         'How to rank results (default "Highest Rated"). Use "Most Downloaded" or "Most Liked" ' +
           'for popularity questions, "Newest" for recency.'
       ),
-    type: z
-      .enum(['Checkpoint', 'LORA', 'LoCon', 'TextualInversion', 'VAE', 'Controlnet'])
+    // 🔴 WAS A SINGULAR `type` ON A SIX-VALUE HAND-WRITTEN ENUM, and both halves
+    // were wrong. `ModelType` has far more members — `Wildcards`, `Poses`,
+    // `Workflows`, `ComfyWorkflows`, `Hypernetwork`, `Upscaler`, `MotionModule`,
+    // `Detection`, `LLM`, `DoRA`, … — so the tool could RETURN a row it could not
+    // ASK for. Measured 2026-08-30: a live answer cited a `Wildcards` model while
+    // that value was unrepresentable in this enum. Now the enum itself, plural,
+    // exactly as the public schema and `blocks/models.ts` express it.
+    types: z
+      .array(z.enum(ModelType))
+      .min(1)
+      .max(MAX_TOOL_FILTER_ITEMS)
       .optional()
-      .describe('Restrict to one model type'),
+      .describe('Restrict to these model types'),
+    // 🔴 THE FILTER MOST POPULARITY QUESTIONS ACTUALLY TURN ON. "the best SDXL
+    // checkpoint", "Illustrious LoRAs" — unanswerable while this was absent, and
+    // `blocks/models.ts` has always had it. Free text rather than an enum,
+    // matching the public schema: base-model names are data, not a code-owned
+    // set, and an enum here would silently drop every newly-released family.
+    baseModels: z
+      .array(z.string().min(1).max(MAX_TOOL_FILTER_VALUE_CHARS))
+      .min(1)
+      .max(MAX_TOOL_FILTER_ITEMS)
+      .optional()
+      .describe('Restrict to these base models, e.g. "SDXL 1.0", "Illustrious", "Pony"'),
+    // The route hardcoded AllTime, so "most downloaded THIS MONTH" could not be
+    // asked. `sort` without `period` only ever ranks over all time.
+    period: z
+      .enum(MetricTimeframe)
+      .optional()
+      .describe('Timeframe the ranking is computed over (default "AllTime")'),
+    supportsGeneration: z
+      .boolean()
+      .optional()
+      .describe('Only models that can be generated with on Civitai'),
+    tag: z
+      .string()
+      .min(1)
+      .max(MAX_TOOL_FILTER_VALUE_CHARS)
+      .optional()
+      .describe('Restrict to models carrying this tag'),
+    username: z
+      .string()
+      .min(1)
+      .max(MAX_TOOL_FILTER_VALUE_CHARS)
+      .optional()
+      .describe('Restrict to models by this creator'),
     limit: z
       .number()
       .int()
@@ -438,7 +514,9 @@ const TOOLS: readonly BlockToolDefinition[] = [
     name: 'search_models',
     description:
       "Search or rank Civitai's model catalog. Returns models with their id, name, type, " +
-      'base model, creator and download count, restricted to what this viewer is allowed to see. ' +
+      'base model, creator, download count and like count, restricted to what this viewer is ' +
+      'allowed to see. Filter with `types`, `baseModels`, `tag`, `username` or ' +
+      '`supportsGeneration`; rank with `sort` and `period`. ' +
       'For a NAMED model pass `query`. For a POPULARITY or RECENCY question pass `sort` and ' +
       'OMIT `query` — e.g. the most popular models overall is `sort: "Most Downloaded"` with no ' +
       'query. Putting a ranking word in `query` searches for that word in model names instead.',

@@ -8,6 +8,7 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNextPage } from '~/server/utils/pagination-helpers';
+import { postgresSlugify } from '~/utils/string-helpers';
 import {
   ModelSearchMeiliTimeoutError,
   resolveModelSearchIds,
@@ -242,12 +243,18 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
   try {
     if (tool.name === 'search_models') {
-      const { query, type, limit, sort } = args.data as {
-        query?: string;
-        type?: string;
-        limit?: number;
-        sort?: string;
-      };
+      const { query, types, baseModels, limit, sort, period, supportsGeneration, tag, username } =
+        args.data as {
+          query?: string;
+          types?: string[];
+          baseModels?: string[];
+          limit?: number;
+          sort?: string;
+          period?: string;
+          supportsGeneration?: boolean;
+          tag?: string;
+          username?: string;
+        };
       // The `Math.min` is redundant TODAY — `searchModelsArgs.limit` is already
       // `.max(MAX_TOOL_RESULT_ITEMS)`, so a larger value is rejected before it
       // reaches here. It stays deliberately: it is the last bound before a value
@@ -257,7 +264,18 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       // if that schema ever relaxes is an unbounded catalog read. A redundant
       // clamp costs one comparison; removing a bound is the wrong direction.
       const effectiveLimit = Math.min(limit ?? DEFAULT_LIMIT, MAX_TOOL_RESULT_ITEMS);
-      const types = type ? [type] : undefined;
+      // `types` arrives as an array now, so there is nothing to wrap. The old
+      // `type ? [type] : undefined` existed only because the schema exposed a
+      // SINGULAR field over a hand-written six-value enum.
+      //
+      // 🔴 `username` IS SLUGIFIED HERE, NOT IN THE SCHEMA. The public schema
+      // applies `postgresSlugify` in its own `.transform`, and the catalog query
+      // matches on the slugified column — so passing a raw "Some User" through
+      // would return NOTHING and read to the model as "that creator has no
+      // models". It is done in the ROUTE rather than the registry because the
+      // registry is deliberately server-import-free (see its header), and this
+      // is the same split that file already uses for dispatch.
+      const slugifiedUsername = username ? postgresSlugify(username) : undefined;
 
       // 🔴 THE MEILI HOP IS NOW CONDITIONAL, mirroring `blocks/models.ts`. With
       // no `query` there is no text relevance to resolve, and running it anyway
@@ -303,13 +321,21 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       const { items } = await runModelSearch(
         {
           types: types as never,
+          baseModels,
+          supportsGeneration,
+          tag,
+          username: slugifiedUsername,
           // 🔴 THE MODEL'S CHOICE, FALLING BACK TO THE SAME DEFAULT THIS LINE
           // USED TO HARDCODE — the identical `sort ?? default` expression
           // `blocks/models.ts` uses. Hardcoding it here is what made "the most
           // popular models" unanswerable: the only lever left was `query`, so
           // the ranking word became the search term.
           sort: (sort ?? constants.modelFilterDefaults.sort) as never,
-          period: MetricTimeframe.AllTime,
+          // Same shape as `sort`, and for the same reason: a hardcoded AllTime
+          // makes "most downloaded THIS MONTH" unaskable. `blocks/models.ts`
+          // still hardcodes this one, so the tool is deliberately WIDER than the
+          // sibling here — matching the public schema, which has always had it.
+          period: (period ?? MetricTimeframe.AllTime) as never,
           limit: effectiveLimit,
           query,
           searchIds,
