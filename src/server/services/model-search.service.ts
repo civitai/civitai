@@ -239,10 +239,26 @@ export async function runModelSearch(
   // the historical behaviour, so every existing caller — the public endpoint and
   // `blocks/models` included — is untouched. Only a caller that has a real
   // user-chosen sort AND wants it to win passes `false`.
-  const orderedItems =
-    query && searchIds && preserveRelevanceOrder !== false
-      ? searchIds.map((id) => items.find((m) => m.id === id)).filter(isDefined)
-      : items;
+  // 🔴 ZERO HITS MEANS ZERO RESULTS, AND IT MUST NOT DEPEND ON THE FLAG ABOVE.
+  // `getModelsRaw` adds its id predicate under `if (!!ids?.length)`, so an EMPTY
+  // `searchIds` adds NO filter at all and the query degrades to an unfiltered
+  // catalog page. Until `preserveRelevanceOrder` existed, the relevance restore
+  // hid that: mapping over an empty array returned `[]`, so the empty case was
+  // guarded by ACCIDENT rather than on purpose. Opting out of the restore
+  // removed the accident and let a no-match text search return the whole
+  // catalog — measured `[]` vs `[1,2,3]` on identical inputs, i.e. a block
+  // answering "the most downloaded zzzqqq models are…" with the site-wide top
+  // 10. That is strictly worse than the wrong ORDER this flag exists to fix.
+  //
+  // So the empty case is now its own branch, ahead of the flag, and says what it
+  // means. Also covers the SFW-clamped shape where Meili's own nsfwLevel filter
+  // is what leaves the hit list empty.
+  const noTextMatches = Boolean(query) && Array.isArray(searchIds) && searchIds.length === 0;
+  const orderedItems = noTextMatches
+    ? []
+    : query && searchIds && preserveRelevanceOrder !== false
+    ? searchIds.map((id) => items.find((m) => m.id === id)).filter(isDefined)
+    : items;
 
   const preferredFormat = { metadata: user?.filePreferences };
 

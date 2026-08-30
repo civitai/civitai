@@ -104,3 +104,90 @@ describe('🔴 runModelSearch — an explicit sort must survive a text query', (
     expect(passed).not.toHaveProperty('preserveRelevanceOrder');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 THE REGRESSION THE OPT-OUT INTRODUCED, found by a delta audit of the fix.
+// `getModelsRaw` adds its id predicate under `if (!!ids?.length)`, so an EMPTY
+// searchIds adds NO filter and the query degrades to an unfiltered catalog page.
+// The relevance restore had been guarding that BY ACCIDENT (mapping an empty
+// array yields []); opting out of the restore removed the accident.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 runModelSearch — a text query with NO hits returns NOTHING', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function withNoHits(extra: Record<string, unknown>) {
+    mockGetModelsWithVersions.mockResolvedValue({
+      // What the DB hands back when no id filter was applied: the catalog.
+      items: [1, 2, 3].map(row),
+      nextCursor: undefined,
+    });
+    const res = await runModelSearch(
+      { limit: 10, query: 'zzzqqq', searchIds: [], sort: 'Most Downloaded' as never, ...extra },
+      {
+        browsingLevel: allBrowsingLevelsFlag,
+        nsfwImagePassthrough: false,
+        user: undefined,
+        baseUrlOrigin: 'https://civitai.com',
+      } as Parameters<typeof runModelSearch>[1]
+    );
+    return (res.items as Array<{ id: number }>).map((m) => m.id);
+  }
+
+  it('🔴 empty searchIds yields [] even with the relevance restore OPTED OUT', async () => {
+    expect(await withNoHits({ preserveRelevanceOrder: false })).toEqual([]);
+  });
+
+  // The historical arm, so the assertion above is a statement about the FLAG
+  // rather than about empty arrays in general.
+  it('empty searchIds yields [] on the default path too', async () => {
+    expect(await withNoHits({})).toEqual([]);
+  });
+
+  // 🔴 POSITIVE CONTROL — the fixture DB rows are real and would surface if the
+  // guard were absent. Without this, `[]` could just mean "the mock returned
+  // nothing" and both assertions above would be vacuous.
+  it('🔴 POSITIVE CONTROL — the same rows DO surface when there are hits', async () => {
+    mockGetModelsWithVersions.mockResolvedValue({
+      items: [3, 2, 1].map(row),
+      nextCursor: undefined,
+    });
+    const res = await runModelSearch(
+      {
+        limit: 10,
+        query: 'anime',
+        searchIds: [1, 2, 3],
+        sort: 'Most Downloaded' as never,
+        preserveRelevanceOrder: false,
+      },
+      {
+        browsingLevel: allBrowsingLevelsFlag,
+        nsfwImagePassthrough: false,
+        user: undefined,
+        baseUrlOrigin: 'https://civitai.com',
+      } as Parameters<typeof runModelSearch>[1]
+    );
+    expect((res.items as Array<{ id: number }>).map((m) => m.id)).toEqual([3, 2, 1]);
+  });
+
+  // A no-QUERY sorted read must be untouched by the new branch — that is the
+  // whole point of the parity work, and gating on `Boolean(query)` is what
+  // keeps it working.
+  it('a no-query sorted read still returns rows', async () => {
+    mockGetModelsWithVersions.mockResolvedValue({
+      items: [3, 2, 1].map(row),
+      nextCursor: undefined,
+    });
+    const res = await runModelSearch(
+      { limit: 10, sort: 'Most Downloaded' as never, searchIds: [] },
+      {
+        browsingLevel: allBrowsingLevelsFlag,
+        nsfwImagePassthrough: false,
+        user: undefined,
+        baseUrlOrigin: 'https://civitai.com',
+      } as Parameters<typeof runModelSearch>[1]
+    );
+    expect((res.items as Array<{ id: number }>).map((m) => m.id)).toEqual([3, 2, 1]);
+  });
+});

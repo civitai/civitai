@@ -660,14 +660,13 @@ describe('🔴 /api/v1/blocks/tools — the catalog filters the public API has',
     mockCheckRateLimit.mockResolvedValue({ allowed: true });
   });
 
-  it('forwards baseModels, supportsGeneration and tag to runModelSearch', async () => {
+  it('forwards baseModels and supportsGeneration to runModelSearch', async () => {
     const res = await invoke('POST', {
       name: 'search_models',
       arguments: {
         sort: 'Most Downloaded',
         baseModels: ['Illustrious', 'Pony'],
         supportsGeneration: true,
-        tag: 'anime',
       },
     });
 
@@ -675,7 +674,6 @@ describe('🔴 /api/v1/blocks/tools — the catalog filters the public API has',
     const [args] = mockRunModelSearch.mock.calls[0];
     expect(args.baseModels).toEqual(['Illustrious', 'Pony']);
     expect(args.supportsGeneration).toBe(true);
-    expect(args.tag).toBe('anime');
   });
 
   // 🔴 A TYPE THE TOOL COULD RETURN BUT NOT REQUEST. `Wildcards` is not in the
@@ -708,20 +706,6 @@ describe('🔴 /api/v1/blocks/tools — the catalog filters the public API has',
     expect(mockRunModelSearch.mock.calls[0][0].period).toBe('AllTime');
   });
 
-  // 🔴 THE SILENT-EMPTY-RESULT ONE. The catalog matches on a SLUGIFIED username,
-  // so forwarding the raw string returns nothing and reads to the model as "that
-  // creator has no models" rather than as an error.
-  it('🔴 `username` is SLUGIFIED before it reaches the catalog', async () => {
-    const res = await invoke('POST', {
-      name: 'search_models',
-      arguments: { username: 'Some User', sort: 'Most Downloaded' },
-    });
-
-    expect(res.statusCode).toBe(200);
-    const [args] = mockRunModelSearch.mock.calls[0];
-    expect(args.username).toBe('some_user');
-    expect(args.username).not.toBe('Some User');
-  });
 
   // 🔴 PASSES IN BOTH ARMS, FOR DIFFERENT REASONS — labelled, not counted as
   // regression coverage. Before the filters existed, `baseModels` and `tag` were
@@ -743,7 +727,7 @@ describe('🔴 /api/v1/blocks/tools — the catalog filters the public API has',
 
     const tooLong = await invoke('POST', {
       name: 'search_models',
-      arguments: { tag: 'x'.repeat(65) },
+      arguments: { baseModels: ['x'.repeat(65)] },
     });
     expect(tooLong.statusCode).toBe(400);
 
@@ -845,5 +829,38 @@ describe('🔴 /api/v1/blocks/tools — the clamp binds on the NO-QUERY path too
     const [, ctx] = mockRunModelSearch.mock.calls[0];
     expect(ctx.browsingLevel).toBe(allBrowsingLevelsFlag);
     expect(ctx.browsingLevel).not.toBe(sfwBrowsingLevelsFlag);
+  });
+});
+
+// 🔴 `tag` and `username` were added and then REMOVED because both FAIL OPEN in
+// the shared catalog service (an unknown tag, or a username that slugifies to
+// empty, drops the filter and returns the whole catalog). Pinned so a future
+// "restore parity" edit has to confront that rather than re-add a schema line.
+describe('🔴 /api/v1/blocks/tools — the fail-open filters stay OUT', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    regionBox.restricted = false;
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockRunModelSearch.mockResolvedValue({ items: [], nextCursor: undefined });
+    mockResolveModelSearchIds.mockResolvedValue({ searchIds: [], nextCursor: undefined });
+    mockCheckRateLimit.mockResolvedValue({ allowed: true });
+  });
+
+  it('rejects `tag` and `username`, and never reaches the catalog', async () => {
+    for (const args of [{ tag: 'anime' }, { username: 'Lykon' }]) {
+      const res = await invoke('POST', { name: 'search_models', arguments: args });
+      expect(res.statusCode, JSON.stringify(args)).toBe(400);
+    }
+    expect(mockRunModelSearch).not.toHaveBeenCalled();
+  });
+
+  // POSITIVE CONTROL — the filters that DID survive still work, so the test
+  // above is about these two fields and not about a schema that rejects all.
+  it('POSITIVE CONTROL — the retained filters are still accepted', async () => {
+    const res = await invoke('POST', {
+      name: 'search_models',
+      arguments: { baseModels: ['Pony'], supportsGeneration: true, sort: 'Most Liked' },
+    });
+    expect(res.statusCode).toBe(200);
   });
 });

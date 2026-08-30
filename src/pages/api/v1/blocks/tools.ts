@@ -8,7 +8,6 @@ import {
 } from '~/server/middleware/block-scope.middleware';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getNextPage } from '~/server/utils/pagination-helpers';
-import { postgresSlugify } from '~/utils/string-helpers';
 import {
   ModelSearchMeiliTimeoutError,
   resolveModelSearchIds,
@@ -244,7 +243,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 
   try {
     if (tool.name === 'search_models') {
-      const { query, types, baseModels, limit, sort, period, supportsGeneration, tag, username } =
+      const { query, types, baseModels, limit, sort, period, supportsGeneration } =
         args.data as {
           query?: string;
           types?: string[];
@@ -253,8 +252,6 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           sort?: string;
           period?: string;
           supportsGeneration?: boolean;
-          tag?: string;
-          username?: string;
         };
       // The `Math.min` is redundant TODAY — `searchModelsArgs.limit` is already
       // `.max(MAX_TOOL_RESULT_ITEMS)`, so a larger value is rejected before it
@@ -268,15 +265,6 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       // `types` arrives as an array now, so there is nothing to wrap. The old
       // `type ? [type] : undefined` existed only because the schema exposed a
       // SINGULAR field over a hand-written six-value enum.
-      //
-      // 🔴 `username` IS SLUGIFIED HERE, NOT IN THE SCHEMA. The public schema
-      // applies `postgresSlugify` in its own `.transform`, and the catalog query
-      // matches on the slugified column — so passing a raw "Some User" through
-      // would return NOTHING and read to the model as "that creator has no
-      // models". It is done in the ROUTE rather than the registry because the
-      // registry is deliberately server-import-free (see its header), and this
-      // is the same split that file already uses for dispatch.
-      const slugifiedUsername = username ? postgresSlugify(username) : undefined;
 
       // 🔴 A TEXT QUERY SILENTLY DISCARDED `sort` UNTIL THIS EXISTED.
       // `runModelSearch` restores Meilisearch's relevance order whenever a
@@ -344,8 +332,6 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
           types: types as never,
           baseModels,
           supportsGeneration,
-          tag,
-          username: slugifiedUsername,
           // 🔴 THE MODEL'S CHOICE, FALLING BACK TO THE SAME DEFAULT THIS LINE
           // USED TO HARDCODE — the identical `sort ?? default` expression
           // `blocks/models.ts` uses. Hardcoding it here is what made "the most

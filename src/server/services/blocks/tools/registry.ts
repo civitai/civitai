@@ -27,7 +27,12 @@ import { MetricTimeframe, ModelType } from '~/shared/utils/prisma/enums';
 // one only re-exports `@civitai/db-schema/enums`. Neither drags the Prisma
 // client. The rule to apply when adding an import here is therefore "does this
 // pull Prisma or a service onto the load path", not "is it under ~/server".
-// Pinned by `__tests__/registry.test.ts`, which walks the import graph. It mirrors the reasoning `~/server/utils/block-catalog-maturity` states
+// Pinned by `__tests__/registry.test.ts`, which asserts THIS FILE'S DIRECT
+// import list against an allowlist. ⚠️ It does NOT walk the graph — an earlier
+// version of this sentence claimed it did, and an audit showed a side-effect
+// import (`import '~/server/db/client';`, no `from`) and a TRANSITIVE one both
+// pass it. It is a ratchet on direct imports, which is the change most likely
+// to happen by hand; a real graph walk would be strictly better. It mirrors the reasoning `~/server/utils/block-catalog-maturity` states
 // for the maturity clamp: the security-relevant parts (the allowlist, the
 // argument bounds, the projection, the AIR scrub) must be unit-testable without
 // dragging the Prisma client, and the only backing implementation available
@@ -503,26 +508,45 @@ const searchModelsArgs = z
       .describe('Restrict to these base models, e.g. "SDXL 1.0", "Illustrious", "Pony"'),
     // The route hardcoded AllTime, so "most downloaded THIS MONTH" could not be
     // asked. `sort` without `period` only ever ranks over all time.
+    // 🔴 THE DESCRIPTION SAYS WHAT THIS ACTUALLY DOES, WHICH IS NOT WHAT ITS
+    // NAME SUGGESTS. `period` does NOT compute the ranking over a timeframe: in
+    // `getModelsRaw` it adds a hard filter on `lastVersionAt`, while the
+    // `orderBy` ladder reads all-time `downloadCount`/`thumbsUpCount` and never
+    // references it. The projected `downloads`/`likes` are all-time too. An
+    // earlier draft of this field described it as "the timeframe the ranking is
+    // computed over" — an audit caught that, and a model reading it would have
+    // reported all-time figures as "this month".
     period: z
       .enum(MetricTimeframe)
       .optional()
-      .describe('Timeframe the ranking is computed over (default "AllTime")'),
+      .describe(
+        'Restrict to models with a version published in this timeframe. Ranking and the ' +
+          'returned counts remain ALL-TIME — this narrows the set, it does not re-rank it.'
+      ),
     supportsGeneration: z
       .boolean()
       .optional()
       .describe('Only models that can be generated with on Civitai'),
-    tag: z
-      .string()
-      .min(1)
-      .max(MAX_TOOL_FILTER_VALUE_CHARS)
-      .optional()
-      .describe('Restrict to models carrying this tag'),
-    username: z
-      .string()
-      .min(1)
-      .max(MAX_TOOL_FILTER_VALUE_CHARS)
-      .optional()
-      .describe('Restrict to models by this creator'),
+    // 🔴 `tag` AND `username` ARE DELIBERATELY ABSENT — they were added here and
+    // then REMOVED, so do not "restore parity" by putting them back without
+    // fixing what follows. Both FAIL OPEN in the shared catalog service, which
+    // is the one failure direction an LLM caller must never be handed:
+    //
+    //   - `tag` is resolved by exact name and the predicate is pushed only
+    //     `if (tagId)` (`model.service`), so an unknown tag adds NO filter and
+    //     the call returns the site-wide top N presented as "models tagged X".
+    //   - `username` is matched on a SLUGIFIED column, and `postgresSlugify`
+    //     strips everything outside [a-zA-Z0-9_] — so a non-ASCII or
+    //     punctuation-only name slugifies to the EMPTY string, the filter is
+    //     dropped (`if (username || user)`), and the whole catalog comes back.
+    //     A non-empty-but-unknown username throws instead, so the dangerous
+    //     direction is the quiet one.
+    //
+    // A human typing a wrong tag into a search box sees an obviously unfiltered
+    // page. A language model gets a plausible list and reports it as the answer
+    // — the same fabrication this file's `sort` work exists to stop. Restoring
+    // them needs validation (resolve the tag id, reject an empty slug) rather
+    // than a schema line.
     limit: z
       .number()
       .int()
@@ -554,9 +578,12 @@ const TOOLS: readonly BlockToolDefinition[] = [
       'base model, creator, download count and like count, restricted to what this viewer is ' +
       'allowed to see. Filter with `types`, `baseModels`, `tag`, `username` or ' +
       '`supportsGeneration`; rank with `sort` and `period`. ' +
-      'For a NAMED model pass `query`. For a POPULARITY or RECENCY question pass `sort` and ' +
-      'OMIT `query` — e.g. the most popular models overall is `sort: "Most Downloaded"` with no ' +
-      'query. Putting a ranking word in `query` searches for that word in model names instead.',
+      'For a NAMED model pass `query` ALONE — adding `sort` there ranks a hundred fuzzy ' +
+      'matches and can push the exact model out of the results. For a POPULARITY question ' +
+      'pass `sort`: with no `query` to rank the whole catalog, or WITH one to rank within ' +
+      'those matches (e.g. the most downloaded anime models is `query: "anime"` plus ' +
+      '`sort: "Most Downloaded"`). Never put a ranking word like "popular" or "best" in ' +
+      '`query` — that searches for the word itself in model names.',
     argsSchema: searchModelsArgs,
   },
 ] as const;
