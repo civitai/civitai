@@ -136,12 +136,38 @@ describe('block tool registry — the argument contract is strict', () => {
     }
   });
 
-  it('rejects a missing query, an empty query, and an over-cap limit', () => {
-    expect(tool.argsSchema.safeParse({}).success).toBe(false);
+  // 🔴 THE MISSING-QUERY ARM WAS DELIBERATELY INVERTED, NOT DELETED — and the
+  // distinction matters, because "a test broke, weaken it" is how a contract
+  // quietly goes missing. A REQUIRED `query` was the defect: it left a ranking
+  // question with one lever, so "the most popular models" went out as
+  // `query: "popular"` and text-matched model NAMES. Omitting `query` is now the
+  // supported way to rank the whole catalog, so it MUST parse.
+  //
+  // Everything else this test guarded is kept and still asserted below: an
+  // EMPTY string is still rejected (`.min(1)` applies whenever the field is
+  // present, so the model cannot send `query: ""` and silently mean "no
+  // filter"), and the over-cap limit is untouched.
+  it('ACCEPTS a missing query, and still rejects an empty one and an over-cap limit', () => {
+    expect(tool.argsSchema.safeParse({}).success).toBe(true);
+    expect(tool.argsSchema.safeParse({ sort: 'Most Downloaded' }).success).toBe(true);
+
     expect(tool.argsSchema.safeParse({ query: '' }).success).toBe(false);
     expect(
       tool.argsSchema.safeParse({ query: 'x', limit: MAX_TOOL_RESULT_ITEMS + 1 }).success
     ).toBe(false);
+  });
+
+  // 🔴 STRENGTHENING, added with the field: the enum is the whole point of
+  // `sort`. Without this, widening it to `z.string()` — which would let the
+  // model send a value `runModelSearch` does not understand — passes every
+  // other assertion in this file.
+  it('🔴 `sort` accepts a real ModelSort and REJECTS anything else', () => {
+    expect(tool.argsSchema.safeParse({ sort: 'Most Downloaded' }).success).toBe(true);
+    expect(tool.argsSchema.safeParse({ sort: 'Most Liked' }).success).toBe(true);
+    expect(tool.argsSchema.safeParse({ sort: 'Highest Rated' }).success).toBe(true);
+    // The phrasing a model is most likely to invent, and it is NOT a ModelSort.
+    expect(tool.argsSchema.safeParse({ sort: 'Most Popular' }).success).toBe(false);
+    expect(tool.argsSchema.safeParse({ sort: 'popular' }).success).toBe(false);
   });
 });
 
@@ -183,6 +209,14 @@ describe('block tool registry — projection is an ALLOWLIST', () => {
       baseModel: 'SD 1.5',
       creator: 'Lykon',
       downloads: 1_700_000,
+      // 🔴 ADDED WITH `sort: "Most Liked"`, and this exact-object assertion is
+      // what makes it meaningful: `likes` and `downloads` are pairwise distinct
+      // in the fixture (42 vs 1,700,000), so a projection that swapped the two
+      // stats keys — the obvious mutant once BOTH are read off `row.stats` —
+      // fails here rather than passing on a coincidence. The fixture also
+      // carries `favoriteCount: 7`, which must NOT appear: this is an allowlist,
+      // and adding one field is not licence to leak its neighbours.
+      likes: 42,
       tags: ['photorealistic', 'woman', 'base model', 'portraits', 'art style', 'a', 'b', 'c'],
       url: 'https://civitai.com/models/4384',
     });
@@ -638,5 +672,150 @@ describe('#426 item 4 — neutralizeAirLiterals is depth-bounded', () => {
     expect(JSON.stringify(neutralizeAirLiterals(nest(10, 'urn:air:x')))).not.toContain(
       NEUTRALIZE_DEPTH_PLACEHOLDER
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 CLAIMS THIS MODULE MAKES IN PROSE, PINNED. Each of these was an UNGUARDED
+// assertion an audit could falsify by reading — which is exactly the class that
+// rots silently, because prose does not go red.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 block tool registry — the module\'s own claims', () => {
+  it('🔴 `sort` offers the WHOLE ModelSort enum, not a curated subset', async () => {
+    const { ModelSort } = await import('~/server/common/enums');
+    const decl = blockToolDeclarations().find((t) => t.function.name === 'search_models')!;
+    const params = decl.function.parameters as { properties: Record<string, { enum?: string[] }> };
+
+    // 🔴 EQUALITY, NOT `toContain`. The field's comment argues that a curated
+    // subset here "would be a second rule that can drift from the one
+    // `models.ts` already enforces" — and a `toContain` spot-check is satisfied
+    // by a hand-listed three-value subset, so the claim would be unguarded.
+    expect(new Set(params.properties.sort.enum)).toEqual(new Set(Object.values(ModelSort)));
+  });
+
+  it('🔴 the declared default sort MATCHES the one the route applies', async () => {
+    const { constants } = await import('~/server/common/constants');
+    const decl = blockToolDeclarations().find((t) => t.function.name === 'search_models')!;
+    const params = decl.function.parameters as {
+      properties: Record<string, { description?: string }>;
+    };
+
+    // The describe string hardcodes the default rather than importing it (that
+    // import would put a server module on this file's load path), so the link
+    // is asserted HERE instead — the same trade this module makes for
+    // MAX_MESSAGE_CHARS.
+    expect(params.properties.sort.description).toContain(
+      `default "${constants.modelFilterDefaults.sort}"`
+    );
+  });
+
+  it('🔴 no Prisma client on this module\'s load path', async () => {
+    // The header's rule is "does this pull Prisma or a service onto the load
+    // path", NOT "is it under ~/server" — the wording used to say
+    // server-import-free, which stopped being true. Assert the PROPERTY.
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(
+      new URL('../registry.ts', import.meta.url).pathname,
+      'utf8'
+    );
+    const imports = [...src.matchAll(/^import[^;]*?from '([^']+)';/gm)].map((m) => m[1]);
+
+    // Everything imported must be zod or a pure enum module. A service, a
+    // client, or `~/server/db/*` would break the property the header protects.
+    expect(imports.sort()).toEqual(
+      ['zod', '~/server/common/enums', '~/shared/utils/prisma/enums'].sort()
+    );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 THE DESCRIPTION IS A CONTRACT THE MODEL READS, AND IT HAD DRIFTED FROM THE
+// SCHEMA. Three audit rounds each found a claim the implementation contradicted;
+// the fourth found it in the highest-consequence place — the text handed to the
+// LLM. After `tag` and `username` were removed from the schema, the description
+// still said "Filter with `types`, `baseModels`, `tag`, `username`", so a model
+// asking for "models by Lykon" emitted an argument that `.strict()` rejects with
+// a 400, or folded the creator name into `query` and searched for models NAMED
+// Lykon — the exact fabrication this tool's `sort` work exists to stop.
+//
+// `parameters` is DERIVED from the schema so it cannot drift. The description is
+// hand-written prose, so it can, and nothing checked it. This is the mechanical
+// check, because four rounds of careful prose did not hold.
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 ONE EXTRACTOR, USED BY BOTH ARMS BELOW — and that is the whole point.
+// This regex was written TWICE: once in the assertion and once in its own
+// "positive control". An audit broke ONLY the assertion's copy and the control
+// stayed green, so the defect the control exists to make impossible could ship
+// with every test passing. A control built from a DUPLICATE of the step you
+// doubt is a second sample, not a control.
+//
+// 🔴 THE TERMINATOR IS [`|:] AND NOT ` ALONE, because the text this guards
+// already uses the other idiom: the tool description writes `query: "anime"`
+// and `sort: "Most Downloaded"`. With a bare-` terminator those are invisible,
+// so an author extending the description in the SAME style it already uses —
+// `username: "Lykon"` — sails straight past the guard. Verified: that exact
+// mutation passed 92/92 before this widening, and the widening produces zero
+// false positives against the current descriptions.
+//
+// ⚠️ WHAT IT STILL CANNOT DO: it checks that a cited parameter EXISTS, not that
+// what the sentence SAYS about it is true. `period` is a real parameter, so a
+// description claiming it re-ranks would pass — and that truthfulness class is
+// the one that has actually recurred. Do not read a green here as "the prose is
+// correct".
+const CITED_PARAM_RE = /`([a-z][a-zA-Z0-9_]*)[`:]/g;
+
+function citedParams(text: string): string[] {
+  return [...text.matchAll(CITED_PARAM_RE)].map((m) => m[1]);
+}
+
+describe('🔴 block tool registry — the DESCRIPTION cannot name a field the schema lacks', () => {
+  it('every backticked identifier in a tool description is a real parameter', () => {
+    for (const entry of blockToolDeclarations()) {
+      const params = entry.function.parameters as { properties: Record<string, unknown> };
+      const known = new Set(Object.keys(params.properties));
+
+      const texts = [
+        entry.function.description,
+        ...Object.values(params.properties as Record<string, { description?: string }>).map(
+          (p) => p.description ?? ''
+        ),
+      ];
+
+      for (const text of texts) {
+        // Only tokens that LOOK like a parameter name: backticked, bare
+        // identifier, no spaces or dots. That deliberately ignores prose values
+        // like `"Most Downloaded"` and paths.
+        const cited = citedParams(text);
+        for (const name of cited) {
+          expect(
+            known.has(name),
+            `${entry.function.name}: description cites \`${name}\`, which is not a parameter ` +
+              `(schema has: ${[...known].join(', ')})`
+          ).toBe(true);
+        }
+      }
+    }
+  });
+
+  // 🔴 POSITIVE CONTROL — the matcher must actually FIND identifiers, or the
+  // loop above is vacuous and would pass on a description citing anything.
+  it('🔴 POSITIVE CONTROL — the scan really does extract parameter names', () => {
+    const decl = blockToolDeclarations().find((t) => t.function.name === 'search_models')!;
+    const cited = citedParams(decl.function.description);
+    // A zero-length extraction would satisfy the test above no matter what the
+    // description said.
+    expect(cited.length).toBeGreaterThan(0);
+    expect(cited).toContain('sort');
+
+    // 🔴 A SYNTHETIC FIXTURE, BECAUSE THE REAL DESCRIPTION CANNOT SEE THIS.
+    // The terminator was widened from ` to [`|:] so the `name: "value"` idiom
+    // is not invisible to the guard — but on the live text every identifier
+    // that appears in colon form ALSO appears bare-backticked, so the two
+    // regexes yield the same DISTINCT set and reverting the widening was
+    // measured fully green (48/48). A guard whose widening has no killing
+    // mutation is one edit away from silently reverting, and the next
+    // description written in the idiom the text already uses would sail past
+    // it again. Only an input the OLD regex cannot match separates them.
+    expect(citedParams('`username: "x"`')).toEqual(['username']);
   });
 });

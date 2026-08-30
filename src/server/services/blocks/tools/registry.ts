@@ -1,4 +1,10 @@
 import * as z from 'zod';
+// 🔴 BOTH ARE PURE ENUM MODULES — CHECKED, NOT ASSUMED. This file's header
+// forbids server imports so it stays unit-testable without dragging Prisma:
+// `~/server/common/enums` has NO imports at all, and `~/shared/utils/prisma/enums`
+// only re-exports `@civitai/db-schema/enums`. Neither pulls the Prisma client.
+import { ModelSort } from '~/server/common/enums';
+import { MetricTimeframe, ModelType } from '~/shared/utils/prisma/enums';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks READ-ONLY TOOL REGISTRY (#398 AC5).
@@ -9,8 +15,24 @@ import * as z from 'zod';
 // arguments the model sends back. AC5 requires the allowlist be "enumerated in
 // code"; this module is that enumeration.
 //
-// 🔴 THIS MODULE IS SERVER-IMPORT-FREE, and that is deliberate rather than
-// tidy. It mirrors the reasoning `~/server/utils/block-catalog-maturity` states
+// 🔴 THIS MODULE KEEPS PRISMA OFF ITS LOAD PATH, and that is deliberate rather
+// than tidy.
+//
+// ⚠️ IT USED TO SAY "SERVER-IMPORT-FREE", AND THAT WORDING IS NOW FALSE — an
+// audit caught it. This file imports `ModelSort` from `~/server/common/enums`
+// and `MetricTimeframe`/`ModelType` from `~/shared/utils/prisma/enums`, so the
+// literal claim does not hold. The PROPERTY it was protecting does: both are
+// pure enum modules — `~/server/common/enums` has one import
+// (`@civitai/notifications/constants`, itself importing nothing) and the shared
+// one only re-exports `@civitai/db-schema/enums`. Neither drags the Prisma
+// client. The rule to apply when adding an import here is therefore "does this
+// pull Prisma or a service onto the load path", not "is it under ~/server".
+// Pinned by `__tests__/registry.test.ts`, which asserts THIS FILE'S DIRECT
+// import list against an allowlist. ⚠️ It does NOT walk the graph — an earlier
+// version of this sentence claimed it did, and an audit showed a side-effect
+// import (`import '~/server/db/client';`, no `from`) and a TRANSITIVE one both
+// pass it. It is a ratchet on direct imports, which is the change most likely
+// to happen by hand; a real graph walk would be strictly better. It mirrors the reasoning `~/server/utils/block-catalog-maturity` states
 // for the maturity clamp: the security-relevant parts (the allowlist, the
 // argument bounds, the projection, the AIR scrub) must be unit-testable without
 // dragging the Prisma client, and the only backing implementation available
@@ -68,7 +90,7 @@ import * as z from 'zod';
  * framing ("Results for X:") without pushing the message over.
  *
  * 🔴 THE LINK TO `MAX_MESSAGE_CHARS` IS ASSERTED IN A TEST, NOT IMPORTED. This
- * module is server-import-free on purpose (see the header); importing
+ * module keeps Prisma off its load path on purpose (see the header); importing
  * `chat-completion.step` here would drag the step registry onto its load path
  * and defeat that. `__tests__/registry.test.ts` imports BOTH and goes red if
  * either constant moves — the same technique `chat-completion.step` already uses
@@ -78,6 +100,42 @@ export const MAX_TOOL_RESULT_CHARS = 6_000;
 
 /** Hard cap on results returned in one call, independent of the char budget. */
 export const MAX_TOOL_RESULT_ITEMS = 10;
+
+/**
+ * Bounds on the ARRAY-valued FILTERS (`types`, `baseModels`).
+ *
+ * 🔴 THESE BOUND A SQL `IN` LIST, NOT A RESPONSE. Every other cap in this file
+ * exists to keep a RESULT replayable; these exist because the values are
+ * forwarded into the catalog query itself — `model.service` joins `baseModels`
+ * straight into an `IN (…)` — and the caller is an untrusted sandboxed iframe
+ * relaying a language model's output. An unbounded array is an unbounded query,
+ * which is a cost problem rather than a correctness one and therefore fails
+ * quietly.
+ *
+ * The per-value length is generous enough for real base-model names
+ * ("Stable Diffusion XL 1.0", "Illustrious") and nowhere near enough to smuggle
+ * a payload.
+ */
+export const MAX_TOOL_FILTER_ITEMS = 10;
+export const MAX_TOOL_FILTER_VALUE_CHARS = 64;
+
+/**
+ * How many Meilisearch candidates to pull when a text `query` is combined with
+ * an explicit `sort`.
+ *
+ * 🔴 WITHOUT THIS THE SORT IS APPLIED TO THE WRONG SET. Meili returns the top-N
+ * by RELEVANCE; the database then orders those N by `sort`. If N is the page
+ * size, "the most downloaded anime models" means "take the 5 most RELEVANT
+ * matches for 'anime', then put those 5 in download order" — which is not the
+ * question. Widening the candidate pool first, and letting the database pick
+ * the page out of it, makes the sort mean what it says.
+ *
+ * Bounded, and deliberately modest: this is an id-only Meili read whose cost is
+ * the id list, but it is still a bigger read than the page, issued on behalf of
+ * an untrusted caller. It only fires when BOTH a query and an explicit sort are
+ * present.
+ */
+export const TOOL_SORTED_QUERY_CANDIDATES = 100;
 
 /**
  * How many results a call returns when it does not ask.
@@ -128,7 +186,7 @@ export const MAX_PROJECTED_TAGS = 8;
  * 🔴 DUPLICATED FROM `steps/index`'s `AIR_URN_PREFIX` ON PURPOSE, and the
  * duplication is asserted in the tests rather than left to drift. Importing it
  * would pull the step registry onto this module's load path, which the
- * server-import-free property forbids. The test imports both and fails if they
+ * Prisma-free load-path property forbids. The test imports both and fails if they
  * diverge — the same trade this file makes for `MAX_MESSAGE_CHARS`.
  */
 export const AIR_URN_PREFIX_LOCAL = 'urn:air:';
@@ -259,6 +317,7 @@ export type ProjectedModel = {
   baseModel?: string;
   creator?: string;
   downloads?: number;
+  likes?: number;
   tags?: string[];
   url: string;
 };
@@ -329,6 +388,15 @@ export function projectModelForTool(raw: unknown): ProjectedModel | null {
     ...(statsRecord && num(statsRecord.downloadCount) !== undefined
       ? { downloads: num(statsRecord.downloadCount) }
       : {}),
+    // 🔴 PROJECTED *BECAUSE* `sort` NOW OFFERS "Most Liked". Without it the tool
+    // could rank by likes and then hand the model only a DOWNLOAD count to
+    // explain the ranking with — so the answer would either cite the wrong
+    // number or be unable to justify its own order. A sort key the result cannot
+    // evidence is worse than no sort key. `thumbsUpCount` is already on the row;
+    // one number per item is a negligible slice of MAX_TOOL_RESULT_CHARS.
+    ...(statsRecord && num(statsRecord.thumbsUpCount) !== undefined
+      ? { likes: num(statsRecord.thumbsUpCount) }
+      : {}),
     ...(tags && tags.length > 0 ? { tags } : {}),
     url: `https://civitai.com/models/${id}`,
   };
@@ -373,11 +441,111 @@ export function boundToolResult(items: ProjectedModel[]): {
 
 const searchModelsArgs = z
   .object({
-    query: z.string().min(1).max(200).describe('Free-text search over model names and keywords'),
-    type: z
-      .enum(['Checkpoint', 'LORA', 'LoCon', 'TextualInversion', 'VAE', 'Controlnet'])
+    // 🔴 OPTIONAL, AND THAT IS THE WHOLE POINT OF THIS FIELD'S SHAPE. While
+    // `query` was REQUIRED the model had exactly one lever, so a ranking
+    // question it could not express became a TEXT SEARCH FOR THE RANKING WORD:
+    // "most popular models" went out as `query: "popular"` and came back with
+    // models literally NAMED "Popular …" — 2,168 downloads against a real
+    // top-of-catalog of 2.3M. Reproduce with
+    // `civitai models search --query "popular"`. Absent `query`, the route
+    // skips Meilisearch entirely and `runModelSearch` does a pure sorted
+    // catalog read, exactly as `blocks/models.ts` already does.
+    query: z
+      .string()
+      .min(1)
+      .max(200)
       .optional()
-      .describe('Restrict to one model type'),
+      .describe(
+        'Free-text search over model names and keywords. OMIT it to rank the whole catalog — ' +
+          'do not put a ranking word like "popular" or "best" here, that searches for the word itself.'
+      ),
+    // 🔴 THE RANKING LEVER, PREVIOUSLY ABSENT. The route hardcoded
+    // `constants.modelFilterDefaults.sort` (Highest Rated), so no phrasing could
+    // ask for most-downloaded. `blocks/models.ts` — the route a block calls
+    // DIRECTLY — has exposed `z.enum(ModelSort).optional()` all along, so tool
+    // calling was strictly LESS capable than the REST surface it replaced. Same
+    // enum deliberately: a curated subset here would be a second rule that can
+    // drift from the one `models.ts` already enforces.
+    sort: z
+      .enum(ModelSort)
+      .optional()
+      .describe(
+        // 🔴 THE DEFAULT IS A LITERAL, AND ITS LINK TO
+        // `constants.modelFilterDefaults.sort` IS ASSERTED IN A TEST RATHER THAN
+        // IMPORTED — the same trade this file already makes for
+        // `MAX_MESSAGE_CHARS`, and for the same reason: importing
+        // `~/server/common/constants` here would put a server module on this
+        // one's load path and break the Prisma-free load-path property the header
+        // depends on. `registry.test.ts` fails if the two ever diverge.
+        'How to rank results (default "Highest Rated"). Use "Most Downloaded" or "Most Liked" ' +
+          'for popularity questions, "Newest" for recency. Combining it with `query` ranks ' +
+          'within the text matches rather than by relevance.'
+      ),
+    // 🔴 WAS A SINGULAR `type` ON A SIX-VALUE HAND-WRITTEN ENUM, and both halves
+    // were wrong. `ModelType` has far more members — `Wildcards`, `Poses`,
+    // `Workflows`, `ComfyWorkflows`, `Hypernetwork`, `Upscaler`, `MotionModule`,
+    // `Detection`, `LLM`, `DoRA`, … — so the tool could RETURN a row it could not
+    // ASK for. Measured 2026-08-30: a live answer cited a `Wildcards` model while
+    // that value was unrepresentable in this enum. Now the enum itself, plural,
+    // exactly as the public schema and `blocks/models.ts` express it.
+    types: z
+      .array(z.enum(ModelType))
+      .min(1)
+      .max(MAX_TOOL_FILTER_ITEMS)
+      .optional()
+      .describe('Restrict to these model types'),
+    // 🔴 THE FILTER MOST POPULARITY QUESTIONS ACTUALLY TURN ON. "the best SDXL
+    // checkpoint", "Illustrious LoRAs" — unanswerable while this was absent, and
+    // `blocks/models.ts` has always had it. Free text rather than an enum,
+    // matching the public schema: base-model names are data, not a code-owned
+    // set, and an enum here would silently drop every newly-released family.
+    baseModels: z
+      .array(z.string().min(1).max(MAX_TOOL_FILTER_VALUE_CHARS))
+      .min(1)
+      .max(MAX_TOOL_FILTER_ITEMS)
+      .optional()
+      .describe('Restrict to these base models, e.g. "SDXL 1.0", "Illustrious", "Pony"'),
+    // The route hardcoded AllTime, so "most downloaded THIS MONTH" could not be
+    // asked. `sort` without `period` only ever ranks over all time.
+    // 🔴 THE DESCRIPTION SAYS WHAT THIS ACTUALLY DOES, WHICH IS NOT WHAT ITS
+    // NAME SUGGESTS. `period` does NOT compute the ranking over a timeframe: in
+    // `getModelsRaw` it adds a hard filter on `lastVersionAt`, while the
+    // `orderBy` ladder reads all-time `downloadCount`/`thumbsUpCount` and never
+    // references it. The projected `downloads`/`likes` are all-time too. An
+    // earlier draft of this field described it as "the timeframe the ranking is
+    // computed over" — an audit caught that, and a model reading it would have
+    // reported all-time figures as "this month".
+    period: z
+      .enum(MetricTimeframe)
+      .optional()
+      .describe(
+        'Restrict to models with a version published in this timeframe. Ranking and the ' +
+          'returned counts remain ALL-TIME — this narrows the set, it does not re-rank it.'
+      ),
+    supportsGeneration: z
+      .boolean()
+      .optional()
+      .describe('Only models that can be generated with on Civitai'),
+    // 🔴 `tag` AND `username` ARE DELIBERATELY ABSENT — they were added here and
+    // then REMOVED, so do not "restore parity" by putting them back without
+    // fixing what follows. Both FAIL OPEN in the shared catalog service, which
+    // is the one failure direction an LLM caller must never be handed:
+    //
+    //   - `tag` is resolved by exact name and the predicate is pushed only
+    //     `if (tagId)` (`model.service`), so an unknown tag adds NO filter and
+    //     the call returns the site-wide top N presented as "models tagged X".
+    //   - `username` is matched on a SLUGIFIED column, and `postgresSlugify`
+    //     strips everything outside [a-zA-Z0-9_] — so a non-ASCII or
+    //     punctuation-only name slugifies to the EMPTY string, the filter is
+    //     dropped (`if (username || user)`), and the whole catalog comes back.
+    //     A non-empty-but-unknown username throws instead, so the dangerous
+    //     direction is the quiet one.
+    //
+    // A human typing a wrong tag into a search box sees an obviously unfiltered
+    // page. A language model gets a plausible list and reports it as the answer
+    // — the same fabrication this file's `sort` work exists to stop. Restoring
+    // them needs validation (resolve the tag id, reject an empty slug) rather
+    // than a schema line.
     limit: z
       .number()
       .int()
@@ -405,9 +573,24 @@ const TOOLS: readonly BlockToolDefinition[] = [
   {
     name: 'search_models',
     description:
-      "Search Civitai's model catalog by free text. Returns matching models with their id, " +
-      'name, type, base model, creator and download count. Results are restricted to what ' +
-      'this viewer is allowed to see.',
+      "Search or rank Civitai's model catalog. Returns models with their id, name, type, " +
+      'base model, creator, download count and like count, restricted to what this viewer is ' +
+      'allowed to see. Filter with `types`, `baseModels` or `supportsGeneration`; rank with ' +
+      // 🔴 `period` IS NOT A RANKING DIMENSION AND MUST NOT BE LISTED AS ONE.
+      // This sentence said "rank with `sort` and `period`" for three rounds. It
+      // is false in the same way the field's own text was before it was
+      // corrected: `getModelsRaw` builds its orderBy purely from all-time
+      // counts and never reads `period`, so `period` only narrows by
+      // `lastVersionAt`. (A period-aware ranking ladder does exist, commented
+      // out — in `getModels`, NOT in the `getModelsRaw` path this tool uses.) The document was
+      // serving the model two contradictory statements about the same field.
+      '`sort`; narrow by `period`. ' +
+      'For a NAMED model pass `query` ALONE — adding `sort` there ranks a hundred fuzzy ' +
+      'matches and can push the exact model out of the results. For a POPULARITY question ' +
+      'pass `sort`: with no `query` to rank the whole catalog, or WITH one to rank within ' +
+      'those matches (e.g. the most downloaded anime models is `query: "anime"` plus ' +
+      '`sort: "Most Downloaded"`). Never put a ranking word like "popular" or "best" in ' +
+      '`query` — that searches for the word itself in model names.',
     argsSchema: searchModelsArgs,
   },
 ] as const;
