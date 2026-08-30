@@ -70,9 +70,19 @@ export const MARKETPLACE_SCOPES_SUMMARY_LIMIT = 3;
  * There used to be a THIRD field: the Bayesian mean `m` pinned across a paging
  * session for the `rating` sort. That sort and the 5-star `app_block_reviews`
  * table behind it are gone, so nothing pins a mean any more. The decoder still
- * tolerates a stale 3-field cursor (it splits on the first two separators and
- * ignores the trailing field) so an in-flight page from before this change
- * resumes instead of 500ing.
+ * tolerates a stale 3-field cursor: it splits on the first two separators and
+ * ignores the trailing field.
+ *
+ * That tolerance is DEFENCE IN DEPTH, not a live back-compat path — do not cite
+ * it as the thing that keeps an in-flight page from 500ing, because the sort
+ * removal already closed that door upstream. A 3-field cursor was only ever
+ * minted by the `rating` sort, and a client resuming that view sends
+ * `sort: 'rating'` alongside it; `marketplaceSortSchema` no longer accepts that
+ * value, so zod rejects the input at the router boundary and this decoder is
+ * never reached. What the tolerant split actually buys is narrower: a replayed
+ * or hand-rolled 3-field cursor paired with a STILL-VALID sort resumes at the
+ * right `(sortKey, id)` tuple instead of seeking past a garbage id built by
+ * concatenating the dead mean onto it.
  */
 const CURSOR_SEPARATOR = String.fromCharCode(31); // unit separator (\x1f)
 function encodeMarketplaceCursor(sortKey: string, id: string): string {

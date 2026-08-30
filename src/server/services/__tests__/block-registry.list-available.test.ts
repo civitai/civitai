@@ -36,6 +36,26 @@ function capturedSql(): string {
 }
 
 /**
+ * The BOUND VALUES Prisma received, in bind order. `capturedSql()` above returns
+ * the assembled string with `?` placeholders — the placeholders are literally
+ * where the values are NOT — so a SQL-shape regex can never observe what a
+ * decoder/parser actually produced. Anything asserting a *parsed* value (the
+ * keyset cursor's `(sortKey, id)`, a filter argument) must read `.values`, or
+ * the assertion is a claim about the query template rather than about the code
+ * under test.
+ */
+function capturedValues(): unknown[] {
+  expect(mockDbRead.$queryRaw).toHaveBeenCalled();
+  const lastCall = mockDbRead.$queryRaw.mock.calls.at(-1);
+  const first = lastCall?.[0] as unknown;
+  if (first && typeof first === 'object' && Array.isArray((first as { values?: unknown }).values)) {
+    return (first as { values: unknown[] }).values;
+  }
+  // Tagged-template form (legacy callers): the interpolations are the rest args.
+  return (lastCall ?? []).slice(1) as unknown[];
+}
+
+/**
  * One raw DB row shape (snake_case, as returned by the $queryRaw). The
  * `manifest` deliberately carries private/internal fields a malicious or
  * careless publisher (or the server's own trustTier stamp) could put there —
@@ -288,9 +308,23 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
     const { items } = await BlockRegistry.listAvailable({ limit: 20, sort: 'popular', cursor });
     expect(items).toHaveLength(1);
     const sql = capturedSql();
-    // The keyset WHERE is still parameterised on (sortKey, id) — the stale third
-    // field neither leaked into the SQL nor broke the resume.
+    // The keyset WHERE is still parameterised on (sortKey, id).
     expect(sql).toMatch(/,\s*ab\.id\)\s*<\s*\(/);
+    // …and THIS is what pins "the mean is ignored". The SQL shape above holds
+    // no matter what the decoder produced (the values sit behind `?`
+    // placeholders), so the resume tuple has to be read off the BOUND VALUES.
+    // `toContain` is strict equality, so a decoder that concatenated the stale
+    // third field onto the id would bind `ab_5\x1f4.25` and fail here.
+    const values = capturedValues();
+    expect(values).toContain('00000000000000000005');
+    expect(values).toContain('ab_5');
+    // Defence in depth on the same claim from the other side: the dead mean
+    // reached NO bound parameter, under any field split.
+    for (const v of values) {
+      if (typeof v !== 'string') continue;
+      expect(v).not.toContain(sep);
+      expect(v).not.toContain('4.25');
+    }
   });
 
   it('category filter is threaded into the SQL (only the requested category)', async () => {
