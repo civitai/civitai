@@ -28,7 +28,9 @@ import {
  * The write half of `AppListingReview` (the read/DISPLAY of the recommend
  * rollup + the model already existed — see `app-listing.service.recommendRollup`
  * + the P0 `AppListingMetric` table). Steam-style RECOMMEND: a boolean
- * thumbs-up/down (NOT the legacy AppBlock 5-star `appBlockReview.service`).
+ * thumbs-up/down. (This SUPERSEDED the legacy AppBlock 5-star
+ * `appBlockReview.service`, which has since been removed — thumbs are now the
+ * only app-review system.)
  *
  * ELIGIBILITY (locked W13 decision — enforced here; the router adds the flag +
  * auth gates): any signed-in user EXCEPT the listing OWNER, for BOTH `onsite`

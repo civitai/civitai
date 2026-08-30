@@ -54,8 +54,6 @@ function rawRow(over: Partial<Record<string, unknown>> = {}) {
     // service uses to build the keyset cursor.
     category: 'utility',
     approved_scopes: ['ai:write:budgeted', 'models:read:self', 'buzz:read:self', 'social:tip:self'],
-    avg_rating: 4.2,
-    review_count: 8n,
     // Publisher screenshots jsonb (the cover comes from the first one). Default
     // null = an app that shipped no screenshots → coverUrl null.
     screenshots: null,
@@ -142,8 +140,6 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
         'manifest',
         'scopesSummary',
         // F-E marketplace reviews — display-safe aggregates.
-        'avgRating',
-        'reviewCount',
         // Card cover image — first public screenshot URL (or null).
         'coverUrl',
       ].sort()
@@ -243,81 +239,58 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
   });
 
   // ---------------------------------------------------------------------------
-  // F-E marketplace REVIEWS — Bayesian `rating` sort DRIFT GUARD.
-  // The rating sort key text MUST be reused identically in the SELECT (AS
-  // sort_key) and the keyset WHERE — if it drifts, keyset pagination silently
-  // skips rows. The Bayesian-score ordering + keyset-completeness PROPERTIES are
-  // pinned in block-registry.rating-sort.test.ts (pure-JS mirror of the SQL).
+  // The 5-star `rating` sort and its Bayesian-shrinkage sort key are GONE (the
+  // whole `AppBlockReview` system was removed). Its drift guard and pinned-mean
+  // tests went with it; this pair is what survives — a standing assertion that
+  // nothing re-introduces the Bayesian fragment or the 3-field pinned-mean
+  // cursor on this code path.
   // ---------------------------------------------------------------------------
 
-  it('sort=rating (the schema DEFAULT) emits the Bayesian key in SELECT + keyset WHERE (no drift)', async () => {
+  it('NO sort emits a Bayesian rating fragment or reads app_block_reviews', async () => {
     const { BlockRegistry } = await import('../block-registry.service');
-    // `rating` is the marketplaceSortSchema default; the service takes the parsed
-    // input so we pass it explicitly here (the zod default applies at the router).
-    await BlockRegistry.listAvailable({ limit: 20, sort: 'rating' });
-    const sql = capturedSql();
-    // The Bayesian encoding fragment (round(score*scale) zero-padded, concat the
-    // install-count) is unique to the rating key.
-    const occurrences = sql.match(/lpad\(round\(/gi)?.length ?? 0;
-    // Emitted once in SELECT (AS sort_key) and once in the keyset WHERE tuple.
-    expect(occurrences).toBeGreaterThanOrEqual(2);
-    expect(sql).toMatch(/AS sort_key/i);
-    expect(sql).toMatch(/ORDER BY\s+sort_key\s+DESC/i);
-    expect(sql).toMatch(/,\s*ab\.id\)\s*<\s*\(/); // DESC keyset resumes with `<`
+    for (const sort of ['popular', 'newest', 'name'] as const) {
+      mockDbRead.$queryRaw.mockClear();
+      await BlockRegistry.listAvailable({ limit: 20, sort });
+      const sql = capturedSql();
+      expect(sql).not.toMatch(/lpad\(round\(/i);
+      expect(sql).not.toMatch(/app_block_reviews/i);
+      expect(sql).not.toMatch(/avg_rating|review_count/i);
+    }
   });
 
-  it('a NON-rating sort does NOT emit the Bayesian fragment', async () => {
+  it('nextCursor is the 2-field `sortKey|id` form — no pinned mean', async () => {
     const { BlockRegistry } = await import('../block-registry.service');
-    await BlockRegistry.listAvailable({ limit: 20, sort: 'popular' });
-    expect(capturedSql()).not.toMatch(/lpad\(round\(/i);
-  });
-
-  // FIX 2 — PIN the Bayesian mean `m` into the rating-sort cursor so a paging
-  // session stays stable when the 1h global-mean cache expires/busts mid-page.
-  it('sort=rating: page 1 PINS the global mean into nextCursor', async () => {
-    const { BlockRegistry } = await import('../block-registry.service');
-    // Call 1 = getGlobalMeanRating (via queryCache → $queryRaw): return m=4.25.
-    mockDbRead.$queryRaw.mockResolvedValueOnce([{ mean: 4.25 }]);
-    // Call 2 = the list query: limit+1 rows so nextCursor is emitted.
+    // limit+1 rows so a nextCursor is emitted. ONE $queryRaw is queued: if the
+    // service still tried to read a global mean first it would consume this and
+    // the list query would get [] (and no cursor).
     mockDbRead.$queryRaw.mockResolvedValueOnce([
-      rawRow({ id: 'ab_0', sort_key: '00000004250000' }),
-      rawRow({ id: 'ab_1', sort_key: '00000004240000' }),
-      rawRow({ id: 'ab_2', sort_key: '00000004230000' }),
+      rawRow({ id: 'ab_0', sort_key: '00000000000000000003' }),
+      rawRow({ id: 'ab_1', sort_key: '00000000000000000002' }),
+      rawRow({ id: 'ab_2', sort_key: '00000000000000000001' }),
     ]);
-    const { nextCursor } = await BlockRegistry.listAvailable({ limit: 2, sort: 'rating' });
-    expect(nextCursor).toBeDefined();
-    const decoded = Buffer.from(nextCursor as string, 'base64url').toString('utf8');
-    const sep = String.fromCharCode(31);
-    // sortKey␟id␟mean — the third field is the pinned mean (4.25).
-    expect(decoded).toBe(`00000004240000${sep}ab_1${sep}4.25`);
-  });
-
-  it('sort=rating: a cursor with a pinned mean REUSES it (no global-mean re-read)', async () => {
-    const { BlockRegistry } = await import('../block-registry.service');
-    const sep = String.fromCharCode(31);
-    // A page-2 cursor pinning m=2.5 (a value the live cache would NOT return —
-    // proving the pinned value is what flows into the SQL, not a fresh read).
-    const cursor = Buffer.from(`00000002500000${sep}ab_5${sep}2.5`, 'utf8').toString('base64url');
-    // ONLY ONE $queryRaw is queued (the list query). If the service re-read the
-    // global mean it would consume this and the list query would get []; instead
-    // the pinned mean short-circuits the read so this feeds the list query.
-    mockDbRead.$queryRaw.mockResolvedValueOnce([
-      rawRow({ id: 'ab_9', sort_key: '00000002400000' }),
-    ]);
-    const { items } = await BlockRegistry.listAvailable({ limit: 20, sort: 'rating', cursor });
-    // The list query ran and projected the row → the pinned mean fed it directly.
-    expect(items).toHaveLength(1);
-    // Exactly ONE $queryRaw call total (the list) — the mean re-read was skipped.
+    const { nextCursor } = await BlockRegistry.listAvailable({ limit: 2, sort: 'popular' });
     expect(mockDbRead.$queryRaw).toHaveBeenCalledTimes(1);
-    // The pinned mean 2.5 is bound into the Bayesian sort key (C*m term = 10*2.5).
+    expect(nextCursor).toBeDefined();
+    const sep = String.fromCharCode(31);
+    const decoded = Buffer.from(nextCursor as string, 'base64url').toString('utf8');
+    expect(decoded).toBe(`00000000000000000002${sep}ab_1`);
+    // Positive control on the split: exactly one separator, i.e. two fields.
+    expect(decoded.split(sep)).toHaveLength(2);
+  });
+
+  it('a LEGACY 3-field cursor (sortKey|id|mean) still resumes — the mean is ignored', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    const sep = String.fromCharCode(31);
+    const cursor = Buffer.from(`00000000000000000005${sep}ab_5${sep}4.25`, 'utf8').toString(
+      'base64url'
+    );
+    mockDbRead.$queryRaw.mockResolvedValueOnce([rawRow({ id: 'ab_9', sort_key: '4' })]);
+    const { items } = await BlockRegistry.listAvailable({ limit: 20, sort: 'popular', cursor });
+    expect(items).toHaveLength(1);
     const sql = capturedSql();
-    expect(sql).toMatch(/lpad\(round\(/i); // rating key present
-    // Regression guard: the lpad length args MUST be cast to ::int. Prisma binds
-    // the JS pad constants (BAYES_SCORE_PAD/INSTALL_PAD) as bigint, and
-    // `lpad(text, bigint, unknown)` has no overload (the signature is
-    // `lpad(text, integer, text)`) → the query 500s at runtime. The shape
-    // assertions above missed it; only the preview smoke test (real DB) caught it.
-    expect(sql).toMatch(/lpad\(round\([\s\S]*?::int,\s*'0'\)/i);
+    // The keyset WHERE is still parameterised on (sortKey, id) — the stale third
+    // field neither leaked into the SQL nor broke the resume.
+    expect(sql).toMatch(/,\s*ab\.id\)\s*<\s*\(/);
   });
 
   it('category filter is threaded into the SQL (only the requested category)', async () => {
@@ -382,7 +355,6 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
       [
         'appId',
         'appName',
-        'avgRating',
         'blockId',
         'category',
         'coverUrl',
@@ -390,7 +362,6 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
         'id',
         'installCount',
         'manifest',
-        'reviewCount',
         'scopesSummary',
       ].sort()
     );

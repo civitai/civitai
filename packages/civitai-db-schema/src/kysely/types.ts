@@ -333,18 +333,6 @@ export type AppBlockPublishRequest = {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
-export type AppBlockReview = {
-  id: Generated<number>;
-  app_block_id: string;
-  user_id: number;
-  rating: number;
-  recommended: Generated<boolean>;
-  details: string | null;
-  exclude: Generated<boolean>;
-  tos_violation: Generated<boolean>;
-  created_at: Generated<Timestamp>;
-  updated_at: Timestamp;
-};
 export type AppCollaborator = {
   app_listing_id: string;
   user_id: number;
@@ -4312,7 +4300,6 @@ export type DB = {
   AnswerVote: AnswerVote;
   ApiKey: ApiKey;
   app_block_publish_requests: AppBlockPublishRequest;
-  app_block_reviews: AppBlockReview;
   app_blocks: AppBlock;
   app_collaborators: AppCollaborator;
   app_dev_forgejo_identity: AppDevForgejoIdentity;

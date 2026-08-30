@@ -338,7 +338,6 @@
     "src/server/redis/__tests__/model-votable-tags-cache.test.ts",
     "src/server/redis/__tests__/periodic-refresh.test.ts",
     "src/server/redis/__tests__/queues.test.ts",
-    "src/server/rewards/__tests__/appBlockReview.reward.test.ts",
     "src/server/rewards/__tests__/base.reward.config.test.ts",
     "src/server/rewards/__tests__/base.reward.failsoft.test.ts",
     "src/server/rewards/__tests__/deprecated-rewards.gate.test.ts",

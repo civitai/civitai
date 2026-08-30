@@ -49,7 +49,6 @@ import { type ModelSlotId } from '~/shared/constants/slot-registry';
 type SlotFilter = ModelSlotId;
 
 const SORT_OPTIONS: { value: MarketplaceSort; label: string }[] = [
-  { value: 'rating', label: 'Top rated' },
   { value: 'popular', label: 'Most popular' },
   { value: 'newest', label: 'Newest' },
   { value: 'name', label: 'Name (A–Z)' },
@@ -60,7 +59,7 @@ export function MarketplaceBody() {
   const currentUser = useCurrentUser();
   const [slotFilter, setSlotFilter] = useState<SlotFilter | null>(null);
   const [category, setCategory] = useState<MarketplaceCategory | null>(null);
-  const [sort, setSort] = useState<MarketplaceSort>('rating');
+  const [sort, setSort] = useState<MarketplaceSort>('popular');
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch] = useDebouncedValue(searchInput, 300);
 
@@ -285,7 +284,7 @@ export function MarketplaceBody() {
           label="Sort"
           data={SORT_OPTIONS}
           value={sort}
-          onChange={(v) => setSort((v as MarketplaceSort) ?? 'rating')}
+          onChange={(v) => setSort((v as MarketplaceSort) ?? 'popular')}
           allowDeselect={false}
           w={170}
         />
