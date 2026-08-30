@@ -201,6 +201,20 @@ export function appListingDetailModActions(input: {
     kind: input.kind,
     // This surface never holds a publish REQUEST, so it can never offer `review`.
     hasPendingRequest: false,
+    // 🔴 THE PURGE-BRANCH INPUTS, PINNED FAIL-SAFE. This surface cannot reach that branch —
+    // `detailListingStatus` returns only `'approved' | null` and never `'draft'`, and `purge`
+    // is absent from DETAIL_SURFACE_MOD_ACTIONS so the filter below would drop it anyway. The
+    // values are still chosen for what happens if EITHER of those stops being true: a null
+    // `appBlockId` says "never approved" and `hasPendingBlockRequest: true` says "assume a
+    // submission is live", and the branch requires the latter to be FALSE. So the fail-safe
+    // direction is withhold, not offer.
+    //
+    // This surface has no honest source for either value — it is handed `{isModerator,
+    // preview, kind}` and nothing else. Do not invent one: a real value here would be a claim
+    // about a listing this function cannot see. Widening the input is the correct move if this
+    // surface ever needs to offer `purge`.
+    appBlockId: null,
+    hasPendingBlockRequest: true,
   }).filter(isDetailSurfaceModAction);
 }
 
