@@ -1321,13 +1321,46 @@ export const appListingsRouter = router({
   // to `ctx.user.id` — never client-supplied. Each writes exactly one
   // `AppListingModerationEvent` in the same tx as its mutation. `claimListing` (PR4)
   // reassigns ownership — there is NO self-service claim endpoint (mod-only is the
-  // whole boundary). All offsite-only.
+  // whole boundary).
+  //
+  // 🔴 KIND SCOPE, CORRECTED — this block used to end "All offsite-only", and that is
+  // FALSE for FOUR of the six named above. Per proc, measured rather than summarised:
+  //
+  //   - `delistListing` / `relistListing` — DUAL-KIND. They resolve the listing through
+  //     `classifyListingForAction`, which applies NO kind filter, and then flip the
+  //     backing `app_blocks.status` (approved↔suspended) for an on-site listing in the
+  //     same tx. That block flip IS the runtime stop, so the on-site path is the whole
+  //     point rather than an accident.
+  //   - `resolveReport` / `dismissReport` — KIND-AGNOSTIC. Both route through
+  //     `closeReport`, which looks the report up BY REPORT ID with no kind filter at all;
+  //     upstream, `reportListing` gates only on the listing being `approved` and
+  //     `listListingReports` filters only on report status. So an ON-SITE listing is
+  //     reportable and its report is closeable, and any sentence here implying otherwise
+  //     describes a path that demonstrably exists.
+  //   - `claimListing` / `purgeListing` — genuinely OFF-SITE ONLY (they classify through
+  //     `classifyOffsiteListing` and raise NOT_FOUND otherwise). These two are what the
+  //     retired sentence was describing when it was written.
+  //
+  // 🔴 THE COUNT IS STATED EXACTLY BECAUSE AN EARLIER VERSION OF *THIS* CORRECTION SAID
+  // "two of these", which asserts the other four are off-site only and re-committed the
+  // error it was written to remove — the same failure, one revision later, now asserted
+  // rather than inherited. If a proc's kind scope changes, edit the list above; do not
+  // re-summarise it as a count with no per-proc backing.
+  //
+  // The correction is load-bearing, not tidying: `ListingTakedownModal` deliberately does
+  // NOT kind-branch its `hide` call precisely because ONE proc serves both kinds, so a
+  // maintainer who trusted the old sentence would "fix" that by adding a kind guard and
+  // reach for a second on-site delist proc that does not exist.
+  // `components/Apps/appListingModerationTableView.ts` states the same kind matrix on the
+  // client side.
   // -------------------------------------------------------------------------
 
   /**
-   * MOD delist an approved off-site listing (approved → removed). Drops out of the
-   * approved-only store read path automatically. Optionally resolves a linked
-   * `reportId` in the same tx. Typed failures map via `mapOffsiteError`
+   * MOD delist an approved listing (approved → removed), DUAL-KIND. Drops out of the
+   * approved-only store read path automatically; for an ON-SITE listing it also suspends
+   * the backing `AppBlock` in the same tx, which is what actually stops it serving.
+   * Optionally resolves a linked `reportId` in the same tx. Typed failures map via
+   * `mapOffsiteError`
    * (NOT_FOUND→NOT_FOUND, NOT_TRANSITIONABLE→BAD_REQUEST, infra→INTERNAL/no leak).
    */
   delistListing: moderatorProcedure.input(delistListingSchema).mutation(async ({ ctx, input }) => {
@@ -1381,7 +1414,12 @@ export const appListingsRouter = router({
       }
     }),
 
-  /** MOD relist a removed off-site listing (removed → approved). Reversibility. */
+  /**
+   * MOD relist a removed listing (removed → approved), DUAL-KIND — the inverse of
+   * `delistListing`, and the reason `hide` is the REVERSIBLE takedown. For an ON-SITE
+   * listing it also un-suspends the backing `AppBlock` (suspended → approved) in the same
+   * tx, so the app serves again.
+   */
   relistListing: moderatorProcedure.input(relistListingSchema).mutation(async ({ ctx, input }) => {
     if (!ctx.user?.isModerator) {
       throw throwAuthorizationError('Relisting standalone listings is restricted to civitai team');
@@ -1478,14 +1516,32 @@ export const appListingsRouter = router({
     }),
 
   // -------------------------------------------------------------------------
-  // W13 POST-APPROVAL LISTING MANAGEMENT (Phase 1) — DARK.
+  // W13 POST-APPROVAL LISTING MANAGEMENT (Phase 1).
+  //
+  // 🔴 THIS HEADING USED TO END "— DARK", and it was false for ALL FIVE procs below:
+  // `unpublishOwnListing`, `republishOwnListing` and `listMyListingModerationEvents` are
+  // reached from the owner-facing publishing surface, and both reset procs from the
+  // moderator surfaces (the /apps/review management table, and the store listing detail
+  // page's `⋮` menu via `components/Apps/ListingTakedownModal.tsx`). The per-proc note on
+  // `resetOnsiteListingToPending` below already said so; this heading — the thing anyone
+  // scanning the file reads first — still announced the opposite 50 lines earlier. Same
+  // shape as the kind-scope correction above: the detail was right and the summary was
+  // wrong, which is exactly why a summary must be re-read whenever the detail changes.
   //
   // `resetListingToPending` is a MOD action (`moderatorProcedure` + `isModerator`
   // recheck, same posture as delist/relist/claim/purge). The three owner procs
   // (`unpublishOwnListing` / `republishOwnListing` / `listMyListingModerationEvents`)
   // are `appDeveloperProcedure` (mods + app-dev-testers) and are bound to the caller
   // in the service (owner-only, else NOT_OWNED → FORBIDDEN). All typed failures map
-  // via `mapOffsiteError` (no infra leak). Offsite-only in the service.
+  // via `mapOffsiteError` (no infra leak).
+  //
+  // 🔴 KIND SCOPE, CORRECTED — this used to end "Offsite-only in the service", and that
+  // is only half true. `resetListingToPending` IS offsite-only (its in-tx re-read raises
+  // NOT_FOUND on `kind !== 'offsite'`; on-site goes through the separate
+  // `resetOnsiteListingToPending` below). The OWNER procs are NOT: `unpublishOwnListing`
+  // and `republishOwnListing` are dual-kind and flip the backing `AppBlock` for an
+  // on-site listing, which is a full takedown/restore rather than a store-visibility
+  // toggle. Their own service-side headers already said so; only this summary was stale.
   // -------------------------------------------------------------------------
 
   /**
@@ -1520,8 +1576,15 @@ export const appListingsRouter = router({
    * `AppBlockPublishRequest` into a fresh pending one (assets/version KEPT, NO owner
    * resubmit) so it re-enters `listPendingRequests`, writes a `reset-to-pending` audit
    * event, and notifies the owner; a mod re-approves it through the existing block
-   * review flow (which restores the listing + un-suspends the block). DARK backend
-   * capability — no UI wiring yet (the mgmt-table Reset button is a downstream PR).
+   * review flow (which restores the listing + un-suspends the block).
+   *
+   * 🔴 NO LONGER DARK — this used to say "DARK backend capability — no UI wiring yet".
+   * It has TWO callers now: the /apps/review management table's Reset action, and the
+   * store listing detail page's `⋮` → "Unpublish and send back to review"
+   * (`components/Apps/ListingTakedownModal.tsx`, which routes by kind between this and
+   * the off-site `resetListingToPending`). Changing this proc's shape or its kind guard
+   * breaks both.
+   *
    * Same input shape + posture as the offsite reset; typed failures map via
    * `mapOffsiteError` (NOT_FOUND→NOT_FOUND, NOT_TRANSITIONABLE→BAD_REQUEST).
    */

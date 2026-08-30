@@ -83,12 +83,31 @@ const MODAL_MODULE = 'components/Apps/MessageAppOwnerModal.tsx';
 const FIELD_MODULE = 'components/Apps/ReasonGatedActionModal.tsx';
 
 /**
- * Every PRODUCTION site that mounts `MessageAppOwnerModal`. One today: the /apps/review
- * "Manage listings" table, which is the only moderator surface that holds an
- * `AppListing` id for an arbitrary listing in any status. Adding a second surface means
- * adding it here — that is the point, not an inconvenience.
+ * The /apps/review "Manage listings" table — the first mount, and the only moderator
+ * surface that holds an `AppListing` id for an arbitrary listing in ANY status. Several
+ * assertions below are about ITS routing specifically (the three-way `openAction`
+ * dispatch), so they name it rather than indexing {@link MOUNT_SITES}: indexing made
+ * them silently become assertions about whichever site happened to sort first the moment
+ * a second one was added.
  */
-const MOUNT_SITES = ['components/Apps/AppListingsModerationTable.tsx'] as const;
+const TABLE_MODULE = 'components/Apps/AppListingsModerationTable.tsx';
+
+/**
+ * The unified store listing DETAIL body — the second mount. It reaches the composer from
+ * the `⋮` overflow menu's moderator section on `/apps/store-preview/<slug>`, where the
+ * listing is `approved` by construction (the read is approved-only). It has no
+ * `openAction` dispatch of its own: the menu item calls the modal's disclosure directly,
+ * so the routing assertions below do not apply to it and are not asserted of it.
+ */
+const DETAIL_MODULE = 'components/Apps/AppListingDetailBody.tsx';
+
+/**
+ * Every PRODUCTION site that mounts `MessageAppOwnerModal`. Adding a third surface means
+ * adding it here — that is the point, not an inconvenience. The ledger fails when the set
+ * SHRINKS (the surface goes dark again, which is what happened once already) and when it
+ * GROWS (a surface appears that nobody wired to the same rules).
+ */
+const MOUNT_SITES = [TABLE_MODULE, DETAIL_MODULE] as const;
 
 const SCHEMA_IMPORT = '~/server/schema/blocks/app-moderator-message.schema';
 
@@ -357,7 +376,7 @@ describe('the owner-message surface is MOUNTED (it shipped dark once already)', 
   });
 
   it('the mounting site routes the action through actionOpensOwnerMessage, not the reason modal', () => {
-    const table = codeOf(MOUNT_SITES[0]);
+    const table = codeOf(TABLE_MODULE);
     // The router must be CALLED, not merely imported — an import with no call site is
     // exactly how the message action would silently fall through to
     // `setPendingAction` and open the wrong modal.
@@ -371,7 +390,7 @@ describe('the owner-message surface is MOUNTED (it shipped dark once already)', 
     // gated routing — measured by reverting it to `action !== 'review'`, which left all
     // 48 component tests green. A ledger over MOUNTS has to cover the ROUTERS too, or
     // the surface stays mounted and reachable by the wrong modal.
-    const table = codeOf(MOUNT_SITES[0]);
+    const table = codeOf(TABLE_MODULE);
     expect(table).toContain('actionRequiresReason(action)');
     expect(table).toContain('setPendingAction({ action, row })');
   });
@@ -380,7 +399,7 @@ describe('the owner-message surface is MOUNTED (it shipped dark once already)', 
     // `messageAppOwner` keys on `apl_<ULID>`; a slug would come back NOT_FOUND. The
     // row carries both and they are adjacent in the object literal, so this is a
     // realistic transposition rather than a hypothetical one.
-    const table = codeOf(MOUNT_SITES[0]);
+    const table = codeOf(TABLE_MODULE);
     expect(table).toMatch(/appListingId:\s*messageRow\.id/);
   });
 });
@@ -526,11 +545,25 @@ describe('the composer takes no owner from its caller', () => {
   });
 
   it('neither the composer nor its mount site carries a display owner', () => {
-    for (const rel of [MODAL_MODULE, MOUNT_SITES[0]]) {
+    for (const rel of [MODAL_MODULE, ...MOUNT_SITES]) {
       expect(codeOf(rel)).not.toContain('ownerLabel');
     }
-    // Positive control: the mount site DOES still build the props it is supposed to.
-    expect(codeOf(MOUNT_SITES[0])).toMatch(/appListingId:\s*messageRow\.id/);
+    // Positive control: the mount sites DO still build the props they are supposed to.
+    expect(codeOf(TABLE_MODULE)).toMatch(/appListingId:\s*messageRow\.id/);
+    expect(codeOf(DETAIL_MODULE)).toMatch(/appListingId:\s*detail\.id/);
+  });
+
+  /**
+   * 🔴 THE DETAIL BODY FEEDS THE LISTING ID, NEVER THE SLUG — the same transposition the
+   * table's assertion guards, in a file where it is MORE reachable: `detail.id` and
+   * `detail.slug` are adjacent in the one object literal the menu hands the composer, and
+   * the neighbouring `slug` there is a legitimate prop. A slug would come back NOT_FOUND
+   * from `messageAppOwner`, which keys on `apl_<ULID>`.
+   */
+  it('the detail body feeds the composer the listing ID, never the slug', () => {
+    const body = codeOf(DETAIL_MODULE);
+    expect(body).toMatch(/appListingId:\s*detail\.id/);
+    expect(body).not.toMatch(/appListingId:\s*detail\.slug/);
   });
 
   /**
