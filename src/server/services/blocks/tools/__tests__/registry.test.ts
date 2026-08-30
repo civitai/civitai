@@ -806,5 +806,16 @@ describe('🔴 block tool registry — the DESCRIPTION cannot name a field the s
     // description said.
     expect(cited.length).toBeGreaterThan(0);
     expect(cited).toContain('sort');
+
+    // 🔴 A SYNTHETIC FIXTURE, BECAUSE THE REAL DESCRIPTION CANNOT SEE THIS.
+    // The terminator was widened from ` to [`|:] so the `name: "value"` idiom
+    // is not invisible to the guard — but on the live text every identifier
+    // that appears in colon form ALSO appears bare-backticked, so the two
+    // regexes yield the same DISTINCT set and reverting the widening was
+    // measured fully green (48/48). A guard whose widening has no killing
+    // mutation is one edit away from silently reverting, and the next
+    // description written in the idiom the text already uses would sail past
+    // it again. Only an input the OLD regex cannot match separates them.
+    expect(citedParams('`username: "x"`')).toEqual(['username']);
   });
 });

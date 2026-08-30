@@ -580,8 +580,9 @@ const TOOLS: readonly BlockToolDefinition[] = [
       // This sentence said "rank with `sort` and `period`" for three rounds. It
       // is false in the same way the field's own text was before it was
       // corrected: `getModelsRaw` builds its orderBy purely from all-time
-      // counts and never reads `period` (the period-aware ranking is commented
-      // out), so `period` only narrows by `lastVersionAt`. The document was
+      // counts and never reads `period`, so `period` only narrows by
+      // `lastVersionAt`. (A period-aware ranking ladder does exist, commented
+      // out — in `getModels`, NOT in the `getModelsRaw` path this tool uses.) The document was
       // serving the model two contradictory statements about the same field.
       '`sort`; narrow by `period`. ' +
       'For a NAMED model pass `query` ALONE — adding `sort` there ranks a hundred fuzzy ' +
