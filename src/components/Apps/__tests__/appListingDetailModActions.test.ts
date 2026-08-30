@@ -507,3 +507,40 @@ describe('takedownConsequenceCopy', () => {
     }
   });
 });
+
+/**
+ * 🔴 REGRESSION — this surface must never offer `purge`, and the guard is the RELATIONSHIP
+ * between two independent facts, either of which could change alone.
+ *
+ * Why it exists: `listingModActions` gained an on-site orphan-draft `purge` branch (#4491)
+ * while this file was being written in parallel (#4493). Both PRs were individually green and
+ * their FILES were disjoint; together they broke `main`'s typecheck, because #4493 added a
+ * second caller of a function whose required inputs #4491 had widened. A clean git merge is
+ * not a clean merge.
+ *
+ * Two things independently keep `purge` off this surface — `detailListingStatus` never returns
+ * `'draft'`, and `DETAIL_SURFACE_MOD_ACTIONS` omits `purge` — so a test that only checked the
+ * output would still pass if ONE of them regressed. These check both, and the inputs the call
+ * site pins are chosen so the fail-safe direction is withhold.
+ */
+describe('appListingDetailModActions — purge is unreachable from the detail surface', () => {
+  it('never offers purge for a moderator on a live listing, either kind', () => {
+    for (const kind of ['onsite', 'offsite']) {
+      const actions = appListingDetailModActions({ isModerator: true, preview: false, kind });
+      expect(actions, `kind=${kind}`).not.toContain('purge');
+      // Positive control: the surface IS returning its real action set, not an empty array —
+      // otherwise "does not contain purge" is vacuously true.
+      expect(actions.length, `kind=${kind} returned nothing`).toBeGreaterThan(0);
+    }
+  });
+
+  it('the surface subset itself excludes purge', () => {
+    expect(DETAIL_SURFACE_MOD_ACTIONS).not.toContain('purge');
+  });
+
+  it('the surface status can never be the one the purge branch requires', () => {
+    // `purge` needs `status === 'draft'`; this surface only ever produces 'approved' or null.
+    expect(detailListingStatus({ preview: false })).toBe('approved');
+    expect(detailListingStatus({ preview: true })).toBeNull();
+  });
+});
