@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  BrowsingLevelProvider,
   BrowsingModeOverrideCtx,
   useBrowsingLevelDebounced,
   useViewerBrowsingLevelDebounced,
@@ -10,8 +11,27 @@ import {
 import { NsfwLevel } from '~/server/common/enums';
 import {
   allBrowsingLevelsFlag,
+  publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+
+/**
+ * The three things the provider computes its cap FROM. Mocked so the cap's value
+ * can be driven, which the hand-built-context cases below deliberately cannot do
+ * — supplying the context is what makes the hooks testable and is exactly what
+ * hides this computation from them.
+ */
+const currentUser = { value: null as { id: number } | null };
+const canViewNsfw = { value: true };
+const settings = { showNsfw: true, browsingLevel: allBrowsingLevelsFlag, blurNsfw: false };
+
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => currentUser.value }));
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ canViewNsfw: canViewNsfw.value }),
+}));
+vi.mock('~/providers/BrowserSettingsProvider', () => ({
+  useBrowsingSettings: (select: (state: typeof settings) => unknown) => select(settings),
+}));
 
 /**
  * The two hooks, tested where the bug can actually live: in how each one MAPS
@@ -110,5 +130,73 @@ describe('browsing level hooks', () => {
 
     expect(page, 'a page override must still scope the page hook').toBe(NsfwLevel.PG);
     expect(viewer, 'the viewer hook must ignore the page override').toBe(allBrowsingLevelsFlag);
+  });
+});
+
+/**
+ * The provider's own cap computation, which the two cases above cannot see.
+ *
+ * These render the REAL `BrowsingLevelProvider` so the domain rules and the cap
+ * merge are exercised rather than supplied. They mirror `applyDomainFeature` in
+ * `src/server/trpc.ts` — anonymous is PG anywhere, a logged-in viewer on a
+ * domain that cannot serve mature content is PG+PG-13 — and that mirror is the
+ * thing nothing checked before.
+ */
+function renderUnderProvider(props: { forcedBrowsingLevel?: number; browsingLevel?: number }) {
+  const result = { page: 0, viewer: 0 };
+  const container = document.createElement('div');
+  const root = createRoot(container);
+
+  function Probe() {
+    result.page = useBrowsingLevelDebounced();
+    result.viewer = useViewerBrowsingLevelDebounced();
+    return null;
+  }
+
+  act(() => {
+    root.render(createElement(BrowsingLevelProvider, props, createElement(Probe)));
+  });
+  act(() => root.unmount());
+  return result;
+}
+
+describe('BrowsingLevelProvider caps', () => {
+  it('caps a logged-in viewer on a domain that cannot serve mature content', () => {
+    currentUser.value = { id: 1 };
+    canViewNsfw.value = false;
+
+    const { viewer } = renderUnderProvider({});
+
+    expect(viewer, 'a saved preference must not lift the domain cap').toBe(sfwBrowsingLevelsFlag);
+  });
+
+  it('caps an anonymous viewer harder than a logged-in one', () => {
+    currentUser.value = null;
+    canViewNsfw.value = false;
+
+    expect(renderUnderProvider({}).viewer).toBe(publicBrowsingLevelsFlag);
+  });
+
+  /**
+   * 🔴 The cap merge. A page passing its own ceiling must not be able to LIFT the
+   * domain cap by being nearer — `??` did exactly that, and a collection ceiling
+   * of PG+PG-13 over an anonymous domain cap of PG is the live shape.
+   */
+  it('intersects a page ceiling with the domain cap rather than replacing it', () => {
+    currentUser.value = null;
+    canViewNsfw.value = false;
+
+    const { viewer } = renderUnderProvider({ forcedBrowsingLevel: sfwBrowsingLevelsFlag });
+
+    expect(viewer, 'a wider page ceiling must not lift the anonymous cap').toBe(
+      publicBrowsingLevelsFlag
+    );
+  });
+
+  it('leaves an uncapped viewer on their own preference', () => {
+    currentUser.value = { id: 1 };
+    canViewNsfw.value = true;
+
+    expect(renderUnderProvider({}).viewer).toBe(allBrowsingLevelsFlag);
   });
 });

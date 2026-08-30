@@ -47,5 +47,29 @@ export function resolveViewerBrowsingLevel({
   return forced ?? user;
 }
 
+/**
+ * The tightest of several caps, as one flag set.
+ *
+ * 🔴 Caps INTERSECT; they do not shadow. `a ?? b` takes the first one that is
+ * set, which is only the tighter of the two by luck — a collection ceiling of
+ * PG+PG-13 written over an anonymous domain cap of PG would LIFT it. Bitwise AND
+ * is the actual "both must allow it" test, and the levels are single flags, so
+ * it is the right operator rather than a clever one.
+ *
+ * Absent caps are skipped, so no cap at all returns `undefined` and the caller
+ * falls through to the viewer's preference.
+ *
+ * ⚠️ Two disjoint caps intersect to 0, which means nothing is servable. Both
+ * hooks then hit `BROWSING_LEVEL_FALLBACK` and serve PG, which is a WIDENING
+ * from nothing to PG. Not reachable today — every cap in the app includes PG —
+ * and stated because the fallback was written for "the debounce has not settled
+ * yet", not for this.
+ */
+export function intersectBrowsingCaps(...caps: (number | undefined)[]) {
+  const present = caps.filter((cap): cap is number => cap != null);
+  if (!present.length) return undefined;
+  return present.reduce((a, b) => a & b);
+}
+
 /** What both hooks fall back to once debouncing has settled on nothing. */
 export const BROWSING_LEVEL_FALLBACK = NsfwLevel.PG;

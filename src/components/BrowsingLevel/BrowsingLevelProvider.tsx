@@ -5,6 +5,7 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   BROWSING_LEVEL_FALLBACK,
+  intersectBrowsingCaps,
   resolvePageBrowsingLevel,
   resolveViewerBrowsingLevel,
 } from '~/components/BrowsingLevel/resolve-browsing-level';
@@ -82,7 +83,15 @@ export function BrowsingLevelProvider({
   return (
     <BrowsingModeOverrideCtx.Provider
       value={{
-        forcedBrowsingLevel: forcedBrowsingLevel ?? domainForcedLevel ?? ctx.forcedBrowsingLevel,
+        // 🔴 Intersected, not shadowed. Every one of these is a ceiling nobody
+        // below may lift, so the effective cap is what ALL of them allow. `??`
+        // took whichever was set first, which let a wider cap from a nearer
+        // provider erase a tighter one further out.
+        forcedBrowsingLevel: intersectBrowsingCaps(
+          forcedBrowsingLevel,
+          domainForcedLevel,
+          ctx.forcedBrowsingLevel
+        ),
         userBrowsingLevel: userBrowsingLevel,
         browsingLevelOverride:
           childBrowsingLevelOverride ?? parentBrowsingLevelOverride ?? ctx.browsingLevelOverride,

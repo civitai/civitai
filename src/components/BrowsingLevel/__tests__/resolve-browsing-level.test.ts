@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
+  intersectBrowsingCaps,
   resolvePageBrowsingLevel,
   resolveViewerBrowsingLevel,
 } from '~/components/BrowsingLevel/resolve-browsing-level';
@@ -31,6 +32,46 @@ describe('resolvePageBrowsingLevel', () => {
 
   it('falls back to the viewer when no page asked for anything', () => {
     expect(resolvePageBrowsingLevel({ user: sfwBrowsingLevelsFlag })).toBe(sfwBrowsingLevelsFlag);
+  });
+});
+
+describe('intersectBrowsingCaps', () => {
+  /**
+   * 🔴 The reason this exists. The provider used to merge caps with `??`, which
+   * takes the first one SET rather than the tighter of the two. A collection
+   * ceiling of PG+PG-13 sitting nearer than an anonymous domain cap of PG would
+   * therefore have erased it — a nearer provider lifting a ceiling further out,
+   * which is the one thing a cap must never permit.
+   *
+   * If this fails, do not adjust the expectation.
+   */
+  it('takes the TIGHTER of two caps, never the nearer one', () => {
+    expect(
+      intersectBrowsingCaps(sfwBrowsingLevelsFlag, publicBrowsingLevelsFlag),
+      'a wider nearer cap must not lift a tighter outer one'
+    ).toBe(publicBrowsingLevelsFlag);
+    // Order must not matter. `??` passes one of these two and fails the other,
+    // which is exactly how the old behaviour looked correct half the time.
+    expect(intersectBrowsingCaps(publicBrowsingLevelsFlag, sfwBrowsingLevelsFlag)).toBe(
+      publicBrowsingLevelsFlag
+    );
+  });
+
+  it('skips absent caps rather than treating them as a ceiling of nothing', () => {
+    expect(intersectBrowsingCaps(undefined, sfwBrowsingLevelsFlag, undefined)).toBe(
+      sfwBrowsingLevelsFlag
+    );
+  });
+
+  /** No cap at all means no ceiling — the caller falls through to the viewer. */
+  it('returns undefined when nothing caps anything', () => {
+    expect(intersectBrowsingCaps(undefined, undefined)).toBeUndefined();
+  });
+
+  it('intersects three, not just the first pair', () => {
+    expect(
+      intersectBrowsingCaps(allBrowsingLevelsFlag, sfwBrowsingLevelsFlag, publicBrowsingLevelsFlag)
+    ).toBe(publicBrowsingLevelsFlag);
   });
 });
 
@@ -106,49 +147,79 @@ describe('resolveViewerBrowsingLevel', () => {
 });
 
 /**
- * The call site, not the function.
+ * The call sites, not the function.
  *
- * Everything above tests a pure resolver that `RemixGalleryCard` merely has to
- * CHOOSE to use. The bug was never in the resolver — it was one hook name at one
- * call site, and unit-testing the resolver would have proved nothing about it.
- * The hooks are React, so a render test lands in the `component` project, which
- * runs in no CI job; this reads the source instead.
+ * Everything above tests pure resolvers that these components merely have to
+ * CHOOSE to use. Every defect in this area so far has been one hook name at one
+ * call site, and no test of a resolver can reach that. The hooks are React, so a
+ * render test lands in the `component` project, which runs in no CI job; this
+ * reads the sources instead.
  *
- * ⚠️ What this does and does not catch, stated because a source guard flatters
- * itself: it catches reverting to `useBrowsingLevelDebounced`, which is the
- * regression that actually happened. It would NOT catch someone reading
- * `useBrowsingLevelContext()` and resolving the level by hand. It pins a
- * spelling, and the spelling it pins is the likely one.
+ * ⚠️ What a source guard is worth, stated because it flatters itself: it catches
+ * a revert to `useBrowsingLevelDebounced`, which is the regression that keeps
+ * happening. It would NOT catch someone reading `useBrowsingLevelContext()` and
+ * resolving by hand. It pins a spelling, and the spelling it pins is the likely
+ * one.
+ *
+ * 🔴 Deliberately NOT comparing path strings. `appModeratorMessageForm.callSites`
+ * does, and it fails on Windows only, because it compares `a/b` against `a\b`.
+ * Paths here are built with `path.resolve` and only ever used to READ.
  */
-describe('the remix gallery reads the viewer, not the page', () => {
-  const cardPath = path.resolve(__dirname, '..', '..', 'RemixGallery', 'RemixGalleryCard.tsx');
-  // Throws rather than passing if the file moves or is renamed. A guard whose
-  // subject has vanished must go red, not quietly become vacuous.
-  const source = readFileSync(cardPath, 'utf-8');
+const VIEWER_SCOPED = [
+  {
+    file: ['..', '..', 'RemixGallery', 'RemixGalleryCard.tsx'],
+    why: 'lists other people’s images beside an image scoped to its own rating',
+  },
+  {
+    file: ['..', '..', 'RemixGallery', 'RemixGalleryBatchProvider.tsx'],
+    why: 'its count must match the gallery that count opens',
+  },
+  {
+    file: ['..', '..', 'UserAvatar', 'UserAvatar.tsx'],
+    why: 'a profile picture belongs to its owner, not to the page it appears on',
+  },
+  {
+    file: ['..', '..', 'UserAvatar', 'UserAvatarSimple.tsx'],
+    why: 'a profile picture belongs to its owner, not to the page it appears on',
+  },
+];
 
-  it('is reading the file it thinks it is', () => {
-    expect(source, 'wrong file — this guard is pointed at nothing').toContain('RemixGalleryCard');
-  });
+describe.each(VIEWER_SCOPED)('$file reads the viewer, not the page', ({ file, why }) => {
+  // Throws rather than passing if the file moves. A guard whose subject has
+  // vanished must go red, not quietly become vacuous.
+  const source = readFileSync(path.resolve(__dirname, ...file), 'utf-8');
 
   it('uses the viewer hook', () => {
-    expect(source).toContain('useViewerBrowsingLevelDebounced()');
+    expect(source, why).toContain('useViewerBrowsingLevelDebounced()');
   });
 
-  /**
-   * 🔴 `ImageDetail2` wraps this card in a provider set to the HOST image's
-   * rating. The ordinary hook inherits that, which scopes a list of other
-   * people's images to the rating of the image they hang beside — entries above
-   * the host cannot intersect it and vanish for every viewer, including the owner
-   * who approved and was paid for them. Measured on prod 2026-08-29: 161 of 488
-   * approved entries invisible that way, 160 of them paid.
-   *
-   * Do not "simplify" this back. The domain cap is still honoured by the viewer
-   * hook; skipping the page override is the entire point.
-   */
-  it('does NOT use the page-scoped hook', () => {
+  it('does NOT inherit a page override', () => {
     expect(
       source.includes('useBrowsingLevelDebounced()'),
-      'RemixGalleryCard must not inherit the detail page browsing-level override'
+      `${file.join('/')} must not inherit a page browsing-level override: ${why}`
+    ).toBe(false);
+  });
+});
+
+/**
+ * The other direction. A collection's ceiling is policy, not preference, so it
+ * must ride the slot every hook honours — as an override it silently stopped
+ * applying to each component above the moment they adopted the viewer hook.
+ */
+describe('a collection ceiling is a cap, not an override', () => {
+  const source = readFileSync(
+    path.resolve(__dirname, '..', '..', 'Collections', 'Collection.tsx'),
+    'utf-8'
+  );
+
+  it('passes it as forcedBrowsingLevel', () => {
+    expect(source).toContain('forcedBrowsingLevel={collection.metadata.forcedBrowsingLevel');
+  });
+
+  it('does not pass it through the override slot', () => {
+    expect(
+      source.includes('browsingLevel={collection.metadata.forcedBrowsingLevel'),
+      'the override slot is one any component may decline to read'
     ).toBe(false);
   });
 });
