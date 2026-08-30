@@ -55,6 +55,7 @@ import {
 } from '~/components/Apps/appListingDetailView';
 import {
   DETAIL_TAKEDOWN_ACTIONS,
+  REVIEW_QUEUE_MANAGE_HREF,
   TAKEDOWN_TESTID_STEM,
   appListingDetailModActions,
   detailModActionLabel,
@@ -1144,10 +1145,16 @@ export function AppListingDetailBody({
                           back is the surface that CAN see a removed listing — the
                           /apps/review mgmt table, which already carries Relist (and
                           Claim/Purge) for exactly that state. See
-                          `appListingDetailModActions.detailListingStatus`. */}
+                          `appListingDetailModActions.detailListingStatus`.
+
+                          🔴 THE `?tab=manage` IS LOAD-BEARING — a bare `/apps/review`
+                          resolves to the PENDING tab, and Relist is on the manage tab.
+                          The href is a named constant so the destination this menu
+                          promises is pinned in the blocking tier rather than typed
+                          inline. */}
                       <Menu.Item
                         component={Link}
-                        href="/apps/review"
+                        href={REVIEW_QUEUE_MANAGE_HREF}
                         leftSection={<IconShieldCheck size={14} stroke={1.5} />}
                         data-testid="apps-listing-mod-manage"
                       >

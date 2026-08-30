@@ -1880,8 +1880,14 @@ describe('AppListingDetailBody — moderator menu section', () => {
     expect(dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)).not.toBeNull();
     // The INVERSE affordance. There is no Relist button because a removed listing 404s
     // on this route; the link is where a removed listing can actually be acted on.
+    //
+    // 🔴 THE WHOLE HREF, INCLUDING `?tab=manage`. `/apps/review` resolves an absent
+    // `?tab=` to the PENDING tab and Relist lives only on the manage tab — so a bare path
+    // renders a perfectly good link to the wrong queue, which no "a link exists" assertion
+    // can see. Written as a literal rather than imported from the constant, so this and
+    // the blocking-tier pin are two independent statements of the same destination.
     expect(dropdown.querySelector(`[data-testid="${MANAGE_ITEM}"]`)?.getAttribute('href')).toBe(
-      '/apps/review'
+      '/apps/review?tab=manage'
     );
     // Asserted on the STATE, not on a word: no lifecycle action here may be a relist.
     expect(dropdown.textContent).not.toContain('Relist');

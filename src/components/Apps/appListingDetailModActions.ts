@@ -72,6 +72,69 @@ export function isDetailTakedownAction(action: string): action is DetailTakedown
 }
 
 /**
+ * Where the menu's "Manage in review queue" item points.
+ *
+ * 🔴 `?tab=manage` IS LOAD-BEARING, NOT A NICETY. `/apps/review` resolves an absent
+ * `?tab=` to **`'pending'`**, and Relist lives only on the `manage` tab — so a bare link
+ * lands a moderator on the pending-submissions queue, which is not where the thing they
+ * were just told to do can be done. {@link takedownConsequenceCopy} promises, at the point
+ * of no return, that a moderator puts the listing back "in one click, with Relist in the
+ * review queue"; this href is what makes that sentence true. `manage` is a real member of
+ * that page's tab union and its `?tab=` sync is the documented deep-link mechanism — it is
+ * simply the case that nothing in the codebase used it before now.
+ *
+ * Pinned as a whole literal in the blocking tier, and separately as a rendered `href` in
+ * the component suite, because "a link renders" is not the claim — where it goes is.
+ */
+export const REVIEW_QUEUE_MANAGE_HREF = '/apps/review?tab=manage';
+
+/**
+ * The confirm button's own label — the VERB, not the menu item's fuller phrasing.
+ *
+ * 🔴 LIVES HERE, IN THE REACT-FREE MODULE, AND THAT PLACEMENT IS THE FIX FOR A MEASURED
+ * HOLE. It used to be a module-private map inside `ListingTakedownModal.tsx`, which no
+ * blocking suite can import — so it was covered only by the report-only browser tier, and
+ * there only on the `hide` arm. An adversarial audit measured a ONE-SIDED mutant,
+ * `SUBMIT_LABEL['reset-to-pending'] = 'Hide from store'`, surviving BOTH tiers green: the
+ * browser assertion reads the hide button, so a change to the reset button's label was
+ * unobservable. The same was true of {@link takedownSuccessMessage}.
+ *
+ * It matters because this string is the last thing a moderator reads before a takedown
+ * they cannot undo from that page, and the two confirms are ONE component that differs
+ * from itself only in these strings and which mutation fires.
+ */
+export function takedownSubmitLabel(action: DetailTakedownAction): string {
+  switch (action) {
+    case 'reset-to-pending':
+      return 'Unpublish';
+    case 'hide':
+      return 'Hide';
+  }
+}
+
+/**
+ * What the moderator is told AFTERWARDS.
+ *
+ * 🔴 EACH ARM MUST NAME ITS OWN UNDO PATH. A hidden listing comes back with Relist, in one
+ * click; a re-queued one comes back only when someone approves its request. Swapping these
+ * two is the mutant that survived both tiers (see {@link takedownSubmitLabel}) — the
+ * mutation succeeds either way, so the only signal a moderator gets that they did the
+ * other thing is this sentence, and a swapped one sends them to the wrong surface with
+ * confidence.
+ */
+export function takedownSuccessMessage(action: DetailTakedownAction): string {
+  switch (action) {
+    case 'reset-to-pending':
+      return (
+        'App unpublished and re-queued for review. Approve the queued request in the review ' +
+        'queue to put it back up.'
+      );
+    case 'hide':
+      return 'App hidden from the store. Use Relist in the review queue to put it straight back.';
+  }
+}
+
+/**
  * The `data-testid` stem each takedown owns, single-sourced.
  *
  * 🔴 SHARED BY THE MENU ITEM AND ITS CONFIRM, and that is the point: the two confirms are

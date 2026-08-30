@@ -3,12 +3,15 @@ import { describe, expect, it } from 'vitest';
 import {
   DETAIL_SURFACE_MOD_ACTIONS,
   DETAIL_TAKEDOWN_ACTIONS,
+  REVIEW_QUEUE_MANAGE_HREF,
   TAKEDOWN_TESTID_STEM,
   appListingDetailModActions,
   detailListingStatus,
   detailModActionLabel,
   isDetailTakedownAction,
   takedownConsequenceCopy,
+  takedownSubmitLabel,
+  takedownSuccessMessage,
 } from '~/components/Apps/appListingDetailModActions';
 import {
   ALL_LISTING_MOD_ACTIONS,
@@ -170,6 +173,83 @@ describe('the takedown pair', () => {
     const stems = DETAIL_TAKEDOWN_ACTIONS.map((a) => TAKEDOWN_TESTID_STEM[a]);
     expect(stems.every((s) => s.length > 0)).toBe(true);
     expect(new Set(stems).size).toBe(stems.length);
+  });
+});
+
+/**
+ * 🔴 THE FOUR CONFIRM STRINGS AND THE REVIEW-QUEUE HREF, PINNED WHOLE, BOTH ARMS, IN THE
+ * BLOCKING TIER — because every one of them was measured SURVIVING a mutant.
+ *
+ * These lived as module-private maps inside `ListingTakedownModal.tsx`, a `.tsx` no
+ * blocking suite can import, so their only coverage was the report-only browser tier and
+ * there only on the `hide` arm. An adversarial audit measured two mutants green on BOTH
+ * tiers:
+ *
+ *   - swapping the two success messages, so a hide tells the moderator to approve a
+ *     request that was never queued and a re-queue tells them to hit Relist;
+ *   - the ONE-SIDED `takedownSubmitLabel('reset-to-pending') = 'Hide from store'`, which
+ *     the browser assertion could not see because it reads the HIDE button.
+ *
+ * 🔴 AND THE ONE-SIDEDNESS IS THE REUSABLE LESSON, not the specific strings. A previous
+ * round of this PR claimed the submit-label swap was killed; it was, but only by the arm
+ * that happened to move the word `Unpublish` onto the button the test reads. A pin on ONE
+ * arm of a two-arm map is not a pin on the map. Every case below asserts BOTH arms.
+ */
+describe('the confirm strings and the review-queue destination', () => {
+  it('the review-queue link carries tab=manage — a bare /apps/review lands on PENDING', () => {
+    // `/apps/review` resolves an absent `?tab=` to 'pending', and Relist is on the manage
+    // tab, so the bare path sends a moderator to a queue that cannot do the thing the
+    // consequence copy just promised. Pinned as the whole literal.
+    expect(REVIEW_QUEUE_MANAGE_HREF).toBe('/apps/review?tab=manage');
+  });
+
+  it('the submit VERB, both arms', () => {
+    expect(takedownSubmitLabel('reset-to-pending')).toBe('Unpublish');
+    expect(takedownSubmitLabel('hide')).toBe('Hide');
+  });
+
+  it('the success message, both arms, whole', () => {
+    expect(takedownSuccessMessage('reset-to-pending')).toBe(
+      'App unpublished and re-queued for review. Approve the queued request in the review ' +
+        'queue to put it back up.'
+    );
+    expect(takedownSuccessMessage('hide')).toBe(
+      'App hidden from the store. Use Relist in the review queue to put it straight back.'
+    );
+  });
+
+  /**
+   * The PROPERTIES the literals protect, so a reword cannot keep the pins happy while
+   * losing the meaning — and, unlike the literals, these fail on a SWAP specifically.
+   */
+  it('each success message names its OWN undo path and not the other one', () => {
+    const reset = takedownSuccessMessage('reset-to-pending');
+    const hide = takedownSuccessMessage('hide');
+    expect(hide).toContain('Relist');
+    expect(hide).not.toContain('Approve the queued request');
+    expect(reset).toContain('Approve the queued request');
+    expect(reset).not.toContain('Relist');
+  });
+
+  it('each submit verb matches its own menu label and not the other action’s', () => {
+    // The button is the last thing read before an irreversible-from-here action, so it
+    // must agree with the item that was clicked. A one-sided mutant fails here on the arm
+    // it changed, whichever arm that is.
+    for (const action of DETAIL_TAKEDOWN_ACTIONS) {
+      const other = DETAIL_TAKEDOWN_ACTIONS.find((a) => a !== action)!;
+      expect(detailModActionLabel(action)).toContain(takedownSubmitLabel(action));
+      expect(detailModActionLabel(action)).not.toContain(takedownSubmitLabel(other));
+    }
+  });
+
+  it('every takedown string is defined and the two arms differ, for all four', () => {
+    // A blanket sweep so a THIRD takedown added later cannot ship with an empty or
+    // copy-pasted string in either map.
+    for (const produce of [takedownSubmitLabel, takedownSuccessMessage]) {
+      const values = DETAIL_TAKEDOWN_ACTIONS.map(produce);
+      expect(values.every((v) => v.length > 0)).toBe(true);
+      expect(new Set(values).size).toBe(values.length);
+    }
   });
 });
 

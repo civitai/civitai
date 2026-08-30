@@ -6,6 +6,8 @@ import {
   TAKEDOWN_TESTID_STEM,
   detailModActionLabel,
   takedownConsequenceCopy,
+  takedownSubmitLabel,
+  takedownSuccessMessage,
   type DetailTakedownAction,
 } from '~/components/Apps/appListingDetailModActions';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -77,7 +79,7 @@ export function ListingTakedownModal({
   // would be the surface asserting something that stopped being true when the mutation
   // returned.
   const onSuccess = async () => {
-    showSuccessNotification({ message: SUCCESS_MESSAGE[action] });
+    showSuccessNotification({ message: takedownSuccessMessage(action) });
     setReason('');
     await utils.appListings.getAppDetail.invalidate();
     onClose();
@@ -146,25 +148,9 @@ export function ListingTakedownModal({
       reasonLabel="Reason (sent to the owner and recorded in the audit trail)"
       reasonPlaceholder="What is wrong, and what has to change before it can go back up."
       reasonTestId={`${stem}-reason`}
-      submitLabel={SUBMIT_LABEL[action]}
+      submitLabel={takedownSubmitLabel(action)}
       submitTestId={`${stem}-submit`}
       onSubmit={() => mutation.mutate({ appListingId: listing.appListingId, reason: reason.trim() })}
     />
   );
 }
-
-/** The confirm button's own label — the verb, not the menu item's fuller phrasing. */
-const SUBMIT_LABEL: Record<DetailTakedownAction, string> = {
-  'reset-to-pending': 'Unpublish',
-  hide: 'Hide',
-};
-
-/**
- * What the moderator is told AFTERWARDS, and it must not restate the wrong undo path:
- * a hidden listing comes back with Relist, a re-queued one only by approving its request.
- */
-const SUCCESS_MESSAGE: Record<DetailTakedownAction, string> = {
-  'reset-to-pending':
-    'App unpublished and re-queued for review. Approve the queued request in the review queue to put it back up.',
-  hide: 'App hidden from the store. Use Relist in the review queue to put it straight back.',
-};
