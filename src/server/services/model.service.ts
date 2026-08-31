@@ -2550,6 +2550,13 @@ export const upsertModel = async (
 
     const result = await dbWrite.$transaction(
       async (tx) => {
+        // Read on the WRITER, inside the transaction, rather than off `beforeUpdate` — that is a
+        // `dbRead` snapshot, and a stale or missed replica row reads as "type unchanged", which
+        // would skip the repair below on exactly the save that needed it.
+        const typeBeforeUpdate = (
+          await tx.model.findUnique({ where: { id }, select: { type: true } })
+        )?.type;
+
         const updated = await tx.model.update({
           select: {
             id: true,
@@ -2613,7 +2620,13 @@ export const upsertModel = async (
         //
         // In the transaction so the type change and the repair cannot be observed apart: a reader
         // between them would price generations against a lineage the model no longer supports.
-        if (data.type !== undefined) {
+        //
+        // 🔴 Gated on the type actually CHANGING, not on the payload carrying one. `type` is
+        // required by `modelUpsertSchema`, so `data.type !== undefined` is true on every save — a
+        // rename, a tag edit — and coercing on those would clear sources no type change
+        // invalidated, including the pre-LicensingRoot rows the accompanying migration
+        // deliberately spares for a human decision.
+        if (updated.type !== typeBeforeUpdate) {
           const stamped = await tx.modelVersion.findMany({
             where: { modelId: updated.id, licensingSourceVersionId: { not: null } },
             select: { id: true, baseModel: true, licensingSourceVersionId: true },
@@ -2720,12 +2733,13 @@ export const upsertModel = async (
         modelType: result.type,
         modelVersionIds: clearedLicensingSources.map((v) => v.id),
       }).catch(() => null);
-      // The fee is read from caches the direct write above does not reach.
-      await bustMvCache(
-        clearedLicensingSources.map((v) => v.id),
-        result.id,
-        userId
-      ).catch(() => undefined);
+      // The fee is read from caches the write above does not reach — and the lag flag has to be set
+      // BEFORE the bust, matching publishModelById: without it a concurrent feed read inside the
+      // replication window refills those caches from the replica's pre-clear row and the fee stays
+      // live for the whole TTL.
+      const clearedVersionIds = clearedLicensingSources.map((v) => v.id);
+      await preventModelVersionLagBatch(result.id, clearedVersionIds);
+      await bustMvCache(clearedVersionIds, result.id, userId).catch(() => undefined);
     }
 
     const modelMeta = result.meta as ModelMeta | null;

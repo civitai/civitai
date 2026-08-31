@@ -19,13 +19,19 @@
 --
 -- Idempotent: re-running it matches nothing new.
 --
--- `updatedAt` is deliberately NOT bumped — this repairs a field the owner never set, and bumping it
--- would surface every touched version as freshly updated. The caches this bypasses are cleared with
--- POST /api/v1/model-versions/bust-cache (moderator-scoped) for each affected id afterwards.
+-- `ModelVersion."createdAt"` is `timestamp without time zone` holding UTC wall-clock, so the bound is
+-- written as TIMESTAMP, not TIMESTAMPTZ. A TIMESTAMPTZ literal is resolved through the APPLYING
+-- SESSION's TimeZone, which is unpinned when a human runs this by hand — and the boundary is the one
+-- thing this migration has to get exactly right.
+--
+-- Raw SQL does not fire Prisma's `@updatedAt`, so the repaired rows keep their timestamps and do not
+-- all surface as freshly updated at once. That also means nothing invalidates the caches the fee is
+-- read from: run POST /api/v1/model-versions/bust-cache (moderator-scoped) for each affected id
+-- after applying. The application path does its own bust, one owner save at a time.
 UPDATE "ModelVersion" mv
 SET "licensingSourceVersionId" = NULL
 WHERE mv."licensingSourceVersionId" IS NOT NULL
-  AND mv."createdAt" >= TIMESTAMPTZ '2026-07-15 21:56:17+00'
+  AND mv."createdAt" >= TIMESTAMP '2026-07-15 21:56:17'
   AND NOT EXISTS (
     SELECT 1
     FROM "LicensingRoot" lr

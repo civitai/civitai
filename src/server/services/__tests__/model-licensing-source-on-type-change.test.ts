@@ -98,6 +98,8 @@ vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
 vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
 
 import { upsertModel } from '~/server/services/model.service';
+import { bustMvCache } from '~/server/services/model-version.service';
+import { preventModelVersionLagBatch } from '~/server/db/db-lag-helpers';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -107,6 +109,7 @@ const mockDbWrite = dbMock.dbWrite;
 const OWNER_ID = 101;
 const MODEL_ID = 42;
 const VERSION_ID = 3144879;
+const OTHER_VERSION_ID = 3144880;
 const ANIMA_ROOT_VERSION_ID = 2945208;
 
 const storedModel = {
@@ -125,6 +128,14 @@ const storedModel = {
 
 const entityChanges = vi.fn(() => Promise.resolve());
 
+/**
+ * The type the WRITER reports before the update. Read inside the transaction, so it is a separate
+ * call from `dbRead.model.findUnique` and has to be declared separately.
+ */
+function storedTypeOnWriter(type: ModelType) {
+  mockDbWrite.model.findUnique.mockResolvedValue({ type });
+}
+
 function upsert(input: Partial<ModelUpsertInput> & { userId: number }) {
   return upsertModel({
     name: 'Test Model',
@@ -137,7 +148,7 @@ function upsert(input: Partial<ModelUpsertInput> & { userId: number }) {
 }
 
 function stampedVersions(
-  rows: { id: number; baseModel: string; licensingSourceVersionId: number }[]
+  rows: { id: number; baseModel: string; licensingSourceVersionId: number | null }[]
 ) {
   mockDbWrite.modelVersion.findMany.mockResolvedValue(rows);
 }
@@ -148,10 +159,16 @@ function licensingRoots(
   mockDbWrite.licensingRoot.findMany.mockResolvedValue(rows);
 }
 
+const animaCheckpointRoot = {
+  modelVersionId: ANIMA_ROOT_VERSION_ID,
+  baseModel: 'Anima',
+  modelType: ModelType.Checkpoint,
+};
+
 /** Only the ModelVersion rows — the Model-level tracker call always fires, empty or not. */
 function versionAuditRows() {
   return entityChanges.mock.calls
-    .flatMap((call) => call[0] as Record<string, unknown>[])
+    .flatMap((call) => call[0] as unknown as Record<string, unknown>[])
     .filter((row) => row.entityType === 'ModelVersion');
 }
 
@@ -174,6 +191,7 @@ beforeEach(() => {
   mockDbRead.model.findUnique.mockResolvedValue(storedModel);
   mockDbRead.model.count.mockResolvedValue(0);
   mockDbWrite.$queryRaw.mockResolvedValue([]);
+  storedTypeOnWriter(ModelType.Checkpoint);
   stampedVersions([]);
   licensingRoots([]);
   mockDbWrite.model.update.mockImplementation(({ data }: { data: Record<string, unknown> }) =>
@@ -201,55 +219,76 @@ describe('upsertModel — licensing lineage on a model type change', () => {
     stampedVersions([
       { id: VERSION_ID, baseModel: 'Anima', licensingSourceVersionId: ANIMA_ROOT_VERSION_ID },
     ]);
-    licensingRoots([
-      {
-        modelVersionId: ANIMA_ROOT_VERSION_ID,
-        baseModel: 'Anima',
-        modelType: ModelType.Checkpoint,
-      },
-    ]);
+    licensingRoots([animaCheckpointRoot]);
 
     await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.LORA });
 
-    // Asserted on the ARGUMENT, not on a returned row. The db mock ignores `data` and echoes the
-    // payload back, so a repair that wrote the wrong column — or wrote nothing — returns a result
-    // indistinguishable from a correct one.
+    // Asserted on the ARGUMENT, not on a returned row. The db mock echoes the payload back, so a
+    // repair that wrote the wrong column — or wrote nothing — returns a result indistinguishable
+    // from a correct one.
     expect(clearCall()).toEqual({
       where: { id: { in: [VERSION_ID] } },
       data: { licensingSourceVersionId: null },
     });
   });
 
-  it('keeps a root the new type still supports', async () => {
+  it('keeps a root the new type supports', async () => {
+    storedTypeOnWriter(ModelType.LORA);
     stampedVersions([
       { id: VERSION_ID, baseModel: 'Anima', licensingSourceVersionId: ANIMA_ROOT_VERSION_ID },
     ]);
-    licensingRoots([
-      {
-        modelVersionId: ANIMA_ROOT_VERSION_ID,
-        baseModel: 'Anima',
-        modelType: ModelType.Checkpoint,
-      },
-    ]);
+    licensingRoots([animaCheckpointRoot]);
 
     await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.Checkpoint });
 
     expect(mockDbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
   });
 
+  // The direction that costs a creator money. Clearing the whole stamped set instead of the failing
+  // subset takes a per-image fee off a version whose root is still valid, and every single-version
+  // fixture passes while doing it.
+  it('clears only the failing version, not every stamped version on the model', async () => {
+    storedTypeOnWriter(ModelType.LORA);
+    stampedVersions([
+      { id: VERSION_ID, baseModel: 'Anima', licensingSourceVersionId: ANIMA_ROOT_VERSION_ID },
+      {
+        id: OTHER_VERSION_ID,
+        baseModel: 'Krea 2',
+        licensingSourceVersionId: ANIMA_ROOT_VERSION_ID,
+      },
+    ]);
+    licensingRoots([animaCheckpointRoot]);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.Checkpoint });
+
+    expect(clearCall()?.where).toEqual({ id: { in: [OTHER_VERSION_ID] } });
+    expect(versionAuditRows()).toHaveLength(1);
+  });
+
+  // 🔴 Named for the decision. `type` is REQUIRED by modelUpsertSchema, so it is present on every
+  // save — a rename, a tag edit. Gating on its presence rather than on the value changing coerces
+  // sources no type change invalidated, including the pre-LicensingRoot rows the migration beside
+  // this deliberately spares for a human decision.
+  it('does not touch lineage on a save that leaves the type alone', async () => {
+    storedTypeOnWriter(ModelType.LORA);
+    stampedVersions([
+      { id: VERSION_ID, baseModel: 'Anima', licensingSourceVersionId: ANIMA_ROOT_VERSION_ID },
+    ]);
+    licensingRoots([animaCheckpointRoot]);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.LORA, name: 'Renamed' });
+
+    expect(mockDbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
+    expect(versionAuditRows()).toEqual([]);
+  });
+
   it('clears a root whose base model no longer matches the version', async () => {
     stampedVersions([
       { id: VERSION_ID, baseModel: 'Flux.1 D', licensingSourceVersionId: ANIMA_ROOT_VERSION_ID },
     ]);
-    licensingRoots([
-      {
-        modelVersionId: ANIMA_ROOT_VERSION_ID,
-        baseModel: 'Anima',
-        modelType: ModelType.Checkpoint,
-      },
-    ]);
+    licensingRoots([animaCheckpointRoot]);
 
-    await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.Checkpoint });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.LORA });
 
     expect(clearCall()?.where).toEqual({ id: { in: [VERSION_ID] } });
   });
@@ -258,17 +297,16 @@ describe('upsertModel — licensing lineage on a model type change', () => {
     stampedVersions([{ id: VERSION_ID, baseModel: 'Anima', licensingSourceVersionId: 999999 }]);
     licensingRoots([]);
 
-    await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.Checkpoint });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.LORA });
 
     expect(clearCall()?.where).toEqual({ id: { in: [VERSION_ID] } });
   });
 
   // The `where` filters these out, but a Prisma mock does not apply a `where` — and neither would a
-  // future caller that hands this helper a wider row set. A version with no source has nothing to
-  // repair, and counting one as repaired emits an audit row and a cache bust for a change that
-  // never happened.
+  // future caller handing this a wider row set. A version with no source has nothing to repair, and
+  // counting one as repaired emits an audit row and a cache bust for a change that never happened.
   it('ignores versions that carry no licensing source', async () => {
-    mockDbWrite.modelVersion.findMany.mockResolvedValue([
+    stampedVersions([
       { id: 900, baseModel: 'Anima', licensingSourceVersionId: null },
       { id: 901, baseModel: 'Anima', licensingSourceVersionId: null },
     ]);
@@ -287,13 +325,7 @@ describe('upsertModel — licensing lineage on a model type change', () => {
     stampedVersions([
       { id: VERSION_ID, baseModel: 'Anima', licensingSourceVersionId: ANIMA_ROOT_VERSION_ID },
     ]);
-    licensingRoots([
-      {
-        modelVersionId: ANIMA_ROOT_VERSION_ID,
-        baseModel: 'Anima',
-        modelType: ModelType.Checkpoint,
-      },
-    ]);
+    licensingRoots([animaCheckpointRoot]);
 
     await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.LORA });
 
@@ -307,5 +339,83 @@ describe('upsertModel — licensing lineage on a model type change', () => {
         reason: 'model-type-changed',
       }),
     ]);
+  });
+
+  // 🔴 The fixture is mixed on purpose. `type` is one of `coverageModelFields`, so a type change
+  // ALREADY busts this model's version caches further down — with every version id. On a
+  // single-version fixture that call is argument-for-argument identical to this one, so deleting
+  // the bust here passes. Only the cleared SUBSET distinguishes them.
+  it('busts the version caches for the versions it cleared', async () => {
+    storedTypeOnWriter(ModelType.LORA);
+    stampedVersions([
+      { id: VERSION_ID, baseModel: 'Anima', licensingSourceVersionId: ANIMA_ROOT_VERSION_ID },
+      {
+        id: OTHER_VERSION_ID,
+        baseModel: 'Krea 2',
+        licensingSourceVersionId: ANIMA_ROOT_VERSION_ID,
+      },
+    ]);
+    licensingRoots([animaCheckpointRoot]);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.Checkpoint });
+
+    expect(bustMvCache).toHaveBeenCalledWith([OTHER_VERSION_ID], MODEL_ID, OWNER_ID);
+    // Order matters as much as presence: bust first and a concurrent feed read inside the
+    // replication window refills the same caches from the replica's pre-clear row.
+    expect(preventModelVersionLagBatch).toHaveBeenCalledWith(MODEL_ID, [OTHER_VERSION_ID]);
+    expect(
+      (preventModelVersionLagBatch as unknown as { mock: { invocationCallOrder: number[] } }).mock
+        .invocationCallOrder[0]
+    ).toBeLessThan(
+      (bustMvCache as unknown as { mock: { invocationCallOrder: number[] } }).mock
+        .invocationCallOrder[0]
+    );
+  });
+
+  // 🔴 The one assertion that pins the repair to the TRANSACTION. The shared db mock hands the same
+  // client back as `tx`, so `tx.modelVersion.updateMany` and `dbWrite.modelVersion.updateMany` are
+  // the same function and lifting the block out of the callback is invisible to every other test
+  // here. This test swaps in a tx object of its own and records what was called on it, so a repair
+  // that runs outside the transaction — where the type change and the clear can be observed apart —
+  // reaches `dbWrite` instead and this fails.
+  it('does the clearing inside the model-update transaction', async () => {
+    stampedVersions([
+      { id: VERSION_ID, baseModel: 'Anima', licensingSourceVersionId: ANIMA_ROOT_VERSION_ID },
+    ]);
+    licensingRoots([animaCheckpointRoot]);
+
+    const calledOnTx: string[] = [];
+    mockDbWrite.$transaction.mockImplementation(async (arg: unknown) => {
+      if (typeof arg !== 'function') return undefined;
+      const tx: unknown = new Proxy(
+        {},
+        {
+          get(_t, model: string) {
+            return new Proxy(
+              {},
+              {
+                get(_m, method: string) {
+                  return (...args: unknown[]) => {
+                    calledOnTx.push(`${model}.${method}`);
+                    return (
+                      mockDbWrite as unknown as Record<
+                        string,
+                        Record<string, (...a: unknown[]) => unknown>
+                      >
+                    )[model][method](...args);
+                  };
+                },
+              }
+            );
+          },
+        }
+      );
+      return (arg as (tx: unknown) => unknown)(tx);
+    });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.LORA });
+
+    expect(clearCall()?.where).toEqual({ id: { in: [VERSION_ID] } });
+    expect(calledOnTx).toContain('modelVersion.updateMany');
   });
 });
