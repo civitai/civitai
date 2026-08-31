@@ -70,6 +70,7 @@ import type {
   PublishPrivateModelInput,
   SetModelCollectionShowcaseInput,
   SetModelMinorInput,
+  SetModelSfwOnlyInput,
   SetModelOfficialInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
@@ -2305,6 +2306,92 @@ export async function setModelMinor({
     logToAxiom({
       type: 'error',
       name: 'set-model-minor-track-activity',
+      message: `Failed to track mod activity for model ${id}`,
+      error,
+    })
+  );
+  await applyModelFlagSideEffects({ before, after: result });
+
+  return result;
+}
+
+// Kept in sync with `lockableProperties` in ModelUpsertForm.tsx — these are the
+// fields the "Set as SFW" quick action locks against creator edits.
+export const SFW_ONLY_LOCKED_PROPERTIES = ['nsfw', 'sfwOnly'];
+
+export async function setModelSfwOnly({
+  id,
+  sfwOnly,
+  userId,
+}: SetModelSfwOnlyInput & { userId: number }) {
+  const before = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      poi: true,
+      minor: true,
+      sfwOnly: true,
+      nsfw: true,
+      availability: true,
+      gallerySettings: true,
+      lockedProperties: true,
+    },
+  });
+  if (!before) throw throwNotFoundError(`No model with id ${id}`);
+
+  // Both invariants are enforced by `ModelUpsertForm`'s schema, so clearing the flag here
+  // would leave a model no creator could save again.
+  if (!sfwOnly) {
+    if (before.minor)
+      throw throwBadRequestError('Minor models are SFW only. Unset as Minor first.');
+    if (before.availability === Availability.Private)
+      throw throwBadRequestError('Private models must be SFW only.');
+  }
+
+  const prevLockedProperties = before.lockedProperties ?? [];
+  const lockedProperties = sfwOnly
+    ? uniq([...prevLockedProperties, ...SFW_ONLY_LOCKED_PROPERTIES])
+    : prevLockedProperties.filter((prop) => !SFW_ONLY_LOCKED_PROPERTIES.includes(prop));
+
+  const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
+
+  const result = await dbWrite.model.update({
+    where: { id },
+    // Unset deliberately leaves nsfw/gallerySettings untouched — the model may have been
+    // legitimately SFW before it was flagged, and guessing wrong would silently re-open
+    // NSFW generation nobody asked to re-open.
+    data: sfwOnly
+      ? {
+          sfwOnly: true,
+          nsfw: false,
+          gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+          lockedProperties,
+        }
+      : {
+          sfwOnly: false,
+          lockedProperties,
+        },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      poi: true,
+      nsfw: true,
+      minor: true,
+      sfwOnly: true,
+      status: true,
+      gallerySettings: true,
+    },
+  });
+
+  await preventReplicationLag('model', id);
+  await trackModActivity(userId, {
+    entityType: 'model',
+    entityId: id,
+    activity: sfwOnly ? 'setSfwOnly' : 'unsetSfwOnly',
+  }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'set-model-sfw-only-track-activity',
       message: `Failed to track mod activity for model ${id}`,
       error,
     })
