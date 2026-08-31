@@ -9,18 +9,17 @@ import type * as BlurbMaterializeService from '~/server/services/blurb-materiali
 //
 // Hoisted: cosmetic-shop.service imports both modules, so these factories have to exist while this
 // file's own imports are still resolving.
-const { expandBlurbs, getReferencedBlurbIds, reconcileBlurbReferences, throwOnBlockedLinkDomain } =
+const { expandBlurbs, getReferencedBlurbIds, reconcileBlurbReferences, throwOnBlockedUserContent } =
   vi.hoisted(() => ({
     expandBlurbs: vi.fn(),
     getReferencedBlurbIds: vi.fn(),
     reconcileBlurbReferences: vi.fn(),
-    throwOnBlockedLinkDomain: vi.fn(),
     throwOnBlockedUserContent: vi.fn(),
   }));
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
-  throwOnBlockedLinkDomain,
+  throwOnBlockedUserContent,
 }));
 vi.mock('~/server/services/blurb-materialize.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlurbMaterializeService>()),
@@ -59,7 +58,7 @@ beforeEach(() => {
   expandBlurbs.mockResolvedValue({ evaluated: true, html: EXPANDED_HTML, uses: USES });
   getReferencedBlurbIds.mockResolvedValue([7]);
   reconcileBlurbReferences.mockResolvedValue(undefined);
-  throwOnBlockedLinkDomain.mockResolvedValue(undefined);
+  throwOnBlockedUserContent.mockResolvedValue(undefined);
   dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue({
     id: ITEM_ID,
     cosmeticId: 4,
@@ -177,7 +176,7 @@ describe('applyCosmeticShopItemContentChange', () => {
   });
 
   it('rejects a blocked link domain before writing anything', async () => {
-    throwOnBlockedLinkDomain.mockRejectedValue(new Error('invalid urls: blocked.example'));
+    throwOnBlockedUserContent.mockRejectedValue(new Error('invalid urls: blocked.example'));
 
     await expect(
       applyCosmeticShopItemContentChange({ id: ITEM_ID, description: EXPANDED_HTML })
