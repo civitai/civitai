@@ -27,3 +27,20 @@ export const COSMETIC_SIMILARITY_LIMIT = 10;
 // and it did: the same 0.125 selects the same five cross-creator pairs anywhere
 // between 8 and 40 of 256, so the value sits on a plateau rather than on an edge.
 export const COSMETIC_SIMILARITY_CLOSE_RATIO = 0.125;
+
+// Fraction of the hash width beyond which a cosmetic is not shown at all — 64
+// bits at the current 256.
+//
+// Without this the panel was a pure rank limit, so it always listed ten
+// cosmetics no matter how far away they were. Measured over the 1,902 hashed
+// cosmetics: the 1st percentile of UNRELATED pairs is 94 and the median is 124,
+// so a list padded out to ten routinely showed neighbours at 100+ — worse than
+// the 1st percentile of artwork chosen at random. A moderator reading that as a
+// ranking is reading noise, which is worse than showing nothing.
+//
+// 0.25 is where the corpus stops being sparse. Cross-creator pairs at or under
+// each cutoff: 7 at 48 bits, 15 at 56, 66 at 64, then 281 at 72 and 1,096 at 80.
+// The last value before that runaway is 64, and it also keeps the one confirmed
+// redrawn imitation (cosmetic 1426 vs official 107, at 60). Per cosmetic the
+// median is 0 and the max 20, so most submissions correctly show nothing.
+export const COSMETIC_SIMILARITY_MAX_RATIO = 0.25;
