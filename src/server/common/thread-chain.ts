@@ -31,11 +31,16 @@ export const MAX_THREAD_CHAIN_DEPTH = 100;
  * suppressed notification is a control someone else operates on your behalf. (Justin's fleet lead,
  * 2026-08-31. Deriving `parentThreadId` server-side is filed separately.)
  *
- * `UNION` rather than `UNION ALL` so a corrupted cycle converges instead of running to the cap.
+ * `UNION ALL`, and the DEPTH CAP is what bounds this — not the dedupe. An earlier version said `UNION`
+ * made a corrupted cycle converge; measured on Postgres 16 with a deliberate 2-cycle, `UNION` and
+ * `UNION ALL` both produce 101 rows and stop at depth 100, because `depth` is in the projected row so
+ * no row is ever a duplicate. The dedupe could never fire, and it cost a hash on every evaluation of
+ * a fragment embedded in 13 producer queries. Out-degree here is 1 (`Thread.commentId` is unique and
+ * `CommentV2.threadId` is single-valued), so there is nothing to converge in the first place.
  */
 export const muteableThreadsCte = (seedExpression: string) => `WITH RECURSIVE muteable_threads AS (
               SELECT ${seedExpression} "id", 0 "depth"
-              UNION
+              UNION ALL
               SELECT pc."threadId", mt."depth" + 1
               FROM muteable_threads mt
               JOIN "Thread" th ON th.id = mt."id"

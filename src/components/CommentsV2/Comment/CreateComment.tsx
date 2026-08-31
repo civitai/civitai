@@ -68,16 +68,29 @@ export function CreateComment({
     );
   }
 
-  if (isLocked || isMuted || isReadonly)
+  // Not being able to POST is not a reason to lose the notification control. A site-muted account
+  // still receives replies to comments it made before the restriction, and the router uses
+  // `protectedProcedure` rather than `guardedProcedure` precisely so that account can silence them —
+  // hiding it here would have made that choice unreachable. Read-only is the exception: the write
+  // would fail, so the control comes off with everything else.
+  if (isLocked || isMuted)
+    return (
+      <Group align="center" justify="space-between" wrap="nowrap" gap="sm">
+        <Alert color="yellow" icon={<IconLock />} style={{ flex: 1 }}>
+          <Center>
+            {isMuted
+              ? 'You cannot add comments because you have been muted'
+              : 'This thread has been locked'}
+          </Center>
+        </Alert>
+        {!replyToCommentId && sectionMute.control}
+      </Group>
+    );
+
+  if (isReadonly)
     return (
       <Alert color="yellow" icon={<IconLock />}>
-        <Center>
-          {isMuted
-            ? 'You cannot add comments because you have been muted'
-            : isLocked
-            ? 'This thread has been locked'
-            : 'Civitai is currently in read-only mode'}
-        </Center>
+        <Center>Civitai is currently in read-only mode</Center>
       </Alert>
     );
 

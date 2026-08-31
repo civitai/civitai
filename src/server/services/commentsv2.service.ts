@@ -514,7 +514,7 @@ export async function toggleThreadMute({
       create: {
         commentId,
         parentThreadId: comment.threadId,
-        rootThreadId: parentThread?.rootThreadId ?? parentThread?.id ?? comment.threadId,
+        rootThreadId: parentThread?.rootThreadId ?? comment.threadId,
       },
       update: {},
       select: { id: true },
@@ -583,20 +583,26 @@ export async function getThreadMuted({
 }: ToggleThreadMuteInput & { userId: number }) {
   const comment = await dbRead.commentV2.findUnique({
     where: { id: commentId },
-    select: { childThread: { select: { id: true } } },
+    select: { threadId: true, childThread: { select: { id: true } } },
   });
-  const threadId = comment?.childThread?.id;
-  if (!threadId) return { muted: false, viaAncestor: false };
+  if (!comment) return { muted: false, viaAncestor: false };
+
+  // Seeded from the comment's OWN thread, not its reply thread, so the answer is right before anyone
+  // has replied — a reply thread is created lazily, and returning early when it is missing reported
+  // "not muted" on every reply-less comment inside a muted discussion while notifications were in
+  // fact suppressed. That is the menu-versus-notification divergence this shared walk exists to
+  // prevent, and skipping the walk was the one way back into it.
+  const ownThreadId = comment.childThread?.id ?? null;
 
   // Walks ancestors, because SUPPRESSION does, and through the SAME shared CTE rather than a retyped
   // copy — mirroring it by hand is what makes the menu and the notification disagree. Reading only
   // this thread made the menu offer "Mute" on a comment already silenced from above, and offer an
   // "Unmute" that deletes nothing and then claims the notifications are back on.
   const [row] = await dbRead.$queryRaw<{ own: boolean; ancestor: boolean }[]>`
-    ${Prisma.raw(muteableThreadsCte(String(threadId)))}
+    ${Prisma.raw(muteableThreadsCte(String(ownThreadId ?? comment.threadId)))}
     SELECT
-      bool_or(mt."id" = ${threadId}::int) "own",
-      bool_or(mt."id" <> ${threadId}::int) "ancestor"
+      bool_or(mt."id" = ${ownThreadId}::int) "own",
+      bool_or(mt."id" IS DISTINCT FROM ${ownThreadId}::int) "ancestor"
     FROM muteable_threads mt
     JOIN "ThreadMute" tm ON tm."threadId" = mt."id"
     WHERE tm."userId" = ${userId}

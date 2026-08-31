@@ -121,8 +121,14 @@ export function CommentContent({
   const currentUser = useCurrentUser();
   const clipboard = useClipboard();
 
-  const { toggleHide, togglePinned, setTosViolation, settingTosViolation, toggleThreadMute } =
-    useMutateComment();
+  const {
+    toggleHide,
+    togglePinned,
+    setTosViolation,
+    settingTosViolation,
+    toggleThreadMute,
+    togglingThreadMute,
+  } = useMutateComment();
 
   // Fetched only while the menu is open: the alternative is one query per comment on every feed.
   const [menuOpened, setMenuOpened] = useState(false);
@@ -346,7 +352,7 @@ export function CommentContent({
                   }
                   // Not merely cosmetic: the mutation toggles from DB state, so clicking a control
                   // labelled "Mute" before the query lands UNMUTES an already-muted thread.
-                  disabled={!threadMute || threadMute.viaAncestor}
+                  disabled={!threadMute || threadMute.viaAncestor || togglingThreadMute}
                   onClick={() => toggleThreadMute({ commentId: comment.id }).catch(() => null)}
                 >
                   {threadMute?.viaAncestor
