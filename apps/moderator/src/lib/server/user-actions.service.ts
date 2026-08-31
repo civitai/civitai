@@ -439,16 +439,27 @@ export const alreadyBannedError = (ban: boolean) =>
  *
  * Polls rather than reading once, and reads the PRIMARY: the write is in flight, so a replica can
  * answer from before it. A false negative withholds a caller's follow-up action; it never bans twice.
+ *
+ * 🔴 Polls `banDetails.completedAt`, NOT `bannedAt`. `toggleBan` writes `bannedAt` before any of the
+ * fan-out — model unpublish, media block, comment flagging, index removal, subscription cancels — so
+ * confirming on it returns while every one of those is still running on the primary, and Bulk Ban's
+ * checkpoint paced the loop without bounding what overlapped. `completedAt` is stamped as the last
+ * statement of the ban branch, so it is the only signal that means the expensive half is done.
+ *
+ * ⚠️ **Deploy the main app first.** An older `toggleBan` never writes `completedAt`, so this reports
+ * every ban unconfirmed and Bulk Ban stops with a 502 after its first checkpoint. There is deliberately
+ * no fall back to `bannedAt`: from here a missing stamp is indistinguishable from a fan-out still in
+ * flight, and falling back would silently restore the unbounded behaviour this exists to end.
  */
-export async function banConfirmed(userId: number, attempts = 6): Promise<boolean> {
+export async function banConfirmed(userId: number, attempts = 20): Promise<boolean> {
   for (let attempt = 0; attempt < attempts; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 500));
     const row = await dbWrite
       .selectFrom('User')
-      .select('bannedAt')
+      .select(sql<string | null>`meta #>> '{banDetails,completedAt}'`.as('completedAt'))
       .where('id', '=', userId)
       .executeTakeFirst();
-    if (row?.bannedAt) return true;
+    if (row?.completedAt) return true;
   }
   return false;
 }

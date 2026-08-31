@@ -278,16 +278,33 @@ look on paper.
       copied. Confirming *every* ban would take a full sweep to ~8 minutes — the checkpoint bounds the
       overlap and catches a wedged endpoint within 25 accounts.
 
-- [ ] **A ban's fan-out is still unbounded, and the checkpoint cannot bound it.** `banConfirmed` polls
+- [x] **A ban's fan-out is still unbounded, and the checkpoint cannot bound it.** `banConfirmed` polled
       `bannedAt`, which `toggleBan` writes FIRST — the model unpublish, media block, comment flagging,
-      search-index removal and subscription cancels all run after it. So the confirmation returns while
-      every one of them is still in flight, and Bulk Ban's checkpoint paces the loop without bounding
-      what overlaps on the primary. It catches a wedged endpoint, which is the half worth having.
+      search-index removal and subscription cancels all run after it. So the confirmation returned while
+      every one of them was still in flight, and Bulk Ban's checkpoint paced the loop without bounding
+      what overlapped on the primary. It caught a wedged endpoint, which is the half worth having.
 
-      The cheap version of the real thing: stamp completion at the END of the ban branch — a
-      `banDetails.completedAt` on `User.meta`, a write that function is already making — and poll for
-      that instead. Making the endpoint synchronous was the other option and does not survive 1000
-      accounts at ~2s each.
+      **Done 2026-08-31, the cheap version as filed.** `toggleBan` stamps `banDetails.completedAt` as
+      the LAST statement of the ban branch, and `banConfirmed` polls that. Making the endpoint
+      synchronous was the other option and does not survive 1000 accounts at ~2s each.
+
+      Three things load-bearing enough to name:
+
+      - **Being last is the whole value.** A stamp written anywhere else in the branch reads as a bound
+        while bounding nothing, and no caller can tell. `ban-completion-stamp.sql.service.test.ts`
+        asserts its POSITION against the last `await` in the branch, not its presence.
+      - **`jsonb_set`, not another `updateUserById`.** The fan-out takes seconds; a read-modify-write of
+        `meta` here would clobber whatever else was written to that column while it ran. Guarded on
+        `meta -> 'banDetails' IS NOT NULL`, since `jsonb_set` needs the parent object to exist and an
+        unban wipes it.
+      - **The poll budget went from 6 attempts to 20.** Six was sized for a write that happens first;
+        the stamp lands after the expensive half.
+
+      🔴 **Deploy the main app FIRST.** An older `toggleBan` never writes `completedAt`, so the spoke
+        would report every ban unconfirmed and Bulk Ban would stop with a 502 at its first checkpoint.
+        There is deliberately no fall back to `bannedAt`: from the spoke a missing stamp is
+        indistinguishable from a fan-out still in flight, and falling back would silently restore the
+        unbounded behaviour this exists to end. The stamp is additive and harmless to ship alone.
 
 - [x] **Should a message-pattern match HIDE the comment as well as report it?** **Decided 2026-08-24:
       report only.** The comment stays up, an automated report lands in the queue, and the author is
