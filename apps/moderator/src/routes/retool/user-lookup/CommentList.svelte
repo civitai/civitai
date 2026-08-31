@@ -19,7 +19,7 @@
     rows,
     truncated,
     userId,
-    canAct,
+    canBulkAct,
     field,
     link,
     badges,
@@ -28,7 +28,7 @@
     rows: T[];
     truncated: boolean;
     userId: number;
-    canAct: boolean;
+    canBulkAct: boolean;
     field: 'commentIds' | 'commentV2Ids';
     link: Snippet<[T]>;
     badges?: Snippet<[T]>;
@@ -102,7 +102,7 @@
       matched={shown.length}
       total={live.length}
     />
-    {#if canAct}
+    {#if canBulkAct}
       <div class="mb-3 flex items-center gap-2">
         <!-- Function binding, not a one-way `checked`: the primitive writes to its own `$bindable`
              on click, and a plain prop leaves the box showing the opposite of the selection whenever
@@ -138,7 +138,7 @@
         {#each shown.slice(0, limit) as c (c.id)}
           <li>
             <div class="flex flex-wrap items-center gap-x-2">
-              {#if canAct}
+              {#if canBulkAct}
                 <Checkbox
                   bind:checked={() => selected.includes(c.id), () => toggle(c.id)}
                   aria-label="Select comment {c.id}"
@@ -155,7 +155,7 @@
           </li>
         {/each}
       </ul>
-      {#if canAct}
+      {#if canBulkAct}
         <div class="mt-3 flex flex-wrap gap-2 border-t border-dark-4 pt-3">
           <ConfirmSubmit
             label="Delete"

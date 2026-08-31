@@ -8,11 +8,19 @@ import { serverSchema } from '~/env/server-schema';
  * `moderator-app.service` builds the ONE client the main app uses to call the moderator spoke
  * (`apps/moderator`). Which credential it presents is the whole subject of this file.
  *
- * The spoke is dropping the platform-wide `WEBHOOK_TOKEN` from its `acceptedTokens()`, so this
- * caller has to start presenting the narrow `MOD_INBOUND_TOKEN`. The `||` fallback is what makes
- * the two repos' deploy ORDER irrelevant, and it is the thing most likely to be "tidied away" by
- * someone who reads it as a redundant default — so both arms are pinned here, plus the boundary
- * case that decides which arm an EMPTY value takes.
+ * The spoke HAS DROPPED the platform-wide `WEBHOOK_TOKEN` from its `acceptedTokens()`, so this
+ * caller must present the narrow `MOD_INBOUND_TOKEN`.
+ *
+ * 🔴 THE `||` FALLBACK NO LONGER MAKES DEPLOY ORDER IRRELEVANT, AND THAT IS THE POINT TO KNOW BEFORE
+ * TOUCHING IT. `||` falls through on an EMPTY local value, never on a REJECTION — so its legacy arm
+ * is now a guaranteed 401 rather than a working bridge, and an environment that has not been given
+ * `MOD_INBOUND_TOKEN` fails QUIETLY: the 401 is < 500, so `image.controller.ts` maps it to a
+ * BAD_REQUEST and a moderator sees a toast rather than an incident. 🔴 Not literally silent —
+ * `onFailure` in `moderator-app.service.ts` does emit `moderator-app-request-failed` to Axiom.
+ * Whether anything ALERTS on that stream is not settled in this repo, so do not assume either way.
+ * The fallback is retained so this caller does not change shape on the same commit, not because it
+ * still works. Both arms stay pinned here — the legacy arm as a statement of what it now selects,
+ * not as a supported path — plus the boundary case that decides which arm an EMPTY value takes.
  *
  * The assertion is on the `token` the service actually hands `createModeratorClient`, i.e. the
  * expression that does the work. A test matching the variable NAME would also pass against a
