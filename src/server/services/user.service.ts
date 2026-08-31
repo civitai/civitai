@@ -2025,6 +2025,20 @@ export const toggleBan = async ({
         });
       }
     }
+
+    // The LAST thing the ban branch does. `bannedAt` is written before any of the fan-out above, so a
+    // caller polling it is told the ban landed while the model unpublish, media block, comment
+    // flagging, index removal and subscription cancels are all still running on the primary — which is
+    // how Bulk Ban came to queue a thousand overlapping fan-outs. This is the only signal that means
+    // "the expensive half is done", and `banConfirmed` in the moderator app polls it.
+    //
+    // `jsonb_set` rather than another `updateUserById`: the fan-out takes seconds, and a read-modify-
+    // write of `meta` here would clobber anything written to that column in the meantime.
+    await dbWrite.$executeRaw`
+      UPDATE "User"
+      SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{banDetails,completedAt}', to_jsonb(NOW()))
+      WHERE id = ${id} AND meta -> 'banDetails' IS NOT NULL
+    `;
   } else {
     // Unbanning: reverse the at-period-end cancellation applied on ban, if the
     // membership is still within its paid period.
