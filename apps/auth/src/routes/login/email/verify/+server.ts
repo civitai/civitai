@@ -22,7 +22,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
   if (!valid) redirect(302, '/login?error=Verification');
 
   const user = await findOrCreateUserByEmail(email);
-  await establishSession(cookies, user);
+  await establishSession(cookies, user, { returnUrl });
 
   // Count the successful email login (best-effort; never blocks the redirect).
   loginsTotal.inc({ provider: 'email' });
