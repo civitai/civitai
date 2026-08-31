@@ -26,9 +26,9 @@ const GATE = resolve(repoRoot, 'scripts/ci/assert-component-suite-ran.mjs');
 const args = process.argv.slice(2);
 
 /**
- * A vitest flag's CANONICAL name: leading dashes off, any `.subkey` and `=value` off, kebab
- * camelCased. `--output-file`, `--outputFile.json=x` and `--outputFile` all canonicalise to
- * `outputFile`.
+ * A vitest flag's CANONICAL PATH: leading dashes off, `=value` off, every dot-segment kebab
+ * camelCased. `--output-file` and `--outputFile` both give `outputFile`; `--outputFile.json=x`
+ * gives `outputFile.json`; `--coverage.enabled` gives `coverage.enabled`.
  *
  * 🔴 KEBAB AND CAMEL ARE THE SAME FLAG TO VITEST, so a set that holds one spelling and not the
  * other has a hole in it. cac camelCases every parsed option key before matching
@@ -36,11 +36,24 @@ const args = process.argv.slice(2);
  * `--max-workers` and `--maxWorkers` both work. Listing spellings by hand got
  * `--max-workers`/`--maxWorkers` right and `--test-timeout`/`--testTimeout` wrong, so the
  * spellings are normalised here instead of enumerated below.
+ *
+ * 🔴 THE `.subkey` IS KEPT, NOT STRIPPED, AND THAT DISTINCTION IS A FIX. Collapsing
+ * `--coverage.enabled` onto `coverage` made every dot-subkey inherit its parent's
+ * value-consuming behaviour — and `--coverage` itself is BOOLEAN (`argument: ""` in vitest's
+ * `cliOptionsConfig`), so `pnpm test:component --coverage <file>` swallowed the FILE as
+ * `--coverage`'s value. The run then scored as a full one, and an 18/18 green single-file run
+ * failed naming ~200 files as absent, telling the reader not to narrow the walk. That is the
+ * same loud-and-misdirecting shape the `--exclude`/`--dir`/`--root` fix existed to remove,
+ * re-introduced by the mechanism that fixed it. Matching on the full PATH means a subkey is
+ * value-taking only if it is listed as one.
  */
 export function canonicalFlag(arg) {
   if (!arg.startsWith('-')) return null;
   const stripped = arg.replace(/^--?/, '').split('=')[0];
-  return stripped.split('.')[0].replace(/-+([a-zA-Z0-9])/g, (_, c) => c.toUpperCase());
+  return stripped
+    .split('.')
+    .map((seg) => seg.replace(/-+([a-zA-Z0-9])/g, (_, c) => c.toUpperCase()))
+    .join('.');
 }
 
 /**
@@ -81,8 +94,12 @@ const VALUE_FLAGS = new Set([
   'environment',
   'exclude',
   'mode',
+  // Bare `--browser <name>` takes a value; `--browser.headless` and friends are booleans and
+  // are therefore NOT listed — the path match is what keeps them apart.
   'browser',
-  'coverage',
+  // Bare `--coverage` is a BOOLEAN. Only these two subkeys take a value.
+  'coverage.reporter',
+  'coverage.provider',
 ]);
 
 /**
@@ -161,13 +178,7 @@ export function isNarrowed(argv) {
  * kebab spelling.
  */
 export function conflictingOutputFile(argv) {
-  return (
-    argv.find((a) => {
-      if (canonicalFlag(a) !== 'outputFile') return null;
-      const subkey = a.replace(/^--?/, '').split('=')[0].split('.')[1];
-      return subkey === undefined || subkey === 'json';
-    }) ?? null
-  );
+  return argv.find((a) => ['outputFile', 'outputFile.json'].includes(canonicalFlag(a))) ?? null;
 }
 
 /**

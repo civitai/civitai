@@ -270,7 +270,15 @@ function main(argv) {
   let root = null;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--repo-root') {
-      root = args[i + 1] ?? null;
+      // 🔴 A missing value is a USAGE ERROR, not a silent fall-through to the real repo. With
+      // `?? null` it fell back to this script's own root, so a fixture report was graded
+      // against the 201 real files and failed with a diagnosis about the include breaking —
+      // a confident wrong answer produced by a typo.
+      if (args[i + 1] === undefined) {
+        console.error('--repo-root requires a directory');
+        return 2;
+      }
+      root = args[i + 1];
       i += 1;
     } else if (!args[i].startsWith('--') && reportPath === null) {
       reportPath = args[i];

@@ -217,6 +217,16 @@ describe('assert-component-suite-ran', () => {
     expect(code).toBe(1);
   });
 
+  it('--repo-root with no value is a USAGE ERROR, not a silent fall-through', () => {
+    // 🔴 It used to fall back to the script's own repo, so a fixture report was graded against
+    // the 201 REAL files and failed with a confident diagnosis about the include breaking —
+    // produced by a typo.
+    const report = writeReport('reporoot-noval.json', healthy(1500));
+    const r = spawnSync(process.execPath, [SCRIPT, report, '--repo-root'], { encoding: 'utf8' });
+    expect(`${r.stdout}${r.stderr}`).toContain('--repo-root requires a directory');
+    expect(r.status).toBe(2);
+  });
+
   it('an UNPARSEABLE report is a failure', () => {
     const path = join(dir, 'garbage.json');
     writeFileSync(path, '{ this is not json');
@@ -410,6 +420,24 @@ describe('isNarrowed', () => {
     }
   });
 
+  it('a BOOLEAN flag does not swallow the filename after it', () => {
+    // 🔴 THE REGRESSION CANONICALISATION INTRODUCED. Collapsing `--coverage.enabled` onto
+    // `coverage` made every dot-subkey inherit its parent's value-consuming behaviour — and
+    // bare `--coverage` is BOOLEAN (`argument: ""` in vitest's cliOptionsConfig). So
+    // `pnpm test:component --coverage <file>` ate the FILE as `--coverage`'s value, scored the
+    // run as full, and failed an 18/18 green single-file run naming ~200 files as absent,
+    // telling the reader not to narrow the walk. Same loud, misdirecting shape the
+    // `--exclude`/`--dir`/`--root` fix existed to remove, re-introduced by the fix's mechanism.
+    const file = 'src/components/X.browser.test.tsx';
+    expect(isNarrowed(['--coverage', file])).toBe(true);
+    expect(isNarrowed(['--coverage.enabled', file])).toBe(true);
+    expect(isNarrowed(['--browser.headless', file])).toBe(true);
+    // …while the subkeys that DO take a value still consume it.
+    expect(isNarrowed(['--coverage.reporter', 'text'])).toBe(false);
+    expect(isNarrowed(['--coverage.provider', 'v8'])).toBe(false);
+    expect(isNarrowed(['--browser', 'chromium'])).toBe(false);
+  });
+
   it('--shard and --changed narrow WITHOUT a positional', () => {
     // 🔴 The loud one: `--shard=1/4` executes about a quarter of 2254, i.e. below the floor,
     // so without this the gate fails a healthy sharded run while telling the reader "Do NOT
@@ -484,22 +512,43 @@ describe('main — the ORDER of effects, which no output can show', () => {
    */
   const ok = { rc: 0, signal: null, spawnFailed: false };
 
+  /**
+   * 🔴 THE FAKES CAPTURE THEIR ARGV, AND THAT IS NOT DECORATION. An earlier version took no
+   * parameter, so nothing in this file could observe the command `main` actually builds — and
+   * a mutation battery found THREE survivors, each of them this PR's own headline failure
+   * mode, all with 35 tests green:
+   *   - dropping `--narrowed` from the gate argv    → every narrowed run hard-fails the floor
+   *                                                   and the on-disk ledger;
+   *   - dropping `--outputFile.json=` from vitest    → every run reports "does not exist" plus
+   *                                                   the whole abort diagnosis;
+   *   - dropping `...argv` from vitest              → `pnpm test:component <file>` silently
+   *                                                   runs the WHOLE suite.
+   * The argv is the seam between the two modules this change exists to wire together, and
+   * testing `isNarrowed` in isolation cannot see whether its answer is ever USED.
+   */
   function harness(vitestResult: Record<string, unknown>, gateResult = ok) {
     const order: string[] = [];
+    const seen: { vitest: string[]; gate: string[] } = { vitest: [], gate: [] };
     return {
       order,
-      opts: {
-        argv: [],
+      seen,
+      make: (argv: string[]) => ({
+        argv,
         clear: () => order.push('clear'),
-        runVitest: async () => {
+        runVitest: async (a: string[]) => {
           order.push('vitest');
+          seen.vitest = a;
           return vitestResult;
         },
-        runGate: async () => {
+        runGate: async (a: string[]) => {
           order.push('gate');
+          seen.gate = a;
           return gateResult;
         },
         log: () => undefined,
+      }),
+      get opts() {
+        return this.make([]);
       },
     };
   }
@@ -541,6 +590,32 @@ describe('main — the ORDER of effects, which no output can show', () => {
 
     const gateRed = harness(ok, { rc: 1, signal: null, spawnFailed: false });
     expect(await main(gateRed.opts)).toBe(1);
+  });
+
+  it('the gate is told --narrowed exactly when isNarrowed says so — the answer is USED', async () => {
+    // 🔴 Kills the mutation that drops `--narrowed` from the gate argv. Without it, every
+    // narrowed run hard-fails the floor AND the on-disk ledger — the loudest wrong answer this
+    // wrapper can give, and one that 35 tests of `isNarrowed` in isolation cannot see.
+    const narrow = harness(ok);
+    expect(await main(narrow.make(['src/components/X.browser.test.tsx']))).toBe(0);
+    expect(narrow.seen.gate).toContain('--narrowed');
+
+    const full = harness(ok);
+    expect(await main(full.make(['--max-workers', '4']))).toBe(0);
+    expect(full.seen.gate).not.toContain('--narrowed');
+  });
+
+  it('the runner is given the JSON report path AND the caller arguments', async () => {
+    // 🔴 Two more mutants that survived a green suite. Drop `--outputFile.json=` and every run
+    // reports "does not exist" plus the abort diagnosis; drop `...argv` and
+    // `pnpm test:component <file>` silently runs the whole suite while printing a ledger that
+    // looks entirely healthy.
+    const h = harness(ok);
+    expect(await main(h.make(['src/components/X.browser.test.tsx', '--bail', '1']))).toBe(0);
+    expect(h.seen.vitest.filter((a) => a.startsWith('--outputFile.json='))).toHaveLength(1);
+    expect(h.seen.vitest.slice(-3)).toEqual(['src/components/X.browser.test.tsx', '--bail', '1']);
+    // …and it is still the component project that runs.
+    expect(h.seen.vitest.slice(0, 3)).toEqual(['run', '--project', 'component']);
   });
 
   it('a conflicting --outputFile refuses BEFORE anything runs', async () => {

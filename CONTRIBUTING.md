@@ -120,24 +120,27 @@ The browser suite has a failure mode that runs **no tests at all** and, until yo
 read the numbers, looks exactly like an ordinary failure. `pnpm test:component`
 runs through `scripts/test-component-run.mjs`, which asks vitest for a JSON report
 and hands it to `scripts/ci/assert-component-suite-ran.mjs`. That gate prints a
-ledger and applies two checks:
+ledger and applies three checks:
 
 ```
 test:component ledger: 2254 executed, 0 skipped, across 201 files; 0 failed suites,
-0 failed tests (baseline 2254 tests / 201 files; 201 on disk; floor 1240)
+0 failed tests (baseline 2254 tests / 201 files measured 2026-08-31; 201 on disk;
+floor 1240)
 ```
 
-- **nothing collected fails**, always — including on a narrowed run;
-- **a `*.browser.test.tsx` on disk that is absent from the report fails, and is
-  named.** A file that stops being collected reports as *absence*, so no failure
-  count can show it.
+1. **Nothing collected fails** — always, on every invocation.
+2. **A `*.browser.test.tsx` on disk that is absent from the report fails, and is
+   named.** A file that stops being collected reports as *absence*, so no failure
+   count and no per-test list can show it.
+3. **A floor on executed tests**, as a backstop for a partial collapse that still
+   leaves every file present.
 
-Plus a floor on executed tests as a backstop. The gate can only ever *add* a
-failure — vitest's own exit code is passed straight through otherwise.
+The gate can only ever *add* a failure — vitest's own exit code is passed straight
+through otherwise.
 
 Three things to know before you run it with arguments:
 
-- **A narrowed run skips both checks but not the zero check.** A file argument,
+- **A narrowed run skips checks 2 and 3. Check 1 always applies.** A file argument,
   `-t`, `--shard`, `--changed`, `--exclude`, `--dir`, `--root` and `--config` all
   count as narrowing, because each legitimately changes what gets collected.
 - **`--outputFile` is refused** (exit 2), in every spelling that would collide with
