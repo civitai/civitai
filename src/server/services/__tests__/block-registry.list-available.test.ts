@@ -326,11 +326,7 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
     // unfiltered call. So the last four are the resume tuple plus the limit,
     // and `slice(-4, -1)` is exactly (sortKey, sortKey, id) in bind order.
     const values = capturedValues();
-    expect(values.slice(-4, -1)).toEqual([
-      '00000000000000000005',
-      '00000000000000000005',
-      'ab_5',
-    ]);
+    expect(values.slice(-4, -1)).toEqual(['00000000000000000005', '00000000000000000005', 'ab_5']);
     // Defence in depth on the same claim from the other side: the dead mean
     // reached NO bound parameter, under any field split.
     for (const v of values) {
