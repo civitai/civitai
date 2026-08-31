@@ -4,6 +4,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { ActiveTagFilter } from '~/components/Tags/ActiveTagFilter';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
@@ -34,6 +35,7 @@ function ArticlesPage() {
       <MasonryContainer>
         <Stack gap="xs">
           {query.favorites && <Title>Your Bookmarked Articles</Title>}
+          <ActiveTagFilter tagIds={query.tags ?? []} />
           <ArticlesInfinite filters={query} />
         </Stack>
       </MasonryContainer>
