@@ -81,6 +81,7 @@ import type { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import {
+  baseTypePrefersCaptions,
   formatTrainingValidationError,
   getTrainingFields,
   getAiToolkitEcosystem,
@@ -102,21 +103,6 @@ import { isDefined } from '~/utils/type-guards';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 const maxRuns = 5;
-
-const prefersCaptions: TrainingBaseModelType[] = [
-  'flux',
-  'flux2',
-  'flux2klein',
-  'sd35',
-  'hunyuan',
-  'wan',
-  'chroma',
-  'zimage',
-  'ernie',
-  'hidream-o1',
-  'acestep15',
-  'acestep15xl',
-];
 
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
@@ -1170,7 +1156,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Stack>
       )}
 
-      {prefersCaptions.includes(selectedRun.baseType) &&
+      {baseTypePrefersCaptions(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'caption' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon
@@ -1199,7 +1185,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           </AlertWithIcon>
         )}
 
-      {!prefersCaptions.includes(selectedRun.baseType) &&
+      {!baseTypePrefersCaptions(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'tag' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon
