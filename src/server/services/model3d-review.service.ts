@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { throwIfBlockedByOwners } from '~/server/services/block-check.service';
@@ -80,6 +81,11 @@ export const upsertModel3DReview = async ({
 }) => {
   const { model3dId, recommended, details, postId } = input;
   let { id } = input;
+
+  await throwOnBlockedUserContent(details, {
+    isModerator: !!user.isModerator,
+    surface: 'model3dReview',
+  });
 
   // Resolve the (model3dId, userId) uniqueness up-front: if a row already
   // exists, treat the call as an update of that row. Avoids recursion + a

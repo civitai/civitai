@@ -38,6 +38,8 @@ const SURFACES: Record<string, number> = {
   'src/server/services/bountyEntry.service.ts': 1,
   'src/server/services/model-version.service.ts': 3,
   'src/server/services/model.service.ts': 3,
+  'src/server/services/model3d-review.service.ts': 1,
+  'src/server/services/model3d.service.ts': 1,
   'src/server/services/post.service.ts': 1,
   'src/server/services/resourceReview.service.ts': 1,
   'src/server/services/user-profile.service.ts': 1,
