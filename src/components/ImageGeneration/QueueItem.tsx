@@ -104,6 +104,8 @@ const POLYGEN_ECOSYSTEM_MODEL_LABELS: Record<string, string> = {
   PolyGen: 'Meshy',
   Tripo: 'Tripo',
   Hunyuan3D: 'Hunyuan3D',
+  Pixal3D: 'Pixal3D',
+  Trellis2: 'Trellis.2',
 };
 
 export function QueueItem({

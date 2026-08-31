@@ -102,7 +102,8 @@ vi.mock('@civitai/client', () => {
     SdCppSchedule SdxlAiToolkitTrainingInput SeedanceVideoGenInput SeedreamImageGenInput
     SeedreamVersion Sora2ImageToVideoInput Sora2TextToVideoInput SubmitWorkflowData
     TextToImageStep TextToImageStepTemplate TrainingOutput TrainingStep TrainingStepTemplate
-    TransactionInfo TransactionType TripoFalPolyGenInput UpdateWorkflowRequest
+    TransactionInfo TransactionType Trellis2ImageTo3dComfyPolyGenInput
+    TripoFalPolyGenInput UpdateWorkflowRequest
     Veo3VideoGenInput VideoBlob VideoEnhancementInput VideoEnhancementStepTemplate
     VideoGenStepTemplate VideoInterpolationStepTemplate VideoUpscalerStepTemplate
     ViduQ3VideoGenInput ViduVideoGenInput Wan21CivitaiVideoGenInput

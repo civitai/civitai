@@ -479,6 +479,8 @@ const featureFlags = createFeatureFlags({
   // `polygenVersion: 'v7'` fail the node's schema (see polygen-graph.ts).
   tripoGenerator: { availability: ['mod'], fliptKey: 'tripo-generator' },
   hunyuan3dGenerator: { availability: ['public'], fliptKey: 'hunyuan3d-generator' },
+  pixal3dGenerator: { availability: ['mod'], fliptKey: 'pixal3d-generator' },
+  trellis2Generator: { availability: ['mod'], fliptKey: 'trellis2-generator' },
   meshyV7Generator: { availability: ['mod'], fliptKey: 'meshy-v7-generator' },
   // Grok Imagine Image 2.0 — gates ONLY the v2.0 entry in the Grok version
   // picker; v1.0 / v1.5 stay live regardless, so Grok image + video generation
