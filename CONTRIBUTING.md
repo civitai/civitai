@@ -30,8 +30,11 @@ consequences:
   though they pass in isolation. So a red unit job is a signal to look, not proof
   you broke something, and a green overall check doesn't mean the tests passed.
   Read the job output.
-- **Component tests don't run in CI at all.** The 106 `*.browser.test.tsx` files
-  need real Chromium and only execute when someone runs them locally.
+- **Component tests run in the PR-preview pipeline, report-only.** The 201
+  `*.browser.test.tsx` files need real Chromium; they do not run in GitHub Actions,
+  but the in-cluster preview pipeline runs them and posts a
+  `preview / component-tests` commit status. It never blocks, so read it rather
+  than relying on it.
 
 A green check on a fork PR therefore means much less than it looks like. Verify
 locally.
@@ -85,7 +88,7 @@ with `nix develop -c`, or use direnv (`cp .envrc.example .envrc && direnv allow`
 ```bash
 pnpm typecheck                 # full repo
 pnpm test:unit:run             # ~8,900 unit tests, node env
-pnpm test:component            # ~1,300 component tests in real Chromium, slower
+pnpm test:component            # ~2,250 component tests in real Chromium, slower
 pnpm exec prettier --check <files you added>
 pnpm exec eslint <files you added>
 ```
@@ -110,6 +113,34 @@ that's what happened.
 The reliable method for any of these commands is to run it on unmodified `main`
 first, save the output, then compare. A failure that also happens on `main` isn't
 yours.
+
+### `pnpm test:component` fails on ZERO COLLECTED, not only on red tests
+
+The browser suite has a failure mode that runs **no tests at all** and, until you
+read the numbers, looks exactly like an ordinary failure. `pnpm test:component`
+runs through `scripts/test-component-run.mjs`, which asks vitest for a JSON report
+and hands it to `scripts/ci/assert-component-suite-ran.mjs`. That gate prints a
+ledger (`N executed, N skipped, across N files`) and **fails the run when nothing
+was collected**, or when the count falls below a floor. It can only ever *add* a
+failure — vitest's own exit code is passed straight through otherwise — and a
+narrowed run (`pnpm test:component <file>`, `-t <name>`) skips the floor.
+
+Why it exists: a `vi.mock` factory that throws is resolved inside a Playwright
+route handler that does not catch, so the rejection escapes as an
+`Unhandled Rejection` in the orchestrator and kills the whole run — no
+`Test Files` line, no per-file results, exit 1. The `preview / component-tests`
+tier reads only the exit code, so that abort and a genuine list of red assertions
+rendered identically. One such file zeroed all 201 suites on `main` at
+`d353f785c3`. A browser crash under host load produces the same shape, wearing the
+same misleading headline. The gate's message enumerates the causes it cannot tell
+apart; read the error printed above it.
+
+The commonest cause is a **wholesale** factory that stops naming an export
+something in the file's module graph imports. `local-rules/no-wholesale-module-mock`
+guards that for a listed set of modules, and
+`src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts` guards
+the feature-flags module — but only under `src/components/AppBlocks`, so neither
+covers you by default.
 
 ## Where tests go
 
