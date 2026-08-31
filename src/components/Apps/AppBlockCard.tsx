@@ -4,7 +4,6 @@ import {
   IconExternalLink,
   IconPlugConnected,
   IconSettings,
-  IconStarFilled,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -269,17 +268,6 @@ export function AppBlockCard({
             {/* Install count is HIDDEN until there's a real user base — every
                 app currently shows 0, which reads as "unused". Re-introduce when
                 installs are meaningful. */}
-            {/* Review indicator: shown ONLY when the app has ≥1 review. A
-                0-review app shows nothing (no "No reviews" affordance) so an
-                un-reviewed app doesn't look bad. */}
-            {block.reviewCount > 0 && block.avgRating != null && (
-              <Group gap={4}>
-                <IconStarFilled size={13} className="text-yellow-500" />
-                <Text size="xs" c="dimmed">
-                  {block.avgRating.toFixed(1)} ({block.reviewCount.toLocaleString()})
-                </Text>
-              </Group>
-            )}
           </Group>
           {/*
             Anon-conversion CTA (F-E E1): for a session-less viewer, clicking
@@ -359,8 +347,8 @@ export function AppBlockCard({
         </Group>
       </Stack>
       {/* Details modal — controlled by this card's local state. GATED so the
-          whole subtree (its tRPC query hooks + the <AppBlockReviews> subtree)
-          only EXISTS while open: with N cards in the marketplace grid, an
+          whole subtree (its tRPC query hooks) only EXISTS while open: with N
+          cards in the marketplace grid, an
           always-mounted modal per card meant N idle modal instances. The "View
           details" BUTTON above stays unconditional (the never-empty-card
           invariant) — only this subtree is gated. */}

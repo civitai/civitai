@@ -600,7 +600,6 @@ model User {
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
   appUserScopeGrants         AppUserScopeGrant[]
-  appBlockReviews            AppBlockReview[]
   appDevForgejoIdentity      AppDevForgejoIdentity?
   appListings                        AppListing[]
   appListingReviews                  AppListingReview[]
@@ -2564,7 +2563,6 @@ model AppBlock {
   publishRequests    AppBlockPublishRequest[]
   scopeInvocations   BlockScopeInvocation[]
   userScopeGrants    AppUserScopeGrant[]
-  reviews            AppBlockReview[]
   appListing         AppListing?
   // NB: App Listing Collaborators (seats / ownership events / ownership transfers)
   // are keyed to `AppListing`, NOT here — see the AppCollaborator model header. An
@@ -2581,40 +2579,6 @@ model AppBlock {
   @@index([status, category], map: "app_blocks_status_category_idx")
   @@index([featured, featuredOrder], map: "app_blocks_featured_order_idx")
   @@map("app_blocks")
-}
-
-/// App Blocks marketplace review (F-E "marketplace" cluster). A parallel table
-/// to ResourceReview (which is hard-bound to model/version FKs) so we can carry
-/// star ratings for app blocks without bending the model-review shape.
-///
-/// 5-star rating (1..5, validated in the service). A blue-buzz reward fires
-/// ONCE per (user, app) on the first create. Self-reviews (app owner reviewing
-/// their own app) are rejected at the service layer AND excluded from the
-/// aggregate. `exclude`/`tosViolation` are moderator controls that keep abusive
-/// reviews out of the rating aggregate + the Bayesian marketplace sort.
-///
-/// ADDITIVE + MANUALLY APPLIED (CNPG nvme0 does not auto-apply; see the
-/// migration). NULL/empty until applied — read only by the dark, mod-gated
-/// marketplace + the gated review procedures.
-model AppBlockReview {
-  id           Int      @id @default(autoincrement())
-  appBlockId   String   @map("app_block_id")
-  appBlock     AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
-  userId       Int      @map("user_id")
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  rating       Int // 1..5 (STARS — validated in the service)
-  recommended  Boolean  @default(true)
-  details      String?
-  exclude      Boolean  @default(false)
-  tosViolation Boolean  @default(false) @map("tos_violation")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  // One review per (user, app).
-  @@unique([appBlockId, userId], map: "app_block_reviews_app_user_uniq")
-  // Aggregate read path (AVG/COUNT WHERE NOT exclude).
-  @@index([appBlockId, exclude], map: "app_block_reviews_app_agg_idx")
-  @@map("app_block_reviews")
 }
 
 /// App Listing COLLABORATORS — a consent-gated editor seat on a STORE LISTING.
@@ -2984,13 +2948,13 @@ model AppListingScreenshot {
 }
 
 /// Steam-style "recommend" review, keyed to AppListing (NOT AppBlock). Shaped
-/// like ResourceReview (schema ResourceReview) core columns. P4 will migrate
-/// existing AppBlockReview rows here using their already-present `recommended`
-/// column and move the write/list UI over.
+/// like ResourceReview (schema ResourceReview) core columns. This is now the
+/// ONLY app-review table: the legacy 5-star `AppBlockReview` was removed
+/// unmigrated (it never held a production row, and its write form had no
+/// reachable entry point).
 ///
-/// P4 NOTE: the `reactions` (helpful votes) and `reports` CHILD tables that
-/// ResourceReview has are NOT built here — they arrive in P4 alongside the
-/// review-system swap.
+/// NOTE: the `reactions` (helpful votes) and `reports` CHILD tables that
+/// ResourceReview has are NOT built here.
 model AppListingReview {
   id           Int        @id @default(autoincrement())
   appListingId String     @map("app_listing_id")

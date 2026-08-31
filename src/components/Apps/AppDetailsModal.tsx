@@ -17,18 +17,11 @@ import {
 } from '@mantine/core';
 import { IconExternalLink, IconLock, IconShieldCheck } from '@tabler/icons-react';
 import Link from 'next/link';
-import { useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
 import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { getAppDetailAuthor } from '~/components/Apps/appDetailAuthorView';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type {
-  AvailableBlock,
-  PublicAppDetail,
-  SubscriptionRecord,
-} from '~/server/schema/blocks/subscription.schema';
+import type { AvailableBlock, PublicAppDetail } from '~/server/schema/blocks/subscription.schema';
 import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
 import { trpc } from '~/utils/trpc';
 
@@ -61,8 +54,6 @@ function scopeLabel(scope: string): string {
  * info that was moved OFF the card face in the 2026-06 UX pass:
  *   - Header: title, author, and (when present) the publisher screenshot
  *     gallery + description.
- *   - Recent reviews — reuses the existing <AppBlockReviews> component/queries
- *     (summary + a few recent rows + the gated write form). Not rebuilt.
  *   - Scopes — the permission disclosure, moved off the card face.
  *
  * Data sources (all the anon-safe public allowlist — no private manifest data):
@@ -73,15 +64,9 @@ function scopeLabel(scope: string): string {
  *     `getAppDetailAuthor`. 🔴 NEVER `appName`/`appId` — see that module. There
  *     is no listing-row fallback because `AvailableBlock` carries no owner, so
  *     the line is simply absent until the detail query resolves.
- *   - reviews → the existing block-reviews queries inside <AppBlockReviews>.
- *
- * The modal fetches its own subscriptions (mirroring the detail page) so the
- * reviews write-form gate works without threading new props through the
- * marketplace grid — it is fully self-contained.
  */
 export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps) {
   const features = useFeatureFlags();
-  const currentUser = useCurrentUser();
   const appBlockId = block.id;
 
   // Anon-capable public read path — only fires while the modal is open (and the
@@ -95,22 +80,11 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
     { enabled: opened && !!features.appBlocks && !!appBlockId, retry: false }
   );
 
-  // Per-user subscriptions feed the reviews write-form gate (an enabled install
-  // is required to review, mirroring the server gate). Guarded on a signed-in
-  // user — the protected proc 401s for anon. Only fires while open.
-  const { data: mySubs } = trpc.blocks.listMySubscriptions.useQuery(undefined, {
-    enabled: opened && !!features.appBlocks && !!currentUser,
-  });
-  const mySubsForApp = useMemo<SubscriptionRecord[]>(
-    () => (mySubs ?? []).filter((sub) => sub.appBlockId === appBlockId),
-    [mySubs, appBlockId]
-  );
-
   const detail = data as PublicAppDetail | undefined;
   // Did the detail query actually RESOLVE (vs still loading / failed)? This is
   // the load-bearing distinction for the disclosure copy + the aggregates: we
-  // only make a definitive statement ("does not request any permissions",
-  // resolved avgRating/reviewCount) once the public detail genuinely resolved.
+  // only make a definitive statement ("does not request any permissions")
+  // once the public detail genuinely resolved.
   const detailLoaded = detail !== undefined;
   // Title/author render from the listing row immediately; the detail query
   // enriches them (and is the only source for screenshots/scopes/version).
@@ -137,13 +111,6 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
   // the scopes disclosure (an external app has none).
   const externalUrl = block.externalUrl ?? detail?.externalUrl ?? null;
   const isExternal = Boolean(externalUrl);
-  // L2: once the detail resolved, the aggregate is authoritative — prefer it
-  // DIRECTLY (a legit `null` means "no rating", not "fall back to the stale
-  // listing value"). Only use the listing `block` aggregate WHILE loading
-  // (detail === undefined). `??` would wrongly fall through on a resolved null.
-  const avgRating = detailLoaded ? detail.avgRating : block.avgRating;
-  const reviewCount = detailLoaded ? detail.reviewCount : block.reviewCount;
-
   return (
     <Modal opened={opened} onClose={onClose} title={name} size="lg" radius="md">
       <Stack gap="lg">
@@ -315,19 +282,6 @@ export function AppDetailsModal({ opened, onClose, block }: AppDetailsModalProps
             )}
           </Stack>
         )}
-
-        <Divider />
-
-        {/* Recent reviews — REUSES the existing reviews component + queries
-            (summary + a few recent rows + the gated write form). The aggregate
-            (avgRating / reviewCount) comes from the listing row (kept fresh by
-            getAppDetail invalidation inside the component). */}
-        <AppBlockReviews
-          appBlockId={appBlockId}
-          avgRating={avgRating}
-          reviewCount={reviewCount}
-          subscriptions={mySubsForApp}
-        />
       </Stack>
     </Modal>
   );

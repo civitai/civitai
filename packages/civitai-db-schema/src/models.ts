@@ -665,7 +665,6 @@ export interface User {
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
   appUserScopeGrants?: AppUserScopeGrant[];
-  appBlockReviews?: AppBlockReview[];
   appDevForgejoIdentity?: AppDevForgejoIdentity | null;
   appListings?: AppListing[];
   appListingReviews?: AppListingReview[];
@@ -1926,23 +1925,7 @@ export interface AppBlock {
   publishRequests?: AppBlockPublishRequest[];
   scopeInvocations?: BlockScopeInvocation[];
   userScopeGrants?: AppUserScopeGrant[];
-  reviews?: AppBlockReview[];
   appListing?: AppListing | null;
-}
-
-export interface AppBlockReview {
-  id: number;
-  appBlockId: string;
-  appBlock?: AppBlock;
-  userId: number;
-  user?: User;
-  rating: number;
-  recommended: boolean;
-  details: string | null;
-  exclude: boolean;
-  tosViolation: boolean;
-  createdAt: Date;
-  updatedAt: Date;
 }
 
 export interface AppCollaborator {

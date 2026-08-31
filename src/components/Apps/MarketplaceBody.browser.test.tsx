@@ -38,8 +38,6 @@ function makeBlock(id: string, name: string): AvailableBlock {
     category: null,
     externalUrl: null,
     scopesSummary: [],
-    avgRating: null,
-    reviewCount: 0,
     coverUrl: null,
   };
 }
@@ -60,8 +58,6 @@ function makePageBlock(id: string, name: string): AvailableBlock {
     category: null,
     externalUrl: null,
     scopesSummary: [],
-    avgRating: null,
-    reviewCount: 0,
     coverUrl: null,
   };
 }
@@ -167,10 +163,11 @@ describe('/apps marketplace body (top controls row)', () => {
     // Search is a textbox labelled "Search".
     await expect.element(page.getByRole('textbox', { name: 'Search' })).toBeInTheDocument();
     // Sort is a Mantine Select — its input is a textbox labelled "Sort" showing
-    // the default "Top rated" sort.
+    // the default "Most popular" sort. (It used to show "Top rated"; that option
+    // was the 5-star `AppBlockReview` Bayesian sort and went with that system.)
     await expect.element(page.getByRole('textbox', { name: 'Sort' })).toBeInTheDocument();
     expect((page.getByRole('textbox', { name: 'Sort' }).element() as HTMLInputElement).value).toBe(
-      'Top rated'
+      'Most popular'
     );
   });
 
@@ -314,15 +311,19 @@ describe('/apps marketplace body — PAGE app open records to recents (M1)', () 
 });
 
 describe('/apps marketplace body — sort default + fallback (M3)', () => {
-  test('the listing query uses the visible default sort "rating" on first render', async () => {
+  test('the listing query uses the visible default sort "popular" on first render', async () => {
     renderWithProviders(<MarketplaceBody />);
-    // The Sort select shows the default "Top rated" (= rating) on first render,
-    // and the listing query is invoked with sort:'rating'.
+    // The Sort select shows the default "Most popular" (= popular) on first
+    // render, and the listing query is invoked with sort:'popular'. The point of
+    // the test is the AGREEMENT between the two — a label showing one sort while
+    // the query asks for another is the bug this pins.
     await expect.element(page.getByRole('textbox', { name: 'Sort' })).toBeInTheDocument();
     expect(
       (page.getByRole('textbox', { name: 'Sort' }).element() as HTMLInputElement).value
-    ).toBe('Top rated');
-    expect(mocks.lastListArgs?.sort).toBe('rating');
+    ).toBe('Most popular');
+    expect(mocks.lastListArgs?.sort).toBe('popular');
+    // Negative control: the removed 5-star sort must not come back through here.
+    expect(mocks.lastListArgs?.sort).not.toBe('rating');
   });
 });
 

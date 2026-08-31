@@ -34,8 +34,6 @@ function makeBlock(id: string, name: string): AvailableBlock {
     category: null,
     externalUrl: null,
     scopesSummary: [],
-    avgRating: null,
-    reviewCount: 0,
     coverUrl: null,
   };
 }
