@@ -36,11 +36,12 @@ import { ToursProvider, useTourContext } from '~/components/Tours/ToursProvider'
 // `appTour: false` keeps LazyTours (and therefore Joyride) unmounted — this file is
 // about provider state, and mounting Joyride would add an overlay over the probe.
 function Probe() {
-  const { runTour, pauseTour, closeTour, run, currentStep } = useTourContext();
+  const { runTour, pauseTour, closeTour, run, currentStep, helpers } = useTourContext();
   return (
     <div>
       <span data-testid="run">{String(run)}</span>
       <span data-testid="step">{currentStep}</span>
+      <span data-testid="helpers">{helpers ? 'present' : 'null'}</span>
       <button onClick={() => runTour({ key: 'auction', step: 0, forceRun: true })}>start</button>
       <button onClick={() => pauseTour()}>pause</button>
       <button onClick={() => closeTour({ reason: 'closed' })}>close</button>
@@ -110,5 +111,49 @@ describe('closeTour', () => {
     await page.getByText('close').click();
 
     await expect.element(page.getByTestId('step')).toHaveTextContent('0');
+  });
+});
+
+/**
+ * Joyride hands over its helpers from its own constructor, and the provider used to
+ * publish `helpers.current` — a ref read during render, which re-renders nobody. So a
+ * consumer that rendered before the tour's Joyride mounted held `null`, and its
+ * `helpers?.next()` did nothing at all, silently: the click landed, the remix menu
+ * opened, the tour stayed on the same step.
+ *
+ * `appTour: false` here means Joyride NEVER mounts, which is the strongest form of the
+ * window — with the old ref read this is `null` forever.
+ */
+describe('the helpers handed to consumers', () => {
+  // Read synchronously, not through `expect.element`: the value is there on the first
+  // render or never, so polling it only turns a revert's failure into a 15s one.
+  test('are present before Joyride has mounted', async () => {
+    await renderProbe();
+
+    expect(page.getByTestId('helpers').element()).toHaveTextContent('present');
+  });
+
+  test('do not throw when called with no Joyride behind them', async () => {
+    let caught: unknown = null;
+    function CallProbe() {
+      const { helpers } = useTourContext();
+      try {
+        helpers?.next();
+        helpers?.prev();
+        helpers?.skip();
+      } catch (e) {
+        caught = e;
+      }
+      return <span data-testid="called">done</span>;
+    }
+
+    renderWithProviders(
+      <ToursProvider>
+        <CallProbe />
+      </ToursProvider>
+    );
+
+    await expect.element(page.getByTestId('called')).toHaveTextContent('done');
+    expect(caught).toBeNull();
   });
 });

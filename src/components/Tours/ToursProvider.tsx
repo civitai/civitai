@@ -104,6 +104,27 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
     blockedTarget: null,
   }));
   const helpers = useRef<StoreHelpers | null>(null);
+  /**
+   * Joyride hands its helpers to `getHelpers` from its own CONSTRUCTOR, and storing them
+   * in a ref re-renders nobody — so `helpers.current` read during render is whatever it
+   * was BEFORE the tour's Joyride mounted, i.e. `null` for the first step. A consumer
+   * calling `helpers?.next()` in that window does nothing at all, silently: the click
+   * lands, the menu opens, the tour stays put. Measured on the content-generation tour,
+   * where `helpers` was still null at step 1 with the tour already running.
+   *
+   * This forwards to whatever the ref holds AT CALL TIME, and its identity never changes,
+   * so it is also safe in a `useCallback` dependency list.
+   */
+  const liveHelpers = useRef<StoreHelpers>({
+    close: (origin) => helpers.current?.close(origin),
+    go: (nextIndex) => helpers.current?.go(nextIndex),
+    info: () => helpers.current?.info() as ReturnType<StoreHelpers['info']>,
+    next: () => helpers.current?.next(),
+    open: () => helpers.current?.open(),
+    prev: () => helpers.current?.prev(),
+    reset: (restart) => helpers.current?.reset(restart),
+    skip: () => helpers.current?.skip(),
+  });
 
   const { data: userSettings, isInitialLoading } = trpc.user.getSettings.useQuery(undefined, {
     enabled: !!currentUser,
@@ -186,7 +207,13 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
         setLocalTour((old) => ({ ...old, ...tourSettings }));
       }
 
-      setState((old) => ({ ...old, running: false, paused: false, currentStep: 0, forceRun: false }));
+      setState((old) => ({
+        ...old,
+        running: false,
+        paused: false,
+        currentStep: 0,
+        forceRun: false,
+      }));
     },
     [
       state.activeTour,
@@ -239,7 +266,7 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
         closeTour,
         setSteps,
         setBlockedTarget,
-        helpers: helpers.current,
+        helpers: liveHelpers.current,
       }}
     >
       {children}

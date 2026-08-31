@@ -140,6 +140,7 @@ import {
   remixContentGenerationTour,
 } from '~/components/Tours/tours/content-gen.tour';
 import { useTourContext } from '~/components/Tours/ToursProvider';
+import { nextTourSteps } from '~/components/Tours/tour-step-updates';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useRemixStore } from '~/store/remix.store';
@@ -249,7 +250,7 @@ export function GenerationForm() {
   }, [graph, loadFromModelVersion]);
 
   // Tour initialization
-  const { runTour, running, paused, currentStep, setSteps, activeTour } = useTourContext();
+  const { runTour, running, paused, currentStep, steps, setSteps, activeTour } = useTourContext();
   const status = useGenerationStatus();
   const loadingGeneratorData = useGenerationGraphStore((state) => state.loading);
   const remixOfId = useRemixStore((state) => state.data?.remixOfId);
@@ -284,7 +285,7 @@ export function GenerationForm() {
       return end === -1 ? steps : steps.slice(0, end + 1);
     };
 
-    if (!running || currentStep > 0 || loadingGeneratorData) return;
+    if (!running || loadingGeneratorData) return;
     const isRemix = remixOfId && activeTour === 'remix-content-generation';
     let genSteps = isRemix ? remixContentGenerationTour : contentGenerationTour;
 
@@ -299,7 +300,12 @@ export function GenerationForm() {
     if (alreadyReviewedTerms)
       genSteps = genSteps.filter((x) => x.target !== '[data-tour="gen:terms"]');
 
-    setSteps(genSteps);
+    // Recomputed on every input change, not only at step 0: `hasGeneratedImages` flips the
+    // moment the user generates — which this tour asks them to do — and freezing the array
+    // there left a first-timer's tour permanently cut at `gen:feed`, without the select and
+    // post steps that hand over to the post-generation tour.
+    const next = nextTourSteps(steps, genSteps, currentStep);
+    if (next) setSteps(next);
   }, [
     loadingGenQueueRequests,
     hasGeneratedImages,
@@ -308,6 +314,7 @@ export function GenerationForm() {
     running,
     activeTour,
     loadingGeneratorData,
+    currentStep,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Get compatibility info based on current workflow and ecosystem
