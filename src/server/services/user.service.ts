@@ -2868,18 +2868,25 @@ export async function getUserContentSettings(id: number): Promise<UserContentSet
  * overlapping patches compose instead of clobbering.
  *
  * Ops (all optional, all applied in one statement, in this order):
- *  - `set`       — replace these top-level keys outright. The patch WINS over the
- *                  stored value; that is the whole point, so the operand order of
- *                  the `||` below is load-bearing rather than stylistic.
- *  - `mergeInto` — merge one level INTO these top-level object keys, so a
- *                  sibling sub-key another writer added survives.
- *  - `remove`    — delete these top-level keys.
+ *  - `set`           — replace these top-level keys outright. The patch WINS over
+ *                      the stored value; that is the whole point, so the operand
+ *                      order of the `||` below is load-bearing rather than stylistic.
+ *  - `mergeInto`     — merge one level INTO these top-level object keys, so a
+ *                      sibling sub-key another writer added survives.
+ *  - `deepMergeInto` — merge one level further: a sub-key of a top-level object is
+ *                      itself merged rather than replaced. `mergeInto` alone still
+ *                      loses a race between two writers of the SAME sub-key (e.g.
+ *                      two `tourSettings.welcome` writes), because it replaces
+ *                      `tourSettings.welcome` wholesale; this composes the two
+ *                      writers' fields instead. Only `tourSettings` uses this today.
+ *  - `remove`        — delete these top-level keys.
  *
- * 🔴 `set` and `mergeInto` do NOT compose on the SAME top-level key. `mergeInto`
- * reads `settings->key` — the STORED column — not the partially-built expression,
- * so passing one key to both ops makes `mergeInto` merge onto the pre-`set` value
- * and win. No caller does this today; if one ever needs to, make `mergeInto` read
- * from the accumulated expression instead of the column.
+ * 🔴 `set` and `mergeInto` do NOT compose on the SAME top-level key, and neither
+ * does `deepMergeInto` with either of them. All three read `settings->key` — the
+ * STORED column — not the partially-built expression, so combining ops on one key
+ * makes the later op win over the earlier op's in-progress result rather than
+ * compose with it. No caller does this today; if one ever needs to, make the ops
+ * read from the accumulated expression instead of the column.
  *
  * Values are bound as parameters, never spliced into the statement text —
  * `JSON.stringify` escapes `"` and `\` but not `'`, so a setting value holding
@@ -2892,6 +2899,8 @@ export async function getUserContentSettings(id: number): Promise<UserContentSet
 export type UserSettingsPatch = {
   set?: Record<string, unknown>;
   mergeInto?: Record<string, Record<string, unknown>>;
+  /** One level deeper than `mergeInto`: top-level key -> sub-key -> patch. */
+  deepMergeInto?: Record<string, Record<string, Record<string, unknown>>>;
   remove?: string[];
   /** `userUpdateCounter` label, so consolidating the writers does not collapse the
    *  per-call-site attribution the metric already carried. */
@@ -2909,6 +2918,15 @@ export async function patchUserSettings(
   const mergeInto = Object.entries(patch.mergeInto ?? {}).filter(
     ([, value]) => value && Object.keys(value).length
   );
+  const deepMergeInto = Object.entries(patch.deepMergeInto ?? {})
+    .map(
+      ([key, subPatch]) =>
+        [
+          key,
+          Object.entries(subPatch ?? {}).filter(([, value]) => value && Object.keys(value).length),
+        ] as const
+    )
+    .filter(([, subEntries]) => subEntries.length);
   const remove = patch.remove?.length ? patch.remove : undefined;
 
   const client = tx ?? dbWrite;
@@ -2922,7 +2940,7 @@ export async function patchUserSettings(
   // the repo's `no-io-in-transaction` lint rule is a call-name denylist that cannot
   // see it. Reading the row also keeps the return value consistent with the write
   // path below, which returns `RETURNING settings` rather than a cached blob.
-  if (!set && !mergeInto.length && !remove) {
+  if (!set && !mergeInto.length && !deepMergeInto.length && !remove) {
     const current = await client.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
       `SELECT settings FROM "User" WHERE id = $1`,
       userId
@@ -2953,14 +2971,34 @@ export async function patchUserSettings(
     // value). Treating a non-object as absent restores that property — the next write
     // repairs the row. This is hardening, not a live fix: sampled prod rows are 100%
     // objects for every key written this way, but `mergeInto` is now the designated
-    // nested-write primitive for `chat`, `features`, `creatorShop`, `gallerySettings`
-    // and `tourSettings`, so the gap would be inherited five times over.
+    // nested-write primitive for `chat`, `features`, `creatorShop` and `gallerySettings`
+    // (`tourSettings` uses `deepMergeInto`, below), so the gap would be inherited
+    // four times over.
     const k = bind(key);
     expr =
       `(${expr} || jsonb_build_object(${k}::text, ` +
       `CASE WHEN jsonb_typeof(settings->${k}::text) = 'object' ` +
       `THEN settings->${k}::text ELSE '{}'::jsonb END ` +
       `|| ${bind(JSON.stringify(value))}::jsonb))`;
+  }
+  for (const [key, subEntries] of deepMergeInto) {
+    // Same guard as `mergeInto`, applied twice: once for the top-level key (so a
+    // malformed `tourSettings` doesn't concatenate) and once per sub-key (so a
+    // malformed `tourSettings.welcome` doesn't either). Both reads are of the STORED
+    // column, same reasoning as the `set`/`mergeInto` non-composition note above.
+    const k = bind(key);
+    let sub =
+      `(CASE WHEN jsonb_typeof(settings->${k}::text) = 'object' ` +
+      `THEN settings->${k}::text ELSE '{}'::jsonb END)`;
+    for (const [subKey, value] of subEntries) {
+      const sk = bind(subKey);
+      sub =
+        `(${sub} || jsonb_build_object(${sk}::text, ` +
+        `CASE WHEN jsonb_typeof(settings->${k}::text->${sk}::text) = 'object' ` +
+        `THEN settings->${k}::text->${sk}::text ELSE '{}'::jsonb END ` +
+        `|| ${bind(JSON.stringify(value))}::jsonb))`;
+    }
+    expr = `(${expr} || jsonb_build_object(${k}::text, ${sub}))`;
   }
   // `jsonb - text[]` drops every listed key in one go, so the names bind as one array.
   if (remove) expr = `(${expr} - ${bind(remove)}::text[])`;

@@ -95,6 +95,10 @@ vi.mock('~/components/RichTextEditor/RichTextEditorComponent', () => ({
 }));
 
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
+import {
+  monetizationDefaultsStore,
+  useMonetizationDefaultsStore,
+} from '~/store/model-version-monetization-defaults.store';
 
 const model = {
   id: 123,
@@ -818,5 +822,171 @@ describe('ModelVersionUpsertForm — licensing lineage pre-selection', () => {
     );
 
     expect((await save()).licensingSourceVersionId ?? null).toBeNull();
+  });
+});
+
+// A creator releasing model after model re-entered the same pricing every time. The last charging save
+// for a model type is remembered locally and offered back the next time monetization is enabled for that
+// type — a starting point in the form, never a charge applied on their behalf.
+describe('ModelVersionUpsertForm — remembered monetization defaults', () => {
+  // Distinguishable from the type suggestion a LORA would otherwise seed (1 Buzz per 10 generations), so
+  // these tests can't pass on the suggestion alone.
+  const REMEMBERED_FEE = { buzz: 7, images: 10 };
+
+  beforeEach(() => {
+    useMonetizationDefaultsStore.setState({ byModelType: {} });
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+  });
+
+  test('opens the fee editor on the fee last saved for this model type', async () => {
+    monetizationDefaultsStore.set('LORA', { fee: REMEMBERED_FEE, paidAccess: null });
+    renderForm();
+
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(rightsCheckbox());
+
+    // The fee switch opening by itself is the whole tell: without a remembered fee this editor waits on
+    // a click ('reveals the affirmation first' above pins that), so its own state proves the restore ran.
+    await expect.element(feeSwitch()).toBeChecked();
+    await expect.element(feeInput()).toHaveValue(String(REMEMBERED_FEE.buzz));
+  });
+
+  test('clamps a remembered fee to what this version may charge', async () => {
+    // 500 Buzz per generation — legal on a video base model, five times the ceiling on this SDXL one.
+    monetizationDefaultsStore.set('LORA', { fee: { buzz: 5000, images: 10 }, paidAccess: null });
+    renderForm();
+
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(rightsCheckbox());
+
+    await expect.element(feeInput()).toHaveValue('1000');
+  });
+
+  test('leaves a version that already charges alone', async () => {
+    monetizationDefaultsStore.set('LORA', { fee: REMEMBERED_FEE, paidAccess: null });
+    renderChargingForm();
+
+    // This version opens with its pricing controls already up, so the restore is reachable at mount —
+    // before any click. Its own 2 Buzz per generation has to survive that.
+    await expect.element(feeInput()).toHaveValue('2');
+
+    // Off and back on: the round trip a creator makes when they change their mind.
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(chargeSwitch());
+
+    // The stored price is this version's to restore explicitly — a remembered one must not stand in for it.
+    expect(feeInput().elements()).toHaveLength(0);
+    await expect
+      .element(page.getByRole('button', { name: 'Restore the stored settings' }))
+      .toBeInTheDocument();
+  });
+
+  // Step 2 of the disclosure shows the affirmation and nothing else, so a remembered fee applied at
+  // step 1 would sit in form state with no control on screen — and block the save over a price the
+  // creator cannot see. Nothing is restored until the pricing controls are up.
+  test('holds the remembered fee back until the pricing controls are on screen', async () => {
+    // Keyed to the type this form renders — a snapshot under any other type restores nothing, and the
+    // save below would pass without exercising the hold-back at all.
+    monetizationDefaultsStore.set('Hypernetwork', { fee: REMEMBERED_FEE, paidAccess: null });
+    renderNewVersionForm();
+
+    await userEvent.click(chargeSwitch());
+    await expect.element(rightsCheckbox()).toBeInTheDocument();
+    // Read synchronously: the save must go through on this state, not on a later one.
+    expect(feeInput().elements()).toHaveLength(0);
+
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ licensingFee: 0 });
+  });
+
+  test('remembers the fee a save actually charged', async () => {
+    renderForm();
+
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(rightsCheckbox());
+    await userEvent.click(feeSwitch());
+    await userEvent.fill(feeInput(), '7');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ licensingFee: 0.7 });
+    // Written after the server takes it, so the wait is on the mutation, not on the store.
+    expect(useMonetizationDefaultsStore.getState().byModelType.LORA).toEqual({
+      fee: REMEMBERED_FEE,
+      paidAccess: null,
+    });
+  });
+
+  // The first-version form, because an untouched existing version never reaches the mutation at all —
+  // the save short-circuits on a clean form, and the assertion would pass without ever exercising this.
+  test('remembers nothing from a save that charged nothing', async () => {
+    renderNewVersionForm();
+
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(useMonetizationDefaultsStore.getState().byModelType.Hypernetwork).toBeUndefined();
+  });
+});
+
+// The gate half of the restore, which none of the fee assertions above can see. Published and unpriced:
+// publishing is what makes a permanent gate configurable without an early-access score, and it is also
+// what takes the timed window off the table — the two cases this pair separates.
+describe('ModelVersionUpsertForm — remembered paid access', () => {
+  const publishedUnpriced = {
+    ...(version as object),
+    status: 'Published',
+  } as unknown as React.ComponentProps<typeof ModelVersionUpsertForm>['version'];
+
+  const gate = {
+    timeframe: 30,
+    accessPrice: 5000,
+    freeGeneration: false,
+    acceptsBlueBuzz: false,
+    freePreviewGenerations: 0,
+  };
+
+  function renderPublishedForm() {
+    renderWithProviders(
+      <ModelVersionUpsertForm model={model} version={publishedUnpriced} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+  }
+
+  beforeEach(() => {
+    useMonetizationDefaultsStore.setState({ byModelType: {} });
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+  });
+
+  test('restores a remembered permanent gate', async () => {
+    monetizationDefaultsStore.set('LORA', {
+      fee: { buzz: 0, images: 10 },
+      paidAccess: { ...gate, permanent: true },
+    });
+    renderPublishedForm();
+
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(rightsCheckbox());
+
+    await expect.element(accessSwitch()).toBeChecked();
+    const price = page.getByLabelText('Price for access').element() as HTMLInputElement;
+    expect(price.value.replace(/\D/g, '')).toBe('5000');
+  });
+
+  test('drops a remembered timed window this version cannot offer', async () => {
+    monetizationDefaultsStore.set('LORA', {
+      fee: { buzz: 0, images: 10 },
+      paidAccess: { ...gate, permanent: false },
+    });
+    renderPublishedForm();
+
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(rightsCheckbox());
+
+    // Published, so there is no timed window to restore into. Shortening it to something on offer would
+    // be a price-relevant choice made on the creator's behalf; the gate is left for them to set.
+    await expect.element(accessSwitch()).not.toBeChecked();
   });
 });

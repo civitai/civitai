@@ -1,9 +1,106 @@
 import { Text } from '@mantine/core';
 import Router from 'next/router';
+import { GEN_BUZZ_TARGET, GEN_SUBMIT_TARGET } from '~/components/Tours/tour-targets';
 import { remixMenuStep } from '~/components/Tours/tours/remix-menu.step';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import type { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
+
+const glowingSpotlight = {
+  spotlight: { animation: 'shadowGlow 2s infinite', willChange: 'box-shadow' },
+};
+
+const termsStep: StepWithData = {
+  target: '[data-tour="gen:terms"]',
+  title: 'Accept the Terms',
+  content: 'Before generating content, you must accept the terms of service.',
+  spotlightClicks: true,
+  disableBeacon: true,
+  disableOverlayClose: true,
+  disableCloseOnEsc: true,
+  hideCloseButton: true,
+  hideFooter: true,
+  styles: glowingSpotlight,
+};
+
+const buzzStep: StepWithData = {
+  target: GEN_BUZZ_TARGET,
+  title: 'Cost of Generation',
+  content:
+    'All AI tools on Civitai run on Buzz. Depending on the complexity of your request, the amount of Buzz may vary.',
+  placement: 'top',
+  disableBeacon: true,
+};
+
+const queueStep: StepWithData = {
+  target: '[data-tour="gen:queue"]',
+  title: 'Your Generation Queue',
+  content: 'This is where your generated media is stored, along with all the generation details.',
+  data: {
+    onPrev: async () => useGenerationPanelStore.setState({ view: 'generate' }),
+  },
+  disableBeacon: true,
+};
+
+const feedStep: StepWithData = {
+  target: '[data-tour="gen:feed"]',
+  title: 'Your Generation Feed',
+  disableBeacon: true,
+  content: 'View all your generated media here in a single scrollable view.',
+  data: {
+    onNext: async () => {
+      useGenerationPanelStore.setState({ view: 'feed' });
+      await waitForElement({ selector: '[data-tour="gen:select"]' });
+    },
+  },
+};
+
+// The closing sentence is the only thing the two tours say differently here.
+const selectStep = (closing: string): StepWithData => ({
+  target: '[data-tour="gen:select"]',
+  title: 'Selecting Content',
+  content: (
+    <Text>
+      You can select images from both the{' '}
+      <Text fw={600} span>
+        Queue
+      </Text>{' '}
+      and the{' '}
+      <Text fw={600} span>
+        Feed
+      </Text>{' '}
+      to post them on the site. {closing}
+    </Text>
+  ),
+  hideFooter: true,
+  disableBeacon: true,
+  disableCloseOnEsc: true,
+  disableOverlayClose: true,
+  spotlightClicks: true,
+  spotlightPadding: 10,
+  data: {
+    onBeforeStart: async () => {
+      useGenerationPanelStore.setState({ opened: true, view: 'feed' });
+    },
+  },
+  styles: glowingSpotlight,
+});
+
+const postStep: StepWithData = {
+  target: '[data-tour="gen:post"]',
+  title: 'Posting Content',
+  content: 'Click this button to post your selected content to the site.',
+  hideFooter: true,
+  disableOverlayClose: true,
+  disableBeacon: true,
+  spotlightClicks: true,
+  data: {
+    onBeforeStart: async () => {
+      useGenerationPanelStore.setState({ opened: true, view: 'feed' });
+    },
+  },
+  styles: glowingSpotlight,
+};
 
 export const contentGenerationTour: StepWithData[] = [
   {
@@ -18,23 +115,7 @@ export const contentGenerationTour: StepWithData[] = [
     },
     disableBeacon: true,
   },
-  {
-    target: '[data-tour="gen:terms"]',
-    title: 'Accept the Terms',
-    content: 'Before generating content, you must accept the terms of service.',
-    spotlightClicks: true,
-    disableBeacon: true,
-    disableOverlayClose: true,
-    disableCloseOnEsc: true,
-    hideCloseButton: true,
-    hideFooter: true,
-    styles: {
-      spotlight: {
-        animation: 'shadowGlow 2s infinite',
-        willChange: 'box-shadow',
-      },
-    },
-  },
+  termsStep,
   {
     target: '[data-tour="gen:prompt"]',
     title: 'Start Here',
@@ -84,24 +165,17 @@ export const contentGenerationTour: StepWithData[] = [
     disableCloseOnEsc: true,
     disableOverlayClose: true,
     spotlightPadding: 10,
-    styles: {
-      spotlight: {
-        animation: 'shadowGlow 2s infinite',
-        willChange: 'box-shadow',
-      },
-    },
+    styles: glowingSpotlight,
   },
   remixMenuStep('gen:remix-menu', {
     onNext: async () => {
-      await waitForElement({ selector: '[data-tour="gen:submit"]', interval: 1000 }).catch(
-        () => null
-      );
+      await waitForElement({ selector: GEN_SUBMIT_TARGET, interval: 1000 }).catch(() => null);
     },
   }),
   {
-    target: '[data-tour="gen:submit"]',
+    target: GEN_SUBMIT_TARGET,
     title: 'Create Your Image',
-    content: `Once your prompt is ready to go, hit the generate button and AI will start doing it's magic!`,
+    content: `Once your prompt is ready to go, hit the generate button and AI will start doing its magic!`,
     placement: 'top',
     hideFooter: true,
     disableOverlayClose: true,
@@ -113,97 +187,15 @@ export const contentGenerationTour: StepWithData[] = [
         await waitForElement({ selector: '[data-tour="gen:remix"]' }).catch(() => null);
       },
     },
-    styles: {
-      spotlight: {
-        animation: 'shadowGlow 2s infinite',
-        willChange: 'box-shadow',
-      },
-    },
+    styles: glowingSpotlight,
   },
-  {
-    target: '[data-tour="gen:buzz"]',
-    title: 'Cost of Generation',
-    content:
-      'All AI tools on Civitai run on Buzz. Depending on the complexity of your request, the amount of Buzz may vary.',
-    placement: 'top',
-    disableBeacon: true,
-  },
-  {
-    target: '[data-tour="gen:queue"]',
-    title: 'Your Generation Queue',
-    content: 'This is where your generated media is stored, along with all the generation details.',
-    data: {
-      onPrev: async () => useGenerationPanelStore.setState({ view: 'generate' }),
-    },
-    disableBeacon: true,
-  },
-  {
-    target: '[data-tour="gen:feed"]',
-    title: 'Your Generation Feed',
-    disableBeacon: true,
-    content: 'View all your generated media here in a single scrollable view.',
-    data: {
-      onNext: async () => {
-        useGenerationPanelStore.setState({ view: 'feed' });
-        await waitForElement({ selector: '[data-tour="gen:select"]' }).catch(() => null);
-      },
-    },
-  },
-  {
-    target: '[data-tour="gen:select"]',
-    title: 'Selecting Content',
-    content: (
-      <Text>
-        You can select images from both the{' '}
-        <Text fw={600} span>
-          Queue
-        </Text>{' '}
-        and the{' '}
-        <Text fw={600} span>
-          Feed
-        </Text>{' '}
-        to post them on the site. Posting lets you share your creations with the community and earn
-        Buzz allowing you to create more!
-      </Text>
-    ),
-    hideFooter: true,
-    disableBeacon: true,
-    disableCloseOnEsc: true,
-    disableOverlayClose: true,
-    spotlightClicks: true,
-    spotlightPadding: 10,
-    data: {
-      onBeforeStart: async () => {
-        useGenerationPanelStore.setState({ opened: true, view: 'feed' });
-      },
-    },
-    styles: {
-      spotlight: {
-        animation: 'shadowGlow 2s infinite',
-        willChange: 'box-shadow',
-      },
-    },
-  },
-  {
-    target: '[data-tour="gen:post"]',
-    title: 'Posting Content',
-    content: 'Click this button to post your selected content to the site.',
-    hideFooter: true,
-    disableOverlayClose: true,
-    disableBeacon: true,
-    spotlightClicks: true,
-    data: {
-      onBeforeStart: async () => {
-        useGenerationPanelStore.setState({ opened: true, view: 'feed' });
-      },
-    },
-    styles: {
-      spotlight: {
-        animation: 'shadowGlow 2s infinite',
-        willChange: 'box-shadow',
-      },
-    },
-  },
+  buzzStep,
+  queueStep,
+  feedStep,
+  selectStep(
+    'Posting lets you share your creations with the community and earn Buzz allowing you to create more!'
+  ),
+  postStep,
 ];
 
 export const remixContentGenerationTour: StepWithData[] = [
@@ -220,23 +212,7 @@ export const remixContentGenerationTour: StepWithData[] = [
       styles: { floater: { width: '100%' } },
     },
   },
-  {
-    target: '[data-tour="gen:terms"]',
-    title: 'Accept the Terms',
-    content: 'Before generating content, you must accept the terms of service.',
-    spotlightClicks: true,
-    disableBeacon: true,
-    disableOverlayClose: true,
-    disableCloseOnEsc: true,
-    hideCloseButton: true,
-    hideFooter: true,
-    styles: {
-      spotlight: {
-        animation: 'shadowGlow 2s infinite',
-        willChange: 'box-shadow',
-      },
-    },
-  },
+  termsStep,
   {
     target: '[data-tour="gen:prompt"]',
     title: 'Start Here',
@@ -247,7 +223,7 @@ export const remixContentGenerationTour: StepWithData[] = [
       'Looks like you are remixing an image. You can modify the prompt here to generate an image based on the remix.',
   },
   {
-    target: '[data-tour="gen:submit"]',
+    target: GEN_SUBMIT_TARGET,
     title: 'Submit Your Prompt',
     content: 'You can submit your prompt by clicking this button and see the magic happen!',
     placement: 'top',
@@ -255,95 +231,13 @@ export const remixContentGenerationTour: StepWithData[] = [
     hideFooter: true,
     disableBeacon: true,
     spotlightClicks: true,
-    styles: {
-      spotlight: {
-        animation: 'shadowGlow 2s infinite',
-        willChange: 'box-shadow',
-      },
-    },
+    styles: glowingSpotlight,
   },
-  {
-    target: '[data-tour="gen:buzz"]',
-    title: 'Cost of Generation',
-    content:
-      'All AI tools on Civitai run on Buzz. Depending on the complexity of your request, the amount of Buzz may vary.',
-    placement: 'top',
-    disableBeacon: true,
-  },
-  {
-    target: '[data-tour="gen:queue"]',
-    title: 'Your Generation Queue',
-    content: 'This is where your generated media is stored, along with all the generation details.',
-    data: {
-      onPrev: async () => useGenerationPanelStore.setState({ view: 'generate' }),
-    },
-    disableBeacon: true,
-  },
-  {
-    target: '[data-tour="gen:feed"]',
-    title: 'Your Generation Feed',
-    disableBeacon: true,
-    content: 'View all your generated media here in a single scrollable view.',
-    data: {
-      onNext: async () => {
-        useGenerationPanelStore.setState({ view: 'feed' });
-        await waitForElement({ selector: '[data-tour="gen:select"]' }).catch(() => null);
-      },
-    },
-  },
-  {
-    target: '[data-tour="gen:select"]',
-    title: 'Selecting Content',
-    content: (
-      <Text>
-        You can select images from both the{' '}
-        <Text fw={600} span>
-          Queue
-        </Text>{' '}
-        and the{' '}
-        <Text fw={600} span>
-          Feed
-        </Text>{' '}
-        to post them on the site. Posting lets you share your creations with the community and earn
-        rewards like Buzz!
-      </Text>
-    ),
-    hideFooter: true,
-    disableBeacon: true,
-    disableCloseOnEsc: true,
-    disableOverlayClose: true,
-    spotlightClicks: true,
-    spotlightPadding: 10,
-    data: {
-      onBeforeStart: async () => {
-        useGenerationPanelStore.setState({ opened: true, view: 'feed' });
-      },
-    },
-    styles: {
-      spotlight: {
-        animation: 'shadowGlow 2s infinite',
-        willChange: 'box-shadow',
-      },
-    },
-  },
-  {
-    target: '[data-tour="gen:post"]',
-    title: 'Posting Content',
-    content: 'Click this button to post your selected content to the site.',
-    hideFooter: true,
-    disableOverlayClose: true,
-    disableBeacon: true,
-    spotlightClicks: true,
-    data: {
-      onBeforeStart: async () => {
-        useGenerationPanelStore.setState({ opened: true, view: 'feed' });
-      },
-    },
-    styles: {
-      spotlight: {
-        animation: 'shadowGlow 2s infinite',
-        willChange: 'box-shadow',
-      },
-    },
-  },
+  buzzStep,
+  queueStep,
+  feedStep,
+  selectStep(
+    'Posting lets you share your creations with the community and earn rewards like Buzz!'
+  ),
+  postStep,
 ];

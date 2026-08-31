@@ -16,39 +16,47 @@ export function setServerDomains(domains: ServerDomains) {
 }
 
 /**
- * Append `sync-account={sourceColor}` to a URL when navigating to a different
- * color domain. The destination's `useDomainSync` reads it and bootstraps a session there via the
- * auth-code flow (`/api/auth/authorize`).
+ * Append `sync-account={sourceColor}` to a URL when navigating to a different color domain. The
+ * destination's `useDomainSync` reads it and bootstraps a session there via the auth-code flow
+ * (`/api/auth/authorize`).
  *
- * Returns the URL unchanged when:
- * - called outside the browser (SSR) or before AppProvider has mounted
- * - the URL is relative (same domain by definition)
- * - either host can't be matched to a known color (external URLs)
- * - source and destination resolve to the same color
+ * Takes the CURRENT colour as an argument rather than reading `window.location.host`, so it works
+ * during SSR. That matters: the window-reading version below returns the url untouched on the server,
+ * so every server-rendered cross-colour link shipped WITHOUT the marker and the carry-over silently
+ * never fired for them. The colour cannot live in a module-scope global: one Next process serves every
+ * colour concurrently, so a per-request value would leak across requests — hence `useSyncAccount`.
  */
-export function syncAccount(url: string): string {
-  if (typeof window === 'undefined' || !serverDomains) return url;
+export function syncAccountFor(
+  url: string,
+  currentColor: ColorDomain | undefined,
+  domains: ServerDomains | undefined
+): string {
+  if (!domains || !currentColor) return url;
 
   const urlHost = extractHost(url);
   if (!urlHost) return url;
 
-  const currentColor = hostToColor(window.location.host, serverDomains);
-  const urlColor = hostToColor(urlHost, serverDomains);
+  const urlColor = hostToColor(urlHost, domains);
+  if (!urlColor || urlColor === currentColor) return url;
 
-  if (!currentColor || !urlColor || currentColor === urlColor) return url;
-
-  return QS.stringifyUrl({
-    url,
-    query: { [SYNC_PARAM]: currentColor },
-  });
+  return QS.stringifyUrl({ url, query: { [SYNC_PARAM]: currentColor } });
 }
 
-function extractHost(url: string): string | undefined {
+/**
+ * Browser-only wrapper kept for call sites that render client-side only. Prefer `useSyncAccount` —
+ * this one cannot stamp during SSR, because it has no way to know the current colour there.
+ */
+export function syncAccount(url: string): string {
+  if (typeof window === 'undefined' || !serverDomains) return url;
+  return syncAccountFor(url, hostToColor(window.location.host, serverDomains), serverDomains);
+}
+
+export function extractHost(url: string): string | undefined {
   const match = url.match(/^(?:https?:)?\/\/([^/?#]+)/i);
   return match?.[1].toLowerCase();
 }
 
-function hostToColor(host: string, domains: ServerDomains): ColorDomain | undefined {
+export function hostToColor(host: string, domains: ServerDomains): ColorDomain | undefined {
   const normalized = host.toLowerCase();
   for (const [color, cfg] of Object.entries(domains)) {
     if (!cfg) continue;

@@ -67,3 +67,35 @@ export const unhandledErrorsTotal = new Counter({
   help: 'Unhandled server errors caught by the SvelteKit handleError hook.',
   registers: [register],
 });
+
+// Every failure mode of the cross-domain hand-off (pending-authz.ts, ClickUp 868kxch09) is SILENT: it falls
+// back to writing the hub session, so a broken deploy still logs people in. Read these together — `issued`
+// should track `matched`; `fell_back` climbing, or `matched` lagging `issued`, means the bug is back.
+
+/**
+ * Outcome of a cross-domain login's attempt to withhold the hub session.
+ *   issued     — record stored, hub session withheld (the fix working)
+ *   fell_back  — record could not be stored (no redis / redis error); hub session written as before
+ */
+export const crossDomainHandoffTotal = new Counter({
+  name: 'hub_cross_domain_handoff_total',
+  help: 'Cross-domain login hand-off attempts, by outcome.',
+  labelNames: ['outcome'] as const,
+  registers: [register],
+});
+
+/**
+ * Outcome of consuming that record at /api/auth/oauth/authorize.
+ *   matched          — record spent; the authorization uses the freshly authenticated identity
+ *   domain_mismatch  — record belongs to a different spoke family; left alone, session used instead
+ *   absent           — no usable record (expired, already spent, corrupt, or redis unavailable)
+ * A `matched` count well below `issued` means records are being minted and never redeemed — the hop is
+ * broken (cookie not arriving, or the domains disagree), and every one of those logins silently re-pointed
+ * civitai.com.
+ */
+export const crossDomainHandoffConsumeTotal = new Counter({
+  name: 'hub_cross_domain_handoff_consume_total',
+  help: 'Cross-domain hand-off record consumption at /authorize, by outcome.',
+  labelNames: ['outcome'] as const,
+  registers: [register],
+});

@@ -24,11 +24,14 @@ export const postGenerationTour: StepWithData[] = [
       'Descriptions provide additional details about your post, helping viewers understand your creation better.',
     data: {
       onNext: async () => {
+        // `EditPostReviews` renders nothing when the post's images carry no resources,
+        // and an Alert instead when the user is muted — so this wait legitimately never
+        // resolves. Uncaught it froze the popover for the whole timeout first.
         await waitForElement({
           selector: '[data-tour="post:rate-resource"]',
           timeout: 10000,
           interval: 1000,
-        });
+        }).catch(() => null);
       },
     },
   },
@@ -38,11 +41,6 @@ export const postGenerationTour: StepWithData[] = [
     disableBeacon: true,
     content:
       'Rate the resource you used to generate this content. This helps the creator improve the quality of their model.',
-    // Hack to prevent solid gray box from appearing
-    styles: {
-      overlay: { backgroundColor: 'rgba(0, 0, 0, 0.4)' },
-      spotlight: { backgroundColor: 'rgba(255, 255, 255, 0.2)' },
-    },
   },
   {
     target: '[data-tour="post:publish"]',

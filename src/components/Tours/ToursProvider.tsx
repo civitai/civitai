@@ -13,6 +13,7 @@ import { useStorage } from '~/hooks/useStorage';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { TourSettingsSchema } from '~/server/schema/user.schema';
 import type { StepWithData } from '~/types/tour';
+import type { TourEndReason, TourTrigger } from '~/utils/faro/tour';
 import type { TourKey } from '~/components/Tours/tours';
 import { tourSteps } from '~/components/Tours/tours';
 import { trpc } from '~/utils/trpc';
@@ -26,16 +27,31 @@ const LazyTours = dynamic(() => import('~/components/Tours/LazyTours'));
 export type TourState = {
   running: boolean;
   forceRun: boolean;
+  paused: boolean;
+  trigger: TourTrigger;
   currentStep: number;
   activeTour?: TourKey | null;
   steps?: StepWithData[];
   returnUrl?: string;
+  // The target selector of the step whose real control is currently disabled — not a bare
+  // boolean, so a step whose footer is hidden for an unrelated reason (e.g. the terms gate)
+  // never inherits another step's blocked state. `FormFooter`'s reporting effect stays mounted
+  // (see GenerationLayout's hidden footer slot) for the whole tour, so scoping by target is
+  // load-bearing, not cosmetic.
+  blockedTarget: string | null;
 };
 
 type TourContextState = TourState & {
-  runTour: (opts?: { key?: TourKey; step?: number; forceRun?: boolean }) => void;
-  closeTour: (opts?: { reset?: boolean }) => void;
+  runTour: (opts?: {
+    key?: TourKey;
+    step?: number;
+    forceRun?: boolean;
+    trigger?: TourTrigger;
+  }) => void;
+  pauseTour: () => void;
+  closeTour: (opts: { reason: TourEndReason }) => void;
   setSteps: (steps: StepWithData[]) => void;
+  setBlockedTarget: (target: string | null) => void;
   completed?: boolean;
   run?: boolean;
   helpers?: StoreHelpers | null;
@@ -44,10 +60,15 @@ type TourContextState = TourState & {
 const TourContext = createContext<TourContextState>({
   running: false,
   forceRun: false,
+  paused: false,
+  trigger: 'auto',
   currentStep: 0,
+  blockedTarget: null,
   runTour: () => null,
+  pauseTour: () => null,
   closeTour: () => null,
   setSteps: () => null,
+  setBlockedTarget: () => null,
   steps: [],
 });
 
@@ -75,11 +96,35 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<TourState>(() => ({
     running: false,
     forceRun: false,
+    paused: false,
+    trigger: tourKey ? 'url' : 'auto',
     activeTour: tourKey,
     currentStep: 0,
     steps: tourKey ? tourSteps[tourKey] ?? [] : [],
+    blockedTarget: null,
   }));
   const helpers = useRef<StoreHelpers | null>(null);
+  /**
+   * Joyride hands its helpers to `getHelpers` from its own CONSTRUCTOR, and storing them
+   * in a ref re-renders nobody — so `helpers.current` read during render is whatever it
+   * was BEFORE the tour's Joyride mounted, i.e. `null` for the first step. A consumer
+   * calling `helpers?.next()` in that window does nothing at all, silently: the click
+   * lands, the menu opens, the tour stays put. Measured on the content-generation tour,
+   * where `helpers` was still null at step 1 with the tour already running.
+   *
+   * This forwards to whatever the ref holds AT CALL TIME, and its identity never changes,
+   * so it is also safe in a `useCallback` dependency list.
+   */
+  const liveHelpers = useRef<StoreHelpers>({
+    close: (origin) => helpers.current?.close(origin),
+    go: (nextIndex) => helpers.current?.go(nextIndex),
+    info: () => helpers.current?.info() as ReturnType<StoreHelpers['info']>,
+    next: () => helpers.current?.next(),
+    open: () => helpers.current?.open(),
+    prev: () => helpers.current?.prev(),
+    reset: (restart) => helpers.current?.reset(restart),
+    skip: () => helpers.current?.skip(),
+  });
 
   const { data: userSettings, isInitialLoading } = trpc.user.getSettings.useQuery(undefined, {
     enabled: !!currentUser,
@@ -109,9 +154,11 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
       setState((old) => ({
         ...old,
         running: true,
+        paused: false,
         activeTour,
         steps: opts?.key ? tourSteps[opts.key] ?? [] : old.steps,
         forceRun: opts?.forceRun ?? old.forceRun,
+        trigger: opts?.trigger ?? old.trigger,
         currentStep: opts?.step ?? old.currentStep,
       }));
 
@@ -131,26 +178,41 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
     ]
   );
 
-  const closeTour = useCallback<TourContextState['closeTour']>(
-    (opts) => {
-      if (state.activeTour) {
-        const currentTourData = getCurrentTourData(state.activeTour);
-        const alreadyCompleted = currentTourData?.completed ?? false;
+  const pauseTour = useCallback<TourContextState['pauseTour']>(() => {
+    if (state.activeTour && !getCurrentTourData(state.activeTour)?.completed) {
+      const tourSettings = {
+        [state.activeTour]: { completed: false, currentStep: state.currentStep },
+      };
+      if (currentUser) updateUserSettingsMutation.mutate({ tourSettings });
+      setLocalTour((old) => ({ ...old, ...tourSettings }));
+    }
 
-        if (!alreadyCompleted) {
-          const tourSettings = {
-            [state.activeTour]: { completed: opts?.reset ?? false, currentStep: state.currentStep },
-          };
-          if (currentUser) updateUserSettingsMutation.mutate({ tourSettings });
-          setLocalTour((old) => ({ ...old, ...tourSettings }));
-        }
+    setState((old) => ({ ...old, running: false, paused: true }));
+  }, [
+    state.activeTour,
+    state.currentStep,
+    getCurrentTourData,
+    currentUser,
+    updateUserSettingsMutation,
+    setLocalTour,
+  ]);
+
+  const closeTour = useCallback<TourContextState['closeTour']>(
+    ({ reason }) => {
+      if (state.activeTour && !getCurrentTourData(state.activeTour)?.completed) {
+        const tourSettings = {
+          [state.activeTour]: { completed: true, currentStep: state.currentStep, reason },
+        };
+        if (currentUser) updateUserSettingsMutation.mutate({ tourSettings });
+        setLocalTour((old) => ({ ...old, ...tourSettings }));
       }
 
       setState((old) => ({
         ...old,
         running: false,
-        currentStep: opts?.reset ? 0 : old.currentStep,
-        forceRun: opts?.reset ? false : old.forceRun,
+        paused: false,
+        currentStep: 0,
+        forceRun: false,
       }));
     },
     [
@@ -166,6 +228,10 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
   const setSteps = (steps: TourState['steps']) => {
     setState((old) => ({ ...old, steps }));
   };
+
+  const setBlockedTarget = useCallback((target: string | null) => {
+    setState((old) => (old.blockedTarget === target ? old : { ...old, blockedTarget: target }));
+  }, []);
 
   useEffect(() => {
     if (isInitialLoading) return;
@@ -186,11 +252,22 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
   }, [isInitialLoading, tourKey]);
 
   const completed = currentTourData?.completed;
-  const run = (state.running && !completed && !isInitialLoading) || state.forceRun;
+  const run =
+    !state.paused && ((state.running && !completed) || state.forceRun) && !isInitialLoading;
 
   return (
     <TourContext.Provider
-      value={{ ...state, completed, run, runTour, closeTour, setSteps, helpers: helpers.current }}
+      value={{
+        ...state,
+        completed,
+        run,
+        runTour,
+        pauseTour,
+        closeTour,
+        setSteps,
+        setBlockedTarget,
+        helpers: liveHelpers.current,
+      }}
     >
       {children}
       {features.appTour && state.activeTour && (

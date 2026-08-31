@@ -22,11 +22,9 @@ export const ModelDiscussion = forwardRef<HTMLDivElement, ModelDiscussionProps>(
     const showEarlyAccess = !isMuted && onlyEarlyAccess && !canDiscuss;
     const showAddComment = !isMuted && canDiscuss;
     return !locked ? (
-      <div ref={ref} className="flex flex-col gap-4">
+      <div ref={ref} data-tour="model:discussion" className="flex flex-col gap-4">
         <div className="flex gap-2.5">
-          <Title order={2} data-tour="model:discussion">
-            Discussion
-          </Title>
+          <Title order={2}>Discussion</Title>
           {showAddComment && (
             <LoginRedirect reason="create-comment">
               <Button

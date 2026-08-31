@@ -247,6 +247,9 @@ const tourSettingsSchema = z.record(
   z.object({
     completed: z.boolean().optional(),
     currentStep: z.number().optional(),
+    // How the tour ended: `closed` (X/Esc), `skipped`, or `finished` — the last one also
+    // covers a tour forced to finish because its last step's target went missing.
+    reason: z.enum(['finished', 'skipped', 'closed']).optional(),
   })
 );
 

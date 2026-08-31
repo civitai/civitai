@@ -1893,6 +1893,12 @@ export const REDIS_SYS_KEYS = {
     ALL: 'session:all',
     TOKEN_STATE: 'session:token-state',
     LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
+    // Single-use identity for an in-flight authorization whose spoke is OUTSIDE the hub's cookie scope
+    // (e.g. civitai.red) — `session:pending-authz:${id}` → { userId, domain }, short TTL, deleted once
+    // spent. Carries the just-authenticated user from the login callback to /api/auth/oauth/authorize
+    // WITHOUT writing the hub's own `.civitai.com` session, which is civitai.com's session too.
+    // `domain` is the spoke's registrable domain, not a full redirect_uri — see apps/auth pending-authz.ts.
+    PENDING_AUTHZ: 'session:pending-authz',
   },
   JOB: 'job',
   SEARCH_INDEX_CLEANUP: {
