@@ -13,6 +13,18 @@ import { describe, expect, it } from 'vitest';
  * were found by a reviewer reading the router tree rather than by this test. Adding a surface to
  * `SURFACES` is a human act; this file protects what is already listed, it does not discover.
  *
+ * 🔴 WHAT THE LEDGER BELOW CERTIFIES, EXACTLY: that these calls are present, and attributed to
+ * these writers. NOT that these are all the writers of a file, and NOT that a writer scans every
+ * field it persists. It counts CALLS, not ARGUMENTS — a writer guarding two of the three fields
+ * it writes is invisible to every count and every name here, which is how `upsertUserHub` sat in
+ * this map, green, while `sources[].alias` went unscanned. A per-writer count says a writer was
+ * guarded; it never says it was guarded completely.
+ *
+ * Three review passes each found writers the previous pass missed, so the enumeration should be
+ * assumed OPEN. It is tracked as ClickUp 868kz1yt1: walk the write call sites once, then every
+ * writer either calls the guard and appears below, or carries a stated reason it does not. Until
+ * that lands, a green run here means "what is listed is still wired", nothing wider.
+ *
  * 868kw6t61. Nine surfaces called `throwOnBlockedLinkDomain` and stopped there, so they enforced
  * one of the two blocklists over the raw stored string while comments ran both over several
  * normalised forms. The unit tests around the guard cannot see this class of defect at all: they
