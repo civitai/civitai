@@ -471,7 +471,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       AND NOT EXISTS (
       WITH RECURSIVE muteable_threads AS (
       SELECT t.id "id", 0 "depth"
-      UNION
+      UNION ALL
       SELECT pc."threadId", mt."depth" + 1
       FROM muteable_threads mt
       JOIN "Thread" th ON th.id = mt."id"
@@ -530,7 +530,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       ) AND NOT EXISTS (
       WITH RECURSIVE muteable_threads AS (
       SELECT t.id "id", 0 "depth"
-      UNION
+      UNION ALL
       SELECT pc."threadId", mt."depth" + 1
       FROM muteable_threads mt
       JOIN "Thread" th ON th.id = mt."id"

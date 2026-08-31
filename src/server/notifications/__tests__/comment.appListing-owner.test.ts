@@ -262,7 +262,7 @@ describe('new-app-listing-comment — SQL: who it notifies, and who it must not'
       AND NOT EXISTS (
       WITH RECURSIVE muteable_threads AS (
       SELECT t.id "id", 0 "depth"
-      UNION
+      UNION ALL
       SELECT pc."threadId", mt."depth" + 1
       FROM muteable_threads mt
       JOIN "Thread" th ON th.id = mt."id"
