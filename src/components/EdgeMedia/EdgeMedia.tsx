@@ -31,7 +31,7 @@ export type EdgeMediaProps = EdgeUrlProps &
     disablePoster?: boolean;
     videoProps?: React.HTMLAttributes<HTMLVideoElement> &
       React.MediaHTMLAttributes<HTMLVideoElement>;
-    imageProps?: React.HTMLAttributes<HTMLImageElement>;
+    imageProps?: React.ImgHTMLAttributes<HTMLImageElement>;
     /** Database image ID — forwarded to EdgeImage for drag-and-drop metadata lookup */
     imageId?: number;
   };

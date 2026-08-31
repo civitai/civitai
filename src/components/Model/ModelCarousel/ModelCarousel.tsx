@@ -31,6 +31,17 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import classes from './ModelCarousel.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import clsx from 'clsx';
+import {
+  COMMON_IMAGE_WIDTHS,
+  getEdgeUrl,
+  snapWidthToCommonSize,
+} from '~/client-utils/cf-images-utils';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+
+const maxModelCarouselImageWidth = snapWidthToCommonSize(DEFAULT_EDGE_IMAGE_WIDTH * 3);
+const modelCarouselImageWidths = COMMON_IMAGE_WIDTHS.filter(
+  (width) => width >= DEFAULT_EDGE_IMAGE_WIDTH && width <= maxModelCarouselImageWidth
+);
 
 export function ModelCarousel(props: Props) {
   const currentUser = useCurrentUser();
@@ -101,6 +112,19 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
         >
           {images.map((image, index) => {
             const fromCommunity = image.user.id !== modelUserId;
+            const srcSet = modelCarouselImageWidths
+              .map(
+                (width) =>
+                  `${getEdgeUrl(image.url, {
+                    name: image.name,
+                    type: image.type,
+                    width,
+                    anim: false,
+                    optimized: true,
+                  })} ${width}w`
+              )
+              .join(', ');
+
             return (
               <Embla.Slide
                 key={image.id}
@@ -167,7 +191,13 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                               >
                                 <ImagePreview
                                   image={image}
-                                  edgeImageProps={{ width: 450 }}
+                                  edgeImageProps={{
+                                    width: DEFAULT_EDGE_IMAGE_WIDTH,
+                                    imageProps: {
+                                      srcSet,
+                                      sizes: mobile ? '100vw' : `${DEFAULT_EDGE_IMAGE_WIDTH}px`,
+                                    },
+                                  }}
                                   aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
                                   // radius="md"
                                   style={{ width: '100%' }}
