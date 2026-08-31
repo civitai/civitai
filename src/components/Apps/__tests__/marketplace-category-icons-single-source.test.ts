@@ -51,22 +51,34 @@ describe('marketplace category icons — single shared source (M2)', () => {
 /**
  * M3 (audit) — the Sort onChange fallback matches the visible default.
  *
- * The Sort select defaults to 'rating' (the first SORT_OPTIONS entry, rendered
- * as "Top rated"), but the clear/onChange fallback used to coerce to 'popular' —
- * a silent mismatch (clearing the control would jump to a DIFFERENT sort than the
- * one shown as default). The fix is `?? 'rating'`. This is a structural guard
+ * The Sort select's initial state used to be 'rating' while the clear/onChange
+ * fallback coerced to 'popular' — a silent mismatch (clearing the control jumped
+ * to a DIFFERENT sort than the one shown as default). This is a structural guard
  * (the Mantine Select uses allowDeselect={false}, so onChange(null) can't be
- * driven from the UI in a browser test) — reverting the source to `?? 'popular'`
- * fails here.
+ * driven from the UI in a browser test).
+ *
+ * 🔴 The three values are DERIVED from the source, not hardcoded, so this keeps
+ * pinning the AGREEMENT rather than one spelling of it. That matters: the guard
+ * used to name 'rating' literally, and when the 5-star `AppBlockReview` system
+ * (and with it the `rating` sort) was removed, a literal assertion would have had
+ * to be rewritten — which is exactly the moment a real mismatch slips in.
  */
 describe('MarketplaceBody — sort default/fallback agree (M3)', () => {
-  test('the Sort onChange fallback resolves to the default sort "rating", not "popular"', () => {
+  test('the initial sort, the onChange fallback and the FIRST offered option are all the same value', () => {
     const src = readFileSync(path.resolve(APPS_DIR, 'MarketplaceBody.tsx'), 'utf8');
-    // The default state…
-    expect(src).toMatch(/useState<MarketplaceSort>\('rating'\)/);
-    // …and the onChange fallback must coerce to the SAME default.
-    expect(src).toMatch(/setSort\(\(v as MarketplaceSort\) \?\? 'rating'\)/);
-    // The old mismatched fallback is gone.
-    expect(src).not.toMatch(/\?\? 'popular'\)/);
+
+    const initial = /useState<MarketplaceSort>\('([a-z-]+)'\)/.exec(src)?.[1];
+    const fallback = /setSort\(\(v as MarketplaceSort\) \?\? '([a-z-]+)'\)/.exec(src)?.[1];
+    const firstOption = /SORT_OPTIONS[^=]*=\s*\[\s*\{\s*value: '([a-z-]+)'/.exec(src)?.[1];
+
+    // Positive control: all three patterns actually matched something. Without
+    // this a renamed hook/prop would make every comparison below `undefined ===
+    // undefined` and the guard would pass while checking nothing.
+    expect(initial).toBeDefined();
+    expect(fallback).toBeDefined();
+    expect(firstOption).toBeDefined();
+
+    expect(fallback).toBe(initial);
+    expect(firstOption).toBe(initial);
   });
 });

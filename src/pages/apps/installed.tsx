@@ -474,9 +474,6 @@ export default function InstalledAppsPage() {
       // An installed app is on-platform by definition (external-link apps have
       // no install) — never an external listing on this path.
       externalUrl: null,
-      // Marketplace reviews — unused on the Manage path (modal-only).
-      avgRating: null,
-      reviewCount: 0,
       // Card cover — unused on the Manage path (the modal renders no cover) and
       // the subscription row carries no screenshot data, so null.
       coverUrl: null,

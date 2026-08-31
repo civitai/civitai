@@ -593,7 +593,7 @@ const CLICKHOUSE_MAX_MULTIPLIER = 9.99;
  * anywhere. Three fields could do it, and all three were doing it (ClickUp 868ktbnjh):
  *
  *   forId       a reward keyed on a string (generation-feedback's jobId, ad-watched's token,
- *               appBlockReview's appBlockId). 4M payouts, zero event rows.
+ *               the removed appBlockReview's appBlockId). 4M payouts, zero event rows.
  *   status      `unqualified` is not in the enum, so a chunk carrying one loses the awarded and
  *               capped updates riding with it and those rows stay `pending` forever.
  *   multiplier  gold's 4 times MAX_GLOBAL_BONUS of 5 is 20, against a ceiling of 9.99.

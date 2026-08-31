@@ -65,6 +65,11 @@ export default function AppsPage() {
           to `/apps/<appBlockId>`, which is retired and redirects to the store
           detail. Restoring the old grid therefore no longer restores the old
           detail surface — undo the route retirement too if that is the intent.
+          ⚠️ It is also partial in a second way now: the legacy grid's 5-star
+          rating chip, its "Top rated" sort option and the whole `AppBlockReview`
+          system behind them were removed. `blocks.listAvailable` now defaults to
+          `popular` and exposes no rating at all, so the rollback restores the
+          old grid WITHOUT the old ranking.
 
           The grid will be EMPTY until the mod-only backfills run on prod
           (`blocks.backfillAppListings` → `appListings.backfillListingAssets`,

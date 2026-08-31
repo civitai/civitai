@@ -65,7 +65,9 @@ import { queryCache } from '~/server/utils/cache-helpers';
 /**
  * Bayesian prior COUNT for the `top-rated` recommend sort — how many "average"
  * reviews a 0-review app is seeded with so a 1-review 100% app can't outrank a
- * many-review 95% app. Mirrors the AppBlock rating sort's `BAYES_MIN_REVIEWS`.
+ * many-review 95% app. (This mirrored the removed AppBlock 5-star rating sort's
+ * `BAYES_MIN_REVIEWS`, which no longer exists — this constant is now the single
+ * source for the store's shrinkage prior, with nothing to stay in step with.)
  */
 export const LISTING_BAYES_PRIOR = 10;
 
