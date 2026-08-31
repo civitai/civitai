@@ -31,6 +31,17 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 type QuickSearchUserType = SearchIndexDataMap['users'][number];
 
+/**
+ * One input for the query AND both invalidations. `paginationSchema` defaults `limit` to 20, so this
+ * page showed an arbitrary twenty of a larger set and a ban that had just succeeded often was not
+ * among them — the reported "a new ban appears to do nothing". 200 is the schema's ceiling, not
+ * paging: it makes the list complete at today's size (39) and is the interim until this page is
+ * ported with a real count and pager.
+ *
+ * Shared rather than repeated so an invalidation cannot drift from the query key it has to match.
+ */
+const CONTEST_BANNED_QUERY = { contestBanned: true, limit: 200 } as const;
+
 function ContestBanUserModal() {
   const dialog = useDialogContext();
 
@@ -40,7 +51,7 @@ function ContestBanUserModal() {
 
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onSuccess() {
-      await queryUtils.user.getAll.invalidate({ contestBanned: true });
+      await queryUtils.user.getAll.invalidate(CONTEST_BANNED_QUERY);
       dialog.onClose();
     },
     onError() {
@@ -115,15 +126,13 @@ export default function ContestsBans() {
     data: users = [],
     isLoading,
     isFetching,
-  } = trpc.user.getAll.useQuery({
-    contestBanned: true,
-  });
+  } = trpc.user.getAll.useQuery(CONTEST_BANNED_QUERY);
 
   const queryUtils = trpc.useUtils();
 
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onSuccess() {
-      await queryUtils.user.getAll.invalidate({ contestBanned: true });
+      await queryUtils.user.getAll.invalidate(CONTEST_BANNED_QUERY);
     },
     onError() {
       showErrorNotification({

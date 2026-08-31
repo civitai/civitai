@@ -969,7 +969,7 @@ four have a root cause that is not what the symptom suggests.
       `NAVIGATION` entry, a Kysely load, filters on kind / status / window, and links out to both the
       collection and the challenge. **Unreachable until granted on `/admin`**, like every new page here.
 
-- [ ] **Contest bans list caps at 20, and a new ban appears to do nothing.** Both symptoms are one bug.
+- [x] **Contest bans list caps at 20, and a new ban appears to do nothing.** Both symptoms are one bug.
       `/moderator/contests/bans` calls `user.getAll({ contestBanned: true })`, whose input extends
       `getAllQuerySchema` → `paginationSchema`, where `limit` is `.default(20)`. The page never passes a
       limit, so the query lands `LIMIT 20` and there is no total in the response to say what was cut.
@@ -981,6 +981,19 @@ four have a root cause that is not what the symptom suggests.
 
       Fix belongs in the port, not in a bigger `limit`: its own load, ordered by `bannedAt` desc, paged
       with a count, searchable, and with unban and edit-reason on the row.
+
+      **Both symptoms fixed 2026-08-31, ahead of that port.** The ordering half is the one that
+      mattered and it cost one clause: `getUsers` now orders the contest path by
+      `meta #>> '{contestBanDetails,bannedAt}' DESC`, so a ban that just succeeded is the first row
+      instead of landing anywhere in an unordered window. `bannedAt` is an ISO-8601 UTC string, so the
+      text sort is chronological, and all 39 production rows carry a well-formed one.
+
+      The page also asks for `limit: 200` — the schema ceiling, **not** paging. At today's 39 rows the
+      list is complete; past 200 it silently truncates again, which is the port's job to fix properly.
+
+      ⚠️ The query input is now a shared `CONTEST_BANNED_QUERY` const used by the query AND both
+      `invalidate` calls. Changing the input without changing them would leave the list not refreshing
+      after a ban — the exact symptom being fixed here, reintroduced by the fix.
 
       ⚠️ **Fixed 2026-08-31, and it was reachable rather than latent.** In `getUsers` the `ORDER BY`
       was spliced into the middle of the `WHERE` clause, above the `contestBanned` predicate, so a

@@ -363,6 +363,17 @@ export const getUsers = async ({
     select.push(`u."meta"`);
   }
 
+  // The contest-ban list is a WINDOW over a set larger than itself, so without an order it showed an
+  // arbitrary twenty of them and a ban that had just succeeded landed anywhere — which is why it read
+  // as "the ban did nothing". Newest ban first is the only order that makes the write visible.
+  // `bannedAt` is an ISO-8601 UTC string, so the text sort is chronological; every row carries one
+  // (checked against production).
+  const orderBy = contestBanned
+    ? `ORDER BY u."meta" #>> '{contestBanDetails,bannedAt}' DESC`
+    : query
+    ? 'ORDER BY LENGTH(username) ASC'
+    : '';
+
   // ORDER BY goes after every predicate. It used to share a line with `u."id" != -1`, above the
   // `contestBanned` clause, so a caller passing both emitted `... ORDER BY ... AND ...` and Postgres
   // rejected the statement with 42601. `user.getAll` routes here whenever a moderator sets
@@ -386,7 +397,7 @@ export const getUsers = async ({
       AND ${
         contestBanned ? Prisma.sql`u."meta"->>'contestBanDetails' IS NOT NULL` : Prisma.sql`TRUE`
       }
-      ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')}
+      ${Prisma.raw(orderBy)}
       ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
   `;
 
