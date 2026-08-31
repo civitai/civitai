@@ -185,6 +185,10 @@ export function PostImages({
                               original={image.type === 'video'}
                               anim={safe}
                               html5Controls={showsControlStrip}
+                              // Fullscreen belongs to the image detail view, which this media
+                              // links to. Chromium-only; other browsers still show the button,
+                              // which EdgeVideo's fullscreen guards keep usable.
+                              videoProps={{ controlsList: 'nofullscreen' }}
                               videoRef={videoRef}
                               vimeoVideoId={vimeoVideoId}
                             />

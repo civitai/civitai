@@ -109,6 +109,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       getFullscreenSnapshot,
       getFullscreenServerSnapshot
     );
+    // The store is document-wide; fullscreen is requested on containerRef, so narrow it to
+    // this player before acting on it.
+    const isSelfFullscreen =
+      isFullscreen && !!containerRef.current && document.fullscreenElement === containerRef.current;
     const [volume, setVolume] = useLocalStorage({
       key: 'global-volume',
       defaultValue: muted ? 0 : 0.5,
@@ -285,10 +289,13 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           // Autoplay failed, user interaction required
           setAutoplayFailed(true);
         });
-      } else {
+      } else if (!isSelfFullscreen) {
+        // Fullscreen moves the element to the top layer, so it stops intersecting the
+        // observer's scroll-area root and canPlay goes false. Pausing on that would stop
+        // the video the moment it is maximized.
         videoElem.pause();
       }
-    }, [canPlay, isCurrentStack, props.autoPlay]);
+    }, [canPlay, isCurrentStack, props.autoPlay, isSelfFullscreen]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
@@ -311,8 +318,19 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       <div
         ref={containerRef}
         {...wrapperProps}
+        onClick={(e) => {
+          // The post page wraps the media in a link, and fullscreen only repaints — clicks still
+          // bubble there and would route away mid-playback. preventDefault is needed alongside
+          // stopPropagation: the link's own handler is what suppresses the native navigation.
+          if (isSelfFullscreen) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          wrapperProps?.onClick?.(e);
+        }}
         className={clsx(
           styles.iosScroll,
+          props.controlsList?.includes('nofullscreen') && styles.noFullscreenButton,
           wrapperProps?.className ? wrapperProps?.className : 'h-full',
           'relative flex flex-col items-center justify-center overflow-hidden'
         )}
