@@ -156,6 +156,9 @@ export function PostImages({
                             images,
                             collectionId: imageCollectionItem?.collection?.id,
                           }}
+                          // A link drags by default, so a press-and-move on the video controls
+                          // becomes a link drag that eats the click. Media opts into its own drag.
+                          draggable={!showsControlStrip}
                           onClick={() => {
                             if (videoRef.current) videoRef.current.stop();
                           }}
