@@ -9,8 +9,11 @@ export type ModeratorClientConfig = {
   /** Base URL of the moderator spoke app, e.g. `https://moderator.civitai.com`. Falls back to
    * `process.env.MODERATOR_APP_URL`. */
   endpoint?: string;
-  /** Shared internal secret for the `/api/mod/*` ingress (the same WEBHOOK_TOKEN syncSearchIndex uses).
-   * Falls back to `process.env.WEBHOOK_TOKEN`. */
+  /** Credential for the `/api/mod/*` ingress. 🔴 PASS THIS EXPLICITLY. The spoke accepts only
+   * `MOD_INBOUND_TOKEN`; `WEBHOOK_TOKEN` was dropped from its accepted set, so the
+   * `process.env.WEBHOOK_TOKEN` fallback below now yields a credential the server REFUSES (401).
+   * The fallback is kept only so an existing caller does not change shape on this commit — it is
+   * not a working default, and a new integrator should not rely on it. */
   token?: string;
   /** Override fetch (tests / non-global-fetch runtimes). */
   fetch?: typeof fetch;

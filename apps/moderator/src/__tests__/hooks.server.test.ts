@@ -8,10 +8,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * the runtime signal the WEBHOOK_TOKEN removal is graded on (see the header of
  * `$lib/server/webhook-endpoint`), which makes these behavioural guards, not logging cosmetics:
  *
- *   - BOTH classes emit. A legacy-only emitter would make a zero unfalsifiable.
- *   - The record carries NOTHING derived from the token's bytes.
- *   - `locals.tokenClient` is still exactly `'webhook'`, for both classes. Three call sites compare
- *     that field strictly; widening it would 401 every token-authenticated request with no type error.
+ *   - EVERY ACCEPTED class emits. A single-class emitter would make a zero unfalsifiable. 🔴 With one
+ *     accepted class the two-class version of this is DORMANT — see the DORMANT note in-file; what
+ *     remains pinned is that the retired class emits NOTHING, which is what lets its count reach zero.
+ *   - The record carries NOTHING derived from the token's bytes. 🔴 Driven with the ACCEPTED secret:
+ *     driven with the retired one it would inspect an EMPTY array and pass vacuously.
+ *   - `locals.tokenClient` is still exactly `'webhook'` for the accepted class, and is left UNSET for
+ *     a refused one. Three call sites compare that field strictly; widening it would 401 every
+ *     token-authenticated request with no type error.
  *   - A refused credential records nothing.
  *   - A logging fault never becomes a failed request.
  *

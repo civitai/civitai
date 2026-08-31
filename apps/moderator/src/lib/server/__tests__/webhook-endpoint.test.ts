@@ -18,9 +18,10 @@ import {
  *   REGRESSION — red before the change, green after: the cases that pin WHICH credential matched, and
  *     the tagged-union verdict shape that carries it.
  *   INVARIANT  — green on BOTH sides once the union shape is accounted for: the accept/refuse/503
- *     decisions themselves, which this change must not move. They are here because the change's whole
- *     point is that they must KEEP passing — the main app presents WEBHOOK_TOKEN on every call into
- *     this app, so recording which credential matched must not stop either one from matching.
+ *     decisions themselves, which a change to WHICH credentials are accepted must not move. The
+ *     accept/refuse boundary moved deliberately when the legacy class was dropped; what these pin is
+ *     that the SHAPE of the decision did not — 503 still means "nothing configured" and 401 still
+ *     means "a credential was presented and refused", and the two never trade places.
  *
  * `$env/dynamic/private` is aliased to `src/test/env.mock.ts`, which is `process.env` itself, and
  * `acceptedTokens()` re-reads it per call — so assigning here really does change what the function
@@ -133,7 +134,10 @@ describe('authenticateWebhookToken', () => {
     expect(refusalOf(authenticateWebhookToken(eventWith({ query: LEGACY }))).status).toBe(503);
   });
 
-  it('INVARIANT: the two tokens are independent — presenting one does not depend on the other being set', () => {
+  it('INVARIANT: with the retired variable UNSET, its secret is still refused — 401, not 503', () => {
+    // Distinct from the 503 case above, and the pair is the point: 503 says "this deployment accepts
+    // nothing", 401 says "something IS accepted and you did not present it". Here MOD_INBOUND_TOKEN
+    // is configured, so presenting the retired secret must be the caller's fault, not the config's.
     setEnv({ MOD_INBOUND_TOKEN: INBOUND });
     expect(refusalOf(authenticateWebhookToken(eventWith({ query: LEGACY }))).status).toBe(401);
   });

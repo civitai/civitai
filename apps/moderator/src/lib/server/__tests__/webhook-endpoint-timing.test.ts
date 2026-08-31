@@ -22,8 +22,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * deleted, because a guard nobody knows existed does not get rebuilt.
  *
  * 🔴 SO DO NOT READ THIS FILE'S GREEN AS COVERAGE OF THE NO-EARLY-EXIT PROPERTY. What still executes
- * is the counter's own positive control and the length-mismatch invariant — both real, neither a test
- * of control flow.
+ * is real and worth having — the counter's own positive control, the length-mismatch invariant, and
+ * two REGRESSION cases pinning that the retired class is neither a candidate nor authenticatable
+ * (both go red if it is restored to the accepted set) — but NONE of them is a test of control flow.
  *
  * 🔴 EVERY FIXTURE SECRET BELOW IS THE SAME LENGTH. The loop checks length before calling
  * timingSafeEqual (that function throws on a length mismatch), so a shorter second secret would be

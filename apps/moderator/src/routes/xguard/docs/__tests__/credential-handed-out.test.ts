@@ -41,15 +41,33 @@ describe('the XGuard docs hand out the inbound-only token', () => {
 
   it('the lab README points the same way, and says why', () => {
     // Two surfaces, one instruction: an operator reaches either. The "why" is what stops the next
-    // editor "simplifying" back to the shared token because both work.
-    expect(readme).toMatch(/Hand out `MOD_INBOUND_TOKEN`, not `WEBHOOK_TOKEN`/);
+    // editor "simplifying" back to the shared token.
+    //
+    // 🔴 The old phrasing pinned here was `Hand out MOD_INBOUND_TOKEN, not WEBHOOK_TOKEN` — a
+    // CONTRAST that only made sense while both were accepted. Once the legacy class was dropped the
+    // README had to state it outright, so this asserts the current claim rather than the old one.
+    expect(readme).toMatch(/Hand out `MOD_INBOUND_TOKEN`/);
+    expect(readme, 'it must say this is the ONLY accepted credential').toMatch(
+      /only credential these endpoints accept/
+    );
     expect(readme, 'the reason must survive, not just the name').toMatch(/inbound-only/);
+    expect(readme, 'and it must say the legacy one is retired, not merely discouraged').toMatch(
+      /no longer is/
+    );
   });
 
-  it('the page still explains that the legacy token also works', () => {
-    // The positive half of the rule above. Deleting this explanation would make the page read as
-    // "only MOD_INBOUND_TOKEN is accepted", which is false while compatibility lasts and would send
-    // anyone debugging a working legacy caller down the wrong path.
+  it('the page explains that the legacy token is NO LONGER accepted, and why', () => {
+    // The positive half of the rule above, INVERTED when the legacy class was dropped from
+    // `acceptedTokens()`. Until then the page said the legacy token "also works" and this test
+    // pinned that sentence; keeping it would have enforced a claim the code contradicts and blocked
+    // the correction.
+    //
+    // 🔴 Still asserted POSITIVELY rather than as a ban on the word. The page names the legacy token
+    // on purpose — an operator whose caller just started 401ing needs to find the reason here — so a
+    // `not.toMatch(/WEBHOOK_TOKEN/)` guard would punish the explanation that prevents the support
+    // ticket. What must survive is the STATEMENT, so that is what is pinned.
     expect(page).toMatch(/WEBHOOK_TOKEN/);
+    expect(page, 'the page must say it is no longer accepted').toMatch(/no longer is/);
+    expect(page, 'and must name the 401 an operator would actually see').toMatch(/401/);
   });
 });
