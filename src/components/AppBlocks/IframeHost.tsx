@@ -618,10 +618,25 @@ export function AppBlockChrome({
         </Menu.Target>
         <Menu.Dropdown>
           <Menu.Label>App</Menu.Label>
+          {/* 🔴 SAME ROUTE ⇒ SAME ICON, ACROSS BOTH MENUS. This item and the
+              platform nav's "Installed apps" are different WORDS for the same
+              destination (`/apps/installed`), so they must not be different
+              PICTURES: the two dropdowns open a few pixels apart in one bar, and a
+              user who sees a plug in one and a grid in the other has to work out
+              whether they lead to the same place. The glyph comes from the store
+              subnav's row for this route (`SUB_NAV_LINKS`), exactly as the platform
+              nav's does — the labels stay different on purpose ("Manage apps" is
+              the action from inside a running app; "Installed apps" is the
+              destination), because the rule is about the ROUTE, not the copy.
+
+              Pinned by `__tests__/chromeNavAlignsWithSubNav.test.ts`, which checks
+              EVERY literal-href item in the whole chrome, not just the platform-nav
+              dropdown — this item is the reason that check is repo-wide rather than
+              scoped, since scoping it to one dropdown is what let this site drift. */}
           <Menu.Item
             component={Link}
             href="/apps/installed"
-            leftSection={<IconApps size={14} stroke={1.5} />}
+            leftSection={<IconPlugConnected size={14} stroke={1.5} />}
           >
             Manage apps
           </Menu.Item>

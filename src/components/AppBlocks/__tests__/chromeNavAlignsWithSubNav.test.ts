@@ -150,6 +150,64 @@ function parsePlatformNav(src: string): NavEntry[] {
     .filter((e): e is NavEntry => e !== null);
 }
 
+/**
+ * EVERY `<Menu.Item>` in the whole chrome that carries a LITERAL href, across both
+ * dropdowns — not just the platform-nav one.
+ *
+ * 🔴 THIS IS THE REPO-WIDE HALF, AND IT EXISTS BECAUSE THE SCOPED HALF MISSED A
+ * SITE. The platform-nav-scoped parser above deliberately ignores the ⋮ overflow
+ * menu so that two items pointing at one route cannot be keyed onto each other —
+ * but that same scoping meant the ⋮ menu's "Manage apps" (`/apps/installed`) was
+ * invisible to the icon rule, and re-iconing only the platform nav left ONE route
+ * wearing TWO glyphs a few pixels apart in one bar. The same-route rule has to be
+ * enforced over the whole component or it just relocates the drift.
+ *
+ * A literal href only: the "Recently run" items build theirs from a template
+ * literal (`/apps/run/${r.blockId}`), which is not a platform route and has no
+ * subnav row, and the store popover's link is built by `getListingDetailHref`.
+ * Neither is a stand-alone destination this rule governs.
+ */
+function chromeBody(): string {
+  const src = code(read(CHROME));
+  const start = src.indexOf('export function AppBlockChrome');
+  expect(
+    start,
+    'the `AppBlockChrome` declaration was not found in IframeHost.tsx — if it moved or was ' +
+      'renamed, re-point this guard rather than deleting it.'
+  ).toBeGreaterThan(-1);
+  // Bounded by the NEXT top-level export: `IframeHost` lives in the same module and
+  // renders no chrome menus of its own, so this keeps the rule about the chrome
+  // rather than about the whole 5k-line file.
+  const rest = src.slice(start + 'export function AppBlockChrome'.length);
+  const nextExport = rest.indexOf('\nexport function ');
+  return nextExport === -1 ? rest : rest.slice(0, nextExport);
+}
+
+function parseAllChromeLinks(src: string): NavEntry[] {
+  return [...src.matchAll(/<Menu\.Item\b([\s\S]*?)<\/Menu\.Item>/g)]
+    .map((m) => {
+      const block = m[1];
+      const href = /href="([^"]+)"/.exec(block)?.[1];
+      const icon = /leftSection=\{<(Icon\w+)/.exec(block)?.[1];
+      if (!href || !icon) return null;
+      let depth = 0;
+      let tagEnd = -1;
+      for (let i = 0; i < block.length; i += 1) {
+        const ch = block[i];
+        if (ch === '{') depth += 1;
+        else if (ch === '}') depth -= 1;
+        else if (ch === '>' && depth === 0) {
+          tagEnd = i;
+          break;
+        }
+      }
+      if (tagEnd === -1) return null;
+      const label = block.slice(tagEnd + 1).trim();
+      return label ? { href, label, icon } : null;
+    })
+    .filter((e): e is NavEntry => e !== null);
+}
+
 describe('the app-block chrome platform nav agrees with the store subnav', () => {
   it('both extractors can actually parse their own shape — positive control', () => {
     // A guard built on a regex that matches nothing reports a confident, empty,
@@ -266,6 +324,71 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     expect(navByHref.get('/apps/mine')?.label).toBe('My apps');
     expect(navByHref.get('/apps/review')?.label).toBe('Review');
     expect(subByHref.get('/apps/installed')?.label).toBe('Installed');
+  });
+
+  it('ONE ROUTE, ONE ICON — every literal-href item in the chrome, both dropdowns', () => {
+    // 🔴 THE RULE THIS PR EXISTS TO ENFORCE, APPLIED TO THE WHOLE COMPONENT. Two
+    // items may legitimately carry different LABELS for one destination ("Manage
+    // apps" from inside a running app vs "Installed apps" as a destination); they
+    // may not carry different PICTURES, because the two dropdowns open a few pixels
+    // apart in the same bar. Fixing only the platform nav would have relocated the
+    // drift rather than removed it, which is what this test is here to prevent.
+    const subnav = parseSubNav(code(read(SUBNAV)));
+    const links = parseAllChromeLinks(chromeBody());
+    const bySubNavHref = new Map(subnav.map((e) => [e.href, e]));
+
+    expect(links.length, 'parsed no literal-href items out of the chrome').toBe(5);
+
+    // (a) Every route the chrome links to is a route the store actually has.
+    for (const link of links) {
+      expect(
+        bySubNavHref.get(link.href),
+        `the chrome links to \`${link.href}\` ("${link.label}"), which the store subnav does ` +
+          'not list. Either it belongs in `SUB_NAV_LINKS`, or the chrome is inventing a ' +
+          'destination the store has no tab for — decide deliberately.'
+      ).toBeDefined();
+    }
+
+    // (b) …and draws it with the store's glyph, wherever in the chrome it appears.
+    for (const link of links) {
+      expect(
+        link.icon,
+        `same-route icon drift: "${link.label}" links to \`${link.href}\` with \`${link.icon}\`, ` +
+          `but the store subnav draws that route with \`${bySubNavHref.get(link.href)?.icon}\`. ` +
+          'One route must not wear two glyphs in one bar.'
+      ).toBe(bySubNavHref.get(link.href)?.icon);
+    }
+
+    // (c) The pair that actually collided, named explicitly so the regression is
+    // legible: two items, one route, and now one icon.
+    const installed = links.filter((l) => l.href === '/apps/installed');
+    expect(
+      installed.map((l) => l.label).sort(),
+      'the chrome should still offer BOTH `/apps/installed` entries — this rule is about ' +
+        'their icons, not about removing one of them (that would be a behaviour change).'
+    ).toEqual(['Installed apps', 'Manage apps']);
+    expect(new Set(installed.map((l) => l.icon)).size).toBe(1);
+  });
+
+  it('the whole-chrome parser sees BOTH dropdowns — positive control', () => {
+    // The scoped parser stops at the first `</Menu.Dropdown>` by design. If this one
+    // inherited that bound it would silently score the ⋮ menu as absent and the rule
+    // above would pass over exactly the site it was written for.
+    const found = parseAllChromeLinks(`
+      <Menu.Label>Civitai Apps</Menu.Label>
+      <Menu.Item component={Link} href="/apps/installed" leftSection={<IconPlugConnected />}>Installed apps</Menu.Item>
+      </Menu.Dropdown>
+      <Menu.Label>App</Menu.Label>
+      <Menu.Item component={Link} href="/apps/installed" leftSection={<IconApps />}>Manage apps</Menu.Item>
+    `);
+    expect(found).toHaveLength(2);
+    expect(found.map((f) => f.label)).toEqual(['Installed apps', 'Manage apps']);
+    // …and it skips a template-literal href (the "Recently run" shape).
+    expect(
+      parseAllChromeLinks(
+        '<Menu.Item component={Link} href={`/apps/run/${r.blockId}`} leftSection={<IconApps />}>x</Menu.Item>'
+      )
+    ).toHaveLength(0);
   });
 
   it('the breadcrumb’s first crumb reads "Marketplace" and still links to /apps', () => {
