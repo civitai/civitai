@@ -94,18 +94,6 @@ export function AppNameCrumb({
   const canSeeStore = hasAppsStoreAccess(features);
   const popover = useIframeAwareMenu();
 
-  // Lazy: the detail query fires on the FIRST open and never on mount, so the
-  // common case (a user running an app and never touching the crumb) costs no
-  // request. React Query caches it, so re-opening is instant. `retry: false`
-  // matches `/apps/store-preview/<slug>`'s own call — a listing that is missing,
-  // unapproved or scope-gated 404s server-side and should settle into the
-  // unavailable state rather than being retried three times.
-  const { data, isLoading, error } = trpc.appListings.getAppDetail.useQuery(
-    { slug: slug ?? '' },
-    { enabled: !!canSeeStore && !!slug && popover.opened, retry: false }
-  );
-  const detail = data as ListingDetail | undefined;
-
   // The crumb's visual contract, IDENTICAL in both branches. `truncate` +
   // `maw` are what keep a long publisher name from shoving the ⋮ menu off the
   // row; the control must not be the one place that forgets them.
@@ -169,56 +157,96 @@ export function AppNameCrumb({
         </UnstyledButton>
       </Popover.Target>
       <Popover.Dropdown data-testid="app-block-name-popover">
-        <Stack gap={6}>
-          {/* The FULL name — the reason the popover is worth opening at all. No
-              `truncate` and no `maw` here: the crumb is capped, this is not. */}
-          <Text size="sm" fw={600} data-testid="app-block-name-popover-name">
-            {name}
-          </Text>
-          <Divider />
-          {isLoading ? (
-            // First open only. Never render a rating slot that is empty or half
-            // known — a "0% recommend" flashed while the query is in flight is a
-            // false statement about the app, not a loading state.
-            <Group gap={6} data-testid="app-block-name-popover-loading">
-              <Loader size="xs" />
-              <Text size="xs" c="dimmed">
-                Loading store details…
-              </Text>
-            </Group>
-          ) : error || !detail ? (
-            // A valid slug can still 404 here — the listing may never have been
-            // minted, may be unapproved, or may be scope/deploy/maturity-gated. All
-            // of those mean the STORE has nothing to show, and the store PAGE would
-            // 404 the same way, so the action is withheld with it. Suppressing the
-            // CTA on this branch is the point: an "unavailable" note plus a link
-            // into a 404 would be worse than either alone.
-            <Text size="xs" c="dimmed" data-testid="app-block-name-popover-unavailable">
-              Store details unavailable.
-            </Text>
-          ) : (
-            <>
-              {/* The SHARED formatter the store cards use — `getRecommendLabel`
-                  renders "No reviews yet" when `recommendPct` is null rather than a
-                  misleading "0% recommend". Reusing it is what keeps the frame and
-                  the store from disagreeing about the same app's rating. */}
-              <Text size="xs" c="dimmed" data-testid="app-block-name-popover-recommend">
-                {getRecommendLabel(detail.recommend, detail.reviewCount)}
-              </Text>
-              <Button
-                component={Link}
-                href={getListingDetailHref(detail.slug)}
-                size="xs"
-                variant="light"
-                leftSection={<IconBuildingStore size={14} stroke={1.5} />}
-                data-testid="app-block-name-popover-store-link"
-              >
-                View in App Store
-              </Button>
-            </>
-          )}
-        </Stack>
+        {/* Mantine mounts a dropdown's children only while it is OPEN (`keepMounted`
+            is off by default), so putting the query inside this child is what makes
+            the fetch lazy — STRUCTURALLY, not via an `enabled` flag that has to be
+            kept correct. See the card's own header for why that distinction earned
+            its own component. */}
+        <AppNameCrumbCard name={name} slug={slug} />
       </Popover.Dropdown>
     </Popover>
+  );
+}
+
+/**
+ * The popover's body: the app's full name plus whatever the STORE knows about it.
+ *
+ * 🔴 A SEPARATE COMPONENT BECAUSE THE tRPC HOOK MUST NOT RUN FOR EVERY CHROME. The
+ * query used to live in `AppNameCrumb` with `enabled: canSeeStore && !!slug &&
+ * opened`. That reads as equivalent and is not: the rules of hooks make the CALL
+ * unconditional, so merely rendering the chrome instantiated a tRPC hook on every
+ * page-surface mount — including for a viewer the gate had already excluded, and
+ * including in any context without a full tRPC client. It was not theoretical:
+ * `AppBlockChromePlatformNav.browser.test.tsx` mocks `~/utils/trpc` with only the
+ * `blocks.*` procedures it needs, so `trpc.appListings` was `undefined` and all six
+ * of its tests died with `Cannot read properties of undefined (reading
+ * 'getAppDetail')` — surfacing as six identical 15-second timeouts, which is the
+ * shape of a load flake rather than of a defect.
+ *
+ * Moving the hook behind the dropdown makes the gate real: an ineligible viewer
+ * never instantiates it, and a closed popover never fetches. `enabled` is gone,
+ * so there is no flag left to get wrong.
+ */
+function AppNameCrumbCard({ name, slug }: { name: string; slug: string }) {
+  // `retry: false` matches `/apps/store-preview/<slug>`'s own call — a listing that
+  // is missing, unapproved or scope-gated 404s server-side and should settle into
+  // the unavailable state rather than being retried three times. React Query caches
+  // the result, so re-opening the popover is instant.
+  const { data, isLoading, error } = trpc.appListings.getAppDetail.useQuery(
+    { slug },
+    { retry: false }
+  );
+  const detail = data as ListingDetail | undefined;
+
+  return (
+    <Stack gap={6}>
+      {/* The FULL name — the reason the popover is worth opening at all. No
+          `truncate` and no `maw` here: the crumb is capped, this is not. */}
+      <Text size="sm" fw={600} data-testid="app-block-name-popover-name">
+        {name}
+      </Text>
+      <Divider />
+      {isLoading ? (
+        // Never render a rating slot that is empty or half known — a
+        // "0% recommend" flashed while the query is in flight is a false
+        // statement about the app, not a loading state.
+        <Group gap={6} data-testid="app-block-name-popover-loading">
+          <Loader size="xs" />
+          <Text size="xs" c="dimmed">
+            Loading store details…
+          </Text>
+        </Group>
+      ) : error || !detail ? (
+        // A valid slug can still 404 here — the listing may never have been minted,
+        // may be unapproved, or may be scope/deploy/maturity-gated. All of those
+        // mean the STORE has nothing to show, and the store PAGE would 404 the same
+        // way, so the action is withheld with it. Suppressing the CTA on this branch
+        // is the point: an "unavailable" note plus a link into a 404 would be worse
+        // than either alone.
+        <Text size="xs" c="dimmed" data-testid="app-block-name-popover-unavailable">
+          Store details unavailable.
+        </Text>
+      ) : (
+        <>
+          {/* The SHARED formatter the store cards use — `getRecommendLabel` renders
+              "No reviews yet" when `recommendPct` is null rather than a misleading
+              "0% recommend". Reusing it is what keeps the frame and the store from
+              disagreeing about the same app's rating. */}
+          <Text size="xs" c="dimmed" data-testid="app-block-name-popover-recommend">
+            {getRecommendLabel(detail.recommend, detail.reviewCount)}
+          </Text>
+          <Button
+            component={Link}
+            href={getListingDetailHref(detail.slug)}
+            size="xs"
+            variant="light"
+            leftSection={<IconBuildingStore size={14} stroke={1.5} />}
+            data-testid="app-block-name-popover-store-link"
+          >
+            View in App Store
+          </Button>
+        </>
+      )}
+    </Stack>
   );
 }
