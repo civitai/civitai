@@ -978,3 +978,61 @@ export async function getCommentsInfinite({
     };
   });
 }
+
+/**
+ * The reverse of `bulkSetCommentV2TosViolation`, and the reason it exists: setting `tosViolation` was a
+ * one-way door. Nothing in the main app or the moderator spoke cleared it, there is no comment
+ * equivalent of `restoreImages`, and a ban purge can set it across a whole account in one click. So a
+ * false positive had no route back at all.
+ *
+ * Mirrors the forward flow in two of its four steps and deliberately NOT in the other two:
+ *
+ * 1) `tosViolation = false` — puts the comment back on the page for everyone.
+ * 2) Its actioned `TOSViolation` reports go back to `Pending`, which is what the forward action closed.
+ *    A report is reopened rather than dismissed: the flag being wrong does not make the report wrong,
+ *    and a moderator still has to rule on it.
+ *
+ * 🔴 3) Rewards are NOT reversed. `reportAcceptedReward` has already paid Buzz to the reporters, and
+ *    there is no claw-back — nor should there be, since reporting in good faith is the behaviour being
+ *    paid for. Re-actioning later does not double-pay: the reward is keyed on `reportId`.
+ * 🔴 4) No notification. The forward action tells the owner their comment broke the rules; there is no
+ *    "never mind" equivalent, and inventing one would tell an author their comment was removed at the
+ *    moment it is being restored.
+ */
+export async function bulkClearCommentV2TosViolation({ ids }: { ids: number[] }) {
+  if (ids.length === 0) return { count: 0, reopenedReports: 0 };
+
+  const enums = await import('~/shared/utils/prisma/enums');
+
+  let reopenedReports = 0;
+  // Rows actually cleared, NOT ids submitted — a comment already unflagged must not be counted, or the
+  // caller reports a restore that restored nothing.
+  let count = 0;
+
+  for (const id of ids) {
+    const updated = await dbWrite.commentV2
+      .update({
+        where: { id },
+        data: { tosViolation: false },
+        select: { id: true },
+      })
+      .catch(() => null);
+    if (!updated) continue;
+    count += 1;
+
+    // Only `Actioned` rows: a report someone Dismissed for its own reasons was not closed by this flag,
+    // and reopening it would put a ruled-on report back in the queue.
+    const reports = await dbWrite.$queryRaw<{ id: number }[]>`
+      UPDATE "Report" r SET status = ${enums.ReportStatus.Pending}::"ReportStatus"
+      FROM "CommentV2Report" c
+      WHERE c."reportId" = r.id
+        AND c."commentV2Id" = ${id}
+        AND r.reason = ${enums.ReportReason.TOSViolation}::"ReportReason"
+        AND r.status = ${enums.ReportStatus.Actioned}::"ReportStatus"
+      RETURNING id
+    `;
+    reopenedReports += reports.length;
+  }
+
+  return { count, reopenedReports };
+}

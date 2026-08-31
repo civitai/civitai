@@ -427,3 +427,43 @@ export const getCommentCountByModel = ({
 }: GetCommentCountByModelInput) => {
   return dbRead.comment.count({ where: { modelId, hidden } });
 };
+
+/**
+ * The legacy twin of `bulkClearCommentV2TosViolation` — see that function for why an unflag exists at
+ * all and for the two steps it deliberately does not mirror (rewards are not clawed back, and no
+ * notification is sent).
+ *
+ * Does NOT reuse `updateCommentReportStatusByReason`: that helper guards on `status <> target`, which
+ * when the target is `Pending` also sweeps up reports a moderator DISMISSED on their own judgement and
+ * puts them back in the queue. Reopening is only ever correct for the ones this flag actioned.
+ */
+export const bulkClearCommentTosViolation = async ({ ids }: { ids: number[] }) => {
+  if (ids.length === 0) return { count: 0, reopenedReports: 0 };
+
+  const ReportReason = (await import('~/shared/utils/prisma/enums')).ReportReason;
+  const ReportStatus = (await import('~/shared/utils/prisma/enums')).ReportStatus;
+
+  let reopenedReports = 0;
+  let count = 0;
+
+  for (const id of ids) {
+    const updated = await dbWrite.comment
+      .update({ where: { id }, data: { tosViolation: false }, select: { id: true } })
+      .catch(() => null);
+    if (!updated) continue;
+    count += 1;
+
+    const reports = await dbWrite.$queryRaw<{ id: number }[]>`
+      UPDATE "Report" r SET status = ${ReportStatus.Pending}::"ReportStatus"
+      FROM "CommentReport" c
+      WHERE c."reportId" = r.id
+        AND c."commentId" = ${id}
+        AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
+        AND r.status = ${ReportStatus.Actioned}::"ReportStatus"
+      RETURNING id
+    `;
+    reopenedReports += reports.length;
+  }
+
+  return { count, reopenedReports };
+};

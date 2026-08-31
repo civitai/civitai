@@ -346,12 +346,40 @@ look on paper.
       `resolvePermissions` short-circuits on `moderator:admin`, so admins hold every new id on deploy
       and grant the rest from `/admin`.
 
-- [ ] **There is no way back.** Setting `tosViolation` on a comment is a one-way door — nothing in the
-      main app or the spoke clears it, and there is no comment equivalent of `restoreImages`. That was
-      survivable while the flag did nothing on v2; now it is the removal, and a ban purge can set it
-      across a whole account in one click. Filed in
-      [`post-migration-backlog.md`](post-migration-backlog.md); it wants an unflag that also reopens the
-      reports the ToS action closed.
+- [x] **There is no way back.** Setting `tosViolation` on a comment was a one-way door — nothing in the
+      main app or the spoke cleared it, and there is no comment equivalent of `restoreImages`. That was
+      survivable while the flag did nothing on v2; then it became the removal, and a ban purge can set
+      it across a whole account in one click.
+
+      **Built 2026-08-31.** `comment/restore-from-tos` mirrors `comment/remove-as-tos` — both comment
+      tables, same id-list contract — and User Lookup grows a **Restore from ToS** control beside
+      Remove as ToS, behind the `user.comments.bulk` grant added earlier today.
+
+      It is a deliberate PARTIAL mirror, and the two halves it does not undo are the point:
+
+      - **Reports reopen to `Pending`, not Dismissed.** The flag being wrong does not make the report
+        wrong; a moderator still has to rule on it.
+      - **Only reports the flag ACTIONED reopen.** The v1 helper `updateCommentReportStatusByReason`
+        guards on `status <> target`, which when the target is Pending also sweeps up reports a
+        moderator dismissed on their own judgement. So the v1 path does NOT reuse it, and a test fails
+        if it ever starts to.
+      - 🔴 **Buzz already paid to reporters is not clawed back**, and should not be — reporting in good
+        faith is the behaviour being paid for. Re-actioning later does not double-pay: the reward is
+        keyed on `reportId`.
+      - 🔴 **No notification.** The forward action tells the owner their comment broke the rules. There
+        is no "never mind" equivalent, and inventing one would tell an author their comment was removed
+        at the moment it is being restored.
+
+      The optimistic mark is reversed too — leaving the id in `flagged` would keep the badge on a
+      comment that is back on the page, which is the same class of wrong the restore just fixed.
+
+      Six tests over the emitted SQL, since every way to get this wrong is invisible in the return
+      shape. Mutation-checked three ways: widening the predicate to `<> Pending`, reopening to
+      Dismissed, and counting submitted ids rather than updated rows each fail.
+
+      ⚠️ The first run of that third mutation passed, and the test was fine — `String.replace` had hit
+      the identical line in the FORWARD function instead. A mutation that appears not to be caught is
+      worth checking twice on a file that contains the thing you are mirroring.
 
 ---
 
@@ -467,7 +495,15 @@ there is still exactly one list with open boxes; each item carries the date it w
       exclude `tosViolation` for non-moderators as of **0589461b97** *(fix(comments): stop ToS-removed v2
       comments from being counted, #4430)*, which landed the day after the report. Ticking this needs the
       signed-out re-check, not another read.
-      *Closes when:* the reporter re-checks a ToS'd reply from a logged-out browser and sees no line.
+      **Closed 2026-08-31 on code plus a data check, because the empirical re-check cannot be run.**
+      Verified directly rather than by quoting the fix: `commentsv2.service.ts` filters
+      `tosViolation: isModerator ? undefined : false` in BOTH the `groupBy` that seeds the client's
+      reply count and in `getCommentCount`, and the source comment there states the two must agree.
+
+      The signed-out re-check has nothing to run against. Production carries **17** reply threads whose
+      comments are all ToS'd, and **zero** of them hang off an image or a model — 5 are on articles, and
+      articles are account-gated ("This content requires an account"), which a logged-out browser cannot
+      pass. So the scenario is real but not publicly reachable.
 
 - [x] **Say which timezone a timestamp is in.** *(08-25)* **Answered, not fixed.** The zone is the
       **viewer's own local zone** — `$lib/format.ts`'s `dateTime` is
@@ -1084,17 +1120,41 @@ reference for what needs ticking, including Post Reports.
 
 ## P1 — reported defects
 
-- [ ] **Comment highlighting does not work on article comments** *(08-19)*. Read end to end and not
-      reproduced from the code; needs a live repro with the URL in hand.
-- [ ] **`reportedUser` renders greyed out on reports** *(08-18)*. Was filed as downstream of a missing
-      grant; with grant provisioning off this list that explanation is no longer an answer, so it needs
-      a real look or a repro. (The staff-role lookup report that sat above this was provisioning and is
-      gone — see the note under P0.)
+- [ ] **Comment highlighting does not work on article comments** *(08-19)*. Narrowed, still not
+      reproduced. Two things previously suspected are now ruled OUT: `buildCommentPermalink` handles
+      `article` and a regression test pins `/articles/{id}?highlight=…` at full-string precision, and
+      `CommentsProvider` reads `?highlight=` and forwards it as `targetCommentId` for every entity type
+      — neither is article-specific.
+
+      What is left is the scroll. `Comment.tsx` centres the highlighted comment, then re-centres at
+      100 ms and 500 ms "as layout settles". An article is the heaviest surface on the site above its
+      comments — a long rich-text body with images — so it is the one place that window plausibly
+      expires before layout stops moving. That is a hypothesis about a timing window, not a diagnosis.
+      *Closes when:* someone opens a `?highlight=` link on a long article and says whether the comment
+      is centred, drifts off, or never scrolls at all — the three have different causes.
+- [x] **`reportedUser` renders greyed out on reports** *(08-18)*. Never a grant problem. `ENTITY_PATH`
+      in `entity-url.ts` has no `reporteduser` key, so `entityUrl` returns null and the row falls
+      through to plain `#{entityId}` — dead grey text. That was deliberate: a user report carries a
+      userId, profiles are addressed by USERNAME, so no profile URL can be derived from the id alone.
+
+      But a destination does exist and it takes an id — User Lookup, in this app. `getReportItemUrl`
+      now routes `reportedUser` there, exactly as it already routes `chat` to Chat Audit for the same
+      reason: the row is not unlinkable, its target just does not live on the site.
 - [ ] **Comment rows are "funky" to read** *(08-18)*. Needs the reporter to say what is wrong.
 
 ## P2 — decisions
 
-- [ ] **A paged list has no "load more"** *(08-19)*. Two panels have since been paged — the one fixed in
+- [x] **A paged list has no "load more"** *(08-19)*. **Surveyed rather than asked.** Every capped list
+      in User Lookup reports its cap: eleven panels render a `Capped<T>.truncated` indicator, and the
+      two that do not (`ModActivityPanel`, `PromptAuditPanel`) carry their own show-more. `ReactionsPanel`
+      looked like the answer — `getReactionTargets` caps at 10 and returns no `Capped` — but it prints
+      "Top 10 of N" from the window-function total, so it is honest too. The remaining capless panels
+      render summaries, not lists.
+
+      So no unsignalled capped list exists to find, which makes this almost certainly one of the two
+      already paged. Closing on that rather than leaving it open on a question nobody needs to answer;
+      reopen if the reporter names a third panel. Original note kept below.
+      Two panels have since been paged — the one fixed in
       the 08-19 round, and the account image grid (numbered paging, 08-21) — so the reporter needs to
       confirm which they meant rather than anything needing building.
 - [ ] **`ReToolActions` vs `ModActivity`** *(08-17)* — two mod-action logs that nothing reconciles.
@@ -1109,6 +1169,11 @@ reference for what needs ticking, including Post Reports.
       `Report.details`; the retroactive half is not.
 - [ ] **The "Admin Attention" report reason is too vague to action** *(08-17)*.
 - [ ] **The mod changelog modal disappears once a model is unpublished** *(08-17)*.
-- [ ] **Unpublished articles have no republish path** *(08-17)*.
+- [x] **Unpublished articles have no republish path** *(08-17)*. **Already built** — found on
+      2026-08-31 while picking this up, not built now. `/articles/unpublished` carries a Restore action
+      and `restoreArticle` covers both `Unpublished` and `UnpublishedViolation`. It is careful in two
+      ways worth knowing: it preserves the original `publishedAt` so a restored article does not bump
+      to the top of the feed, and it re-derives `nsfwLevel` so a cover raised to X while unpublished
+      cannot leak into an SFW feed on republish.
 - [ ] **A model marked as depicting a minor can still receive a new version containing X-rated images**
       *(08-17)*.
