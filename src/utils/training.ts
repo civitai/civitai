@@ -696,6 +696,15 @@ export const isAiToolkitEnabled = (
   return flagKey ? !!features[flagKey] : false;
 };
 
+// Base model types trained on short, comma-separated tags (legacy kohya SD1.5/SDXL).
+// Every other base type — the AI-Toolkit image ecosystems, video, and audio — trains on
+// natural-language captions, so caption preference is the complement rather than a second
+// hand-maintained list that would drift as models are added.
+export const tagLabelBaseTypes: TrainingBaseModelType[] = ['sd15', 'sdxl'];
+
+export const baseTypePrefersCaptions = (baseType: TrainingBaseModelType): boolean =>
+  !(tagLabelBaseTypes as readonly string[]).includes(baseType);
+
 // Check if base model supports AI Toolkit
 export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean => {
   // AI Toolkit supports these base model types (flux2 is not included - it only uses rapid)
