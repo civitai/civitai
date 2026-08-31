@@ -33,6 +33,7 @@ const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const HOST = path.join(REPO_ROOT, 'src/components/AppBlocks/IframeHost.tsx');
 const HOOK = path.join(REPO_ROOT, 'src/components/AppBlocks/useIframeAwareMenu.ts');
 const CRUMB = path.join(REPO_ROOT, 'src/components/AppBlocks/AppNameCrumb.tsx');
+const REVIEW_ENTRY = path.join(REPO_ROOT, 'src/components/AppBlocks/ChromeReviewEntry.tsx');
 
 function read(file: string): string {
   // Prove the path before trusting any "no match" below: a scan of an absent
@@ -167,6 +168,19 @@ describe('every Menu in the app-block chrome is iframe-aware', () => {
         'the breadcrumb app-name crumb’s store popover (full name + recommend rollup + "View ' +
         'in App Store"). It renders directly over the app iframe like every other floating ' +
         'surface in this chrome, so it is on the same hook.',
+    },
+    {
+      what: 'ChromeReviewEntry.tsx',
+      source: () => code(read(REVIEW_ENTRY)),
+      surfaces: 0,
+      detail:
+        'F4’s two review entry points. ZERO is the correct count and this row is not filler: ' +
+        'both are plain controls rendered INTO surfaces their hosts already own (a `Menu.Item` ' +
+        'inside the chrome’s ⋮ dropdown, a `Button` inside the crumb’s popover), and the modal ' +
+        'they open is mounted by `AppBlockChrome` OUTSIDE both. A `<Menu>` or `<Popover>` ' +
+        'appearing here means this file grew a floating surface of its own — put it on ' +
+        '`useIframeAwareMenu` and raise this number in the same commit, or it will hang over ' +
+        'the app the first time a user clicks into it.',
     },
   ];
 
