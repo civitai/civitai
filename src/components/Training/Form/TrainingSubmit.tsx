@@ -57,7 +57,7 @@ import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import type { ModelFileCreateInput } from '~/server/schema/model-file.schema';
 import type {
@@ -134,6 +134,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const { color: buzzColor } = useBuzzCurrencyConfig(selectedType);
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const yellowOnGreen = features.isGreen && selectedType === 'yellow';
 
   const { addRun, removeRun, updateRun } = trainingStore;

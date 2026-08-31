@@ -45,7 +45,7 @@ import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationFo
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { useMembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { GEN_BUZZ_KEY, GEN_SUBMIT_KEY, GEN_SUBMIT_TARGET } from '~/components/Tours/tour-targets';
@@ -391,6 +391,7 @@ export function useSelfHostedBlock() {
 export function SelfHostedBlockedAlert() {
   const { blockedEcosystem, state, message } = useSelfHostedBlock();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
 
   if (!blockedEcosystem) return null;
 
@@ -988,6 +989,7 @@ function QuantityFieldInner({
 function BlueBuzzMatureReminder() {
   const { variant, acknowledged } = useMembershipUpsell();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
 
   if (variant !== 'blue-on-red' || !acknowledged) return null;
 

@@ -5,16 +5,8 @@ import { syncAccountFor } from '~/utils/sync-account';
 
 /**
  * Stamp cross-colour links with `sync-account` so the destination bootstraps a session
- * (`useDomainSync` → `/api/auth/authorize`).
- *
- * Use this rather than the bare `syncAccount()` in anything that renders on the server. `syncAccount`
- * derives the current colour from `window.location.host`, so on the server it returns the url
- * untouched — every server-rendered cross-colour link shipped unstamped, and a browser arriving at
- * the other colour without an existing session stayed signed out. It is masked in normal use because
- * the destination's session cookie is 30-day rolling, so people are usually already signed in there.
- *
- * The colour comes from context, not a module-level global: one Next process serves every colour
- * concurrently, so caching a per-request value at module scope would let one request read another's.
+ * (`useDomainSync` → `/api/auth/authorize`). Supplies the current colour from context, which is what
+ * makes stamping work during SSR — see `syncAccountFor` for why it cannot come from anywhere else.
  */
 export function useSyncAccount() {
   const { domain, serverDomains } = useAppContext();

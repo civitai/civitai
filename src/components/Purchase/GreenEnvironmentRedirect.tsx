@@ -2,7 +2,7 @@ import { Button, Center, Container, Group, Loader, Stack, Text, Title } from '@m
 import clsx from 'clsx';
 import { useServerDomains } from '~/providers/AppProvider';
 import { QS } from '~/utils/qs';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import type { JoinRedirectReason } from '~/utils/join-helpers';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { Meta } from '~/components/Meta/Meta';
@@ -38,6 +38,7 @@ export function GreenEnvironmentRedirect({
 }: GreenEnvironmentRedirectProps) {
   const { classNames: greenClassNames } = useBuzzCurrencyConfig('green');
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
 
   const handleManualRedirect = () => {
     const query = { buzzType: 'green', ...queryParams };

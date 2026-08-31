@@ -27,7 +27,7 @@ import {
 } from '~/shared/utils/buzz-membership';
 import { formatDate } from '~/utils/date-helpers';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
@@ -120,6 +120,7 @@ function SubscriptionRow({
   showDivider: boolean;
 }) {
   const [siteBuzzType] = useAvailableBuzz();
+  const syncAccount = useSyncAccount();
   const price = subscription.price;
   const product = subscription.product;
   const { image } = getPlanDetails(subscription.product, features);

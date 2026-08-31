@@ -11,7 +11,7 @@ import type { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -22,6 +22,7 @@ const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
 
   return async function (props: BuyBuzzModalProps) {
     if (!features.canBuyBuzz) {
