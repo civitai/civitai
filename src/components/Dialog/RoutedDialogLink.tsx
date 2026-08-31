@@ -43,6 +43,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   onClick,
   variant = 'text',
   rel,
+  draggable,
   'aria-label': ariaLabel,
 }: {
   name: T;
@@ -55,6 +56,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   onClick?: (e: React.MouseEvent<HTMLAnchorElement, MouseEvent>) => void;
   variant?: AnchorProps['variant'];
   rel?: string;
+  draggable?: boolean;
   'aria-label'?: string;
 }) {
   const router = useRouter();
@@ -75,6 +77,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
       href: asPath,
       onClick: handleClick,
       rel,
+      ...(draggable !== undefined ? { draggable } : {}),
       // Forward the accessible name in the passHref branch too (latent-safety:
       // no current caller passes both, but don't silently drop it).
       ...(ariaLabel ? { 'aria-label': ariaLabel } : {}),
@@ -91,6 +94,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
       style={style}
       variant={variant}
       rel={rel}
+      draggable={draggable}
       aria-label={ariaLabel}
     >
       {children}
