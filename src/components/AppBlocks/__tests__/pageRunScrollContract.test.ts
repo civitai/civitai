@@ -214,14 +214,16 @@ describe('the run page and its host agree on who owns the height', () => {
     );
   });
 
-  it('the host still DEFAULTS to `viewport`, so the other three mounters are untouched', () => {
+  it('the host still DEFAULTS to `viewport`, so a mounter that has not opted in is untouched', () => {
     const src = code(read(HOST));
-    // The dev tunnel and the mod-review preview mount inside scrolling ancestors
-    // that bound nothing; flipping this default would collapse both.
+    // The dev tunnel mounts inside `AppLayout`'s ScrollArea, which bounds
+    // nothing; on `fill` its host would collapse to the `FILL_MIN_HEIGHT_PX`
+    // floor — a fixed slab whatever the viewport. Flipping this default would do
+    // that to every surface that has not made the choice deliberately.
     expect(src).toMatch(/\bfit\s*=\s*['"]viewport['"]/);
   });
 
-  it('only the run page opts into `fill` — a new mounter must opt in deliberately', () => {
+  it('the `fill` opt-in ledger — a new mounter must opt in deliberately', () => {
     // A directory walk, not a hand-kept list: the point is to notice a mounter
     // nobody told this test about.
     //
@@ -253,7 +255,26 @@ describe('the run page and its host agree on who owns the height', () => {
     };
     walk(path.join(REPO_ROOT, 'src'));
 
-    expect(offenders.sort()).toEqual(['src/pages/apps/run/[slug]/[[...path]].tsx']);
+    // 🔴 THIS IS A LEDGER, AND BOTH DIRECTIONS ARE THE POINT. It fails when the
+    // set GROWS (a mounter took `fill` without anyone reading the co-requisite)
+    // and when it SHRINKS (an opt-in was reverted during an unrelated change).
+    // Adding a row here is the intended maintenance path — deleting the
+    // assertion is not.
+    //
+    // `ReviewBlockPreviewHost` (the mod review preview, on both its mounters —
+    // the review modal's fixed 420px panel and the full-page preview's
+    // `100dvh − header` box) joined on the second entry. Its case is NOT the run
+    // page's: it never sat in an unbounded scrolling layout, it sat in a box that
+    // bounded its height and CLIPPED, while the host went on claiming
+    // `100dvh − header` for itself. So the co-requisite it needs is the mounter's
+    // wrapper being a bounded FLEX COLUMN (both are), not `scrollable: false` —
+    // that is a page-layout declaration and one of its two mounters is a modal,
+    // which has no page layout at all. The equivalence asserted above is
+    // therefore scoped to the run page on purpose.
+    expect(offenders.sort()).toEqual([
+      'src/components/Apps/ReviewBlockPreviewHost.tsx',
+      'src/pages/apps/run/[slug]/[[...path]].tsx',
+    ]);
   });
 
   it('the layout premise this all rests on still holds', () => {
