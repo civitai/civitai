@@ -10,7 +10,11 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 // callback against `dbMock.dbWrite`, which keeps that identity.
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+}));
 
 // upsertArticle's UPDATE path does post-commit work that reaches Redis: the
 // count-cache refresh and the replication-lag markers. With no live Redis these

@@ -84,7 +84,11 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn(),
 }));
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+}));
 vi.mock('~/server/services/collection.service', () => ({
   getAvailableCollectionItemsFilterForUser: vi.fn(),
   getUserCollectionPermissionsById: vi.fn(),

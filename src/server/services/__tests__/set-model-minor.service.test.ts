@@ -6,7 +6,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // unit test rather than an integration test. Mirrors the mock scaffold used
 // for applyModelFlagSideEffects in model-flag-side-effects.service.test.ts.
 
-
 const {
   mockModelTagRefresh,
   mockModelVotableBust,
@@ -14,7 +13,7 @@ const {
   mockQueueImageSearchIndexUpdate,
   mockTrackModActivity,
   mockPreventReplicationLag,
-  } = vi.hoisted(() => ({
+} = vi.hoisted(() => ({
   mockModelTagRefresh: vi.fn(),
   mockModelVotableBust: vi.fn(),
   mockModelsQueueUpdate: vi.fn(),
@@ -22,7 +21,6 @@ const {
   mockTrackModActivity: vi.fn(),
   mockPreventReplicationLag: vi.fn(),
 }));
-
 
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: mockPreventReplicationLag,
@@ -59,7 +57,11 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn(),
 }));
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+}));
 vi.mock('~/server/services/collection.service', () => ({
   getAvailableCollectionItemsFilterForUser: vi.fn(),
   getUserCollectionPermissionsById: vi.fn(),
@@ -358,9 +360,7 @@ describe('setModelMinor — pre-state snapshot', () => {
         .join('?')
         .includes('minorFlagSnapshot')
     ) ??
-    mockDbWrite.$executeRaw.mock.calls.find((call) =>
-      call.slice(1).includes('minorFlagSnapshot')
-    );
+    mockDbWrite.$executeRaw.mock.calls.find((call) => call.slice(1).includes('minorFlagSnapshot'));
 
   it('snapshots before the update so it records pre-flag state', async () => {
     mockBefore({});

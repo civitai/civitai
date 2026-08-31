@@ -186,7 +186,8 @@ ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times)
 `no-module-scope-cache`, `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
 `no-sharp-outside-native-project`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
 `no-unbounded-paging-fake`, `no-unguarded-billable-submit` (a user-token orchestrator submit must have its
-owner checked — see `assertWorkflowOwner`), `no-unloadable-image-fixture`, `no-unverified-provenance-write`,
+owner checked — see `assertWorkflowOwner`), `no-unguarded-user-text`, `no-unloadable-image-fixture`,
+`no-unverified-provenance-write`,
 `no-unpriced-default-model`, `no-unwrapped-knob-rotation`, `no-wholesale-module-mock`.
 
 ⚠️ **`pnpm run test:lint-rules` is a hand-maintained file list**, so a guard can be missing from it and

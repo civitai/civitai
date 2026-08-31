@@ -17,6 +17,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
   throwOnBlockedLinkDomain: vi.fn(async () => undefined),
+  throwOnBlockedUserContent: vi.fn(),
 }));
 vi.mock('~/server/utils/otel-helpers', () => ({
   withSpan: (_name: string, fn: () => unknown) => fn(),

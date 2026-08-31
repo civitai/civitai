@@ -21,7 +21,7 @@ const {
   submitTextModeration,
   preventReplicationLag,
   refreshUserArticleCount,
-  throwOnBlockedLinkDomain,
+  throwOnBlockedUserContent,
 } = vi.hoisted(() => ({
   expandBlurbs: vi.fn(),
   getReferencedBlurbIds: vi.fn(),
@@ -29,12 +29,12 @@ const {
   submitTextModeration: vi.fn(),
   preventReplicationLag: vi.fn(async () => undefined),
   refreshUserArticleCount: vi.fn(async () => undefined),
-  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
 }));
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
-  throwOnBlockedLinkDomain,
+  throwOnBlockedUserContent,
 }));
 vi.mock('~/server/services/blurb-materialize.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlurbMaterializeService>()),
@@ -119,7 +119,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   expandBlurbs.mockResolvedValue({ evaluated: true, html: EXPANDED_HTML, uses: USES });
   getReferencedBlurbIds.mockResolvedValue([7]);
-  throwOnBlockedLinkDomain.mockResolvedValue(undefined);
+  throwOnBlockedUserContent.mockResolvedValue(undefined);
   reconcileBlurbReferences.mockResolvedValue(undefined);
   submitTextModeration.mockResolvedValue(undefined);
   dbMock.dbWrite.article.findUnique.mockResolvedValue(storedArticle);
@@ -136,6 +136,16 @@ beforeEach(() => {
     content: EXPANDED_HTML,
   });
 });
+
+/**
+ * The guard takes one value or several — a title alongside a body — so a call's checked text is a
+ * list. Flattened here rather than indexed, so an assertion below says WHICH text was checked
+ * without also pinning how many fields the call happens to bundle.
+ */
+const checkedTexts = () =>
+  throwOnBlockedUserContent.mock.calls.map(([value]: [string | string[]]) =>
+    Array.isArray(value) ? value : [value]
+  );
 
 describe('upsertArticle — blurb expansion', () => {
   it('stores what the blurb says, not the html the client sent', async () => {
@@ -166,13 +176,15 @@ describe('upsertArticle — blurb expansion', () => {
     // top of `upsertArticle` ran before the splice, so only a re-check of the EXPANDED
     // html can see this.
     expandBlurbs.mockResolvedValue({ evaluated: true, html: BLOCKED_HTML, uses: USES });
-    throwOnBlockedLinkDomain.mockImplementation(async (html: string) => {
-      if (html.includes('blocked.example')) throw new Error('invalid urls: blocked.example');
+    throwOnBlockedUserContent.mockImplementation(async (value: string | string[]) => {
+      const values = Array.isArray(value) ? value : [value];
+      if (values.some((text) => text?.includes('blocked.example')))
+        throw new Error('invalid urls: blocked.example');
     });
 
     await expect(upsert()).rejects.toThrow('invalid urls');
 
-    expect(throwOnBlockedLinkDomain).toHaveBeenCalledWith(BLOCKED_HTML);
+    expect(checkedTexts().flat()).toContain(BLOCKED_HTML);
     expect(dbMock.dbWrite.article.update).not.toHaveBeenCalled();
   });
 
@@ -331,7 +343,7 @@ describe('applyArticleContentChange', () => {
   });
 
   it('rejects a blocked link domain before writing anything', async () => {
-    throwOnBlockedLinkDomain.mockRejectedValue(new Error('invalid urls: blocked.example'));
+    throwOnBlockedUserContent.mockRejectedValue(new Error('invalid urls: blocked.example'));
 
     await expect(
       applyArticleContentChange({ id: ARTICLE_ID, userId: OWNER_ID, content: BLOCKED_HTML })

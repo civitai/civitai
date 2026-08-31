@@ -17,7 +17,7 @@ const {
   expandBlurbs,
   getReferencedBlurbIds,
   reconcileBlurbReferences,
-  throwOnBlockedLinkDomain,
+  throwOnBlockedUserContent,
   enqueueImageIngestion,
   refreshUserBountyCount,
   evaluateAutoNsfw,
@@ -26,7 +26,7 @@ const {
   expandBlurbs: vi.fn(),
   getReferencedBlurbIds: vi.fn(),
   reconcileBlurbReferences: vi.fn(),
-  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
   enqueueImageIngestion: vi.fn(),
   refreshUserBountyCount: vi.fn(async () => undefined),
 }));
@@ -37,7 +37,7 @@ vi.mock('~/server/services/auto-nsfw', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlocklistService>()),
-  throwOnBlockedLinkDomain,
+  throwOnBlockedUserContent,
 }));
 vi.mock('~/server/services/blurb-materialize.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BlurbMaterializeService>()),
@@ -109,7 +109,7 @@ beforeEach(() => {
   expandBlurbs.mockResolvedValue({ evaluated: true, html: EXPANDED_HTML, uses: USES });
   getReferencedBlurbIds.mockResolvedValue([7]);
   reconcileBlurbReferences.mockResolvedValue(undefined);
-  throwOnBlockedLinkDomain.mockResolvedValue(undefined);
+  throwOnBlockedUserContent.mockResolvedValue(undefined);
   dbMock.dbRead.bounty.findUnique.mockResolvedValue({
     lockedProperties: [],
     userId: OWNER_ID,
@@ -138,6 +138,16 @@ beforeEach(() => {
   dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 });
 
+/**
+ * The guard takes one value or several — a title alongside a body — so a call's checked text is a
+ * list. Flattened here rather than indexed, so an assertion below says WHICH text was checked
+ * without also pinning how many fields the call happens to bundle.
+ */
+const checkedTexts = () =>
+  throwOnBlockedUserContent.mock.calls.map(([value]: [string | string[]]) =>
+    Array.isArray(value) ? value : [value]
+  );
+
 describe('upsertBounty — blurb expansion', () => {
   it('stores what the blurb says, not the html the client sent', async () => {
     await upsert();
@@ -153,8 +163,9 @@ describe('upsertBounty — blurb expansion', () => {
     // The first guard saw the client's html. Drop the `data.description = expansion.html`
     // assignment and this second call re-checks the same unexpanded string, so a blocked domain
     // that arrived inside the blurb body is never seen.
-    const checked = throwOnBlockedLinkDomain.mock.calls.map(([html]) => html);
-    expect(checked).toEqual([CLIENT_HTML, EXPANDED_HTML]);
+    const checked = checkedTexts();
+    expect(checked[0]).toContain(CLIENT_HTML);
+    expect(checked[1]).toEqual([EXPANDED_HTML]);
   });
 
   it('expands against the owner, not the moderator doing the saving', async () => {
@@ -244,7 +255,7 @@ describe('applyBountyContentChange', () => {
   });
 
   it('rejects a blocked link domain before writing anything', async () => {
-    throwOnBlockedLinkDomain.mockRejectedValue(new Error('invalid urls: blocked.example'));
+    throwOnBlockedUserContent.mockRejectedValue(new Error('invalid urls: blocked.example'));
 
     await expect(
       applyBountyContentChange({ id: BOUNTY_ID, description: EXPANDED_HTML })

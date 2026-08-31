@@ -15,6 +15,7 @@ const { expandBlurbs, getReferencedBlurbIds, reconcileBlurbReferences, throwOnBl
     getReferencedBlurbIds: vi.fn(),
     reconcileBlurbReferences: vi.fn(),
     throwOnBlockedLinkDomain: vi.fn(),
+    throwOnBlockedUserContent: vi.fn(),
   }));
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({

@@ -175,9 +175,7 @@ describe('throwOnBlockedUserContent', () => {
 
     it('skips absent and empty values without reading the lists', async () => {
       setLists({ patterns: [PHISH] });
-      await expect(
-        throwOnBlockedUserContent([null, undefined, ''])
-      ).resolves.toBeUndefined();
+      await expect(throwOnBlockedUserContent([null, undefined, ''])).resolves.toBeUndefined();
       expect(redisGet).not.toHaveBeenCalled();
     });
 
