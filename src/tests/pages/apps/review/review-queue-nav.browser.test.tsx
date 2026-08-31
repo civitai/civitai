@@ -27,8 +27,22 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
   createServerSideProps: () => async () => ({ props: {} }),
 }));
 
+// 🔴 BOTH hooks, because this factory REPLACES the module. The queue page's row now
+// renders the review entry point, which reads flags through `useOptionalFeatureFlags`
+// (the non-throwing variant, correct outside a provider). A factory naming only
+// `useFeatureFlags` leaves that named import nothing to bind to:
+//   SyntaxError: The requested module '/src/providers/FeatureFlagsProvider.tsx'
+//   does not provide an export named 'useOptionalFeatureFlags'
+// and in BROWSER mode that does not fail this file — it takes down the whole run. The
+// factory is resolved over the browser<->node channel inside a Playwright route handler
+// that does not catch, so the rejection escapes as an Unhandled Rejection in the
+// orchestrator: no summary, no per-file results, zero tests collected, exit 1. This one
+// file zeroed the entire `preview / component-tests` tier.
+// Both hooks return the SAME flags: the gate must be decided by this fixture, not by
+// which of the two a component happens to call.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => state.flags,
+  useOptionalFeatureFlags: () => state.flags,
 }));
 
 // Stub the modal component (assert whether a selection opened it) but keep the
