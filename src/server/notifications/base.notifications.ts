@@ -1,7 +1,7 @@
 import * as z from 'zod';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import type { NotificationCategory } from '~/server/common/enums';
-import { MAX_THREAD_CHAIN_DEPTH } from '~/server/common/thread-chain';
+import { muteableThreadsCte } from '~/server/common/thread-chain';
 
 /**
  * SQL fragment dropping a notification when recipient and acting user are on either side of a block.
@@ -33,14 +33,8 @@ export const notBlockedBetween = (recipient: string, actor: string) => `NOT EXIS
  * Matching only the comment's own thread would leave a mute set at the head of a conversation silent
  * about replies nested below it, which is the case the control is mostly used for. So this walks up.
  *
- * It climbs TWO edges, because neither alone reaches every ancestor. `Thread.parentThreadId` is
- * written from request input, so `throwIfThreadChainLocked` refuses to decide on it — but it is the
- * only link left once a parent comment is deleted, since `Thread.commentId` is `onDelete: SetNull`.
- * Measured on production 2026-08-27: 1,508 of 461,725 comment-anchored threads (0.33%) have no usable
- * `parentThreadId`, and 3,110 of 254,368 orphans (1.2%) have no `commentId` and only a
- * `parentThreadId`. `UNION` rather than `UNION ALL` so a diamond or a corrupted cycle converges.
- * The second edge is a scalar subquery rather than a `LEFT JOIN` so these statements stay free of one:
- * `comment.bounty-entry-owner.test.ts` refuses any `LEFT JOIN` in them, and that guard predates this.
+ * It climbs the shared ancestor walk in `thread-chain.ts`; the two edges and why `UNION` is
+ * load-bearing are documented there.
  *
  * The 8 entity-owner processors pin `t` to the entity ROOT thread (`t."imageId" IS NOT NULL` and its
  * siblings) and this only climbs, so a mute set on a conversation under a comment never matches them.
@@ -59,18 +53,7 @@ export const notBlockedBetween = (recipient: string, actor: string) => `NOT EXIS
  * A NULL threadId yields no ancestors and passes: the legacy `Comment` branches have no thread.
  */
 export const notThreadMuted = (recipient: string, threadId: string) => `NOT EXISTS (
-            WITH RECURSIVE muteable_threads AS (
-              SELECT ${threadId} "id", 0 "depth"
-              UNION
-              SELECT "parentId", mt."depth" + 1
-              FROM muteable_threads mt
-              JOIN "Thread" th ON th.id = mt."id"
-              CROSS JOIN LATERAL unnest(ARRAY[
-                th."parentThreadId",
-                (SELECT pc."threadId" FROM "CommentV2" pc WHERE pc.id = th."commentId")
-              ]) AS "parentId"
-              WHERE "parentId" IS NOT NULL AND mt."depth" < ${MAX_THREAD_CHAIN_DEPTH}
-            )
+            ${muteableThreadsCte(threadId)}
             SELECT 1
             FROM muteable_threads mt
             JOIN "ThreadMute" tm ON tm."threadId" = mt."id"

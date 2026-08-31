@@ -10,6 +10,7 @@ import { IconBell, IconBellOff, IconDotsVertical, IconLock } from '@tabler/icons
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useState } from 'react';
 import { trpc } from '~/utils/trpc';
+import { sectionMuteSchema, type SectionMuteInput } from '~/server/schema/commentv2.schema';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 type CreateCommentProps = {
@@ -29,7 +30,14 @@ export function CreateComment({
 }: CreateCommentProps) {
   const currentUser = useCurrentUser();
   const { isLocked, isMuted, isReadonly, forceLocked, entityType, entityId } = useCommentsContext();
-  const sectionMute = useSectionMute({ entityType, entityId, enabled: !replyToCommentId });
+  // `comicChapter` threads are keyed by (project, position) rather than a single column, and a
+  // `comment` section is muted through the comment's own menu — the section endpoint accepts
+  // neither, so do not render a control that could only fail.
+  const sectionMuteTarget = sectionMuteSchema.safeParse({ entityType, entityId });
+  const sectionMute = useSectionMute({
+    target: sectionMuteTarget.success ? sectionMuteTarget.data : undefined,
+    enabled: !replyToCommentId,
+  });
 
   if (!currentUser)
     return (
@@ -92,30 +100,22 @@ export function CreateComment({
  * one comment. Only rendered on the top-level composer: on a reply box the enclosing comment's own
  * menu is the right place, and two mute controls a few pixels apart would mean different things.
  */
-function useSectionMute({
-  entityType,
-  entityId,
-  enabled,
-}: {
-  entityType: ReturnType<typeof useCommentsContext>['entityType'];
-  entityId: number;
-  enabled: boolean;
-}) {
+function useSectionMute({ target, enabled }: { target?: SectionMuteInput; enabled: boolean }) {
   const queryUtils = trpc.useUtils();
   const [opened, setOpened] = useState(false);
 
   // Fetched on menu open only, so a page of comments costs no extra requests.
-  const { data } = trpc.commentv2.getSectionMuted.useQuery(
-    { entityType, entityId },
-    { enabled: enabled && opened }
-  );
+  const { data } = trpc.commentv2.getSectionMuted.useQuery(target ?? ({} as SectionMuteInput), {
+    enabled: !!target && enabled && opened,
+  });
 
   const toggle = trpc.commentv2.toggleSectionMute.useMutation({
     onSuccess(result) {
-      queryUtils.commentv2.getSectionMuted.setData(
-        { entityType, entityId },
-        { muted: result.muted }
-      );
+      if (!target) return;
+      queryUtils.commentv2.getSectionMuted.setData(target, {
+        muted: result.muted,
+        hasThread: result.threadId !== null,
+      });
       showSuccessNotification({
         message: result.muted
           ? "You won't be notified about new comments here"
@@ -138,8 +138,12 @@ function useSectionMute({
         </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
+        {/*
+          Nothing to mute until the first comment creates the thread. Disabled rather than hidden,
+          and it says why: firing the mutation there writes nothing and would report success.
+        */}
         <Menu.Item
-          disabled={!data || toggle.isPending}
+          disabled={!data || !data.hasThread || toggle.isPending}
           leftSection={
             data?.muted ? (
               <IconBell size={14} stroke={1.5} />
@@ -147,13 +151,19 @@ function useSectionMute({
               <IconBellOff size={14} stroke={1.5} />
             )
           }
-          onClick={() => toggle.mutate({ entityType, entityId })}
+          onClick={() => target && toggle.mutate(target)}
         >
-          {data?.muted ? 'Unmute this discussion' : 'Mute this discussion'}
+          {!data
+            ? 'Mute this discussion'
+            : !data.hasThread
+            ? 'No comments to mute yet'
+            : data.muted
+            ? 'Unmute this discussion'
+            : 'Mute this discussion'}
         </Menu.Item>
       </Menu.Dropdown>
     </Menu>
   );
 
-  return { control };
+  return { control: target ? control : null };
 }

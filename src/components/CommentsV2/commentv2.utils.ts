@@ -46,7 +46,11 @@ export const useMutateComment = () => {
 
   const toggleThreadMuteMutation = trpc.commentv2.toggleThreadMute.useMutation({
     async onSuccess(result, { commentId }) {
-      queryUtils.commentv2.getThreadMuted.setData({ commentId }, { muted: result.muted });
+      queryUtils.commentv2.getThreadMuted.setData(
+        { commentId },
+        // Toggling your own mute can never produce one inherited from above.
+        { muted: result.muted, viaAncestor: false }
+      );
       showSuccessNotification({
         message: result.muted
           ? "You won't be notified about replies in this thread"

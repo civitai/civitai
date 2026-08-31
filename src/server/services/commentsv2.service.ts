@@ -2,7 +2,7 @@ import type { GetByIdInput } from './../schema/base.schema';
 import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
-import { MAX_THREAD_CHAIN_DEPTH } from '~/server/common/thread-chain';
+import { MAX_THREAD_CHAIN_DEPTH, muteableThreadsCte } from '~/server/common/thread-chain';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -10,6 +10,7 @@ import type {
   UpsertCommentV2Input,
   CommentConnectorInput,
   GetCommentsInfiniteInput,
+  SectionMuteInput,
   ToggleThreadMuteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
@@ -505,12 +506,17 @@ export async function toggleThreadMute({
       where: { id: comment.threadId },
       select: { id: true, rootThreadId: true },
     });
-    const created = await dbWrite.thread.create({
-      data: {
+    // `upsert`, not `create`: a first mute and a first reply can land on the same comment together
+    // and `Thread.commentId` is unique, so the loser of that race would surface a raw constraint
+    // error and silently not mute.
+    const created = await dbWrite.thread.upsert({
+      where: { commentId },
+      create: {
         commentId,
         parentThreadId: comment.threadId,
         rootThreadId: parentThread?.rootThreadId ?? parentThread?.id ?? comment.threadId,
       },
+      update: {},
       select: { id: true },
     });
     threadId = created.id;
@@ -533,7 +539,7 @@ export async function toggleSectionMute({
   entityType,
   entityId,
   userId,
-}: CommentConnectorInput & { userId: number }) {
+}: SectionMuteInput & { userId: number }) {
   // Deliberately does NOT create the thread. An entity with no thread has no comments, so there is
   // nothing to be notified about and nothing to mute; the first comment creates the thread and the
   // control works from then on. Refusing to create also means this endpoint — which takes a plain
@@ -555,18 +561,20 @@ export async function getSectionMuted({
   entityType,
   entityId,
   userId,
-}: CommentConnectorInput & { userId: number }) {
+}: SectionMuteInput & { userId: number }) {
   const thread = await dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: { id: true },
   });
-  if (!thread) return { muted: false };
+  // `hasThread: false` is not the same as "not muted" and the caller must be able to tell them
+  // apart: nothing can be muted yet, so offering the action would report success over a no-op.
+  if (!thread) return { muted: false, hasThread: false };
 
   const mute = await dbRead.threadMute.findUnique({
     where: { userId_threadId: { userId, threadId: thread.id } },
     select: { userId: true },
   });
-  return { muted: !!mute };
+  return { muted: !!mute, hasThread: true };
 }
 
 export async function getThreadMuted({
@@ -578,13 +586,25 @@ export async function getThreadMuted({
     select: { childThread: { select: { id: true } } },
   });
   const threadId = comment?.childThread?.id;
-  if (!threadId) return { muted: false };
+  if (!threadId) return { muted: false, viaAncestor: false };
 
-  const mute = await dbRead.threadMute.findUnique({
-    where: { userId_threadId: { userId, threadId } },
-    select: { userId: true },
-  });
-  return { muted: !!mute };
+  // Walks ancestors, because SUPPRESSION does, and through the SAME shared CTE rather than a retyped
+  // copy — mirroring it by hand is what makes the menu and the notification disagree. Reading only
+  // this thread made the menu offer "Mute" on a comment already silenced from above, and offer an
+  // "Unmute" that deletes nothing and then claims the notifications are back on.
+  const [row] = await dbRead.$queryRaw<{ own: boolean; ancestor: boolean }[]>`
+    ${Prisma.raw(muteableThreadsCte(String(threadId)))}
+    SELECT
+      bool_or(mt."id" = ${threadId}::int) "own",
+      bool_or(mt."id" <> ${threadId}::int) "ancestor"
+    FROM muteable_threads mt
+    JOIN "ThreadMute" tm ON tm."threadId" = mt."id"
+    WHERE tm."userId" = ${userId}
+  `;
+
+  const own = row?.own ?? false;
+  const ancestor = row?.ancestor ?? false;
+  return { muted: own || ancestor, viaAncestor: !own && ancestor };
 }
 
 export const getComment = async ({

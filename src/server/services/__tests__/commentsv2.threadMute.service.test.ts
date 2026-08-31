@@ -57,13 +57,14 @@ describe('toggleThreadMute', () => {
   it('gives a lazily created reply thread the ancestry a reply would have given it', async () => {
     db.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: null });
     db.thread.findUnique.mockResolvedValue({ id: 10, rootThreadId: 3 });
-    db.thread.create.mockResolvedValue({ id: 99 });
+    db.thread.upsert.mockResolvedValue({ id: 99 });
 
     const result = await toggleThreadMute({ commentId: 5, userId: 1 });
 
-    expect(db.thread.create).toHaveBeenCalledWith(
+    expect(db.thread.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: { commentId: 5, parentThreadId: 10, rootThreadId: 3 },
+        where: { commentId: 5 },
+        create: { commentId: 5, parentThreadId: 10, rootThreadId: 3 },
       })
     );
     expect(result).toEqual({ muted: true, threadId: 99 });
@@ -72,13 +73,14 @@ describe('toggleThreadMute', () => {
   it('roots a lazily created thread at its parent when the parent IS the root', async () => {
     db.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: null });
     db.thread.findUnique.mockResolvedValue({ id: 10, rootThreadId: null });
-    db.thread.create.mockResolvedValue({ id: 99 });
+    db.thread.upsert.mockResolvedValue({ id: 99 });
 
     await toggleThreadMute({ commentId: 5, userId: 1 });
 
-    expect(db.thread.create).toHaveBeenCalledWith(
+    expect(db.thread.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: { commentId: 5, parentThreadId: 10, rootThreadId: 10 },
+        where: { commentId: 5 },
+        create: { commentId: 5, parentThreadId: 10, rootThreadId: 10 },
       })
     );
   });
@@ -124,7 +126,7 @@ describe('toggleThreadMute', () => {
   it('consults the thread-lock chain before creating a reply thread', async () => {
     db.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: null });
     db.thread.findUnique.mockResolvedValue({ id: 10, rootThreadId: 3 });
-    db.thread.create.mockResolvedValue({ id: 99 });
+    db.thread.upsert.mockResolvedValue({ id: 99 });
     db.$queryRaw.mockResolvedValue([{ locked: false, unresolved: false }]);
 
     await toggleThreadMute({ commentId: 5, userId: 1 });
@@ -138,7 +140,7 @@ describe('toggleThreadMute', () => {
     db.$queryRaw.mockResolvedValue([{ locked: true, unresolved: false }]);
 
     await expect(toggleThreadMute({ commentId: 5, userId: 1 })).rejects.toThrow(/locked/i);
-    expect(db.thread.create).not.toHaveBeenCalled();
+    expect(db.thread.upsert).not.toHaveBeenCalled();
     expect(db.threadMute.create).not.toHaveBeenCalled();
   });
 
@@ -179,6 +181,25 @@ describe('toggleSectionMute', () => {
     expect(db.thread.upsert).not.toHaveBeenCalled();
     expect(db.threadMute.create).not.toHaveBeenCalled();
     expect(result).toEqual({ muted: false, threadId: null });
+  });
+
+  /**
+   * The mocked client ignores `where`, so without this a hardcoded `imageId` — or the wrong id
+   * entirely — passes every other assertion here. Two entity types, because one cannot tell a
+   * hardcoded key from a computed one.
+   */
+  it.each([
+    ['post', 'postId'],
+    ['article', 'articleId'],
+  ] as const)('resolves the %s section by its own column', async (entityType, column) => {
+    db.thread.findUnique.mockResolvedValue({ id: 42 });
+
+    await toggleSectionMute({ entityType, entityId: 5, userId: 7 });
+
+    expect(db.thread.findUnique).toHaveBeenCalledWith({
+      where: { [column]: 5 },
+      select: { id: true },
+    });
   });
 
   it('mutes the existing root thread for the caller only', async () => {

@@ -101,3 +101,21 @@ export const muteRateLimits: RateLimit[] = [
   { limit: 60, period: CacheTTL.hour },
   { limit: 300, period: CacheTTL.day },
 ];
+
+/**
+ * The entity types a section mute can address: every one whose `Thread` row is findable by a single
+ * unique column, `<entityType>Id`.
+ *
+ * `comicChapter` is excluded because there is no `comicChapterId` — comic threads hang off
+ * `@@unique([comicProjectId, comicChapterPosition])`. Passing it builds `where: { comicChapterId }`,
+ * which Prisma rejects as an unknown argument, so the endpoint 500s rather than returning "not
+ * muted". The comics page does supply that entityType, so this is reachable rather than theoretical.
+ *
+ * `comment` is excluded for a different reason: a comment's thread is muted through
+ * `toggleThreadMute`, which takes the comment id. Routing it here as well would give one thread two
+ * doors with different names.
+ */
+export const sectionMuteSchema = commentConnectorSchema.pick({ entityId: true }).extend({
+  entityType: commentConnectorSchema.shape.entityType.exclude(['comicChapter', 'comment']),
+});
+export type SectionMuteInput = z.infer<typeof sectionMuteSchema>;

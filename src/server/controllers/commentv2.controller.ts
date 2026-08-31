@@ -24,6 +24,7 @@ import { hasEntityAccess } from '../services/common.service';
 import type { GetByIdInput } from './../schema/base.schema';
 import type {
   CommentConnectorInput,
+  SectionMuteInput,
   ToggleThreadMuteInput,
   UpsertCommentV2Input,
 } from './../schema/commentv2.schema';
@@ -214,7 +215,7 @@ export const toggleSectionMuteHandler = async ({
   input,
 }: {
   ctx: ProtectedContext;
-  input: CommentConnectorInput;
+  input: SectionMuteInput;
 }) => {
   try {
     return await toggleSectionMute({ ...input, userId: ctx.user.id });
@@ -229,7 +230,7 @@ export const getSectionMutedHandler = async ({
   input,
 }: {
   ctx: ProtectedContext;
-  input: CommentConnectorInput;
+  input: SectionMuteInput;
 }) => {
   try {
     return await getSectionMuted({ ...input, userId: ctx.user.id });

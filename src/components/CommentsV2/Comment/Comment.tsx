@@ -334,6 +334,8 @@ export function CommentContent({
                 </LoginRedirect>
               )}
               {currentUser && (
+                // Already silenced from further up, so unmuting here would delete nothing and then
+                // claim the notifications were back on. Says where the mute lives instead.
                 <Menu.Item
                   leftSection={
                     threadMute?.muted ? (
@@ -342,9 +344,16 @@ export function CommentContent({
                       <IconBellOff size={14} stroke={1.5} />
                     )
                   }
+                  // Not merely cosmetic: the mutation toggles from DB state, so clicking a control
+                  // labelled "Mute" before the query lands UNMUTES an already-muted thread.
+                  disabled={!threadMute || threadMute.viaAncestor}
                   onClick={() => toggleThreadMute({ commentId: comment.id }).catch(() => null)}
                 >
-                  {threadMute?.muted ? 'Unmute this thread' : 'Mute this thread'}
+                  {threadMute?.viaAncestor
+                    ? 'Muted with the thread above'
+                    : threadMute?.muted
+                    ? 'Unmute this thread'
+                    : 'Mute this thread'}
                 </Menu.Item>
               )}
               <Menu.Item leftSection={<IconLink size={14} stroke={1.5} />} onClick={handleCopyLink}>
