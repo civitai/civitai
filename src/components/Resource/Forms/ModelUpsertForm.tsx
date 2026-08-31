@@ -175,6 +175,9 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const queryUtils = trpc.useUtils();
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
+  // Only a saved model grandfathers a retired type. A template seeds `type` without an `id`, and
+  // minting a new model on a retired type is what retiring it was meant to stop.
+  const grandfatheredType = model?.id ? model.type : null;
   const [nsfw, poi, sfwOnly, minor] = form.watch(['nsfw', 'poi', 'sfwOnly', 'minor']);
   const watchedTags = form.watch('tagsOnModels') ?? [];
   const allowCommercialUse = form.watch('allowCommercialUse') as CommercialUse[] | undefined;
@@ -345,7 +348,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                   name="type"
                   label="Type"
                   placeholder="Type"
-                  data={getModelTypeSelectData(type)}
+                  data={getModelTypeSelectData(grandfatheredType)}
                   onChange={handleModelTypeChange}
                   disabled={isTrained}
                   allowDeselect={false}

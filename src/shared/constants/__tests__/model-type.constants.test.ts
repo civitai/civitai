@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 import {
   currentlySelectedGroupLabel,
@@ -71,6 +73,24 @@ describe('model type picker data', () => {
     expect(data.filter(({ value }) => value === ModelType.Checkpoint)).toHaveLength(1);
   });
 
+  it('lists both partitions explicitly, so a new ModelType cannot become silently unpickable', () => {
+    // retiredModelTypes is written out rather than derived as the complement of the selectable set.
+    // Derived, a ModelType added later would land in it and this file would stay green.
+    expect([...retiredModelTypes]).toStrictEqual([
+      ModelType.TextualInversion,
+      ModelType.Hypernetwork,
+      ModelType.AestheticGradient,
+      ModelType.MotionModule,
+      ModelType.Poses,
+      ModelType.Detection,
+      ModelType.ComfyWorkflows,
+      ModelType.CLIP,
+      ModelType.CLIPVision,
+      ModelType.LLM,
+      ModelType.VisionLanguage,
+    ]);
+  });
+
   it('offers no retired type when nothing is selected yet', () => {
     const values = getModelTypeSelectData(null).map(({ value }) => value);
 
@@ -81,12 +101,29 @@ describe('model type picker data', () => {
   });
 
   it('emits flat items carrying a group, the shape SelectWrapper expects', () => {
-    // Pre-grouped `{ group, items }` objects survive typecheck and render options with no value.
+    // SelectWrapper does the grouping itself; pre-grouped `{ group, items }` renders valueless
+    // options.
     for (const item of getModelTypeSelectData(ModelType.Hypernetwork)) {
       expect(Object.keys(item).sort()).toStrictEqual(['group', 'label', 'value']);
       expect(typeof item.value).toBe('string');
       expect(item.label.length).toBeGreaterThan(0);
     }
+  });
+
+  it('reads the grandfathered type from the saved model, never from the form', () => {
+    // This has to be asserted at the call site: both ways of getting it wrong type-check and pass
+    // every test above. Passing the watched `type` drops the grandfathered option the moment the
+    // user clicks another one, so the original becomes unrecoverable; and a template seeds `type`
+    // with no `id`, so keying off anything but `model?.id` lets `/models/create?templateId=` mint a
+    // new model on a retired type — the thing retiring it was meant to stop.
+    const source = readFileSync(
+      path.resolve(__dirname, '../../../components/Resource/Forms/ModelUpsertForm.tsx'),
+      'utf8'
+    );
+
+    expect(source).toContain('const grandfatheredType = model?.id ? model.type : null;');
+    expect(source).toContain('data={getModelTypeSelectData(grandfatheredType)}');
+    expect(source).not.toContain('getModelTypeSelectData(type)');
   });
 
   it('labels Checkpoint as Fine-tune', () => {
