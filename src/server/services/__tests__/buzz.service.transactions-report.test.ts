@@ -13,8 +13,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 import type * as ClickhouseClient from '~/server/clickhouse/client';
+import type * as BuzzClient from '@civitai/buzz';
 
-const { $query } = vi.hoisted(() => ({ $query: vi.fn() }));
+const { $query, getUserTransactionsReport } = vi.hoisted(() => ({
+  $query: vi.fn(),
+  getUserTransactionsReport: vi.fn(),
+}));
+
+// Spread the real package and override only the client factory, so this file is not coupled to every
+// export buzz.service happens to import from it.
+vi.mock('@civitai/buzz', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzClient>()),
+  createBuzzClient: () => ({ getUserTransactionsReport }),
+}));
 
 // Spread the real module and override only the client. It re-exports the package surface plus the
 // app Tracker, and a hand-listed mock would couple this file to all of it.
@@ -35,6 +46,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   $query.mockReset();
   $query.mockResolvedValue([]);
+  getUserTransactionsReport.mockReset();
 });
 
 afterEach(() => {
@@ -51,19 +63,23 @@ const branches = (sql: string) => {
 };
 
 describe('getTransactionsReport', () => {
-  it('excludes bank and withdrawal from the spent series, and nothing else', async () => {
+  // 🔴 BOTH branches, deliberately. A `withdrawal` debited yellow until 2025-02-27 and credits it now
+  // (cashSettled -> yellow), and `extract` credits yellow/green out of the program bank — so a cash-out
+  // reaches the chart through the GAINED branch today. Excluding on the spend side alone is a guard
+  // that cannot fire for any window this chart offers. If you are here to "simplify" this back to one
+  // branch, that is the bug, not the redundancy.
+  it('excludes cash-out plumbing from the spent series', async () => {
     await getTransactionsReport({ userId: USER, window: 'day', accountType: 'yellow' });
 
-    const { spent } = branches(sqlOf());
     // The whole predicate, operator included: an assertion on the type names alone passes just as
     // well against `type IN (...)`, which would draw ONLY cash-outs.
-    expect(spent).toContain("AND type NOT IN ('bank','withdrawal')");
+    expect(branches(sqlOf()).spent).toContain("AND type NOT IN ('bank','withdrawal','extract')");
   });
 
-  it('does not filter the gained series', async () => {
+  it('excludes cash-out plumbing from the gained series too', async () => {
     await getTransactionsReport({ userId: USER, window: 'day', accountType: 'yellow' });
 
-    expect(branches(sqlOf()).gained).not.toContain('type NOT IN');
+    expect(branches(sqlOf()).gained).toContain("AND type NOT IN ('bank','withdrawal','extract')");
   });
 
   it('scopes both branches to the requested account and account type', async () => {
@@ -119,6 +135,47 @@ describe('getTransactionsReport', () => {
     expect(report).toHaveLength(8);
     expect(report.every((bucket) => bucket.accounts[0].gained === 0)).toBe(true);
     expect(report.every((bucket) => bucket.accounts[0].spent === 0)).toBe(true);
+  });
+
+  // The chart keys each dataset by a `MMM-DD` label, so two buckets that format alike overwrite each
+  // other. A year-back start spans thirteen months and both ends render as `Aug-01`.
+  it('emits twelve month buckets, not thirteen', async () => {
+    const report = await getTransactionsReport({
+      userId: USER,
+      window: 'month',
+      accountType: 'yellow',
+    });
+
+    expect(report).toHaveLength(12);
+    expect(report[0].date.slice(0, 7)).toBe('2025-09');
+    expect(report[11].date.slice(0, 7)).toBe('2026-08');
+    // The label the chart actually keys on has to be unique across the window.
+    const labels = report.map((bucket) => bucket.date.slice(5, 10));
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+
+  it('falls back to the buzz service when the ClickHouse query fails', async () => {
+    $query.mockRejectedValue(new Error('clickhouse is down'));
+    getUserTransactionsReport.mockResolvedValue([
+      {
+        date: '2026-08-31T00:00:00',
+        start: '2026-08-31T00:00:00',
+        end: '2026-09-01T00:00:00',
+        accounts: [{ accountType: 'User', spent: 10, gained: 20 }],
+      },
+    ]);
+
+    const report = await getTransactionsReport({
+      userId: USER,
+      window: 'day',
+      accountType: 'yellow',
+    });
+
+    // Degrades to the chart's previous behaviour — which draws the cash-out — rather than to an empty
+    // result, which the client renders as "no data on the provided timeframe" over real activity.
+    expect(getUserTransactionsReport).toHaveBeenCalledOnce();
+    expect(report).toHaveLength(1);
+    expect(report[0].accounts[0].gained).toBe(20);
   });
 
   it('buckets weeks on Monday, matching ClickHouse toMonday', async () => {
