@@ -34,6 +34,7 @@ import {
   buildPublishedSampleQuery,
   buildScheduledSampleQuery,
   baseModelDenominators,
+  baseModelIsExplained,
   buildBaseModelSampleQuery,
   compareStratum,
   getAuditConfig,
@@ -50,6 +51,7 @@ const AUDIT_ENV = [
   'BITDEX_AUDIT_PUBLISHED_WINDOW_SECS',
   'BITDEX_AUDIT_SORTAT_TOLERANCE_SECS',
   'BITDEX_AUDIT_SETTLE_SECS',
+  'BITDEX_AUDIT_BASEMODEL_SETTLE_SECS',
 ];
 
 const clearEnv = () => AUDIT_ENV.forEach((k) => delete process.env[k]);
@@ -125,13 +127,22 @@ describe('buildPublishedSampleQuery', () => {
 });
 
 describe('getAuditConfig', () => {
-  it('defaults to 50 samples / 24h window / 5m tolerance / 2m settle', () => {
+  it('defaults to 50 samples / 24h window / 5m tolerance / 2m settle / 15m baseModel settle', () => {
     expect(getAuditConfig()).toEqual({
       sampleSize: 50,
       publishedWindowSecs: 86400,
       sortAtToleranceSecs: 300,
       settleSecs: 120,
+      // Wider than the others on purpose: this stratum compares a value derived from
+      // ImageResourceNew, which a resource edit changes without moving Post."updatedAt".
+      baseModelSettleSecs: 900,
     });
+  });
+
+  it('honors the baseModel settle override independently of the shared one', () => {
+    process.env.BITDEX_AUDIT_SETTLE_SECS = '60';
+    process.env.BITDEX_AUDIT_BASEMODEL_SETTLE_SECS = '1800';
+    expect(getAuditConfig()).toMatchObject({ settleSecs: 60, baseModelSettleSecs: 1800 });
   });
 
   it('honors positive env overrides', () => {
@@ -296,6 +307,66 @@ describe('buildBaseModelSampleQuery', () => {
   it('samples randomly, so repeated runs cover the population', () => {
     expect(sql()).toContain('ORDER BY random()');
   });
+
+  it('reads only', () => {
+    expect(sql()).not.toMatch(/(INSERT|UPDATE|DELETE)/);
+  });
+
+  // Substring assertions alone stay green when the window and the settle belt are
+  // SWAPPED — both are `make_interval(secs => $n)` and both appear either way. Pinning
+  // the parameter order is what tells a 24h window from a 24h settle belt.
+  it('binds window, settle and limit in that order', () => {
+    const q = buildBaseModelSampleQuery({
+      sampleSize: 50,
+      publishedWindowSecs: 86400,
+      baseModelSettleSecs: 900,
+    });
+    expect(q.values).toEqual([86400, 900, 50]);
+  });
+});
+
+/**
+ * The rule the whole stratum rests on. It replaced a membership test that produced a
+ * measured 0.23% false-mismatch rate on correct data, because the index it treats as
+ * truth glues several checkpoints into one string with no delimiter.
+ */
+describe('baseModelIsExplained', () => {
+  it('accepts the single-checkpoint case', () => {
+    expect(baseModelIsExplained('Pony', ['Pony'])).toBe(true);
+  });
+
+  it('accepts a concatenation of the image checkpoints, in either order', () => {
+    expect(baseModelIsExplained('AnimaMiniMax H3', ['Anima', 'MiniMax H3'])).toBe(true);
+    expect(baseModelIsExplained('MiniMax H3Anima', ['Anima', 'MiniMax H3'])).toBe(true);
+  });
+
+  // Real values from the prod replica, the ones that made the membership rule fire on
+  // correct data: image 141436030 and 141433747.
+  it('accepts the two production values that broke the membership rule', () => {
+    expect(baseModelIsExplained('AnimaMiniMax H3', ['Anima', 'MiniMax H3'])).toBe(true);
+    expect(baseModelIsExplained('LTXV 2.3Krea 2', ['Krea 2', 'LTXV 2.3'])).toBe(true);
+  });
+
+  // The property that has to survive the fix: a base model from an attached LoRA rather
+  // than a checkpoint is still not explainable. Without this the rule accepts everything.
+  it('rejects a value belonging to no checkpoint on the image', () => {
+    expect(baseModelIsExplained('Pony', ['Illustrious'])).toBe(false);
+    expect(baseModelIsExplained('IllustriousPony', ['Illustrious'])).toBe(false);
+  });
+
+  it('rejects any value when the image has no checkpoint at all', () => {
+    expect(baseModelIsExplained('Illustrious', [])).toBe(false);
+  });
+
+  // A checkpoint name that is a PREFIX of the value must not be consumed greedily into a
+  // false accept, and one that is a prefix of another candidate must still backtrack.
+  it('does not accept a value that merely starts with a checkpoint name', () => {
+    expect(baseModelIsExplained('SD 1.5 Hyper', ['SD 1.5'])).toBe(false);
+  });
+
+  it('backtracks when one candidate is a prefix of another', () => {
+    expect(baseModelIsExplained('PonyPony XL', ['Pony', 'Pony XL'])).toBe(true);
+  });
 });
 
 describe('compareStratum — basemodel (868ktxe1r / 868ku8x8k)', () => {
@@ -366,13 +437,34 @@ describe('compareStratum — basemodel (868ktxe1r / 868ku8x8k)', () => {
     ).toEqual([]);
   });
 
-  it('accepts any one of several checkpoints on the same image', () => {
+  // The fixture is the CONCATENATION, because that is what the index emits for a
+  // multi-checkpoint image — `string_agg(..., '')`, no delimiter. A fixture holding one
+  // of the two would certify a document shape production never produces, and that is the
+  // test that blessed the membership bug rather than catching it.
+  it('accepts the glued value a multi-checkpoint image indexes as', () => {
     expect(
       compare(
-        [{ id: 1, isPublished: true, baseModel: 'SDXL 1.0' }],
+        [{ id: 1, isPublished: true, baseModel: 'PonySDXL 1.0' }],
         [row({ expectedBaseModels: ['Pony', 'SDXL 1.0'] })]
       )
     ).toEqual([]);
+  });
+
+  it('still flags a glued value carrying a base model from no checkpoint', () => {
+    const found = compare(
+      [{ id: 1, isPublished: true, baseModel: 'PonyIllustrious' }],
+      [row({ expectedBaseModels: ['Pony'] })]
+    );
+    expect(found.map((f) => f.kind)).toEqual(['basemodel_not_checkpoint']);
+  });
+
+  // The sample query is the only thing that supplies this column. Defaulting a missing
+  // one to `[]` would read as "no checkpoint anywhere" and silence both arms while the
+  // denominators stayed healthy — so it throws instead, and the run fails loudly.
+  it('throws rather than treating a missing expectedBaseModels as no checkpoint', () => {
+    expect(() => compare([{ id: 1, isPublished: true, baseModel: 'Pony' }], [row()])).toThrow(
+      /expectedBaseModels/
+    );
   });
 });
 
@@ -395,13 +487,33 @@ describe('baseModelDenominators', () => {
     expect(baseModelDenominators(rows as never, docs as never)).toEqual({
       comparedDocs: 2,
       withCheckpoint: 1,
+      withDocValue: 1,
     });
   });
 
-  it('is zero on both counts when BitDex holds none of the sample', () => {
+  it('is zero on every count when BitDex holds none of the sample', () => {
     expect(
       baseModelDenominators([row({ expectedBaseModels: ['Pony'] })] as never, [] as never)
-    ).toEqual({ comparedDocs: 0, withCheckpoint: 0 });
+    ).toEqual({ comparedDocs: 0, withCheckpoint: 0, withDocValue: 0 });
+  });
+
+  // The `not_checkpoint` arm's zero needs its own denominator: a sample where every
+  // compared document carried NO value can only produce `basemodel_missing`, so a zero
+  // on the other arm says nothing. One number covering both arms would hide that.
+  it('counts the two arms with separate denominators', () => {
+    const rows = [
+      row({ imageId: 1, expectedBaseModels: ['Pony'] }),
+      row({ imageId: 2, expectedBaseModels: [] }),
+    ];
+    const docs = [
+      { id: 1, isPublished: true },
+      { id: 2, isPublished: true, baseModel: 'Pony' },
+    ];
+    expect(baseModelDenominators(rows as never, docs as never)).toEqual({
+      comparedDocs: 2,
+      withCheckpoint: 1,
+      withDocValue: 1,
+    });
   });
 });
 
@@ -457,6 +569,7 @@ describe('auditBitdexConsistency job body', () => {
       // The zero below means agreement only because these two are nonzero.
       baseModelComparedDocs: 1,
       baseModelWithCheckpoint: 1,
+      baseModelWithDocValue: 1,
       baseModelMismatches: 0,
     });
   });
@@ -499,6 +612,30 @@ describe('auditBitdexConsistency job body', () => {
 
     expect(mockFetchDocs).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({ scheduledChecked: 0, publishedChecked: 1, baseModelChecked: 1 });
+  });
+
+  // 🔴 The one that pins the machinery. The two zero-denominator tests around it assert
+  // values IDENTICAL to the `?? 0` fallback the job reads them through, so deleting the
+  // whole `baseModelDenominators` spread from `auditStratum` leaves them green — measured.
+  // This one asserts a nonzero comparedDocs beside a zero withCheckpoint, which only the
+  // real computation produces. Do not "simplify" it back into the zero case.
+  it('reports denominators that a missing computation could not produce', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockDbWrite.$queryRaw
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([row({ imageId: 3, postId: 30, expectedBaseModels: [] })]);
+    mockFetchDocs.mockResolvedValueOnce([{ id: 3, isPublished: true }]);
+
+    const result = await runJob();
+
+    expect(result).toMatchObject({
+      baseModelChecked: 1,
+      baseModelComparedDocs: 1,
+      baseModelWithCheckpoint: 0,
+      baseModelWithDocValue: 0,
+      baseModelMismatches: 0,
+    });
   });
 
   // The failure this guard exists to not have: it must be impossible to read a clean

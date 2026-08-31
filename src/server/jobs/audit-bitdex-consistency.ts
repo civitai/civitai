@@ -42,6 +42,16 @@ const DEFAULT_SORTAT_TOLERANCE_SECS = 5 * 60;
 // settle belt, and deliberately larger — the audit has no reason to look at the edge.
 const DEFAULT_SETTLE_SECS = 120;
 
+// Stratum C's belt, and it is wider than the others for a reason that is NOT caution.
+// The other two compare publication state, which lives on `Post`, so `Post."updatedAt"`
+// moves with the thing they measure. This one compares a value derived from
+// `ImageResourceNew`, and `addResourceToImages` (post.service.ts) inserts those rows
+// WITHOUT touching `Post."updatedAt"` — so for a resource edit the belt is watching a
+// timestamp that never moved, and a wider window only shrinks the overlap with the
+// index's sync lag rather than closing it. A mismatch on a just-edited image is a known
+// false positive here; the row prints both sides so it can be recognised as one.
+const DEFAULT_BASEMODEL_SETTLE_SECS = 15 * 60;
+
 // Doc fields the comparison reads. publishedAt is fetched alongside isPublished
 // because isPublished is an exists_boolean derived FROM publishedAt in the index
 // config: if the boolean is ever absent from a doc payload, publishedAt still carries
@@ -74,6 +84,7 @@ export type AuditConfig = {
   publishedWindowSecs: number;
   sortAtToleranceSecs: number;
   settleSecs: number;
+  baseModelSettleSecs: number;
 };
 
 // Env-overridable so sample size and tolerance can be retuned without a redeploy —
@@ -90,6 +101,10 @@ export function getAuditConfig(): AuditConfig {
       DEFAULT_SORTAT_TOLERANCE_SECS
     ),
     settleSecs: parsePositiveInt(process.env.BITDEX_AUDIT_SETTLE_SECS, DEFAULT_SETTLE_SECS),
+    baseModelSettleSecs: parsePositiveInt(
+      process.env.BITDEX_AUDIT_BASEMODEL_SETTLE_SECS,
+      DEFAULT_BASEMODEL_SETTLE_SECS
+    ),
   };
 }
 
@@ -105,9 +120,11 @@ export type AuditSampleRow = {
   // audit compares against the same GREATEST semantics rather than reimplementing them.
   expectedSortAtSecs: number;
   // Distinct baseModels of the image's CHECKPOINT resources. Only the baseModel stratum
-  // selects it; a set rather than a scalar because an image can carry more than one
-  // checkpoint, and because the comparison is membership — which resource supplied the
-  // value is the whole question, and ordering is not.
+  // selects it, which is why the type says optional — but it is REQUIRED wherever it is
+  // read, and `auditStratum` throws rather than defaulting when a sampled row arrives
+  // without it. Coercing a lost column to `[]` would mean "this image has no checkpoint",
+  // which is a legitimate state for ~14% of images and would silence both arms while the
+  // denominators still looked healthy.
   expectedBaseModels?: string[] | null;
 };
 
@@ -174,8 +191,8 @@ export function buildPublishedSampleQuery({
 export function buildBaseModelSampleQuery({
   sampleSize,
   publishedWindowSecs,
-  settleSecs,
-}: Pick<AuditConfig, 'sampleSize' | 'publishedWindowSecs' | 'settleSecs'>): Prisma.Sql {
+  baseModelSettleSecs,
+}: Pick<AuditConfig, 'sampleSize' | 'publishedWindowSecs' | 'baseModelSettleSecs'>): Prisma.Sql {
   return Prisma.sql`
     SELECT
       i.id AS "imageId",
@@ -194,7 +211,7 @@ export function buildBaseModelSampleQuery({
     JOIN "Image" i ON i."postId" = p.id
     WHERE p."publishedAt" > now() - make_interval(secs => ${publishedWindowSecs})
       AND p."publishedAt" <= now()
-      AND p."updatedAt" < now() - make_interval(secs => ${settleSecs})
+      AND p."updatedAt" < now() - make_interval(secs => ${baseModelSettleSecs})
     ORDER BY random()
     LIMIT ${sampleSize}
   `;
@@ -232,6 +249,40 @@ export function readDocState(doc: BitdexDocument | undefined): BitdexDocState {
   };
 }
 
+/**
+ * Is the document's baseModel explainable by the image's checkpoints?
+ *
+ * NOT membership. The index this stratum treats as truth builds the value with
+ * `string_agg(..., '')` — no delimiter, no DISTINCT — so a multi-checkpoint image comes
+ * back as one glued string (`AnimaMiniMax H3`), and `includes()` would call that a
+ * mismatch. Measured on the prod replica over this stratum's exact window: 3000 rows,
+ * 2566 single-checkpoint, 427 with none, 7 multi. At 0.23% that is roughly 17 false
+ * mismatches a day — a permanent noise floor on the series meant to detect the leak.
+ *
+ * BitDex's own derivation is the thing we cannot observe from here, so this deliberately
+ * does not assume Meili's exact expression: a value is accepted when it can be consumed
+ * entirely by concatenating checkpoint base models, in any order, which holds whether the
+ * producer emits one value or glues several. A base model belonging to no checkpoint on
+ * the image — the reported leak — still cannot be consumed, which is the property that
+ * has to survive.
+ */
+export function baseModelIsExplained(value: string, expected: string[]): boolean {
+  if (!expected.length) return false;
+  const candidates = [...new Set(expected)].filter(Boolean);
+
+  const seen = new Set<number>();
+  const consume = (from: number): boolean => {
+    if (from === value.length) return true;
+    if (seen.has(from)) return false;
+    seen.add(from);
+    for (const c of candidates) {
+      if (value.startsWith(c, from) && consume(from + c.length)) return true;
+    }
+    return false;
+  };
+  return consume(0);
+}
+
 export type AuditMismatch = {
   stratum: AuditStratum;
   kind: MismatchKind;
@@ -264,7 +315,7 @@ export function compareStratum(
       // here would double-count one lost write as two defects in two places.
       if (!state.present || !state.published) continue;
 
-      const expected = row.expectedBaseModels ?? [];
+      const expected = expectedBaseModelsOf(row);
 
       if (state.baseModel == null) {
         // No checkpoint on the image means no base model is the CORRECT answer, so this
@@ -283,7 +334,7 @@ export function compareStratum(
         continue;
       }
 
-      if (!expected.includes(state.baseModel)) {
+      if (!baseModelIsExplained(state.baseModel, expected)) {
         mismatches.push({
           stratum,
           kind: 'basemodel_not_checkpoint',
@@ -356,7 +407,28 @@ export type AuditScopeResult = {
   // beside a zero denominator is not evidence of agreement.
   comparedDocs?: number;
   withCheckpoint?: number;
+  // The `not_checkpoint` arm's own denominator: compared documents that actually carried
+  // a value to disagree about. Its zero needs this the way the `missing` arm's zero needs
+  // `withCheckpoint`, and one number covering both arms would hide whichever is empty.
+  withDocValue?: number;
 };
+
+/**
+ * Reads the checkpoint set off a sampled row, and THROWS when the column is not there.
+ *
+ * The tempting `?? []` is the failure this whole guard exists to prevent: an empty set is
+ * a legitimate state for ~14% of images (no checkpoint resource), so a lost alias, a
+ * dropped COALESCE or a changed row shape would silence BOTH arms permanently while
+ * `comparedDocs` stayed healthy and nonzero. Throwing routes it to the error counter and
+ * fails the run, which is loud; defaulting would read as a clean audit forever.
+ */
+function expectedBaseModelsOf(row: AuditSampleRow): string[] {
+  if (!Array.isArray(row.expectedBaseModels))
+    throw new Error(
+      `baseModel stratum: image ${row.imageId} arrived without expectedBaseModels — the sample query is not delivering the column`
+    );
+  return row.expectedBaseModels;
+}
 
 /**
  * The denominators the baseModel stratum's zero has to be read against: how many sampled
@@ -370,13 +442,15 @@ export function baseModelDenominators(rows: AuditSampleRow[], docs: BitdexDocume
 
   let comparedDocs = 0;
   let withCheckpoint = 0;
+  let withDocValue = 0;
   for (const row of rows) {
     const state = readDocState(byId.get(row.imageId));
     if (!state.present || !state.published) continue;
     comparedDocs++;
-    if ((row.expectedBaseModels ?? []).length) withCheckpoint++;
+    if (expectedBaseModelsOf(row).length) withCheckpoint++;
+    if (state.baseModel != null) withDocValue++;
   }
-  return { comparedDocs, withCheckpoint };
+  return { comparedDocs, withCheckpoint, withDocValue };
 }
 
 // Samples one stratum and compares it. A BitDex fetch failure propagates:
@@ -478,6 +552,7 @@ export const auditBitdexConsistency = createJob(
         // and comparing none of them reports the same mismatch count as full agreement.
         baseModelComparedDocs: result.baseModel.comparedDocs ?? 0,
         baseModelWithCheckpoint: result.baseModel.withCheckpoint ?? 0,
+        baseModelWithDocValue: result.baseModel.withDocValue ?? 0,
         baseModelMismatches: result.baseModel.mismatches.length,
         // Ids and expected-vs-actual, so a firing alert has a trail to pull on
         // instead of only a rate.
@@ -498,6 +573,7 @@ export const auditBitdexConsistency = createJob(
       baseModelChecked: result.baseModel.checked,
       baseModelComparedDocs: result.baseModel.comparedDocs ?? 0,
       baseModelWithCheckpoint: result.baseModel.withCheckpoint ?? 0,
+      baseModelWithDocValue: result.baseModel.withDocValue ?? 0,
       baseModelMismatches: result.baseModel.mismatches.length,
       durationSec,
     };
