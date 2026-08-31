@@ -12,7 +12,7 @@ import {
   resourceReviewSimpleSelect,
 } from '~/server/selectors/resourceReview.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   getBlockCheckOwnerIds,
   throwIfBlockedByOwners,
@@ -354,7 +354,7 @@ export const upsertResourceReview = async ({
   isModerator,
   ...data
 }: UpsertResourceReviewInput & { userId: number; isModerator?: boolean }) => {
-  if (data.details) await throwOnBlockedLinkDomain(data.details);
+  await throwOnBlockedUserContent(data.details, { isModerator, surface: 'resourceReview' });
   // Edits too, not just creates — a review written before a block would otherwise stay editable
   // into anything afterwards. An edit writes `modelId` through from the request while being scoped
   // by review id, so the review's stored model is checked alongside the one the request names.

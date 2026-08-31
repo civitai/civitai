@@ -23,7 +23,7 @@ import { dbRead, dbWrite } from '../db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import type { GetByIdInput } from '../schema/base.schema';
 import { userBountyEntryCountCache } from '~/server/redis/caches';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 
@@ -113,7 +113,7 @@ export const upsertBountyEntry = async ({
   description,
   userId,
 }: UpsertBountyEntryInput & { userId: number }) => {
-  if (description) await throwOnBlockedLinkDomain(description);
+  await throwOnBlockedUserContent(description, { surface: 'bountyEntry' });
 
   let imagesToIngest: IngestImageInput[] = [];
 

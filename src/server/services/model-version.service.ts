@@ -102,7 +102,7 @@ import {
 } from '@civitai/buzz';
 import { applyModelMonetizationPolicy } from '~/server/services/model-monetization-policy';
 import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -534,7 +534,10 @@ export const upsertModelVersion = async ({
    */
   licensingSourceCoercedReason?: LicensingSourceRejection;
 }) => {
-  if (data.description) await throwOnBlockedLinkDomain(data.description);
+  await throwOnBlockedUserContent([data.name, data.description], {
+    isModerator,
+    surface: 'modelVersion',
+  });
 
   // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
   // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
@@ -611,7 +614,7 @@ export const upsertModelVersion = async ({
     data.description = expansion.html;
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
     // since, so the string about to be written is one it never checked.
-    await throwOnBlockedLinkDomain(data.description);
+    await throwOnBlockedUserContent(data.description, { isModerator, surface: 'modelVersion' });
   }
 
   // Validate NSFW + restricted base model combination
@@ -1047,7 +1050,7 @@ export async function applyModelVersionContentChange({
 }) {
   // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
-  await throwOnBlockedLinkDomain(description);
+  await throwOnBlockedUserContent(description, { surface: 'modelVersion' });
 
   let modelId: number;
   if (context) {

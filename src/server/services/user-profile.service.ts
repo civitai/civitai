@@ -25,6 +25,7 @@ import { userUpdateCounter } from '~/server/prom/client';
 import { usersSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 
 export type UserContentOverviewVariant = 'public' | 'sfw' | 'all';
 
@@ -233,6 +234,22 @@ export const updateUserProfile = async ({
   domain,
   ...profile
 }: UserProfileUpdateSchema & { userId: number; domain?: ColorDomain }) => {
+  // Both domain variants, not just the field being edited: the SFW override and the field it
+  // overrides are independently writable and independently rendered, so checking one leaves the
+  // other as an unchecked way to put the same text on a profile page.
+  await throwOnBlockedUserContent(
+    [
+      profile.bio,
+      profile.sfwBio,
+      profile.message,
+      profile.sfwMessage,
+      profile.location,
+      ...(socialLinks?.map((link) => link.url) ?? []),
+      ...(sponsorshipLinks?.map((link) => link.url) ?? []),
+    ],
+    { surface: 'userProfile' }
+  );
+
   // `sessionUserId` is what populates the `default*`/`sfw*` fields compared below — they are
   // withheld from anyone who can't edit the profile. Drop it and both read back null, so every
   // save looks like a changed announcement and re-stamps `messageAddedAt`.

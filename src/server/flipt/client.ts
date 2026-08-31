@@ -126,6 +126,14 @@ export enum FLIPT_FEATURE_FLAGS {
   // context, so a segment rule here returns the flag default and looks exactly like "blurbs are
   // off". The site is recorded in ENTITY_WITHOUT_CONTEXT_LEDGER (flipt-eval-context.test.ts).
   TEXT_BLURBS = 'text-blurbs',
+
+  // 🔴 RAMP BY PERCENTAGE OR BOOLEAN ONLY — A SEGMENT ROLLOUT MATCHES NOTHING, for the same
+  // reason as TEXT_BLURBS above: `throwOnBlockedUserContent` evaluates this with no context,
+  // because several of its call sites are content fan-outs with no session in scope.
+  //
+  // OFF is the shipped default and means the pattern list is recorded but not enforced on these
+  // surfaces. The link-domain half throws either way — this flag has never governed it.
+  USER_CONTENT_PATTERN_ENFORCE = 'user-content-pattern-enforce',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

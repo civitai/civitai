@@ -1,5 +1,5 @@
 import { includesMinor, includesPoi } from '~/utils/metadata/audit';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 
 /**
@@ -32,8 +32,8 @@ import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing
  *     `auditPromptServer` runs the full platform audit (regex + external
  *     moderation) and routes repeat abuse into the EXISTING auto-mute machinery,
  *     closing the loop with the trust gate.
- *   - M1 (link abuse): `throwOnBlockedLinkDomain` rejects blocked link domains; no
- *     server-side unfurl is ever performed.
+ *   - M1 (link abuse): `throwOnBlockedUserContent` rejects blocked link domains and the
+ *     blocked-pattern list; no server-side unfurl is ever performed.
  *   - M3 (size): tight caps (title ≤ 200 chars, body ≤ a few KB) — enforced by the
  *     router's zod schema AND re-asserted here as defence-in-depth.
  *
@@ -47,7 +47,7 @@ import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing
 export const SHARED_TITLE_MAX = 200;
 export const SHARED_BODY_MAX = 4096;
 
-export type SharedBlockedCategory = 'minor' | 'poi' | 'link' | 'audit' | 'size';
+export type SharedBlockedCategory = 'minor' | 'poi' | 'link' | 'audit' | 'size' | 'pattern';
 
 /**
  * Thrown by `assertSharedTextSafe` when the text is rejected. Carries the
@@ -105,11 +105,24 @@ export async function assertSharedTextSafe(
     throw new SharedContentBlockedError('poi', 'Content flagged for review');
   }
 
-  // M1 — blocked link domains. `throwOnBlockedLinkDomain` throws (a BAD_REQUEST
-  // TRPCError); the bare catch re-wraps any throw into SharedContentBlockedError.
+  // M1 — both blocklists. `onBlocked` reports WHICH list rejected the text, so the category
+  // stays exact without reading the thrown message. The category decides whether the router files
+  // a Report; neither of these two does today, but they are kept distinct so that stays the
+  // router's decision rather than being flattened here.
+  //
+  // The outer catch is still load-bearing: the guard reaches redis and Flipt, and an
+  // infrastructure throw from either must not escape as a raw 500 on user input.
   try {
-    await throwOnBlockedLinkDomain(combined);
-  } catch {
+    await throwOnBlockedUserContent(combined, {
+      surface: 'appListing',
+      onBlocked: (kind) => {
+        throw kind === 'link'
+          ? new SharedContentBlockedError('link', 'Content contains a blocked link')
+          : new SharedContentBlockedError('pattern', 'Content flagged for review');
+      },
+    });
+  } catch (error) {
+    if (error instanceof SharedContentBlockedError) throw error;
     throw new SharedContentBlockedError('link', 'Content contains a blocked link');
   }
 
