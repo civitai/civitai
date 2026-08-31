@@ -47,7 +47,9 @@ const sqlFor = (type: string) => defs[type].prepareQuery?.({ lastSent: '2026-01-
  */
 const MUTE_EXEMPT = new Set(['new-mention']);
 
-const v2Types = Object.keys(defs).filter((type) => sqlFor(type).includes('FROM "CommentV2"'));
+// Matches the TABLE, not one spelling of the clause: `FROM "Thread" t JOIN "CommentV2" c`, or a line
+// break after FROM, is the same processor and must not fall out of the sweep.
+const v2Types = Object.keys(defs).filter((type) => sqlFor(type).includes('"CommentV2"'));
 const filteredTypes = v2Types.filter((type) => !MUTE_EXEMPT.has(type));
 
 /**
@@ -72,6 +74,13 @@ const muteRecipients = (sql: string) =>
   [...sql.matchAll(/WHERE tm\."userId" = ([\s\S]+?)\n\s*\)/g)].map((m) => m[1].trim());
 
 describe('comment notifications — per-thread mute', () => {
+  // A name added here silently removes two tests per processor and the run stays green at 27, so the
+  // exemption list is pinned as well as documented.
+  it('exempts exactly one processor, on purpose', () => {
+    expect([...MUTE_EXEMPT]).toEqual(['new-mention']);
+    expect(filteredTypes).toHaveLength(13);
+  });
+
   it('finds the family on the real objects', () => {
     // A sweep over an empty list passes vacuously.
     expect(v2Types.length).toBeGreaterThanOrEqual(14);
@@ -84,6 +93,9 @@ describe('comment notifications — per-thread mute', () => {
     expect(sql).toContain('"ThreadMute" tm');
     // The walk, not just the table: a join that never climbs would silence only the exact thread.
     expect(sql).toContain('WITH RECURSIVE muteable_threads');
+    // Seeded from the comment's OWN thread alias. Passing `root.id` instead is valid SQL that starts
+    // the walk at NULL for a top-level comment, so the filter matches nothing and suppression dies.
+    expect(sql).toContain('SELECT t.id "id", 0 "depth"');
   });
 
   it.each(filteredTypes)('%s mutes for the RECIPIENT, not the comment author', (type) => {

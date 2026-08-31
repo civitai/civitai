@@ -20,23 +20,25 @@ export const MAX_THREAD_CHAIN_DEPTH = 100;
  * mirroring it by retyping is what guarantees they drift — and when they drift the menu says "muted"
  * while notifications keep arriving, or the reverse.
  *
- * Two edges: `Thread.parentThreadId`, and `Thread.commentId -> CommentV2.threadId`. Neither reaches
- * every ancestor on its own (measured on production 2026-08-27: 1,508 of 461,725 comment-anchored
- * threads have no usable `parentThreadId`; 3,110 of 254,368 orphans have only that).
+ * Climbs `Thread.commentId -> CommentV2.threadId` ONLY, the same edge `throwIfThreadChainLocked`
+ * uses, and deliberately NOT `Thread.parentThreadId`. That column is written from client input on
+ * the first reply, so trusting it would let a commenter steer their own reply into a chain the
+ * recipient has muted and have the notification dropped — a suppression chosen by the person being
+ * replied to about. Dropping the edge fails the other way: a mute is not recognised and the
+ * notification arrives anyway. Measured on production 2026-08-27, that costs 3,110 of 254,368
+ * orphaned threads (1.2% of orphans, 0.057% of all threads) whose only surviving upward link is the
+ * `parentThreadId` their deleted parent comment left behind. An unrecognised mute is noise; a
+ * suppressed notification is a control someone else operates on your behalf. (Justin's fleet lead,
+ * 2026-08-31. Deriving `parentThreadId` server-side is filed separately.)
  *
- * 🔴 `UNION`, never `UNION ALL`. With two edges the walk branches by 2 at every level, so the dedup
- * is what bounds it — not the depth cap. Measured: swapping in `UNION ALL` and capping at depth 18
- * produced 524,287 rows against this version's 19. At the shipped cap that is 2 to the 101.
+ * `UNION` rather than `UNION ALL` so a corrupted cycle converges instead of running to the cap.
  */
 export const muteableThreadsCte = (seedExpression: string) => `WITH RECURSIVE muteable_threads AS (
               SELECT ${seedExpression} "id", 0 "depth"
               UNION
-              SELECT "parentId", mt."depth" + 1
+              SELECT pc."threadId", mt."depth" + 1
               FROM muteable_threads mt
               JOIN "Thread" th ON th.id = mt."id"
-              CROSS JOIN LATERAL unnest(ARRAY[
-                th."parentThreadId",
-                (SELECT pc."threadId" FROM "CommentV2" pc WHERE pc.id = th."commentId")
-              ]) AS "parentId"
-              WHERE "parentId" IS NOT NULL AND mt."depth" < ${MAX_THREAD_CHAIN_DEPTH}
+              JOIN "CommentV2" pc ON pc.id = th."commentId"
+              WHERE mt."depth" < ${MAX_THREAD_CHAIN_DEPTH}
             )`;

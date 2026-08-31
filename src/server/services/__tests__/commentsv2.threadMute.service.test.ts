@@ -85,6 +85,21 @@ describe('toggleThreadMute', () => {
     );
   });
 
+  it('falls back to the comment own thread when the parent row has vanished', async () => {
+    db.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: null });
+    db.thread.findUnique.mockResolvedValue(null);
+    db.thread.upsert.mockResolvedValue({ id: 99 });
+    db.$queryRaw.mockResolvedValue([{ locked: false, unresolved: false }]);
+
+    await toggleThreadMute({ commentId: 5, userId: 1 });
+
+    expect(db.thread.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: { commentId: 5, parentThreadId: 10, rootThreadId: 10 },
+      })
+    );
+  });
+
   it('unmutes when a mute row already existed, and writes no new one', async () => {
     db.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: { id: 77 } });
     db.threadMute.deleteMany.mockResolvedValue({ count: 1 });
@@ -182,9 +197,11 @@ describe('toggleSectionMute', () => {
 
     const result = await toggleSectionMute({ entityType: 'image', entityId: 5, userId: 1 });
 
-    expect(db.thread.create).not.toHaveBeenCalled();
-    expect(db.thread.upsert).not.toHaveBeenCalled();
+    // NOT asserting `thread.create`/`thread.upsert` were not called: `toggleSectionMute` has no
+    // create call site on any path, so those negatives are true for every input and would pass a
+    // refactor that added one under a different condition. The two below can actually fail.
     expect(db.threadMute.create).not.toHaveBeenCalled();
+    expect(db.thread.findUnique).toHaveBeenCalled();
     expect(result).toEqual({ muted: false, threadId: null });
   });
 

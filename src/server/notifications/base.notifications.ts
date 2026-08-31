@@ -33,8 +33,8 @@ export const notBlockedBetween = (recipient: string, actor: string) => `NOT EXIS
  * Matching only the comment's own thread would leave a mute set at the head of a conversation silent
  * about replies nested below it, which is the case the control is mostly used for. So this walks up.
  *
- * It climbs the shared ancestor walk in `thread-chain.ts`; the two edges and why `UNION` is
- * load-bearing are documented there.
+ * Climbs the shared ancestor walk in `thread-chain.ts`, which trusts only the server-derived
+ * `commentId` edge — the reason, and what that costs, are documented there.
  *
  * The 8 entity-owner processors pin `t` to the entity ROOT thread (`t."imageId" IS NOT NULL` and its
  * siblings) and this only climbs, so a mute set on a conversation under a comment never matches them.

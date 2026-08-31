@@ -263,14 +263,11 @@ describe('new-app-listing-comment — SQL: who it notifies, and who it must not'
       WITH RECURSIVE muteable_threads AS (
       SELECT t.id "id", 0 "depth"
       UNION
-      SELECT "parentId", mt."depth" + 1
+      SELECT pc."threadId", mt."depth" + 1
       FROM muteable_threads mt
       JOIN "Thread" th ON th.id = mt."id"
-      CROSS JOIN LATERAL unnest(ARRAY[
-      th."parentThreadId",
-      (SELECT pc."threadId" FROM "CommentV2" pc WHERE pc.id = th."commentId")
-      ]) AS "parentId"
-      WHERE "parentId" IS NOT NULL AND mt."depth" < 100
+      JOIN "CommentV2" pc ON pc.id = th."commentId"
+      WHERE mt."depth" < 100
       )
       SELECT 1
       FROM muteable_threads mt
