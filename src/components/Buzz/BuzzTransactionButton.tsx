@@ -131,7 +131,6 @@ export function BuzzTransactionButton({
       {priceReplacement}
       {(hasCost || loading) && !priceReplacement && (
         <CurrencyBadge
-          data-tour="gen:buzz"
           currency={Currency.BUZZ}
           unitAmount={buzzAmount}
           displayCurrency={false}

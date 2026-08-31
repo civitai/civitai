@@ -189,3 +189,70 @@ describe('patchUserSettings mergeInto — a malformed stored key must not become
     expect(returned.chat).toEqual({ muteSounds: true, acknowledged: true });
   });
 });
+
+/**
+ * `deepMergeInto` carries the SAME hazard one level deeper: it reads `tourSettings.<key>`
+ * as well as `tourSettings` itself, and `jsonb || jsonb` concatenates a non-object there
+ * exactly as it would at the top level. `tourSettings` is the one caller of this op.
+ */
+describe('patchUserSettings deepMergeInto — a malformed tourSettings sub-key must not become an array', () => {
+  beforeAll(async () => {
+    holder.db = new PGlite();
+    await createUserSchema(holder.db);
+  }, 60_000);
+
+  afterAll(async () => {
+    await holder.db?.close();
+  });
+
+  beforeEach(() => {
+    holder.gate = createGate();
+    holder.bridge = createPrismaBridge(holder.db, holder.gate);
+    installBridge();
+    settingsCacheBust.mockClear();
+    metricPrivacyBust.mockClear();
+  });
+
+  it.each([
+    ['a number', 7],
+    ['a string', 'nope'],
+    ['JSON null', null],
+    ['a boolean', true],
+    ['an array', [1, 2]],
+  ])(
+    'repairs %s stored under tourSettings.<key> instead of concatenating onto it',
+    async (_l, bad) => {
+      await seedUser(holder.db, USER_ID, {
+        dismissedAlerts: ['keep-me'],
+        tourSettings: { welcome: bad, auction: { completed: true } },
+      });
+
+      const returned = await patchUserSettings(USER_ID, {
+        deepMergeInto: { tourSettings: { welcome: { currentStep: 1 } } },
+        location: 'test',
+      });
+
+      const stored = await readSettings(holder.db, USER_ID);
+      for (const settings of [returned as Record<string, unknown>, stored]) {
+        const tour = settings.tourSettings as Record<string, unknown>;
+        expect(Array.isArray(tour.welcome)).toBe(false);
+        expect(tour.welcome).toEqual({ currentStep: 1 });
+        // The guard must repair the malformed sub-key without touching its sibling tour.
+        expect(tour.auction).toEqual({ completed: true });
+      }
+      expect(stored.dismissedAlerts).toEqual(['keep-me']);
+    }
+  );
+
+  it('repairs a malformed tourSettings TOP-level value the same way a malformed sub-key is repaired', async () => {
+    await seedUser(holder.db, USER_ID, { dismissedAlerts: ['keep-me'], tourSettings: 7 });
+
+    const returned = (await patchUserSettings(USER_ID, {
+      deepMergeInto: { tourSettings: { welcome: { currentStep: 1 } } },
+      location: 'test',
+    })) as Record<string, unknown>;
+
+    expect(returned.tourSettings).toEqual({ welcome: { currentStep: 1 } });
+    expect(returned.dismissedAlerts).toEqual(['keep-me']);
+  });
+});

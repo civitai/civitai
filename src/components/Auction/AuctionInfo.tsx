@@ -228,6 +228,7 @@ export const AuctionTopSection = ({
                 key: 'auction',
                 step: 0,
                 forceRun: true,
+                trigger: 'help',
               });
             }}
           />

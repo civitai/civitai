@@ -3,6 +3,7 @@ import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { clsx } from 'clsx';
 import React from 'react';
 import type { TooltipRenderProps } from 'react-joyride';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 
 export function TourPopover(props: TooltipRenderProps) {
   const {
@@ -17,6 +18,7 @@ export function TourPopover(props: TooltipRenderProps) {
     skipProps,
     tooltipProps,
   } = props;
+  const { blockedTarget } = useTourContext();
 
   const centered = step.placement === 'center';
 
@@ -51,7 +53,7 @@ export function TourPopover(props: TooltipRenderProps) {
         )}
         {typeof step.content === 'string' ? <Text>{step.content}</Text> : step.content}
       </div>
-      {!step.hideFooter && (
+      {(!step.hideFooter || blockedTarget === step.target) && (
         <Group justify="space-between" wrap="nowrap">
           {step.showSkipButton !== false && (
             <Button {...skipProps} variant="subtle" size="xs" color="gray">

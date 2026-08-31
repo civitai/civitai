@@ -1478,8 +1478,10 @@ export const setUserSettingHandler = async ({
     const restSettings = await getUserSettings(id);
     const newSettings = await patchUserSettings(id, {
       ...splitSettingsPatch(restInput),
-      // One level deep, so a tour another request just completed is not dropped.
-      ...(tour && Object.keys(tour).length ? { mergeInto: { tourSettings: tour } } : {}),
+      // Two levels deep: `mergeInto` alone would still let two writes to the SAME
+      // tour (e.g. a `currentStep` bump racing a `completed` write) clobber each
+      // other, which is how a tour's completion got lost mid-flight in practice.
+      ...(tour && Object.keys(tour).length ? { deepMergeInto: { tourSettings: tour } } : {}),
     });
 
     const privacyKeys = ['hideModelBuzz', 'hideModelDownloads', 'hideModelGenerations'] as const;

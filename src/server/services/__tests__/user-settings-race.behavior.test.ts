@@ -327,6 +327,64 @@ describe('User.settings — concurrent writers must not discard each other', () 
     expect(features[a.key]).toBe(true);
     expect(features[b.key]).toBe(true);
   });
+
+  it('keeps a tour completion that a stale step-update overwrites when it lands later', async () => {
+    // Reported bug: the tour UI fires three overlapping `user.setSettings` calls for one
+    // transition (`{currentStep:1}`, `{currentStep:2}`, `{completed:true,reason:'finished'}`),
+    // and network/scheduling can land them out of order. A ONE-level `tourSettings` merge
+    // replaces `tourSettings.welcome` WHOLESALE, so whichever write's UPDATE statement
+    // executes last wins entirely — including a stale step bump that lands after a
+    // completion already landed — silently discarding the completion.
+    await seedUser(holder.db, USER_ID, { tourSettings: { welcome: { currentStep: 1 } } });
+
+    // Hold the stale step-update so its statement is the one that executes LAST.
+    const hold = holder.gate.hold(isSettingsWrite);
+    const staleStep = setUserSettingHandler({
+      input: { tourSettings: { welcome: { currentStep: 2 } } },
+      ctx,
+    });
+    await reach(hold, staleStep);
+
+    await setUserSettingHandler({
+      input: { tourSettings: { welcome: { completed: true, reason: 'finished' } } },
+      ctx,
+    });
+
+    hold.release();
+    await staleStep;
+
+    const settings = await readSettings(holder.db, USER_ID);
+    const welcome = (settings.tourSettings as Record<string, Record<string, unknown>>).welcome;
+    // Pre-fix: the held write's one-level merge replaced `welcome` wholesale with just
+    // `{currentStep:2}`, so `completed`/`reason` — already committed by the other request —
+    // vanished.
+    expect(welcome.completed).toBe(true);
+    expect(welcome.reason).toBe('finished');
+  });
+
+  it('keeps a sibling tour untouched when only one tour is written', async () => {
+    // The property the one-level `mergeInto` already had for `tourSettings` and which
+    // `deepMergeInto` must not regress: writing one tour never touches another.
+    await seedUser(holder.db, USER_ID, {
+      tourSettings: {
+        welcome: { currentStep: 3 },
+        auction: { completed: true, reason: 'finished' },
+      },
+    });
+
+    await setUserSettingHandler({
+      input: { tourSettings: { welcome: { completed: true, reason: 'skipped' } } },
+      ctx,
+    });
+
+    const tour = (await readSettings(holder.db, USER_ID)).tourSettings as Record<
+      string,
+      Record<string, unknown>
+    >;
+    // `currentStep` survives too — `deepMergeInto` merges fields, it doesn't replace them.
+    expect(tour.welcome).toEqual({ currentStep: 3, completed: true, reason: 'skipped' });
+    expect(tour.auction).toEqual({ completed: true, reason: 'finished' });
+  });
 });
 
 describe('User.settings — single-request behaviour the writers must keep', () => {
