@@ -16,9 +16,12 @@ a re-derivation each time.
 
 - **The hub is the sole authority.** It is the only minter of session tokens (`civ-token`, thin ES256) and the
   sole producer of rich `SessionUser` data. Spokes never mint and never compute a user from the DB.
-- **A spoke owns its own cookie.** A spoke on a different registrable domain (`civitai.red`) can't read the
-  hub's `.civitai.com` cookie, so each spoke runs the OAuth authorization-code + PKCE flow against the hub and
-  sets **its own** `civ-token` cookie on its own domain. Same family domain or cross-site — identical flow.
+- **A spoke owns its own cookie — but only across registrable domains.** A spoke on a different registrable
+  domain (`civitai.red`) can't read the hub's `.civitai.com` cookie, so it runs the OAuth authorization-code
+  + PKCE flow and sets **its own** `civ-token` on its own domain. A spoke inside `*.civitai.com` — including
+  the main app — writes the **same cookie slot** the hub does (same name, `Domain=civitai.com` vs
+  `.civitai.com`, which RFC 6265 treats as one). The bridge is identical code; the cookie is not a separate
+  session. Anything that re-points that slot re-points civitai.com.
 - **Two trust tiers of client.** The hub treats *first-party* (trusted) spokes specially: they skip the consent
   screen and are the only clients allowed to exchange a code for a **session** (not just an API token). A host
   becomes first-party by being in the hub's `TrustedSpokeDomain` registry (see §6).
@@ -72,7 +75,7 @@ These live on the spoke's own origin. Paths are a hard contract where noted (the
 ### Group A — Login bridge (T1)
 | Endpoint | Method | Purpose | Calls on hub |
 |---|---|---|---|
-| `/api/auth/authorize` | GET | Initiate. Generate PKCE verifier + `state`, stash them + `returnUrl` in a short-lived httpOnly bridge cookie, 302 to the hub authorize URL with this spoke's `client_id` + exact `redirect_uri`. | redirect → `GET /api/auth/oauth/authorize` |
+| `/api/auth/authorize` | GET | Initiate. Generate PKCE verifier + `state`, stash them + `returnUrl` in a short-lived httpOnly bridge cookie, 302 to the hub authorize URL with this spoke's `client_id` + exact `redirect_uri`. **Path is fixed** (`SPOKE_AUTHORIZE_PATH`) — the hub matches on this exact string to recognise a cross-domain login hand-off; a spoke that mounts it elsewhere silently loses the hand-off. | redirect → `GET /api/auth/oauth/authorize` |
 | `/api/auth/callback` | GET | Receive `?code&state`. Verify `state` vs the bridge cookie, exchange the code **server-to-server**, set the `civ-token` cookie, continue to `returnUrl`. **Path is fixed** (`SPOKE_CALLBACK_PATH`). | `POST /api/auth/oauth/session` |
 
 ### Group B — Session read (T0)
@@ -144,7 +147,7 @@ Server-to-server unless marked *(browser redirect)*. All resolved off `AUTH_JWT_
 
 | Hub endpoint | Auth | Used by | Purpose |
 |---|---|---|---|
-| `GET /api/auth/oauth/authorize` *(browser redirect)* | user session (hub cookie) | `/api/auth/authorize` | OAuth authorize; first-party skips consent |
+| `GET /api/auth/oauth/authorize` *(browser redirect)* | user session (hub cookie), **or** a single-use `civ-pending` record when the login withheld the hub cookie — record wins, and fails closed | `/api/auth/authorize` | OAuth authorize; first-party skips consent |
 | `POST /api/auth/oauth/session` | code + PKCE verifier + client_id | `/api/auth/callback` | First-party code → **civ-token session** |
 | `GET /api/auth/identity` | Bearer = session token | `getSessionUser` (miss) | Fetch rich `SessionUser` |
 | `POST /api/auth/identity` | Bearer = `AUTH_INTERNAL_TOKEN` | `invalidate`/`refresh` | Bust/re-produce cache for any user |
@@ -157,7 +160,8 @@ Server-to-server unless marked *(browser redirect)*. All resolved off `AUTH_JWT_
 
 Package clients that wrap these: `createSessionClient` (identity read + invalidate), `createSessionTokenClient`
 (refresh + revoke), `createDeviceAccountClient` (accounts + switch), `createImpersonationClient`
-(impersonate/exit), and the first-party helpers (`firstPartyClientId`, `SPOKE_CALLBACK_PATH`) +
+(impersonate/exit), and the first-party helpers (`firstPartyClientId`, `SPOKE_CALLBACK_PATH`,
+`SPOKE_AUTHORIZE_PATH`) +
 `buildPostLoginRedirect` / `isCivitaiOrigin` for the redirect contract.
 
 ---

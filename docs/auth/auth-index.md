@@ -44,7 +44,7 @@ via JWKS. See the architecture spec and actual-flows first if you're new to it.
 
 | Doc | Purpose |
 |---|---|
-| [auth-hub-actual-flows.html](./auth-hub-actual-flows.html) | UC1–UC8 login/logout/switch/impersonation flows **as implemented**, + a cookie reference. |
+| [auth-hub-actual-flows.html](./auth-hub-actual-flows.html) | UC1–UC8 login/logout/switch/impersonation flows as implemented **in June 2026** — UC4/UC5 predate the swap-bridge deletion. + a cookie reference. |
 | [first-party-sso-vs-oauth-diagrams.html](./first-party-sso-vs-oauth-diagrams.html) | Current (swap-token) vs proposed (OIDC auth-code) wire diagrams. |
 
 ## First-party SSO simplification (swap bridge → OIDC)

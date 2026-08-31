@@ -1,4 +1,5 @@
 import { Button, Text, ThemeIcon } from '@mantine/core';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import {
   IconArrowLeft,
   IconArrowRight,
@@ -29,7 +30,6 @@ import { requireLogin } from '~/components/Login/requireLogin';
 import { useAdGate } from '~/components/Ads/AdsProvider';
 import { useAppContext, useServerDomains } from '~/providers/AppProvider';
 import { isAdGatedContent } from '~/shared/utils/ad-gating';
-import { syncAccount } from '~/utils/sync-account';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 
 const PAYWALL_SELECTOR_CLASS = 'paywalled-content';
@@ -254,6 +254,7 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
 function MatureContentRedirect() {
   const router = useRouter();
   const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
   const redUrl = syncAccount(`//${redDomain}${router.asPath}`);
   const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
     size: 250,
