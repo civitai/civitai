@@ -146,21 +146,44 @@ coexist without touching consumers.
 
 **Closing condition:** the spike test passes in this worktree; committed.
 
-### Phase 1 — the video slice, from the reference (medium)
+### Phase 1 — the video slice (medium)
 
-Port LTX + Wan + the video hub by adapting the finished reference ports:
+**Scouting findings — read before starting. The reference ports are a SHAPE GUIDE, not
+code to copy:**
 
-1. Copy `wan.ts`, `ltx.ts`, `video-hub.ts`, `defs.ts` from
-   `C:\work\form-graph\src\v1\ports\` into `src/shared/data-graph/__ported__/video/`.
-2. Rewire imports: `'../../lib/core/index.js'` → `'form-graph'`; their `constants.js`
-   imports point at this repo's real modules under `src/shared/data-graph/generation/`
-   (the reference's `constants.ts` was a vendored copy — import the originals via `~/`).
-   `gates.ts` similarly: the reference used a copy of this repo's `gates.ts`.
-3. Copy + adapt the differential suite from `C:\work\form-graph\src\v1\__tests__\`
-   (`video-parity.test.ts` pattern) — but here the oracle is the LIVE
-   `generationGraph.safeParse`, not a vendored copy, which is strictly better.
+- They were written against a **vendored snapshot that has drifted from live**. Live
+  `wan-graph.ts` has **six** versions (v2.1, v2.2, v2.2-5b, v2.5, v2.7, **v3.0**); the
+  reference has five — v3.0 must be ported fresh from the live file. Live LTX matches
+  the reference (v2, v23, v25).
+- The live tables have **different names** than the reference's vendored copies (live
+  `wan21AspectRatiosByResolution` vs reference `wan21AspectRatioList`, etc.).
+- **Import tables from the live graph files; never copy them.** Both `wan-graph.ts` and
+  `ltx-graph.ts` end with an `export { … }` block carrying exactly what a port needs
+  (`wanVersionDefs`, `wanAspectRatios`, `wanDurations`, `wanInterpolatorModels`,
+  `ltxVersionOptions`, `DISTILLED_IDS`, …). One source of truth = no drift, and in
+  Phase 6 those tables move to the new home with the port.
+- The reference's `defs.ts` uses `codec()`, which form-graph 0.2.0 **no longer exports**.
+  This is NOT a missing capability — `codec()` was a pure identity function for typing.
+  Replace `codec<T, M>({…})` with an object literal typed `FieldDef<T, M>` (exported).
+
+Steps:
+
+1. Port `ltx`, `wan` (all six versions) and the video hub into
+   `src/shared/data-graph/__ported__/video/`, reading the live `*-graph.ts` as the source
+   of truth and the reference ports as the shape guide.
+2. Import every table and version id from the live graph files via
+   `~/shared/data-graph/generation/…`.
+3. Build the family case list on the differential harness (below).
 4. Grow the case list: every LTX/Wan ecosystem × workflow × a gated-ext variant, plus the
    reconcile probes (workflow↔ecosystem coupling).
+
+**The differential harness already exists and is smoke-tested:**
+`src/shared/data-graph/__ported__/__tests__/differential.ts`. A family suite is a case
+table plus `assertDifferential(portedGraph, testCase, TEST_CTX)`. It compares
+success/failure, the full key sets, and per-key values. Declared deltas
+(`added`/`missing`/`valueDeltas`) must carry a written reason inside the string, must be
+REAL (a stale entry fails the test), and cannot be declared on a case where both sides
+fail. `harness.smoke.test.ts` holds its negative controls — keep them green.
 
 **Closing condition:** the video differential suite passes with an empty (or explicitly
 documented) delta allowlist; committed. If a delta cannot be explained, STOP and write it
@@ -287,8 +310,8 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 
 | Family | Ported | Differential green | Notes |
 | --- | --- | --- | --- |
-| video: wan | ☐ | ☐ | reference: C:\work\form-graph\src\v1\ports\wan.ts |
-| video: ltx | ☐ | ☐ | reference: ltx.ts |
-| video hub | ☐ | ☐ | reference: video-hub.ts |
+| video: wan | ☐ | ☐ | LIVE HAS v3.0, reference does not — shape guide: C:\work\form-graph\src\v1\ports\wan.ts |
+| video: ltx | ☐ | ☐ | shape guide: ltx.ts (versions match live) |
+| video hub | ☐ | ☐ | shape guide: video-hub.ts |
 | flux | ☐ | ☐ | corpus sample: C:\work\form-graph\src\lib\generation\flux.ts |
 | _…add a row per `*-graph.ts` file during Phase 2 inventory…_ | | | |
