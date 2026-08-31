@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { ToolSort } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import type { GetAllToolsSchema, ToolMetadata } from '~/server/schema/tool.schema';
+import { normalizeMetadataToolNames } from '~/utils/metadata/declared-tools.metadata';
 
 export type ToolModel = AsyncReturnType<typeof getAllTools>['items'][number];
 export async function getAllTools(input?: GetAllToolsSchema) {
@@ -63,6 +64,32 @@ export async function getToolByName(name: string) {
     where: { name: { equals: name, mode: 'insensitive' } },
     select: { id: true },
   });
+}
+
+export async function getToolIdsByAliasesOrNames(values: string[]) {
+  const normalizedValues = normalizeMetadataToolNames(values);
+  if (!normalizedValues) return [];
+
+  const tools = await dbRead.tool.findMany({
+    where: {
+      OR: [
+        { alias: { in: normalizedValues, mode: 'insensitive' } },
+        { name: { in: normalizedValues, mode: 'insensitive' } },
+      ],
+    },
+    select: { id: true, alias: true, name: true },
+  });
+
+  const toolIds: number[] = [];
+  for (const value of normalizedValues) {
+    const normalized = value.toLowerCase();
+    const tool =
+      tools.find((candidate) => candidate.alias?.toLowerCase() === normalized) ??
+      tools.find((candidate) => candidate.name.toLowerCase() === normalized);
+    if (tool && !toolIds.includes(tool.id)) toolIds.push(tool.id);
+  }
+
+  return toolIds;
 }
 
 export async function getToolByDomain(domain: string) {

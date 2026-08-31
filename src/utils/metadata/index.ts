@@ -3,6 +3,11 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { automaticMetadataProcessor } from '~/utils/metadata/automatic.metadata';
 import { comfyMetadataProcessor } from '~/utils/metadata/comfy.metadata';
+import {
+  normalizeMetadataToolNames,
+  parseMetadataEngine,
+  parseMetadataToolNames,
+} from '~/utils/metadata/declared-tools.metadata';
 import { rfooocusMetadataProcessor } from '~/utils/metadata/rfooocus.metadata';
 import { swarmUIMetadataProcessor } from '~/utils/metadata/swarmui.metadata';
 
@@ -45,10 +50,29 @@ export async function ExifParser(file: File | string) {
   const parser = matchedParser;
 
   function parse() {
+    const declaredEngine = parseMetadataEngine(exif.engine);
+    const declaredTools = parseMetadataToolNames(exif.tools);
+
+    function mergeDeclarations(metadata?: ImageMetaProps) {
+      const engine = metadata?.engine ?? declaredEngine;
+      const tools = normalizeMetadataToolNames([
+        ...(normalizeMetadataToolNames(metadata?.tools) ?? []),
+        ...(declaredTools ?? []),
+      ]);
+
+      if (!metadata && !engine && !tools) return undefined;
+      return {
+        ...(metadata ?? {}),
+        ...(engine ? { engine } : {}),
+        ...(tools ? { tools } : {}),
+      };
+    }
+
     try {
-      return parser?.parse(matchedExif);
+      return mergeDeclarations(parser?.parse(matchedExif));
     } catch (e) {
       console.error('Error parsing metadata', e);
+      return mergeDeclarations();
     }
   }
 
