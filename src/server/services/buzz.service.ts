@@ -1808,6 +1808,10 @@ export async function getTransactionsReport({
         end: endDate.toDate(),
       });
 
+      // Only these two paths agree on a UTC host. The schema's `z.coerce.date()` reads the buzz
+      // service's bare timestamps as LOCAL and formats them as UTC, while the ClickHouse path is UTC
+      // throughout — so off UTC a fallback also shifts every bar's label by the host offset, and the
+      // degradation looks like a data bug. Production runs UTC.
       return getTransactionsReportResultSchema.parse(data);
     } catch (error) {
       // `mapError` already turns every buzz-service HTTP status into a TRPCError carrying the

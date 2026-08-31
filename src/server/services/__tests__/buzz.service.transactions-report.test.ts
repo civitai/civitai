@@ -18,9 +18,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as BuzzClient from '@civitai/buzz';
 
-const { $query, getUserTransactionsReport } = vi.hoisted(() => ({
+const { $query, getUserTransactionsReport, state } = vi.hoisted(() => ({
   $query: vi.fn(),
   getUserTransactionsReport: vi.fn(),
+  // The `!clickhouse` branch is unreachable behind a mock that always supplies a client, so the export
+  // is a getter and the tests decide per case whether ClickHouse is configured at all.
+  state: { clickhouseConfigured: true },
 }));
 
 // Spread the real package and override only the client factory, so this file is not coupled to every
@@ -34,7 +37,9 @@ vi.mock('@civitai/buzz', async (importOriginal) => ({
 // app Tracker, and a hand-listed mock would couple this file to all of it.
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
-  clickhouse: { $query },
+  get clickhouse() {
+    return state.clickhouseConfigured ? { $query } : undefined;
+  },
 }));
 
 import { getTransactionsReport } from '~/server/services/buzz.service';
@@ -47,6 +52,7 @@ const NOW = new Date('2026-08-31T18:00:00.000Z');
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
+  state.clickhouseConfigured = true;
   $query.mockReset();
   $query.mockResolvedValue([]);
   getUserTransactionsReport.mockReset();
@@ -155,6 +161,25 @@ describe('getTransactionsReport', () => {
     // The label the chart actually keys on has to be unique across the window.
     const labels = report.map((bucket) => bucket.date.slice(5, 10));
     expect(new Set(labels).size).toBe(labels.length);
+  });
+
+  // The other way ClickHouse can be unavailable, and the one a permanently-present mock hides. Without
+  // this, inverting the guard to `if (clickhouse) return fallback()` passes every other test in the
+  // file and only shows up where CLICKHOUSE_* is unset — as a TypeError reaching the client raw,
+  // because the handler is synchronous and cannot catch it.
+  it('falls back to the buzz service when ClickHouse is not configured', async () => {
+    state.clickhouseConfigured = false;
+    getUserTransactionsReport.mockResolvedValue([]);
+
+    const report = await getTransactionsReport({
+      userId: USER,
+      window: 'day',
+      accountType: 'yellow',
+    });
+
+    expect(getUserTransactionsReport).toHaveBeenCalledOnce();
+    expect($query).not.toHaveBeenCalled();
+    expect(report).toEqual([]);
   });
 
   it('falls back to the buzz service when the ClickHouse query fails', async () => {
