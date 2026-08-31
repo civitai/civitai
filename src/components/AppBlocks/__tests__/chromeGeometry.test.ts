@@ -28,7 +28,7 @@ import {
 import { breakpoints } from '~/utils/tailwind';
 
 describe('CHROME_BREAKPOINTS', () => {
-  it('is the px scale from breakpoints.json, not Mantine\'s stock em scale', () => {
+  it("is the px scale from breakpoints.json, not Mantine's stock em scale", () => {
     // Single-source drift guard. `breakpoints.json` is also what tailwind.config.js
     // require()s, so this pins the chrome to the SAME numbers the utility classes
     // use. Literals are restated here deliberately: a test that only compared the
@@ -114,8 +114,9 @@ describe('resolveChromeGeometry', () => {
     // Monotonicity is the property a hand-edited table loses first. Sampled at
     // every boundary AND at a midpoint of every band, since a table edit can break
     // ordering between two rows without moving a boundary.
-    const widths = [0, 240, 479, 480, 600, 767, 768, 900, 1023, 1024, 1100, 1183, 1184,
-      1300, 1439, 1440, 2560];
+    const widths = [
+      0, 240, 479, 480, 600, 767, 768, 900, 1023, 1024, 1100, 1183, 1184, 1300, 1439, 1440, 2560,
+    ];
     let previousName = -1;
     let previousMenu = -1;
     for (const w of widths) {
