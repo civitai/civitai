@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { LISTING_REVIEW_DETAILS_MAX } from '~/server/schema/blocks/app-listing-review.schema';
 import { resolveClientStoreScope } from '~/shared/utils/app-blocks-access';
 import {
@@ -100,6 +101,21 @@ export function useCanReviewListing({
  * 🔴 Applies NO eligibility gate of its own: a caller that mounts this has already
  * decided the viewer may review (via {@link useCanReviewListing}), and duplicating
  * the rule here would put it in two places. The server gate is the real one.
+ *
+ * 🔴 `fullScreen` ON MOBILE IS DRIVEN BY A VIEWPORT MEDIA QUERY, NOT BY
+ * `useIsMobile`'s DEFAULT CONTAINER QUERY, AND THE CHOICE IS DELIBERATE. F4 made this
+ * modal reachable from the App Blocks host chrome, which is the one surface where the
+ * default is actively wrong for two independent reasons. (1) The container default
+ * resolves against the nearest `ContainerProvider` — `main`, the page's content
+ * column — and the chrome is deliberately renderable in isolation, where there is no
+ * such provider at all. (2) Even where one exists, `main` describes neither this
+ * modal nor the screen: a Mantine `Modal` is portalled to `document.body` and
+ * `fullScreen` means the VIEWPORT (100vw/100vh), so the viewport is the box the
+ * question is actually about. That is the mirror image of the call F1 made for the
+ * chrome's own geometry (`chromeGeometry.ts`): there the viewport was wrong because
+ * the bar can sit in a 320px sidebar inside a wide page; here the container is wrong
+ * because the modal is not inside the container at all. Same lesson — measure the box
+ * that the thing is laid out against.
  */
 export function ReviewListingModal({
   appListingId,
@@ -112,6 +128,8 @@ export function ReviewListingModal({
 }) {
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
+  // See the header: viewport, not the container default.
+  const isMobile = useIsMobile({ type: 'media' });
   const [recommended, setRecommended] = useState<boolean | null>(null);
   const [details, setDetails] = useState('');
   const close = onClose;
@@ -176,6 +194,8 @@ export function ReviewListingModal({
         title={isEditing ? 'Edit your review' : 'Review this app'}
         size="md"
         centered
+        fullScreen={isMobile}
+        data-testid="app-listing-review-modal"
       >
         <Stack gap="md">
           <Text size="sm" c="dimmed">

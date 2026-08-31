@@ -12,9 +12,9 @@ import { IconBuildingStore } from '@tabler/icons-react';
 import { getListingDetailHref, getRecommendLabel } from '~/components/Apps/appListingCardView';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
-import { trpc } from '~/utils/trpc';
+import { ChromeReviewPopoverAction } from './ChromeReviewEntry';
+import { useChromeListingDetail } from './useChromeListingDetail';
 import { useIframeAwareMenu } from './useIframeAwareMenu';
 
 /**
@@ -74,6 +74,7 @@ export function AppNameCrumb({
   name,
   slug,
   maxWidth,
+  onOpenReview,
 }: {
   /**
    * The app's display name, ALREADY SANITIZED by the caller
@@ -98,6 +99,13 @@ export function AppNameCrumb({
    * (the `xl` tier).
    */
   maxWidth: number | undefined;
+  /**
+   * F4 — open the review modal for this listing. The popover offers the action; the
+   * CHROME owns the modal, because a `Popover.Dropdown` is unmounted when it closes
+   * and would destroy a modal rendered inside it. Omitted → no review action in the
+   * popover (the crumb keeps doing everything else it did).
+   */
+  onOpenReview?: (appListingId: string) => void;
 }) {
   const features = useOptionalFeatureFlags();
   const canSeeStore = hasAppsStoreAccess(features);
@@ -171,7 +179,23 @@ export function AppNameCrumb({
             the fetch lazy — STRUCTURALLY, not via an `enabled` flag that has to be
             kept correct. See the card's own header for why that distinction earned
             its own component. */}
-        <AppNameCrumbCard name={name} slug={slug} />
+        <AppNameCrumbCard
+          name={name}
+          slug={slug}
+          // 🔴 THE POPOVER CLOSES BEFORE THE MODAL OPENS, AND THE CLOSE IS EXPLICIT.
+          // A `Popover` has no `closeOnItemClick` equivalent, so nothing closes it
+          // for us; leaving it open would park a dropdown behind a focus-trapping
+          // modal with `aria-expanded="true"` still on the crumb. Order matters only
+          // in the sense that both happen in one handler — React batches them into a
+          // single commit.
+          onOpenReview={
+            onOpenReview &&
+            ((appListingId: string) => {
+              popover.onChange(false);
+              onOpenReview(appListingId);
+            })
+          }
+        />
       </Popover.Dropdown>
     </Popover>
   );
@@ -196,16 +220,23 @@ export function AppNameCrumb({
  * never instantiates it, and a closed popover never fetches. `enabled` is gone,
  * so there is no flag left to get wrong.
  */
-function AppNameCrumbCard({ name, slug }: { name: string; slug: string }) {
-  // `retry: false` matches `/apps/store-preview/<slug>`'s own call — a listing that
-  // is missing, unapproved or scope-gated 404s server-side and should settle into
-  // the unavailable state rather than being retried three times. React Query caches
-  // the result, so re-opening the popover is instant.
-  const { data, isLoading, error } = trpc.appListings.getAppDetail.useQuery(
-    { slug },
-    { retry: false }
-  );
-  const detail = data as ListingDetail | undefined;
+function AppNameCrumbCard({
+  name,
+  slug,
+  onOpenReview,
+}: {
+  name: string;
+  slug: string;
+  onOpenReview?: (appListingId: string) => void;
+}) {
+  // 🔴 THE READ GOES THROUGH THE CHROME'S SHARED HOOK, NOT A LOCAL `useQuery`. F4
+  // added a SECOND surface in this same bar that needs the same listing row (the ⋮
+  // menu's review item, which needs the id/owner/kind). React Query dedupes by KEY,
+  // so two call sites are one request only while their inputs and options serialise
+  // identically — a property of two pieces of code that nothing was checking. There
+  // is now exactly one call site (`useChromeListingDetail`) and a guard that fails if
+  // a second appears. `retry: false` and the laziness rationale live there.
+  const { detail, isLoading, error } = useChromeListingDetail(slug);
 
   return (
     <Stack gap={6}>
@@ -254,6 +285,15 @@ function AppNameCrumbCard({ name, slug }: { name: string; slug: string }) {
           >
             View in App Store
           </Button>
+          {/* F4 — the second review entry point. Sits under the store link because
+              it is the action about THIS app rather than a way to leave for the
+              store, and because the rollup directly above it is what prompts the
+              thought. It renders only for a viewer the server would accept
+              (`useCanReviewListing`, inside the component) and only on this success
+              branch, so it can never be offered against a listing that 404'd. */}
+          {onOpenReview && (
+            <ChromeReviewPopoverAction detail={detail} onOpenReview={onOpenReview} />
+          )}
         </>
       )}
     </Stack>
