@@ -313,11 +313,24 @@ describe('BlockRegistry.listAvailable — anon-exposure protections (F-E E1)', (
     // …and THIS is what pins "the mean is ignored". The SQL shape above holds
     // no matter what the decoder produced (the values sit behind `?`
     // placeholders), so the resume tuple has to be read off the BOUND VALUES.
-    // `toContain` is strict equality, so a decoder that concatenated the stale
-    // third field onto the id would bind `ab_5\x1f4.25` and fail here.
+    //
+    // Pin the ORDERED TAIL, not the multiset. `toContain` is order-blind, so a
+    // decoder that TRANSPOSED its two return fields (`cursorSortKey` ← the id,
+    // `cursorId` ← the sort key) still binds both strings and passes — while
+    // the query compares `(sort_key, ab.id) < ('ab_5', '000…005')`, a wrong
+    // page boundary that silently skips or duplicates rows. Measured: that
+    // mutant survived every other assertion in this file.
+    //
+    // The bind order is [slotFilter ×2, queryLike ×3, categoryFilter ×2,
+    // cursorSortKey ×2, cursorId, limit+1] — 11 values, the first 7 null on an
+    // unfiltered call. So the last four are the resume tuple plus the limit,
+    // and `slice(-4, -1)` is exactly (sortKey, sortKey, id) in bind order.
     const values = capturedValues();
-    expect(values).toContain('00000000000000000005');
-    expect(values).toContain('ab_5');
+    expect(values.slice(-4, -1)).toEqual([
+      '00000000000000000005',
+      '00000000000000000005',
+      'ab_5',
+    ]);
     // Defence in depth on the same claim from the other side: the dead mean
     // reached NO bound parameter, under any field split.
     for (const v of values) {
