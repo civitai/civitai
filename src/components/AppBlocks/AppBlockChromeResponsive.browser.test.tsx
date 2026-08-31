@@ -181,7 +181,7 @@ describe('AppBlockChrome responsive geometry', () => {
     expect(styleSheetLoaded(root), '@mantine/core/styles.css must be loaded').toBe(true);
 
     await page.getByTestId('app-platform-nav-trigger').click();
-    await expect.element(page.getByText('Apps home')).toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).toBeInTheDocument();
 
     const dropdown = document.querySelector('.mantine-Menu-dropdown') as HTMLElement | null;
     // Positive control on the lookup: a null here would make every width

@@ -88,8 +88,25 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 // module imports `setTrpcBatchingEnabled` from '~/utils/trpc', which the
 // wholesale trpc factory below does not provide, so spreading the original makes
 // the file fail to LOAD.
+// 🔴 `useOptionalFeatureFlags` IS LISTED TOO, AND OMITTING IT BREAKS THE WHOLE FILE.
+// This factory REPLACES the module (deliberately — see the note above), so it must
+// name every export anything in this file's module graph imports. The app-block
+// chrome's breadcrumb crumb reads `useOptionalFeatureFlags` for its store gate (the
+// non-throwing variant, because the chrome renders outside a provider), and the day
+// it started doing so this factory stopped satisfying the link:
+//   SyntaxError: The requested module '/src/providers/FeatureFlagsProvider.tsx'
+//   does not provide an export named 'useOptionalFeatureFlags'
+//
+// 🔴 THE FILE THEN FAILS TO IMPORT, WHICH IS NOT THE SAME AS FAILING. Nothing is
+// collected, so the run reported `Test Files 6 failed` alongside `Tests 374 passed`
+// — zero failing ASSERTIONS. Anything reading a failure count, or a per-test
+// summary, sees success. Read the FILE count, not the test count.
+//
+// Both hooks return the SAME flags: the gate must be decided by this fixture, not
+// by which of the two a component happens to call.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
+  useOptionalFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
 }));
 
 // IframeHost drives two tRPC queries at render plus the SDK bridges. Stub them so

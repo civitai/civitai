@@ -2,7 +2,7 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 
 // Part A: the app icon opens a Menu of the Civitai App PLATFORM's own pages
-// (Apps home / Installed apps / My apps / Review). "Review" is gated on
+// (Marketplace / Installed apps / My apps / Review). "Review" is gated on
 // the viewer's moderator flag. Part B: the ⋯ menu gains a "Permissions &
 // activity" item (only when an appBlockId is threaded) that opens a per-app
 // transparency drawer.
@@ -60,8 +60,8 @@ beforeEach(() => {
 
 async function openPlatformNav() {
   await page.getByRole('button', { name: 'Apps menu' }).click();
-  // "Apps home" is present for every viewer — wait on it so the dropdown mounted.
-  await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+  // "Marketplace" is present for every viewer — wait on it so the dropdown mounted.
+  await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).toBeInTheDocument();
 }
 
 describe('AppBlockChrome platform-nav menu (Part A)', () => {
@@ -72,7 +72,7 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
     );
     await openPlatformNav();
 
-    const home = page.getByRole('menuitem', { name: 'Apps home' }).element();
+    const home = page.getByRole('menuitem', { name: 'Marketplace' }).element();
     expect(home.getAttribute('href')).toBe('/apps');
 
     const installed = page.getByRole('menuitem', { name: 'Installed apps' }).element();

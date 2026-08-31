@@ -3706,6 +3706,12 @@ export function PageBlockHost({
         blockInstanceId={blockInstanceId}
         appBlockId={appBlockId}
         appName={appName}
+        // The page's own route slug. For an on-site app it is the `AppBlock.block_id`,
+        // which is exactly what `AppListing.slug` stores — so the chrome can key the
+        // store lookup off it without a second identifier. This is the ONLY surface
+        // that threads it: the model slot renders no breadcrumb, so it has nothing to
+        // hang the store popover on.
+        slug={slug}
         slotId={PAGE_SLOT_ID}
         canOpenPage={canOpenPage}
       />

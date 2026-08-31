@@ -32,6 +32,7 @@ import { describe, expect, it } from 'vitest';
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const HOST = path.join(REPO_ROOT, 'src/components/AppBlocks/IframeHost.tsx');
 const HOOK = path.join(REPO_ROOT, 'src/components/AppBlocks/useIframeAwareMenu.ts');
+const CRUMB = path.join(REPO_ROOT, 'src/components/AppBlocks/AppNameCrumb.tsx');
 
 function read(file: string): string {
   // Prove the path before trusting any "no match" below: a scan of an absent
@@ -67,10 +68,22 @@ function chromeSource(): string {
   return nextExport === -1 ? rest : rest.slice(0, nextExport);
 }
 
-/** Opening `<Menu …>` tags only — `<Menu.Item>` / `<Menu.Dropdown>` / `<Menu.Label>`
- *  are sub-components, not menus, and closing tags are not openings. */
+/**
+ * Opening `<Menu …>` / `<Popover …>` tags only — `<Menu.Item>`, `<Menu.Dropdown>`,
+ * `<Popover.Target>` etc. are sub-components, not floating surfaces, and closing
+ * tags are not openings.
+ *
+ * 🔴 THE HAZARD IS THE FLOATING SURFACE, NOT THE COMPONENT NAME. The rule this
+ * ledger enforces is a fact about the SURFACE — the chrome sits on a cross-origin
+ * iframe that swallows the `mousedown` of a click into the app — so it applies to
+ * anything Mantine renders in a floating layer with a click-outside close, not just
+ * to `<Menu>`. F2 added a `<Popover>` (the app-name crumb's store card), which the
+ * `<Menu>`-only matcher would have counted as zero and passed clean while the
+ * popover hung over the app exactly like the ⋮ menu once did. Widen this union
+ * before adding a `HoverCard`, `Combobox` or `Drawer` to the chrome.
+ */
 function menuOpeningTags(src: string): string[] {
-  return [...src.matchAll(/<Menu(?![.\w])[\s\S]*?>/g)].map((m) => m[0]);
+  return [...src.matchAll(/<(?:Menu|Popover)(?![.\w])[\s\S]*?>/g)].map((m) => m[0]);
 }
 
 describe('every Menu in the app-block chrome is iframe-aware', () => {
@@ -90,6 +103,16 @@ describe('every Menu in the app-block chrome is iframe-aware', () => {
     // …and that it does NOT count the sub-components, which is the whole reason
     // for the `(?![.\w])` guard.
     expect(menuOpeningTags('<Menu.Item>x</Menu.Item><Menu.Dropdown />')).toHaveLength(0);
+
+    // The `<Popover>` half of the union, with the same sub-component control. A
+    // matcher that silently sees no popovers would score the F2 crumb as
+    // "no floating surfaces here" — a green built entirely out of a blind spot.
+    expect(
+      menuOpeningTags('<Popover opened={p.opened} onChange={p.onChange}>x</Popover>')
+    ).toHaveLength(1);
+    expect(
+      menuOpeningTags('<Popover.Target><button /></Popover.Target><Popover.Dropdown />')
+    ).toHaveLength(0);
   });
 
   it('the shared hook exists and is the only place the blur listener lives', () => {
@@ -108,42 +131,120 @@ describe('every Menu in the app-block chrome is iframe-aware', () => {
     ).toHaveLength(0);
   });
 
-  it('the chrome renders exactly TWO menus, and both are on the hook', () => {
-    const chrome = chromeSource();
-    const tags = menuOpeningTags(chrome);
+  /**
+   * The LEDGER, one row per source that renders part of the chrome.
+   *
+   * 🔴 THE CHROME IS NO LONGER ONE FILE. F2 moved the breadcrumb's app-name crumb
+   * into its own component (`AppNameCrumb.tsx`) because it needs a tRPC query and a
+   * feature-flag gate that do not belong in a 5k-line host module. That split is
+   * the exact shape that lets the rule leak: a guard scoped to `AppBlockChrome`'s
+   * function body cannot see a floating surface that renders INSIDE the chrome from
+   * another file, so it would report "still two, both controlled" and pass while a
+   * third dropdown hung over the app. Every new file that renders into this chrome
+   * belongs in this table.
+   */
+  const LEDGER: ReadonlyArray<{
+    what: string;
+    source: () => string;
+    surfaces: number;
+    detail: string;
+  }> = [
+    {
+      what: 'AppBlockChrome (IframeHost.tsx)',
+      source: chromeSource,
+      surfaces: 2,
+      detail:
+        'the platform-nav menu behind the app icon and the ⋮ overflow menu. A THIRD means a ' +
+        'new control was added: put it on `useIframeAwareMenu` and update this count in the ' +
+        'same commit, or it will be stuck open the first time a user clicks into the app. ' +
+        'FEWER means one was removed or restructured past this scanner.',
+    },
+    {
+      what: 'AppNameCrumb.tsx',
+      source: () => code(read(CRUMB)),
+      surfaces: 1,
+      detail:
+        'the breadcrumb app-name crumb’s store popover (full name + recommend rollup + "View ' +
+        'in App Store"). It renders directly over the app iframe like every other floating ' +
+        'surface in this chrome, so it is on the same hook.',
+    },
+  ];
 
-    // The LEDGER. Failing on GROWTH is the point: a third menu added to this
-    // chrome must be a deliberate edit here, which is the moment somebody reads
-    // the paragraph above and wires the hook. Failing on SHRINK catches a menu
-    // being removed or replaced with something this guard can no longer see.
+  it.each(LEDGER)('$what renders exactly $surfaces floating surface(s), all on the hook', (row) => {
+    const src = row.source();
+    const tags = menuOpeningTags(src);
+
+    // Failing on GROWTH is the point: a new floating surface must be a deliberate
+    // edit here, which is the moment somebody reads the paragraph above and wires
+    // the hook. Failing on SHRINK catches one being removed or restructured past
+    // this scanner.
     expect(
       tags.length,
-      'expected exactly TWO `<Menu>`s in AppBlockChrome — the platform-nav menu behind the app ' +
-        'icon and the ⋮ overflow menu. A THIRD means a new control was added: put it on ' +
-        '`useIframeAwareMenu` and update this count in the same commit, or it will be stuck open ' +
-        'the first time a user clicks into the app. FEWER means one was removed or restructured ' +
-        'past this scanner — re-point the guard deliberately.'
-    ).toBe(2);
+      `expected exactly ${row.surfaces} floating surface(s) in ${row.what} — ${row.detail}`
+    ).toBe(row.surfaces);
 
-    // Every one of them is CONTROLLED. A count alone would pass two menus that
-    // both dropped their `opened`/`onChange`.
+    // Every one of them is CONTROLLED. A count alone would pass surfaces that all
+    // dropped their `opened`/`onChange`.
     for (const tag of tags) {
       const oneLine = tag.replace(/\s+/g, ' ');
-      expect(oneLine, `an uncontrolled <Menu> in AppBlockChrome: ${oneLine}`).toMatch(/opened=\{/);
-      expect(oneLine, `a <Menu> with no onChange in AppBlockChrome: ${oneLine}`).toMatch(
+      expect(oneLine, `an uncontrolled floating surface in ${row.what}: ${oneLine}`).toMatch(
+        /opened=\{/
+      );
+      expect(oneLine, `a floating surface with no onChange in ${row.what}: ${oneLine}`).toMatch(
         /onChange=\{/
       );
     }
 
-    // …and the control state comes from the SHARED hook, once per menu. Two menus
-    // and one hook call would mean they share a single `opened` flag (opening one
-    // would close the other); two menus and three calls means a dead one.
-    const hookCalls = chrome.match(/useIframeAwareMenu\(/g) ?? [];
+    // …and the control state comes from the SHARED hook, once per surface. Two
+    // surfaces and one hook call would mean they share a single `opened` flag
+    // (opening one would close the other); two surfaces and three calls means a
+    // dead one.
+    const hookCalls = src.match(/useIframeAwareMenu\(/g) ?? [];
     expect(
       hookCalls,
-      'the number of `useIframeAwareMenu()` calls must equal the number of `<Menu>`s in the ' +
-        'chrome — each menu owns its own open state.'
+      `the number of \`useIframeAwareMenu()\` calls must equal the number of floating surfaces ` +
+        `in ${row.what} — each owns its own open state.`
     ).toHaveLength(tags.length);
+
+    // 🔴 ONE listener, one place — checked per source, not just for the chrome.
+    // The original defect was this effect existing at one site and not the other;
+    // an inline copy in ANY chrome source is that defect re-forming.
+    expect(
+      src.match(/addEventListener\(\s*'blur'/g) ?? [],
+      `a window \`blur\` listener has reappeared inside ${row.what}. That is the copy this ` +
+        'consolidation removed — route the new control through `useIframeAwareMenu` instead.'
+    ).toHaveLength(0);
+  });
+
+  it('a CONTROLLED Popover gets no onClick from Mantine, so the crumb wires its own', () => {
+    // 🔴 THIS IS THE ONE THAT WOULD SHIP A DEAD BUTTON. `PopoverTarget` clones its
+    // child with `...(!ctx.controlled ? { onClick: ctx.onToggle } : null)` — so the
+    // moment the popover is put on `useIframeAwareMenu` (which is what supplying
+    // `opened` means) Mantine STOPS attaching the handler that opens it. The result
+    // is a real `<button>` carrying every correct ARIA attribute that does nothing
+    // at all, and no type error, no lint error and no ledger row above can see it.
+    //
+    // Pinned against the installed Mantine so the premise is checked, not assumed:
+    // if a future version starts attaching onClick to controlled targets, this
+    // fails and the redundant handler can be dropped deliberately.
+    const target = fs.readFileSync(
+      path.join(
+        REPO_ROOT,
+        'node_modules/@mantine/core/esm/components/Popover/PopoverTarget/PopoverTarget.mjs'
+      ),
+      'utf8'
+    );
+    expect(
+      target.replace(/\s+/g, ' '),
+      'Mantine’s PopoverTarget no longer guards its onClick on `!ctx.controlled` — re-read the ' +
+        'crumb’s own onClick before trusting either.'
+    ).toContain('!ctx.controlled ? { onClick: ctx.onToggle } : null');
+
+    expect(
+      code(read(CRUMB)),
+      'AppNameCrumb’s Popover.Target must carry its OWN onClick — a controlled Popover.Target ' +
+        'gets none from Mantine, so without it the trigger opens nothing.'
+    ).toMatch(/onClick=\{[^}]*popover\.onChange/);
   });
 
   it('the ⋮ overflow trigger is addressable by a stable testid, like its siblings', () => {

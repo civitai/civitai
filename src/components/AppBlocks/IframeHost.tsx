@@ -4,12 +4,12 @@ import type { ReactNode } from 'react';
 import { ActionIcon, Avatar, Box, Group, Menu, Text } from '@mantine/core';
 import {
   IconApps,
+  IconBuildingStore,
   IconDots,
   IconEyeOff,
-  IconLayoutGrid,
-  IconShieldCheck,
+  IconGavel,
+  IconPlugConnected,
   IconShieldLock,
-  IconUpload,
 } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
@@ -19,6 +19,7 @@ import {
 import { selectChromeRecentApps } from '~/components/Apps/recentAppsRail';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
+import { AppNameCrumb } from './AppNameCrumb';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
@@ -176,6 +177,7 @@ export function AppBlockChrome({
   blockInstanceId,
   appBlockId,
   appName,
+  slug,
   modelId,
   modelName,
   slotId,
@@ -188,6 +190,17 @@ export function AppBlockChrome({
    *  (a caller that hasn't threaded the id gets the pre-existing chrome). */
   appBlockId?: string;
   appName?: string;
+  /** The app's STORE slug — for an on-site app the `AppBlock.block_id`, which is
+   *  also what `AppListing.slug` holds, so one value keys both `/apps/run/<slug>`
+   *  and `appListings.getAppDetail`. Threaded by the full-page host, which has it
+   *  as its own route param. Drives the breadcrumb crumb's store popover
+   *  (`AppNameCrumb`); omitted → that crumb stays the static text it was, which is
+   *  why the model surface (no slug, and no breadcrumb either) is unaffected.
+   *
+   *  🔴 NOT `appBlockId`. That prop is the internal `AppBlock.id` row key and
+   *  matches NEITHER selector of `getAppDetail` (which takes a listing `slug` or an
+   *  `apl_<ULID>` listing `id`); passing it would 404 every lookup. */
+  slug?: string;
   modelId?: number;
   modelName?: string;
   /** The slot this chrome renders in. Drives the page-vs-model surface
@@ -402,24 +415,46 @@ export function AppBlockChrome({
           </Menu.Target>
           <Menu.Dropdown>
             <Menu.Label>Civitai Apps</Menu.Label>
+            {/* 🔴 THE ICONS AND THE "Marketplace" LABEL ARE MIRRORED FROM THE STORE
+                SUBNAV, WHICH IS THE SOURCE OF TRUTH — `SUB_NAV_LINKS` in
+                `~/components/Apps/AppsSubNav`. This dropdown and that tab bar are two
+                renderings of ONE platform navigation: a user who opens an app from the
+                store and then reaches for this menu is looking for the same four
+                destinations they just left, and until now every shared concept was drawn
+                with a DIFFERENT glyph here (grid vs storefront, apps vs plug, upload vs
+                apps, shield vs gavel) — four out of four, so the disagreement was the
+                rule rather than an oversight.
+
+                When you add or re-icon an entry here, change `SUB_NAV_LINKS` first (or
+                confirm it already says what you are about to write) and follow it. The
+                alignment is pinned by `__tests__/chromeNavAlignsWithSubNav.test.ts`,
+                which reads BOTH tables and fails when they drift — including when the
+                subnav changes and this menu does not.
+
+                The LABELS are deliberately NOT all identical: the subnav's tabs sit under
+                an "Apps" heading and can afford one-word labels ("Installed", "Review"),
+                whereas these menu items stand alone in a dropdown over a running app and
+                need the noun ("Installed apps"). "Marketplace" is the one label that is
+                shared verbatim, because "Apps home" named a destination the store itself
+                stopped calling that. */}
             <Menu.Item
               component={Link}
               href="/apps"
-              leftSection={<IconLayoutGrid size={14} stroke={1.5} />}
+              leftSection={<IconBuildingStore size={14} stroke={1.5} />}
             >
-              Apps home
+              Marketplace
             </Menu.Item>
             <Menu.Item
               component={Link}
               href="/apps/installed"
-              leftSection={<IconApps size={14} stroke={1.5} />}
+              leftSection={<IconPlugConnected size={14} stroke={1.5} />}
             >
               Installed apps
             </Menu.Item>
             <Menu.Item
               component={Link}
               href="/apps/mine"
-              leftSection={<IconUpload size={14} stroke={1.5} />}
+              leftSection={<IconApps size={14} stroke={1.5} />}
             >
               My apps
             </Menu.Item>
@@ -427,7 +462,7 @@ export function AppBlockChrome({
               <Menu.Item
                 component={Link}
                 href="/apps/review"
-                leftSection={<IconShieldCheck size={14} stroke={1.5} />}
+                leftSection={<IconGavel size={14} stroke={1.5} />}
               >
                 Review
               </Menu.Item>
@@ -524,24 +559,27 @@ export function AppBlockChrome({
               data-testid="app-block-breadcrumb-apps"
               data-clickable="true"
             >
-              Apps
+              {/* Reads "Marketplace", not "Apps" — the destination `/apps` is what the
+                  store's own subnav calls its first tab (`SUB_NAV_LINKS[0].label`), and a
+                  crumb that names the page differently from the page's own tab makes the
+                  trail look like it leads somewhere else. The testid deliberately keeps
+                  its `-apps` spelling: it addresses the crumb by its ROUTE, which has not
+                  moved, so a future copy change does not churn every test that reaches
+                  for it. */}
+              Marketplace
             </Text>
             <Text size="xs" c="dimmed" aria-hidden>
               /
             </Text>
-            {/* Same responsive cap as the badge name — it is the same
-                publisher-controlled string, just rendered on the page surface
-                instead of the model surface, so one tier table serves both. */}
-            <Text
-              size="xs"
-              c="dimmed"
-              fw={500}
-              truncate
-              maw={geometry.nameMaxWidth}
-              data-testid="app-block-breadcrumb-name"
-            >
-              {label}
-            </Text>
+            {/* The trailing crumb is a CONTROL, not a label — see `AppNameCrumb`.
+                It keeps the same responsive cap as the badge name (it is the same
+                publisher-controlled string, just on the page surface, so one tier
+                table serves both) and the same testid; what it adds is a popover
+                with the app's full name, the store's recommend rollup and a "View
+                in App Store" action. The whole cluster is gated on
+                `hasAppsStoreAccess` INSIDE that component — a viewer without store
+                access gets the static text this used to be. */}
+            <AppNameCrumb name={label} slug={slug} maxWidth={geometry.nameMaxWidth} />
           </Group>
         )}
       </Group>
@@ -580,10 +618,25 @@ export function AppBlockChrome({
         </Menu.Target>
         <Menu.Dropdown>
           <Menu.Label>App</Menu.Label>
+          {/* 🔴 SAME ROUTE ⇒ SAME ICON, ACROSS BOTH MENUS. This item and the
+              platform nav's "Installed apps" are different WORDS for the same
+              destination (`/apps/installed`), so they must not be different
+              PICTURES: the two dropdowns open a few pixels apart in one bar, and a
+              user who sees a plug in one and a grid in the other has to work out
+              whether they lead to the same place. The glyph comes from the store
+              subnav's row for this route (`SUB_NAV_LINKS`), exactly as the platform
+              nav's does — the labels stay different on purpose ("Manage apps" is
+              the action from inside a running app; "Installed apps" is the
+              destination), because the rule is about the ROUTE, not the copy.
+
+              Pinned by `__tests__/chromeNavAlignsWithSubNav.test.ts`, which checks
+              EVERY literal-href item in the whole chrome, not just the platform-nav
+              dropdown — this item is the reason that check is repo-wide rather than
+              scoped, since scoping it to one dropdown is what let this site drift. */}
           <Menu.Item
             component={Link}
             href="/apps/installed"
-            leftSection={<IconApps size={14} stroke={1.5} />}
+            leftSection={<IconPlugConnected size={14} stroke={1.5} />}
           >
             Manage apps
           </Menu.Item>
