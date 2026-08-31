@@ -688,15 +688,32 @@ there is still exactly one list with open boxes; each item carries the date it w
       same as, the 08-25 "pressing Actioned fails" item above — that one was a 409 rendered as "failed —
       retry"; this one is the row reappearing after a successful write.
 
-- [ ] **A long report detail shoves the dashboard columns sideways.** *(08-27)* Reported as "long comment
-      caused the reason and rightwards to move over instead of spacing it down". Read but **not
-      reproduced** — the details block on the Most Reported row renders each entry as a bare `<span>`
-      inside a `flex flex-col` with no width constraint, and the table is auto-layout, so a long value
-      widens that column and pushes reason / age / reporter / actions right rather than wrapping. That
-      is a hypothesis from reading the markup, not a diagnosis: it needs a report whose details actually
-      contain a long comment.
-      *Closes when:* the reporter opens the dashboard on a report carrying a long comment and the row
-      wraps instead of widening.
+- [x] **A long report detail shoves the dashboard columns sideways.** *(08-27)* Reported as "long comment
+      caused the reason and rightwards to move over instead of spacing it down", and reproduced exactly:
+      the comment does not wrap, the table overflows, and Reason / First reported / By are pushed off the
+      right edge.
+
+      **The cause is one inherited property, and my first two guesses were both wrong.** `TableCell`
+      applies `whitespace-nowrap` to EVERY cell, and `white-space` inherits — so it reaches the details
+      block and no value can wrap at all. It has nothing to do with the value's shape; an ordinary
+      sentence does it. The fix is `whitespace-normal` on that block.
+
+      🔴 **`break-words` does not finish the job, and looks like it does.** Production also carries a
+      640-character run with no whitespace, and `overflow-wrap: break-word` leaves it overflowing:
+      it only breaks a word that overflows its LINE BOX, and an auto-layout table cell grows rather
+      than overflowing, so the break never triggers. `overflow-wrap: anywhere` (Tailwind
+      `wrap-anywhere`, needs v4.1+; this app is on 4.3.2) participates in min-content sizing, so the
+      cell can shrink and the token wraps. Measured side by side rather than reasoned: `break-words`
+      wrapped the sentence and left the token overflowing in the same screenshot.
+
+      Timeline worth keeping: unlinked rows only started rendering `details` on 08-25, as the fix
+      for
+      "a no linked content report gives a moderator nothing to judge" above. This is that feature's
+      first long value, two days later.
+
+      ⚠️ Verified against a standalone reproduction using `TableCell`'s own classes, NOT the live
+      page — the local login could not be re-established. The mechanism and both candidate fixes are
+      measured; the dashboard itself has not been seen with this change on it.
 
 - [ ] **"Dashboard being funkeh" — a screen recording nobody has read back.** *(08-27)* Posted as a
       video with no description, twenty minutes after the actioned-reports report above and after a fix
