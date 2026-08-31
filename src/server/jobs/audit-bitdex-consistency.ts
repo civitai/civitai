@@ -48,12 +48,21 @@ const DEFAULT_SETTLE_SECS = 120;
 // the same fact, and disagreement between the two would itself be a finding.
 const AUDIT_DOC_FIELDS = ['id', 'isPublished', 'publishedAt', 'sortAt'];
 
+// The baseModel stratum still needs the publication pair, because a document that is
+// absent or unpublished is stratum B's finding and must not be re-reported here.
+const BASEMODEL_DOC_FIELDS = ['id', 'isPublished', 'publishedAt', 'baseModel'];
+
 // Cap on mismatch rows written to Axiom per run. The counters carry the rate; the log
 // only has to carry enough ids to start an investigation.
 const MAX_LOGGED_MISMATCHES = 25;
 
-export type AuditStratum = 'scheduled' | 'published_recent';
-export type MismatchKind = 'scheduled_visible' | 'published_missing' | 'sortat_drift';
+export type AuditStratum = 'scheduled' | 'published_recent' | 'basemodel';
+export type MismatchKind =
+  | 'scheduled_visible'
+  | 'published_missing'
+  | 'sortat_drift'
+  | 'basemodel_not_checkpoint'
+  | 'basemodel_missing';
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = parseInt(raw ?? '', 10);
@@ -95,6 +104,11 @@ export type AuditSampleRow = {
   // publishedAt and existedAt (= max(scannedAt, createdAt)). Computed in PG so the
   // audit compares against the same GREATEST semantics rather than reimplementing them.
   expectedSortAtSecs: number;
+  // Distinct baseModels of the image's CHECKPOINT resources. Only the baseModel stratum
+  // selects it; a set rather than a scalar because an image can carry more than one
+  // checkpoint, and because the comparison is membership — which resource supplied the
+  // value is the whole question, and ordering is not.
+  expectedBaseModels?: string[] | null;
 };
 
 // Stratum A — the incident class. Images whose parent Post is scheduled to publish in
@@ -147,29 +161,74 @@ export function buildPublishedSampleQuery({
   `;
 }
 
+// Stratum C — what the two base-model filter reports were about (868ktxe1r, 868ku8x8k).
+// BitDex's `baseModel` decides whether an image matches `In(baseModel, [...])`, and the
+// two reported failures were the two directions of it being wrong: a value taken from an
+// attached LoRA rather than the checkpoint, so a Pony filter served an Illustrious image;
+// and no value at all on a fresh document, so a recent image matched no filter.
+//
+// Truth here is the CHECKPOINT-only derivation, which is what the Meilisearch index
+// builds (`CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel"`, metrics-images.search-index.ts).
+// An image with no checkpoint resource legitimately has no base model, and that is a
+// distinct case rather than a missing one — see `compareStratum`.
+export function buildBaseModelSampleQuery({
+  sampleSize,
+  publishedWindowSecs,
+  settleSecs,
+}: Pick<AuditConfig, 'sampleSize' | 'publishedWindowSecs' | 'settleSecs'>): Prisma.Sql {
+  return Prisma.sql`
+    SELECT
+      i.id AS "imageId",
+      p.id AS "postId",
+      extract(epoch FROM p."publishedAt")::double precision AS "publishedAtSecs",
+      extract(epoch FROM GREATEST(p."publishedAt", i."scannedAt", i."createdAt"))::double precision
+        AS "expectedSortAtSecs",
+      COALESCE((
+        SELECT array_agg(DISTINCT mv."baseModel")
+        FROM "ImageResourceNew" irn
+        JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId"
+        JOIN "Model" m ON m.id = mv."modelId"
+        WHERE irn."imageId" = i.id AND m.type = 'Checkpoint' AND mv."baseModel" IS NOT NULL
+      ), '{}') AS "expectedBaseModels"
+    FROM "Post" p
+    JOIN "Image" i ON i."postId" = p.id
+    WHERE p."publishedAt" > now() - make_interval(secs => ${publishedWindowSecs})
+      AND p."publishedAt" <= now()
+      AND p."updatedAt" < now() - make_interval(secs => ${settleSecs})
+    ORDER BY random()
+    LIMIT ${sampleSize}
+  `;
+}
+
 export type BitdexDocState = {
   // False when BitDex returned no row, or a bare `{ id }` — the batch endpoint's
   // encoding for "no document on disk for this slot".
   present: boolean;
   published: boolean;
   sortAtSecs: number | null;
+  // Empty string is the index's own "no checkpoint" encoding — the Meili side builds the
+  // value with `string_agg`, which yields '' rather than null when nothing matches. Both
+  // spellings mean the same thing here, so they collapse to null.
+  baseModel: string | null;
 };
 
 // Reads BitDex's answer out of a doc payload. isPublished is the authority when the
 // key is present; publishedAt is the fallback, because the index derives isPublished
 // from it via exists_boolean and the two carry the same fact.
 export function readDocState(doc: BitdexDocument | undefined): BitdexDocState {
-  if (!doc) return { present: false, published: false, sortAtSecs: null };
+  if (!doc) return { present: false, published: false, sortAtSecs: null, baseModel: null };
 
   const isPublished = doc.isPublished;
   const publishedAt = doc.publishedAt;
   const sortAt = doc.sortAt;
+  const baseModel = doc.baseModel;
   const present = isPublished !== undefined || publishedAt !== undefined || sortAt !== undefined;
 
   return {
     present,
     published: typeof isPublished === 'boolean' ? isPublished : publishedAt != null,
     sortAtSecs: typeof sortAt === 'number' ? sortAt : null,
+    baseModel: typeof baseModel === 'string' && baseModel !== '' ? baseModel : null,
   };
 }
 
@@ -199,6 +258,45 @@ export function compareStratum(
   const mismatches: AuditMismatch[] = [];
   for (const row of rows) {
     const state = readDocState(byId.get(row.imageId));
+
+    if (stratum === 'basemodel') {
+      // An absent or unpublished document is stratum B's finding. Reporting it again
+      // here would double-count one lost write as two defects in two places.
+      if (!state.present || !state.published) continue;
+
+      const expected = row.expectedBaseModels ?? [];
+
+      if (state.baseModel == null) {
+        // No checkpoint on the image means no base model is the CORRECT answer, so this
+        // arm can only fire where PG has one. That is also why the run reports how many
+        // sampled images had a checkpoint at all — see `baseModelDenominators`.
+        if (expected.length) {
+          mismatches.push({
+            stratum,
+            kind: 'basemodel_missing',
+            imageId: row.imageId,
+            postId: row.postId,
+            expected: `one of [${expected.join(', ')}]`,
+            actual: 'no baseModel on the document',
+          });
+        }
+        continue;
+      }
+
+      if (!expected.includes(state.baseModel)) {
+        mismatches.push({
+          stratum,
+          kind: 'basemodel_not_checkpoint',
+          imageId: row.imageId,
+          postId: row.postId,
+          expected: expected.length
+            ? `one of [${expected.join(', ')}]`
+            : 'no baseModel (image has no checkpoint resource)',
+          actual: `baseModel=${state.baseModel}`,
+        });
+      }
+      continue;
+    }
 
     if (stratum === 'scheduled') {
       // A doc that is absent, or present and unpublished, is the correct state — a
@@ -252,7 +350,34 @@ export type AuditScopeResult = {
   stratum: AuditStratum;
   checked: number;
   mismatches: AuditMismatch[];
+  // Only the baseModel stratum sets these. `checked` alone cannot tell a clean run from
+  // one that compared nothing: documents that are absent or unpublished are skipped, and
+  // the `basemodel_missing` arm can only fire on an image that HAS a checkpoint. A zero
+  // beside a zero denominator is not evidence of agreement.
+  comparedDocs?: number;
+  withCheckpoint?: number;
 };
+
+/**
+ * The denominators the baseModel stratum's zero has to be read against: how many sampled
+ * images BitDex held as published documents at all, and how many of those PG says have a
+ * checkpoint. Separate from `compareStratum` so both numbers exist whether or not any
+ * mismatch was found.
+ */
+export function baseModelDenominators(rows: AuditSampleRow[], docs: BitdexDocument[]) {
+  const byId = new Map<number, BitdexDocument>();
+  for (const doc of docs) byId.set(doc.id, doc);
+
+  let comparedDocs = 0;
+  let withCheckpoint = 0;
+  for (const row of rows) {
+    const state = readDocState(byId.get(row.imageId));
+    if (!state.present || !state.published) continue;
+    comparedDocs++;
+    if ((row.expectedBaseModels ?? []).length) withCheckpoint++;
+  }
+  return { comparedDocs, withCheckpoint };
+}
 
 // Samples one stratum and compares it. A BitDex fetch failure propagates:
 // fetchBitdexDocuments throws rather than returning null precisely so an unreachable
@@ -260,7 +385,8 @@ export type AuditScopeResult = {
 async function auditStratum(
   stratum: AuditStratum,
   query: Prisma.Sql,
-  config: AuditConfig
+  config: AuditConfig,
+  docFields: string[] = AUDIT_DOC_FIELDS
 ): Promise<AuditScopeResult> {
   // Primary, not the replica: this job's whole output is "PG and BitDex disagree",
   // and replica lag would manufacture exactly that disagreement. 100 sampled rows
@@ -272,29 +398,37 @@ async function auditStratum(
   const docs = await fetchBitdexDocuments(
     BITDEX_INDEX,
     rows.map((r) => r.imageId),
-    AUDIT_DOC_FIELDS
+    docFields
   );
 
-  return { stratum, checked: rows.length, mismatches: compareStratum(stratum, rows, docs, config) };
+  return {
+    stratum,
+    checked: rows.length,
+    mismatches: compareStratum(stratum, rows, docs, config),
+    ...(stratum === 'basemodel' ? baseModelDenominators(rows, docs) : {}),
+  };
 }
 
 export type AuditResult = {
   scheduled: AuditScopeResult;
   publishedRecent: AuditScopeResult;
+  baseModel: AuditScopeResult;
 };
 
 export async function runAudit(config: AuditConfig): Promise<AuditResult> {
-  const scheduled = await auditStratum(
-    'scheduled',
-    buildScheduledSampleQuery(config),
-    config
-  );
+  const scheduled = await auditStratum('scheduled', buildScheduledSampleQuery(config), config);
   const publishedRecent = await auditStratum(
     'published_recent',
     buildPublishedSampleQuery(config),
     config
   );
-  return { scheduled, publishedRecent };
+  const baseModel = await auditStratum(
+    'basemodel',
+    buildBaseModelSampleQuery(config),
+    config,
+    BASEMODEL_DOC_FIELDS
+  );
+  return { scheduled, publishedRecent, baseModel };
 }
 
 export const auditBitdexConsistency = createJob(
@@ -316,7 +450,7 @@ export const auditBitdexConsistency = createJob(
     }
     const durationSec = (Date.now() - start) / 1000;
 
-    const scopes = [result.scheduled, result.publishedRecent];
+    const scopes = [result.scheduled, result.publishedRecent, result.baseModel];
     for (const scope of scopes) {
       bitdexAuditCheckedCounter?.inc({ stratum: scope.stratum }, scope.checked);
       for (const mismatch of scope.mismatches)
@@ -339,6 +473,12 @@ export const auditBitdexConsistency = createJob(
         scheduledMismatches: result.scheduled.mismatches.length,
         publishedChecked: result.publishedRecent.checked,
         publishedMismatches: result.publishedRecent.mismatches.length,
+        baseModelChecked: result.baseModel.checked,
+        // The two denominators the baseModel zero must be read against: sampling 50 rows
+        // and comparing none of them reports the same mismatch count as full agreement.
+        baseModelComparedDocs: result.baseModel.comparedDocs ?? 0,
+        baseModelWithCheckpoint: result.baseModel.withCheckpoint ?? 0,
+        baseModelMismatches: result.baseModel.mismatches.length,
         // Ids and expected-vs-actual, so a firing alert has a trail to pull on
         // instead of only a rate.
         mismatches: allMismatches.slice(0, MAX_LOGGED_MISMATCHES),
@@ -355,9 +495,13 @@ export const auditBitdexConsistency = createJob(
       scheduledMismatches: result.scheduled.mismatches.length,
       publishedChecked: result.publishedRecent.checked,
       publishedMismatches: result.publishedRecent.mismatches.length,
+      baseModelChecked: result.baseModel.checked,
+      baseModelComparedDocs: result.baseModel.comparedDocs ?? 0,
+      baseModelWithCheckpoint: result.baseModel.withCheckpoint ?? 0,
+      baseModelMismatches: result.baseModel.mismatches.length,
       durationSec,
     };
   },
-  // Two sampled queries + one batch doc fetch; keep the single-runner lock short.
+  // Three sampled queries + a batch doc fetch each; keep the single-runner lock short.
   { lockExpiration: 5 * 60 }
 );
