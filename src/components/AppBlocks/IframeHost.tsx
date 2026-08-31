@@ -20,6 +20,8 @@ import { selectChromeRecentApps } from '~/components/Apps/recentAppsRail';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { AppNameCrumb } from './AppNameCrumb';
+import { ChromeReviewMenuItem } from './ChromeReviewEntry';
+import { ReviewListingModal } from '~/components/Apps/ReviewListingButton';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
@@ -238,6 +240,19 @@ export function AppBlockChrome({
   // Per-app "Permissions & activity" drawer open state (only reachable when
   // appBlockId was threaded through).
   const [permsOpen, setPermsOpen] = useState(false);
+  // F4 — the review modal's target listing, `null` while closed.
+  //
+  // 🔴 THE CHROME OWNS THIS STATE BECAUSE NEITHER ENTRY POINT CAN. Both triggers
+  // live inside a floating surface Mantine UNMOUNTS on close (a `Menu.Dropdown` and
+  // a `Popover.Dropdown`), so a modal rendered beside either one would be destroyed
+  // by the click that opens it — it could never appear. Hoisting the state here is
+  // the same shape `AppListingDetailBody` uses for the same reason, and it is why
+  // `ReviewListingModal` takes `opened` from its caller instead of owning it.
+  //
+  // Storing the LISTING ID rather than a boolean is what lets the modal be mounted
+  // only when there is something to review: an id is what the entry point resolved
+  // and handed up, so there is no window in which the modal exists without one.
+  const [reviewListingId, setReviewListingId] = useState<string | null>(null);
 
   // Recently-run apps (client-only personalisation from localStorage). Seeded
   // empty so SSR + the first client render match (no hydration mismatch); the
@@ -579,7 +594,12 @@ export function AppBlockChrome({
                 in App Store" action. The whole cluster is gated on
                 `hasAppsStoreAccess` INSIDE that component — a viewer without store
                 access gets the static text this used to be. */}
-            <AppNameCrumb name={label} slug={slug} maxWidth={geometry.nameMaxWidth} />
+            <AppNameCrumb
+              name={label}
+              slug={slug}
+              maxWidth={geometry.nameMaxWidth}
+              onOpenReview={setReviewListingId}
+            />
           </Group>
         )}
       </Group>
@@ -640,6 +660,24 @@ export function AppBlockChrome({
           >
             Manage apps
           </Menu.Item>
+          {/* F4 — the permanent review entry point. An ACTION, not a route link:
+              it carries no `href`, so the ONE ROUTE, ONE ICON guard in
+              `__tests__/chromeNavAlignsWithSubNav.test.ts` (which extracts only
+              literal-href items) correctly does not treat it as a destination the
+              store subnav must also list.
+
+              Placed directly under "Manage apps" so the two whole-app actions that
+              are ALWAYS about the running app ("rate it", "see what it can do") sit
+              together above the dismissal, and "Hide app" stays last.
+
+              🔴 THE ITEM RENDERS ITS OWN GATES AND MAY RETURN NULL. It is offered
+              only to a viewer the server would accept: signed in, not the owner,
+              holding a store scope that admits this listing's kind, and with store
+              access at all (`hasAppsStoreAccess`). Offering a control whose submit
+              403s is the anti-goal `useCanReviewListing` exists to prevent, so the
+              gate is IMPORTED from the review module rather than re-derived here.
+              The query behind it is mounted only while this dropdown is open. */}
+          <ChromeReviewMenuItem slug={slug} onOpenReview={setReviewListingId} />
           {appBlockId && (
             <Menu.Item
               leftSection={<IconShieldLock size={14} stroke={1.5} />}
@@ -675,6 +713,19 @@ export function AppBlockChrome({
         appName={sanitizedName ?? undefined}
         opened={permsOpen}
         onClose={() => setPermsOpen(false)}
+      />
+    )}
+    {/* F4 — the review form, mounted OUTSIDE both floating surfaces (see
+        `reviewListingId` above for why that is forced rather than tidy). Mounted only
+        once an entry point has handed up a listing id, so a chrome nobody has asked
+        to review issues no `getMyReview` and renders no modal DOM. The modal applies
+        no eligibility gate of its own by design — the entry points did, and
+        duplicating the rule would put it in two places. */}
+    {reviewListingId && (
+      <ReviewListingModal
+        appListingId={reviewListingId}
+        opened
+        onClose={() => setReviewListingId(null)}
       />
     )}
     </>
