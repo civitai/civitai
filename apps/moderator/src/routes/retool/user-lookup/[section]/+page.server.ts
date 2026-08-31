@@ -503,8 +503,7 @@ export const actions: Actions = {
 
   // Checkbox ids arrive as repeated fields, so they are read off the raw FormData rather than the
   // parsed object, which keeps only the last value per name.
-  contentAction: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return contentFail('Not permitted.');
+  contentAction: requiresGrant('user.comments.bulk', async ({ request, locals }) => {
     const form = await request.formData();
     const input = parseForm(
       userIdSchema.extend({
@@ -552,12 +551,11 @@ export const actions: Actions = {
     });
     if (!result.ok) return contentFail(result.error);
     return { success: true };
-  },
+  }),
 
   // The typed-username confirmation is checked SERVER-side as well as in the UI: this is irreversible,
   // and a client-only guard is no guard at all against a double-submit or a forged post.
-  purgeContent: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
+  purgeContent: requiresGrant('user.purge', async ({ request, locals }) => {
     const input = parseForm(
       userIdSchema.extend({ confirm: z.string().trim() }),
       await request.formData()
@@ -572,10 +570,9 @@ export const actions: Actions = {
     const result = await purgeAllContent({ userId: input.userId, moderatorId: locals.user.id });
     if (!result.ok) return accountFail(result.error);
     return { success: true };
-  },
+  }),
 
-  setBanned: async ({ request, locals }) => {
-    if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');
+  setBanned: requiresGrant('user.ban', async ({ request, locals }) => {
     // reasonCode is validated against the SAME list the main app's endpoint parses. It rejects anything
     // else with a 500 before the ban happens, so an unchecked value here is a ban that silently does not
     // occur.
@@ -598,7 +595,7 @@ export const actions: Actions = {
     });
     if (!result.ok) return accountFail(result.error);
     return { success: true };
-  },
+  }),
 
   addTimedMute: async ({ request, locals }) => {
     if (!canAccess(locals.user, '/users')) return accountFail('Not permitted.');

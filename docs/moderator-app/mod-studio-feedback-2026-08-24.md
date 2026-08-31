@@ -313,7 +313,7 @@ look on paper.
       see the one-way-door item below). Revisit if the queue cannot keep pace with a wave, and revisit
       it WITH that fix rather than instead of it.
 
-- [ ] **User Lookup's enforcement actions are gated on the `/users` PAGE grant.** `contentAction` (bulk
+- [x] **User Lookup's enforcement actions are gated on the `/users` PAGE grant.** `contentAction` (bulk
       comment delete and ToS), `purgeContent` (irreversible) and `setBanned` all check
       `canAccess(user, '/users')` — a page grant standing in for a permission, which is the weld this
       app's own `CLAUDE.md` records as having cost the team once already. It was invisible while
@@ -321,9 +321,30 @@ look on paper.
       worth granting. Ticking a box that reads "let them see new signups" would have handed over mass
       comment deletion, ban and purge.
 
-      Worked around for now by giving the new list its own path (`/users/newest`), which is a fence, not
-      a fix. The fix is permission ids for the three actions — `user.ban`, `user.purge`,
-      `user.comments.bulk` — resolved through `locals.grants` like every other action in the app.
+      Worked around at the time by giving the new list its own path (`/users/newest`), which was a
+      fence, not a fix.
+
+      **Done 2026-08-31.** The three ids exist and the actions are `requiresGrant('user.ban')`,
+      `requiresGrant('user.purge')` and `requiresGrant('user.comments.bulk')` — the same shape the four
+      already-converted actions on that page use (`user.identity.edit`, `user.moderator.toggle`,
+      `user.cosmetics.grant`, `user.buzz.send`). Three ids rather than one because they are three
+      decisions: a role can reasonably clear comment spam without being able to end an account, and
+      `user.purge` is the only one with no way back.
+
+      The UI moved with the server, or the fix would only relocate the confusion: the Ban/Unban and
+      Purge buttons now render on `data.grants['user.ban']` / `['user.purge']`, and `CommentList`'s
+      bulk controls on `['user.comments.bulk']` — that prop is renamed `canBulkAct`, since `canAct`
+      now means something different from what gates it.
+
+      `canAct` still comes from the `/users` page grant and still means "may open the enforcement UI".
+      That is the correct remaining use of a page grant; the defect was it standing in for the
+      permission underneath. Sixteen other actions on this page are still on `canAccess('/users')` —
+      identity, socials, profile, notes and the rest — and were left alone: this item was about the
+      three that end an account.
+
+      Nothing is held by anyone at first, which is the design rather than a cutover risk:
+      `resolvePermissions` short-circuits on `moderator:admin`, so admins hold every new id on deploy
+      and grant the rest from `/admin`.
 
 - [ ] **There is no way back.** Setting `tosViolation` on a comment is a one-way door — nothing in the
       main app or the spoke clears it, and there is no comment equivalent of `restoreImages`. That was
@@ -1054,17 +1075,21 @@ four have a root cause that is not what the symptom suggests.
       rename, and the SQL migrations: verify two of the original three, and apply the two added
       2026-08-24 (`20260824120000_user_email_domain_index`, which also needs `ANALYZE "User";`, and
       `20260824140000_comment_user_id_indexes`) everywhere except production, where both are live.
-- [ ] **Tick the action grants on `/admin`, then check as a non-admin** *(08-19)*. There are no default
-      roles, so until this pass happens the actions are held by nobody. The pass itself is
-      [`action-grants-review.md`](action-grants-review.md). **Add Post Reports to it** — the new page is
-      admin-only until granted.
+
+**Not tracked here: who holds which grant.** The grant system is built — permissions are declared in
+`$lib/permissions.ts` and ticked per role on `/admin`. A moderator who cannot reach a page or run an
+action is a provisioning question for Seb, not a defect and not engineering work, so those reports do
+not become boxes on this list. [`action-grants-review.md`](action-grants-review.md) remains as the
+reference for what needs ticking, including Post Reports.
 
 ## P1 — reported defects
 
 - [ ] **Comment highlighting does not work on article comments** *(08-19)*. Read end to end and not
       reproduced from the code; needs a live repro with the URL in hand.
-- [ ] **User Lookup unavailable for the staff role** *(08-17)*. Not a defect — part of the `/admin` pass.
-- [ ] **`reportedUser` renders greyed out on reports** *(08-18)*. Suspected downstream of the above.
+- [ ] **`reportedUser` renders greyed out on reports** *(08-18)*. Was filed as downstream of a missing
+      grant; with grant provisioning off this list that explanation is no longer an answer, so it needs
+      a real look or a repro. (The staff-role lookup report that sat above this was provisioning and is
+      gone — see the note under P0.)
 - [ ] **Comment rows are "funky" to read** *(08-18)*. Needs the reporter to say what is wrong.
 
 ## P2 — decisions
