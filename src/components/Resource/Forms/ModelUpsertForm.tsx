@@ -50,19 +50,20 @@ import { TagSort } from '~/server/common/enums';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { modelUpsertSchema } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   CheckpointType,
   CommercialUse,
   ModelStatus,
-  ModelType,
   ModelUploadType,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
+import { getModelTypeSelectData } from '~/shared/constants/model-type.constants';
 import type { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
-import { getDisplayName, getModelUrl, splitUppercase, titleCase } from '~/utils/string-helpers';
+import { getModelUrl, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
@@ -344,12 +345,10 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                   name="type"
                   label="Type"
                   placeholder="Type"
-                  data={Object.values(ModelType).map((type) => ({
-                    label: getDisplayName(type),
-                    value: type,
-                  }))}
+                  data={getModelTypeSelectData(type)}
                   onChange={handleModelTypeChange}
                   disabled={isTrained}
+                  allowDeselect={false}
                   withAsterisk
                 />
                 {type === 'Checkpoint' && (
