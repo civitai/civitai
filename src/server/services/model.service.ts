@@ -2544,15 +2544,12 @@ export const upsertModel = async (
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
     const prevMeta = beforeUpdate.meta as ModelMeta | null;
 
-    // Versions whose licensing source the type change invalidated, cleared inside the transaction
-    // below and reported outside it.
     let clearedLicensingSources: { id: number; licensingSourceVersionId: number }[] = [];
 
     const result = await dbWrite.$transaction(
       async (tx) => {
-        // Read on the WRITER, inside the transaction, rather than off `beforeUpdate` — that is a
-        // `dbRead` snapshot, and a stale or missed replica row reads as "type unchanged", which
-        // would skip the repair below on exactly the save that needed it.
+        // Not `beforeUpdate.type` — that is a `dbRead` read, and a stale replica reads as "type
+        // unchanged", skipping the repair below on exactly the save that needed it.
         const typeBeforeUpdate = (
           await tx.model.findUnique({ where: { id }, select: { type: true } })
         )?.type;
@@ -2609,31 +2606,21 @@ export const upsertModel = async (
           },
         });
 
-        // A model's type decides which licensing roots its versions may inherit a per-image fee
-        // from, and the type stays editable after the versions exist. The rule is enforced on a
-        // VERSION write (upsertModelVersionHandler coerces a mismatched source to null); nothing
-        // re-checked the versions when the model moved under them. So a version stamped while its
-        // model was a Checkpoint went on charging that checkpoint's fee — to everyone who
-        // generated with it, settled to the CHECKPOINT owner, on a line carrying the derivative's
-        // own name — once the model became a LoRA, and no surface on the site could clear it.
-        // Same rule, same coercion, on the other write that can break it (CU 868kwf2fd).
+        // The same lineage rule `upsertModelVersionHandler` coerces on a version write, applied to
+        // the other write that can break the pairing: the model's type (CU 868kwf2fd).
         //
-        // In the transaction so the type change and the repair cannot be observed apart: a reader
-        // between them would price generations against a lineage the model no longer supports.
+        // Inside the transaction: a reader between the type change and the repair would price
+        // generations against a lineage the model no longer supports.
         //
-        // 🔴 Gated on the type actually CHANGING, not on the payload carrying one. `type` is
-        // required by `modelUpsertSchema`, so `data.type !== undefined` is true on every save — a
-        // rename, a tag edit — and coercing on those would clear sources no type change
-        // invalidated, including the pre-LicensingRoot rows the accompanying migration
-        // deliberately spares for a human decision.
+        // 🔴 Gate on the type CHANGING, not on the payload carrying one: `type` is required by
+        // `modelUpsertSchema`, so `data.type !== undefined` is true on every save — a rename, a
+        // tag edit.
         if (updated.type !== typeBeforeUpdate) {
           const stamped = await tx.modelVersion.findMany({
             where: { modelId: updated.id, licensingSourceVersionId: { not: null } },
             select: { id: true, baseModel: true, licensingSourceVersionId: true },
           });
-          // Narrowed in code as well as in the `where`: a version with no source has nothing to
-          // repair, and treating one as repaired would emit an audit row and a cache bust for a
-          // change that never happened.
+          // Type-narrowing only; the `where` above already excludes nulls.
           const stampedWithSource = stamped.filter(
             (v): v is typeof v & { licensingSourceVersionId: number } =>
               v.licensingSourceVersionId != null
@@ -2700,9 +2687,7 @@ export const upsertModel = async (
     }
 
     if (clearedLicensingSources.length) {
-      // Attributed to the rule, not to the creator: they changed a type, not a fee. Without
-      // `systemFields` the first rows this trail ever produces for the field are automated repairs
-      // wearing an owner's name.
+      // `systemFields` attributes the clear to the rule, not the owner, who changed a type, not a fee.
       const actorRole = resolveActorRole({
         actorUserId: userId,
         ownerId: beforeUpdate.userId,
@@ -2733,10 +2718,9 @@ export const upsertModel = async (
         modelType: result.type,
         modelVersionIds: clearedLicensingSources.map((v) => v.id),
       }).catch(() => null);
-      // The fee is read from caches the write above does not reach — and the lag flag has to be set
-      // BEFORE the bust, matching publishModelById: without it a concurrent feed read inside the
-      // replication window refills those caches from the replica's pre-clear row and the fee stays
-      // live for the whole TTL.
+      // Flag lag BEFORE the bust (as publishModelById does): otherwise a concurrent read inside the
+      // replication window refills these caches from the replica's pre-clear row and the fee stays
+      // live. A type change already busts every version id below — the ordering is what this adds.
       const clearedVersionIds = clearedLicensingSources.map((v) => v.id);
       await preventModelVersionLagBatch(result.id, clearedVersionIds);
       await bustMvCache(clearedVersionIds, result.id, userId).catch(() => undefined);

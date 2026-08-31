@@ -1,11 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// upsertModel must re-check its versions' licensing lineage when the model's TYPE changes.
-// A version inherits a per-image licence fee from a LicensingRoot, every root is a Checkpoint, and
-// the type stays editable after the versions exist — so a version stamped while the model was a
-// Checkpoint went on charging that checkpoint's fee once the model became a LoRA (CU 868kwf2fd).
-// model.service.ts has a very large import graph, so its transitive dependencies are stubbed below;
-// the scaffold mirrors model-locked-properties.service.test.ts.
+// model.service.ts has a very large import graph; scaffold mirrors
+// model-locked-properties.service.test.ts.
 
 const { mockEvaluateContent, mockThrowOnBlockedLinkDomain, mockGetHighestTierSubscription } =
   vi.hoisted(() => ({
@@ -223,9 +219,8 @@ describe('upsertModel — licensing lineage on a model type change', () => {
 
     await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.LORA });
 
-    // Asserted on the ARGUMENT, not on a returned row. The db mock echoes the payload back, so a
-    // repair that wrote the wrong column — or wrote nothing — returns a result indistinguishable
-    // from a correct one.
+    // Assert the ARGUMENT: the db mock echoes the payload back, so a repair that wrote the wrong
+    // column, or nothing, returns a result indistinguishable from a correct one.
     expect(clearCall()).toEqual({
       where: { id: { in: [VERSION_ID] } },
       data: { licensingSourceVersionId: null },
@@ -244,9 +239,8 @@ describe('upsertModel — licensing lineage on a model type change', () => {
     expect(mockDbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
   });
 
-  // The direction that costs a creator money. Clearing the whole stamped set instead of the failing
-  // subset takes a per-image fee off a version whose root is still valid, and every single-version
-  // fixture passes while doing it.
+  // Multi-version on purpose: clearing the whole stamped set instead of the failing subset passes
+  // every single-version fixture while taking a fee off a version whose root is still valid.
   it('clears only the failing version, not every stamped version on the model', async () => {
     storedTypeOnWriter(ModelType.LORA);
     stampedVersions([
@@ -265,10 +259,7 @@ describe('upsertModel — licensing lineage on a model type change', () => {
     expect(versionAuditRows()).toHaveLength(1);
   });
 
-  // 🔴 Named for the decision. `type` is REQUIRED by modelUpsertSchema, so it is present on every
-  // save — a rename, a tag edit. Gating on its presence rather than on the value changing coerces
-  // sources no type change invalidated, including the pre-LicensingRoot rows the migration beside
-  // this deliberately spares for a human decision.
+  // A rename must not clear anything — see the gate comment in upsertModel.
   it('does not touch lineage on a save that leaves the type alone', async () => {
     storedTypeOnWriter(ModelType.LORA);
     stampedVersions([
@@ -302,9 +293,7 @@ describe('upsertModel — licensing lineage on a model type change', () => {
     expect(clearCall()?.where).toEqual({ id: { in: [VERSION_ID] } });
   });
 
-  // The `where` filters these out, but a Prisma mock does not apply a `where` — and neither would a
-  // future caller handing this a wider row set. A version with no source has nothing to repair, and
-  // counting one as repaired emits an audit row and a cache bust for a change that never happened.
+  // A Prisma mock does not apply the `where`, and a future caller could hand this a wider set.
   it('ignores versions that carry no licensing source', async () => {
     stampedVersions([
       { id: 900, baseModel: 'Anima', licensingSourceVersionId: null },
@@ -318,9 +307,7 @@ describe('upsertModel — licensing lineage on a model type change', () => {
     expect(versionAuditRows()).toEqual([]);
   });
 
-  // Named for the decision: the repair is attributed to the RULE, not to the creator, who changed a
-  // type and never touched a fee. Drop the attribution and the first rows this audit trail ever
-  // produces for the field are automated repairs wearing an owner's name.
+  // The clear is attributed to the rule, not the owner.
   it('attributes the cleared source to the rule, not to the owner', async () => {
     stampedVersions([
       { id: VERSION_ID, baseModel: 'Anima', licensingSourceVersionId: ANIMA_ROOT_VERSION_ID },
@@ -341,10 +328,8 @@ describe('upsertModel — licensing lineage on a model type change', () => {
     ]);
   });
 
-  // 🔴 The fixture is mixed on purpose. `type` is one of `coverageModelFields`, so a type change
-  // ALREADY busts this model's version caches further down — with every version id. On a
-  // single-version fixture that call is argument-for-argument identical to this one, so deleting
-  // the bust here passes. Only the cleared SUBSET distinguishes them.
+  // Mixed on purpose: `type` is in `coverageModelFields`, so a type change already busts every
+  // version id below. Only the cleared SUBSET distinguishes that call from this one.
   it('busts the version caches for the versions it cleared', async () => {
     storedTypeOnWriter(ModelType.LORA);
     stampedVersions([
@@ -360,8 +345,7 @@ describe('upsertModel — licensing lineage on a model type change', () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.Checkpoint });
 
     expect(bustMvCache).toHaveBeenCalledWith([OTHER_VERSION_ID], MODEL_ID, OWNER_ID);
-    // Order matters as much as presence: bust first and a concurrent feed read inside the
-    // replication window refills the same caches from the replica's pre-clear row.
+    // Order, not just presence: bust first and the replica refills the same caches pre-clear.
     expect(preventModelVersionLagBatch).toHaveBeenCalledWith(MODEL_ID, [OTHER_VERSION_ID]);
     expect(
       (preventModelVersionLagBatch as unknown as { mock: { invocationCallOrder: number[] } }).mock
@@ -372,12 +356,9 @@ describe('upsertModel — licensing lineage on a model type change', () => {
     );
   });
 
-  // 🔴 The one assertion that pins the repair to the TRANSACTION. The shared db mock hands the same
-  // client back as `tx`, so `tx.modelVersion.updateMany` and `dbWrite.modelVersion.updateMany` are
-  // the same function and lifting the block out of the callback is invisible to every other test
-  // here. This test swaps in a tx object of its own and records what was called on it, so a repair
-  // that runs outside the transaction — where the type change and the clear can be observed apart —
-  // reaches `dbWrite` instead and this fails.
+  // 🔴 The only assertion pinning the repair to the TRANSACTION. The shared db mock returns the
+  // same client as `tx`, so lifting the block out of the callback is invisible to every other test
+  // here. This one passes its own tx object and fails if the write lands on `dbWrite`.
   it('does the clearing inside the model-update transaction', async () => {
     stampedVersions([
       { id: VERSION_ID, baseModel: 'Anima', licensingSourceVersionId: ANIMA_ROOT_VERSION_ID },
