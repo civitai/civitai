@@ -122,7 +122,15 @@ export function ReviewBlockPreviewHost({
   const buzzCap = mintData.buzzCap ?? REVIEW_RUN_FOR_REAL_BUZZ_CAP;
 
   return (
-    <Stack gap="xs">
+    // 🔴 A BOUNDED FLEX COLUMN, because `fit="fill"` below has to resolve against
+    // something. Both mounters wrap this component in a box of KNOWN height (the
+    // review modal's 420px panel, the full-page preview's `100dvh − header`), so
+    // this Stack takes that height and hands the host whatever the banner above
+    // does not use. `minHeight: 0` is what lets it shrink below its content —
+    // without it a flex item refuses to go under its automatic minimum and the
+    // host pushes out of the panel again. In a non-flex parent `flex: 1` is
+    // simply ignored, so this is inert rather than wrong for any future mounter.
+    <Stack gap="xs" style={{ flex: 1, minHeight: 0 }}>
       {runForRealActive ? (
         // PERSISTENT banner while run-for-real is active. Stays visible for the
         // whole run-for-real session so the mod is never unaware their OWN account
@@ -264,6 +272,28 @@ export function ReviewBlockPreviewHost({
         // missing either — including during an `appBlocks` kill-switch — gets no
         // dead links.)
         canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
+        // 🔴 FILL THE PANEL, DON'T CLAIM THE VIEWPORT. Both review surfaces bound
+        // this component's height themselves, so the default `fit="viewport"` was
+        // wrong here in the way that matters: it claims
+        // `min-height: calc(100dvh - HEADER_HEIGHT_PX)` regardless of the box it
+        // is in. Inside the modal's `height: 420; overflow: hidden` panel that is
+        // ~600px of app crushed out of sight on a 1080px screen — clipped, with
+        // nothing to scroll to reach it — and it gets WORSE the taller the
+        // viewport, because the claim grows while the panel does not. The
+        // full-page preview has the same shape, milder: its wrapper is
+        // `100dvh − header`, and the host claimed all of that with the run-for-real
+        // banner still to fit above it.
+        //
+        // `fill` claims no height of its own (`flex: 1`, floored at
+        // `FILL_MIN_HEIGHT_PX`) and takes what the parent actually has, which is
+        // the correct question on both surfaces. The floor is inert here: 300 is
+        // well under the 420 panel.
+        //
+        // Deliberately opted in, not defaulted. `fit` still defaults to
+        // `viewport`, and the dev tunnel still takes that default — its ancestors
+        // bound nothing, so `fill` there would collapse the host to a fixed
+        // 300px slab. Enumerated in `AppBlocks/__tests__/pageRunScrollContract.test.ts`.
+        fit="fill"
       />
     </Stack>
   );

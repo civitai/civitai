@@ -425,10 +425,16 @@ describe('PageBlockHost — `fit` decides whether the page grows a SECOND scroll
     });
   });
 
-  test('the DEFAULT is `viewport`, so the three non-page mounters are unchanged', async () => {
-    // The dev tunnel and the mod-review preview both sit inside a SCROLLING
-    // ancestor that does not bound their height; on `fill` they would collapse.
-    // Pinning the default here is what lets this change be page-only.
+  test('the DEFAULT is `viewport`, so a mounter that has not opted in is unchanged', async () => {
+    // The dev tunnel sits inside a SCROLLING ancestor that does not bound its
+    // height; on `fill` it would collapse to the floor. Pinning the default here
+    // is what keeps every `fill` opt-in a deliberate one.
+    //
+    // ⚠️ This comment used to name the mod-review preview alongside the dev
+    // tunnel, and that was the wrong reading of that surface: it is not in an
+    // unbounded scrolling ancestor, it is in a box that bounds its height and
+    // then clips (a 420px modal panel / a `100dvh − header` page box). It is on
+    // `fill` as of the fix for that; see `ReviewPreviewFit.browser.test.tsx`.
     const { containerHeight } = layoutChainHeights();
     renderWithProviders(
       <div style={{ height: `${containerHeight}px`, overflowY: 'auto' }}>

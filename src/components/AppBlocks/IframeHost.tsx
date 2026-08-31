@@ -37,6 +37,7 @@ import {
   projectBlockInitViewer,
 } from './projectBlockInit';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
+import { useIframeAwareMenu } from './useIframeAwareMenu';
 import { blockInitFragmentEnabled } from './blockInitFragmentGate';
 import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { usePostMessage } from './usePostMessage';
@@ -223,28 +224,10 @@ export function AppBlockChrome({
   // appBlockId was threaded through).
   const [permsOpen, setPermsOpen] = useState(false);
 
-  // The platform-nav ("Civitai Apps") Menu is CONTROLLED so we can close it when
-  // the user clicks INTO the cross-origin app iframe. Mantine's default
-  // outside-click close CAN'T detect that: the iframe swallows the mousedown, so
-  // the parent document never sees it and Mantine can't tell the click was
-  // "outside" the dropdown — the menu appears stuck open (the reported bug).
-  // The fix is iframe-aware: while the menu is open, listen for the window
-  // `blur` event, which DOES fire when focus/pointer moves into a cross-origin
-  // iframe, and close on it. Normal same-document outside-clicks + item-clicks
-  // still close via Mantine's untouched defaults (closeOnClickOutside /
-  // closeOnItemClick).
-  const [menuOpened, setMenuOpened] = useState(false);
-  useEffect(() => {
-    if (!menuOpened) return;
-    const onBlur = () => setMenuOpened(false);
-    window.addEventListener('blur', onBlur);
-    return () => window.removeEventListener('blur', onBlur);
-  }, [menuOpened]);
-
   // Recently-run apps (client-only personalisation from localStorage). Seeded
   // empty so SSR + the first client render match (no hydration mismatch); the
   // real list loads in an effect after mount AND is refreshed every time the
-  // menu opens (see handleMenuChange) so a within-session client-nav
+  // menu opens (see `platformNavMenu` below) so a within-session client-nav
   // (app A → app B) shows the CURRENT list, not the list as of first mount.
   // Excludes the app currently being viewed (matched by appBlockId — the store's
   // stable id) and is capped to a short list for the compact dropdown.
@@ -268,17 +251,33 @@ export function AppBlockChrome({
     limit: RECENTLY_RUN_LIMIT,
   });
 
-  // Controlled-Menu change handler: mirror the open state AND re-read the recents
-  // store on the transition to open, so the "Recently run" list is fresh within
-  // an SPA session. Still SSR-safe — the read only happens on a user-driven open
-  // (never during render) and getRecentlyOpenedApps() self-guards `isClient`.
-  const handleMenuChange = useCallback(
-    (opened: boolean) => {
-      setMenuOpened(opened);
-      if (opened) setRecents(getRecentlyOpenedApps(recentsOwnerId));
-    },
-    [recentsOwnerId]
+  // 🔴 EVERY `<Menu>` IN THIS CHROME GOES THROUGH `useIframeAwareMenu`. That is a
+  // rule about the SURFACE, not about one menu: the chrome sits directly on top
+  // of a cross-origin app iframe, which swallows the `mousedown` of a click into
+  // the app, so Mantine's `closeOnClickOutside` never fires and a dropdown is
+  // left floating over the app the user just clicked into. The hook supplies
+  // controlled open state plus the one signal that DOES fire (window `blur`) and
+  // leaves every other close path (item click, Escape, same-document outside
+  // click) on Mantine's untouched defaults.
+  //
+  // It is SHARED, not copied. The behaviour was originally inline here for the
+  // platform-nav menu, and the ⋮ overflow menu — same component, same iframe —
+  // silently shipped without it and was stuck open for exactly that reason. A
+  // predicate open-coded at one site is how the second site is born wrong; the
+  // ledger in `__tests__/iframeAwareMenu.test.ts` now fails if a `<Menu>` appears
+  // in this chrome that is not on the hook.
+  //
+  // The platform-nav menu's own extra: on the transition to OPEN it re-reads the
+  // recents store, so the "Recently run" list is fresh within an SPA session.
+  // Still SSR-safe — the read only happens on a user-driven open (never during
+  // render) and `getRecentlyOpenedApps()` self-guards `isClient`.
+  const platformNavMenu = useIframeAwareMenu(() =>
+    setRecents(getRecentlyOpenedApps(recentsOwnerId))
   );
+  // The ⋮ overflow menu. No open-time side effect — its items are static — but
+  // it needs the identical iframe-aware close, which is the whole point of the
+  // shared hook.
+  const overflowMenu = useIframeAwareMenu();
   // The full-page run surface (`app.page`) has no model-page slot to hide the
   // block from — the page IS the block — so suppress the "Hide" item there.
   const isPage = slotId != null && isPageSlot(slotId);
@@ -337,8 +336,8 @@ export function AppBlockChrome({
           position="bottom-start"
           shadow="md"
           width={200}
-          opened={menuOpened}
-          onChange={handleMenuChange}
+          opened={platformNavMenu.opened}
+          onChange={platformNavMenu.onChange}
         >
           <Menu.Target>
             <ActionIcon
@@ -491,9 +490,30 @@ export function AppBlockChrome({
           </Group>
         )}
       </Group>
-      <Menu position="bottom-end" shadow="md" width={180}>
+      {/* The ⋮ overflow menu. CONTROLLED via the same `useIframeAwareMenu` the
+          platform-nav menu uses — see the hook call above for why this is shared
+          rather than a second copy of the effect. Without it a click into the app
+          leaves this dropdown open on top of the app. */}
+      <Menu
+        position="bottom-end"
+        shadow="md"
+        width={180}
+        opened={overflowMenu.opened}
+        onChange={overflowMenu.onChange}
+      >
         <Menu.Target>
-          <ActionIcon variant="subtle" color="gray" size="sm" aria-label="App menu">
+          {/* `data-testid` alongside the accessible name: the sibling controls in
+              this chrome (`app-platform-nav-trigger`, `app-block-name`,
+              `app-block-breadcrumb*`) are all addressable that way, and a test
+              reaching this trigger by accessible name alone breaks on a copy
+              change that is not a behaviour change. */}
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size="sm"
+            aria-label="App menu"
+            data-testid="app-block-menu-trigger"
+          >
             <IconDots size={16} stroke={1.5} />
           </ActionIcon>
         </Menu.Target>

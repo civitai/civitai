@@ -427,11 +427,20 @@ export interface PageBlockHostProps {
    *     it scroll.
    *     Correct ONLY for a mounter sitting inside a SCROLLING ancestor that does
    *     not otherwise bound its height: the dev tunnel (`/apps/dev/<blockId>`,
-   *     default `AppLayout` → `ScrollArea`) and the mod-review preview (inside a
-   *     modal). Without it those hosts would be sized only by
-   *     `FILL_MIN_HEIGHT_PX` — measured 300px of host, 31px of chrome, 269px of
-   *     iframe, regardless of how much room the page actually has. Usable, but
-   *     no longer FILLING anything.
+   *     default `AppLayout` → `ScrollArea`). Without it that host would be sized
+   *     only by `FILL_MIN_HEIGHT_PX` — measured 300px of host, 31px of chrome,
+   *     269px of iframe, regardless of how much room the page actually has.
+   *     Usable, but no longer FILLING anything.
+   *
+   *     ⚠️ This used to name the mod-review preview here too, and that was the
+   *     WRONG diagnosis of that surface: it is not in an unbounded scrolling
+   *     ancestor, it is in a box that bounds its height and CLIPS
+   *     (`height: 420; overflow: hidden` in the review modal;
+   *     `100dvh − header` on the full-page preview). Claiming
+   *     `100dvh − HEADER_HEIGHT_PX` inside a 420px panel put roughly 600px of app
+   *     out of reach on a 1080px screen, with nothing to scroll to it — and it
+   *     got worse the taller the viewport, because the claim grows while the
+   *     panel does not. `ReviewBlockPreviewHost` is on `'fill'` as of that fix.
    *
    *   'fill' — the host fills its parent (`flex: 1`, floored at
    *     `FILL_MIN_HEIGHT_PX`) and
