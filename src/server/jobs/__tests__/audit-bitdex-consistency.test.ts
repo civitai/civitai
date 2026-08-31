@@ -7,6 +7,7 @@ const { mockIsFlipt, mockFetchDocs, mockCounters, mockHistogram } = vi.hoisted((
     checked: { inc: vi.fn() },
     compared: { inc: vi.fn() },
     opportunity: { inc: vi.fn() },
+    stratumFailed: { inc: vi.fn() },
     mismatch: { inc: vi.fn() },
     runs: { inc: vi.fn() },
     errors: { inc: vi.fn() },
@@ -23,6 +24,7 @@ vi.mock('~/server/prom/client', () => ({
   bitdexAuditCheckedCounter: mockCounters.checked,
   bitdexAuditComparedCounter: mockCounters.compared,
   bitdexAuditOpportunityCounter: mockCounters.opportunity,
+  bitdexAuditStratumFailedCounter: mockCounters.stratumFailed,
   bitdexAuditMismatchCounter: mockCounters.mismatch,
   bitdexAuditRunsCounter: mockCounters.runs,
   bitdexAuditErrorsCounter: mockCounters.errors,
@@ -524,9 +526,6 @@ describe('baseModelDenominators', () => {
       comparedDocs: 2,
       withCheckpoint: 1,
       withDocValue: 1,
-      // Image 1 has a checkpoint AND a value, so only the leak arm had an opportunity.
-      missingArmOpportunities: 0,
-      leakArmOpportunities: 1,
     });
   });
 
@@ -537,8 +536,6 @@ describe('baseModelDenominators', () => {
       comparedDocs: 0,
       withCheckpoint: 0,
       withDocValue: 0,
-      missingArmOpportunities: 0,
-      leakArmOpportunities: 0,
     });
   });
 
@@ -564,8 +561,6 @@ describe('baseModelDenominators', () => {
       comparedDocs: 2,
       withCheckpoint: 1,
       withDocValue: 1,
-      missingArmOpportunities: 1,
-      leakArmOpportunities: 1,
     });
   });
 });
@@ -692,9 +687,63 @@ describe('auditBitdexConsistency job body', () => {
       1
     );
     expect(mockCounters.opportunity.inc).toHaveBeenCalledWith(
-      { stratum: 'basemodel', kind: 'basemodel_missing' },
-      0
+      { stratum: 'basemodel', kind: 'basemodel_unfilterable' },
+      1
     );
+    // 🔴 The missing arm's denominator is compared-docs-WITH-a-checkpoint, not the count
+    // of documents missing a value — that second thing is the arm's own NUMERATOR, and a
+    // previous round shipped it as the denominator, giving a ratio of permanently 1 or
+    // 0/0. This fixture has one compared document that has both a checkpoint and a value,
+    // so the denominator is 1 while the arm cannot fire.
+    expect(mockCounters.opportunity.inc).toHaveBeenCalledWith(
+      { stratum: 'basemodel', kind: 'basemodel_missing' },
+      1
+    );
+  });
+
+  // The catch is for ONE failure, not for any failure. `fetchBitdexDocuments` throws on
+  // every error precisely so an unreachable index cannot be mistaken for a clean audit;
+  // swallowing that here would report a BitDex outage as a caught stratum failure on a
+  // run recorded as successful — the silent pass its contract forbids.
+  it('does not swallow a BitDex fetch failure in the baseModel stratum', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockDbWrite.$queryRaw
+      .mockResolvedValueOnce(scheduledRows)
+      .mockResolvedValueOnce(publishedRows)
+      .mockResolvedValueOnce(baseModelRows);
+    mockFetchDocs
+      .mockResolvedValueOnce([{ id: 1, isPublished: false }])
+      .mockResolvedValueOnce([{ id: 2, isPublished: true, sortAt: NOW }])
+      .mockRejectedValueOnce(new Error('BitDex documents fetch failed 503'));
+
+    await expect(runJob()).rejects.toThrow(/503/);
+    expect(mockCounters.runs.inc).not.toHaveBeenCalled();
+  });
+
+  // Split because `basemodel_unfilterable` is expected to be nonzero on a healthy system:
+  // folding it into the summary count puts the same permanent floor under the number a
+  // human reads that keeping it out of the alerting series was meant to avoid.
+  it('keeps unfilterable out of the mismatch summary and reports it separately', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockDbWrite.$queryRaw
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        row({ imageId: 3, postId: 30, expectedBaseModels: ['Pony', 'SDXL 1.0'] }),
+      ]);
+    mockFetchDocs.mockResolvedValueOnce([{ id: 3, isPublished: true, baseModel: 'PonySDXL 1.0' }]);
+
+    const result = (await runJob()) as Record<string, unknown>;
+
+    expect(result.baseModelUnfilterable).toBe(1);
+    expect(result.baseModelMismatches).toBe(0);
+
+    // The Axiom line too, not only the return value: they are separate call sites and a
+    // mutation of the log alone left this test green until this assertion existed. The
+    // log is what a human actually reads when they go looking.
+    const payload = loggingMock.logToAxiom.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(payload.baseModelUnfilterable).toBe(1);
+    expect(payload.baseModelMismatches).toBe(0);
   });
 
   // 🔴 A column-shape problem in the NEWEST stratum must not silence the detector for the
@@ -723,7 +772,15 @@ describe('auditBitdexConsistency job body', () => {
     expect(mockCounters.errors.inc).toHaveBeenCalledTimes(1);
     expect(result.baseModelChecked).toBe(0);
     expect(result.baseModelError).toMatch(/expectedBaseModels/);
-    expect(mockCounters.compared.inc).not.toHaveBeenCalledWith({ stratum: 'basemodel' }, 0);
+    // 🔴 The denominator series must still be CREATED, with zero. prom-client makes a
+    // labelled child on first `inc`, so skipping the call leaves the series absent, and
+    // `increase(...) == 0` over an absent series returns an empty vector — the alert
+    // silently never fires. An earlier round asserted the opposite and pinned that gap
+    // in place. Absence is worse than a flat line, not safer than one.
+    expect(mockCounters.compared.inc).toHaveBeenCalledWith({ stratum: 'basemodel' }, 0);
+    // And the failure is attributable: errors_total is unlabelled and shared with
+    // whole-run throws, so this is the only series that says WHICH stratum died.
+    expect(mockCounters.stratumFailed.inc).toHaveBeenCalledWith({ stratum: 'basemodel' }, 1);
   });
 
   // 🔴 The one that pins the machinery. The two zero-denominator tests around it assert

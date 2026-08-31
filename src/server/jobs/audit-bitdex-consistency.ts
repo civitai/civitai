@@ -8,6 +8,7 @@ import {
   bitdexAuditCheckedCounter,
   bitdexAuditComparedCounter,
   bitdexAuditOpportunityCounter,
+  bitdexAuditStratumFailedCounter,
   bitdexAuditErrorsCounter,
   bitdexAuditMismatchCounter,
   bitdexAuditRunDurationHistogram,
@@ -245,9 +246,13 @@ export type BitdexDocState = {
   baseModel: string | null;
 };
 
-// Reads BitDex's answer out of a doc payload. isPublished is the authority when the
-// key is present; publishedAt is the fallback, because the index derives isPublished
-// from it via exists_boolean and the two carry the same fact.
+// Reads BitDex's answer out of a doc payload.
+//
+// ⚠️ `publishedAt` reads like a fallback and is NOT one: the metrics indexer destructures
+// it out of the record and emits `publishedAtUnix`, so it is never a document field. That
+// leaves `published` resting on `isPublished` alone. `present` has `sortAt` as a second
+// witness; `published` has none, so a projection that omits `isPublished` reports every
+// document unpublished rather than reporting nothing.
 export function readDocState(doc: BitdexDocument | undefined): BitdexDocState {
   if (!doc) return { present: false, published: false, sortAtSecs: null, baseModel: null };
 
@@ -438,6 +443,11 @@ export function compareStratum(
   return mismatches;
 }
 
+const countUnfilterable = (m: AuditMismatch[]) =>
+  m.filter((x) => x.kind === 'basemodel_unfilterable').length;
+const countAlerting = (m: AuditMismatch[]) =>
+  m.filter((x) => x.kind !== 'basemodel_unfilterable').length;
+
 export type AuditScopeResult = {
   stratum: AuditStratum;
   checked: number;
@@ -448,12 +458,12 @@ export type AuditScopeResult = {
   // beside a zero denominator is not evidence of agreement.
   comparedDocs?: number;
   withCheckpoint?: number;
-  // Per-arm OPPORTUNITY counts: compared documents on which that arm could have fired at
-  // all. The three marginals below cannot recover these — a run that compared two
-  // documents with one checkpoint and one value between them reports the same marginals
-  // whether both arms had an opportunity or neither did.
-  missingArmOpportunities?: number;
-  leakArmOpportunities?: number;
+  // 🔴 `withCheckpoint` and `withDocValue` ARE the per-arm denominators — do not add
+  // "opportunity" counts beside them. A previous round did, and `missingArmOpportunities`
+  // came out as `hasCheckpoint && !hasValue`, which is the `basemodel_missing` PREDICATE:
+  // numerator and denominator identical, ratio permanently 1 or 0/0. The arm can only
+  // fire on a document that has a checkpoint, so the denominator is "compared documents
+  // WITH a checkpoint" — and the same for the leak arm and `withDocValue`.
   // The `not_checkpoint` arm's own denominator: compared documents that actually carried
   // a value to disagree about. Its zero needs this the way the `missing` arm's zero needs
   // `withCheckpoint`, and one number covering both arms would hide whichever is empty.
@@ -469,9 +479,11 @@ export type AuditScopeResult = {
  * `comparedDocs` stayed healthy and nonzero. Throwing routes it to the error counter and
  * fails the run, which is loud; defaulting would read as a clean audit forever.
  */
+export class MissingExpectedBaseModelsError extends Error {}
+
 function expectedBaseModelsOf(row: AuditSampleRow): string[] {
   if (!Array.isArray(row.expectedBaseModels))
-    throw new Error(
+    throw new MissingExpectedBaseModelsError(
       `baseModel stratum: image ${row.imageId} arrived without expectedBaseModels — the sample query is not delivering the column`
     );
   return row.expectedBaseModels;
@@ -490,29 +502,18 @@ export function baseModelDenominators(rows: AuditSampleRow[], docs: BitdexDocume
   let comparedDocs = 0;
   let withCheckpoint = 0;
   let withDocValue = 0;
-  let missingArmOpportunities = 0;
-  let leakArmOpportunities = 0;
   for (const row of rows) {
     const state = readDocState(byId.get(row.imageId));
     if (!state.present || !state.published) continue;
     comparedDocs++;
-    const hasCheckpoint = expectedBaseModelsOf(row).length > 0;
-    const hasValue = state.baseModel != null;
-    if (hasCheckpoint) withCheckpoint++;
-    if (hasValue) withDocValue++;
-    // `basemodel_missing` fires only where PG has a checkpoint AND the document has no
-    // value; `basemodel_not_checkpoint` only where the document HAS one. Each zero is
-    // read against its own count, not against the marginals.
-    if (hasCheckpoint && !hasValue) missingArmOpportunities++;
-    if (hasValue) leakArmOpportunities++;
+    // `basemodel_missing` can only fire on a compared document that HAS a checkpoint;
+    // `basemodel_not_checkpoint` and `basemodel_unfilterable` only on one that HAS a
+    // value. So these two marginals are the arms' denominators, and a ratio against
+    // either is bounded below 1 rather than being the numerator again.
+    if (expectedBaseModelsOf(row).length) withCheckpoint++;
+    if (state.baseModel != null) withDocValue++;
   }
-  return {
-    comparedDocs,
-    withCheckpoint,
-    withDocValue,
-    missingArmOpportunities,
-    leakArmOpportunities,
-  };
+  return { comparedDocs, withCheckpoint, withDocValue };
 }
 
 // Samples one stratum and compares it. A BitDex fetch failure propagates:
@@ -577,7 +578,12 @@ export async function runAudit(config: AuditConfig): Promise<AuditResult> {
       BASEMODEL_DOC_FIELDS
     );
   } catch (e) {
-    baseModelError = e instanceof Error ? e.message : String(e);
+    // ONLY the column-shape failure is survivable here. `fetchBitdexDocuments` throws on
+    // any failure precisely so an unreachable index can never be mistaken for a clean
+    // audit (bitdex/client.ts), and a swallowed 401 or timeout would be exactly that —
+    // reported as a caught stratum failure while the run records itself successful.
+    if (!(e instanceof MissingExpectedBaseModelsError)) throw e;
+    baseModelError = e.message;
     // checked stays 0 and the denominators stay undefined: a failed stratum must not
     // contribute a zero that reads as agreement.
     baseModel = { stratum: 'basemodel', checked: 0, mismatches: [] };
@@ -603,8 +609,16 @@ export const auditBitdexConsistency = createJob(
       throw e; // createJob logs job-error to Axiom and marks the run failed
     }
     // A caught stratum failure is still an error: the run continues so the other two
-    // strata keep reporting, but it must not look like a clean pass on the error series.
-    if (result.baseModelError) bitdexAuditErrorsCounter?.inc();
+    // strata keep reporting, but it must not look like a clean pass.
+    //
+    // `errors_total` is unlabelled and shared with whole-run failures, so on its own it
+    // cannot say WHICH stratum died — and `runs_total` still ticks, correctly, because
+    // the run did complete for the other two. The labelled series is the one an alert
+    // can use to notice that this stratum has been dead for a week.
+    if (result.baseModelError) {
+      bitdexAuditErrorsCounter?.inc();
+      bitdexAuditStratumFailedCounter?.inc({ stratum: 'basemodel' }, 1);
+    }
 
     const durationSec = (Date.now() - start) / 1000;
 
@@ -619,18 +633,27 @@ export const auditBitdexConsistency = createJob(
       // absent or unpublished is skipped before any comparison, so without these a
       // stratum that compared nothing emits a mismatch zero identical to one from
       // perfect agreement, which is the whole failure this guard exists to prevent.
-      if (scope.comparedDocs !== undefined)
-        bitdexAuditComparedCounter?.inc({ stratum: scope.stratum }, scope.comparedDocs);
-      if (scope.missingArmOpportunities !== undefined)
+      //
+      // 🔴 Emitted UNCONDITIONALLY, including zero, for the same reason `checked_total`
+      // is. prom-client creates a labelled child on first `inc`, so skipping the call
+      // when a stratum produced nothing leaves the series ABSENT rather than zero — and
+      // `increase(...) == 0` over an absent series returns an empty vector, so the
+      // denominator alert never fires. Absence is worse than a flat line: a flat line
+      // and a flat line look the same, but absence breaks the query.
+      if (scope.stratum === 'basemodel') {
+        bitdexAuditComparedCounter?.inc({ stratum: scope.stratum }, scope.comparedDocs ?? 0);
         bitdexAuditOpportunityCounter?.inc(
           { stratum: scope.stratum, kind: 'basemodel_missing' },
-          scope.missingArmOpportunities
+          scope.withCheckpoint ?? 0
         );
-      if (scope.leakArmOpportunities !== undefined)
-        bitdexAuditOpportunityCounter?.inc(
-          { stratum: scope.stratum, kind: 'basemodel_not_checkpoint' },
-          scope.leakArmOpportunities
-        );
+        // Both value-side arms share this denominator: they can only fire on a compared
+        // document that carried a value at all.
+        for (const kind of ['basemodel_not_checkpoint', 'basemodel_unfilterable'])
+          bitdexAuditOpportunityCounter?.inc(
+            { stratum: scope.stratum, kind },
+            scope.withDocValue ?? 0
+          );
+      }
     }
 
     bitdexAuditRunsCounter?.inc();
@@ -655,9 +678,12 @@ export const auditBitdexConsistency = createJob(
         baseModelComparedDocs: result.baseModel.comparedDocs ?? 0,
         baseModelWithCheckpoint: result.baseModel.withCheckpoint ?? 0,
         baseModelWithDocValue: result.baseModel.withDocValue ?? 0,
-        baseModelMissingArmOpportunities: result.baseModel.missingArmOpportunities ?? 0,
-        baseModelLeakArmOpportunities: result.baseModel.leakArmOpportunities ?? 0,
-        baseModelMismatches: result.baseModel.mismatches.length,
+        // Split, because `basemodel_unfilterable` is expected to be nonzero on a healthy
+        // system (~0.2% of sampled images). Folding it into the summary count would put
+        // the same permanent floor under the number a human reads that keeping it out of
+        // the alerting series was meant to avoid.
+        baseModelMismatches: countAlerting(result.baseModel.mismatches),
+        baseModelUnfilterable: countUnfilterable(result.baseModel.mismatches),
         // Present only when the stratum threw. Without it a failed stratum and a clean
         // one are the same row of zeros.
         baseModelError: result.baseModelError,
@@ -681,9 +707,8 @@ export const auditBitdexConsistency = createJob(
       baseModelComparedDocs: result.baseModel.comparedDocs ?? 0,
       baseModelWithCheckpoint: result.baseModel.withCheckpoint ?? 0,
       baseModelWithDocValue: result.baseModel.withDocValue ?? 0,
-      baseModelMissingArmOpportunities: result.baseModel.missingArmOpportunities ?? 0,
-      baseModelLeakArmOpportunities: result.baseModel.leakArmOpportunities ?? 0,
-      baseModelMismatches: result.baseModel.mismatches.length,
+      baseModelMismatches: countAlerting(result.baseModel.mismatches),
+      baseModelUnfilterable: countUnfilterable(result.baseModel.mismatches),
       baseModelError: result.baseModelError,
       durationSec,
     };
