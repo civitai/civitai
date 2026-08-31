@@ -30,7 +30,9 @@ import type {
 import {
   deleteComment,
   getComment,
+  getSectionMuted,
   getThreadMuted,
+  toggleSectionMute,
   toggleThreadMute,
   getCommentCount,
   getCommentsThreadDetails2,
@@ -202,6 +204,35 @@ export const getCommentsThreadDetailsHandler = async ({
       excludedUserIds,
       isModerator: ctx.user?.isModerator ?? false,
     });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const toggleSectionMuteHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: CommentConnectorInput;
+}) => {
+  try {
+    return await toggleSectionMute({ ...input, userId: ctx.user.id });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getSectionMutedHandler = async ({
+  ctx,
+  input,
+}: {
+  ctx: ProtectedContext;
+  input: CommentConnectorInput;
+}) => {
+  try {
+    return await getSectionMuted({ ...input, userId: ctx.user.id });
   } catch (error) {
     throw throwDbError(error);
   }

@@ -12,12 +12,15 @@ import {
   togglePinnedCommentHandler,
   toggleThreadMuteHandler,
   getThreadMutedHandler,
+  toggleSectionMuteHandler,
+  getSectionMutedHandler,
 } from './../controllers/commentv2.controller';
 import {
   commentConnectorSchema,
   upsertCommentv2Schema,
   getCommentsInfiniteSchema,
   toggleThreadMuteSchema,
+  muteRateLimits,
 } from './../schema/commentv2.schema';
 import {
   middleware,
@@ -98,8 +101,21 @@ export const commentv2Router = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(toggleThreadMuteSchema)
     .query(getThreadMutedHandler),
-  toggleThreadMute: protectedProcedure
+  // Both mutations share ONE rate-limit budget: they are the same capability at two granularities,
+  // and a per-endpoint budget is just twice the number it appears to be. `guardedProcedure` to match
+  // `upsert` above — these can write a `Thread` row, so they are held to the same bar as commenting.
+  toggleThreadMute: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(toggleThreadMuteSchema)
+    .use(rateLimit(muteRateLimits, undefined, { sharedKey: 'commentv2.mute' }))
     .mutation(toggleThreadMuteHandler),
+  getSectionMuted: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(commentConnectorSchema)
+    .query(getSectionMutedHandler),
+  toggleSectionMute: guardedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(commentConnectorSchema)
+    .use(rateLimit(muteRateLimits, undefined, { sharedKey: 'commentv2.mute' }))
+    .mutation(toggleSectionMuteHandler),
 });

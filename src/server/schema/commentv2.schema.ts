@@ -1,4 +1,6 @@
 import * as z from 'zod';
+import { CacheTTL } from '~/server/common/constants';
+import type { RateLimit } from '~/server/middleware.trpc';
 import { constants } from '~/server/common/constants';
 import { ThreadSort } from '~/server/common/enums';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
@@ -89,3 +91,13 @@ export const toggleThreadMuteSchema = z.object({
   commentId: z.number(),
 });
 export type ToggleThreadMuteInput = z.infer<typeof toggleThreadMuteSchema>;
+
+/**
+ * Muting is a normal, repeatable user action, so this is generous by design — it exists to bound
+ * enumeration, not to ration the feature. Both mute endpoints share one budget (see the router), or
+ * the budget is simply twice as large as it reads.
+ */
+export const muteRateLimits: RateLimit[] = [
+  { limit: 60, period: CacheTTL.hour },
+  { limit: 300, period: CacheTTL.day },
+];

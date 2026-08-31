@@ -480,12 +480,23 @@ export async function toggleThreadMute({
 }: ToggleThreadMuteInput & { userId: number }) {
   const comment = await dbWrite.commentV2.findUnique({
     where: { id: commentId },
-    select: { threadId: true, childThread: { select: { id: true } } },
+    select: {
+      threadId: true,
+      tosViolation: true,
+      childThread: { select: { id: true } },
+    },
   });
   if (!comment) throw throwNotFoundError();
+  // A ToS-flagged comment is not visible to a non-moderator, and this endpoint takes a bare id — so
+  // without this it doubles as an oracle for whether an id exists and whether it was actioned.
+  if (comment.tosViolation) throw throwNotFoundError();
 
   let threadId = comment.childThread?.id;
   if (!threadId) {
+    // Only the CREATE path is gated. Muting an existing thread writes one small row; creating one
+    // writes into `Thread`, which is large and heavily indexed, so that is the path worth refusing
+    // inside a chain no one may write to.
+    await throwIfThreadChainLocked(comment.threadId);
     // A comment's reply thread is created lazily by the first reply, so muting can run before one
     // exists. It must be created with the SAME ancestry `upsertComment` would give it: the reply
     // path finds this row and skips its own create, and a thread left with a null `rootThreadId`
@@ -510,6 +521,52 @@ export async function toggleThreadMute({
 
   await dbWrite.threadMute.create({ data: { threadId, userId } });
   return { muted: true, threadId };
+}
+
+/**
+ * The section-level mute: silences a whole comment section rather than one conversation under a
+ * comment. It is the only writer that targets an ENTITY ROOT thread, which is what makes the mute
+ * filter on the entity-owner processors reachable at all — see `notThreadMuted`.
+ *
+ */
+export async function toggleSectionMute({
+  entityType,
+  entityId,
+  userId,
+}: CommentConnectorInput & { userId: number }) {
+  // Deliberately does NOT create the thread. An entity with no thread has no comments, so there is
+  // nothing to be notified about and nothing to mute; the first comment creates the thread and the
+  // control works from then on. Refusing to create also means this endpoint — which takes a plain
+  // entity id — cannot be walked to insert rows into `Thread`.
+  const thread = await dbWrite.thread.findUnique({
+    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
+    select: { id: true },
+  });
+  if (!thread) return { muted: false, threadId: null };
+
+  const { count } = await dbWrite.threadMute.deleteMany({ where: { threadId: thread.id, userId } });
+  if (count > 0) return { muted: false, threadId: thread.id };
+
+  await dbWrite.threadMute.create({ data: { threadId: thread.id, userId } });
+  return { muted: true, threadId: thread.id };
+}
+
+export async function getSectionMuted({
+  entityType,
+  entityId,
+  userId,
+}: CommentConnectorInput & { userId: number }) {
+  const thread = await dbRead.thread.findUnique({
+    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
+    select: { id: true },
+  });
+  if (!thread) return { muted: false };
+
+  const mute = await dbRead.threadMute.findUnique({
+    where: { userId_threadId: { userId, threadId: thread.id } },
+    select: { userId: true },
+  });
+  return { muted: !!mute };
 }
 
 export async function getThreadMuted({
