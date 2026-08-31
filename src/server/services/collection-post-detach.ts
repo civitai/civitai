@@ -1,32 +1,55 @@
-import type { Prisma } from '@prisma/client';
+import { dbWrite } from '~/server/db/client';
 
-/**
- * `Post.collectionId` is ON DELETE CASCADE and `Image.postId` is ON DELETE SET NULL, so deleting a
- * collection deletes every post created into it — including other people's — and leaves their
- * images alive with no post. The images then 404 on their own detail page while still serving from
- * the feed's search index.
- *
- * Detaching first keeps those posts as ordinary posts on their owner's profile. Callers must run
- * this in the same transaction as the delete, or a failure in between leaves posts pointing at a
- * collection that still exists.
- */
-export async function detachPostsFromCollection(
-  tx: Prisma.TransactionClient,
-  collectionId: number
-) {
-  return tx.$executeRaw`
-    UPDATE "Post" SET "collectionId" = NULL WHERE "collectionId" = ${collectionId}
-  `;
+const DETACH_BATCH_SIZE = 1000;
+
+// A run past ~1M posts means the loop isn't draining. Throw rather than spin: a runaway await
+// loop starves the macrotask queue, so vitest's setTimeout-based testTimeout never fires.
+const MAX_DETACH_BATCHES = 1000;
+
+async function detachInBatches(nextBatch: () => Promise<number>) {
+  let total = 0;
+  for (let batch = 0; batch < MAX_DETACH_BATCHES; batch++) {
+    const detached = await nextBatch();
+    total += detached;
+    if (detached < DETACH_BATCH_SIZE) return total;
+  }
+  throw new Error(`detachPostsFromCollection exceeded ${MAX_DETACH_BATCHES} batches`);
 }
 
 /**
- * Account deletion drops every collection the user owns, so the same cascade fires — and a contest
- * or challenge collection holds posts belonging to the people who entered it, not to the departing
- * user. Their own posts are deleted by id straight after this and are unaffected by the detach.
+ * `Post.collectionId` is ON DELETE CASCADE and `Image.postId` is ON DELETE SET NULL, so deleting a
+ * collection deletes every post created into it — including every entrant's — and leaves their
+ * images alive with no post, still served by the feed's search index.
+ *
+ * Must run OUTSIDE the deleting transaction: the largest collection takes ~25s, past Prisma's 5s
+ * interactive default. A partial detach is safe to retry — those posts have merely left a
+ * collection that still exists.
  */
-export async function detachPostsFromUserCollections(tx: Prisma.TransactionClient, userId: number) {
-  return tx.$executeRaw`
-    UPDATE "Post" SET "collectionId" = NULL
-    WHERE "collectionId" IN (SELECT id FROM "Collection" WHERE "userId" = ${userId})
-  `;
+export async function detachPostsFromCollection(collectionId: number) {
+  return detachInBatches(
+    () => dbWrite.$executeRaw`
+      UPDATE "Post" SET "collectionId" = NULL
+      WHERE id IN (
+        SELECT id FROM "Post" WHERE "collectionId" = ${collectionId} LIMIT ${DETACH_BATCH_SIZE}
+      )
+    `
+  );
+}
+
+/**
+ * Account deletion drops every collection the user owns, firing the same cascade — a contest
+ * collection holds the entrants' posts, not the departing user's.
+ */
+export async function detachPostsFromUserCollections(userId: number) {
+  return detachInBatches(
+    () => dbWrite.$executeRaw`
+      UPDATE "Post" SET "collectionId" = NULL
+      WHERE id IN (
+        SELECT p.id FROM "Post" p
+        JOIN "Collection" c ON c.id = p."collectionId"
+        WHERE c."userId" = ${userId}
+        LIMIT ${DETACH_BATCH_SIZE}
+      )
+    `
+  );
 }

@@ -2206,21 +2206,21 @@ export async function deleteChallenge(id: number) {
 
   const collectionId = challenge.collectionId;
 
+  // Outside the transaction on purpose — see detachPostsFromCollection.
+  if (collectionId) await detachPostsFromCollection(collectionId);
+
   // Keep challenge + collection deletion in one transaction so a failed collection delete
   // cannot leave an orphaned contest collection after the challenge row is removed.
   await dbWrite.$transaction(async (tx) => {
     // Delete challenge first (cascades to ChallengeWinner)
     await tx.challenge.delete({ where: { id } });
 
-    // Delete the associated collection and all its data
     if (collectionId) {
-      await detachPostsFromCollection(tx, collectionId);
       await tx.collection.delete({ where: { id: collectionId } });
     }
   });
 
   if (collectionId) {
-    // Remove from search index
     await collectionsSearchIndex.queueUpdate([
       { id: collectionId, action: SearchIndexUpdateQueueAction.Delete },
     ]);

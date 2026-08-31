@@ -966,48 +966,38 @@ export const updatePost = async ({
 };
 
 export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {
-  // Phase 1: Atomic DB operations in a single transaction
   const { post, deletedImages, orphanedImageIds } = await dbWrite.$transaction(
     async (tx) => {
-      // Only the non-moderator delete is scoped, so only it can leave an image behind.
-      const allImageIds = isModerator
-        ? []
-        : await tx.$queryRaw<{ id: number }[]>`
-            SELECT id FROM "Image" WHERE "postId" = ${id}
-          `;
-
-      // Find images belonging to this post
-      const images = await tx.$queryRaw<{ id: number; url: string }[]>`
-        SELECT i.id, i.url
+      // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
+      const images = await tx.$queryRaw<{ id: number; url: string; deletable: boolean }[]>`
+        SELECT i.id, i.url, ${Prisma.raw(
+          isModerator ? 'TRUE' : 'i."userId" = p."userId"'
+        )} AS deletable
         FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"
         WHERE i."postId" = ${id}
-          AND ${Prisma.raw(isModerator ? '1 = 1' : 'i."userId" = p."userId"')}
       `;
 
+      const deletableImages = images.filter((image) => image.deletable);
+
       let deletedImages: { id: number; url: string }[] = [];
-      if (images.length) {
+      if (deletableImages.length) {
         deletedImages = await tx.$queryRaw<{ id: number; url: string }[]>`
           DELETE FROM "Image"
-          WHERE id IN (${Prisma.join(images.map((i) => i.id))})
+          WHERE id IN (${Prisma.join(deletableImages.map((i) => i.id))})
           RETURNING id, url
         `;
       }
 
-      // Delete the post
       const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
         DELETE FROM "Post"
         WHERE id = ${id}
         RETURNING id, "nsfwLevel"
       `;
 
-      // Whatever the delete above skipped keeps its row and has its `postId` nulled by the FK's
-      // ON DELETE SET NULL. The index build requires `postId IS NOT NULL`, so a doc indexed while
-      // the post existed is never revisited and goes on serving an image whose detail page is gone.
-      const deletedIds = new Set(deletedImages.map((image) => image.id));
-      const orphanedImageIds = allImageIds
-        .map(({ id }) => id)
-        .filter((imageId) => !deletedIds.has(imageId));
+      // Skipped images keep their row with `postId` nulled (ON DELETE SET NULL). The index sync only
+      // selects `postId IS NOT NULL`, so it never revisits them — their docs must be dropped here.
+      const orphanedImageIds = images.filter((image) => !image.deletable).map(({ id }) => id);
 
       return { post, deletedImages, orphanedImageIds };
     },
@@ -1033,26 +1023,22 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
     { timeout: 10000 }
   );
 
-  // Phase 2: Side effects after successful transaction
+  const deletedImageIds = deletedImages.map((img) => img.id);
+
+  // Orphans leave the index but keep their rows — they must not reach the S3 delete below.
+  const deindexIds = [...deletedImageIds, ...orphanedImageIds];
+  if (deindexIds.length)
+    await queueImageSearchIndexUpdate({
+      ids: deindexIds,
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+
   if (deletedImages.length) {
-    const imageIds = deletedImages.map((img) => img.id);
+    await invalidateManyImageExistence(deletedImageIds);
 
-    await Promise.all([
-      queueImageSearchIndexUpdate({ ids: imageIds, action: SearchIndexUpdateQueueAction.Delete }),
-      invalidateManyImageExistence(imageIds),
-    ]);
-
-    // S3 deletion with concurrency limit
     await Limiter({ batchSize: 5 }).process(deletedImages, async (batch) =>
       Promise.all(batch.map(({ id, url }) => deleteImageFromS3({ id, url })))
     );
-  }
-
-  if (orphanedImageIds.length) {
-    await queueImageSearchIndexUpdate({
-      ids: orphanedImageIds,
-      action: SearchIndexUpdateQueueAction.Delete,
-    });
   }
 
   await bustCachesForPosts(id);

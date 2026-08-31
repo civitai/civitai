@@ -2112,10 +2112,9 @@ export const deleteCollectionById = async ({
     throw throwBadRequestError('You cannot delete a bookmark collection');
   }
 
-  const res = await dbWrite.$transaction(async (tx) => {
-    await detachPostsFromCollection(tx, id);
-    return tx.collection.delete({ where: { id } });
-  });
+  await detachPostsFromCollection(id);
+
+  const res = await dbWrite.collection.delete({ where: { id } });
 
   // UserHubSource.targetId is polymorphic, so there is no foreign key to cascade
   // through — a hub would keep pointing at a collection that no longer exists and

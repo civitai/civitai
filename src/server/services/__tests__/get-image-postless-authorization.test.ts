@@ -2,14 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 
 // `Image.postId` is ON DELETE SET NULL, so an image outlives a deleted post. `getImage` used to
-// inner-join Post for non-moderators, which dropped those rows before the ownership clause was
-// ever evaluated — the owner got a 404 on their own image while a moderator loaded it fine.
-//
-// The gates now sit in the WHERE against a LEFT JOIN, so the shape of the statement IS the
-// authorization decision and is what these assert on. Two mutations this exists to kill: putting
-// the post gate back in the JOIN (postless rows vanish again for everyone but mods), and dropping
-// the `i."userId"` conjunct from the postless branch (every never-posted upload on the site
-// becomes fetchable by id).
+// inner-join Post for non-moderators, dropping those rows before the ownership clause ran — the
+// owner 404'd on their own image while a moderator loaded it fine. The statement's shape IS the
+// authorization decision, which is why these assert on rendered SQL.
 //
 // Mock recipe follows image-hide-challenges-exclusion.test.ts.
 
@@ -50,27 +45,43 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 const VIEWER = 71806;
 const IMAGE_ID = 137353037;
 
-// The embedded `Prisma.sql` fragments arrive as values, not as template text, so the statement has
-// to be reassembled from both halves before it can be read. Prisma flattens nested fragments at
-// construction, so each value's own `.sql` already carries its full text.
-function renderLastQuery() {
-  const call = dbMock.dbRead.$queryRaw.mock.calls.at(-1);
-  if (!call) throw new Error('$queryRaw was never called');
-  const [strings, ...values] = call as [string[], ...unknown[]];
+type Frag = { strings: readonly string[]; values: readonly unknown[] };
+const isFrag = (v: unknown): v is Frag =>
+  !!v &&
+  typeof v === 'object' &&
+  Array.isArray((v as Frag).strings) &&
+  Array.isArray((v as Frag).values);
+
+const literal = (v: unknown) =>
+  v === undefined || v === null ? 'NULL' : typeof v === 'string' ? `'${v}'` : String(v);
+
+// Bindings are rendered resolved, not as `?`. A placeholder hides exactly what these tests are
+// about: which id is bound into the postless ownership check. Built by interleaving `strings` and
+// `values` — never by splitting `.sql` on `?`, because `imageOnSiteSql()` contains the jsonb
+// existence operator and a `?`-split mis-aligns every binding after it.
+function resolve(strings: readonly string[], values: readonly unknown[]): string {
   return strings
     .map((chunk, i) => {
       if (i === 0) return chunk;
-      const value = values[i - 1] as { sql?: string } | undefined;
-      return (typeof value?.sql === 'string' ? value.sql : '?') + chunk;
+      const value = values[i - 1];
+      return (isFrag(value) ? resolve(value.strings, value.values) : literal(value)) + chunk;
     })
     .join('');
 }
 
+function renderLastQuery() {
+  const call = dbMock.dbRead.$queryRaw.mock.calls.at(-1);
+  if (!call) throw new Error('$queryRaw was never called');
+  const [strings, ...values] = call as [string[], ...unknown[]];
+  return resolve(strings, values).replace(/\s+/g, ' ');
+}
+
 // getImage throws not-found on an empty result, before any of the enrichment fetches. The
-// statement is already assembled by then, which is all these need.
+// statement is already assembled by then. The message is pinned so a mock that breaks for an
+// unrelated reason cannot be laundered into "the not-found path ran".
 async function captureQuery(args: Parameters<typeof getImage>[0]) {
-  await expect(getImage(args)).rejects.toThrow();
-  return renderLastQuery().replace(/\s+/g, ' ');
+  await expect(getImage(args)).rejects.toThrow(/No image with id/);
+  return renderLastQuery();
 }
 
 describe('getImage postless authorization', () => {
@@ -88,26 +99,41 @@ describe('getImage postless authorization', () => {
     expect(sql).not.toMatch(/JOIN "Post" p ON p\.id = i\."postId" AND/);
   });
 
-  it('admits a postless image only to its owner', async () => {
+  it('admits a postless image only to the viewer who owns it', async () => {
     const sql = await captureQuery({ id: IMAGE_ID, userId: VIEWER });
 
-    expect(sql).toContain('i."postId" IS NULL AND i."userId" = ?');
-    expect(sql).toContain('i."postId" IS NULL OR p."availability" != \'Private\'');
+    // Resolved, so binding the image id in place of the viewer fails here. Drop the `i."userId"`
+    // conjunct entirely and every never-posted upload becomes fetchable by id.
+    expect(sql).toContain(`i."postId" IS NULL AND i."userId" = ${VIEWER}`);
+  });
+
+  it('keeps the owner escape on the private-post clause', async () => {
+    const sql = await captureQuery({ id: IMAGE_ID, userId: VIEWER });
+
+    expect(sql).toContain(
+      `(i."postId" IS NULL OR p."availability" != 'Private' OR p."userId" = ${VIEWER})`
+    );
   });
 
   it('still requires a published or owned post when one exists', async () => {
     const sql = await captureQuery({ id: IMAGE_ID, userId: VIEWER });
 
-    expect(sql).toContain('p."publishedAt" < now() OR p."userId" = ?');
+    expect(sql).toContain(`p."publishedAt" < now() OR p."userId" = ${VIEWER}`);
   });
 
-  it('binds the viewer as the owner the postless branch checks against', async () => {
-    await captureQuery({ id: IMAGE_ID, userId: VIEWER });
+  it('binds NULL for an anonymous viewer, so every ownership branch fails closed', async () => {
+    const sql = await captureQuery({ id: IMAGE_ID });
 
-    const values = (dbMock.dbRead.$queryRaw.mock.calls.at(-1) as [string[], ...unknown[]])
-      .slice(1)
-      .flatMap((value) => (value as { values?: unknown[] })?.values ?? []);
-    expect(values).toContain(VIEWER);
+    expect(sql).toContain('i."postId" IS NULL AND i."userId" = NULL');
+  });
+
+  it('emits no Post reference when the caller opts out of the post', async () => {
+    // `withoutPost` is a client-supplied field on a public procedure, and the article lightbox
+    // sends it. Emitting the post gates without the join is `missing FROM-clause entry for "p"`.
+    const sql = await captureQuery({ id: IMAGE_ID, userId: VIEWER, withoutPost: true });
+
+    expect(sql).not.toContain('JOIN "Post"');
+    expect(sql).not.toContain('p."');
   });
 
   it('leaves the moderator path ungated', async () => {

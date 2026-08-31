@@ -1384,7 +1384,7 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   await dbWrite.resourceReview.deleteMany({ where: { userId: id } });
   await dbWrite.commentV2.deleteMany({ where: { userId: id } });
   await dbWrite.comment.deleteMany({ where: { userId: id } });
-  await detachPostsFromUserCollections(dbWrite, id);
+  await detachPostsFromUserCollections(id);
   await dbWrite.collection.deleteMany({ where: { userId: id } });
   await dbWrite.article.deleteMany({ where: { userId: id } });
   await dbWrite.post.deleteMany({ where: { userId: id } });

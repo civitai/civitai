@@ -6502,11 +6502,9 @@ export const getImage = async ({
     );
 
     if (!withoutPost) {
-      // Post gates live here rather than in the JOIN so a postless image still produces a row.
-      // Deleting a collection cascades to the posts created into it and `Image.postId` is
-      // ON DELETE SET NULL, so an image can outlive its post; serve those to their owner instead
-      // of 404ing. Nothing on `Image` tells one apart from an upload that was never posted, so
-      // nobody else gets them.
+      // Post gates sit in the WHERE, not the JOIN: an image outlives a deleted post (`Image.postId`
+      // is ON DELETE SET NULL) and an inner join drops it before ownership is tested. Nothing on
+      // `Image` separates that from a never-posted upload, so only the owner may fetch a postless one.
       AND.push(
         Prisma.sql`(
           p."publishedAt" < now()
