@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -191,6 +192,11 @@ export const submitCreatorShopPack = async ({
   quotedFee,
   stickersEnabled,
 }: SubmitCreatorShopPackInput & { userId: number; stickersEnabled?: boolean }) => {
+  // The same CosmeticShopItem.title/description columns the moderator-only upsert guards; these
+  // are the CREATOR-facing doors into them. Guarding only the moderator one would have closed
+  // the lower-risk door and left these open.
+  await throwOnBlockedUserContent([name, description], { surface: 'creatorShop' });
+
   // Only artwork needs affirming, and only a cover is artwork the lister
   // supplied — the members were each affirmed when they were submitted.
   if (imageUrl && !rightsAffirmed)
@@ -297,6 +303,8 @@ export const updateCreatorShopPack = async ({
   isModerator?: boolean;
   stickersEnabled?: boolean;
 }) => {
+  await throwOnBlockedUserContent([name, description], { isModerator, surface: 'creatorShop' });
+
   const existing = await dbRead.cosmeticShopItem.findUnique({
     where: { id },
     select: {

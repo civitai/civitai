@@ -544,7 +544,7 @@ export const upsertModelVersion = async ({
   // scanned in `upsertModel`, and nothing makes versions different except this replay. Closing it
   // needs a way to tell a user edit from a replay — do not "fix" it by adding `data.name` here,
   // which reintroduces the version that cannot be declined.
-  await throwOnBlockedUserContent(data.description, {
+  await throwOnBlockedUserContent([data.description, ...(data.trainedWords ?? [])], {
     isModerator,
     surface: 'modelVersion',
   });

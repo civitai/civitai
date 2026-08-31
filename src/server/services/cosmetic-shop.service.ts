@@ -271,7 +271,7 @@ export const upsertCosmeticShopItem = async ({
   // The guard above saw the CLIENT's html. A creator's blurb body was spliced in since, so the
   // string about to be written is one it never checked — the same second call its four sibling
   // upserts make, and the reason this file's guard count is three rather than one.
-  await throwOnBlockedUserContent(expansion.html, { surface: 'cosmeticShop' });
+  await throwOnBlockedUserContent(expansion.html, { isModerator, surface: 'cosmeticShop' });
 
   const data = {
     ...cosmeticShopItem,

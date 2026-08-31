@@ -1177,10 +1177,7 @@ export const upsertCollection = async ({
     ...collectionItem
   } = input;
 
-  await throwOnBlockedUserContent([name, description, collectionItem.note], {
-    isModerator,
-    surface: 'collection',
-  });
+  await throwOnBlockedUserContent([name, description], { isModerator, surface: 'collection' });
 
   // `autoTagId` writes tag rows onto every image submitted to the collection, including
   // images the submitter doesn't own (nothing in the save path validates image

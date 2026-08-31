@@ -59,6 +59,8 @@ const SURFACES: Record<string, number> = {
   'src/server/services/collection.service.ts': 1,
   'src/server/services/cosmetic-shop.service.ts': 3,
   'src/server/services/creator-announcement.service.ts': 1,
+  'src/server/services/creator-shop-pack.service.ts': 2,
+  'src/server/services/creator-shop.service.ts': 2,
   'src/server/services/model-version.service.ts': 4,
   'src/server/services/model.service.ts': 3,
   'src/server/services/model3d-review.service.ts': 1,
@@ -115,6 +117,14 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     upsertCosmeticShopItem: 2,
   },
   'src/server/services/creator-announcement.service.ts': { upsertCreatorAnnouncement: 1 },
+  'src/server/services/creator-shop-pack.service.ts': {
+    submitCreatorShopPack: 1,
+    updateCreatorShopPack: 1,
+  },
+  'src/server/services/creator-shop.service.ts': {
+    submitCreatorShopItem: 1,
+    updateCreatorShopItem: 1,
+  },
   'src/server/services/model-version.service.ts': {
     applyModelVersionContentChange: 1,
     upsertExplorationPrompt: 1,
@@ -155,7 +165,18 @@ function importedNames(source: ts.SourceFile, exported: string): string[] {
     if (!node.moduleSpecifier.text.includes(BLOCKLIST_MODULE)) return;
 
     const bindings = node.importClause?.namedBindings;
-    if (!bindings || !ts.isNamedImports(bindings)) return;
+    if (!bindings) return;
+
+    // `import * as blocklist from ...` binds every export under one local name, so a file using
+    // `blocklist.throwOnBlockedLinkDomain(...)` has no named import to find. Reading that as "this
+    // file uses neither function" is a hole in the one test whose job is catching a surface nobody
+    // listed — for a LISTED file it fails closed, but the sweep below would pass it silently.
+    // Recorded as `<ns>.<export>` so `countCalls` can still be told what to look for.
+    if (ts.isNamespaceImport(bindings)) {
+      names.push(`${bindings.name.text}.${exported}`);
+      return;
+    }
+    if (!ts.isNamedImports(bindings)) return;
 
     for (const element of bindings.elements) {
       const importedName = (element.propertyName ?? element.name).text;
@@ -196,11 +217,15 @@ function callsByFunction(source: ts.SourceFile, names: string[]): Map<string, nu
       nextDepth = depth + 1;
     }
 
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      names.includes(node.expression.text)
-    ) {
+    const callee = ts.isCallExpression(node)
+      ? ts.isIdentifier(node.expression)
+        ? node.expression.text
+        : ts.isPropertyAccessExpression(node.expression)
+        ? `${node.expression.expression.getText()}.${node.expression.name.text}`
+        : undefined
+      : undefined;
+
+    if (callee !== undefined && names.includes(callee)) {
       // 🔴 Depth, not just name. Attribution by nearest NAMED scope alone is forgeable: a local
       // `const createPost = async () => { await guard(); }` declared inside `updatePost` produces
       // the same map as two real top-level writers, so the guard reads as covering a writer that
