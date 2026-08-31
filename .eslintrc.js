@@ -44,6 +44,38 @@ module.exports = {
     // ready to gate on it.
     'local-rules/no-io-in-transaction': 'warn',
 
+    // readMetadata/parseGenerationText without `{ plugins: [civitai()] }`
+    // type-check clean and silently degrade: madeOnSite false, on-site formats
+    // undetected, resources unresolved. Plugin-independent exports
+    // (copyMetadata, embedMetadata, types) stay importable. Covers the /image
+    // and /node subpaths too (they re-export the same bare readers); a dynamic
+    // `await import(...)` is not caught — don't do that.
+    'no-restricted-imports': [
+      'error',
+      {
+        paths: [
+          {
+            name: '@civitai/generation-metadata',
+            importNames: ['readMetadata', 'parseGenerationText'],
+            message:
+              'Silently loses civitai semantics without the plugin — use ~/utils/metadata (ExifParser / parsePromptMetadata), or readCivitaiMetadata from @civitai/generation-metadata/civitai.',
+          },
+          {
+            name: '@civitai/generation-metadata/image',
+            importNames: ['readMetadata', 'parseGenerationText'],
+            message:
+              'Silently loses civitai semantics without the plugin — use ~/utils/metadata (ExifParser / parsePromptMetadata), or readCivitaiMetadata from @civitai/generation-metadata/civitai.',
+          },
+          {
+            name: '@civitai/generation-metadata/node',
+            importNames: ['readMetadataFromFile'],
+            message:
+              'Plugin-less by default — read the file yourself and use readCivitaiMetadata from @civitai/generation-metadata/civitai, or pass plugins explicitly.',
+          },
+        ],
+      },
+    ],
+
     // Flags a `vi.mock('~/utils/trpc', () => ({ ... }))` whose factory hand-writes
     // the module instead of spreading the real one via `importOriginal`. A
     // wholesale factory breaks the whole test FILE the day the module gains an

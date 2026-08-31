@@ -10,6 +10,10 @@ This document records what the failure actually is, the evidence, and a proposed
 were taken against the production read replica on 2026-08-18. Where two independent review passes
 produced slightly different counts, the later figure is used and the drift noted.
 
+> The `src/utils/metadata/*.metadata.ts` parsers cited by `file:line` below were since replaced by
+> `@civitai/generation-metadata` (behavior-preserving; parity-gated over its fixture corpus). The
+> references describe the pre-migration code; the equivalent logic now lives in that package.
+
 ---
 
 ## How matching works today

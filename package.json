@@ -130,6 +130,7 @@
     "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/flipt": "workspace:*",
+    "@civitai/generation-metadata": "^0.1.0",
     "@civitai/moderation": "workspace:*",
     "@civitai/next-axiom": "^0.17.0",
     "@civitai/shared": "workspace:*",

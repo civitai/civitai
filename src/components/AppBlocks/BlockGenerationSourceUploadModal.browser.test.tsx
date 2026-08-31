@@ -37,12 +37,8 @@ vi.mock('~/utils/image-utils', async (orig) => {
 // The generator's client-side resize/re-encode helpers. Mocked here as SPIES so
 // we can assert the modal downscales to the SCHEMA bound (DIM_MAX) before upload
 // — the actual canvas pixel-clamp is canvas-utils' own well-tested contract
-// (calculateAspectRatioFit). They're also mocked out of necessity: their real
-// path (imageToJpegBlob → canvasToBlobWithImageExif) uses `Buffer`, which Next
-// polyfills in the browser bundle (the shipped generator relies on exactly this)
-// but the vitest browser env does not provide. So the real pixel path is
-// exercised in production via SourceImageUpload; here we lock the ORCHESTRATION
-// (which bounds, in which order).
+// (calculateAspectRatioFit). The real pixel path is exercised in production via
+// SourceImageUpload; here we lock the ORCHESTRATION (which bounds, in which order).
 vi.mock('~/shared/utils/canvas-utils', () => ({
   resizeImage: mocks.resizeImage,
   imageToJpegBlob: mocks.imageToJpegBlob,
