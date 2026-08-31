@@ -57,9 +57,13 @@ export const BASELINE = { files: 201, tests: 2254, measuredOn: '2026-08-31' };
  * read the error above". All three below have been observed on this suite.
  */
 export const ABORT_DIAGNOSIS = `
-🔴 THE COMPONENT SUITE COLLECTED NOTHING. THIS IS NOT A TEST FAILURE AND IT IS NOT A PASS —
-   nothing executed, so this tier verified NOTHING on this commit. Read the error printed
-   ABOVE this line; it is the only thing that separates the causes below.
+🔴 THIS RUN PRODUCED NO ACCOUNTABLE RESULT. IT IS NOT A TEST FAILURE AND IT IS NOT A PASS —
+   nothing here says what was verified on this commit. Read the error printed ABOVE this
+   line; it is the only thing that separates the causes below.
+
+   🔴 Do not read green lines above as coverage. An abort can land PART-WAY: files can have
+   run and passed and still leave no report, because the run died before it could say what
+   ran. Whatever scrolled past is unaccounted for, not confirmed.
 
    1. A \`vi.mock\` FACTORY THREW.  Vitest resolves manual mocks over the browser<->node
       channel inside a Playwright route handler that does not catch, so the rejection escapes
@@ -194,8 +198,10 @@ function main(argv) {
   if (!existsSync(reportPath)) {
     console.error(
       `\n${reportPath} does not exist — the run wrote no JSON report.\n` +
-        'That is not evidence anything ran; it means vitest did not get far enough to write\n' +
-        'one, or --outputFile never reached it.' +
+        'The reporter writes at the END of a run, so this means vitest never reached that\n' +
+        'point, or --outputFile never reached vitest. Measured: an abort 68 files into a\n' +
+        '201-file run still wrote nothing, so a partial run and a run that never started are\n' +
+        'INDISTINGUISHABLE from here — which is why neither counts as one that ran.' +
         ABORT_DIAGNOSIS
     );
     return 1;

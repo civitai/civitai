@@ -101,7 +101,7 @@ describe('assert-component-suite-ran', () => {
       { name: 'src/b.browser.test.tsx' },
     ]);
     const { code, out } = runGate(report);
-    expect(out).toContain('COLLECTED NOTHING');
+    expect(out).toContain('NO ACCOUNTABLE RESULT');
     expect(code).toBe(1);
   });
 
@@ -113,7 +113,7 @@ describe('assert-component-suite-ran', () => {
     const report = writeReport('allred.json', [{ name: 'src/a.browser.test.tsx', failed: 1873 }]);
     const { code, out } = runGate(report);
     expect(out).toContain('1873 executed');
-    expect(out).not.toContain('COLLECTED NOTHING');
+    expect(out).not.toContain('NO ACCOUNTABLE RESULT');
     expect(code).toBe(0);
   });
 
@@ -156,7 +156,7 @@ describe('assert-component-suite-ran', () => {
     // when someone is debugging it — the guard must not go quiet there.
     const report = writeReport('narrowzero.json', [{ name: 'src/a.browser.test.tsx' }]);
     const { code, out } = runGate(report, '--narrowed');
-    expect(out).toContain('COLLECTED NOTHING');
+    expect(out).toContain('NO ACCOUNTABLE RESULT');
     expect(code).toBe(1);
   });
 
@@ -181,7 +181,7 @@ describe('assert-component-suite-ran', () => {
     // needed.
     const { code, out } = runGate(join(dir, 'does-not-exist.json'));
     expect(out).toContain('does not exist');
-    expect(out).toContain('COLLECTED NOTHING');
+    expect(out).toContain('NO ACCOUNTABLE RESULT');
     expect(code).toBe(1);
   });
 
