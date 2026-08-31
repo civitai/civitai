@@ -29,17 +29,21 @@ const PUBLIC_PATHS = new Set(['/favicon.svg']);
 export const CREDENTIAL_ATTRIBUTION_EVENT = 'webhook credential presented';
 
 /**
- * Records WHICH inbound service credential authenticated a request — the runtime signal that makes
- * dropping WEBHOOK_TOKEN from `acceptedTokens` a checkable claim rather than an inferred one (see the
- * header of $lib/server/webhook-endpoint).
+ * Records WHICH inbound service credential authenticated a request — the runtime signal that made
+ * dropping WEBHOOK_TOKEN from `acceptedTokens` a checkable claim rather than an inferred one, and that
+ * will grade the next such removal the same way (see the header of $lib/server/webhook-endpoint).
  *
- * 🔴 EMITTED FOR EVERY CLASS, NOT JUST THE LEGACY ONE. Logging only WEBHOOK_TOKEN looks like the
- * obvious saving — it is the thing we are waiting to stop seeing — and it destroys the evidence. A
- * zero from a legacy-only emitter is indistinguishable from an emitter that was never deployed, never
- * ingested, or quietly broken, so it can never license the removal. With both classes emitted, a
- * non-zero MOD_INBOUND_TOKEN count is the IN-BAND POSITIVE CONTROL standing beside the WEBHOOK_TOKEN
- * zero in the same window and proving the instrument was live when it read zero. The pair is the
- * evidence. Do not narrow this to the legacy class.
+ * 🔴 EMITTED FOR EVERY ACCEPTED CLASS, NOT JUST A RETIRING ONE. Narrowing this to whichever class is
+ * on its way out looks like the obvious saving — it is the thing we are waiting to stop seeing — and
+ * it destroys the evidence. A zero from a single-class emitter is indistinguishable from an emitter
+ * that was never deployed, never ingested, or quietly broken, so it can never license a removal. With
+ * every class emitted, a non-zero count for a live class is the IN-BAND POSITIVE CONTROL standing
+ * beside the retiring class's zero in the same window, proving the instrument was live when it read
+ * zero. The pair is the evidence. Do not narrow this to one class.
+ *
+ * 🔴 A REFUSED CREDENTIAL EMITS NOTHING, and that is deliberate rather than an omission. Recording
+ * refusals would mean a retired class's count could never fall to zero, so the signal that authorises
+ * the next removal would be permanently stuck at "still in use". Pinned in __tests__/hooks.server.
  *
  * 🔴 NOTHING DERIVED FROM THE TOKEN'S BYTES GOES IN THE RECORD — no value, prefix, suffix, length or
  * hash. Any of those is a credential oracle on a log stream that is far more widely readable than the
