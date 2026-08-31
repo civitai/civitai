@@ -172,8 +172,8 @@ Tiered: e.g., 200,000 buzz = 0% on first 100k + 5% on next 100k = 5,000 fee.
 | `creatorsProgramInviteTipalti` | `50 23 L * *` | Creates Tipalti payee for users above $50 threshold |
 | `creatorsProgramRollover` | `0 0 1 * *` | Flushes all caches for new month |
 | `creatorsProgramSettleCash` | `0 0 15 * *` | Moves `cashPending` -> `cashSettled`, notifies users |
-| `bankingPhaseEndingNotification` | `0 0 L-4 * *` | Notifies users banking phase is ending |
-| `extractionPhaseStartedNotification` | `0 0 L-3 * *` | Notifies extraction phase started |
+| `bankingPhaseEndingNotification` | `0 0 L-3 * *` | Notifies users on the last banking day (banking closes end of L-3) |
+| `extractionPhaseStartedNotification` | `0 0 L-2 * *` | Notifies users on the first extraction day (L-2) |
 | `extractionPhaseEndingNotification` | `0 0 L * *` | Notifies extraction phase ending |
 
 ### Distribution Logic
