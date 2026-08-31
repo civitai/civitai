@@ -110,10 +110,22 @@ vi.mock('~/server/services/minor-hash.service', () => ({
 
 // Default ON so the existing wiring tests exercise the real path; the gate's
 // off-state is asserted explicitly below.
+// Flag VALUES must be real here, not a single-key stub. The service gates three independent
+// things on Flipt (minor-hash auto-flag, strict skip verification, format-mismatch hold), and
+// with only one key in this map the others resolve to `undefined` — every gate would then be
+// asking about the same flag and a test could not turn one on while leaving another off.
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: mockIsFlipt,
-  FLIPT_FEATURE_FLAGS: { MINOR_HASH_AUTO_FLAG: 'minor-hash-auto-flag' },
+  FLIPT_FEATURE_FLAGS: {
+    MINOR_HASH_AUTO_FLAG: 'minor-hash-auto-flag',
+    SCAN_STRICT_SKIP_VERIFICATION: 'scan-strict-skip-verification',
+    SCAN_FORMAT_MISMATCH_HOLD: 'scan-format-mismatch-hold',
+  },
 }));
+
+/** Turn named flags on and leave every other flag off. */
+const onlyFlags = (...on: string[]) =>
+  mockIsFlipt.mockImplementation(async (flag: string) => on.includes(flag));
 
 import {
   applyScanOutcome,
@@ -840,7 +852,12 @@ describe('model-file-scan.service', () => {
       expect(updateCall.data.virusScanMessage).toBe('EICAR signature detected');
     });
 
-    it('treats pickleScan skipped=true (safetensors) as Success with null message', async () => {
+    // This previously used an extension-derived skipReason, which the format-conformance change
+    // no longer treats as verified, so it no longer belongs in a test asserting a PASS. The case
+    // this test exists for — a genuine skip yields Success with a null message — is preserved by
+    // moving it to the byte-verified reason. Both regimes are covered in the
+    // 'scan format conformance' block below.
+    it('treats a byte-verified pickleScan skip (safetensors) as Success with null message', async () => {
       mockGetWorkflow.mockResolvedValue({
         data: {
           metadata: { fileId: 1 },
@@ -855,7 +872,7 @@ describe('model-file-scan.service', () => {
                 status: 'skippedSafetensors',
                 dangerousImportsFound: false,
                 skipped: true,
-                skipReason: 'safetensors-extension',
+                skipReason: 'safetensors-magic',
               },
             },
           ],
@@ -1436,6 +1453,288 @@ describe('model-file-scan.service', () => {
       });
 
       expect(mockCheckMinorHashOnScan).not.toHaveBeenCalled();
+    });
+  });
+
+  // -------------------------------------------------------------------------------------
+  // Regression cover: a file whose contents do not match its declared container format must
+  // never be recorded as having passed the scans. Incident record, mechanism and measurements
+  // are in the internal ticket — deliberately not restated here.
+  // -------------------------------------------------------------------------------------
+  describe('scan format conformance', () => {
+    function makeReq(body: unknown) {
+      return { body } as unknown as Parameters<typeof processModelFileScanResult>[0];
+    }
+
+    // Any skip reason NOT in the byte-verified set. The specific legacy strings are an
+    // implementation detail of the scanner build and are deliberately not named here.
+    const LEGACY_UNVERIFIED_SKIP_REASON = 'legacy-unverified-skip';
+
+    const pickleStep = (output: Record<string, unknown>) => ({
+      $type: 'modelPickleScan',
+      output,
+    });
+
+    /** The pickle step exactly as the scanner emits it for a declared/actual disagreement. */
+    const formatMismatchOutput = {
+      exitCode: 2,
+      status: 'ParseError',
+      skipped: false,
+      skipReason: 'format-mismatch',
+      output:
+        "Declared format 'Safetensors' does not match file contents (detected: Unknown). " +
+        'The file does not carry a valid header for the container type it claims to be.',
+      globalImports: [],
+      dangerousImports: [],
+      dangerousImportsFound: false,
+    };
+
+    async function runWithSteps(steps: unknown[]) {
+      mockGetWorkflow.mockResolvedValue({
+        data: { metadata: { fileId: 1, modelVersionId: 100 }, steps },
+      });
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-fmt', type: 'workflow', status: 'succeeded' })
+      );
+      return mockDbWrite.modelFile.update.mock.calls[0][0];
+    }
+
+    beforeEach(() => {
+      mockDbWrite.modelFile.findUnique.mockResolvedValue({
+        id: 1,
+        modelVersionId: 100,
+        modelVersion: { modelId: 200, model: { userId: 42 } },
+      });
+      mockDbWrite.modelFile.update.mockResolvedValue({});
+      mockDbWrite.$transaction.mockResolvedValue([]);
+      mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      mockDbWrite.model.findUnique.mockResolvedValue({
+        id: 200,
+        name: 'Test Model',
+        meta: {},
+        userId: 42,
+        status: 'Published',
+      });
+      mockSetNxKeepTtlWithEx.mockResolvedValue(true);
+    });
+
+    it('a format mismatch is never recorded as a clean pickle scan', async () => {
+      const updateCall = await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(updateCall.data.pickleScanResult).not.toBe(ScanResultCode.Success);
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
+    });
+
+    it('keeps the scanner explanation in rawScanResult, not in the public message', async () => {
+      // The detail must survive for forensics and for the moderator-facing log, but NOT in
+      // pickleScanMessage, which the public v1 API serves. Both halves asserted together so a
+      // future change cannot quietly move it from one to the other.
+      const updateCall = await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(JSON.stringify(updateCall.data.rawScanResult)).toContain(
+        'does not match file contents'
+      );
+      expect(updateCall.data.pickleScanMessage).not.toContain('does not match file contents');
+    });
+
+    it('leaves a byte-verified safetensors skip passing', async () => {
+      // The false-positive control: the overwhelming majority of real uploads are genuine
+      // safetensors, and under the new scanner they arrive with this skipReason.
+      const updateCall = await runWithSteps([
+        pickleStep({
+          exitCode: 0,
+          status: 'SkippedSafetensors',
+          skipped: true,
+          skipReason: 'safetensors-magic',
+          globalImports: [],
+          dangerousImports: [],
+          dangerousImportsFound: false,
+        }),
+      ]);
+
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Success);
+    });
+
+    it('a legacy metadata-based skip still passes while strict verification is off', async () => {
+      // Deployment-ordering guard: until SCAN_STRICT_SKIP_VERIFICATION is flipped on, a skip
+      // reason this build does not recognize must keep passing, or shipping the web app ahead
+      // of the scanner fleet would flag ordinary uploads. See the flag's note.
+      onlyFlags(); // strict verification OFF
+
+      const updateCall = await runWithSteps([
+        pickleStep({
+          exitCode: 0,
+          status: 'SkippedSafetensors',
+          skipped: true,
+          skipReason: LEGACY_UNVERIFIED_SKIP_REASON,
+          globalImports: [],
+          dangerousImports: [],
+          dangerousImportsFound: false,
+        }),
+      ]);
+
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Success);
+    });
+
+    it('a legacy metadata-based skip stops passing once strict verification is on', async () => {
+      onlyFlags('scan-strict-skip-verification');
+
+      const updateCall = await runWithSteps([
+        pickleStep({
+          exitCode: 0,
+          status: 'SkippedSafetensors',
+          skipped: true,
+          skipReason: LEGACY_UNVERIFIED_SKIP_REASON,
+          globalImports: [],
+          dangerousImports: [],
+          dangerousImportsFound: false,
+        }),
+      ]);
+
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
+    });
+
+    it('ClamAV limits-exceeded is Error, never Success and never Danger', async () => {
+      // A >4 GB file ClamAV refused to open. Not clean (nothing was read) and not infected
+      // (nothing was found) — and NOT Pending, which would re-queue it to be retried forever.
+      const updateCall = await runWithSteps([
+        {
+          $type: 'modelClamScan',
+          output: {
+            exitCode: 2,
+            status: 'Error',
+            infected: false,
+            limitsExceeded: true,
+            maxScanSizeMb: 4000,
+            output: 'Heuristics.Limits.Exceeded FOUND',
+          },
+        },
+      ]);
+
+      expect(updateCall.data.virusScanResult).toBe(ScanResultCode.Error);
+    });
+
+    it('ClamAV limits-exceeded is Error even when the status is unrecognized', async () => {
+      // KILLING FIXTURE for the limitsExceeded guard. The other limits test also sets
+      // status:'Error', which independently reaches Error via status.includes('error') — so
+      // deleting the guard leaves that test green and the guard untested. This payload has NO
+      // status, which is exactly the case the guard exists for: an unrecognized status becomes
+      // null at the orchestrator, the code falls through to exitCodeToScanResult, and a limits
+      // bail-out exits 1 — which would score as Danger, a false virus detection.
+      const updateCall = await runWithSteps([
+        {
+          $type: 'modelClamScan',
+          output: { exitCode: 1, infected: false, limitsExceeded: true },
+        },
+      ]);
+
+      expect(updateCall.data.virusScanResult).toBe(ScanResultCode.Error);
+      expect(updateCall.data.virusScanResult).not.toBe(ScanResultCode.Danger);
+    });
+
+    it('a byte-verified GGUF skip passes under strict verification', async () => {
+      // KILLING FIXTURE for the gguf-magic member of BYTE_VERIFIED_SKIP_REASONS. Without this,
+      // narrowing the set to just safetensors-magic marks every legitimate GGUF upload Error
+      // and no test notices.
+      onlyFlags('scan-strict-skip-verification');
+
+      const updateCall = await runWithSteps([
+        pickleStep({
+          exitCode: 0,
+          status: 'SkippedGguf',
+          skipped: true,
+          skipReason: 'gguf-magic',
+          globalImports: [],
+          dangerousImports: [],
+          dangerousImportsFound: false,
+        }),
+      ]);
+
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Success);
+    });
+
+    it('a skipped-* STATUS with no skipped flag is not a pass under strict verification', async () => {
+      // KILLING FIXTURE for the status.startsWith('skipped') branch. Reachable on in-flight
+      // legacy workflows where `skipped` is unset but the status string still says skipped —
+      // the same "we did not look" answer, and previously always Success.
+      onlyFlags('scan-strict-skip-verification');
+
+      const updateCall = await runWithSteps([
+        pickleStep({
+          exitCode: 0,
+          status: 'skippedSafetensors',
+          globalImports: [],
+          dangerousImports: [],
+          dangerousImportsFound: false,
+        }),
+      ]);
+
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
+    });
+
+    it('logs a mismatch even when the enforcement flag is OFF', async () => {
+      // The rollout plan is "flip the flag, then watch". That is impossible without telemetry
+      // from BEFORE the flip. Detection is ungated; only enforcement is gated.
+      onlyFlags(); // every flag off
+
+      await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'scan-format-mismatch' }),
+        'webhooks'
+      );
+      expect(mockUnpublishModelById).not.toHaveBeenCalled();
+      expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it('records a mismatch as telemetry regardless of any flag, and touches no model', async () => {
+      // 🔴 The scope guard for this PR. Four audit rounds went into an automated hold and each
+      // found the lever attached to something unchecked — a queue excluding the flagged status,
+      // a publish handler stripping the field, and finally a flag the model's OWNER can clear.
+      // The hold moved to a follow-up; what stays is the recorded verdict plus the population
+      // signal needed to size the problem before any enforcement is switched on. If a later
+      // change reintroduces a model mutation here, this test is what should stop it.
+      onlyFlags(); // every flag off — the shipping state
+
+      const updateCall = await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'scan-format-mismatch',
+          detail: expect.stringContaining('does not match file contents'),
+        }),
+        'webhooks'
+      );
+      // The verdict is recorded...
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Error);
+      // ...and nothing is done TO the model.
+      expect(mockUnpublishModelById).not.toHaveBeenCalled();
+      expect(mockCreateNotification).not.toHaveBeenCalled();
+      expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+      expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it('does not leak the detector verdict into the public scan message', async () => {
+      // pickleScanMessage is served by the public v1 model-versions API, so operator-facing
+      // detail must not appear in it.
+      const updateCall = await runWithSteps([pickleStep(formatMismatchOutput)]);
+
+      expect(updateCall.data.pickleScanMessage).not.toContain('detected');
+      expect(updateCall.data.pickleScanMessage).not.toContain('Safetensors');
+      expect(updateCall.data.pickleScanMessage).toBe(
+        'File format could not be verified. This file is under review.'
+      );
+    });
+
+    it('a normal clean ClamAV pass is still Success', async () => {
+      const updateCall = await runWithSteps([
+        {
+          $type: 'modelClamScan',
+          output: { exitCode: 0, status: 'clean', infected: false, limitsExceeded: false },
+        },
+      ]);
+
+      expect(updateCall.data.virusScanResult).toBe(ScanResultCode.Success);
     });
   });
 });

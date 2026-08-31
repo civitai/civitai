@@ -55,6 +55,21 @@ export type ScanOutcome = {
   hashes?: Partial<Record<ModelHashType, string>>;
   /** Parsed safetensors header. May be unset if the file isn't safetensors. */
   headerData?: unknown;
+  /**
+   * The file's declared container format is contradicted by its bytes — it is not the kind of
+   * file it claims to be. Distinct from a generic scan Error: this one names a deliberate
+   * disguise rather than a transient scanner fault.
+   */
+  formatMismatch?: boolean;
+  /**
+   * The scanner's own explanation of the mismatch, for the operator log ONLY.
+   *
+   * Kept separate from `pickleScan.message` on purpose: that field is served by the public v1
+   * API and is therefore a fixed string. Without a distinct field the operator log would carry
+   * the same constant and tell a responder nothing about which format was declared or what was
+   * actually detected.
+   */
+  formatMismatchDetail?: string | null;
   /** Full upstream payload (orchestrator step outputs or legacy ScanResult) for forensics. */
   rawScanResult?: unknown;
 };
@@ -322,6 +337,34 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     });
   }
 
+  // A file that is not the kind of file it claims to be. The scan RESULT above already records
+  // this as non-clean, which is what closes the gap — the model cannot show a Verified shield.
+  //
+  // 🔴 THIS DELIBERATELY TAKES NO ACTION ON THE MODEL, only telemetry. Four audit rounds went
+  // into an automated hold here and each one found the lever was attached to something not
+  // checked: a queue that excludes the status being flagged, a publish handler that strips the
+  // field, and finally a flag the model's own OWNER can clear with one `model.upsert` (it is
+  // absent from MODERATION_OWNED_META_KEYS). An automated hold needs moderator surfaces that do
+  // not exist yet — a queue that lists flagged drafts, a clearing path, and copy that states the
+  // real cause — so it is being designed separately rather than patched in here. Recording the
+  // verdict does not depend on any of that.
+  //
+  // Ungated on purpose: this is the population signal needed to size the problem and validate
+  // the detector BEFORE any enforcement is switched on.
+  if (outcome.formatMismatch) {
+    logToAxiom(
+      {
+        type: 'warning',
+        name: 'scan-format-mismatch',
+        message: `File ${fileId} does not match its declared format`,
+        fileId,
+        modelId: file.modelVersion?.modelId,
+        detail: outcome.formatMismatchDetail ?? null,
+      },
+      'webhooks'
+    ).catch();
+  }
+
   // Search index + cache invalidation. modelId comes from the initial lookup so
   // there's no second round-trip per webhook callback.
   const modelVersionId = outcome.modelVersionId ?? file.modelVersionId;
@@ -377,6 +420,15 @@ type ModelClamScanStep = {
     infected?: boolean | null;
     infectedFileCount?: number | null;
     scannedFileCount?: number | null;
+    /**
+     * ClamAV refused the file for exceeding its size limits, so nothing was inspected.
+     * Reported by the scanner as status "Error" (NOT a new status string — the orchestrator
+     * parses that field with Enum.TryParse and an unknown value becomes null, which sends the
+     * web app to the raw exit code, and a limits bail-out exits 1 exactly like a real
+     * detection). This flag carries the true cause for forensics and dashboards.
+     */
+    limitsExceeded?: boolean | null;
+    maxScanSizeMb?: number | null;
   };
 };
 
@@ -488,6 +540,10 @@ export function normalizeScanHashes(
 // in-flight workflows that pre-date the orchestrator update.
 function deriveClamScanResult(output: NonNullable<ModelClamScanStep['output']>): ScanResultCode {
   if (output.infected === true) return ScanResultCode.Danger;
+  // Nothing was inspected, so this is neither clean nor infected. Terminal (Error), not
+  // Pending: Pending would put the file back in scan-files-fallback's queue to be retried
+  // forever, and the retry cannot succeed — the file is simply larger than ClamAV can scan.
+  if (output.limitsExceeded === true) return ScanResultCode.Error;
   const status = output.status?.toLowerCase();
   if (status) {
     if (status === 'clean') return ScanResultCode.Success;
@@ -498,14 +554,65 @@ function deriveClamScanResult(output: NonNullable<ModelClamScanStep['output']>):
   return exitCodeToScanResult(output.exitCode);
 }
 
+/**
+ * Marker the scanner writes to `skipReason` when a file's declared container format is
+ * contradicted by its bytes.
+ *
+ * Cross-repo contract with spine-controller's ModelPickleScanMiddleware.FormatMismatchReason.
+ * The scanner reports the mismatch as ParseError with `skipped: false` and exit code 2, so
+ * this string is NOT what makes the result non-clean — it is what tells us the cause was a
+ * disguised file rather than a transient scanner fault, which is the difference between
+ * "retry it" and "put it in front of a moderator".
+ */
+export const FORMAT_MISMATCH_SKIP_REASON = 'format-mismatch';
+
+/**
+ * What a mismatch shows publicly. Deliberately says nothing about what the scanner detected —
+ * this string is served by the public v1 model-versions API. The scanner's explanation stays in
+ * `rawScanResult` and reaches the operator log via ScanOutcome.formatMismatchDetail, which is
+ * deliberately a different field from this one.
+ */
+export const FORMAT_MISMATCH_PUBLIC_MESSAGE =
+  'File format could not be verified. This file is under review.';
+
+/**
+ * The only skip reasons that represent a container verified from its MAGIC BYTES. Any other
+ * skip reason is one the scanner produced without verifying the file's contents.
+ */
+const BYTE_VERIFIED_SKIP_REASONS = new Set(['safetensors-magic', 'gguf-magic']);
+
+export function isFormatMismatch(
+  output: NonNullable<ModelPickleScanStep['output']> | undefined
+): boolean {
+  return output?.skipReason === FORMAT_MISMATCH_SKIP_REASON;
+}
+
 function derivePickleScanResult(
-  output: NonNullable<ModelPickleScanStep['output']>
+  output: NonNullable<ModelPickleScanStep['output']>,
+  { strictSkipVerification }: { strictSkipVerification: boolean }
 ): ScanResultCode {
   if (output.dangerousImportsFound === true) return ScanResultCode.Danger;
-  if (output.skipped === true) return ScanResultCode.Success;
+
+  // 🔴 A SKIP IS NOT A PASS. A skip means the scanner did not inspect the file, and that
+  // non-answer must not be recorded as an affirmative clean result.
+  //
+  // Under strict verification only a byte-verified skip passes. Left off until every worker is
+  // on the new scanner build — see the flag's own note for the ordering constraint.
+  if (output.skipped === true) {
+    if (!strictSkipVerification) return ScanResultCode.Success;
+    return output.skipReason && BYTE_VERIFIED_SKIP_REASONS.has(output.skipReason)
+      ? ScanResultCode.Success
+      : ScanResultCode.Error;
+  }
+
   const status = output.status?.toLowerCase();
   if (status) {
-    if (status === 'clean' || status.startsWith('skipped')) return ScanResultCode.Success;
+    // `startsWith('skipped')` is deliberately NOT treated as clean here any more. It is
+    // reachable with `skipped` unset, and it is the same "we did not look" answer.
+    if (status === 'clean') return ScanResultCode.Success;
+    if (status.startsWith('skipped')) {
+      return strictSkipVerification ? ScanResultCode.Error : ScanResultCode.Success;
+    }
     if (status.includes('danger') || status.includes('infect')) return ScanResultCode.Danger;
     if (status.includes('error') || status.includes('fail')) return ScanResultCode.Error;
     return ScanResultCode.Pending;
@@ -600,6 +707,7 @@ export async function processModelFileScanResult(req: NextApiRequest) {
 
   if (pickleScan?.output) {
     const pickleOut = pickleScan.output;
+    const strictSkipVerification = await isFlipt(FLIPT_FEATURE_FLAGS.SCAN_STRICT_SKIP_VERIFICATION);
     // Skipped (e.g. safetensors) means picklescan never inspected imports —
     // don't synthesize a "No Pickle imports" message; the Success result code
     // is the source of truth.
@@ -614,13 +722,21 @@ export async function processModelFileScanResult(req: NextApiRequest) {
           globalImports: pickleOut.globalImports,
         });
 
-    const baseResult = derivePickleScanResult(pickleOut);
+    const baseResult = derivePickleScanResult(pickleOut, { strictSkipVerification });
     const hasDanger = pickleOut.dangerousImportsFound === true || importsDanger;
     outcome.pickleScan = {
       result: hasDanger ? ScanResultCode.Danger : baseResult,
-      message: pickleScanMessage,
+      // A format mismatch carries no import list, so examinePickleImports produces nothing to
+      // show — but the scanner's own explanation must NOT go here. `pickleScanMessage` is
+      // returned by the PUBLIC v1 model-versions API, and operator-facing detail does not
+      // belong on a public surface. A fixed string here; the detail is preserved in
+      // rawScanResult for forensics and reaches the log via formatMismatchDetail.
+      message: isFormatMismatch(pickleOut) ? FORMAT_MISMATCH_PUBLIC_MESSAGE : pickleScanMessage,
       dangerousImports: pickleOut.dangerousImports ?? undefined,
     };
+    outcome.formatMismatch = isFormatMismatch(pickleOut);
+    // The scanner's text, never the public constant — see formatMismatchDetail.
+    outcome.formatMismatchDetail = isFormatMismatch(pickleOut) ? pickleOut.output ?? null : null;
   }
 
   if (hashStep?.output) {

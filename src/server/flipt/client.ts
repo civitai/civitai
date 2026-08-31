@@ -126,6 +126,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // context, so a segment rule here returns the flag default and looks exactly like "blurbs are
   // off". The site is recorded in ENTITY_WITHOUT_CONTEXT_LEDGER (flipt-eval-context.test.ts).
   TEXT_BLURBS = 'text-blurbs',
+  // 🔴 DO NOT ENABLE BEFORE THE SPINE-CONTROLLER SCANNER CHANGE IS DEPLOYED EVERYWHERE.
+  //
+  // Makes a pickle-scan SKIP count as a pass only when the scanner verified the container from
+  // its magic bytes ("safetensors-magic" / "gguf-magic"). Deployment ordering against the
+  // worker fleet matters here; the constraint and its reasoning are in the internal ticket.
+  SCAN_STRICT_SKIP_VERIFICATION = 'scan-strict-skip-verification',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
