@@ -3,9 +3,10 @@ import { dev } from '$app/environment';
 import type { SessionUser } from '@civitai/auth';
 import { guard } from '$lib/server/auth';
 
-// Local UI preview without OAuth: ONLY in `vite dev` AND only when opted in via
-// TRAINING_STUDIO_DEV_LOGIN=1. `dev` is false in the built server, so this is dead code in prod.
-const DEV_LOGIN = dev && process.env.TRAINING_STUDIO_DEV_LOGIN === '1';
+// Local UI preview without OAuth: ON by default in `vite dev` so the flow is viewable without an auth
+// hub; opt out with TRAINING_STUDIO_DEV_LOGIN=0 to exercise the real login against a local hub. `dev`
+// is false in the built server, so this is dead code in prod regardless.
+const DEV_LOGIN = dev && process.env.TRAINING_STUDIO_DEV_LOGIN !== '0';
 const DEV_USER = { id: 0, username: 'dev-preview' } as unknown as SessionUser;
 
 // AUTH ADAPTER — read the Cookie header → ask the shared spoke guard → act. The guard's decision logic is

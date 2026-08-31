@@ -297,27 +297,41 @@ export const MODEL_CARDS: ModelCard[] = [
   },
 ];
 
-/** LoRA "type" (Character/Style/Concept/Effect) → recommended card id + step tuning. */
+/** Media the training produces — the primary choice, like the prod trainer's image/video/audio toggle. */
+export const MEDIA_OPTIONS: { id: Media; name: string; icon: string }[] = [
+  { id: 'image', name: 'Image', icon: '🖼️' },
+  { id: 'video', name: 'Video', icon: '🎬' },
+  { id: 'audio', name: 'Audio', icon: '🎵' },
+];
+
+/** LoRA "type" (Character/Style/Concept/Effect) → per-media recommended card + step tuning. */
 export interface LoraType {
   id: string;
   name: string;
   icon: string;
-  /** Recommended base-model card `type`. */
-  rec: string;
-  /** Media this type produces — filters the base-model grid. */
-  media: Media;
-  /** Default per-image "seen" target used to compute a starting step count. */
+  /** Which media this type applies to. */
+  medias: Media[];
+  /** Recommended base-model card `type` per media. */
+  rec: Partial<Record<Media, string>>;
+  /** Default per-item "seen" target used to compute a starting step count. */
   seen: number;
-  /** Warn below this image count for this type. */
+  /** Warn below this item count for this type. */
   minImg: number;
 }
 
 export const LORA_TYPES: LoraType[] = [
-  { id: 'character', name: 'Character', icon: '🧍', rec: 'flux', media: 'image', seen: 100, minImg: 10 },
-  { id: 'style', name: 'Style', icon: '🎨', rec: 'flux', media: 'image', seen: 150, minImg: 15 },
-  { id: 'concept', name: 'Concept', icon: '💡', rec: 'flux', media: 'image', seen: 150, minImg: 15 },
-  { id: 'effect', name: 'Effect', icon: '✨', rec: 'wan', media: 'video', seen: 150, minImg: 20 },
+  { id: 'character', name: 'Character', icon: '🧍', medias: ['image', 'video'], rec: { image: 'flux', video: 'wan' }, seen: 100, minImg: 10 },
+  { id: 'style', name: 'Style', icon: '🎨', medias: ['image', 'video', 'audio'], rec: { image: 'flux', video: 'wan', audio: 'acestep' }, seen: 150, minImg: 15 },
+  { id: 'concept', name: 'Concept', icon: '💡', medias: ['image', 'video', 'audio'], rec: { image: 'flux', video: 'wan', audio: 'acestep' }, seen: 150, minImg: 15 },
+  { id: 'effect', name: 'Effect', icon: '✨', medias: ['video'], rec: { video: 'wan' }, seen: 150, minImg: 20 },
 ];
+
+export const typesForMedia = (media: Media): LoraType[] =>
+  LORA_TYPES.filter((t) => t.medias.includes(media));
+
+/** LoRA type by id, falling back to the first type so callers never read `undefined`. */
+export const loraTypeById = (id: string): LoraType =>
+  LORA_TYPES.find((t) => t.id === id) ?? LORA_TYPES[0]!;
 
 export const cardByType = (type: string): ModelCard | undefined =>
   MODEL_CARDS.find((c) => c.type === type);

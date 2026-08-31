@@ -1,0 +1,290 @@
+<script lang="ts">
+  import { untrack } from 'svelte';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
+  import { loraTypeById, typesForMedia } from '$lib/data/trainingModels';
+  import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
+  import {
+    isCustom,
+    runCard,
+    runCost,
+    runVersionLabel,
+    type LaunchedRun,
+    type RunParams,
+    type Selection,
+  } from './trainingFlow';
+
+  let {
+    selection,
+    imageCount,
+    onStart,
+    onBack,
+  }: {
+    selection: Selection;
+    imageCount: number;
+    onStart: (launched: LaunchedRun[]) => void;
+    onBack: () => void;
+  } = $props();
+
+  const SAMPLE_RATE = 30;
+  const OPTIMIZERS = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'];
+  const LR_SCHEDULERS = ['constant', 'cosine', 'cosine_with_restarts', 'linear'];
+
+  const presetTypes = $derived(typesForMedia(selection.media));
+  const seenFor = (id: string) => loraTypeById(id).seen;
+  const defaultSteps = (id: string) => Math.max(200, imageCount * seenFor(id));
+
+  // Seeded once from the (stable) selection; the parent remounts this step via {#if}, so a fresh
+  // selection gets a fresh component. untrack documents the intentional one-time capture.
+  let presetType = $state(untrack(() => selection.loraType));
+  let params = $state<RunParams[]>(
+    untrack(() =>
+      selection.runs.map(() => ({
+        steps: defaultSteps(selection.loraType),
+        epochs: 10,
+        unetLr: '0.0004',
+        textEncoderLr: '0.00005',
+        networkDim: '32',
+        networkAlpha: '16',
+        lrScheduler: 'cosine',
+        optimizer: 'AdamW8Bit',
+        resolution: '1024',
+        batchSize: '2',
+      })),
+    ),
+  );
+  let stepsEdited = $state<boolean[]>(untrack(() => selection.runs.map(() => false)));
+  let prompts = $state([
+    { id: 0, text: 'standing in a park, natural daylight' },
+    { id: 1, text: 'close-up portrait, studio lighting' },
+    { id: 2, text: 'wearing a red jacket, city background at night' },
+  ]);
+  let promptSeq = 3;
+  let openAdv = $state(-1);
+
+  const presetSeen = $derived(seenFor(presetType));
+  const sampleCost = $derived(prompts.length * SAMPLE_RATE);
+  const runTotal = $derived(
+    selection.runs.reduce((s, run, i) => s + runCost(run, params[i]!.steps), 0),
+  );
+  const total = $derived(runTotal + sampleCost);
+  const etaMin = $derived(
+    Math.max(...selection.runs.map((_, i) => Math.max(1, Math.round((params[i]!.steps / 2000) * 18)))),
+  );
+
+  function seen(i: number) {
+    return imageCount > 0 ? Math.round(params[i]!.steps / imageCount) : 0;
+  }
+  function low(i: number) {
+    return seen(i) < Math.round(presetSeen * 0.6);
+  }
+
+  function setPreset(id: string) {
+    presetType = id;
+    params = params.map((p, i) => (stepsEdited[i] ? p : { ...p, steps: defaultSteps(id) }));
+  }
+  function setSteps(i: number, v: string) {
+    params[i]!.steps = parseInt(v) || 0;
+    stepsEdited[i] = true;
+  }
+  function addPrompt() {
+    if (prompts.length < 6) prompts = [...prompts, { id: promptSeq++, text: 'new scene' }];
+  }
+  function removePrompt(i: number) {
+    if (prompts.length > 1) prompts = prompts.filter((_, k) => k !== i);
+  }
+  function start() {
+    onStart(selection.runs.map((run, i) => ({ run, params: params[i]! })));
+  }
+
+  const multi = $derived(selection.runs.length > 1);
+</script>
+
+<div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+  <div class="flex min-w-0 flex-col gap-5">
+    <div>
+      <h2 class="m-0 text-xl font-semibold text-white">Review &amp; start</h2>
+      <p class="mt-1 text-sm text-dark-2">
+        Steps are set for you from your type and image count. Tweak if you like — everything else is
+        optional.
+      </p>
+    </div>
+
+    <div class="flex items-center justify-between">
+      <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Training runs</div>
+      <div class="flex items-center gap-1.5">
+        <span class="font-mono text-xs text-dark-2">preset</span>
+        {#each presetTypes as t (t.id)}
+          <Button
+            variant={presetType === t.id ? 'default' : 'outline'}
+            size="xs"
+            onclick={() => setPreset(t.id)}
+          >
+            {t.name}
+          </Button>
+        {/each}
+      </div>
+    </div>
+
+    <div class="flex flex-col gap-3">
+      {#each selection.runs as run, i (run.id)}
+        {@const card = runCard(run)}
+        <div class="overflow-hidden rounded-md border border-dark-4">
+          <div class="flex flex-wrap items-center gap-3 bg-dark-6 px-4 py-3">
+            <ModelCodeBadge code={card.code} size="sm" />
+            <div>
+              <div class="text-sm font-bold text-dark-0">
+                {multi ? `Run ${i + 1} · ` : ''}{card.name}
+                {runVersionLabel(run)}{isCustom(run) ? ' · custom' : ''}
+              </div>
+              <button
+                type="button"
+                onclick={() => (openAdv = openAdv === i ? -1 : i)}
+                class="mt-1 inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs font-medium transition
+                  {openAdv === i
+                  ? 'border-primary/50 bg-primary/10 text-primary'
+                  : 'border-dark-4 text-dark-2 hover:border-dark-3 hover:text-white'}"
+              >
+                ⚙ Advanced settings <span class="text-[10px]">{openAdv === i ? '▲' : '▼'}</span>
+              </button>
+            </div>
+            <div class="ml-auto flex flex-col">
+              <span class="font-mono text-[10px] uppercase tracking-wider text-dark-2">Steps</span>
+              <Input
+                value={String(params[i]!.steps)}
+                oninput={(e) => setSteps(i, e.currentTarget.value)}
+                class="h-7 w-24 font-mono"
+              />
+            </div>
+            <span class="w-20 text-right font-mono text-sm text-[#f59f00]">
+              ⚡ {runCost(run, params[i]!.steps).toLocaleString()}
+            </span>
+          </div>
+
+          <div class="bg-dark-6 px-4 pb-3 font-mono text-xs {low(i) ? 'text-[#f59f00]' : 'text-emerald-400'}">
+            {low(i) ? '⚠️ ' : '✓ '}each image seen ~{seen(i)}× ({low(i)
+              ? `low — we recommend ~${presetSeen}×; results may be weak, no refund`
+              : `good for a ${presetType}`})
+          </div>
+
+          {#if openAdv === i}
+            <div class="border-t border-dark-4 bg-dark-8 px-4 py-4">
+              <div class="mb-2 font-mono text-[11px] uppercase tracking-wider text-primary">
+                ⚙ Advanced training settings
+              </div>
+              <div class="grid gap-x-6 sm:grid-cols-2">
+                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
+                  <span class="text-dark-2">Checkpoints (epochs)</span>
+                  <Input value={String(params[i]!.epochs)} oninput={(e) => (params[i]!.epochs = parseInt(e.currentTarget.value) || 0)} class="h-7 font-mono" />
+                </div>
+                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
+                  <span class="text-dark-2">Batch size</span>
+                  <Input bind:value={params[i]!.batchSize} class="h-7 font-mono" />
+                </div>
+                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
+                  <span class="text-dark-2">UNet LR</span>
+                  <Input bind:value={params[i]!.unetLr} class="h-7 font-mono" />
+                </div>
+                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
+                  <span class="text-dark-2">Text encoder LR</span>
+                  <Input bind:value={params[i]!.textEncoderLr} class="h-7 font-mono" />
+                </div>
+                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
+                  <span class="text-dark-2">Network dim</span>
+                  <Input bind:value={params[i]!.networkDim} class="h-7 font-mono" />
+                </div>
+                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
+                  <span class="text-dark-2">Network alpha</span>
+                  <Input bind:value={params[i]!.networkAlpha} class="h-7 font-mono" />
+                </div>
+                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
+                  <span class="text-dark-2">Resolution</span>
+                  <Input bind:value={params[i]!.resolution} class="h-7 font-mono" />
+                </div>
+                <div class="grid grid-cols-[1fr_120px] items-center gap-2 border-b border-dark-4/60 py-1.5 text-sm">
+                  <span class="text-dark-2">LR scheduler</span>
+                  <Select.Root type="single" bind:value={params[i]!.lrScheduler}>
+                    <Select.Trigger class="h-7 font-mono">{params[i]!.lrScheduler}</Select.Trigger>
+                    <Select.Content>
+                      {#each LR_SCHEDULERS as s (s)}
+                        <Select.Item value={s}>{s}</Select.Item>
+                      {/each}
+                    </Select.Content>
+                  </Select.Root>
+                </div>
+                <div class="grid grid-cols-[1fr_120px] items-center gap-2 py-1.5 text-sm">
+                  <span class="text-dark-2">Optimizer</span>
+                  <Select.Root type="single" bind:value={params[i]!.optimizer}>
+                    <Select.Trigger class="h-7 font-mono">{params[i]!.optimizer}</Select.Trigger>
+                    <Select.Content>
+                      {#each OPTIMIZERS as o (o)}
+                        <Select.Item value={o}>{o}</Select.Item>
+                      {/each}
+                    </Select.Content>
+                  </Select.Root>
+                </div>
+              </div>
+            </div>
+          {/if}
+        </div>
+      {/each}
+    </div>
+
+    <div>
+      <div class="mb-2 font-mono text-xs uppercase tracking-wider text-dark-2">
+        Sample prompts <span class="lowercase text-dark-2">· the test images generated as it trains</span>
+      </div>
+      <div class="rounded-md border border-dark-4 bg-dark-6 p-4">
+        <div class="flex flex-col gap-2">
+          {#each prompts as p, i (p.id)}
+            <div class="flex items-center gap-2">
+              <Input bind:value={prompts[i]!.text} class="flex-1" />
+              {#if prompts.length > 1}
+                <Button variant="outline" size="icon-sm" aria-label={`Remove prompt ${i + 1}`} onclick={() => removePrompt(i)}>✕</Button>
+              {/if}
+            </div>
+          {/each}
+        </div>
+        {#if prompts.length < 6}
+          <Button variant="outline" class="mt-2 w-full border-dashed" onclick={addPrompt}>+ Add sample prompt</Button>
+        {/if}
+        <p class="mt-2.5 font-mono text-[11px] text-dark-2">
+          Applied to every run. Extra prompts add a small per-image charge.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <aside class="sticky top-4 h-fit max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-md border border-dark-4 bg-dark-6 p-5">
+    <h3 class="m-0 mb-3 font-mono text-xs uppercase tracking-widest text-dark-2">Final price</h3>
+    {#each selection.runs as run, i (run.id)}
+      <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
+        <span class="truncate text-dark-2">{multi ? `Run ${i + 1} · ` : ''}{runCard(run).name}</span>
+        <span class="font-semibold text-dark-0">⚡ {runCost(run, params[i]!.steps).toLocaleString()}</span>
+      </div>
+    {/each}
+    <div class="flex justify-between gap-2.5 py-2 text-sm">
+      <span class="text-dark-2">Sample images</span>
+      <span class="font-semibold text-dark-0">⚡ {sampleCost.toLocaleString()}</span>
+    </div>
+    <div class="mt-2 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
+      <span class="text-sm text-dark-2">Total</span>
+      <span class="font-mono text-2xl font-bold text-[#f59f00]">⚡ {total.toLocaleString()}</span>
+    </div>
+    <div class="mt-1 text-right font-mono text-[11px] text-dark-2">
+      ~{etaMin} min{multi ? ' · parallel' : ''} · {imageCount} images
+    </div>
+    <Button class="mt-4 w-full" onclick={start}>
+      ⚡ {multi ? `Start ${selection.runs.length} runs` : 'Start training'}
+    </Button>
+    <p class="mt-3 text-center font-mono text-[11px] text-dark-2">
+      Refunded automatically if training fails
+    </p>
+  </aside>
+</div>
+
+<div class="mt-6 flex items-center justify-between border-t border-dark-4 pt-5">
+  <Button variant="outline" onclick={onBack}>← Back</Button>
+  <span class="font-mono text-xs text-dark-2">This is the one moment we submit to the orchestrator</span>
+</div>

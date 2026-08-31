@@ -1,5 +1,7 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
+  import GradientTile from '$lib/components/GradientTile.svelte';
 
   let { onNew, onOpen }: { onNew: () => void; onOpen: (name: string) => void } = $props();
 
@@ -22,11 +24,11 @@
     { name: 'retro_poster', base: 'SDXL · Illustrious', code: 'XL', state: 'failed', sub: 'refunded ⚡ 1,750', pct: 0, progress: '' },
   ];
 
-  const status: Record<RunState, { label: string; cls: string }> = {
-    ready: { label: '✓ ready', cls: 'text-emerald-400 bg-emerald-500/15' },
-    training: { label: 'training', cls: 'text-primary bg-primary/15' },
-    published: { label: 'published', cls: 'text-amber-400 bg-amber-500/15' },
-    failed: { label: 'failed', cls: 'text-red-400 bg-red-500/15' },
+  const status: Record<RunState, { label: string; cls: string; dot: string }> = {
+    ready: { label: 'Ready', cls: 'text-emerald-400 bg-emerald-500/15', dot: 'bg-emerald-400' },
+    training: { label: 'Training', cls: 'text-primary bg-primary/15', dot: 'bg-primary animate-pulse' },
+    published: { label: 'Published', cls: 'text-[#f59f00] bg-[#f59f00]/15', dot: 'bg-[#f59f00]' },
+    failed: { label: 'Failed', cls: 'text-red-400 bg-red-500/15', dot: 'bg-red-400' },
   };
 </script>
 
@@ -44,30 +46,28 @@
 
   <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
     {#each rows as r (r.name)}
-      <div class="overflow-hidden rounded-xl border border-dark-4 bg-dark-6">
+      <div class="overflow-hidden rounded-md border border-dark-4 bg-dark-6">
         <div class="flex items-center gap-3 border-b border-dark-4 p-3.5">
-          <span class="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary/10 font-mono text-[10px] font-extrabold text-primary">
-            {r.code}
-          </span>
+          <ModelCodeBadge code={r.code} size="lg" />
           <div class="min-w-0">
             <div class="truncate text-sm font-bold text-dark-0">{r.name}</div>
             <div class="truncate font-mono text-[11px] text-dark-2">{r.base} · {r.sub}</div>
           </div>
-          <span class="ml-auto rounded-full px-2.5 py-1 font-mono text-[10px] font-semibold {status[r.state].cls}">
-            {status[r.state].label}
+          <span class="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded px-2.5 py-1 text-[11px] font-semibold {status[r.state].cls}">
+            <span class="h-1.5 w-1.5 rounded-full {status[r.state].dot}"></span>{status[r.state].label}
           </span>
         </div>
 
         <div class="p-3.5">
           {#if r.state === 'training'}
             <div class="h-1.5 overflow-hidden rounded-full bg-dark-7">
-              <div class="h-full bg-amber-400" style={`width:${r.pct}%`}></div>
+              <div class="h-full bg-[#f59f00]" style={`width:${r.pct}%`}></div>
             </div>
             <div class="mt-2 font-mono text-[11px] text-dark-2">{r.progress}</div>
           {:else}
             <div class="grid grid-cols-4 gap-1.5">
               {#each Array(4) as _, i (i)}
-                <div class="aspect-square rounded-md bg-gradient-to-br from-primary/15 to-dark-7"></div>
+                <GradientTile index={r.code.length + i} />
               {/each}
             </div>
           {/if}

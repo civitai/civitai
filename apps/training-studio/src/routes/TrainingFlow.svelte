@@ -1,7 +1,10 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
-  import { runCard, runVersionLabel, type Selection } from './trainingFlow';
+  import DataStep from './DataStep.svelte';
+  import ReviewStep from './ReviewStep.svelte';
+  import ResultsStep from './ResultsStep.svelte';
+  import type { Img, LaunchedRun, Selection } from './trainingFlow';
 
   let { onExit }: { onExit: () => void } = $props();
 
@@ -14,6 +17,10 @@
 
   let step = $state(1);
   let selection = $state<Selection | null>(null);
+  // Dataset + trigger are owned here so they survive Back/Continue between steps.
+  let images = $state<Img[]>([]);
+  let trigger = $state('');
+  let launched = $state<LaunchedRun[] | null>(null);
 
   function jump(n: number) {
     if (n <= step) step = n;
@@ -61,36 +68,19 @@
         step = 2;
       }}
     />
-  {:else if selection}
-    {@const name = STEPS.find((s) => s.n === step)?.label ?? ''}
-    <div class="rounded-xl border border-dark-4 bg-dark-6 p-6">
-      <div class="flex items-center gap-2">
-        <h2 class="m-0 text-xl font-semibold text-white">{name}</h2>
-        <span class="rounded-full bg-amber-500/15 px-2.5 py-1 font-mono text-[11px] font-semibold text-amber-400">
-          in progress
-        </span>
-      </div>
-      <p class="mt-1 text-sm text-dark-2">
-        Next up in the build. See <code class="font-mono">docs/prototype/training-flow.html</code> for the
-        design and <code class="font-mono">CLAUDE.md → Build order</code> for the plan.
-      </p>
-
-      <div class="mt-4 rounded-xl border border-dark-4 bg-dark-7 p-4">
-        <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Carried selection</div>
-        <div class="mt-2 text-sm text-dark-0">Type: <strong>{selection.loraType}</strong></div>
-        <ul class="mt-1 space-y-1 text-sm">
-          {#each selection.runs as r, i (i)}
-            {@const c = runCard(r)}
-            <li class="text-dark-0">
-              Run {i + 1}: <strong>{c.name}</strong>
-              {runVersionLabel(r)}
-              <span class="font-mono text-xs text-dark-2">({c.label === 'tag' ? 'tags' : 'captions'})</span>
-            </li>
-          {/each}
-        </ul>
-      </div>
-
-      <Button variant="outline" class="mt-5" onclick={() => (step = step - 1)}>← Back</Button>
-    </div>
+  {:else if step === 2 && selection}
+    <DataStep {selection} bind:images bind:trigger onContinue={() => (step = 3)} onBack={() => (step = 1)} />
+  {:else if step === 3 && selection}
+    <ReviewStep
+      {selection}
+      imageCount={images.length}
+      onStart={(l) => {
+        launched = l;
+        step = 4;
+      }}
+      onBack={() => (step = 2)}
+    />
+  {:else if step === 4 && launched}
+    <ResultsStep {launched} {trigger} onExit={onExit} />
   {/if}
 </section>
