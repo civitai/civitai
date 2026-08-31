@@ -2151,7 +2151,7 @@ export async function updateChallengeStatus(id: number, status: ChallengeStatus)
   return challenge;
 }
 
-export async function deleteChallenge(id: number) {
+export async function deleteChallenge(id: number, { force = false }: { force?: boolean } = {}) {
   // Read on the primary, not the read replica: replica lag let a delete see a stale `Scheduled`
   // status for a challenge the activation job had just flipped to `Active`, then refund + delete a
   // now-live challenge out from under its entrants.
@@ -2172,6 +2172,24 @@ export async function deleteChallenge(id: number) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
       message: 'Cannot delete an active challenge. Cancel it first.',
+    });
+  }
+
+  // `ChallengeWinner` is ON DELETE CASCADE, so deleting a challenge that has paid out erases who
+  // won while the Buzz stays spent in the ledger and the winners keep their cosmetics — a badge
+  // with no surviving explanation. `Completing` is mid-payout, which is worse. Neither is voidable
+  // (`voidChallenge` takes Active/Scheduled/Cancelled only), so this cannot be a hard block without
+  // stranding moderators on a challenge that has to come down; `force` is the deliberate override
+  // and no UI passes it.
+  if (
+    !force &&
+    (challenge.status === ChallengeStatus.Completed ||
+      challenge.status === ChallengeStatus.Completing)
+  ) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message:
+        'This challenge has already awarded prizes. Deleting it would erase its winner records.',
     });
   }
 

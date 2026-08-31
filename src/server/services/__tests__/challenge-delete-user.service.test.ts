@@ -195,6 +195,43 @@ describe('deleteChallenge (direct)', () => {
     );
   });
 
+  it.each([['Completed'], ['Completing']])(
+    'refuses a %s challenge without force, so winner records survive',
+    async (status) => {
+      mockDbWrite.challenge.findUnique.mockResolvedValue(
+        makeChallenge({ status: ChallengeStatus[status as 'Completed' | 'Completing'] })
+      );
+
+      // `ChallengeWinner` cascades on the challenge row, and the prize Buzz is already spent.
+      await expect(deleteChallenge(1)).rejects.toThrow(/already awarded prizes/i);
+      expect(mockDbWrite.challenge.delete).not.toHaveBeenCalled();
+      expect(mockDbWrite.collection.delete).not.toHaveBeenCalled();
+      // Nothing may run ahead of the guard either — a detached entrant post is not undone by the
+      // delete failing.
+      expect(detachCallIndex()).toBe(-1);
+    }
+  );
+
+  it('deletes a Completed challenge when force is passed', async () => {
+    mockDbWrite.challenge.findUnique.mockResolvedValue(
+      makeChallenge({ status: ChallengeStatus.Completed })
+    );
+
+    await deleteChallenge(1, { force: true });
+
+    expect(mockDbWrite.challenge.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+    // A Completed pool was already paid out; refunding it would double-spend from account 0.
+    expect(mockRefundUserChallengeFunds).not.toHaveBeenCalled();
+  });
+
+  it('blocks an Active challenge even with force', async () => {
+    mockDbWrite.challenge.findUnique.mockResolvedValue(
+      makeChallenge({ status: ChallengeStatus.Active })
+    );
+    await expect(deleteChallenge(1, { force: true })).rejects.toThrow(/active/i);
+    expect(mockDbWrite.challenge.delete).not.toHaveBeenCalled();
+  });
+
   it('blocks deleting an Active challenge', async () => {
     mockDbWrite.challenge.findUnique.mockResolvedValue(
       makeChallenge({ status: ChallengeStatus.Active })
