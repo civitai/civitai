@@ -6,6 +6,8 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   bitdexAuditCheckedCounter,
+  bitdexAuditComparedCounter,
+  bitdexAuditOpportunityCounter,
   bitdexAuditErrorsCounter,
   bitdexAuditMismatchCounter,
   bitdexAuditRunDurationHistogram,
@@ -45,22 +47,34 @@ const DEFAULT_SETTLE_SECS = 120;
 // Stratum C's belt, and it is wider than the others for a reason that is NOT caution.
 // The other two compare publication state, which lives on `Post`, so `Post."updatedAt"`
 // moves with the thing they measure. This one compares a value derived from
-// `ImageResourceNew`, and `addResourceToImages` (post.service.ts) inserts those rows
-// WITHOUT touching `Post."updatedAt"` — so for a resource edit the belt is watching a
-// timestamp that never moved, and a wider window only shrinks the overlap with the
-// index's sync lag rather than closing it. A mismatch on a just-edited image is a known
-// false positive here; the row prints both sides so it can be recognised as one.
+// `ImageResourceNew`, which `addResourceToImages` (post.service.ts) writes without
+// touching `Post."updatedAt"` — so the query bounds `Image."updatedAt"` as well.
+//
+// ⚠️ That is a reduction, NOT a closure, and the residual is the same order of magnitude
+// as the false-mismatch class this stratum's comparison rule was written to remove.
+// Measured on the prod replica over this stratum's population (posts published in the
+// last 24h, past a 15-minute belt): 90.2% of images carry an `Image."updatedAt"` later
+// than their post's, and 0.28% were modified INSIDE the belt window. `ImageResourceNew`
+// carries no timestamp of its own, so a resource edit that moves neither row is
+// unbounded and unmeasurable after the fact. A mismatch on a just-edited image is a
+// known false positive here; the row prints both sides so it can be recognised as one.
 const DEFAULT_BASEMODEL_SETTLE_SECS = 15 * 60;
 
-// Doc fields the comparison reads. publishedAt is fetched alongside isPublished
-// because isPublished is an exists_boolean derived FROM publishedAt in the index
-// config: if the boolean is ever absent from a doc payload, publishedAt still carries
-// the same fact, and disagreement between the two would itself be a finding.
+// Doc fields the comparison reads.
+//
+// ⚠️ `publishedAt` is requested but is NOT a document field: the metrics indexer
+// destructures it out of the record and emits `publishedAtUnix` instead
+// (metrics-images.search-index.ts). So the "publishedAt carries the same fact if the
+// boolean is missing" fallback this list used to claim is inert, and `sortAt` is the
+// only independent witness that a document exists at all. Keep it in every field list
+// for that reason, not for the value.
 const AUDIT_DOC_FIELDS = ['id', 'isPublished', 'publishedAt', 'sortAt'];
 
-// The baseModel stratum still needs the publication pair, because a document that is
-// absent or unpublished is stratum B's finding and must not be re-reported here.
-const BASEMODEL_DOC_FIELDS = ['id', 'isPublished', 'publishedAt', 'baseModel'];
+// The baseModel stratum needs the publication fields too, because a document that is
+// absent or unpublished is not compared here — and it needs `sortAt` for the reason
+// above: without it, presence would rest on `isPublished` alone, and a projection that
+// omitted that one key would skip every row and report a clean stratum.
+const BASEMODEL_DOC_FIELDS = ['id', 'isPublished', 'publishedAt', 'sortAt', 'baseModel'];
 
 // Cap on mismatch rows written to Axiom per run. The counters carry the rate; the log
 // only has to carry enough ids to start an investigation.
@@ -72,7 +86,8 @@ export type MismatchKind =
   | 'published_missing'
   | 'sortat_drift'
   | 'basemodel_not_checkpoint'
-  | 'basemodel_missing';
+  | 'basemodel_missing'
+  | 'basemodel_unfilterable';
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const n = parseInt(raw ?? '', 10);
@@ -212,6 +227,7 @@ export function buildBaseModelSampleQuery({
     WHERE p."publishedAt" > now() - make_interval(secs => ${publishedWindowSecs})
       AND p."publishedAt" <= now()
       AND p."updatedAt" < now() - make_interval(secs => ${baseModelSettleSecs})
+      AND i."updatedAt" < now() - make_interval(secs => ${baseModelSettleSecs})
     ORDER BY random()
     LIMIT ${sampleSize}
   `;
@@ -311,8 +327,10 @@ export function compareStratum(
     const state = readDocState(byId.get(row.imageId));
 
     if (stratum === 'basemodel') {
-      // An absent or unpublished document is stratum B's finding. Reporting it again
-      // here would double-count one lost write as two defects in two places.
+      // Not compared. Stratum B samples the same population independently and reports
+      // that class in aggregate — it is NOT handed this row, so do not read this as a
+      // deferral. It is a skip, which is why the run reports how many rows it actually
+      // compared rather than only how many it sampled.
       if (!state.present || !state.published) continue;
 
       const expected = expectedBaseModelsOf(row);
@@ -344,6 +362,29 @@ export function compareStratum(
             ? `one of [${expected.join(', ')}]`
             : 'no baseModel (image has no checkpoint resource)',
           actual: `baseModel=${state.baseModel}`,
+        });
+        continue;
+      }
+
+      // Explainable but not a single checkpoint — a glued value like `AnimaMiniMax H3`.
+      // The base-model filter is exact string equality (`_in('baseModel', …)` in
+      // image.service.ts), so a glued value matches NO filter: it is 868ku8x8k's symptom
+      // arriving by a different route, and accepting it silently is how the previous
+      // rule's fix would have hidden a real defect while removing a false one.
+      //
+      // 🔴 Its own kind on purpose, and it is NOT an alerting series: it is expected to
+      // be nonzero (measured ~0.2% of sampled images) because the index builds the value
+      // with `string_agg`. Alert on `basemodel_not_checkpoint` and `basemodel_missing`;
+      // watch this one for its RATE. Folding it into either of those would put a
+      // permanent floor under a series that has to mean something when it moves.
+      if (!expected.includes(state.baseModel)) {
+        mismatches.push({
+          stratum,
+          kind: 'basemodel_unfilterable',
+          imageId: row.imageId,
+          postId: row.postId,
+          expected: `exactly one of [${expected.join(', ')}]`,
+          actual: `baseModel=${state.baseModel} (concatenation; matches no base-model filter)`,
         });
       }
       continue;
@@ -407,6 +448,12 @@ export type AuditScopeResult = {
   // beside a zero denominator is not evidence of agreement.
   comparedDocs?: number;
   withCheckpoint?: number;
+  // Per-arm OPPORTUNITY counts: compared documents on which that arm could have fired at
+  // all. The three marginals below cannot recover these — a run that compared two
+  // documents with one checkpoint and one value between them reports the same marginals
+  // whether both arms had an opportunity or neither did.
+  missingArmOpportunities?: number;
+  leakArmOpportunities?: number;
   // The `not_checkpoint` arm's own denominator: compared documents that actually carried
   // a value to disagree about. Its zero needs this the way the `missing` arm's zero needs
   // `withCheckpoint`, and one number covering both arms would hide whichever is empty.
@@ -443,14 +490,29 @@ export function baseModelDenominators(rows: AuditSampleRow[], docs: BitdexDocume
   let comparedDocs = 0;
   let withCheckpoint = 0;
   let withDocValue = 0;
+  let missingArmOpportunities = 0;
+  let leakArmOpportunities = 0;
   for (const row of rows) {
     const state = readDocState(byId.get(row.imageId));
     if (!state.present || !state.published) continue;
     comparedDocs++;
-    if (expectedBaseModelsOf(row).length) withCheckpoint++;
-    if (state.baseModel != null) withDocValue++;
+    const hasCheckpoint = expectedBaseModelsOf(row).length > 0;
+    const hasValue = state.baseModel != null;
+    if (hasCheckpoint) withCheckpoint++;
+    if (hasValue) withDocValue++;
+    // `basemodel_missing` fires only where PG has a checkpoint AND the document has no
+    // value; `basemodel_not_checkpoint` only where the document HAS one. Each zero is
+    // read against its own count, not against the marginals.
+    if (hasCheckpoint && !hasValue) missingArmOpportunities++;
+    if (hasValue) leakArmOpportunities++;
   }
-  return { comparedDocs, withCheckpoint, withDocValue };
+  return {
+    comparedDocs,
+    withCheckpoint,
+    withDocValue,
+    missingArmOpportunities,
+    leakArmOpportunities,
+  };
 }
 
 // Samples one stratum and compares it. A BitDex fetch failure propagates:
@@ -487,6 +549,9 @@ export type AuditResult = {
   scheduled: AuditScopeResult;
   publishedRecent: AuditScopeResult;
   baseModel: AuditScopeResult;
+  // Set when the baseModel stratum threw. Its presence is the ONLY thing separating a
+  // stratum that failed from one that found nothing, since both report zero mismatches.
+  baseModelError?: string;
 };
 
 export async function runAudit(config: AuditConfig): Promise<AuditResult> {
@@ -496,13 +561,28 @@ export async function runAudit(config: AuditConfig): Promise<AuditResult> {
     buildPublishedSampleQuery(config),
     config
   );
-  const baseModel = await auditStratum(
-    'basemodel',
-    buildBaseModelSampleQuery(config),
-    config,
-    BASEMODEL_DOC_FIELDS
-  );
-  return { scheduled, publishedRecent, baseModel };
+  // Stratum C is caught SEPARATELY. It is the newest and the only one that throws on a
+  // column shape, and letting that propagate would discard the two already-computed
+  // results — no checked, no mismatch, no runs increment — so a problem in the newest
+  // stratum would silence the detector for the 2026-08-06 incident class on every run.
+  // The failure is still loud: the error counter fires and the run reports it, but C is
+  // marked failed rather than reported as clean.
+  let baseModel: AuditScopeResult;
+  let baseModelError: string | undefined;
+  try {
+    baseModel = await auditStratum(
+      'basemodel',
+      buildBaseModelSampleQuery(config),
+      config,
+      BASEMODEL_DOC_FIELDS
+    );
+  } catch (e) {
+    baseModelError = e instanceof Error ? e.message : String(e);
+    // checked stays 0 and the denominators stay undefined: a failed stratum must not
+    // contribute a zero that reads as agreement.
+    baseModel = { stratum: 'basemodel', checked: 0, mismatches: [] };
+  }
+  return { scheduled, publishedRecent, baseModel, baseModelError };
 }
 
 export const auditBitdexConsistency = createJob(
@@ -522,6 +602,10 @@ export const auditBitdexConsistency = createJob(
       bitdexAuditErrorsCounter?.inc();
       throw e; // createJob logs job-error to Axiom and marks the run failed
     }
+    // A caught stratum failure is still an error: the run continues so the other two
+    // strata keep reporting, but it must not look like a clean pass on the error series.
+    if (result.baseModelError) bitdexAuditErrorsCounter?.inc();
+
     const durationSec = (Date.now() - start) / 1000;
 
     const scopes = [result.scheduled, result.publishedRecent, result.baseModel];
@@ -529,6 +613,24 @@ export const auditBitdexConsistency = createJob(
       bitdexAuditCheckedCounter?.inc({ stratum: scope.stratum }, scope.checked);
       for (const mismatch of scope.mismatches)
         bitdexAuditMismatchCounter?.inc({ stratum: scope.stratum, kind: mismatch.kind }, 1);
+
+      // The denominators go to PROMETHEUS, not only to the Axiom line — an alert reads
+      // the series, and `checked_total` counts rows SAMPLED. A row whose document is
+      // absent or unpublished is skipped before any comparison, so without these a
+      // stratum that compared nothing emits a mismatch zero identical to one from
+      // perfect agreement, which is the whole failure this guard exists to prevent.
+      if (scope.comparedDocs !== undefined)
+        bitdexAuditComparedCounter?.inc({ stratum: scope.stratum }, scope.comparedDocs);
+      if (scope.missingArmOpportunities !== undefined)
+        bitdexAuditOpportunityCounter?.inc(
+          { stratum: scope.stratum, kind: 'basemodel_missing' },
+          scope.missingArmOpportunities
+        );
+      if (scope.leakArmOpportunities !== undefined)
+        bitdexAuditOpportunityCounter?.inc(
+          { stratum: scope.stratum, kind: 'basemodel_not_checkpoint' },
+          scope.leakArmOpportunities
+        );
     }
 
     bitdexAuditRunsCounter?.inc();
@@ -553,7 +655,12 @@ export const auditBitdexConsistency = createJob(
         baseModelComparedDocs: result.baseModel.comparedDocs ?? 0,
         baseModelWithCheckpoint: result.baseModel.withCheckpoint ?? 0,
         baseModelWithDocValue: result.baseModel.withDocValue ?? 0,
+        baseModelMissingArmOpportunities: result.baseModel.missingArmOpportunities ?? 0,
+        baseModelLeakArmOpportunities: result.baseModel.leakArmOpportunities ?? 0,
         baseModelMismatches: result.baseModel.mismatches.length,
+        // Present only when the stratum threw. Without it a failed stratum and a clean
+        // one are the same row of zeros.
+        baseModelError: result.baseModelError,
         // Ids and expected-vs-actual, so a firing alert has a trail to pull on
         // instead of only a rate.
         mismatches: allMismatches.slice(0, MAX_LOGGED_MISMATCHES),
@@ -574,7 +681,10 @@ export const auditBitdexConsistency = createJob(
       baseModelComparedDocs: result.baseModel.comparedDocs ?? 0,
       baseModelWithCheckpoint: result.baseModel.withCheckpoint ?? 0,
       baseModelWithDocValue: result.baseModel.withDocValue ?? 0,
+      baseModelMissingArmOpportunities: result.baseModel.missingArmOpportunities ?? 0,
+      baseModelLeakArmOpportunities: result.baseModel.leakArmOpportunities ?? 0,
       baseModelMismatches: result.baseModel.mismatches.length,
+      baseModelError: result.baseModelError,
       durationSec,
     };
   },

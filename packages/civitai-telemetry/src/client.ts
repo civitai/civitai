@@ -319,6 +319,22 @@ export const bitdexAuditMismatchCounter = registerCounterWithLabels({
   help: 'PG<->BitDex disagreements found by the consistency audit, by sample stratum and failure kind',
   labelNames: ['stratum', 'kind'] as const,
 });
+// The denominators a mismatch count of zero has to be read against, on the SAME surface
+// an alert reads. `checked_total` counts rows SAMPLED; a row whose document is absent or
+// unpublished is skipped before any comparison, so a stratum that compared nothing emits
+// a mismatch zero indistinguishable from perfect agreement unless these are here too.
+// `opportunity` is the arm-specific count: compared documents on which that arm COULD
+// have fired at all.
+export const bitdexAuditComparedCounter = registerCounterWithLabels({
+  name: 'bitdex_audit_compared_total',
+  help: 'Sampled images the consistency audit actually compared (document present and published), by sample stratum',
+  labelNames: ['stratum'] as const,
+});
+export const bitdexAuditOpportunityCounter = registerCounterWithLabels({
+  name: 'bitdex_audit_opportunity_total',
+  help: 'Compared images on which a given audit failure kind could have fired, by sample stratum and failure kind — the denominator for that kind of zero',
+  labelNames: ['stratum', 'kind'] as const,
+});
 export const bitdexAuditRunsCounter = registerCounter({
   name: 'bitdex_audit_runs_total',
   help: 'BitDex consistency audit runs that completed SUCCESSFULLY (success-only; the liveness signal behind a mismatch alert being trustworthy)',

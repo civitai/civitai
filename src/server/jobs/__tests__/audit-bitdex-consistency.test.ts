@@ -5,6 +5,8 @@ const { mockIsFlipt, mockFetchDocs, mockCounters, mockHistogram } = vi.hoisted((
   mockFetchDocs: vi.fn(),
   mockCounters: {
     checked: { inc: vi.fn() },
+    compared: { inc: vi.fn() },
+    opportunity: { inc: vi.fn() },
     mismatch: { inc: vi.fn() },
     runs: { inc: vi.fn() },
     errors: { inc: vi.fn() },
@@ -19,6 +21,8 @@ vi.mock('~/server/flipt/client', () => ({
 }));
 vi.mock('~/server/prom/client', () => ({
   bitdexAuditCheckedCounter: mockCounters.checked,
+  bitdexAuditComparedCounter: mockCounters.compared,
+  bitdexAuditOpportunityCounter: mockCounters.opportunity,
   bitdexAuditMismatchCounter: mockCounters.mismatch,
   bitdexAuditRunsCounter: mockCounters.runs,
   bitdexAuditErrorsCounter: mockCounters.errors,
@@ -286,8 +290,15 @@ describe('compareStratum — published_recent', () => {
 });
 
 describe('buildBaseModelSampleQuery', () => {
+  // ⚠️ `baseModelSettleSecs`, NOT `settleSecs`. `tsconfig.json` excludes `__tests__`, so
+  // tsc never sees this call: passing the wrong key left the settle bound `undefined` and
+  // every substring assertion below still green — a helper that cannot fail.
   const sql = () =>
-    buildBaseModelSampleQuery({ sampleSize: 50, publishedWindowSecs: 86400, settleSecs: 120 }).sql;
+    buildBaseModelSampleQuery({
+      sampleSize: 50,
+      publishedWindowSecs: 86400,
+      baseModelSettleSecs: 900,
+    }).sql;
 
   // Truth for this stratum is the CHECKPOINT-only value, because that is the whole
   // defect: 868ktxe1r was the filter matching an attached LoRA's base model. A query
@@ -321,7 +332,9 @@ describe('buildBaseModelSampleQuery', () => {
       publishedWindowSecs: 86400,
       baseModelSettleSecs: 900,
     });
-    expect(q.values).toEqual([86400, 900, 50]);
+    // Two settle bindings, not one: the belt bounds `Post."updatedAt"` AND
+    // `Image."updatedAt"`, because a resource edit moves the second and not the first.
+    expect(q.values).toEqual([86400, 900, 900, 50]);
   });
 });
 
@@ -441,10 +454,33 @@ describe('compareStratum — basemodel (868ktxe1r / 868ku8x8k)', () => {
   // multi-checkpoint image — `string_agg(..., '')`, no delimiter. A fixture holding one
   // of the two would certify a document shape production never produces, and that is the
   // test that blessed the membership bug rather than catching it.
-  it('accepts the glued value a multi-checkpoint image indexes as', () => {
+  it('does not call a glued value a leak', () => {
+    const found = compare(
+      [{ id: 1, isPublished: true, baseModel: 'PonySDXL 1.0' }],
+      [row({ expectedBaseModels: ['Pony', 'SDXL 1.0'] })]
+    );
+    expect(found.map((f) => f.kind)).not.toContain('basemodel_not_checkpoint');
+  });
+
+  // 🔴 But it is not "correct" either: the base-model filter is exact string equality, so
+  // a glued value matches NO filter — 868ku8x8k's symptom by another route. The previous
+  // rule removed a false positive; accepting this silently would have removed a real
+  // defect with it. Its own kind, so the leak series keeps meaning what it says.
+  it('reports a glued value as unfilterable rather than as agreement', () => {
+    const found = compare(
+      [{ id: 1, isPublished: true, baseModel: 'PonySDXL 1.0' }],
+      [row({ expectedBaseModels: ['Pony', 'SDXL 1.0'] })]
+    );
+    expect(found.map((f) => f.kind)).toEqual(['basemodel_unfilterable']);
+    expect(found[0].actual).toContain('matches no base-model filter');
+  });
+
+  // The negative control for the arm above: one exact checkpoint is the clean case and
+  // must stay silent, or the new kind fires on every image on the site.
+  it('stays silent when the value is exactly one of the checkpoints', () => {
     expect(
       compare(
-        [{ id: 1, isPublished: true, baseModel: 'PonySDXL 1.0' }],
+        [{ id: 1, isPublished: true, baseModel: 'Pony' }],
         [row({ expectedBaseModels: ['Pony', 'SDXL 1.0'] })]
       )
     ).toEqual([]);
@@ -488,19 +524,34 @@ describe('baseModelDenominators', () => {
       comparedDocs: 2,
       withCheckpoint: 1,
       withDocValue: 1,
+      // Image 1 has a checkpoint AND a value, so only the leak arm had an opportunity.
+      missingArmOpportunities: 0,
+      leakArmOpportunities: 1,
     });
   });
 
   it('is zero on every count when BitDex holds none of the sample', () => {
     expect(
       baseModelDenominators([row({ expectedBaseModels: ['Pony'] })] as never, [] as never)
-    ).toEqual({ comparedDocs: 0, withCheckpoint: 0, withDocValue: 0 });
+    ).toEqual({
+      comparedDocs: 0,
+      withCheckpoint: 0,
+      withDocValue: 0,
+      missingArmOpportunities: 0,
+      leakArmOpportunities: 0,
+    });
   });
 
   // The `not_checkpoint` arm's zero needs its own denominator: a sample where every
   // compared document carried NO value can only produce `basemodel_missing`, so a zero
   // on the other arm says nothing. One number covering both arms would hide that.
-  it('counts the two arms with separate denominators', () => {
+  // 🔴 The marginals are IDENTICAL to the case above — same comparedDocs, withCheckpoint
+  // and withDocValue — while the comparison work is completely different: there, one
+  // image with both and one with neither, so only the leak arm could fire; here, one
+  // image with a checkpoint and no value and one with a value and no checkpoint, so BOTH
+  // arms could. Marginals cannot tell those apart, which is why the per-arm opportunity
+  // counts exist. If you are tempted to merge these two tests, that is the reason not to.
+  it('counts the two arms with separate opportunity denominators', () => {
     const rows = [
       row({ imageId: 1, expectedBaseModels: ['Pony'] }),
       row({ imageId: 2, expectedBaseModels: [] }),
@@ -513,6 +564,8 @@ describe('baseModelDenominators', () => {
       comparedDocs: 2,
       withCheckpoint: 1,
       withDocValue: 1,
+      missingArmOpportunities: 1,
+      leakArmOpportunities: 1,
     });
   });
 });
@@ -551,6 +604,11 @@ describe('auditBitdexConsistency job body', () => {
     // The baseModel stratum asks for a different field set; requesting the default one
     // would return documents with no baseModel key and read as a clean audit forever.
     expect(mockFetchDocs.mock.calls[2][2]).toContain('baseModel');
+    // `sortAt` is not decoration here. `publishedAt` is never a document field — the
+    // indexer destructures it out and emits `publishedAtUnix` — so without `sortAt`,
+    // document presence rests on `isPublished` alone, and a projection missing that one
+    // key would skip every row and report the stratum clean.
+    expect(mockFetchDocs.mock.calls[2][2]).toContain('sortAt');
     // Docs are requested by the sampled image ids, from the civitai index.
     expect(mockFetchDocs.mock.calls[0][0]).toBe('civitai');
     expect(mockFetchDocs.mock.calls[0][1]).toEqual([1]);
@@ -612,6 +670,60 @@ describe('auditBitdexConsistency job body', () => {
 
     expect(mockFetchDocs).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({ scheduledChecked: 0, publishedChecked: 1, baseModelChecked: 1 });
+  });
+
+  // The denominators have to reach the surface an ALERT reads, not only the Axiom line.
+  // `checked_total` counts rows SAMPLED; a row whose document is absent is skipped before
+  // any comparison, so without these a stratum that compared nothing emits the same
+  // mismatch zero as perfect agreement.
+  it('emits the compared and per-arm opportunity counts to prometheus', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockDbWrite.$queryRaw
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(baseModelRows);
+    mockFetchDocs.mockResolvedValueOnce(baseModelDocs);
+
+    await runJob();
+
+    expect(mockCounters.compared.inc).toHaveBeenCalledWith({ stratum: 'basemodel' }, 1);
+    expect(mockCounters.opportunity.inc).toHaveBeenCalledWith(
+      { stratum: 'basemodel', kind: 'basemodel_not_checkpoint' },
+      1
+    );
+    expect(mockCounters.opportunity.inc).toHaveBeenCalledWith(
+      { stratum: 'basemodel', kind: 'basemodel_missing' },
+      0
+    );
+  });
+
+  // 🔴 A column-shape problem in the NEWEST stratum must not silence the detector for the
+  // 2026-08-06 incident class. Before this, the throw propagated out of runAudit and the
+  // already-computed scheduled/published results were discarded — no checked, no
+  // mismatch, no runs increment, on every run until someone noticed.
+  it('keeps the other two strata reporting when the baseModel stratum throws', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockDbWrite.$queryRaw
+      .mockResolvedValueOnce(scheduledRows)
+      .mockResolvedValueOnce(publishedRows)
+      // No expectedBaseModels — the shape `expectedBaseModelsOf` refuses.
+      .mockResolvedValueOnce([row({ imageId: 3, postId: 30 })]);
+    mockFetchDocs
+      .mockResolvedValueOnce([{ id: 1, isPublished: false }])
+      .mockResolvedValueOnce([{ id: 2, isPublished: true, sortAt: NOW }])
+      .mockResolvedValueOnce([{ id: 3, isPublished: true, baseModel: 'Pony' }]);
+
+    const result = (await runJob()) as Record<string, unknown>;
+
+    expect(mockCounters.checked.inc).toHaveBeenCalledWith({ stratum: 'scheduled' }, 1);
+    expect(mockCounters.checked.inc).toHaveBeenCalledWith({ stratum: 'published_recent' }, 1);
+    expect(mockCounters.runs.inc).toHaveBeenCalledTimes(1);
+    // Loud, not swallowed — and the failed stratum contributes no zero that reads as
+    // agreement: checked stays 0 and the error is on the record.
+    expect(mockCounters.errors.inc).toHaveBeenCalledTimes(1);
+    expect(result.baseModelChecked).toBe(0);
+    expect(result.baseModelError).toMatch(/expectedBaseModels/);
+    expect(mockCounters.compared.inc).not.toHaveBeenCalledWith({ stratum: 'basemodel' }, 0);
   });
 
   // 🔴 The one that pins the machinery. The two zero-denominator tests around it assert
