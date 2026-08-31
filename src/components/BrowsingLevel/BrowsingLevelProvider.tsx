@@ -5,6 +5,7 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   BROWSING_LEVEL_FALLBACK,
+  intersectBrowsingCaps,
   resolvePageBrowsingLevel,
   resolveViewerBrowsingLevel,
 } from '~/components/BrowsingLevel/resolve-browsing-level';
@@ -64,7 +65,11 @@ export function BrowsingLevelProvider({
   );
   const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
   const [childBrowsingLevelOverride, setBrowsingLevelOverride] = useState<number | undefined>();
-  const [forcedBrowsingLevel, setForcedBrowsingLevel] = useState(parentForcedBrowsingLevel);
+  // 🔴 State holds ONLY what `setForcedBrowsingLevel` put there. Seeding it from
+  // the prop froze the cap at first mount, so a collection whose ceiling was
+  // raised left mounted viewers on the older, WIDER one — the prop is read live
+  // below instead.
+  const [imperativeForcedBrowsingLevel, setForcedBrowsingLevel] = useState<number | undefined>();
 
   // Cap rules mirror the server middleware (src/server/trpc.ts applyDomainFeature):
   //   anonymous (any domain)     → publicBrowsingLevelsFlag (PG)
@@ -82,7 +87,16 @@ export function BrowsingLevelProvider({
   return (
     <BrowsingModeOverrideCtx.Provider
       value={{
-        forcedBrowsingLevel: forcedBrowsingLevel ?? domainForcedLevel ?? ctx.forcedBrowsingLevel,
+        // 🔴 Intersected, not shadowed. Every one of these is a ceiling nobody
+        // below may lift, so the effective cap is what ALL of them allow. `??`
+        // took whichever was set first, which let a wider cap from a nearer
+        // provider erase a tighter one further out.
+        forcedBrowsingLevel: intersectBrowsingCaps(
+          imperativeForcedBrowsingLevel,
+          parentForcedBrowsingLevel,
+          domainForcedLevel,
+          ctx.forcedBrowsingLevel
+        ),
         userBrowsingLevel: userBrowsingLevel,
         browsingLevelOverride:
           childBrowsingLevelOverride ?? parentBrowsingLevelOverride ?? ctx.browsingLevelOverride,

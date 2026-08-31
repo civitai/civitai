@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { RemixGalleryCardSummary } from '~/server/services/remix-gallery.service';
 import { chunkStickerIds } from '~/components/Sticker/sticker.util';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
@@ -44,16 +44,19 @@ export function RemixGalleryBatchProvider({
   // `EdgeMedia` with no ImageGuard, came back at every level the viewer had
   // turned off.
   //
-  // ⚠️ The PAGE level, while `RemixGalleryCard` reads the VIEWER's. They agree
-  // wherever no page sets an override, which is every ordinary feed. Where one
-  // does — the site root, the home blocks, a collection — this count is scoped
-  // to the page and the gallery it opens is scoped to the viewer, so the two can
-  // disagree. Deliberate for now rather than overlooked: this is a count on a
-  // card inside a page-scoped feed, and widening it would show a number for
-  // content the page narrowed on purpose. Raised with Justin 2026-08-30; if he
-  // decides the count should follow the viewer instead, the change is this one
-  // line and the reasoning above is what has to be re-argued.
-  const browsingLevel = useBrowsingLevelDebounced();
+  // 🔴 The VIEWER's level, matching `RemixGalleryCard`. This count and the
+  // gallery it opens are one concept and were reading two different numbers:
+  // wherever a page set an override — the site root, the home blocks, a
+  // collection — the count was page-scoped while the gallery was viewer-scoped,
+  // which is the count-versus-contents mismatch #4497 fixed on the other side.
+  // Justin's call, 2026-08-30.
+  //
+  // ⚠️ The consequence, since it is the argument against: on a page that
+  // deliberately narrows itself, the count and its thumbnails now follow the
+  // viewer rather than the page. Domain and policy caps still apply — they ride
+  // `forcedBrowsingLevel`, which this hook honours — so what widens is a page's
+  // curation choice, never a ceiling.
+  const browsingLevel = useViewerBrowsingLevelDebounced();
 
   // The sticker batch's chunker, not a third copy of it. Its own tests pin the
   // property both providers depend on and neither spells out in code: chunking

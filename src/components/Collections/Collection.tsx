@@ -639,7 +639,16 @@ export function Collection({
   if (!collection) return null;
 
   return (
-    <BrowsingLevelProvider browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}>
+    /* 🔴 `forcedBrowsingLevel`, not `browsingLevel`. This is a policy ceiling —
+       the same value `Gated` below treats as a gate, bypassed only for mods and
+       owners — and the override slot it used to sit in is one any component may
+       decline to read. `useViewerBrowsingLevelDebounced` does exactly that by
+       design, so as an override this cap silently stopped applying to the remix
+       gallery and to avatars. Caps are intersected by the provider, so this
+       cannot lift the domain cap either. */
+    <BrowsingLevelProvider
+      forcedBrowsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}
+    >
       <BrowsingSettingsAddonsProvider>
         <Gated
           contentNsfwLevel={collection.metadata.forcedBrowsingLevel || collection.nsfwLevel}
