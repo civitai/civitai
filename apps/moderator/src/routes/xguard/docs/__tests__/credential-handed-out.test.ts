@@ -7,13 +7,15 @@ import { describe, expect, it } from 'vitest';
  * WHICH credential the XGuard docs tell an operator to ask for.
  *
  * 🔴 This page is the human distribution channel for a service token, so what it names is what
- * people end up holding. It told operators to ask for `WEBHOOK_TOKEN` — which this app accepts, so
- * nothing was broken and nothing failed — but that token is shared with the main app, while
- * `MOD_INBOUND_TOKEN` is accepted here and nowhere else. XGuard's API is an inbound-only consumer,
- * so every operator onboarded through this page was handed more reach than the job needs.
+ * people end up holding. It once told operators to ask for `WEBHOOK_TOKEN` — which this app accepted
+ * AT THE TIME, so nothing was broken and nothing failed — but that token is shared with the main app,
+ * while `MOD_INBOUND_TOKEN` is accepted here and nowhere else. XGuard's API is an inbound-only
+ * consumer, so every operator onboarded through this page was handed more reach than the job needed.
+ * 🔴 PAST TENSE THROUGHOUT, deliberately: this app NO LONGER accepts `WEBHOOK_TOKEN` at all — it was
+ * dropped from `acceptedTokens()`, so an operator still holding it now gets a 401.
  *
- * 🔴 DELIBERATELY NOT `expect(page).not.toMatch(/WEBHOOK_TOKEN/)`. The page names the legacy token
- * on purpose, to say why it is the wrong one to hand out — a blanket ban on the word would fail on
+ * 🔴 DELIBERATELY NOT `expect(page).not.toMatch(/WEBHOOK_TOKEN/)`. The page names the retired token
+ * on purpose, to say that it is refused and why — a blanket ban on the word would fail on
  * the explanation and push a future editor to delete the very sentence that prevents the mistake.
  * (That exact trap cost two rounds elsewhere in this app: a guard forbidding a string failed on the
  * comment explaining the string.) Assert the INSTRUCTION and the COPY-PASTEABLE EXAMPLE — the two

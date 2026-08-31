@@ -45,7 +45,9 @@ the token for everyone holding it.
 inbound-only: nothing outside this app accepts it, and nothing in this app sends it anywhere.
 `WEBHOOK_TOKEN` **used to be accepted here and no longer is** — it is shared with the main app and
 reaches far beyond this one, which is why it was dropped once no caller still presented it inbound.
-A caller that starts returning 401 against `/api/xguard/*` is presenting the retired token. Since
+A caller that *starts* returning 401 against `/api/xguard/*` is most likely presenting the retired
+token — check that first, but it is not the only cause: a rotated or mistyped secret, a wrong token,
+and a non-Bearer `Authorization` scheme all 401 the same way. Since
 revocation here means rotating for every holder, which token an agent operator holds decides how
 much a rotation costs and how far a leak reaches.
 

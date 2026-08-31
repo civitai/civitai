@@ -8,17 +8,27 @@ import { logToAxiom } from '~/server/logging/client';
 // in the other direction. Import this instance; there should be exactly one configured client. Failures
 // are logged and rethrown (mutations aren't retried).
 //
-// 🔴 THE `||` FALLBACK IS THE DESIGN, NOT A LEFTOVER — do not "clean it up" into a required var.
-// This app and the moderator app deploy from different pipelines, and the ConfigMap supplying
-// MOD_INBOUND_TOKEN lands from a third one (the infra repo). The fallback makes that ordering
-// irrelevant: config first and nothing changes; code first and the call keeps working on the legacy
-// token. Remove it and there is a window in which this call is simply broken.
+// 🔴 THE `||` FALLBACK NO LONGER PROTECTS DEPLOY ORDER — IT IS NOW A SILENT FAILURE PATH.
+// It used to: this app and the moderator app deploy from different pipelines, the ConfigMap supplying
+// MOD_INBOUND_TOKEN lands from a third (the infra repo), and while the spoke still accepted
+// WEBHOOK_TOKEN the legacy arm kept the call working whichever landed first.
+//
+// 🔴 THE SPOKE HAS NOW DROPPED WEBHOOK_TOKEN FROM ITS ACCEPTED SET, so that arm is a guaranteed 401.
+// `||` falls through on an EMPTY local value, never on a REJECTION — so in any environment where
+// MOD_INBOUND_TOKEN is unset this silently selects a credential the spoke refuses. Nothing here
+// errors: `onFailure` logs to Axiom, the 401 reaches `image.controller.ts` and, being < 500, is
+// mapped to a BAD_REQUEST — a moderator clicking block/unblock gets a toast, not an incident.
+//
+// So MOD_INBOUND_TOKEN is now effectively REQUIRED wherever this client is used, even though the
+// schema still types it optional. The fallback is retained only so this caller did not change shape
+// in the same commit as the spoke's removal; it is not a working default. Deleting it, and making
+// the variable required so a missing key is a loud boot failure rather than a silent 401, is the
+// correct follow-up — not a "cleanup" to avoid.
 //
 // MOD_INBOUND_TOKEN is the narrow, inbound-only credential the moderator app accepts.
 // WEBHOOK_TOKEN is the platform-wide admin credential — it authenticates ~134 endpoints in this app,
-// so presenting it here is far more authority than this one call needs. The moderator app is dropping
-// it from its accepted set; once MOD_INBOUND_TOKEN is set in every environment, the fallback (and
-// then this comment) can go.
+// so presenting it here was far more authority than this one call needs, which is why the spoke
+// stopped accepting it.
 //
 // 🔴 THE ENDPOINT IS DELIBERATELY *NOT* `MODERATOR_APP_URL`, AND THE TWO ARE NOT INTERCHANGEABLE.
 // `MODERATOR_APP_URL` has a second consumer with the opposite requirement: `src/pages/moderator/

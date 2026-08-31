@@ -23,6 +23,12 @@ import {
  *     that the SHAPE of the decision did not — 503 still means "nothing configured" and 401 still
  *     means "a credential was presented and refused", and the two never trade places.
  *
+ * 🔴 A TEST THAT PINS A STRING THE CHANGE EDITS IS A REGRESSION, WHATEVER IT IS ABOUT. The 503-body
+ * case reads like an invariant — it is about the fail-closed path, which did not move — but it
+ * asserts the WHOLE message, and dropping a credential class rewrites that message. It was labelled
+ * INVARIANT and is red on the pre-change side, which made the matrix claim above false. Relabelled
+ * REGRESSION. Sort by what the MATRIX does, never by what the test is thematically about.
+ *
  * `$env/dynamic/private` is aliased to `src/test/env.mock.ts`, which is `process.env` itself, and
  * `acceptedTokens()` re-reads it per call — so assigning here really does change what the function
  * sees.
@@ -207,7 +213,7 @@ describe('authenticateWebhookToken', () => {
     expect(refusalOf(authenticateWebhookToken(eventWith({ query: LEGACY }))).status).toBe(503);
   });
 
-  it('INVARIANT: the 503 names EVERY accepted class, so an operator knows any one would fix it', async () => {
+  it('REGRESSION: the 503 names EVERY accepted class, so an operator knows any one would fix it', async () => {
     setEnv({});
     const body = await refusalOf(authenticateWebhookToken(eventWith({ query: LEGACY }))).json();
     // The whole normalised sentence, not a substring: a body that names only one class still contains
