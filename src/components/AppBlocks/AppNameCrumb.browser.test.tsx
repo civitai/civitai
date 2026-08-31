@@ -166,9 +166,7 @@ describe('the app-name crumb is a real control', () => {
     const rec = page.getByTestId('app-block-name-popover-recommend').element();
     expect((rec.textContent ?? '').trim()).toBe('90% recommend (10)');
 
-    await expect
-      .element(page.getByTestId('app-block-name-popover-store-link'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('app-block-name-popover-store-link')).toBeInTheDocument();
   });
 
   test.each(['{Enter}', ' '])(
@@ -264,9 +262,7 @@ describe('the popover never shows a broken or empty rating', () => {
     renderChrome();
     await page.getByTestId('app-block-breadcrumb-name').click();
 
-    await expect
-      .element(page.getByTestId('app-block-name-popover-loading'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('app-block-name-popover-loading')).toBeInTheDocument();
     // 🔴 A "0% recommend" flashed while the query is in flight is a false statement
     // about the app, not a loading state.
     await expect
@@ -311,9 +307,7 @@ describe('the popover never shows a broken or empty rating', () => {
     const rec = page.getByTestId('app-block-name-popover-recommend').element();
     expect((rec.textContent ?? '').trim()).toBe('No reviews yet');
     // The action still stands — the listing exists, it just has no reviews.
-    await expect
-      .element(page.getByTestId('app-block-name-popover-store-link'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('app-block-name-popover-store-link')).toBeInTheDocument();
   });
 });
 

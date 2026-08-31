@@ -1,4 +1,13 @@
-import { Button, Divider, Group, Loader, Popover, Stack, Text, UnstyledButton } from '@mantine/core';
+import {
+  Button,
+  Divider,
+  Group,
+  Loader,
+  Popover,
+  Stack,
+  Text,
+  UnstyledButton,
+} from '@mantine/core';
 import { IconBuildingStore } from '@tabler/icons-react';
 import { getListingDetailHref, getRecommendLabel } from '~/components/Apps/appListingCardView';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
