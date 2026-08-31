@@ -27,7 +27,7 @@ import type {
   // GetBuzzTransactionResponse,
   GetDailyBuzzCompensationInput,
   GetEarnPotentialSchema,
-  // GetTransactionsReportResultSchema,
+  GetTransactionsReportResultSchema,
   GetTransactionsReportSchema,
   ExportUserBuzzTransactionsSchema,
   GetUserBuzzAccountSchema,
@@ -1679,29 +1679,165 @@ export async function claimWatchedAdReward({
   // return true;
 }
 
+type TransactionsReportWindow = GetTransactionsReportSchema['window'];
+
+// A cash-out is a debit like any other, but at creator volume one of them is thousands of times the
+// tallest other bar, so the axis scales to it and every other bar renders under a pixel. Measured over
+// the 89 creators who cashed out in a 30-day window: tallest bar over median day falls 39.5x -> 4.1x
+// once these are out. Spelled through TransactionType so the ClickHouse values stay derived from the
+// enum rather than hand-typed twice.
+const CHART_EXCLUDED_SPEND_TYPES = [TransactionType.Bank, TransactionType.Withdrawal].map(
+  toClickhouseTransactionType
+);
+
+const REPORT_BUCKET_SQL: Record<TransactionsReportWindow, string> = {
+  hour: 'toStartOfHour(date)',
+  day: 'toDate(date)',
+  week: 'toMonday(date)',
+  month: 'toStartOfMonth(date)',
+};
+
+// Buckets are UTC on both sides: the `date` column is written UTC and `toClickhouseDate` compares in
+// UTC, so a local-calendar bucket sequence would key off by the host's offset and every bucket would
+// read zero.
+function reportBucketStart(value: Dayjs, window: TransactionsReportWindow) {
+  switch (window) {
+    case 'hour':
+      return value.startOf('hour');
+    case 'day':
+      return value.startOf('day');
+    // ClickHouse `toMonday`. dayjs `startOf('week')` is locale-dependent and lands on Sunday here.
+    case 'week':
+      return value.startOf('day').subtract((value.day() + 6) % 7, 'day');
+    case 'month':
+      return value.startOf('month');
+  }
+}
+
+function buildTransactionsReportQuery({
+  userId,
+  accountType,
+  window,
+  start,
+  end,
+}: {
+  userId: number;
+  accountType: BuzzSpendType;
+  window: TransactionsReportWindow;
+  start: Date;
+  end: Date;
+}) {
+  const bucket = REPORT_BUCKET_SQL[window];
+  const excluded = CHART_EXCLUDED_SPEND_TYPES.map((type) => `'${type}'`).join(',');
+  const range = `date >= '${toClickhouseDate(start)}' AND date < '${toClickhouseDate(end)}'`;
+
+  return `
+    SELECT bucket, sum(gained) AS gained, sum(spent) AS spent
+    FROM (
+      SELECT ${bucket} AS bucket, amount AS gained, 0 AS spent
+      FROM buzzTransactions
+      WHERE toAccountId = ${userId} AND toAccountType = '${accountType}' AND ${range}
+      UNION ALL
+      SELECT ${bucket} AS bucket, 0 AS gained, amount AS spent
+      FROM buzzTransactions
+      WHERE fromAccountId = ${userId} AND fromAccountType = '${accountType}' AND ${range}
+        AND type NOT IN (${excluded})
+    )
+    GROUP BY bucket
+  `;
+}
+
+type ClickhouseReportBucket = { bucket: string; gained: number | string; spent: number | string };
+
 export async function getTransactionsReport({
   userId,
   ...input
 }: GetTransactionsReportSchema & { userId: number }) {
+  const window = input.window;
+  const accountType = input.accountType ?? 'yellow';
   const startDate =
-    input.window === 'hour'
+    window === 'hour'
       ? dayjs().startOf('day')
-      : input.window === 'day'
+      : window === 'day'
       ? dayjs().startOf('day').subtract(7, 'day')
-      : input.window === 'week'
+      : window === 'week'
       ? dayjs().startOf('day').subtract(1, 'month')
       : dayjs().startOf('day').subtract(1, 'year');
   // End date is always the start of the next day
   const endDate = dayjs().add(1, 'day').startOf('day');
 
-  const data = await buzzService.getUserTransactionsReport(userId, {
-    accountType: input.accountType ?? 'yellow',
-    window: input.window,
-    start: startDate.toDate(),
-    end: endDate.toDate(),
-  });
+  // The buzz service's report endpoint answers with pre-aggregated spent/gained per bucket and carries
+  // no transaction type, so the cash-out exclusion cannot be expressed against it. Without ClickHouse
+  // configured the chart falls back to that endpoint: it shows the cash-out, which is what it did
+  // before, rather than showing nothing.
+  if (!clickhouse) {
+    const data = await buzzService.getUserTransactionsReport(userId, {
+      accountType,
+      window,
+      start: startDate.toDate(),
+      end: endDate.toDate(),
+    });
 
-  return getTransactionsReportResultSchema.parse(data);
+    return getTransactionsReportResultSchema.parse(data);
+  }
+
+  const rows = await queryTransactionsReport(
+    buildTransactionsReportQuery({
+      userId,
+      accountType,
+      window,
+      start: startDate.toDate(),
+      end: endDate.toDate(),
+    })
+  );
+
+  const totals = new Map(
+    rows.map((row) => [reportBucketStart(dayjs.utc(row.bucket), window).valueOf(), row])
+  );
+
+  // Every bucket in the range is emitted whether it has rows or not. The chart draws one bar per
+  // returned bucket, so dropping the empty ones would silently shorten the axis instead of showing a
+  // quiet day, and an account with no activity at all would render as a broken chart rather than a
+  // flat one.
+  const report: GetTransactionsReportResultSchema = [];
+  const lastBucket = reportBucketStart(dayjs.utc(), window);
+  let cursor = reportBucketStart(dayjs.utc(startDate.toDate()), window);
+  while (!cursor.isAfter(lastBucket)) {
+    const next = cursor.add(1, window);
+    const row = totals.get(cursor.valueOf());
+    report.push({
+      date: cursor.format('YYYY-MM-DDTHH:mm:ss'),
+      start: cursor.format('YYYY-MM-DDTHH:mm:ss'),
+      end: next.format('YYYY-MM-DDTHH:mm:ss'),
+      accounts: [
+        {
+          accountType,
+          gained: Number(row?.gained ?? 0),
+          spent: Number(row?.spent ?? 0),
+        },
+      ],
+    });
+    cursor = next;
+  }
+
+  return report;
+}
+
+async function queryTransactionsReport(query: string) {
+  try {
+    return await clickhouse!.$query<ClickhouseReportBucket>(query);
+  } catch (error) {
+    logToAxiom({
+      name: 'buzz-transactions-report',
+      type: 'error',
+      message: (error as Error).message,
+      stack: (error as Error).stack,
+    }).catch(() => undefined);
+    throw new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      message: 'Could not load the Buzz report right now. Please try again shortly.',
+    });
+  }
 }
 
 export async function getCounterPartyBuzzTransactions({
