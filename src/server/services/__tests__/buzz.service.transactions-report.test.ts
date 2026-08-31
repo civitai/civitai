@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -210,6 +211,22 @@ describe('getTransactionsReport', () => {
     expect(report[0].accounts[0].accountType).toBe('green');
   });
 
+  it('passes a mapped buzz-service error through unchanged', async () => {
+    $query.mockRejectedValue(new Error('clickhouse is down'));
+    // What `mapError` produces for a 404. Re-wrapping it would relabel a client fault as a 500 and
+    // bury the BuzzApiError a level below where `getBuzzApiStatus` reads it.
+    const mapped = new TRPCError({
+      code: 'NOT_FOUND',
+      message: 'Not found',
+      cause: 'buzz-api-error',
+    });
+    getUserTransactionsReport.mockRejectedValue(mapped);
+
+    await expect(
+      getTransactionsReport({ userId: USER, window: 'day', accountType: 'yellow' })
+    ).rejects.toBe(mapped);
+  });
+
   it('surfaces a handled error when the fallback fails too', async () => {
     $query.mockRejectedValue(new Error('clickhouse is down'));
     getUserTransactionsReport.mockRejectedValue(new Error('buzz service is down'));
@@ -230,8 +247,9 @@ describe('getTransactionsReport', () => {
     });
 
     expect(sqlOf()).toContain('toMonday(date)');
-    // Six, the same span a calendar `subtract(1, 'month')` covered before the sequence was rewritten.
-    // Nothing else pins the week window's length, and it lost a period once already.
+    // Six: the widest the old calendar `subtract(1, 'month')` reached. That varied 5 or 6 with the
+    // weekday and the month's length, so this pins a number rather than inheriting one that moves.
+    // Nothing else covers the week window's length, and it changed once already unnoticed.
     expect(report).toHaveLength(6);
     expect(report[0].date.slice(0, 10)).toBe('2026-07-27');
     const last = report[report.length - 1];

@@ -1689,8 +1689,10 @@ type TransactionsReportWindow = GetTransactionsReportSchema['window'];
 // Which side each type lands on, over 180 days of production rows:
 //   bank        yellow/green -> creatorProgramBank   the Spent bar. 2,174 rows, max 10,477,563.
 //   extract     creatorProgramBank -> yellow/green   the GAINED bar. 79 rows, max 500,000.
-//   withdrawal  cashSettled -> yellow, toAccountId 0  neither: it credits the central bank, not a
-//               creator. It debited a creator's yellow until 2025-02-27, and is kept for that.
+//   withdrawal  cashSettled -> yellow, toAccountId 0  neither, inside any window this chart can
+//               render today. Kept because the type has credited a creator's yellow out of the
+//               program bank as recently as 2025-08-07 (8 rows, max 5,233,644) and debited it
+//               directly until 2025-02-27 — both shapes land on a bar when they occur.
 //
 // So the gained branch is not defence-in-depth — `extract` reaches it and nothing else would remove
 // it. Nothing legitimate is lost there: an `extract` credit is the creator's own banked Buzz coming
@@ -1776,8 +1778,10 @@ export async function getTransactionsReport({
   // dataset by a `MMM-DD` label, so two buckets that format alike overwrite each other: a 12-month
   // window started a calendar year back spans THIRTEEN months, and its first and last both render as
   // `Aug-01`. Counting back whole buckets from the last one keeps every label distinct and stops the
-  // first bucket being a partial period drawn as a whole one. The counts reproduce what a calendar
-  // subtraction gave at its widest — 6 weeks, not 5 — so no window lost a period in the rewrite.
+  // first bucket being a partial period drawn as a whole one. `week` is pinned at the WIDEST the old
+  // calendar subtraction reached: that varied 5 or 6 by weekday and month length (5 on 790 of 1,200
+  // enumerated days, 6 on the rest), and a window whose length depends on today's date is worse than
+  // either number.
   const lastBucket = reportBucketStart(dayjs.utc(), window);
   const firstBucket =
     window === 'hour'
@@ -1806,8 +1810,13 @@ export async function getTransactionsReport({
 
       return getTransactionsReportResultSchema.parse(data);
     } catch (error) {
-      // Both sources down. Without this the raw upstream client error reaches the client — the
-      // handler's try/catch cannot wrap it, being synchronous around an async call.
+      // `mapError` already turns every buzz-service HTTP status into a TRPCError carrying the
+      // BuzzApiError as `cause`. Re-wrapping one would relabel a 404 as a 500 — counting it in the
+      // 5xx SLO, and burying the status a level deeper than `getBuzzApiStatus` looks.
+      if (error instanceof TRPCError) throw error;
+
+      // What is left is transport-level: refused, aborted, DNS. The handler's own try/catch cannot
+      // wrap it, being synchronous around an async call, so it would reach the client raw.
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
         message: 'Could not load the Buzz report right now. Please try again shortly.',
