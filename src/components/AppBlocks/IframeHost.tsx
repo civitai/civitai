@@ -29,6 +29,8 @@ import { resolveRequestConsent } from './requestConsentGate';
 import { hideBlock } from './hiddenBlocks';
 import { isPageSlot } from '~/shared/constants/slot-registry';
 import { sanitizeAppChromeName } from './appChromeName';
+import { resolveChromeGeometry } from './chromeGeometry';
+import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import {
@@ -308,23 +310,60 @@ export function AppBlockChrome({
   // visible fallback "App" Text is present to carry provenance itself —
   // avoiding an unlabeled SVG / a double-reading "App".
   const iconProvenance = hasName || !showBadgeName;
+
+  // 🔴 RESPONSIVE GEOMETRY IS DRIVEN BY THE CHROME'S OWN INLINE SIZE — see
+  // `chromeGeometry.ts` for the full rationale and the breakpoint scale. Short
+  // version: this bar renders both in a ~320px model sidebar and as the header of
+  // a 2560px full-page app frame, so neither the viewport nor the page's `main`
+  // ContainerProvider (which DOES exist on both surfaces, via BaseLayout, and is
+  // therefore not the reason we don't use it) describes the space this row
+  // actually has. `useResizeObserver` is the same primitive `ContainerProvider`
+  // itself uses; we just point it at this element.
+  //
+  // Before the observer fires — SSR, and the first client render — the width is 0,
+  // which resolves to the `base` tier whose values ARE the pre-change hard-coded
+  // ones. So the server HTML and the first client paint are unchanged and there is
+  // no hydration mismatch to guard with `useIsClient`.
+  const [chromeWidth, setChromeWidth] = useState(0);
+  const chromeRef = useResizeObserver<HTMLDivElement>((entry) => {
+    const next = entry.borderBoxSize?.[0]?.inlineSize ?? entry.contentRect.width;
+    setChromeWidth((prev) => (prev === next ? prev : next));
+  });
+  const geometry = resolveChromeGeometry(chromeWidth);
+
   return (
     <>
     <Group
+      ref={chromeRef}
       justify="space-between"
       gap="xs"
       px="xs"
       py={4}
+      // 🔴 `nowrap` STAYS, and it is not the breakpoint-blind bit. The bar's
+      // resting height is a pinned contract — `CHROME_BAR_PX = 35` in
+      // `slotReservation.ts`, the model slot's CLS reservation — and letting this
+      // row wrap to a second line at a narrow width would break it on exactly the
+      // surface the reservation exists for. The fix for narrow widths is that both
+      // flex children can SHRINK (`minWidth: 0` on the growing side, an explicit
+      // `flexShrink: 0` on each icon button so the controls are never crushed),
+      // which keeps the row one line tall at every width. This change is
+      // width-only; `CHROME_BAR_PX` is unchanged.
       wrap="nowrap"
       data-testid="app-block-chrome"
+      // Machine-readable resolved tier, so a test can assert the decision rather
+      // than re-deriving it from pixels.
+      data-chrome-tier={geometry.tier}
       style={{
         borderBottom: '1px solid var(--mantine-color-default-border)',
         background: 'var(--mantine-color-default-hover)',
       }}
     >
       {/* minWidth:0 lets the truncating name shrink instead of pushing the
-          ⋯ menu out of the narrow sidebar layout. */}
-      <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
+          ⋯ menu out of the narrow sidebar layout; `flex: 1 1 auto` lets it CLAIM
+          the row's slack on a wide surface, which is what makes an uncapped name
+          at the `xl` tier actually use the space instead of sitting at its
+          content width. */}
+      <Group gap={6} wrap="nowrap" style={{ minWidth: 0, flex: '1 1 auto' }}>
         {/* The provenance app icon doubles as a quick-nav Menu of the Civitai
             App PLATFORM's own pages (NOT the sandboxed app's internal routes —
             apps self-route as SPAs inside the iframe; the host has no list of
@@ -335,7 +374,11 @@ export function AppBlockChrome({
         <Menu
           position="bottom-start"
           shadow="md"
-          width={200}
+          // Responsive: this dropdown renders publisher-controlled app names in
+          // its "Recently run" section, so its useful width tracks the surface.
+          // (The ⋮ overflow menu below keeps a fixed width on purpose — every
+          // label in it is short, fixed and host-authored.)
+          width={geometry.navMenuWidth}
           opened={platformNavMenu.opened}
           onChange={platformNavMenu.onChange}
         >
@@ -421,7 +464,7 @@ export function AppBlockChrome({
                         Zalgo combining runs, bounds length). `||` (not `??`) so an
                         empty/whitespace sanitized result falls back to the blockId
                         handle. `lineClamp={1}` keeps a pathologically long name
-                        from blowing out the width={200} dropdown. */}
+                        from blowing out the dropdown at ANY of its widths. */}
                     <Text size="sm" lineClamp={1}>
                       {sanitizeAppChromeName(r.name) || r.blockId}
                     </Text>
@@ -432,12 +475,21 @@ export function AppBlockChrome({
           </Menu.Dropdown>
         </Menu>
         {/* Host-rendered (spoof-proof) app-name label. Truncates with an
-            ellipsis at a bounded width so a long name never wraps or shoves
-            the menu off the row in the narrow model.sidebar_top slot. On the
-            page surface this is suppressed (the breadcrumb crumb below carries
-            the name once) — see `showBadgeName`. */}
+            ellipsis so a long name never wraps or shoves the menu off the row in
+            the narrow model.sidebar_top slot. The cap is now RESPONSIVE to the
+            bar's own width (`chromeGeometry.ts`) instead of a fixed 160px: 160 in
+            a narrow sidebar / on a phone exactly as before, wider as the bar gets
+            wider, and uncapped once the bar is `xl`. On the page surface this is
+            suppressed (the breadcrumb crumb below carries the name once) — see
+            `showBadgeName`. */}
         {showBadgeName && (
-          <Text size="xs" c="dimmed" truncate maw={160} data-testid="app-block-name">
+          <Text
+            size="xs"
+            c="dimmed"
+            truncate
+            maw={geometry.nameMaxWidth}
+            data-testid="app-block-name"
+          >
             {label}
           </Text>
         )}
@@ -477,12 +529,15 @@ export function AppBlockChrome({
             <Text size="xs" c="dimmed" aria-hidden>
               /
             </Text>
+            {/* Same responsive cap as the badge name — it is the same
+                publisher-controlled string, just rendered on the page surface
+                instead of the model surface, so one tier table serves both. */}
             <Text
               size="xs"
               c="dimmed"
               fw={500}
               truncate
-              maw={200}
+              maw={geometry.nameMaxWidth}
               data-testid="app-block-breadcrumb-name"
             >
               {label}
@@ -513,6 +568,11 @@ export function AppBlockChrome({
             size="sm"
             aria-label="App menu"
             data-testid="app-block-menu-trigger"
+            // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
+            // Without this the ⋯ trigger is a shrinkable flex item and a long name
+            // at a narrow width squeezes it below its 26px resting size; its
+            // sibling on the left has carried `flexShrink: 0` all along.
+            style={{ flexShrink: 0 }}
           >
             <IconDots size={16} stroke={1.5} />
           </ActionIcon>
