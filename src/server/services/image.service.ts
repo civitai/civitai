@@ -1,5 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import {
+  assertMediaPresentForPublish,
+  MediaPresence,
+  type MediaProbeAnswer,
+  summarizeProbeError,
+} from '@civitai/shared';
 import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
@@ -224,7 +230,12 @@ import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
+import {
+  serverUploadImage,
+  getB2ImageS3Client,
+  getImageUploadBackend,
+  headObject,
+} from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
@@ -8051,8 +8062,69 @@ export async function updateImageNsfwLevel({
 // NOTE(moderator-migration): getImageRatingRequests + getDownleveledImages (the image-rating-review and
 // downleveled-review queues) now live in the spoke app (apps/moderator). updateImageNsfwLevel STAYS — it
 // backs user rating votes + the mod APIs (set-image-nsfw-level, retool) + new-order.
-// NOTE(moderator-migration): getIngestionErrorImages (the ingestion-error-review queue) now lives in the
-// spoke app (apps/moderator, Kysely). resolveIngestionError STAYS — main's article-image-scan
+/**
+ * Timeout budget for the media-existence probe below. A moderator is waiting on this click, and an
+ * UNBOUNDED probe against a degraded store would turn a review action into a hung request — strictly
+ * worse than the bug it guards. Per `headObject`'s contract this bounds each network ATTEMPT, not
+ * wall clock: the SDK's retry sleep is not abort-aware, so worst case is this budget plus one
+ * backoff. An abort is not a not-found shape, so it lands on `unknown` and the publish proceeds.
+ */
+const RESOLVE_INGESTION_MEDIA_PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * Ask the uploads bucket whether an image's object is actually there, as a three-valued answer.
+ *
+ * 🔴 THE BACKEND COMES FROM `getImageUploadBackend()`, NOT AN INLINE CLIENT + BUCKET LITERAL.
+ * `Image.url` is the key the UPLOAD path minted, so the only store that can answer about it is the
+ * one that path writes to. An open-coded `getB2ImageS3Client()` + `env.S3_IMAGE_B2_BUCKET ??
+ * 'civitai-media-uploads'` pair agrees with that resolver only by coincidence today: change where
+ * uploads land and the probe keeps asking the old bucket, which answers 404 for every key — and on
+ * this path an `absent` is a PERMANENT publish refusal, so the whole queue would fail closed while
+ * looking exactly like a real run of misses. Resolving through the same function the uploader uses
+ * removes that class WITHIN THIS PROCESS. (The sibling probe at
+ * `src/server/utils/stored-image-probe.ts` already resolves this way.)
+ *
+ * 🔴 SCOPE OF THAT CLAIM — IT IS ABOUT THIS RUNTIME ONLY, AND THE SPOKE IS NOT COVERED. Today this
+ * is a pure no-op: `getImageUploadBackend()` (`src/utils/s3-utils.ts`) returns exactly the
+ * `getB2ImageS3Client()` + `env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads'` pair it replaces.
+ * Its whole value is that a future move of the upload store moves the probe with it, here.
+ *
+ * The moderator spoke's copy of this probe (`apps/moderator/src/lib/server/ingestion.service.ts`)
+ * names a fixed backend — `getMediaProbeStorage().headObject({ backend: 'b2Image', key })` — and
+ * that is NOT the same asymmetry it looks like, so it is written out rather than filed as a TODO.
+ * `'b2Image'` is not a bucket literal; it is an alias in `@civitai/storage`'s wire enum
+ * (`packages/civitai-storage/src/schema.ts`) that the `apps/storage` service resolves in ITS OWN
+ * process (`apps/storage/src/lib/server/backends.ts`) from ITS OWN `S3_IMAGE_B2_*` env — a
+ * different deployment and a different Secret from this app's. So the spoke already resolves
+ * through an indirection; it just lands on a SECOND source of truth rather than this one. There is
+ * no `getImageUploadBackend()` equivalent to route it through, and adding one is not a rename.
+ *
+ * The consequence, stated so nobody re-derives it as symmetry: moving the upload store needs THREE
+ * coordinated changes, not one — this app's `S3_IMAGE_B2_*`, the storage service's `S3_IMAGE_B2_*`
+ * (or a new alias in that enum plus every `backend: 'b2Image'` call site), and the Go
+ * storage-resolver's `B2_MEDIA_BUCKET_NAME`, whose `media_locations` rows are already stamped
+ * `backend='backblaze'`. This change removes one of the three from the list of things that can be
+ * forgotten silently. It does not remove the other two.
+ *
+ * Calling it is deliberately INSIDE the caller's try (see `assertMediaPresentForPublish`), because
+ * it builds the S3 client, which throws when credentials are absent — that must land on `unknown`,
+ * not on a failed publish.
+ */
+async function probeImageMediaPresence(key: string): Promise<MediaProbeAnswer> {
+  // 🔴 No key check here, deliberately. `assertMediaPresentForPublish` classifies the url and only
+  // calls this with a value that already passed the SHARED `isProbeableMediaKey` — a copy of that
+  // test in each probe is exactly how two runtimes come to disagree about the same row.
+  const { s3, bucket } = await getImageUploadBackend();
+  const head = await headObject(bucket, key, s3, {
+    abortSignal: AbortSignal.timeout(RESOLVE_INGESTION_MEDIA_PROBE_TIMEOUT_MS),
+  });
+  if (head.status === 'present') return MediaPresence.Present;
+  if (head.status === 'absent') return MediaPresence.Absent;
+  return MediaPresence.Unknown;
+}
+
+// NOTE(moderator-migration): getIngestionErrorImages (the ingestion-error-review queue) now lives in
+// the spoke app (apps/moderator, Kysely). resolveIngestionError STAYS — main's article-image-scan
 // (resolveArticleImageScan) reuses it to pin an article image's nsfwLevel.
 export async function resolveIngestionError({
   id,
@@ -8070,9 +8142,69 @@ export async function resolveIngestionError({
       postId: true,
       userId: true,
       metadata: true,
+      url: true,
     },
   });
   if (!image) throw new Error('Image not found');
+
+  /**
+   * 🔴 REFUSE TO PUBLISH AN IMAGE WHOSE MEDIA IS GONE.
+   *
+   * This function's whole effect is to make an image visible: `ingestion = 'Scanned'` plus a locked
+   * nsfwLevel. It did that unconditionally, and the queue that feeds it selects only on
+   * `ingestion = 'Error' AND nsfwLevel = 0` — so an image whose file can never be fetched was
+   * presented to a moderator for a rating exactly like a scan that merely timed out, and publishing
+   * it put a permanent 404 on the site. Measured over ~92,000 image creations in 24h: 10 such
+   * images, all 10 confirmed absent from the store, 8 of them published by the queue that day.
+   *
+   * Only `absent` refuses; see `@civitai/shared/missing-media` for why an unconsultable store must
+   * fail OPEN, and `@civitai/shared/media-key` for which urls are even askable. The same rule runs
+   * in the moderator spoke, from the same module, so the two cannot drift.
+   */
+  await assertMediaPresentForPublish({
+    url: image.url,
+    probe: (key) => probeImageMediaPresence(key),
+    raise: (message) => throwBadRequestError(message),
+    // The mirror of onUnknown: a wrong bucket name 404s for EVERY key, so a fail-CLOSED
+    // misconfiguration would refuse every publish and look exactly like a real run of misses.
+    onRefused: (presence) =>
+      logToAxiom({
+        type: 'warning',
+        name: 'resolveIngestionError:media-absent-refused',
+        message: 'Refused to publish an image whose media cannot be served',
+        imageId: id,
+        presence,
+      }).catch(() => undefined),
+    // Silent fail-open is how a guard lies for months: with credentials rotated, every publish
+    // would take the `unknown` branch and this would be indistinguishable from a clean run.
+    // 🔴 `reason` is what makes the count readable: `headObject` RESOLVES `{ status: 'unknown' }`
+    // rather than throwing, so without it a store that answers 403 for every key and a client that
+    // cannot be built at all emit the same line with an empty `error`.
+    onUnknown: ({ reason, error }) =>
+      logToAxiom({
+        type: 'warning',
+        name: 'resolveIngestionError:media-probe-unknown',
+        message: 'Could not consult the uploads bucket; allowing the publish',
+        imageId: id,
+        reason,
+        error: summarizeProbeError(error),
+      }).catch(() => undefined),
+    /**
+     * 🔴 The short-circuit needs a counter too, and for a sharper reason than the other two.
+     * `isProbeableMediaKey` is a deliberate UNDER-approximation — it matches only the bare-uuid
+     * shape our upload endpoints mint, and several write paths accept a caller-supplied string —
+     * so it is KNOWN to decline real keys. Without this line that under-approximation is
+     * unmeasurable: a run in which the predicate declines every row emits nothing at all and is
+     * byte-identical to a run where the guard did its job.
+     */
+    onSkipped: () =>
+      logToAxiom({
+        type: 'warning',
+        name: 'resolveIngestionError:media-probe-skipped',
+        message: 'Image.url is not a probeable media key; no existence check ran',
+        imageId: id,
+      }).catch(() => undefined),
+  });
 
   const metadata = (image.metadata as ImageMetadata) ?? {};
 
