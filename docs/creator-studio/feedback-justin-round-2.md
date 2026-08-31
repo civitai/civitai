@@ -49,9 +49,12 @@ Code fixes committed on `creator-studio-implementation`: **`d70d871`** (models/s
     card now shows a **locked message** ("unlocks once you have $50 in settled cash") instead of a Set-up button
     when not set up. **TODO in code:** wire the real settled-cash read so the button unlocks at ≥ $50 (right now
     "not set up" is always locked, which is safe pre-cutover since ~no one has settled cash yet).
-17. **🚩 Fee-defaults section.** Justin expected it to be where you **set a default fee rate** + an **"apply to
-    all my models"** button. That **contradicts B9** (decided: *no* per-account default; the section is
-    read-only info). Needs a product call before building — is B9 being reversed?
+17. **✅ Fee-defaults section.** Justin expected it to be where you **set a default fee rate** + an **"apply to
+    all my models"** button. Originally flagged as contradicting B9 — **it does not** (resolved 2026-08-31).
+    The two halves land separately: the **bulk apply** was decided the other way by **B7** and already shipped
+    (`bulkSetFee` / `bulkSetPaidAccess` + select-all-across-filter), and the **default** is a creator-authored
+    template, which B9 never spoke to — it governs *Civitai's* suggested values. Plan:
+    [pricing-templates.md](pricing-templates.md).
 
 ## Models
 
