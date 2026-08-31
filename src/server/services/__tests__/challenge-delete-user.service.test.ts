@@ -11,6 +11,13 @@ const { mockRefundUserChallengeFunds, mockQueueUpdate } = vi.hoisted(() => ({
   mockQueueUpdate: vi.fn(),
 }));
 
+const mockExecuteRaw = vi.fn().mockResolvedValue(0);
+const txClient = () => ({
+  challenge: mockDbWrite.challenge,
+  collection: mockDbWrite.collection,
+  $executeRaw: mockExecuteRaw,
+});
+
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   chargeInitialPrize: vi.fn(),
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
@@ -40,9 +47,7 @@ describe('deleteUserChallenge', () => {
     vi.clearAllMocks();
     mockDbRead.collectionItem.count.mockResolvedValue(0);
     mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
-    mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
-      fn({ challenge: mockDbWrite.challenge, collection: mockDbWrite.collection })
-    );
+    mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(txClient()));
   });
 
   it('owner + Scheduled + 0 entries: claims, refunds and deletes', async () => {
@@ -133,9 +138,7 @@ describe('deleteChallenge (direct)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
-    mockDbWrite.$transaction.mockImplementation(async (fn: any) =>
-      fn({ challenge: mockDbWrite.challenge, collection: mockDbWrite.collection })
-    );
+    mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(txClient()));
   });
 
   it('already-Cancelled User challenge: re-refunds idempotently without re-claiming, then deletes', async () => {
@@ -155,6 +158,24 @@ describe('deleteChallenge (direct)', () => {
 
     await expect(deleteChallenge(1)).rejects.toThrow(/collection delete failed/i);
     expect(mockQueueUpdate).not.toHaveBeenCalled();
+  });
+
+  it('detaches entrant posts before dropping the collection', async () => {
+    mockDbWrite.challenge.findUnique.mockResolvedValue(
+      makeChallenge({ status: ChallengeStatus.Cancelled })
+    );
+
+    await deleteChallenge(1);
+
+    // `Post.collectionId` is ON DELETE CASCADE and `Image.postId` is ON DELETE SET NULL, so
+    // dropping the collection first deletes every entrant's submission post and strands their
+    // images with no post — a 404 on the owner's own image. Order is the whole guarantee.
+    const [strings, ...values] = mockExecuteRaw.mock.calls[0];
+    expect(strings.join('?')).toMatch(/UPDATE "Post" SET "collectionId" = NULL/);
+    expect(values).toEqual([100]);
+    expect(mockExecuteRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.collection.delete.mock.invocationCallOrder[0]
+    );
   });
 
   it('blocks deleting an Active challenge', async () => {

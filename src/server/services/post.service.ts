@@ -967,8 +967,15 @@ export const updatePost = async ({
 
 export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {
   // Phase 1: Atomic DB operations in a single transaction
-  const { post, deletedImages } = await dbWrite.$transaction(
+  const { post, deletedImages, orphanedImageIds } = await dbWrite.$transaction(
     async (tx) => {
+      // Only the non-moderator delete is scoped, so only it can leave an image behind.
+      const allImageIds = isModerator
+        ? []
+        : await tx.$queryRaw<{ id: number }[]>`
+            SELECT id FROM "Image" WHERE "postId" = ${id}
+          `;
+
       // Find images belonging to this post
       const images = await tx.$queryRaw<{ id: number; url: string }[]>`
         SELECT i.id, i.url
@@ -994,7 +1001,15 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
         RETURNING id, "nsfwLevel"
       `;
 
-      return { post, deletedImages };
+      // Whatever the delete above skipped keeps its row and has its `postId` nulled by the FK's
+      // ON DELETE SET NULL. The index build requires `postId IS NOT NULL`, so a doc indexed while
+      // the post existed is never revisited and goes on serving an image whose detail page is gone.
+      const deletedIds = new Set(deletedImages.map((image) => image.id));
+      const orphanedImageIds = allImageIds
+        .map(({ id }) => id)
+        .filter((imageId) => !deletedIds.has(imageId));
+
+      return { post, deletedImages, orphanedImageIds };
     },
     // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
     // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
@@ -1031,6 +1046,13 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
     await Limiter({ batchSize: 5 }).process(deletedImages, async (batch) =>
       Promise.all(batch.map(({ id, url }) => deleteImageFromS3({ id, url })))
     );
+  }
+
+  if (orphanedImageIds.length) {
+    await queueImageSearchIndexUpdate({
+      ids: orphanedImageIds,
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
   }
 
   await bustCachesForPosts(id);

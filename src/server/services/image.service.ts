@@ -6502,7 +6502,21 @@ export const getImage = async ({
     );
 
     if (!withoutPost) {
-      AND.push(Prisma.sql`(p."availability" != 'Private' OR p."userId" = ${userId})`);
+      // Post gates live here rather than in the JOIN so a postless image still produces a row.
+      // Deleting a collection cascades to the posts created into it and `Image.postId` is
+      // ON DELETE SET NULL, so an image can outlive its post; serve those to their owner instead
+      // of 404ing. Nothing on `Image` tells one apart from an upload that was never posted, so
+      // nobody else gets them.
+      AND.push(
+        Prisma.sql`(
+          p."publishedAt" < now()
+          OR p."userId" = ${userId}
+          OR (i."postId" IS NULL AND i."userId" = ${userId})
+        )`
+      );
+      AND.push(
+        Prisma.sql`(i."postId" IS NULL OR p."availability" != 'Private' OR p."userId" = ${userId})`
+      );
     }
 
     // A Blocked-level rating is a ToS removal (or a pending-Blocked verdict awaiting
@@ -6559,7 +6573,7 @@ export const getImage = async ({
       ${
         !withoutPost
           ? Prisma.sql`
-            p."availability" "availability",
+            COALESCE(p."availability", 'Public') "availability",
             GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
           `
           : Prisma.sql`'Public' "availability",`
@@ -6572,17 +6586,7 @@ export const getImage = async ({
       ) reactions
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
-    ${Prisma.raw(
-      withoutPost
-        ? ''
-        : // Now that moderators can review images without post, we need to make this optional
-          // in case they land in an image-specific review flow
-          `${isModerator ? 'LEFT ' : ''}JOIN "Post" p ON p.id = i."postId" ${
-            !isModerator
-              ? `AND (p."publishedAt" < now()${userId ? ` OR p."userId" = ${userId}` : ''})`
-              : ''
-          }`
-    )}
+    ${Prisma.raw(withoutPost ? '' : `LEFT JOIN "Post" p ON p.id = i."postId"`)}
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
   if (!rawImages.length) throw throwNotFoundError(`No image with id ${id}`);

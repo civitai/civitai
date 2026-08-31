@@ -18,6 +18,7 @@ import { resolveChallengeCollectionOwnerId } from '~/server/games/daily-challeng
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
+import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import {
   recordChallengeCreated,
   recordChallengeScanResult,
@@ -2213,6 +2214,7 @@ export async function deleteChallenge(id: number) {
 
     // Delete the associated collection and all its data
     if (collectionId) {
+      await detachPostsFromCollection(tx, collectionId);
       await tx.collection.delete({ where: { id: collectionId } });
     }
   });

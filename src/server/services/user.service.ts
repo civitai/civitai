@@ -71,6 +71,7 @@ import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/us
 import { deleteBidsForModel } from '~/server/services/auction.service';
 import { bustUserMetricPrivacyDefaultsCache } from '~/server/services/creator-membership.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
+import { detachPostsFromUserCollections } from '~/server/services/collection-post-detach';
 import {
   countPendingAccountDeletionImageRestores,
   disarmAccountDeletionImagePurge,
@@ -1383,6 +1384,7 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   await dbWrite.resourceReview.deleteMany({ where: { userId: id } });
   await dbWrite.commentV2.deleteMany({ where: { userId: id } });
   await dbWrite.comment.deleteMany({ where: { userId: id } });
+  await detachPostsFromUserCollections(dbWrite, id);
   await dbWrite.collection.deleteMany({ where: { userId: id } });
   await dbWrite.article.deleteMany({ where: { userId: id } });
   await dbWrite.post.deleteMany({ where: { userId: id } });
