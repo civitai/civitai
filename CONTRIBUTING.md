@@ -120,10 +120,30 @@ The browser suite has a failure mode that runs **no tests at all** and, until yo
 read the numbers, looks exactly like an ordinary failure. `pnpm test:component`
 runs through `scripts/test-component-run.mjs`, which asks vitest for a JSON report
 and hands it to `scripts/ci/assert-component-suite-ran.mjs`. That gate prints a
-ledger (`N executed, N skipped, across N files`) and **fails the run when nothing
-was collected**, or when the count falls below a floor. It can only ever *add* a
-failure — vitest's own exit code is passed straight through otherwise — and a
-narrowed run (`pnpm test:component <file>`, `-t <name>`) skips the floor.
+ledger and applies two checks:
+
+```
+test:component ledger: 2254 executed, 0 skipped, across 201 files; 0 failed suites,
+0 failed tests (baseline 2254 tests / 201 files; 201 on disk; floor 1240)
+```
+
+- **nothing collected fails**, always — including on a narrowed run;
+- **a `*.browser.test.tsx` on disk that is absent from the report fails, and is
+  named.** A file that stops being collected reports as *absence*, so no failure
+  count can show it.
+
+Plus a floor on executed tests as a backstop. The gate can only ever *add* a
+failure — vitest's own exit code is passed straight through otherwise.
+
+Three things to know before you run it with arguments:
+
+- **A narrowed run skips both checks but not the zero check.** A file argument,
+  `-t`, `--shard`, `--changed`, `--exclude`, `--dir`, `--root` and `--config` all
+  count as narrowing, because each legitimately changes what gets collected.
+- **`--outputFile` is refused** (exit 2), in every spelling that would collide with
+  the report the gate reads. Run `pnpm exec vitest run --project component` directly
+  if you want your own report.
+- Flag values are consumed, so `--max-workers 1` is not mistaken for a filename.
 
 Why it exists: a `vi.mock` factory that throws is resolved inside a Playwright
 route handler that does not catch, so the rejection escapes as an

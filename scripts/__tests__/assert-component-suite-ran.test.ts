@@ -4,7 +4,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { conflictingOutputFile, exitCodeForSignal, isNarrowed } from '../test-component-run.mjs';
+import {
+  conflictingOutputFile,
+  exitCodeForSignal,
+  isNarrowed,
+  main,
+} from '../test-component-run.mjs';
 
 /**
  * Tests for the `preview / component-tests` positive control
@@ -96,9 +101,16 @@ function runGate(reportPath: string, ...args: string[]) {
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
-/** Same, but pointed at a caller-supplied tree so the on-disk ledger is armed. */
+/**
+ * Same, but pointed at a caller-supplied tree so the on-disk ledger is armed.
+ *
+ * 🔴 `--repo-root` goes FIRST here on purpose. Picking the report as "the first non-flag
+ * argument" read the DIRECTORY as the report path whenever the flag preceded it — measured:
+ * "EISDIR: illegal operation on a directory" plus the whole abort diagnosis. Every earlier
+ * case passed it last, which is precisely why nothing caught it.
+ */
 function runGateAt(reportPath: string, root: string, ...args: string[]) {
-  const r = spawnSync(process.execPath, [SCRIPT, reportPath, '--repo-root', root, ...args], {
+  const r = spawnSync(process.execPath, [SCRIPT, '--repo-root', root, reportPath, ...args], {
     encoding: 'utf8',
   });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
@@ -333,21 +345,22 @@ describe('isNarrowed', () => {
     expect(isNarrowed(['--max-workers=8', 'src/components/X.browser.test.tsx'])).toBe(true);
   });
 
-  it('a test-name pattern is a filter in both spellings', () => {
-    // 🔴 `-t foo` puts the pattern in the NEXT argv slot, where it does not start with `-`
-    // and would be caught by the positional rule anyway. `-t=foo` and `--testNamePattern=foo`
-    // would NOT be — they start with `-`. Both spellings are pinned so the `=` forms cannot
-    // be dropped from the check without a test going red.
+  it('a test-name pattern is a filter in every spelling', () => {
+    // 🔴 `-t` is now in BOTH sets, and the NARROWING one has to win. It is also a value flag,
+    // so if the narrowing branch were removed the pattern would be CONSUMED as `-t`'s value
+    // rather than seen as a positional — i.e. the old comment here, which said the positional
+    // rule would catch `-t foo` anyway, stopped being true the moment `-t` was listed as
+    // value-taking. These four are the only thing holding it.
     expect(isNarrowed(['-t', 'renders'])).toBe(true);
     expect(isNarrowed(['-t=renders'])).toBe(true);
     expect(isNarrowed(['--testNamePattern', 'renders'])).toBe(true);
     expect(isNarrowed(['--testNamePattern=renders'])).toBe(true);
   });
 
-  it("a value-taking flag's SPACE form does not disable the floor", () => {
+  it("a value-taking flag's SPACE form does not disable the checks", () => {
     // 🔴 The silent one, and it was live: `--max-workers 1` put `1` in a positional slot, so
-    // the run scored "narrowed" and THE FLOOR WAS TURNED OFF with only a one-line note. This
-    // is the shape CONTRIBUTING steers people towards for sizing a run on a shared box.
+    // the run scored "narrowed" and BOTH checks were turned off with only a one-line note.
+    // This is the shape CONTRIBUTING steers people towards for sizing a run on a shared box.
     expect(isNarrowed(['--max-workers', '1'])).toBe(false);
     expect(isNarrowed(['--maxWorkers', '3'])).toBe(false);
     expect(isNarrowed(['--reporter', 'verbose'])).toBe(false);
@@ -359,35 +372,87 @@ describe('isNarrowed', () => {
     expect(isNarrowed(['--max-workers', '1', 'src/components/X.browser.test.tsx'])).toBe(true);
   });
 
+  it('KEBAB and CAMEL spellings of the same flag behave identically', () => {
+    // 🔴 vitest treats them as one flag (cac camelCases every option key before matching), so a
+    // hand-enumerated list has a hole wherever it carries one spelling and not the other — and
+    // it did: `--max-workers`/`--maxWorkers` were both listed, `--test-timeout`/`--testTimeout`
+    // were not, so the kebab form silently disabled both checks. Asserted in PAIRS, because a
+    // list that regains one spelling and not the other still passes a single-spelling check.
+    for (const [kebab, camel] of [
+      ['--test-timeout', '--testTimeout'],
+      ['--hook-timeout', '--hookTimeout'],
+      ['--teardown-timeout', '--teardownTimeout'],
+      ['--max-concurrency', '--maxConcurrency'],
+      ['--min-workers', '--minWorkers'],
+    ]) {
+      expect(isNarrowed([kebab, '2']), kebab).toBe(false);
+      expect(isNarrowed([camel, '2']), camel).toBe(false);
+    }
+  });
+
+  it('flags that SHRINK the file set narrow, or the on-disk ledger false-fails', () => {
+    // 🔴 THE REGRESSION THE FILE LEDGER INTRODUCED. `--exclude`, `--dir` and `--root` take a
+    // value AND genuinely remove files from the run. Scored as full runs, the ledger fails and
+    // names up to 200 files, asserting the include broke or the run died and telling the reader
+    // not to touch the walk — for `pnpm test:component --exclude 'src/tests/**'`, which is a
+    // legitimate invocation. `--config` can replace the project's `include` outright, which is
+    // the assumption the walk is built on.
+    for (const a of [
+      ['--exclude', 'src/tests/**'],
+      ['--exclude=src/tests/**'],
+      ['--dir', 'src/components'],
+      ['--root', '.'],
+      ['-r', '.'],
+      ['--config', 'other.config.mts'],
+      ['-c', 'other.config.mts'],
+    ]) {
+      expect(isNarrowed(a), a.join(' ')).toBe(true);
+    }
+  });
+
   it('--shard and --changed narrow WITHOUT a positional', () => {
     // 🔴 The loud one: `--shard=1/4` executes about a quarter of 2254, i.e. below the floor,
     // so without this the gate fails a healthy sharded run while telling the reader "Do NOT
     // lower the floor to make this green" — misdirection, not just a false red.
+    //
+    // `--related` is deliberately NOT here: it is a vitest SUBCOMMAND (`cli.command("related
+    // [...filters]")`), and this wrapper always spawns `vitest run …`, so it cannot arrive.
+    // An assertion for it pinned behaviour on an input the runner cannot receive.
     expect(isNarrowed(['--shard=1/4'])).toBe(true);
     expect(isNarrowed(['--shard', '1/4'])).toBe(true);
     expect(isNarrowed(['--changed'])).toBe(true);
-    expect(isNarrowed(['--related'])).toBe(true);
   });
 });
 
 describe('conflictingOutputFile', () => {
   it('catches every spelling that would redirect the report', () => {
-    // 🔴 Measured before this existed: an 18/18 GREEN single-file run reported "THE COMPONENT
-    // SUITE COLLECTED NOTHING" and exited 1, because `--outputFile=<p>` clobbered the
+    // 🔴 Measured before this existed: an 18/18 GREEN single-file run reported an abort that
+    // "verified NOTHING" and exited 1, because `--outputFile=<p>` clobbered the
     // `--outputFile.json=` form the wrapper appends. `.github/workflows/lint.yml` runs the
     // SIBLING unit tier with exactly that flag, so this is a copy-paste away.
+    //
+    // 🔴 The KEBAB form is here because vitest accepts it and the first version of this guard
+    // did not catch it — so the test whose name claimed "every spelling" covered four of five.
     expect(conflictingOutputFile(['--outputFile=/tmp/x.json'])).toBe('--outputFile=/tmp/x.json');
     expect(conflictingOutputFile(['--outputFile.json=/tmp/x.json'])).toBe(
       '--outputFile.json=/tmp/x.json'
     );
     expect(conflictingOutputFile(['--outputFile', '/tmp/x.json'])).toBe('--outputFile');
+    expect(conflictingOutputFile(['--output-file=/tmp/x.json'])).toBe('--output-file=/tmp/x.json');
+    expect(conflictingOutputFile(['--output-file', '/tmp/x.json'])).toBe('--output-file');
   });
 
-  it('does not fire on the ordinary flags', () => {
+  it('does not fire on the ordinary flags, or on a NON-json output key', () => {
     expect(conflictingOutputFile([])).toBeNull();
     expect(conflictingOutputFile(['--max-workers=4', '--reporter=verbose'])).toBeNull();
     // Not a prefix match: a different flag that merely starts the same way must pass.
     expect(conflictingOutputFile(['--outputFileSomethingElse=1'])).toBeNull();
+    // 🔴 Object-form output paths are PER REPORTER, so a junit or html path does not touch the
+    // `.json` key this wrapper writes. Refusing them was over-strict — a legitimate invocation
+    // rejected by a guard whose stated reason ("the bare form sets the path for EVERY
+    // reporter") is true only of the bare form.
+    expect(conflictingOutputFile(['--outputFile.junit=/tmp/j.xml'])).toBeNull();
+    expect(conflictingOutputFile(['--outputFile.html=/tmp/h'])).toBeNull();
   });
 });
 
@@ -406,5 +471,94 @@ describe('exitCodeForSignal', () => {
 
   it('falls back to 143 for a name node does not know', () => {
     expect(exitCodeForSignal('SIGNOTAREALSIGNAL')).toBe(143);
+  });
+});
+
+describe('main — the ORDER of effects, which no output can show', () => {
+  /**
+   * 🔴 THESE PIN SEQUENCING, WHICH IS WHY THEY EXIST AT ALL. The two `clearReport()` calls are
+   * byte-identical statements; only their POSITION carries the meaning, so a refactor that
+   * moves the first below the run reopens "a stale report satisfies the next run's ledger" —
+   * the gate silently inert in exactly its own use case — with every other test still green.
+   * Both this and the spawn-failure short-circuit shipped with no coverage.
+   */
+  const ok = { rc: 0, signal: null, spawnFailed: false };
+
+  function harness(vitestResult: Record<string, unknown>, gateResult = ok) {
+    const order: string[] = [];
+    return {
+      order,
+      opts: {
+        argv: [],
+        clear: () => order.push('clear'),
+        runVitest: async () => {
+          order.push('vitest');
+          return vitestResult;
+        },
+        runGate: async () => {
+          order.push('gate');
+          return gateResult;
+        },
+        log: () => undefined,
+      },
+    };
+  }
+
+  it('clears the stale report BEFORE starting the runner', async () => {
+    const h = harness(ok);
+    expect(await main(h.opts)).toBe(0);
+    expect(h.order).toEqual(['clear', 'vitest', 'gate', 'clear']);
+    expect(h.order.indexOf('clear')).toBeLessThan(h.order.indexOf('vitest'));
+  });
+
+  it('a SIGNAL death returns the runner status and never consults the gate', async () => {
+    // Consulting the gate here would read a report that a killed run never wrote and call it
+    // "collected nothing" — relabelling a truncation as an abort, which is a wrong answer
+    // rather than a missing one, and would break the CI task's timeout/oom branches.
+    const h = harness({ rc: 137, signal: 'SIGKILL', spawnFailed: false });
+    expect(await main(h.opts)).toBe(137);
+    expect(h.order).toEqual(['clear', 'vitest']);
+  });
+
+  it('a failed SPAWN returns without consulting the gate', async () => {
+    const h = harness({ rc: 127, signal: null, spawnFailed: true });
+    expect(await main(h.opts)).toBe(127);
+    expect(h.order).toEqual(['clear', 'vitest']);
+  });
+
+  it('a runner that legitimately EXITS 127 is still graded', async () => {
+    // 🔴 Keyed on the spawn flag, not on the number. 127 is an exit code a runner can produce
+    // on its own; treating it as "the binary could not be started" is a second wrong answer,
+    // and it skips the gate on a run that did happen.
+    const h = harness({ rc: 127, signal: null, spawnFailed: false });
+    expect(await main(h.opts)).toBe(127);
+    expect(h.order).toEqual(['clear', 'vitest', 'gate', 'clear']);
+  });
+
+  it('the gate can only ADD a failure — it never turns red into green', async () => {
+    const red = harness({ rc: 1, signal: null, spawnFailed: false }, ok);
+    expect(await main(red.opts)).toBe(1);
+
+    const gateRed = harness(ok, { rc: 1, signal: null, spawnFailed: false });
+    expect(await main(gateRed.opts)).toBe(1);
+  });
+
+  it('a conflicting --outputFile refuses BEFORE anything runs', async () => {
+    const order: string[] = [];
+    const rc = await main({
+      argv: ['--outputFile=/tmp/x.json'],
+      clear: () => order.push('clear'),
+      runVitest: async () => {
+        order.push('vitest');
+        return ok;
+      },
+      runGate: async () => {
+        order.push('gate');
+        return ok;
+      },
+      log: () => undefined,
+    });
+    expect(rc).toBe(2);
+    expect(order).toEqual([]);
   });
 });

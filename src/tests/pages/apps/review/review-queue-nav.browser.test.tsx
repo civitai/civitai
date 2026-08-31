@@ -39,17 +39,20 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
 // orchestrator: no summary, no per-file results, zero tests collected, exit 1. This one
 // file zeroed the entire `preview / component-tests` tier.
 //
-// 🔴 So the rule is EVERY runtime hook the module exports, not "the two we know about".
-// `useFeatureFlagsReady` is the third (`src/providers/FeatureFlagsProvider.tsx:36`) and has
+// 🔴 So the rule is EVERY RUNTIME EXPORT the module has, not "the ones we know about".
+// `useFeatureFlagsReady` is the third hook (`src/providers/FeatureFlagsProvider.tsx:36`), with
 // four live consumers — useChatEnabled, useFeatureNotice, NavTidyNotice,
-// YellowBuzzMigrationNotice. None is in this page's graph TODAY, which is the only reason
-// naming two would still load; the day one enters, the identical whole-run abort returns.
+// YellowBuzzMigrationNotice — and `FeatureFlagsProvider` itself is the fourth export
+// (`:37`, imported today only by `src/pages/_app.tsx`). Neither is in this page's graph TODAY,
+// which is the only reason naming fewer would still load — and "not in this graph today" is
+// precisely the reasoning that put this file in the diff. So name all four.
 // The flag hooks return the SAME flags: the gate must be decided by this fixture, not by
 // which of them a component happens to call.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => state.flags,
   useOptionalFeatureFlags: () => state.flags,
   useFeatureFlagsReady: () => true,
+  FeatureFlagsProvider: ({ children }: { children: unknown }) => children,
 }));
 
 // Stub the modal component (assert whether a selection opened it) but keep the

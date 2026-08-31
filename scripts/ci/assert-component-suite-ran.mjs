@@ -260,9 +260,26 @@ export function verdict(counts, { narrowed = false, onDisk = null } = {}) {
 function main(argv) {
   const args = argv.slice(2);
   const narrowed = args.includes('--narrowed');
-  const reportPath = args.find((a) => !a.startsWith('--'));
+
+  // 🔴 `--repo-root <dir>` CONSUMES ITS VALUE, and this loop is why. Picking the report as
+  // "the first argument that is not a flag" read the DIRECTORY as the report path whenever the
+  // flag came first — measured: `--repo-root /tmp/tree report.json` failed with
+  // "EISDIR: illegal operation on a directory" plus the entire abort diagnosis. The tests
+  // happened to pass it last, so nothing caught it.
+  let reportPath = null;
+  let root = null;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--repo-root') {
+      root = args[i + 1] ?? null;
+      i += 1;
+    } else if (!args[i].startsWith('--') && reportPath === null) {
+      reportPath = args[i];
+    }
+  }
   if (!reportPath) {
-    console.error('usage: assert-component-suite-ran.mjs <vitest-json-report> [--narrowed]');
+    console.error(
+      'usage: assert-component-suite-ran.mjs <vitest-json-report> [--narrowed] [--repo-root <dir>]'
+    );
     return 2;
   }
 
@@ -294,13 +311,9 @@ function main(argv) {
 
   // `--repo-root <dir>` exists so the unit tests can point the on-disk walk at a fixture tree.
   // Default is this script's own repo, which is the only thing a real run should ever grade.
-  const rootFlag = args.indexOf('--repo-root');
-  const root =
-    rootFlag !== -1 && args[rootFlag + 1]
-      ? args[rootFlag + 1]
-      : resolve(fileURLToPath(new URL('../..', import.meta.url)));
+  const repoRoot = root ?? resolve(fileURLToPath(new URL('../..', import.meta.url)));
 
-  const result = verdict(tally(report), { narrowed, onDisk: browserTestFilesOnDisk(root) });
+  const result = verdict(tally(report), { narrowed, onDisk: browserTestFilesOnDisk(repoRoot) });
   for (const line of result.lines) (result.ok ? console.log : console.error)(line);
   return result.code;
 }
