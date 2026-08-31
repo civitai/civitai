@@ -1854,6 +1854,20 @@ export function GenerationForm() {
               )}
             />
 
+            {/* Prime (Wan 3.0) */}
+            <Controller
+              graph={graph}
+              name="usePrime"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Prime"
+                  description="Faster generation for a higher cost. Output quality is unchanged."
+                  checked={value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
+              )}
+            />
+
             {/* Creativity (Krea 2) */}
             <Controller
               graph={graph}
