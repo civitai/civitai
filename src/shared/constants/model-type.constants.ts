@@ -12,10 +12,15 @@ export const modelTypeGroups = [
     group: 'Workflow additives',
     types: [ModelType.Workflows, ModelType.Wildcards, ModelType.Controlnet],
   },
-  { group: 'Other', types: [ModelType.Other] },
 ] as const satisfies readonly { group: string; types: readonly ModelType[] }[];
 
-export const selectableModelTypes = modelTypeGroups.flatMap(({ types }) => types);
+/** Offered after the groups, under no heading — a group of one repeats its own name as a header. */
+export const ungroupedModelTypes = [ModelType.Other] as const satisfies readonly ModelType[];
+
+export const selectableModelTypes = [
+  ...modelTypeGroups.flatMap(({ types }) => types),
+  ...ungroupedModelTypes,
+] as ModelType[];
 
 /**
  * Types no longer offered when picking a type. They stay valid everywhere else: a model already set
@@ -35,7 +40,9 @@ export const retiredModelTypes = [
   ModelType.VisionLanguage,
 ] as const satisfies readonly ModelType[];
 
-type SelectableModelType = (typeof modelTypeGroups)[number]['types'][number];
+type SelectableModelType =
+  | (typeof modelTypeGroups)[number]['types'][number]
+  | (typeof ungroupedModelTypes)[number];
 type UncategorisedModelType = Exclude<
   ModelType,
   SelectableModelType | (typeof retiredModelTypes)[number]
@@ -49,20 +56,22 @@ type UncategorisedModelType = Exclude<
  */
 const _everyModelTypeIsCategorised: [UncategorisedModelType] extends [never]
   ? true
-  : { error: 'Add it to modelTypeGroups or retiredModelTypes'; missing: UncategorisedModelType } =
-  true;
+  : {
+      error: 'Add it to modelTypeGroups, ungroupedModelTypes or retiredModelTypes';
+      missing: UncategorisedModelType;
+    } = true;
 void _everyModelTypeIsCategorised;
 
 const selectableModelTypeSet = new Set<string>(selectableModelTypes);
 
 export const currentlySelectedGroupLabel = 'Currently selected';
 
-type ModelTypeSelectItem = { value: ModelType; label: string; group: string };
+type ModelTypeSelectItem = { value: ModelType; label: string; group?: string };
 
-const toItem = (type: ModelType, group: string): ModelTypeSelectItem => ({
+const toItem = (type: ModelType, group?: string): ModelTypeSelectItem => ({
   value: type,
   label: getDisplayName(type),
-  group,
+  ...(group ? { group } : {}),
 });
 
 /**
@@ -76,9 +85,10 @@ const toItem = (type: ModelType, group: string): ModelTypeSelectItem => ({
 export function getModelTypeSelectData(
   currentType?: ModelType | string | null
 ): ModelTypeSelectItem[] {
-  const offered = modelTypeGroups.flatMap(({ group, types }) =>
-    types.map((type) => toItem(type, group))
-  );
+  const offered = [
+    ...modelTypeGroups.flatMap(({ group, types }) => types.map((type) => toItem(type, group))),
+    ...ungroupedModelTypes.map((type) => toItem(type)),
+  ];
 
   if (!currentType || selectableModelTypeSet.has(currentType)) return offered;
 
@@ -87,21 +97,28 @@ export function getModelTypeSelectData(
 
 type ModelTypeSeed = { id?: number | null; type?: ModelType | string | null } | null | undefined;
 
+/** What a form with nothing to go on starts on. */
+export const defaultModelType = ModelType.Checkpoint;
+
 /**
- * Splits what the form starts on from what the picker has to keep offering.
+ * Splits what the form starts on from what the picker has to keep offering. Both must come from one
+ * call: a value the form holds that the picker will not render is a blank required input over a live
+ * value, which submits.
  *
- * A saved model keeps its type whatever it is, retired or not, and the picker re-offers it. A model
- * being seeded from someone's template or bounty is a NEW model, so it may only start on a type that
- * is still offered: leaving a retired one in place renders a blank required field while the form
- * still holds the retired value, and the submit then creates a model on it.
+ * A saved model keeps its type whatever it is, retired or not, and the picker re-offers it. A
+ * template or bounty seeds a NEW model, so a retired type there falls back to `Other` rather than to
+ * `Checkpoint` — the substitution is invisible either way, and `Other` is the one selectable type
+ * that claims nothing about the model. Filing a pose pack as a fine-tune is the worse silent error.
  */
 export function resolveModelTypeDefaults(model: ModelTypeSeed) {
   const seeded = (model?.type ?? null) as ModelType | null;
   const isSaved = !!model?.id;
-  const seededIsOffered = !!seeded && selectableModelTypeSet.has(seeded);
+
+  if (isSaved && seeded) return { grandfatheredType: seeded, initialType: seeded };
+  if (!seeded) return { grandfatheredType: null, initialType: defaultModelType };
 
   return {
-    grandfatheredType: isSaved ? seeded : null,
-    initialType: isSaved || seededIsOffered ? seeded : null,
+    grandfatheredType: null,
+    initialType: selectableModelTypeSet.has(seeded) ? seeded : ModelType.Other,
   };
 }

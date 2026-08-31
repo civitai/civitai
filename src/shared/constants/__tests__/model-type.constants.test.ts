@@ -8,6 +8,7 @@ import {
   resolveModelTypeDefaults,
   retiredModelTypes,
   selectableModelTypes,
+  ungroupedModelTypes,
 } from '~/shared/constants/model-type.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -104,11 +105,20 @@ describe('model type picker data', () => {
   it('emits flat items carrying a group, the shape SelectWrapper expects', () => {
     // SelectWrapper does the grouping itself; pre-grouped `{ group, items }` renders valueless
     // options.
-    for (const item of getModelTypeSelectData(ModelType.Hypernetwork)) {
-      expect(Object.keys(item).sort()).toStrictEqual(['group', 'label', 'value']);
+    const data = getModelTypeSelectData(ModelType.Hypernetwork);
+
+    for (const item of data) {
+      expect(Object.keys(item).sort()).toStrictEqual(
+        item.group ? ['group', 'label', 'value'] : ['label', 'value']
+      );
       expect(typeof item.value).toBe('string');
       expect(item.label.length).toBeGreaterThan(0);
     }
+
+    // Only the trailing ungrouped types have no heading; a group of one would repeat its own name.
+    expect(data.filter(({ group }) => !group).map(({ value }) => value)).toStrictEqual([
+      ...ungroupedModelTypes,
+    ]);
   });
 
   it('grandfathers a saved model, and offers a template only what is still offered', () => {
@@ -125,8 +135,12 @@ describe('model type picker data', () => {
     // A template seeds `type` with no `id`, so it is a NEW model. Dropping the option alone is not
     // enough: the form would still hold the retired value behind a blank required field, and the
     // submit would create a model on it.
+    // Falling back to Checkpoint would file it as a fine-tune; Other claims nothing.
     const fromTemplate = resolveModelTypeDefaults({ type: ModelType.TextualInversion });
-    expect(fromTemplate).toStrictEqual({ grandfatheredType: null, initialType: null });
+    expect(fromTemplate).toStrictEqual({
+      grandfatheredType: null,
+      initialType: ModelType.Other,
+    });
 
     // A template on a type that is still offered is untouched.
     expect(resolveModelTypeDefaults({ type: ModelType.LORA })).toStrictEqual({
@@ -135,7 +149,7 @@ describe('model type picker data', () => {
     });
     expect(resolveModelTypeDefaults(undefined)).toStrictEqual({
       grandfatheredType: null,
-      initialType: null,
+      initialType: ModelType.Checkpoint,
     });
   });
 
@@ -153,12 +167,11 @@ describe('model type picker data', () => {
     for (const seed of seeds) {
       const { grandfatheredType, initialType } = resolveModelTypeDefaults(seed);
       const offered = getModelTypeSelectData(grandfatheredType).map(({ value }) => value);
-      const startsOn = initialType ?? ModelType.Checkpoint;
 
       expect(
         offered,
-        `${JSON.stringify(seed)} starts on ${startsOn}, absent from its picker`
-      ).toContain(startsOn);
+        `${JSON.stringify(seed)} starts on ${initialType}, absent from its picker`
+      ).toContain(initialType);
     }
   });
 
@@ -170,9 +183,11 @@ describe('model type picker data', () => {
       'utf8'
     );
 
-    expect(source).toMatch(/resolveModelTypeDefaults\(model\)/);
+    expect(source).toMatch(/resolveModelTypeDefaults\(initialModel\)/);
     expect(source).toMatch(/getModelTypeSelectData\(grandfatheredType\)/);
-    expect(source).toMatch(/type: initialType \?\? 'Checkpoint'/);
+    expect(source).toMatch(/type: initialType,/);
+    expect(source).not.toContain('getModelTypeSelectData(type)');
+    expect(source).not.toContain('resolveModelTypeDefaults(model)');
   });
 
   it('labels Checkpoint as Fine-tune', () => {

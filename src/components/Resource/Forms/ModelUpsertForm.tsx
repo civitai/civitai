@@ -21,7 +21,7 @@ import {
 import { IconClockCheck, IconExclamationMark, IconGlobe } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
@@ -149,14 +149,18 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const colorScheme = useComputedColorScheme('dark');
 
   const defaultCategory = result.success ? result.data.category ?? 0 : 0;
-  const { grandfatheredType, initialType } = resolveModelTypeDefaults(model);
+  // One snapshot feeds both: `initialType` reaches the form once through defaultValues, so a
+  // `grandfatheredType` that kept recomputing could drift from it if a caller ever mounted this
+  // form before `model` arrived.
+  const initialModel = useRef(model).current;
+  const { grandfatheredType, initialType } = resolveModelTypeDefaults(initialModel);
   const defaultValues: ModelUpsertSchema = {
     ...model,
     name: model?.name ?? '',
     description: model?.description ?? '',
     tagsOnModels: model?.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
     status: model?.status ?? 'Draft',
-    type: initialType ?? 'Checkpoint',
+    type: initialType,
     checkpointType: model?.checkpointType,
     uploadType: model?.uploadType ?? 'Created',
     poi: model?.poi == null ? '' : model?.poi ? 'true' : 'false',
