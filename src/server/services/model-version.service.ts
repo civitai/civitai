@@ -544,7 +544,16 @@ export const upsertModelVersion = async ({
   // scanned in `upsertModel`, and nothing makes versions different except this replay. Closing it
   // needs a way to tell a user edit from a replay — do not "fix" it by adding `data.name` here,
   // which reintroduces the version that cannot be declined.
-  await throwOnBlockedUserContent([data.description, ...(data.trainedWords ?? [])], {
+  // Description only. `data.name` and `data.trainedWords` are both deliberately absent, for one
+  // reason: `requestReviewHandler` and `declineReviewHandler` select BOTH and replay the stored row
+  // through here with no moderator flag. The link half never exempts moderators and is not behind
+  // the enforcement flag, so scanning either field would let a version that trips a list become
+  // impossible to decline or resubmit — the guard would block the remedy for the abuse it found.
+  //
+  // 🔴 Adding `trainedWords` here looks obviously right and was tried; it is tracked on 868kz1yt1
+  // with the rest. Closing it needs the replay callers to say they are replaying, not a wider
+  // argument list.
+  await throwOnBlockedUserContent(data.description, {
     isModerator,
     surface: 'modelVersion',
   });

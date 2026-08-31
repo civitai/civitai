@@ -266,6 +266,21 @@ function sweptFiles(): string[] {
   return out;
 }
 
+/**
+ * Files CALLING the link-only helper, not merely importing a binding that could reach it.
+ *
+ * 🔴 The distinction only matters because of namespace imports, and it matters in both
+ * directions. `import * as blocklist` binds EVERY export, so a file that namespace-imports and
+ * calls only the shared guard would be accused of falling back to the link-only one — a false
+ * accusation carrying a misleading remedy — while the sweep would be firing on the import form
+ * rather than on the dodge it exists to catch. Asking whether the call happens answers both.
+ */
+function bannedCalls(rel: string): string[] {
+  const source = parse(rel);
+  const names = importedNames(source, BANNED);
+  return [...callsByFunction(source, names).keys()];
+}
+
 describe('no unguarded user-authored text', () => {
   it.each(Object.entries(SURFACES))('%s runs the guard in every writer', (rel, expected) => {
     const source = parse(rel);
@@ -293,7 +308,7 @@ describe('no unguarded user-authored text', () => {
 
   it.each(Object.keys(SURFACES))('%s does not fall back to the link-only check', (rel) => {
     expect(
-      importedNames(parse(rel), BANNED),
+      bannedCalls(rel),
       `${rel} imports ${BANNED}. That check reads one of the two lists, over the raw string only — swapping ${REQUIRED} for it is the revert this guard exists to catch`
     ).toEqual([]);
   });
@@ -305,7 +320,7 @@ describe('no unguarded user-authored text', () => {
    */
   it('nothing outside the stated exceptions still uses the link-only check', () => {
     const offenders = sweptFiles().filter(
-      (rel) => !(rel in LINK_ONLY_ALLOWED) && importedNames(parse(rel), BANNED).length > 0
+      (rel) => !(rel in LINK_ONLY_ALLOWED) && bannedCalls(rel).length > 0
     );
 
     expect(
@@ -320,9 +335,7 @@ describe('no unguarded user-authored text', () => {
    */
   it('every stated exception is still real', () => {
     const stale = Object.keys(LINK_ONLY_ALLOWED).filter(
-      (rel) =>
-        rel !== 'src/server/services/blocklist.service.ts' &&
-        importedNames(parse(rel), BANNED).length === 0
+      (rel) => rel !== 'src/server/services/blocklist.service.ts' && bannedCalls(rel).length === 0
     );
 
     expect(

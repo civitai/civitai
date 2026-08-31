@@ -1177,7 +1177,14 @@ export const upsertCollection = async ({
     ...collectionItem
   } = input;
 
-  await throwOnBlockedUserContent([name, description], { isModerator, surface: 'collection' });
+  // `collectionItem.note` is NOT dead. `upsertCollectionInput` merges `collectionItemSchema`, so
+  // `note` arrives from the client and reaches `items: { create: { ...collectionItem } }` below.
+  // A grep for `note:` in a write position does not find it, because it is spread — this check was
+  // deleted once on that evidence and had to be restored.
+  await throwOnBlockedUserContent([name, description, collectionItem.note], {
+    isModerator,
+    surface: 'collection',
+  });
 
   // `autoTagId` writes tag rows onto every image submitted to the collection, including
   // images the submitter doesn't own (nothing in the save path validates image

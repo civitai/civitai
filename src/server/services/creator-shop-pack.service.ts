@@ -303,8 +303,6 @@ export const updateCreatorShopPack = async ({
   isModerator?: boolean;
   stickersEnabled?: boolean;
 }) => {
-  await throwOnBlockedUserContent([name, description], { isModerator, surface: 'creatorShop' });
-
   const existing = await dbRead.cosmeticShopItem.findUnique({
     where: { id },
     select: {
@@ -321,6 +319,10 @@ export const updateCreatorShopPack = async ({
   if (existing.cosmeticId != null) throw throwBadRequestError('This listing is not a pack');
   if (!isModerator && existing.addedById !== userId)
     throw throwBadRequestError('You can only manage your own shop items');
+
+  // AFTER the ownership check, deliberately. The rejection names the matched entry, so running
+  // it first turns this endpoint into a membership oracle for anyone holding another's id.
+  await throwOnBlockedUserContent([name, description], { isModerator, surface: 'creatorShop' });
   if (existing.status === CosmeticShopItemStatus.Rejected)
     throw throwBadRequestError(REJECTED_IS_FINAL);
   if (existing.status === CosmeticShopItemStatus.Archived)

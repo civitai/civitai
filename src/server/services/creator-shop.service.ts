@@ -483,9 +483,11 @@ export const updateCreatorShopItem = async ({
   pricePerUse,
   rightsAffirmed,
 }: UpdateCreatorShopItemInput & { userId: number; isModerator?: boolean }) => {
-  await throwOnBlockedUserContent([name, description], { isModerator, surface: 'creatorShop' });
-
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+
+  // AFTER the ownership check, deliberately. The rejection names the matched entry, so running it
+  // first turns this endpoint into a membership oracle for anyone holding someone else's id.
+  await throwOnBlockedUserContent([name, description], { isModerator, surface: 'creatorShop' });
   // A pack has no cosmetic of its own; everything below edits one.
   if (existing.cosmeticId == null || existing.cosmetic == null)
     throw throwBadRequestError('Packs are edited through the pack editor');
