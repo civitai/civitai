@@ -7,6 +7,7 @@ import {
   imageCollectionSortOptions,
   modelCollectionSortOptions,
   postCollectionSortOptions,
+  resolveImageCollectionSort,
 } from '~/components/Collections/collection-sort';
 import {
   ArticleSort,
@@ -19,11 +20,8 @@ import {
   PostSortHidden,
 } from '~/server/common/enums';
 
-// `Recently Added` orders on CollectionItem.id, and every service throws a 400 when it
-// arrives without a collectionId. Two things therefore have to stay true together, and
-// each is broken by a different half-finished edit: the general feed menus must not offer
-// it (a `*SortHidden` entry that was never added), and the collection menus must
-// (a `*CollectionSortOptions` list that was never extended).
+// Every service 400s `Recently Added` when it arrives without a collectionId, so the general
+// menus must never offer it and the collection menus must.
 const feeds = [
   {
     name: 'images',
@@ -56,23 +54,46 @@ const feeds = [
 ] as const;
 
 describe('collection sort options', () => {
-  it.each(feeds)('$name withholds Recently Added from the general feed menu', (feed) => {
-    // `SortFilter`'s `sortOptions` is `all` minus `hidden`; assert on that difference
-    // rather than on the map, so dropping the filter there is caught too.
-    const generalMenu = feed.all.filter((x) => !feed.hidden.includes(x as never));
-    expect(generalMenu).not.toContain(feed.recentlyAdded);
+  // SortFilter's `sortOptions` map is module-private, so this asserts the input it
+  // subtracts — a dropped `.filter` there is not covered.
+  it.each(feeds)('$name hides Recently Added from the general feed menu via *SortHidden', (feed) => {
+    expect(feed.hidden).toContain(feed.recentlyAdded);
   });
 
   it.each(feeds)('$name offers Recently Added first inside a collection', (feed) => {
     expect(feed.collectionOptions[0]).toBe(feed.recentlyAdded);
   });
 
-  it.each(feeds)('$name collection menu still offers every general sort', (feed) => {
-    const generalMenu = feed.all.filter((x) => !feed.hidden.includes(x as never));
-    // Images are the exception: that menu was already an explicit two-sort subset
-    // before this sort existed, so it is asserted on its own below.
-    if (feed.name === 'images') return;
-    for (const sort of generalMenu) expect(feed.collectionOptions).toContain(sort);
+  // The image collection menu was a deliberate two-sort subset before this sort existed;
+  // it is asserted exactly, below.
+  it.each(feeds.filter((f) => f.name !== 'images'))(
+    '$name collection menu still offers every general sort',
+    (feed) => {
+      const generalMenu = feed.all.filter((x) => !feed.hidden.includes(x as never));
+      for (const sort of generalMenu) expect(feed.collectionOptions).toContain(sort);
+    }
+  );
+
+  // The one behaviour the feature exists for: a viewer who asks for nothing gets add order.
+  // Only images default to it — models, posts and articles keep Newest.
+  it('defaults an image collection to Recently Added', () => {
+    expect(resolveImageCollectionSort({})).toBe(ImageSort.RecentlyAdded);
+  });
+
+  it('lets the URL override the default, but only with a sort this menu serves', () => {
+    expect(resolveImageCollectionSort({ querySort: ImageSort.Oldest })).toBe(ImageSort.Oldest);
+    // MostReactions is a real ImageSort the collection menu does not offer, so it falls back
+    // rather than reaching a service that would order on a column the CTE never selected.
+    expect(resolveImageCollectionSort({ querySort: ImageSort.MostReactions })).toBe(
+      ImageSort.RecentlyAdded
+    );
+  });
+
+  it('gives a contest collection Random, whatever the URL says', () => {
+    expect(resolveImageCollectionSort({ isContest: true })).toBe(ImageSort.Random);
+    expect(resolveImageCollectionSort({ querySort: ImageSort.Newest, isContest: true })).toBe(
+      ImageSort.Random
+    );
   });
 
   it('keeps the image collection menu to the three sorts it can serve', () => {
@@ -85,9 +106,8 @@ describe('collection sort options', () => {
 });
 
 describe('contest sort pools', () => {
-  // A contest re-rolls its sort every render. Recently Added is deterministic, so a draw
-  // landing on it pins the newest entries to the top — the visibility spread the rotation
-  // exists for is gone for that render, and nothing about the feed looks wrong.
+  // Nothing here filters Recently Added explicitly — it is out of the pools only because
+  // `visible()` drops `*SortHidden`, so removing it from those maps re-admits it silently.
   it.each([
     { name: 'models', pool: contestModelSorts as readonly string[], sort: ModelSort.RecentlyAdded },
     { name: 'posts', pool: contestPostSorts as readonly string[], sort: PostSort.RecentlyAdded },

@@ -350,6 +350,12 @@ export const getModelsRaw = async ({
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
 }) => {
+  // Ahead of every early empty return below, including the Meilisearch no-hits one: the point of
+  // throwing rather than falling back is that the misuse is legible, and an empty page hides it.
+  if (input.sort === ModelSort.RecentlyAdded && !input.collectionId) {
+    throw throwBadRequestError('Recently Added sort requires a collectionId');
+  }
+
   const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(
     input,
     {
@@ -484,10 +490,6 @@ export const getModelsRaw = async ({
   let isPrivate = false;
   const AND: Prisma.Sql[] = [];
   let collectionJoin = Prisma.empty;
-
-  if (sort === ModelSort.RecentlyAdded && !collectionId) {
-    throw throwBadRequestError('Recently Added sort requires a collectionId');
-  }
 
   const userId = sessionUser?.id;
   const isModerator = sessionUser?.isModerator ?? false;
@@ -837,9 +839,10 @@ export const getModelsRaw = async ({
     const { rawAND: collectionItemModelsAND }: { rawAND: Prisma.Sql[] } =
       getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
 
-    // `RecentlyAdded` orders on ci."id", which a semi-join cannot expose. The partial unique
-    // index on ("collectionId", "modelId") means the join cannot multiply rows, so the two
-    // shapes select the same models.
+    // A semi-join cannot expose ci."id" to the ORDER BY. Safe to widen: CollectionItem is unique on
+    // ("collectionId", "modelId"), so the join cannot multiply rows. schema.full.prisma does not
+    // declare it, and the name has drifted — CollectionItem_model_idx in
+    // containers/db/docker-init/02_all_dll.sql, CollectionItem_model on prod.
     if (sort === ModelSort.RecentlyAdded) {
       collectionJoin = Prisma.sql`JOIN "CollectionItem" ci ON ci."modelId" = mm."modelId"
         AND ci."collectionId" = ${collectionId}

@@ -55,6 +55,7 @@ import {
   imageCollectionSortOptions,
   modelCollectionSortOptions,
   postCollectionSortOptions,
+  resolveImageCollectionSort,
   toSortMenuOptions,
 } from '~/components/Collections/collection-sort';
 import { CollectionInvitePrompt } from '~/components/Collections/CollectionCollaborators/CollectionInvitePrompt';
@@ -126,7 +127,7 @@ const ModelCollection = ({
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
     ? getRandom(contestModelSorts)
-    : query.sort ?? ModelSort.RecentlyAdded;
+    : query.sort ?? ModelSort.Newest;
   const currentUser = useCurrentUser();
 
   // For contest collections, we need to keep the filters clean from outside intervention.
@@ -224,11 +225,10 @@ const ImageCollection = ({
 }) => {
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const { replace, query } = useImageQueryParams();
-  const defaultSort =
-    query.sort && imageCollectionSortOptions.includes(query.sort)
-      ? query.sort
-      : ImageSort.RecentlyAdded;
-  const sort = isContestCollection ? ImageSort.Random : defaultSort;
+  const sort = resolveImageCollectionSort({
+    querySort: query.sort,
+    isContest: isContestCollection,
+  });
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImage = useUpdateCollectionCoverImage();
   const currentUser = useCurrentUser();
@@ -384,7 +384,7 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
     ? getRandom(contestPostSorts)
-    : query.sort ?? PostSort.RecentlyAdded;
+    : query.sort ?? PostSort.Newest;
 
   const filters = isContestCollection
     ? {
@@ -438,7 +438,7 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
     ? getRandom(contestArticleSorts)
-    : query.sort ?? ArticleSort.RecentlyAdded;
+    : query.sort ?? ArticleSort.Newest;
 
   // For contest collections, we need to keep the filters clean from outside intervention.
   const filters = isContestCollection

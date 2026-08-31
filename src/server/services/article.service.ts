@@ -269,9 +269,9 @@ export const getArticles = async ({
         userId: sessionUser?.id,
       });
 
-      // `RecentlyAdded` orders on ci."id", which a semi-join cannot expose. The partial unique
-      // index on ("collectionId", "articleId") means the join cannot multiply rows, so the two
-      // shapes select the same articles.
+      // A semi-join cannot expose ci."id" to the ORDER BY. Safe to widen: CollectionItem_article_idx
+      // is unique on ("collectionId", "articleId"), so the join cannot multiply rows.
+      // schema.full.prisma does not declare it — see containers/db/docker-init/02_all_dll.sql.
       if (sort === ArticleSort.RecentlyAdded) {
         collectionJoin = Prisma.sql`JOIN "CollectionItem" ci ON ci."articleId" = a."id"
           AND ci."collectionId" = ${collectionId}

@@ -17,7 +17,6 @@ type Row = {
   id: number;
   publishedAt: Date | null;
   createdAt: Date;
-  /** The post's "CollectionItem".id — set only on the collection feed rows below. */
   collectionItemId?: number;
 };
 
@@ -56,10 +55,8 @@ const publishedFeed: Row[] = [
   { id: 7, publishedAt: d('2025-01-09T10:00:00.000Z'), createdAt: d('2025-01-09T09:00:00.000Z') },
 ];
 
-// Added to the collection in an order unrelated to publication: 501 is the oldest post but
-// the most recently added item, 504 the newest post but the earliest added. Newest and
-// Recently Added therefore produce exactly reversed feeds, so a Recently Added that quietly
-// falls through to the publishedAt branch cannot pass by coincidence.
+// Publication order is deliberately the inverse of add order, so Newest and Recently Added
+// produce exactly reversed feeds and a fall-through to the publishedAt branch cannot pass.
 const collectionFeed: Row[] = [
   {
     id: 501,
@@ -292,12 +289,11 @@ describe('getPostSortClauses', () => {
     );
   });
 
-  it('falls back to publishedAt when the caller did not join the collection', () => {
-    // getPostsInfinite rejects this combination before it reaches here, so the fallback is
-    // a second line rather than the contract — but emitting ci."id" against a FROM that has
-    // no ci would be a 500 rather than a wrong order.
-    expect(getPostSortClauses({ sort: PostSort.RecentlyAdded }).primarySortProp).toBe(
-      'p."publishedAt"'
+  it('throws rather than silently ordering by publishedAt when the collection was not joined', () => {
+    // The silent fallback IS the regression: dropping `collectionJoined = true` in the service
+    // would reorder the feed by publication date with nothing to read. Assert it is loud.
+    expect(() => getPostSortClauses({ sort: PostSort.RecentlyAdded })).toThrow(
+      /requires the caller to join/
     );
   });
 
@@ -311,8 +307,7 @@ describe('getPostSortClauses', () => {
     expect(recentlyAdded.seen).toEqual([501, 502, 503, 504]);
     expect(recentlyAdded.pages).toBeGreaterThan(1);
 
-    // The negative control: same rows, publication order, reversed. Without it a pager that
-    // ignored primarySortProp entirely could still satisfy the assertion above.
+    // Negative control: a pager that ignored primarySortProp would satisfy the assertion above.
     expect(drain({ rows: collectionFeed, sort: PostSort.Newest, limit: 2 }).seen).toEqual([
       504, 503, 502, 501,
     ]);

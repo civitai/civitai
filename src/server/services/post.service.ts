@@ -40,6 +40,7 @@ import {
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
   getCollectionById,
+  getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
@@ -303,6 +304,7 @@ export const getPostsInfinite = async ({
 
   const joins: string[] = [];
   let collectionJoined = false;
+  let collectionJoin = Prisma.empty;
   if (!canSeeUnpublished) {
     if (scheduled && userId) {
       // Surface own scheduled posts alongside the public published feed. Mirrors
@@ -388,14 +390,19 @@ export const getPostsInfinite = async ({
       ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${user?.id})`
       : '';
 
-    // `RecentlyAdded` orders on ci."id", which a semi-join cannot expose. The partial unique
-    // index on ("collectionId", "postId") means the join cannot multiply rows, so the two
-    // shapes select the same posts.
+    // A semi-join cannot expose ci."id" to the ORDER BY. Safe to widen: CollectionItem_post_idx is
+    // unique on ("collectionId", "postId"), so the join cannot multiply rows. schema.full.prisma
+    // does not declare it — it lives in containers/db/docker-init/02_all_dll.sql.
     if (sort === PostSort.RecentlyAdded) {
+      const { rawAND: collectionItemAND } = getAvailableCollectionItemsFilterForUser({
+        permissions,
+        userId: user?.id,
+      });
       collectionJoined = true;
-      joins.push(
-        `JOIN "CollectionItem" ci ON ci."postId" = p.id AND ci."collectionId" = ${collectionId} AND (ci."status" = 'ACCEPTED' ${displayReviewItems})`
-      );
+      collectionJoin = Prisma.sql`JOIN "CollectionItem" ci
+        ON ci."postId" = p.id
+        AND ci."collectionId" = ${collectionId}
+        AND ${Prisma.join(collectionItemAND, ' AND ')}`;
     } else {
       AND.push(Prisma.sql`EXISTS (
         SELECT 1 FROM "CollectionItem" ci
@@ -417,14 +424,21 @@ export const getPostsInfinite = async ({
   }
 
   // sorting - always include id as tiebreaker for stable pagination
-  const { orderBy, primarySortProp, isDateSort, ascending, filter } = getPostSortClauses({
-    sort,
-    draftOnly,
-    collectionJoined,
-  });
+  const { orderBy, primarySortProp, isDateSort, ascending, filter, singleColumnCursor } =
+    getPostSortClauses({
+      sort,
+      draftOnly,
+      collectionJoined,
+    });
   if (filter) AND.push(filter);
 
-  const cursorClause = buildPostCursorClause({ cursor, primarySortProp, isDateSort, ascending });
+  const cursorClause = buildPostCursorClause({
+    cursor,
+    primarySortProp,
+    isDateSort,
+    ascending,
+    singleColumnCursor,
+  });
   if (cursorClause) AND.push(cursorClause);
 
   const postsRawQuery = Prisma.sql`
@@ -440,6 +454,7 @@ export const getPostsInfinite = async ({
       ${Prisma.raw(primarySortProp)} "cursorId"
     FROM "Post" p
     ${Prisma.raw(joins.join('\n'))}
+    ${collectionJoin}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit + 1}`;
@@ -473,7 +488,7 @@ export const getPostsInfinite = async ({
   let nextCursor: string | undefined;
   if (postsRaw.length > limit) {
     const nextItem = postsRaw.pop();
-    if (nextItem) nextCursor = encodePostCursor(nextItem);
+    if (nextItem) nextCursor = encodePostCursor(nextItem, singleColumnCursor);
   }
 
   // Filter to published model versions:

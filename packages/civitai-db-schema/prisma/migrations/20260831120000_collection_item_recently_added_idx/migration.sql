@@ -1,29 +1,24 @@
--- Serves the collection feeds' new "Recently Added" sort, which orders on the
--- CollectionItem row's own id:
---   WHERE "collectionId" = $1 AND <status/entity filters> ORDER BY id DESC LIMIT $2
+-- Serves the collection feeds' "Recently Added" sort, which orders on the CollectionItem
+-- row's own id rather than the entity's. No existing index can produce that order: the
+-- closest, CollectionItem_image_idx ("collectionId", "imageId"), is why the pre-existing
+-- Newest sort on images is cheap — imageId order IS id order there — and it says nothing
+-- about the order items were added in.
 --
--- No existing index can produce that order. The closest, CollectionItem_image_idx
--- ("collectionId", "imageId"), is why the pre-existing Newest sort is cheap — it
--- yields imageId order, which for images IS id order. Ordering on the item id
--- instead makes the planner read every row of the collection and sort: measured on
--- the prod replica against the largest image collection (163,624 items), 246ms
--- versus 19ms for the same page under Newest.
+-- Not partial on an entity column, unlike the four ("collectionId", <entity>Id) uniques
+-- beside it. Collection.tsx dispatches a collection to exactly one feed by Collection.type,
+-- so within a single collectionId the entity filter drops nothing in practice, and one
+-- index serves images, models, posts and articles instead of four over the same table.
 --
--- What this index buys, measured on a 44,367-item collection with an equivalent
--- index scoped to that one collectionId: 42.2ms -> 1.8ms, and the Sort node
--- disappears. The point is the shape rather than the ratio — the scan reads 102
--- rows and stops at the LIMIT instead of reading all 44,367, so the page cost stops
--- scaling with the size of the collection.
+-- Cost of the full feed query without it, prod replica, most-viewed image collection
+-- (~16.5k items): 448ms warm, 1.4s cold, against 2-3ms for Newest. On a collection whose
+-- newest item is far behind the table's max id the planner switches to a backward scan of
+-- CollectionItem_pkey and the cost is unbounded — one 191k-item model collection did not
+-- return in 45s.
 --
--- Not partial on an entity column, unlike the four ("collectionId", <entity>Id)
--- uniques beside it. A collection holds one entity type (Collection.type), so
--- within a single collectionId the entity filter drops nothing and the ordered
--- scan still stops at the window — one index serves images, models, posts and
--- articles rather than four partial ones over the same 204M rows.
---
--- CONCURRENTLY, because the table is 15 GB / ~204M rows and this index adds ~6 GB
--- to the 82 GB already on it. Run it OUTSIDE a transaction: psql's -c with two
--- statements opens one implicitly and the server refuses. A cancelled CONCURRENTLY
--- build leaves an INVALID index that must be dropped before retrying.
+-- CONCURRENTLY, because the table is 15 GB / ~204M rows. Run it OUTSIDE a transaction:
+-- psql's -c with two statements opens one implicitly and the server refuses. A cancelled
+-- CONCURRENTLY build leaves an INVALID index; IF NOT EXISTS will then skip creation and
+-- exit 0 with the invalid index still in place, so check indisvalid before trusting a
+-- successful re-run.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "CollectionItem_collectionId_id_idx"
   ON "CollectionItem" ("collectionId", id DESC);

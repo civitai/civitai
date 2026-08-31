@@ -7,6 +7,13 @@ export type PostSortClauses = {
   isDateSort: boolean;
   ascending: boolean;
   filter?: Prisma.Sql;
+  /**
+   * Emit `prop < cursor` instead of the `(prop, p.id) <= (…)` row comparison. A row comparison
+   * spanning two tables cannot be pushed into an Index Cond on either, so every page after the
+   * first re-scans the whole collection; a single-column predicate lands on the `ci` scan.
+   * Only legal when the prop is already unique per row.
+   */
+  singleColumnCursor?: boolean;
 };
 
 /**
@@ -26,12 +33,21 @@ export const getPostSortClauses = ({
   /** Whether the caller joined "CollectionItem" as `ci`, which `RecentlyAdded` orders on. */
   collectionJoined?: boolean;
 }): PostSortClauses => {
-  if (sort === PostSort.RecentlyAdded && collectionJoined) {
+  if (sort === PostSort.RecentlyAdded) {
+    // Unreachable from getPostsInfinite, which 400s the sort without a collectionId before it
+    // gets here. Throwing rather than falling through to publishedAt because that fallback is
+    // exactly what a dropped `collectionJoined` would produce: a silently wrong order.
+    if (!collectionJoined)
+      throw new Error('PostSort.RecentlyAdded requires the caller to join "CollectionItem" as ci');
+
+    // The join is through a unique ("collectionId", "postId") index, so ci."id" is already
+    // total over the feed and needs no p.id tiebreaker in the ORDER BY or the cursor.
     return {
       orderBy: 'ci."id" DESC',
       primarySortProp: 'ci."id"',
       isDateSort: false,
       ascending: false,
+      singleColumnCursor: true,
     };
   }
 
@@ -97,11 +113,13 @@ export const buildPostCursorClause = ({
   primarySortProp,
   isDateSort,
   ascending,
+  singleColumnCursor,
 }: {
   cursor?: string | number;
   primarySortProp: string;
   isDateSort: boolean;
   ascending: boolean;
+  singleColumnCursor?: boolean;
 }): Prisma.Sql | undefined => {
   if (!cursor) return undefined;
 
@@ -119,6 +137,13 @@ export const buildPostCursorClause = ({
 
   const sortProp = Prisma.raw(primarySortProp);
 
+  // Non-strict, to match the row-comparison branch: the caller sets nextCursor from the popped
+  // lookahead row, so that row must be re-served as the first row of the next page.
+  if (singleColumnCursor)
+    return ascending
+      ? Prisma.sql`${sortProp} >= ${primaryValue}`
+      : Prisma.sql`${sortProp} <= ${primaryValue}`;
+
   if (cursorId !== null) {
     // Row-comparison form lets postgres push the predicate into Index Cond on a
     // (primarySortProp, id) index. Equivalent to
@@ -133,9 +158,12 @@ export const buildPostCursorClause = ({
     : Prisma.sql`${sortProp} < ${primaryValue}`;
 };
 
-export const encodePostCursor = (row: { id: number; cursorId: Date | number | null }) => {
+export const encodePostCursor = (
+  row: { id: number; cursorId: Date | number | null },
+  singleColumnCursor?: boolean
+) => {
   if (row.cursorId === null || row.cursorId === undefined) return undefined;
   const cursorValue =
     row.cursorId instanceof Date ? row.cursorId.toISOString() : String(row.cursorId);
-  return `${cursorValue}|${row.id}`;
+  return singleColumnCursor ? cursorValue : `${cursorValue}|${row.id}`;
 };
