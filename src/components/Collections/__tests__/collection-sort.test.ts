@@ -56,9 +56,12 @@ const feeds = [
 describe('collection sort options', () => {
   // SortFilter's `sortOptions` map is module-private, so this asserts the input it
   // subtracts — a dropped `.filter` there is not covered.
-  it.each(feeds)('$name hides Recently Added from the general feed menu via *SortHidden', (feed) => {
-    expect(feed.hidden).toContain(feed.recentlyAdded);
-  });
+  it.each(feeds)(
+    '$name hides Recently Added from the general feed menu via *SortHidden',
+    (feed) => {
+      expect(feed.hidden).toContain(feed.recentlyAdded);
+    }
+  );
 
   it.each(feeds)('$name offers Recently Added first inside a collection', (feed) => {
     expect(feed.collectionOptions[0]).toBe(feed.recentlyAdded);

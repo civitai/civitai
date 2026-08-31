@@ -302,7 +302,6 @@ export const getPostsInfinite = async ({
 
   const canSeeUnpublished = canSeePostDrafts({ isOwnerRequest, isModerator, targetUser });
 
-  const joins: string[] = [];
   let collectionJoined = false;
   let collectionJoin = Prisma.empty;
   if (!canSeeUnpublished) {
@@ -423,7 +422,8 @@ export const getPostsInfinite = async ({
     AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.raw(`${excluded.join(',')}`)})`);
   }
 
-  // sorting - always include id as tiebreaker for stable pagination
+  // Every sort carries a p.id tiebreaker except Recently Added, whose ci."id" is already unique
+  // per row through the ("collectionId", "postId") join.
   const { orderBy, primarySortProp, isDateSort, ascending, filter, singleColumnCursor } =
     getPostSortClauses({
       sort,
@@ -453,7 +453,6 @@ export const getPostsInfinite = async ({
       ${include?.includes('detail') ? Prisma.sql`p."detail",` : Prisma.sql``}
       ${Prisma.raw(primarySortProp)} "cursorId"
     FROM "Post" p
-    ${Prisma.raw(joins.join('\n'))}
     ${collectionJoin}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
