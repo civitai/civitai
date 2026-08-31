@@ -131,8 +131,13 @@ describe('toggleThreadMute', () => {
 
     await toggleThreadMute({ commentId: 5, userId: 1 });
 
-    const sql = db.$queryRaw.mock.calls.map(([s]: [TemplateStringsArray]) => s.join('?')).join(' ');
-    expect(sql).toContain('RECURSIVE chain');
+    // Destructuring only the strings array drops every interpolated value, so a swap to
+    // `throwIfThreadChainLocked(commentId)` would walk an unrelated chain and still pass. The tag
+    // records values in the same call, so assert on the whole call.
+    const [call] = db.$queryRaw.mock.calls;
+    expect(call[0].join('?')).toContain('RECURSIVE chain');
+    expect(call).toContain(10);
+    expect(call).not.toContain(5);
   });
 
   it('refuses to create a reply thread inside a locked chain', async () => {
