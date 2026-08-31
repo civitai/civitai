@@ -488,16 +488,23 @@ export function scannableTextForms(content: string) {
 async function throwOnBlockedText(
   values: Array<string | null | undefined>,
   {
-    isModerator,
+    exemptFromLinks,
+    exemptFromPatterns,
     onLinkMatch,
     onPatternMatch,
   }: {
-    isModerator: boolean;
+    exemptFromLinks: boolean;
+    exemptFromPatterns: boolean;
     onLinkMatch: (matched: string[]) => void;
     onPatternMatch: (matched: string) => Promise<void> | void;
   }
 ) {
-  if (isModerator) return;
+  // 🔴 TWO exemptions, not one. A single `isModerator` short-circuit over both lists is wrong on
+  // the non-comment surfaces: the link-domain check there had NO exemption before this guard
+  // existed, so exempting moderators from it would silently switch off a control that is live in
+  // production. Comments are the case that exempts both, and that asymmetry is why these are two
+  // flags rather than one.
+  if (exemptFromLinks && exemptFromPatterns) return;
 
   const present = values.filter((value): value is string => !!value);
   if (!present.length) return;
@@ -516,7 +523,7 @@ async function throwOnBlockedText(
     // `onPatternMatch` is allowed NOT to throw. Interleaved, a caller in record-only mode would
     // leave the remaining forms of this value unscanned for LINK hits, which do still throw —
     // the weaker half would silently shorten the stronger one.
-    for (const form of forms) {
+    for (const form of exemptFromLinks ? [] : forms) {
       const blockedFor = findBlockedLinkDomains(form, matchableDomains);
       if (blockedFor.length) {
         onLinkMatch(blockedFor);
@@ -527,7 +534,7 @@ async function throwOnBlockedText(
       }
     }
 
-    for (const form of forms) {
+    for (const form of exemptFromPatterns ? [] : forms) {
       const matched = findBlockedPattern(form, matchable);
       if (matched !== undefined) {
         await onPatternMatch(matched);
@@ -557,7 +564,8 @@ export async function throwOnBlockedCommentContent(
   { isModerator = false }: { isModerator?: boolean } = {}
 ) {
   await throwOnBlockedText([content], {
-    isModerator,
+    exemptFromLinks: isModerator,
+    exemptFromPatterns: isModerator,
     onLinkMatch: (blockedFor) => throwBadRequestError(`invalid urls: ${blockedFor.join(', ')}`),
     onPatternMatch: () => throwBadRequestError('Comment blocked by content filter'),
   });
@@ -620,35 +628,32 @@ export async function throwOnBlockedUserContent(
   };
 
   await throwOnBlockedText(Array.isArray(content) ? content : [content], {
-    isModerator,
+    exemptFromLinks: false,
+    exemptFromPatterns: isModerator,
     onLinkMatch: (blockedFor) => reject('link', `invalid urls: ${blockedFor.join(', ')}`),
     onPatternMatch: async (matched) => {
-      let enforce = false;
-      try {
-        enforce = await getFliptBoolean(FLIPT_FEATURE_FLAGS.USER_CONTENT_PATTERN_ENFORCE);
-      } catch (error) {
-        // Degrade to recording, never to a 500. An unreachable Flipt would otherwise convert a
-        // flag read into a failed publish on a surface whose enforcement has not been turned on
-        // yet — a stricter outcome than the flag's own ON position, reached by accident.
-        logToAxiom({
-          name: 'user-content-pattern-flag-unreadable',
-          type: 'error',
-          message: 'Could not read the enforcement flag; recording the match without blocking',
-          details: { surface, error: error instanceof Error ? error.message : String(error) },
-        }).catch(() => undefined);
-      }
+      // No try/catch: `getBoolean` swallows its own failures and returns `false`, so an
+      // unreachable or uninitialised Flipt already degrades to recording. A catch here would be
+      // unreachable code that reads as a safety net, and the only test able to exercise it would
+      // be asserting that a mock rejects.
+      const enforce = await getFliptBoolean(FLIPT_FEATURE_FLAGS.USER_CONTENT_PATTERN_ENFORCE);
+
+      // Logged on BOTH branches. Recording only the un-enforced hits would delete the telemetry at
+      // the exact moment the flag is flipped, and comparing the rate either side of that flip is
+      // the whole reason the rollout is staged.
+      logToAxiom({
+        name: 'user-content-pattern-match',
+        type: 'info',
+        message: enforce
+          ? 'Blocked pattern found in user content; write rejected'
+          : 'Blocked pattern found in user content; not enforced on this surface yet',
+        details: { surface, matched, enforced: enforce },
+      }).catch(() => undefined);
 
       if (enforce) {
         reject('pattern', 'Content blocked by content filter');
         return;
       }
-
-      logToAxiom({
-        name: 'user-content-pattern-match',
-        type: 'info',
-        message: 'Blocked pattern found in user content; not enforced on this surface yet',
-        details: { surface, matched },
-      }).catch(() => undefined);
     },
   });
 }

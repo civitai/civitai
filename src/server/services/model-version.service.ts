@@ -534,7 +534,12 @@ export const upsertModelVersion = async ({
    */
   licensingSourceCoercedReason?: LicensingSourceRejection;
 }) => {
-  await throwOnBlockedUserContent([data.name, data.description], {
+  // Description only, deliberately NOT `data.name`. `requestReviewHandler` and
+  // `declineReviewHandler` replay the STORED row through this function and pass no moderator flag,
+  // so scanning the name would check text the actor never submitted and cannot edit — a version
+  // whose name trips a list could then never be declined or resubmitted, which is worse than the
+  // name going unscanned. The name is checked where a user actually authors it.
+  await throwOnBlockedUserContent(data.description, {
     isModerator,
     surface: 'modelVersion',
   });

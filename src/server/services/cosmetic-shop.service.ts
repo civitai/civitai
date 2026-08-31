@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -351,7 +351,11 @@ export async function applyCosmeticShopItemContentChange({
 }) {
   // The blocklist can move after a blurb was saved, and this path has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
-  await throwOnBlockedLinkDomain(description);
+  //
+  // The shop copy itself is moderator-authored, but THIS argument is not: it is the body after a
+  // creator's blurb has been spliced into it, which is the whole reason the re-check is here. The
+  // four sibling fan-out adapters run the same guard.
+  await throwOnBlockedUserContent(description, { surface: 'cosmeticShop' });
 
   const updated = await dbWrite.cosmeticShopItem.updateMany({
     where: expectedDescription === undefined ? { id } : { id, description: expectedDescription },

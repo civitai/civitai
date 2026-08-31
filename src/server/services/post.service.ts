@@ -784,6 +784,8 @@ export const createPost = async ({
 }: PostCreateInput & {
   userId: number;
 }): Promise<PostDetailEditable> => {
+  await throwOnBlockedUserContent([data.title, data.detail], { surface: 'post' });
+
   const tagsToAdd: number[] = [];
   if (tags && tags.length > 0) {
     const tagObj = await findOrCreateTagsByName(tags);

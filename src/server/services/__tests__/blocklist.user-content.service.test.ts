@@ -118,21 +118,31 @@ describe('throwOnBlockedUserContent', () => {
       const error = await rejection(`<p>${PHISH}</p>`);
       expect(error).toBeInstanceOf(TRPCError);
       expect((error as TRPCError).message).toBe('Content blocked by content filter');
-      expect(patternLogs()).toHaveLength(0);
     });
 
     /**
-     * An unreadable flag must degrade to recording, never to a 500 and never to enforcing. The
-     * second is the surprising direction: reaching a STRICTER outcome than the flag's own ON
-     * position, by accident, on a surface nobody has turned enforcement on for.
+     * Telemetry survives the flip. Logging only the un-enforced hits would delete the signal at
+     * the moment enforcement starts, which is precisely when the before/after comparison the
+     * staged rollout exists to produce becomes readable.
      */
-    it('records rather than throwing when the flag cannot be read', async () => {
-      getFliptBoolean.mockRejectedValue(new Error('flipt unreachable'));
+    it('still records the hit when it enforces', async () => {
+      getFliptBoolean.mockResolvedValue(true);
       setLists({ patterns: [PHISH] });
 
-      await expect(throwOnBlockedUserContent(`<p>${PHISH}</p>`)).resolves.toBeUndefined();
-      expect(patternLogs()).toHaveLength(1);
+      await rejection(`<p>${PHISH}</p>`, { surface: 'model' });
+
+      const logs = patternLogs();
+      expect(logs).toHaveLength(1);
+      expect(logs[0][0].details).toMatchObject({ surface: 'model', enforced: true });
     });
+
+    /**
+     * There is deliberately NO test for "the flag read throws". `getBoolean` swallows its own
+     * failures and returns `false`, so an unreachable Flipt already lands on the recording branch
+     * above. A test using `mockRejectedValue` would assert that the MOCK rejects and nothing
+     * about production — it passed against an unreachable `catch` here until a reviewer read the
+     * client. The measured fact belongs in the code comment, and it is there.
+     */
 
     /**
      * The forms are spellings of one piece of text. Counting each of them would report a
@@ -198,15 +208,31 @@ describe('throwOnBlockedUserContent', () => {
      * Same exemption comments carry, and for the same reason: quoting the text in order to warn
      * people about it is a thing moderators do, on an article as much as in a comment.
      */
-    it('exempts a moderator from both lists', async () => {
+    it('exempts a moderator from the pattern list', async () => {
       getFliptBoolean.mockResolvedValue(true);
-      setLists({ domains: ['blocked.example'], patterns: [PHISH] });
+      setLists({ patterns: [PHISH] });
 
       await expect(
-        throwOnBlockedUserContent(`<p>${PHISH} https://blocked.example/x</p>`, {
-          isModerator: true,
-        })
+        throwOnBlockedUserContent(`<p>${PHISH}</p>`, { isModerator: true })
       ).resolves.toBeUndefined();
+      expect(patternLogs()).toHaveLength(0);
+    });
+
+    /**
+     * 🔴 The paired half, and the one that matters. These surfaces enforced the link list against
+     * EVERYONE before this guard existed — `throwOnBlockedLinkDomain` took no moderator flag at
+     * all. Exempting moderators from it here would switch off a live control while looking like
+     * consistency with the comment path, which exempts both. It nearly shipped that way.
+     *
+     * Set `exemptFromLinks: isModerator` in `throwOnBlockedUserContent` and this fails with a
+     * `null` rejection.
+     */
+    it('does NOT exempt a moderator from the link list', async () => {
+      setLists({ domains: ['blocked.example'] });
+
+      const error = await rejection('<p>https://blocked.example/x</p>', { isModerator: true });
+      expect(error).toBeInstanceOf(TRPCError);
+      expect((error as TRPCError).message).toContain('blocked.example');
     });
 
     /**

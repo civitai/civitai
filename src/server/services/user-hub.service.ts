@@ -1,4 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { decodeHubId, encodeHubId } from '~/server/utils/hub-id';
 import { Prisma } from '@prisma/client';
 import type {
@@ -270,6 +271,8 @@ export async function upsertUserHub({
 }: UpsertUserHubInput & { userId: number; isModerator?: boolean }) {
   const writable = hubWriterWhere({ userId, isModerator });
   const { id, sources, description, filters, ...data } = input;
+
+  await throwOnBlockedUserContent([data.name, description], { isModerator, surface: 'userHub' });
 
   if (sources) {
     const duplicate = new Set<string>();

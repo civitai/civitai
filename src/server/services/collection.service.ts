@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
@@ -1175,6 +1176,8 @@ export const upsertCollection = async ({
     tags,
     ...collectionItem
   } = input;
+
+  await throwOnBlockedUserContent([name, description], { isModerator, surface: 'collection' });
 
   // `autoTagId` writes tag rows onto every image submitted to the collection, including
   // images the submitter doesn't own (nothing in the save path validates image

@@ -4,7 +4,14 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Every surface that stores user-authored text runs `throwOnBlockedUserContent`.
+ * The surfaces LISTED below still run `throwOnBlockedUserContent`, and nothing reachable falls
+ * back to the weaker check.
+ *
+ * ⚠️ Read that scope literally. This does NOT prove "every surface that stores user text is
+ * guarded", and an earlier version of this docstring claimed exactly that. Both halves key on a
+ * file's IMPORTS, so a writer that calls neither function is invisible here — several were, and
+ * were found by a reviewer reading the router tree rather than by this test. Adding a surface to
+ * `SURFACES` is a human act; this file protects what is already listed, it does not discover.
  *
  * 868kw6t61. Nine surfaces called `throwOnBlockedLinkDomain` and stopped there, so they enforced
  * one of the two blocklists over the raw stored string while comments ran both over several
@@ -32,6 +39,8 @@ const BANNED = 'throwOnBlockedLinkDomain';
  * green, and that second call is the one with no user in the loop to notice.
  */
 const SURFACES: Record<string, number> = {
+  'src/server/services/collection.service.ts': 1,
+  'src/server/services/cosmetic-shop.service.ts': 1,
   'src/server/services/article.service.ts': 3,
   'src/server/services/blurb.service.ts': 2,
   'src/server/services/bounty.service.ts': 3,
@@ -40,8 +49,10 @@ const SURFACES: Record<string, number> = {
   'src/server/services/model.service.ts': 3,
   'src/server/services/model3d-review.service.ts': 1,
   'src/server/services/model3d.service.ts': 1,
-  'src/server/services/post.service.ts': 1,
+  'src/server/services/post.service.ts': 2,
   'src/server/services/resourceReview.service.ts': 1,
+  'src/server/services/user-hub.service.ts': 1,
+  'src/server/services/user-link.service.ts': 2,
   'src/server/services/user-profile.service.ts': 1,
   'src/server/services/apps/shared-content-safety.ts': 1,
 };
@@ -51,10 +62,10 @@ const SURFACES: Record<string, number> = {
  * that the surface does NOT carry ordinary user-authored text, so adding one is a decision.
  */
 const LINK_ONLY_ALLOWED: Record<string, string> = {
+  'src/server/controllers/chat.controller.ts':
+    'chat edit — runs throwOnBlockedMessagePattern on the same string, so both lists apply',
   'src/server/services/chat.service.ts':
     'already runs both lists — it calls throwOnBlockedMessagePattern beside the link check',
-  'src/server/services/cosmetic-shop.service.ts':
-    'moderator-authored shop copy, not user-authored text',
   'src/server/services/blocks/app-moderator-message.service.ts':
     'moderator-authored message to an app developer',
   'src/server/services/blocklist.service.ts': 'defines both functions',
@@ -103,8 +114,16 @@ function countCalls(source: ts.SourceFile, names: string[]) {
   return count;
 }
 
-/** Every service file, so a NEW surface cannot be added holding the weaker check. */
-function allServiceFiles(): string[] {
+/**
+ * Everywhere a writer plausibly lives, so a NEW one cannot be added holding the weaker check.
+ *
+ * Routers and controllers are swept as well as services: `chat.controller.ts` calls the link-only
+ * function directly, so "writers only ever live in services" was never true, and a sweep of the
+ * services directory alone would have reported a clean result while missing it.
+ */
+const SWEPT_DIRS = ['src/server/services', 'src/server/routers', 'src/server/controllers'];
+
+function sweptFiles(): string[] {
   const out: string[] = [];
   const walk = (dir: string) => {
     for (const entry of fs.readdirSync(path.join(REPO_ROOT, dir), { withFileTypes: true })) {
@@ -115,7 +134,7 @@ function allServiceFiles(): string[] {
       } else if (entry.name.endsWith('.ts')) out.push(rel);
     }
   };
-  walk('src/server/services');
+  for (const dir of SWEPT_DIRS) walk(dir);
   return out;
 }
 
@@ -146,8 +165,8 @@ describe('no unguarded user-authored text', () => {
    * month with the weaker check is invisible here, and the guard reports a clean sweep of the
    * files it already knew about — the shape that makes a guard read as coverage it does not have.
    */
-  it('no service outside the stated exceptions still uses the link-only check', () => {
-    const offenders = allServiceFiles().filter(
+  it('nothing outside the stated exceptions still uses the link-only check', () => {
+    const offenders = sweptFiles().filter(
       (rel) => !(rel in LINK_ONLY_ALLOWED) && importedNames(parse(rel), BANNED).length > 0
     );
 
