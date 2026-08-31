@@ -91,8 +91,13 @@ describe('ActiveTagFilter', () => {
  * `All` chip on ImageFeedTagBar; this component stands in only where that chip is absent,
  * and both of those states are pinned in ImageFeedTagBar's own suite, beside the mount
  * guard for the bar itself.
+ *
+ * ⚠️ Named for the three pages it pins, not for the property, because it is NOT a closed
+ * set: `/user/[username]/posts`, `/user/[username]/articles` and `/tools/[slug]` all pass
+ * `?tags=` through to their feed with no control that can clear it. They were out of scope
+ * for 868kuq3jk. Do not read a green run here as "every tag-filtered feed is covered".
  */
-describe('the feeds that filter on ?tags= mount the clear control', () => {
+describe('/posts, /articles and /3d-models mount the clear control', () => {
   it.each([
     ['src/pages/posts/index.tsx'],
     ['src/pages/articles/index.tsx'],
@@ -116,5 +121,10 @@ describe('the feeds that filter on ?tags= mount the clear control', () => {
 
     expect(source).toContain("from '~/components/Tags/ActiveTagFilter'");
     expect(mounted).toHaveLength(1);
+    // `tagIds` became required in the same change that added these mounts, which makes
+    // `tagIds={[]}` a one-token edit that mounts the control and renders it for nobody —
+    // a guard stopping at "it is on the page" passes over exactly that.
+    expect(mounted[0]).toMatch(/tagIds=\{/);
+    expect(mounted[0]).not.toContain('tagIds={[]}');
   });
 });

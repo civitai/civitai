@@ -38,7 +38,7 @@ export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
 
   // `!!` is load-bearing: FeatureAccess is sparse, so an off flag is `undefined` rather
   // than `false`, and react-query reads `enabled: undefined` as enabled.
-  const { data } = trpc.tag.getFeedTagBar.useQuery(undefined, {
+  const { data, isLoading: chipsLoading } = trpc.tag.getFeedTagBar.useQuery(undefined, {
     enabled: !!features.feedTagBar,
   });
   const { items: tags, loadingPreferences } = useApplyHiddenPreferences({
@@ -81,16 +81,25 @@ export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
   // reservation and NO chips in that state — the All chip included.
   const chipsHeld = loadingPreferences || !tags.length;
 
+  // SETTLED and still empty — a failed or empty chip fetch, which is permanent, not the
+  // in-flight state. `chipsHeld` alone would put the control on screen for every viewer's
+  // first paint (`loadingPreferences` is the preferences query's `isLoading`, true on
+  // mount for everyone) and take it away again a moment later.
+  const chipsGone = !chipsLoading && !loadingPreferences && !tags.length;
+
   return (
-    <>
-      <TagChipRow
-        items={tags.map((tag) => ({ id: tag.id, label: tag.name }))}
-        activeId={activeId}
-        onSelect={handleSelect}
-        onClear={handleClear}
-        loading={chipsHeld}
-      />
-      {chipsHeld && <ActiveTagFilter tagIds={tagIds} />}
-    </>
+    <TagChipRow
+      items={tags.map((tag) => ({ id: tag.id, label: tag.name }))}
+      activeId={activeId}
+      onSelect={handleSelect}
+      onClear={handleClear}
+      loading={chipsHeld}
+      // Inside the reservation, so standing in for the chips costs no extra height.
+      // Uninstrumented on purpose: `Feed_TagBar_Click` measures the BAR, and the bar's
+      // fate is being decided on that series (868kv1b9m). Counting a press of a control
+      // that appears only when the bar has no chips would inflate the number the decision
+      // reads.
+      placeholder={chipsGone ? <ActiveTagFilter tagIds={tagIds} /> : null}
+    />
   );
 }
