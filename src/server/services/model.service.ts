@@ -2544,6 +2544,10 @@ export const upsertModel = async (
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
     const prevMeta = beforeUpdate.meta as ModelMeta | null;
 
+    // Versions whose licensing source the type change invalidated, cleared inside the transaction
+    // below and reported outside it.
+    let clearedLicensingSources: { id: number; licensingSourceVersionId: number }[] = [];
+
     const result = await dbWrite.$transaction(
       async (tx) => {
         const updated = await tx.model.update({
@@ -2560,6 +2564,7 @@ export const upsertModel = async (
             status: true,
             meta: true,
             availability: true,
+            type: true,
           },
           where: { id },
           data: {
@@ -2597,6 +2602,56 @@ export const upsertModel = async (
           },
         });
 
+        // A model's type decides which licensing roots its versions may inherit a per-image fee
+        // from, and the type stays editable after the versions exist. The rule is enforced on a
+        // VERSION write (upsertModelVersionHandler coerces a mismatched source to null); nothing
+        // re-checked the versions when the model moved under them. So a version stamped while its
+        // model was a Checkpoint went on charging that checkpoint's fee — to everyone who
+        // generated with it, settled to the CHECKPOINT owner, on a line carrying the derivative's
+        // own name — once the model became a LoRA, and no surface on the site could clear it.
+        // Same rule, same coercion, on the other write that can break it (CU 868kwf2fd).
+        //
+        // In the transaction so the type change and the repair cannot be observed apart: a reader
+        // between them would price generations against a lineage the model no longer supports.
+        if (data.type !== undefined) {
+          const stamped = await tx.modelVersion.findMany({
+            where: { modelId: updated.id, licensingSourceVersionId: { not: null } },
+            select: { id: true, baseModel: true, licensingSourceVersionId: true },
+          });
+          // Narrowed in code as well as in the `where`: a version with no source has nothing to
+          // repair, and treating one as repaired would emit an audit row and a cache bust for a
+          // change that never happened.
+          const stampedWithSource = stamped.filter(
+            (v): v is typeof v & { licensingSourceVersionId: number } =>
+              v.licensingSourceVersionId != null
+          );
+          if (stampedWithSource.length) {
+            const roots = await tx.licensingRoot.findMany({
+              where: {
+                modelVersionId: {
+                  in: uniq(stampedWithSource.map((v) => v.licensingSourceVersionId)),
+                },
+              },
+              select: { modelVersionId: true, baseModel: true, modelType: true },
+            });
+            const rootByVersionId = new Map(roots.map((r) => [r.modelVersionId, r]));
+            clearedLicensingSources = stampedWithSource
+              .filter((v) => {
+                const root = rootByVersionId.get(v.licensingSourceVersionId);
+                return !root || root.baseModel !== v.baseModel || root.modelType !== updated.type;
+              })
+              .map((v) => ({
+                id: v.id,
+                licensingSourceVersionId: v.licensingSourceVersionId,
+              }));
+            if (clearedLicensingSources.length)
+              await tx.modelVersion.updateMany({
+                where: { id: { in: clearedLicensingSources.map((v) => v.id) } },
+                data: { licensingSourceVersionId: null },
+              });
+          }
+        }
+
         if (descriptionSupplied && expansion.evaluated)
           await reconcileBlurbReferences({
             entityType: 'Model',
@@ -2629,6 +2684,48 @@ export const upsertModel = async (
           : undefined,
       });
       tracker.entityChanges(changeRows).catch(() => null);
+    }
+
+    if (clearedLicensingSources.length) {
+      // Attributed to the rule, not to the creator: they changed a type, not a fee. Without
+      // `systemFields` the first rows this trail ever produces for the field are automated repairs
+      // wearing an owner's name.
+      const actorRole = resolveActorRole({
+        actorUserId: userId,
+        ownerId: beforeUpdate.userId,
+        isModerator,
+      });
+      if (tracker)
+        tracker
+          .entityChanges(
+            clearedLicensingSources.flatMap((v) =>
+              diffEntityChanges({
+                entityType: 'ModelVersion',
+                entityId: v.id,
+                ownerId: beforeUpdate.userId,
+                before: { licensingSourceVersionId: v.licensingSourceVersionId },
+                after: { licensingSourceVersionId: null },
+                actorRole,
+                systemFields: { licensingSourceVersionId: 'model-type-changed' },
+              })
+            )
+          )
+          .catch(() => null);
+      logToAxiom({
+        name: 'model-version-licensing-source-cleared',
+        type: 'info',
+        reason: 'model-type-changed',
+        userId,
+        modelId: result.id,
+        modelType: result.type,
+        modelVersionIds: clearedLicensingSources.map((v) => v.id),
+      }).catch(() => null);
+      // The fee is read from caches the direct write above does not reach.
+      await bustMvCache(
+        clearedLicensingSources.map((v) => v.id),
+        result.id,
+        userId
+      ).catch(() => undefined);
     }
 
     const modelMeta = result.meta as ModelMeta | null;
