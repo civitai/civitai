@@ -558,3 +558,93 @@ describe('AppBlockChrome platform-nav closes on window blur (iframe-aware)', () 
     await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
   });
 });
+
+// The ⋮ OVERFLOW menu, same iframe-aware close — and this is the arm that was
+// MISSING. The platform-nav suite above has covered the blur close since the bug
+// was first reported; the ⋮ menu sitting inches away in the same component was a
+// bare uncontrolled `<Menu>` with no `opened`/`onChange` and no blur handling, so
+// clicking into the app left it open on top of the app. Both menus now share
+// `useIframeAwareMenu`, and this suite is what holds the ⋮ half down.
+//
+// 🔴 RED AT BASE: with the uncontrolled `<Menu>`, "Manage apps" is STILL in the
+// document after `window.dispatchEvent(new Event('blur'))`, so the
+// `not.toBeInTheDocument()` assertion below fails. The `data-testid` assertion
+// fails at base too — the trigger carried no testid.
+describe('AppBlockChrome ⋮ overflow menu closes on window blur (iframe-aware)', () => {
+  beforeEach(() => {
+    clearRecentlyOpenedApps();
+  });
+
+  // Distinct from the platform-nav trigger ("Apps menu"): this is the ⋮ one.
+  //
+  // 🔴 DELIBERATELY BY ACCESSIBLE NAME, NOT BY THE NEW TESTID. The testid does
+  // not exist at `origin/main`, so keying the open step on it would make the blur
+  // tests below fail at base with `Cannot find element` — red, but for the wrong
+  // reason, and they would say nothing about the close behaviour. Opening by a
+  // locator that resolves on BOTH trees is what makes the failing assertion at
+  // base the `not.toBeInTheDocument()` one. The testid gets its own test.
+  async function openOverflow() {
+    await page.getByRole('button', { name: 'App menu' }).click();
+    await expect.element(page.getByRole('menuitem', { name: 'Manage apps' })).toBeInTheDocument();
+  }
+
+  test('the ⋮ trigger is addressable by testid, not only by accessible name', async () => {
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-dots-testid" appName="Any App" slotId="app.page" />
+    );
+    // 🔴 AWAIT BEFORE READING. `render` returns before React has committed, so a
+    // synchronous `.element()` throws `Cannot find element` against an empty
+    // container — which is the SAME error a genuinely missing testid produces.
+    // Written that way first, this test was red at base for a reason unrelated to
+    // what it claims. Awaiting the retrying matcher makes the two distinguishable.
+    await expect.element(page.getByTestId('app-block-menu-trigger')).toBeInTheDocument();
+    // Same element the accessible-name query finds — the testid must be ON the
+    // trigger, not on some wrapper that merely contains it.
+    expect(page.getByTestId('app-block-menu-trigger').element()).toBe(
+      page.getByRole('button', { name: 'App menu' }).element()
+    );
+  });
+
+  test('opening works, and a window blur (click into the app iframe) closes the ⋮ menu', async () => {
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-dots-blur" appName="Any App" slotId="app.page" />
+    );
+
+    await openOverflow();
+
+    // Simulate the click landing INSIDE the cross-origin iframe: the parent
+    // window loses focus → `blur`. The controlled menu must close.
+    window.dispatchEvent(new Event('blur'));
+    await expect
+      .element(page.getByRole('menuitem', { name: 'Manage apps' }))
+      .not.toBeInTheDocument();
+
+    // The trigger still opens the menu again after the blur-close (the toggle is
+    // intact — a `useState` that got stuck `true` would fail here, and so would a
+    // fix that closed the menu by unmounting its target).
+    await openOverflow();
+  });
+
+  test('the two menus are independent — blurring closes both, and neither wedges the other', async () => {
+    // Both menus now read the same hook, but each must own its OWN state: a
+    // single shared `opened` flag would make one trigger close the other, and a
+    // module-level flag would leak between mounts. Open the ⋮ menu, close it by
+    // blur, then confirm the platform-nav menu still opens normally.
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-dots-both" appName="Any App" slotId="app.page" />
+    );
+
+    await openOverflow();
+    window.dispatchEvent(new Event('blur'));
+    await expect
+      .element(page.getByRole('menuitem', { name: 'Manage apps' }))
+      .not.toBeInTheDocument();
+
+    await page.getByRole('button', { name: 'Apps menu' }).click();
+    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+    // …and that one still closes on blur too (the pre-existing behaviour is not
+    // regressed by moving it onto the shared hook).
+    window.dispatchEvent(new Event('blur'));
+    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).not.toBeInTheDocument();
+  });
+});
