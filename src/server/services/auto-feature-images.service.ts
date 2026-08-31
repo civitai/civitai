@@ -27,7 +27,12 @@ type SelectArgs = {
   candidates: AutoFeatureCandidate[];
   config: AutoFeatureSchema;
   now: Date;
-  /** Auto-added items already live in the window, keyed by creator / by collection. */
+  /**
+   * Items already live in the window. `creatorCounts` covers EVERY item in the target collection,
+   * manual features included — the cap is about how much of the page one creator holds, not about
+   * which system put them there. `collectionCounts` covers the job's own rows only, because a
+   * manual row has no source collection to attribute.
+   */
   creatorCounts: Map<number, number>;
   collectionCounts: Map<number, number>;
   /** Advances each run so the same collection isn't always served first. */
@@ -49,6 +54,18 @@ export function scoreCandidate(
   return candidate.reactions / decay;
 }
 
+export type AutoFeatureSelection = {
+  picks: AutoFeaturePick[];
+  /**
+   * Why a run came up short. Counted over candidates left unpicked once the run is done, so it
+   * answers "what would still be refused now" rather than "how many times did a loop pass ask" —
+   * the round-robin sweep visits the same candidate repeatedly and attempt counts would inflate.
+   */
+  blocked: { creatorWindow: number; collectionWindow: number };
+  /** Candidates that cleared `minReactions` — the pool the caps were applied to. */
+  scored: number;
+};
+
 /** Rank candidates and take this run's picks. */
 export function selectAutoFeaturePicks({
   candidates,
@@ -57,7 +74,7 @@ export function selectAutoFeaturePicks({
   creatorCounts,
   collectionCounts,
   rotationOffset,
-}: SelectArgs): AutoFeaturePick[] {
+}: SelectArgs): AutoFeatureSelection {
   const scored = candidates
     .filter((c) => c.reactions >= config.minReactions)
     .map((c) => ({ ...c, score: scoreCandidate(c, config, now) }))
@@ -86,12 +103,34 @@ export function selectAutoFeaturePicks({
     perCollection.set(c.collectionId, (perCollection.get(c.collectionId) ?? 0) + 1);
   };
 
+  const finish = (): AutoFeatureSelection => {
+    const pickedIds = new Set(picks.map((p) => p.imageId));
+    const leftOver = scored.filter((c) => !pickedIds.has(c.imageId));
+    return {
+      picks,
+      scored: scored.length,
+      blocked: {
+        creatorWindow: leftOver.filter(
+          (c) => (perCreator.get(c.userId) ?? 0) >= config.maxPerCreatorInWindow
+        ).length,
+        collectionWindow:
+          config.maxPerCollectionInWindow === undefined
+            ? 0
+            : leftOver.filter(
+                (c) =>
+                  (perCollection.get(c.collectionId) ?? 0) >=
+                  (config.maxPerCollectionInWindow as number)
+              ).length,
+      },
+    };
+  };
+
   if (config.strategy === 'global') {
     for (const candidate of scored) {
       if (picks.length >= config.perRun) break;
       if (canTake(candidate)) take(candidate);
     }
-    return picks;
+    return finish();
   }
 
   const byCollection = new Map<number, AutoFeaturePick[]>();
@@ -104,7 +143,7 @@ export function selectAutoFeaturePicks({
   // Collection order is fixed (ascending id) so the rotation offset is the only thing that
   // moves between runs — otherwise Map insertion order would make the rotation meaningless.
   const collectionIds = [...byCollection.keys()].sort((a, b) => a - b);
-  if (collectionIds.length === 0) return picks;
+  if (collectionIds.length === 0) return finish();
 
   const cursors = new Map(collectionIds.map((id) => [id, 0]));
   // Cursors persist across passes and only ever advance, so a sweep that takes nothing means
@@ -128,7 +167,7 @@ export function selectAutoFeaturePicks({
     if (!tookAny) break;
   }
 
-  return picks;
+  return finish();
 }
 
 async function getAutoFeatureConfig() {
@@ -231,10 +270,21 @@ async function fetchCandidates(args: {
 }
 
 /**
- * Counts previous auto-features per creator and per source collection, over the window the caps
- * are measured in. That window is `capWindowDays`, not the candidate-freshness `windowDays` —
- * they used to be the same value, so tuning a cap also changed which images the job considered
- * recent, and therefore what it picked.
+ * Counts previous features per creator and per source collection, over the window the caps are
+ * measured in. That window is `capWindowDays`, not the candidate-freshness `windowDays` — they
+ * used to be the same value, so tuning a cap also changed which images the job considered recent,
+ * and therefore what it picked.
+ *
+ * The two counts deliberately cover different populations:
+ *
+ * - **Per creator: every row in the target collection**, however it got there. This used to be
+ *   filtered to the job's own rows, which meant a creator featured by hand held slots the cap
+ *   could not see — `maxPerCreatorInWindow: 2` permitted 4 in a week in production. The limit is
+ *   about how much of the page one creator holds, and a viewer cannot tell who added an item.
+ * - **Per source collection: the job's own rows only.** A manual row carries no
+ *   `auto-featured:<id>` note, so it has no source collection to attribute. Counting it would
+ *   have to invent one, and `split_part` on a NULL note yields NULL rather than an error — the
+ *   quiet kind of wrong. `source` is therefore NULL for manual rows and the caller skips them.
  */
 export function buildWindowCountsQuery({
   targetCollectionId,
@@ -246,15 +296,39 @@ export function buildWindowCountsQuery({
   autoFeatureUserId: number;
 }) {
   return Prisma.sql`
-    SELECT i."userId", split_part(ci.note, ':', 2) AS source
+    SELECT
+      i."userId",
+      CASE
+        WHEN ci."addedById" = ${autoFeatureUserId}
+         AND ci.note LIKE ${`${AUTO_FEATURE_NOTE_PREFIX}:%`}
+        THEN split_part(ci.note, ':', 2)
+      END AS source
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     WHERE ci."collectionId" = ${targetCollectionId}
-      AND ci."addedById" = ${autoFeatureUserId}
-      AND ci.note LIKE ${`${AUTO_FEATURE_NOTE_PREFIX}:%`}
       AND ci.status <> 'REJECTED'::"CollectionItemStatus"
       AND ci."createdAt" >= now() - ${intervalDays(capWindowDays)}
   `;
+}
+
+/**
+ * Split out from the query so the asymmetry between the two counts is testable: every row counts
+ * toward its creator, and only rows carrying a source collection count toward one.
+ *
+ * `Number(null)` is 0, not NaN, so the finite check alone would file every manual row under
+ * collection 0 and cap a collection that does not exist. The `> 0` is what stops that, and it is
+ * load-bearing rather than defensive.
+ */
+export function aggregateWindowCounts(rows: { userId: number; source: string | null }[]) {
+  const creatorCounts = new Map<number, number>();
+  const collectionCounts = new Map<number, number>();
+  for (const row of rows) {
+    creatorCounts.set(row.userId, (creatorCounts.get(row.userId) ?? 0) + 1);
+    const source = Number(row.source);
+    if (row.source !== null && Number.isFinite(source) && source > 0)
+      collectionCounts.set(source, (collectionCounts.get(source) ?? 0) + 1);
+  }
+  return { creatorCounts, collectionCounts };
 }
 
 async function fetchWindowCounts(args: {
@@ -266,15 +340,7 @@ async function fetchWindowCounts(args: {
     buildWindowCountsQuery(args)
   );
 
-  const creatorCounts = new Map<number, number>();
-  const collectionCounts = new Map<number, number>();
-  for (const row of rows) {
-    creatorCounts.set(row.userId, (creatorCounts.get(row.userId) ?? 0) + 1);
-    const source = Number(row.source);
-    if (Number.isFinite(source) && source > 0)
-      collectionCounts.set(source, (collectionCounts.get(source) ?? 0) + 1);
-  }
-  return { creatorCounts, collectionCounts };
+  return aggregateWindowCounts(rows);
 }
 
 export async function runAutoFeatureImages({
@@ -312,7 +378,7 @@ export async function runAutoFeatureImages({
   // collection: any two consecutive runs land on different offsets.
   const rotationOffset = Math.floor(Date.now() / (config.intervalHours * 3_600_000));
 
-  const picks = selectAutoFeaturePicks({
+  const { picks, blocked, scored } = selectAutoFeaturePicks({
     candidates,
     config,
     now: new Date(),
@@ -327,8 +393,14 @@ export async function runAutoFeatureImages({
     windowDays: config.windowDays,
     capWindowDays: config.capWindowDays,
     candidates: candidates.length,
+    // What the caps were applied to, and what they refused. A short run is legitimate — the caps
+    // doing their job — but it is otherwise indistinguishable from the job not running at all,
+    // which is the shape of a 79-hour outage nobody noticed in August.
+    scored,
     eligibleCollections: eligible.length,
+    target: config.perRun,
     picked: picks.length,
+    blocked,
     picks: picks.map((p) => ({
       imageId: p.imageId,
       userId: p.userId,

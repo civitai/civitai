@@ -22,5 +22,21 @@ export const autoFeatureImages = createJob('auto-feature-images', '20 * * * *', 
   // push the next attempt an interval away.
   if ('picked' in result) await setLastRun();
 
+  // A run that picks nothing writes nothing, and a homepage that stops changing looks exactly the
+  // same as a job that stopped running — which happened for 79 hours in August and was noticed by
+  // nobody. Tightening the caps makes a short run likelier, so say what the caps did. A partial run
+  // is normal and informational; an empty one is the shape that hid an outage.
+  if ('picked' in result && result.picked < result.target)
+    logToAxiom({
+      type: result.picked === 0 ? 'job-produced-nothing' : 'job-partial',
+      name: 'auto-feature-images',
+      target: result.target,
+      picked: result.picked,
+      scored: result.scored,
+      candidates: result.candidates,
+      blockedByCreatorCap: result.blocked.creatorWindow,
+      blockedByCollectionCap: result.blocked.collectionWindow,
+    });
+
   return result;
 });
