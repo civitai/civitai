@@ -42,14 +42,11 @@ export const notBlockedBetween = (recipient: string, actor: string) => `NOT EXIS
  * The second edge is a scalar subquery rather than a `LEFT JOIN` so these statements stay free of one:
  * `comment.bounty-entry-owner.test.ts` refuses any `LEFT JOIN` in them, and that guard predates this.
  *
- * UNREACHABLE ON 8 PROCESSORS TODAY, and that is worth knowing before you read the call sites as
- * coverage. The entity-owner processors pin `t` to the entity ROOT thread (`t."imageId" IS NOT NULL`
- * and its eight siblings), the walk only climbs, and no UI path writes a mute against a root thread —
- * the menu always mutes the thread hanging off a comment. So on those the clause cannot match, and
- * "new comments on your image" is muteable only through the global per-type setting. A control that
- * mutes a whole comment section would make all eight live at once; they carry the filter so that
- * arrives working rather than needing eight edits. `new-3d-model-comment-nested` pins `t."commentId"`
- * instead, so it is the one owner processor a thread mute already reaches.
+ * The 8 entity-owner processors pin `t` to the entity ROOT thread (`t."imageId" IS NOT NULL` and its
+ * siblings) and this only climbs, so a mute set on a conversation under a comment never matches them.
+ * Only `toggleSectionMute` writes against a root thread, and it is what makes those 8 reachable —
+ * before it existed the clause on them could not match anything. `new-3d-model-comment-nested` pins
+ * `t."commentId"` instead, which is why it was reachable from the per-comment control all along.
  *
  * Applied to every processor that can emit for a `CommentV2` EXCEPT `new-mention`. Being named is not
  * "somebody responded in a thread you're in" — Justin's call, 2026-08-27. That exemption is safe
