@@ -6,6 +6,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
+import { ActiveTagFilter } from '~/components/Tags/ActiveTagFilter';
 
 function PostsPage() {
   const { query } = usePostQueryParams();
@@ -19,6 +20,7 @@ function PostsPage() {
       />
       <MasonryContainer>
         <Stack gap="xs">
+          <ActiveTagFilter />
           <IsClient>
             <PostsInfinite filters={query} showEof showAds />
           </IsClient>

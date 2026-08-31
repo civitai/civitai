@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import fs from 'fs';
+import path from 'path';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -71,4 +73,38 @@ describe('ActiveTagFilter', () => {
     expect(target.query).toEqual({ sort: 'Newest', period: 'Week' });
     expect(target.query).not.toHaveProperty('tags');
   });
+});
+
+/**
+ * Every test above renders the component directly, so all of them stay green while it is
+ * mounted nowhere — which is exactly how it shipped in #4141 and sat unused until
+ * 868kuq3jk. These are the only assertions that anything in the app renders it.
+ *
+ * /images and /videos are not in this list: there the escape hatch is the `All` chip on
+ * ImageFeedTagBar, with this component as its flag-off fallback. Both of those are
+ * covered in ImageFeedTagBar's own suite — the mount guard there, and the flag-off
+ * fallback test beside it.
+ */
+describe('the feeds that filter on ?tags= mount the clear control', () => {
+  it.each([['src/pages/posts/index.tsx'], ['src/pages/articles/index.tsx']])(
+    '%s renders <ActiveTagFilter />',
+    (relative) => {
+      const repoRoot = path.resolve(__dirname, '../../../..');
+      const source = fs.readFileSync(path.join(repoRoot, ...relative.split('/')), 'utf-8');
+
+      // Commenting the mount out leaves the string in place, so strip comments first —
+      // block comments because that is what an editor produces over a selection.
+      //
+      // Known limit, same as the ImageFeedTagBar guard: `{someFlag && <ActiveTagFilter/>}`
+      // passes this while rendering for nobody. Scanning source cannot see that.
+      const code = source.replace(/\{\/\*[\s\S]*?\*\/\}/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+      const mounted = code
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.includes('<ActiveTagFilter') && !line.startsWith('//'));
+
+      expect(source).toContain("from '~/components/Tags/ActiveTagFilter'");
+      expect(mounted).toHaveLength(1);
+    }
+  );
 });

@@ -150,7 +150,7 @@ describe('ImageFeedTagBar', () => {
   // Gated so the bar can be switched off without a deploy, after its click-through came
   // in under the floor it shipped on (868kv1b9m). `feedTagBar` fails OPEN, so the case
   // that needs pinning is that OFF actually removes it.
-  it('renders nothing when the feedTagBar flag is off', () => {
+  it('renders nothing when the feedTagBar flag is off and no tag filter is active', () => {
     mocks.feedTagBar = undefined;
     const container = render();
 
@@ -158,6 +158,23 @@ describe('ImageFeedTagBar', () => {
     // The reserved row too, not just the chips: the bar holds height while its tags load,
     // so a gate that only emptied the chip list would still push the feed down by 26px.
     expect(reservedRows(container)).toHaveLength(0);
+  });
+
+  // The flag is a kill switch for the bar, not for the escape hatch. Switching it off
+  // must not put /images and /videos back in the state 868kuq3jk describes, where a
+  // `?tags=` deep link narrows the feed with no UI that can widen it. The test above is
+  // this one's negative control: same flag state, no `tags`, no button.
+  it('falls back to the clear control when the flag is off and ?tags= is set', () => {
+    mocks.feedTagBar = undefined;
+    mocks.query = { tags: ['999999'], sort: 'Newest' };
+    const container = render();
+
+    expect(buttonLabels(container)).toEqual(['Clear 1 tag filter']);
+
+    clickButton(container, 'Clear 1 tag filter');
+
+    expect(mocks.replace).toHaveBeenCalledTimes(1);
+    expect(lastReplacedQuery()).toEqual({ sort: 'Newest' });
   });
 
   it('does not request the chip list when the flag is off, and does when it is on', () => {

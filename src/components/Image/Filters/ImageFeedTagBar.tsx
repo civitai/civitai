@@ -2,6 +2,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import type { TagChipRowItem } from '~/components/Tags/TagChipRow';
 import { TagChipRow } from '~/components/Tags/TagChipRow';
+import { ActiveTagFilter } from '~/components/Tags/ActiveTagFilter';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
@@ -15,10 +16,13 @@ type FeedTagBarFeed = 'images' | 'videos';
  * is an AND across tags, which lands on an empty feed for most pairs here, and it was
  * undiscoverable anyway.
  *
- * The `All` chip is not decoration — it is the only UI on these feeds that can widen a
- * `?tags=` deep link back out (`ActiveTagFilter`, written for that job, is mounted
- * nowhere; ClickUp 868kuq3jk). It clears whatever is in `?tags=`, including ids that are
- * not chips on this bar.
+ * The `All` chip is not decoration — it is what widens a `?tags=` deep link back out on
+ * these feeds. It clears whatever is in `?tags=`, including ids that are not chips on
+ * this bar.
+ *
+ * `feedTagBar` is a kill switch for a bar that may yet be removed, so the off branch
+ * falls back to `ActiveTagFilter` rather than rendering nothing: turning the bar off must
+ * not take the only escape hatch from a `?tags=` deep link with it (ClickUp 868kuq3jk).
  */
 export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
   const { trackAction } = useTrackEvent();
@@ -68,7 +72,7 @@ export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
     replace({ tags: [] });
   };
 
-  if (!features.feedTagBar) return null;
+  if (!features.feedTagBar) return <ActiveTagFilter />;
 
   return (
     <TagChipRow
