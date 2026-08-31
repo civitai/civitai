@@ -175,7 +175,7 @@ export const contentGenerationTour: StepWithData[] = [
   {
     target: GEN_SUBMIT_TARGET,
     title: 'Create Your Image',
-    content: `Once your prompt is ready to go, hit the generate button and AI will start doing it's magic!`,
+    content: `Once your prompt is ready to go, hit the generate button and AI will start doing its magic!`,
     placement: 'top',
     hideFooter: true,
     disableOverlayClose: true,

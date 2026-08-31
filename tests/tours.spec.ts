@@ -142,8 +142,16 @@ test.describe('guided tours', () => {
     // Step 2 spotlights the carousel's remix button and is `hideFooter`, so the
     // tooltip must still be up and the button clickable rather than the tour having
     // silently advanced past a target that never rendered.
+    //
+    // Deliberately NOT skipped when the button is absent: that is the exact regression
+    // this asserts, so a skip would go green on it. The message separates the other
+    // reason it can fail — a fixture model whose carousel has no remixable image.
     await expect(tooltip).toBeVisible();
-    await expect(page.locator('[data-tour="model:remix"]')).toBeVisible();
+    await expect(
+      page.locator('[data-tour="model:remix"]'),
+      `model ${MODEL_ID} rendered no carousel remix button — either the tour regressed, or ` +
+        'this fixture has no remixable carousel image (set E2E_TOUR_MODEL_ID to one that does)'
+    ).toBeVisible();
   });
 
   test('the model page help button restarts the welcome tour, not the model-page one', async ({
