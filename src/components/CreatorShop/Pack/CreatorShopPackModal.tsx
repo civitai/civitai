@@ -21,6 +21,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconAlertTriangle, IconPlus, IconX } from '@tabler/icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { PackCoverField } from '~/components/CreatorShop/Pack/PackCoverField';
@@ -30,6 +31,7 @@ import {
   FEE_UNAVAILABLE_MESSAGE,
   useCreatorShopFees,
 } from '~/components/CreatorShop/useCreatorShopFees';
+import { FeeSection } from '~/components/CreatorShop/Submit/FeeSection';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
 import {
@@ -71,6 +73,9 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
     item?.availableQuantity ?? undefined
   );
   const [acceptsBlueBuzz, setAcceptsBlueBuzz] = useState(false);
+  // Which account pays the submission fee — not `acceptsBlueBuzz` above, which
+  // is what buyers may pay this pack with.
+  const [buzzType, setBuzzType] = useState<'yellow' | 'green' | 'blue'>('yellow');
   const [rightsAffirmed, setRightsAffirmed] = useState(false);
   const [selected, setSelected] = useState<Bundlable[]>([]);
   const [search, setSearch] = useState('');
@@ -146,6 +151,24 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
   const tooMany = selected.length > PACK_MAX_MEMBERS;
   const priceTooLow = (price ?? 0) < floor;
   const packFee = useCreatorShopFees()?.pack;
+  const { data: buzz, isLoading: loadingBuzz } = useQueryBuzz(['yellow', 'green', 'blue']);
+  const yellowBalance = buzz.accounts.find((a) => a.type === 'yellow')?.balance ?? 0;
+  const greenBalance = buzz.accounts.find((a) => a.type === 'green')?.balance ?? 0;
+  const blueBalance = buzz.accounts.find((a) => a.type === 'blue')?.balance ?? 0;
+  const feeAccountBalance =
+    buzzType === 'yellow' ? yellowBalance : buzzType === 'green' ? greenBalance : blueBalance;
+  // A KNOWN shortfall only. Both the fee and the balances read as zero until they
+  // resolve, and "your balance doesn't cover the fee" said before either is known
+  // is a false claim about the creator's money — and a permanent one if the fee
+  // read fails.
+  //
+  // 🔴 Deliberately NOT a term in `canSubmit`. Disabling the button on a shortfall
+  // takes the top-up path away with it: `BuzzTransactionButton` answers a short
+  // balance by opening the purchase modal and submitting on success, and a
+  // disabled button never reaches its own onClick. The warning informs; the
+  // button still works.
+  const feeShortfall =
+    !isEdit && !loadingBuzz && packFee !== undefined && feeAccountBalance < packFee;
   const canSubmit =
     !!name.trim() &&
     (isEdit || packFee !== undefined) &&
@@ -200,7 +223,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
         memberCosmeticIds,
         price,
         availableQuantity: quantity ?? null,
-        buzzType: 'yellow',
+        buzzType,
         acceptsBlueBuzz,
         ...(imageId ? { imageUrl: imageId } : {}),
         // Only claimed when artwork was actually supplied.
@@ -391,6 +414,19 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
           />
         )}
 
+        {!isEdit && (
+          <FeeSection
+            buzzType={buzzType}
+            onBuzzTypeChange={setBuzzType}
+            yellowBalance={yellowBalance}
+            greenBalance={greenBalance}
+            blueBalance={blueBalance}
+            feeAccountBalance={feeAccountBalance}
+            canAffordFee={!feeShortfall}
+            submissionFee={packFee}
+          />
+        )}
+
         <Group justify="flex-end">
           <Button variant="default" onClick={dialog.onClose}>
             Cancel
@@ -400,11 +436,16 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
               Save pack
             </Button>
           ) : (
+            // `exactAccountTypes`, not `accountTypes`: that one appends the domain
+            // currency, so a blue pick would clear its balance check on yellow and
+            // then fail the charge, which bills `buzzType` alone.
             <BuzzTransactionButton
               disabled={!canSubmit}
               loading={submitPack.isPending}
               buzzAmount={packFee ?? 0}
               priceReplacement={packFee === undefined ? '…' : undefined}
+              exactAccountTypes={[buzzType]}
+              colorType={buzzType}
               label="Submit pack"
               onPerformTransaction={handleSubmit}
             />
