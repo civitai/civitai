@@ -50,74 +50,27 @@ const args = process.argv.slice(2);
 export function canonicalFlag(arg) {
   if (!arg.startsWith('-')) return null;
   const stripped = arg.replace(/^--?/, '').split('=')[0];
-  return stripped
-    .split('.')
-    .map((seg) => seg.replace(/-+([a-zA-Z0-9])/g, (_, c) => c.toUpperCase()))
-    .join('.');
+  // 🔴 FIRST SEGMENT ONLY, matching cac's own `camelcaseOptionName`, which is
+  // `name.split(".").map((v, i) => (i === 0 ? camelcase(v) : v)).join(".")` — segments after
+  // the first are left VERBATIM. Camel-casing all of them would make this accept a spelling
+  // vitest does not (`--coverage.reports-directory`), so the wrapper and vitest would disagree
+  // about what the next token is.
+  const [head, ...rest] = stripped.split('.');
+  return [head.replace(/-+([a-zA-Z0-9])/g, (_, c) => c.toUpperCase()), ...rest].join('.');
 }
 
 /**
- * Vitest flags that take their value as the NEXT argv entry, by canonical name.
- *
- * 🔴 THIS LIST IS WHAT KEEPS `isNarrowed` FROM READING A FLAG'S VALUE AS A FILENAME. Without
- * it, `--max-workers 1` — the space form, which is the one CONTRIBUTING and `vitest.config.mts`
- * steer people towards when sizing a run on a shared box — makes `1` look like a positional
- * filter, so the run is scored "narrowed" and both checks are SILENTLY TURNED OFF. Measured
- * against the real function; `--reporter`, `--retry`, `--bail`, `--project` and `--pool` all
- * did it too.
- *
- * A value-taking flag that is NOT listed degrades to "narrowed", which now disables the on-disk
- * ledger as well as the floor — i.e. it is quiet, not loud, and quiet is the direction this
- * whole change exists to eliminate. Add to this list rather than relying on that.
- */
-const VALUE_FLAGS = new Set([
-  't',
-  'testNamePattern',
-  'c',
-  'config',
-  'r',
-  'root',
-  'dir',
-  'reporter',
-  'outputFile',
-  'project',
-  'pool',
-  'retry',
-  'bail',
-  'shard',
-  'maxWorkers',
-  'minWorkers',
-  'maxConcurrency',
-  'testTimeout',
-  'hookTimeout',
-  'teardownTimeout',
-  'environment',
-  'exclude',
-  'mode',
-  // Bare `--browser <name>` takes a value; `--browser.headless` and friends are booleans and
-  // are therefore NOT listed — the path match is what keeps them apart.
-  'browser',
-  // Bare `--coverage` is a BOOLEAN. Only these two subkeys take a value.
-  'coverage.reporter',
-  'coverage.provider',
-]);
-
-/**
- * Flags that narrow the run WITHOUT a positional argument, so neither the floor nor the
- * on-disk ledger can mean anything.
- *
- * 🔴 EVERY ONE OF THESE FAILS LOUDLY IF OMITTED, WHICH IS WHY THE SET IS SEPARATE FROM
- * `VALUE_FLAGS` RATHER THAN DERIVED FROM IT.
+ * Flags that narrow the run outright, so neither the file ledger nor the floor can mean
+ * anything. Each of these fails LOUDLY if omitted, which is why they are named rather than
+ * inferred:
  *  - `--shard=1/4` executes about a quarter of 2254, i.e. under the floor, so the gate would
  *    fail a healthy sharded run while telling the reader "Do NOT lower the floor to make this
  *    green". Sharding is the obvious next lever for a 201-file browser suite.
- *  - `--exclude`, `--dir` and `--root` genuinely SHRINK the collected file set, and since the
- *    on-disk ledger landed that is a hard failure naming up to 200 files, with a message
- *    asserting the include broke or the run died and telling the reader not to touch the walk.
- *    `pnpm test:component --exclude 'src/tests/**'` is a legitimate invocation.
+ *  - `--exclude`, `--dir` and `--root` genuinely SHRINK the collected file set, which the
+ *    on-disk ledger reports as up to 200 files "absent", asserting the include broke or the
+ *    run died. `pnpm test:component --exclude 'src/tests/**'` is a legitimate invocation.
  *  - `--config` can replace the `component` project's `include` outright, which is the
- *    assumption the walk is built on; with a different config the ledger is comparing against
- *    an expectation that no longer applies.
+ *    assumption the walk is built on.
  */
 const NARROWING_FLAGS = new Set([
   'shard',
@@ -133,27 +86,77 @@ const NARROWING_FLAGS = new Set([
 ]);
 
 /**
- * Whether the caller narrowed the run. A positional argument is a filename filter, and the
- * flags above narrow with no positional at all; each makes the collected count a property of
- * the filter rather than of the suite.
- *
- * Exported for the unit test: this is the one branch here that can be wrong in a way no amount
- * of running the real suite would reveal — it is silent in one direction and misdirecting in
- * the other.
+ * The few flags whose VALUE is itself a path, so path-shape cannot tell it from a filter.
+ * Everything else is handled by shape alone — see `narrowingReason`. Kept deliberately tiny:
+ * most path-valued vitest flags (`--config`, `--root`, `--dir`, `--exclude`) are narrowing
+ * anyway and return before this is consulted.
  */
-export function isNarrowed(argv) {
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--') continue;
-    const name = canonicalFlag(a);
-    if (name && NARROWING_FLAGS.has(name)) return true;
-    if (name && VALUE_FLAGS.has(name) && !a.includes('=')) {
-      i += 1; // the next entry is this flag's VALUE, not a filename
+const PATH_VALUE_FLAGS = new Set([
+  'outputFile',
+  'coverage.reportsDirectory',
+  'coverage.customProviderModule',
+  'coverage.include',
+  'coverage.exclude',
+]);
+
+/** A positional that looks like a path INTO the repo, i.e. a vitest file filter. */
+function looksLikePath(a) {
+  return a.includes('/') || /\.[cm]?[jt]sx?$/.test(a);
+}
+
+/**
+ * WHY this run counts as narrowed, or `null` for a full run.
+ *
+ * 🔴 SHAPE, NOT A FLAG LIST — because the list cannot be kept right. Two rounds of audit were
+ * spent on it: enumerating flag NAMES missed `--test-timeout` next to `--testTimeout`;
+ * canonicalising spellings then made `--coverage <file>` swallow the file; and splitting
+ * `coverage` into subkeys left 25 value-taking paths (`--retry.count 2`,
+ * `--browser.name chromium`, sixteen more `coverage.*`) reading their VALUE as a filename and
+ * silently switching both checks off. vitest 4.1.11 has a 164-path option tree; a
+ * hand-maintained copy of it is wrong the day it is written.
+ *
+ * So the rule is about the ARGUMENT rather than the flag: a positional is a file filter if it
+ * looks like a path, or if nothing before it could have been expecting a value. A non-path
+ * token straight after a flag is that flag's value, whatever the flag is — which is right for
+ * every one of the 73 value-taking options without naming any of them.
+ *
+ * 🔴 AND THE DECISION IS RETURNED AS A SENTENCE, not a boolean, so that turning the checks off
+ * can never be the QUIET outcome. Whichever way this rule is wrong, the reader is told which
+ * token caused it.
+ */
+export function narrowingReason(argv) {
+  let pendingFlag = null; // the canonical name of the immediately preceding flag, if any
+  for (const a of argv) {
+    if (a === '--') {
+      pendingFlag = null;
       continue;
     }
-    if (!a.startsWith('-')) return true;
+    const name = canonicalFlag(a);
+    if (name !== null) {
+      if (NARROWING_FLAGS.has(name)) return `\`${a}\` narrows which tests run`;
+      pendingFlag = a.includes('=') ? null : name;
+      continue;
+    }
+    // A positional. Three ways it is NOT a filter, all of them "it is a flag's value":
+    if (pendingFlag !== null && PATH_VALUE_FLAGS.has(pendingFlag)) {
+      pendingFlag = null;
+      continue;
+    }
+    if (pendingFlag !== null && !looksLikePath(a)) {
+      pendingFlag = null;
+      continue;
+    }
+    return `\`${a}\` was read as a file filter`;
   }
-  return false;
+  return null;
+}
+
+/**
+ * Whether the caller narrowed the run — the boolean the gate needs. `narrowingReason` owns the
+ * rule and the explanation.
+ */
+export function isNarrowed(argv) {
+  return narrowingReason(argv) !== null;
 }
 
 /**
@@ -343,7 +346,22 @@ export async function main({
     return rc;
   }
 
-  const gate = await runGate([GATE, REPORT, ...(isNarrowed(argv) ? ['--narrowed'] : [])]);
+  // 🔴 SAY WHY, whenever the checks are being turned off. `--narrowed` disables the file
+  // ledger and the floor — the two checks this whole change exists to add — so a wrong
+  // narrowing decision is the QUIET failure, the one direction the comments here repeatedly
+  // name as worse than a loud one. Printing the token that caused it is what stops it being
+  // quiet: `--retry.count 2` reading `2` as a file filter is obviously wrong on sight, and
+  // invisible otherwise.
+  const reason = narrowingReason(argv);
+  if (reason) {
+    log(
+      `\ntest:component: NARROWED — ${reason}, so the file ledger and the floor are skipped ` +
+        '(the zero-collected check still applies). If that reading is wrong, the checks you ' +
+        'wanted are not running.'
+    );
+  }
+
+  const gate = await runGate([GATE, REPORT, ...(reason ? ['--narrowed'] : [])]);
 
   // Best-effort, and AFTER the gate has read it. The load-bearing clear is the one BEFORE the
   // run; this one only keeps the tree tidy.

@@ -269,17 +269,27 @@ function main(argv) {
   let reportPath = null;
   let root = null;
   for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--repo-root') {
-      // 🔴 A missing value is a USAGE ERROR, not a silent fall-through to the real repo. With
+    // 🔴 BOTH SPELLINGS. Matching only `--repo-root <dir>` left `--repo-root=<dir>` — the more
+    // conventional GNU form — falling through BOTH branches, so `root` stayed null and the walk
+    // silently graded against the real repo. That is byte-for-byte the failure the missing-value
+    // guard below was added to close, still reachable through one extra character: a guard
+    // spelled rather than structural.
+    if (args[i] === '--repo-root' || args[i].startsWith('--repo-root=')) {
+      const inline = args[i].startsWith('--repo-root=')
+        ? args[i].slice('--repo-root='.length)
+        : null;
+      const value = inline !== null ? inline : args[i + 1];
+      // A missing value is a USAGE ERROR, not a silent fall-through to the real repo. With
       // `?? null` it fell back to this script's own root, so a fixture report was graded
       // against the 201 real files and failed with a diagnosis about the include breaking —
-      // a confident wrong answer produced by a typo.
-      if (args[i + 1] === undefined) {
+      // a confident wrong answer produced by a typo. A value that is itself a flag is the
+      // same mistake wearing a plausible shape.
+      if (value === undefined || value === '' || value.startsWith('--')) {
         console.error('--repo-root requires a directory');
         return 2;
       }
-      root = args[i + 1];
-      i += 1;
+      root = value;
+      if (inline === null) i += 1;
     } else if (!args[i].startsWith('--') && reportPath === null) {
       reportPath = args[i];
     }

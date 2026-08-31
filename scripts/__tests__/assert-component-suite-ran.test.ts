@@ -5,10 +5,12 @@ import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  canonicalFlag,
   conflictingOutputFile,
   exitCodeForSignal,
   isNarrowed,
   main,
+  narrowingReason,
 } from '../test-component-run.mjs';
 
 /**
@@ -217,14 +219,31 @@ describe('assert-component-suite-ran', () => {
     expect(code).toBe(1);
   });
 
-  it('--repo-root with no value is a USAGE ERROR, not a silent fall-through', () => {
+  it('--repo-root with no usable value is a USAGE ERROR, not a silent fall-through', () => {
     // 🔴 It used to fall back to the script's own repo, so a fixture report was graded against
     // the 201 REAL files and failed with a confident diagnosis about the include breaking —
-    // produced by a typo.
+    // produced by a typo. All three shapes are pinned because the first fix covered only the
+    // first: `--repo-root=<dir>` fell through BOTH branches and reached the same wrong answer
+    // through one extra character.
     const report = writeReport('reporoot-noval.json', healthy(1500));
-    const r = spawnSync(process.execPath, [SCRIPT, report, '--repo-root'], { encoding: 'utf8' });
-    expect(`${r.stdout}${r.stderr}`).toContain('--repo-root requires a directory');
-    expect(r.status).toBe(2);
+    for (const args of [['--repo-root'], ['--repo-root='], ['--repo-root', '--narrowed']]) {
+      const r = spawnSync(process.execPath, [SCRIPT, report, ...args], { encoding: 'utf8' });
+      expect(`${r.stdout}${r.stderr}`, args.join(' ')).toContain(
+        '--repo-root requires a directory'
+      );
+      expect(r.status, args.join(' ')).toBe(2);
+    }
+  });
+
+  it('--repo-root=<dir> is honoured, not ignored', () => {
+    // The inline spelling must actually WORK, not merely be rejected when empty — otherwise
+    // the fix above would be a refusal where a feature belongs.
+    const report = writeReport('reporoot-inline.json', healthy(1500));
+    const r = spawnSync(process.execPath, [SCRIPT, report, `--repo-root=${dir}`], {
+      encoding: 'utf8',
+    });
+    expect(`${r.stdout}${r.stderr}`).toContain('on-disk count UNAVAILABLE');
+    expect(r.status).toBe(0);
   });
 
   it('an UNPARSEABLE report is a failure', () => {
@@ -421,21 +440,89 @@ describe('isNarrowed', () => {
   });
 
   it('a BOOLEAN flag does not swallow the filename after it', () => {
-    // 🔴 THE REGRESSION CANONICALISATION INTRODUCED. Collapsing `--coverage.enabled` onto
-    // `coverage` made every dot-subkey inherit its parent's value-consuming behaviour — and
-    // bare `--coverage` is BOOLEAN (`argument: ""` in vitest's cliOptionsConfig). So
-    // `pnpm test:component --coverage <file>` ate the FILE as `--coverage`'s value, scored the
-    // run as full, and failed an 18/18 green single-file run naming ~200 files as absent,
-    // telling the reader not to narrow the walk. Same loud, misdirecting shape the
-    // `--exclude`/`--dir`/`--root` fix existed to remove, re-introduced by the fix's mechanism.
+    // 🔴 A file path after ANY flag is a filter, whatever the flag is — which is what a
+    // shape rule buys over a flag list. Bare `--coverage` is boolean, so
+    // `pnpm test:component --coverage <file>` used to eat the FILE as its value, score the run
+    // as full, and fail an 18/18 green single-file run naming ~200 files as absent.
     const file = 'src/components/X.browser.test.tsx';
     expect(isNarrowed(['--coverage', file])).toBe(true);
     expect(isNarrowed(['--coverage.enabled', file])).toBe(true);
     expect(isNarrowed(['--browser.headless', file])).toBe(true);
-    // …while the subkeys that DO take a value still consume it.
-    expect(isNarrowed(['--coverage.reporter', 'text'])).toBe(false);
-    expect(isNarrowed(['--coverage.provider', 'v8'])).toBe(false);
-    expect(isNarrowed(['--browser', 'chromium'])).toBe(false);
+    expect(isNarrowed(['--some-future-boolean-flag', file])).toBe(true);
+  });
+
+  it('a NON-path value after ANY flag is a value, named or not', () => {
+    // 🔴 THE OTHER HALF, AND THE QUIET ONE. Enumerating flag names left 25 value-taking option
+    // paths reading their VALUE as a filename — `--retry.count 2`, `--browser.name chromium`
+    // and sixteen more `coverage.*` — which scored a FULL run as narrowed and switched the file
+    // ledger and the floor off with nothing to show for it. vitest 4.1.11 has a 164-path option
+    // tree; a hand-maintained copy is wrong the day it is written. These are asserted for flags
+    // that appear in NO list in the implementation, which is the point: the rule is about the
+    // argument's shape, not the flag's name.
+    for (const argv of [
+      ['--retry.count', '2'],
+      ['--browser.name', 'chromium'],
+      ['--coverage.thresholds.lines', '80'],
+      ['--max-workers', '1'],
+      ['--test-timeout', '60000'],
+      ['--a-flag-nobody-has-heard-of', 'somevalue'],
+    ]) {
+      expect(isNarrowed(argv), argv.join(' ')).toBe(false);
+    }
+    // …and a filter AFTER such a pair is still seen.
+    expect(isNarrowed(['--retry.count', '2', 'src/components/X.browser.test.tsx'])).toBe(true);
+  });
+
+  it('a PATH-valued flag keeps its value from being read as a filter', () => {
+    // The residual the shape rule cannot decide on its own: a value that IS a path. Only a
+    // handful of flags have one, and most of those (`--config`, `--root`, `--dir`,
+    // `--exclude`) are narrowing anyway and return before this is consulted.
+    expect(isNarrowed(['--coverage.reportsDirectory', './coverage'])).toBe(false);
+    expect(isNarrowed(['--coverage.include', 'src/**'])).toBe(false);
+  });
+
+  it('a bare substring filter with no flag before it is still a filter', () => {
+    // `vitest run AppNameCrumb` is a legitimate filter that is not path-shaped. Nothing
+    // precedes it, so nothing could have been expecting it as a value.
+    expect(isNarrowed(['AppNameCrumb'])).toBe(true);
+    expect(isNarrowed(['--max-workers', '4', 'AppNameCrumb'])).toBe(true);
+    // 🔴 …and an INLINE `=` flag consumes nothing, so a non-path filter after one is still a
+    // filter. A mutation sweep found this: dropping the `a.includes('=')` check left
+    // `--reporter=json AppNameCrumb` reading the filter as the flag's value and scoring a
+    // narrowed run as full — a survivor of a green 44-test suite, because every other case
+    // used a path-shaped filter, which the shape rule catches either way.
+    expect(isNarrowed(['--reporter=json', 'AppNameCrumb'])).toBe(true);
+    expect(isNarrowed(['--max-workers=8', 'AppNameCrumb'])).toBe(true);
+  });
+
+  it('canonicalFlag leaves dot SUBKEYS verbatim, exactly as cac does', () => {
+    // 🔴 cac's own `camelcaseOptionName` is
+    // `name.split(".").map((v, i) => (i === 0 ? camelcase(v) : v)).join(".")` — only the FIRST
+    // segment is camelCased. Camel-casing all of them would make this wrapper accept
+    // `--coverage.reports-directory` as `coverage.reportsDirectory`, a spelling vitest does
+    // NOT, so the two would disagree about whether the next token is a value or a filename.
+    // Also a mutation survivor: with no dot-split at all every current input is unchanged,
+    // because no set entry has a dashed subkey — the divergence only appears on one.
+    expect(canonicalFlag('--coverage.reports-directory')).toBe('coverage.reports-directory');
+    expect(canonicalFlag('--coverage.reportsDirectory')).toBe('coverage.reportsDirectory');
+    expect(canonicalFlag('--max-workers')).toBe('maxWorkers');
+    expect(canonicalFlag('--output-file.json=/x')).toBe('outputFile.json');
+    expect(canonicalFlag('src/x.browser.test.tsx')).toBeNull();
+  });
+
+  it('narrowingReason NAMES the token, so turning the checks off is never quiet', () => {
+    // 🔴 The rule above will sometimes be wrong — no rule over an unknowable flag list can be
+    // right always. What must never happen is being wrong SILENTLY, because `--narrowed`
+    // disables the two checks this whole change exists to add. The reason is a sentence
+    // naming the token, so a misreading is visible on sight.
+    expect(narrowingReason([])).toBeNull();
+    expect(narrowingReason(['--max-workers', '4'])).toBeNull();
+    expect(narrowingReason(['src/components/X.browser.test.tsx'])).toContain(
+      'src/components/X.browser.test.tsx'
+    );
+    expect(narrowingReason(['src/components/X.browser.test.tsx'])).toContain('file filter');
+    expect(narrowingReason(['--shard=1/4'])).toContain('--shard=1/4');
+    expect(narrowingReason(['--shard=1/4'])).toContain('narrows which tests run');
   });
 
   it('--shard and --changed narrow WITHOUT a positional', () => {
