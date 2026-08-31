@@ -30,7 +30,8 @@
  * `-t` filter, which makes the collected count a property of the filter rather than of the
  * suite. The floor guards the CI invocation, which passes no filters.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -134,16 +135,51 @@ export function tally(report) {
       .filter((f) => f?.status === 'failed' && (f?.assertionResults ?? []).length === 0)
       .map((f) => f?.name)
       .filter(Boolean),
+    /** Every file the report accounts for, for the on-disk ledger in `verdict`. */
+    names: (report?.testResults ?? []).map((f) => f?.name).filter(Boolean),
   };
 }
 
-/** The verdict, as data. `{ ok, code, lines[] }`; `code` is what the caller should exit with. */
-export function verdict(counts, { narrowed = false } = {}) {
+/**
+ * Every `*.browser.test.tsx` under `src/`, which is exactly the `component` project's `include`
+ * in `vitest.config.mts`. Walked rather than globbed: `grep -r` and friends honour `.gitignore`
+ * here, and a silently-narrower expectation is a ledger that cannot notice anything.
+ *
+ * Returns `null` when it cannot see the tree at all (wrong cwd, no `src/`), because a ZERO from
+ * a walk that found nothing is indistinguishable from a suite with no files — and a ledger
+ * built on an unproven zero would pass everything.
+ */
+export function browserTestFilesOnDisk(root) {
+  const src = join(root, 'src');
+  if (!existsSync(src)) return null;
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.next') continue;
+        walk(p);
+      } else if (entry.name.endsWith('.browser.test.tsx')) {
+        out.push(p);
+      }
+    }
+  };
+  walk(src);
+  return out.length > 0 ? out : null;
+}
+
+/**
+ * The verdict, as data. `{ ok, code, lines[] }`; `code` is what the caller should exit with.
+ *
+ * `onDisk` is the list from `browserTestFilesOnDisk`, or `null` when it could not be derived.
+ */
+export function verdict(counts, { narrowed = false, onDisk = null } = {}) {
   const lines = [
     `test:component ledger: ${counts.executed} executed, ${counts.skipped} skipped, ` +
       `across ${counts.files} files; ${counts.failedSuites} failed suites, ` +
       `${counts.failedTests} failed tests (baseline ${BASELINE.tests} tests / ` +
       `${BASELINE.files} files measured ${BASELINE.measuredOn}` +
+      (onDisk ? `; ${onDisk.length} on disk` : '; on-disk count UNAVAILABLE') +
       (narrowed ? '; floor SKIPPED — narrowed by a filter' : `; floor ${MIN_TESTS}`) +
       ')',
   ];
@@ -161,6 +197,44 @@ export function verdict(counts, { narrowed = false } = {}) {
 
   if (counts.executed === 0) {
     return { ok: false, code: 1, lines: [...lines, ABORT_DIAGNOSIS] };
+  }
+
+  /**
+   * 🔴 A LEDGER OVER FILES, NOT A SECOND FLOOR — and it is the stronger of the two checks.
+   *
+   * The test floor sits at ~55%, so up to ~45% of the suite can stop being COLLECTED while the
+   * gate stays green. The historical incident this guard descends from is exactly that shape:
+   * six files contributed 0 of 438 tests and nothing turned red
+   * (src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts). Comparing the
+   * report's file list against what is on disk catches ONE file going missing, not 90, and
+   * needs no constant to maintain — the expectation is re-derived every run.
+   *
+   * Skipped when narrowed (a filter legitimately selects fewer files) and when the walk could
+   * not run. Files are matched by SUFFIX because the report carries absolute paths.
+   */
+  if (!narrowed && onDisk) {
+    const collected = new Set(counts.names.map((n) => n.replace(/\\/g, '/')));
+    const missing = onDisk.filter((p) => {
+      const rel = p.replace(/\\/g, '/');
+      for (const c of collected) if (c === rel || c.endsWith(rel) || rel.endsWith(c)) return false;
+      return true;
+    });
+    if (missing.length > 0) {
+      return {
+        ok: false,
+        code: 1,
+        lines: [
+          ...lines,
+          `\n🔴 ${missing.length} \`*.browser.test.tsx\` FILE(S) ON DISK ARE ABSENT FROM THE ` +
+            `RUN'S REPORT.\n` +
+            '   They were not collected at all — not run, not skipped, not failed. That reports\n' +
+            '   as ABSENCE, so no failure count and no per-test list can show it:\n' +
+            missing.map((p) => `     ${p}`).join('\n') +
+            '\n   Either the project include stopped matching them, or the run did not finish\n' +
+            '   collecting. Do NOT silence this by narrowing the walk.',
+        ],
+      };
+    }
   }
 
   if (!narrowed && counts.executed < MIN_TESTS) {
@@ -218,7 +292,15 @@ function main(argv) {
     return 1;
   }
 
-  const result = verdict(tally(report), { narrowed });
+  // `--repo-root <dir>` exists so the unit tests can point the on-disk walk at a fixture tree.
+  // Default is this script's own repo, which is the only thing a real run should ever grade.
+  const rootFlag = args.indexOf('--repo-root');
+  const root =
+    rootFlag !== -1 && args[rootFlag + 1]
+      ? args[rootFlag + 1]
+      : resolve(fileURLToPath(new URL('../..', import.meta.url)));
+
+  const result = verdict(tally(report), { narrowed, onDisk: browserTestFilesOnDisk(root) });
   for (const line of result.lines) (result.ok ? console.log : console.error)(line);
   return result.code;
 }

@@ -1,10 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { isNarrowed } from '../test-component-run.mjs';
+import { conflictingOutputFile, exitCodeForSignal, isNarrowed } from '../test-component-run.mjs';
 
 /**
  * Tests for the `preview / component-tests` positive control
@@ -79,8 +79,28 @@ const healthy = (n: number, extra: FileSpec[] = []): FileSpec[] => [
   ...extra,
 ];
 
+/**
+ * 🔴 EVERY CASE PASSES `--repo-root`, AND IT MUST.
+ *
+ * The gate also compares the report's file list against every `*.browser.test.tsx` on disk.
+ * Left pointing at the real repo, that check grades a two-file FIXTURE against 201 real files
+ * and every case below fails for a reason none of them is about. Pointing it at a directory
+ * with no `src/` makes the walk return "unavailable", which the gate skips — and prints, so a
+ * reader can see which checks a given run actually applied. The on-disk ledger has its own
+ * fixture tree and its own cases further down.
+ */
 function runGate(reportPath: string, ...args: string[]) {
-  const r = spawnSync(process.execPath, [SCRIPT, reportPath, ...args], { encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [SCRIPT, reportPath, '--repo-root', dir, ...args], {
+    encoding: 'utf8',
+  });
+  return { code: r.status, out: `${r.stdout}${r.stderr}` };
+}
+
+/** Same, but pointed at a caller-supplied tree so the on-disk ledger is armed. */
+function runGateAt(reportPath: string, root: string, ...args: string[]) {
+  const r = spawnSync(process.execPath, [SCRIPT, reportPath, '--repo-root', root, ...args], {
+    encoding: 'utf8',
+  });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
@@ -203,6 +223,100 @@ describe('assert-component-suite-ran', () => {
   });
 });
 
+describe('the on-disk ledger — a file that stops being COLLECTED', () => {
+  /**
+   * 🔴 THE STRONGER OF THE TWO CHECKS, and the reason it exists: the test floor sits at ~55%,
+   * so ~45% of the suite can stop being collected while the gate stays green. The incident
+   * this whole guard descends from is exactly that shape — six files contributing 0 of 438
+   * with nothing red. This catches ONE file going missing.
+   */
+  let tree: string;
+  beforeAll(() => {
+    tree = mkdtempSync(join(tmpdir(), 'component-ondisk-'));
+    mkdirSync(join(tree, 'src/components/Deep'), { recursive: true });
+    mkdirSync(join(tree, 'src/node_modules/pkg'), { recursive: true });
+    for (const p of [
+      'src/components/A.browser.test.tsx',
+      'src/components/Deep/B.browser.test.tsx',
+      'src/components/Deep/C.browser.test.tsx',
+    ]) {
+      writeFileSync(join(tree, p), '// fixture\n');
+    }
+    // Neither of these may be counted: the walk must skip `node_modules`, and a `.test.tsx`
+    // that is not a `.browser.test.tsx` belongs to the node project, not this one. If either
+    // leaked in, the ledger would demand a file the component run can never collect.
+    writeFileSync(join(tree, 'src/node_modules/pkg/D.browser.test.tsx'), '// fixture\n');
+    writeFileSync(join(tree, 'src/components/E.test.tsx'), '// fixture\n');
+  });
+  afterAll(() => rmSync(tree, { recursive: true, force: true }));
+
+  const all = [
+    'src/components/A.browser.test.tsx',
+    'src/components/Deep/B.browser.test.tsx',
+    'src/components/Deep/C.browser.test.tsx',
+  ];
+
+  it('passes when every file on disk appears in the report', () => {
+    const report = writeReport(
+      'ondisk-all.json',
+      all.map((name, i) => ({ name: join(tree, name), passed: 500 + i }))
+    );
+    const { code, out } = runGateAt(report, tree);
+    expect(out).toContain('3 on disk');
+    expect(code).toBe(0);
+  });
+
+  it('FAILS when one file is missing, and NAMES it', () => {
+    // 1502 executed is comfortably above the floor, so the floor cannot be what fails this —
+    // if the on-disk check were deleted this case would go green.
+    const report = writeReport(
+      'ondisk-missing.json',
+      all.slice(0, 2).map((name) => ({ name: join(tree, name), passed: 751 }))
+    );
+    const { code, out } = runGateAt(report, tree);
+    expect(out).toContain('ABSENT FROM THE RUN');
+    expect(out).toContain('Deep/C.browser.test.tsx');
+    expect(out).not.toContain('EXECUTED ONLY');
+    expect(code).toBe(1);
+  });
+
+  it('a NARROWED run does not trip it', () => {
+    const report = writeReport('ondisk-narrow.json', [{ name: join(tree, all[0]), passed: 4 }]);
+    expect(runGateAt(report, tree, '--narrowed').code).toBe(0);
+  });
+
+  it('says so, and skips, when there is no tree at all', () => {
+    // A ZERO from a walk that found nothing is indistinguishable from a suite with no files,
+    // so the gate must not build a ledger on it — but it must SAY it did not, or a reader
+    // cannot tell which checks this run applied.
+    const report = writeReport('ondisk-unavailable.json', healthy(1500));
+    const { code, out } = runGateAt(report, join(dir, 'no-such-tree'));
+    expect(out).toContain('on-disk count UNAVAILABLE');
+    expect(code).toBe(0);
+  });
+
+  it('says so, and skips, when `src/` EXISTS but holds no browser tests', () => {
+    // 🔴 THIS CASE EXISTS BECAUSE THE OTHER ONE CANNOT REACH THE CODE IT LOOKS LIKE IT
+    // COVERS. With no `src/` at all the walk returns early, so the "an empty result is not a
+    // measurement" line below it never executes — a mutation sweep proved it: turning
+    // `out.length > 0 ? out : null` into a bare `out` SURVIVED a green suite. An empty array
+    // is TRUTHY, so that mutant would arm a ledger over zero expected files, which passes
+    // everything while reading as a check that ran.
+    const emptyTree = mkdtempSync(join(tmpdir(), 'component-ondisk-empty-'));
+    mkdirSync(join(emptyTree, 'src/components'), { recursive: true });
+    writeFileSync(join(emptyTree, 'src/components/NotATest.tsx'), '// fixture\n');
+    try {
+      const report = writeReport('ondisk-empty-src.json', healthy(1500));
+      const { code, out } = runGateAt(report, emptyTree);
+      expect(out).toContain('on-disk count UNAVAILABLE');
+      expect(out).not.toContain('0 on disk');
+      expect(code).toBe(0);
+    } finally {
+      rmSync(emptyTree, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('isNarrowed', () => {
   it('no args is a full run', () => {
     expect(isNarrowed([])).toBe(false);
@@ -228,5 +342,69 @@ describe('isNarrowed', () => {
     expect(isNarrowed(['-t=renders'])).toBe(true);
     expect(isNarrowed(['--testNamePattern', 'renders'])).toBe(true);
     expect(isNarrowed(['--testNamePattern=renders'])).toBe(true);
+  });
+
+  it("a value-taking flag's SPACE form does not disable the floor", () => {
+    // 🔴 The silent one, and it was live: `--max-workers 1` put `1` in a positional slot, so
+    // the run scored "narrowed" and THE FLOOR WAS TURNED OFF with only a one-line note. This
+    // is the shape CONTRIBUTING steers people towards for sizing a run on a shared box.
+    expect(isNarrowed(['--max-workers', '1'])).toBe(false);
+    expect(isNarrowed(['--maxWorkers', '3'])).toBe(false);
+    expect(isNarrowed(['--reporter', 'verbose'])).toBe(false);
+    expect(isNarrowed(['--retry', '2'])).toBe(false);
+    expect(isNarrowed(['--bail', '1'])).toBe(false);
+    expect(isNarrowed(['--project', 'component'])).toBe(false);
+    expect(isNarrowed(['--pool', 'threads'])).toBe(false);
+    // …and a filter AFTER one is still seen.
+    expect(isNarrowed(['--max-workers', '1', 'src/components/X.browser.test.tsx'])).toBe(true);
+  });
+
+  it('--shard and --changed narrow WITHOUT a positional', () => {
+    // 🔴 The loud one: `--shard=1/4` executes about a quarter of 2254, i.e. below the floor,
+    // so without this the gate fails a healthy sharded run while telling the reader "Do NOT
+    // lower the floor to make this green" — misdirection, not just a false red.
+    expect(isNarrowed(['--shard=1/4'])).toBe(true);
+    expect(isNarrowed(['--shard', '1/4'])).toBe(true);
+    expect(isNarrowed(['--changed'])).toBe(true);
+    expect(isNarrowed(['--related'])).toBe(true);
+  });
+});
+
+describe('conflictingOutputFile', () => {
+  it('catches every spelling that would redirect the report', () => {
+    // 🔴 Measured before this existed: an 18/18 GREEN single-file run reported "THE COMPONENT
+    // SUITE COLLECTED NOTHING" and exited 1, because `--outputFile=<p>` clobbered the
+    // `--outputFile.json=` form the wrapper appends. `.github/workflows/lint.yml` runs the
+    // SIBLING unit tier with exactly that flag, so this is a copy-paste away.
+    expect(conflictingOutputFile(['--outputFile=/tmp/x.json'])).toBe('--outputFile=/tmp/x.json');
+    expect(conflictingOutputFile(['--outputFile.json=/tmp/x.json'])).toBe(
+      '--outputFile.json=/tmp/x.json'
+    );
+    expect(conflictingOutputFile(['--outputFile', '/tmp/x.json'])).toBe('--outputFile');
+  });
+
+  it('does not fire on the ordinary flags', () => {
+    expect(conflictingOutputFile([])).toBeNull();
+    expect(conflictingOutputFile(['--max-workers=4', '--reporter=verbose'])).toBeNull();
+    // Not a prefix match: a different flag that merely starts the same way must pass.
+    expect(conflictingOutputFile(['--outputFileSomethingElse=1'])).toBeNull();
+  });
+});
+
+describe('exitCodeForSignal', () => {
+  it('maps each signal to the shell 128+N, not a constant', () => {
+    // 🔴 This was a hardcoded 143 for EVERY signal, which re-created the exact mislabelling
+    // this whole change exists to remove: the CI task branches on 137 to report `oom-killed`
+    // ("raise the task's memory limit"), and a constant 143 matches no branch and falls
+    // through to `fail` — a memory problem rendered as a test failure, on the same tier, in
+    // the same words. The three are asserted separately because a mutant returning any single
+    // constant must fail at least two of them.
+    expect(exitCodeForSignal('SIGKILL')).toBe(137);
+    expect(exitCodeForSignal('SIGTERM')).toBe(143);
+    expect(exitCodeForSignal('SIGINT')).toBe(130);
+  });
+
+  it('falls back to 143 for a name node does not know', () => {
+    expect(exitCodeForSignal('SIGNOTAREALSIGNAL')).toBe(143);
   });
 });
