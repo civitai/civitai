@@ -139,6 +139,50 @@ describe('createTourCallback', () => {
   });
 
   /**
+   * A dead step ahead of a live one used to make `Back` a no-op: skipping always
+   * forward walked straight back to the step the user was leaving. The generator's
+   * `gen:buzz` sat dead between `gen:submit` and `gen:queue`, so this covered every
+   * step behind it.
+   */
+  it('skips backwards when the missing target was reached by Back', async () => {
+    const { deps, runTour, closeTour } = makeDeps({
+      steps: new Array(9).fill({}) as unknown as TourCallbackDeps['steps'],
+    });
+    const callback = createTourCallback(deps);
+
+    await callback(
+      callbackData({
+        type: EVENTS.TARGET_NOT_FOUND,
+        action: ACTIONS.PREV,
+        index: 6,
+        step: { target: '[data-tour="gen:buzz"]' } as CallBackProps['step'],
+      })
+    );
+
+    expect(runTour).toHaveBeenCalledWith({ step: 5 });
+    expect(closeTour).not.toHaveBeenCalled();
+  });
+
+  it('stops rather than stepping past the start when the first step is missing', async () => {
+    const { deps, runTour, closeTour } = makeDeps({
+      steps: new Array(9).fill({}) as unknown as TourCallbackDeps['steps'],
+    });
+    const callback = createTourCallback(deps);
+
+    await callback(
+      callbackData({
+        type: EVENTS.TARGET_NOT_FOUND,
+        action: ACTIONS.PREV,
+        index: 0,
+        step: { target: '[data-tour="gen:start"]' } as CallBackProps['step'],
+      })
+    );
+
+    expect(runTour).not.toHaveBeenCalled();
+    expect(closeTour).not.toHaveBeenCalled();
+  });
+
+  /**
    * Revert check: removing the `isLastStep` clamp makes this fail at the
    * `runTour` assertion below — Joyride is controlled here, so advancing past
    * the last index leaves it rendering `steps[5]` (undefined) and never fires

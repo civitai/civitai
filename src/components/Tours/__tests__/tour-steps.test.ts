@@ -109,6 +109,26 @@ describe('the gen: namespace', () => {
 
     expect(source).toMatch(/data-tour=\{`gen:\$\{/);
   });
+
+  /**
+   * The orphan check above only asks whether SOME file in `src/` declares the key. That
+   * is why `gen:buzz` read as live for five months while on `BuzzTransactionButton`,
+   * which the v2 generator does not render — the tour skipped the step in silence and the
+   * step counter jumped. These two live in the generator's own footer or nowhere.
+   */
+  it.each([
+    ['GEN_BUZZ_KEY', 'gen:buzz', 'tourTarget={GEN_BUZZ_KEY}'],
+    ['GEN_SUBMIT_KEY', 'gen:submit', 'data-tour={GEN_SUBMIT_KEY}'],
+  ])('wires %s from the generator footer', (constant, key, binding) => {
+    const source = readFileSync(
+      path.join(SRC, 'components', 'generation_v2', 'FormFooter.tsx'),
+      'utf-8'
+    );
+
+    expect(source).toContain(binding);
+    expect(source).toContain('data-tour={tourTarget}');
+    expect(tourTargetKeys.some((t) => t.key === key)).toBe(true);
+  });
 });
 
 describe('data-tour attributes nothing targets', () => {
@@ -145,10 +165,42 @@ describe.each([
     expect(targets()[index + 1]).toBe(`[data-tour="${button}-menu"]`);
   });
 
-  it('leaves the menu step a way forward for an image every engine refuses', () => {
+  /**
+   * The menu the next step aims at only exists once the button is clicked, so a
+   * `Next` here walks the tour onto a target that is not in the document.
+   */
+  it('offers no footer on the button step', () => {
+    const buttonStep = tourSteps[tour].find((step) => step.target === `[data-tour="${button}"]`);
+
+    expect(buttonStep?.hideFooter).toBe(true);
+  });
+
+  it('offers no footer on the menu step either', () => {
     const menuStep = tourSteps[tour].find((step) => step.target === `[data-tour="${button}-menu"]`);
 
-    expect(menuStep?.hideFooter).not.toBe(true);
+    expect(menuStep?.hideFooter).toBe(true);
+  });
+});
+
+/**
+ * Both remix steps hide their footer, so an image every engine refuses opens a menu
+ * with nothing clickable and no `Next`. `RemixMenu` reports that menu as the tour's
+ * blocked target, which is the only thing that puts the footer back — see
+ * `ToursProvider`'s `blockedTarget` doc and `TourPopover.blocked.browser.test.tsx`.
+ */
+describe('the remix menu', () => {
+  const source = readFileSync(
+    path.join(SRC, 'components', 'Image', 'Remix', 'RemixMenu.tsx'),
+    'utf-8'
+  );
+
+  it('reports itself blocked when nothing in it is actionable', () => {
+    expect(source).toContain('setBlockedTarget(`[data-tour="${tourTarget}"]`)');
+    expect(source).toMatch(/if \(tourTarget && !hasActionableItem\)/);
+  });
+
+  it('clears that report only when it was the one to make it', () => {
+    expect(source).toContain('if (!reportedBlocked.current) return;');
   });
 });
 

@@ -65,6 +65,13 @@ export function createTourCallback(deps: TourCallbackDeps): Callback {
     if (type === EVENTS.TARGET_NOT_FOUND) {
       if (key) emit.step({ key, index, target: tourTargetKey(step?.target), resolved: false });
 
+      // Skip in the direction of travel: stepping forward here returned the user to the
+      // step they were leaving, making `Back` a no-op behind any dead step.
+      if (action === ACTIONS.PREV) {
+        if (index > 0) deps.runTour({ step: index - 1 });
+        return;
+      }
+
       const isLastStep = index + 1 >= (deps.steps?.length ?? 0);
       if (isLastStep) {
         if (key) emit.end({ key, index, reason: 'finished' });

@@ -1,6 +1,6 @@
 import { Text } from '@mantine/core';
 import Router from 'next/router';
-import { GEN_SUBMIT_TARGET } from '~/components/Tours/tour-targets';
+import { GEN_BUZZ_TARGET, GEN_SUBMIT_TARGET } from '~/components/Tours/tour-targets';
 import { remixMenuStep } from '~/components/Tours/tours/remix-menu.step';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import type { StepWithData } from '~/types/tour';
@@ -24,7 +24,7 @@ const termsStep: StepWithData = {
 };
 
 const buzzStep: StepWithData = {
-  target: '[data-tour="gen:buzz"]',
+  target: GEN_BUZZ_TARGET,
   title: 'Cost of Generation',
   content:
     'All AI tools on Civitai run on Buzz. Depending on the complexity of your request, the amount of Buzz may vary.',

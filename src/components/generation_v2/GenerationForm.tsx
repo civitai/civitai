@@ -249,7 +249,7 @@ export function GenerationForm() {
   }, [graph, loadFromModelVersion]);
 
   // Tour initialization
-  const { runTour, running, currentStep, setSteps, activeTour } = useTourContext();
+  const { runTour, running, paused, currentStep, setSteps, activeTour } = useTourContext();
   const status = useGenerationStatus();
   const loadingGeneratorData = useGenerationGraphStore((state) => state.loading);
   const remixOfId = useRemixStore((state) => state.data?.remixOfId);
@@ -261,7 +261,12 @@ export function GenerationForm() {
   // Trigger tour when form is ready
   useEffect(() => {
     if (!status.available || status.isLoading || loadingGeneratorData) return;
-    if (!running) runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation' });
+    // `paused` is a tour mid-step, waiting on its own `onNext` hook — and picking a remix
+    // option moves `remixOfId` inside exactly that window. Reading only `running` there
+    // re-entered `runTour({ key })`, which reinstates the UNFILTERED step array under a
+    // step index meant for the filtered one.
+    if (!running && !paused)
+      runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation' });
   }, [
     status.isLoading,
     status.available,
@@ -269,6 +274,7 @@ export function GenerationForm() {
     hasGeneratedImages,
     remixOfId,
     loadingGeneratorData,
+    paused,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Configure tour steps based on user state

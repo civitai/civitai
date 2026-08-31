@@ -48,7 +48,7 @@ import { useServerDomains } from '~/providers/AppProvider';
 import { syncAccount } from '~/utils/sync-account';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
-import { GEN_SUBMIT_KEY, GEN_SUBMIT_TARGET } from '~/components/Tours/tour-targets';
+import { GEN_BUZZ_KEY, GEN_SUBMIT_KEY, GEN_SUBMIT_TARGET } from '~/components/Tours/tour-targets';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -214,11 +214,14 @@ export function BuzzTypeSelector({
   loading,
   error,
   onRetry,
+  tourTarget,
 }: {
   cost: number;
   loading: boolean;
   error?: boolean;
   onRetry?: () => void;
+  /** `data-tour` for the cost button. Only the generator's tour spotlights it. */
+  tourTarget?: string;
 }) {
   const { availableTypes, selectedType, setBuzzType } = useSelectedBuzzType();
   const buzzConfig = useBuzzCurrencyConfig(selectedType);
@@ -257,6 +260,7 @@ export function BuzzTypeSelector({
     return (
       <Tooltip label="Failed to estimate cost. Click to retry.">
         <Button
+          data-tour={tourTarget}
           variant="default"
           size="compact-sm"
           className="h-full gap-1 px-2"
@@ -274,6 +278,7 @@ export function BuzzTypeSelector({
     <Menu position="top" withinPortal onChange={handleMenuOpen}>
       <Menu.Target>
         <Button
+          data-tour={tourTarget}
           variant="default"
           size="compact-sm"
           className={clsx('h-full gap-1 px-2', showGlow && 'animate-buzz-glow')}
@@ -319,7 +324,13 @@ function ConnectedBuzzTypeSelector() {
   const { isLoading, isError, refetch } = useWhatIfContext();
   const cost = useTotalGenerationCost();
   return (
-    <BuzzTypeSelector cost={cost} loading={isLoading} error={isError} onRetry={() => refetch()} />
+    <BuzzTypeSelector
+      cost={cost}
+      loading={isLoading}
+      error={isError}
+      onRetry={() => refetch()}
+      tourTarget={GEN_BUZZ_KEY}
+    />
   );
 }
 
