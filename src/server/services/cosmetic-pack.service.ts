@@ -290,12 +290,20 @@ export const computePackPayouts = ({
   packCreatorId,
   members,
   buyerId,
+  resaleShareByCosmeticId,
 }: {
   /** What the buyer was actually charged, after any ownership discount. */
   packPrice: number;
   packCreatorId: number | null;
   members: PackMemberListing[];
   buyerId?: number;
+  /**
+   * cosmeticId → the seller share the pack creator snapshotted when they listed
+   * that member for resale (`UserCosmeticShopItemResale`). Present only for
+   * members the pack creator actually resells; the pack creator is then this
+   * member's reseller, paid out of the member's own pool.
+   */
+  resaleShareByCosmeticId?: Map<number, number>;
 }) => {
   const components: { cosmeticId: number; userId: number; amount: number; unitAmount: number }[] =
     [];
@@ -327,19 +335,20 @@ export const computePackPayouts = ({
     const basis = scale === 1 ? member.floorAmount : Math.floor(member.floorAmount * scale);
     if (basis <= 0) continue;
     foreignTotal += basis;
+    // A member is resold by the pack creator only when a resale row exists for
+    // it — resale is by reference (`UserCosmeticShopItemResale`), so the
+    // member's own listing is always its creator's and its `addedById` never
+    // names a reseller. The share comes from that snapshot, not the member's
+    // current listing: the creator can cut it, or withdraw resale, long after
+    // the pack was built on the terms they offered. The buyer can't be the
+    // reseller here — a creator can't buy their own pack.
+    const resaleShare = resaleShareByCosmeticId?.get(member.cosmeticId);
+    const isReseller = resaleShare !== undefined && packCreatorId != null;
     const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
       basis,
-      member.listingMeta.sellerShare ?? 0
+      isReseller ? resaleShare : 0
     );
-    // The member's own reseller, if it has one, is paid out of that member's
-    // pool rather than the pack creator's — unless the reseller is the buyer,
-    // in which case the seller share would be a discount they fund for
-    // themselves. The single purchase refuses this in as many words; a pack
-    // reaches the same state through a member and needs the same answer.
-    const resellerId =
-      member.addedById && member.addedById !== member.createdById && member.addedById !== buyerId
-        ? member.addedById
-        : null;
+    const resellerId = isReseller ? packCreatorId : null;
     if (resellerId && sellerAmount > 0) {
       if (creatorAmount > 0)
         components.push({
@@ -372,6 +381,35 @@ export const computePackPayouts = ({
     packCreatorId && packCreatorId !== buyerId ? computeCreatorShopSplit(remainder).creatorPool : 0;
 
   return { components, foreignTotal, remainder, packCreatorAmount, scaled: scale !== 1 };
+};
+
+/**
+ * cosmeticId → the pack creator's snapshotted seller share, for the foreign
+ * members they resell. Keyed on the member's own listing (`listingId`), which is
+ * the creator listing a resale row references. Empty when the pack creator
+ * resells none of the members, which is the common case.
+ */
+export const packOwnerResaleShares = async (
+  packCreatorId: number | null,
+  members: PackMemberListing[]
+): Promise<Map<number, number>> => {
+  const shares = new Map<number, number>();
+  if (!packCreatorId) return shares;
+  const foreign = members.filter((m) => m.createdById !== packCreatorId);
+  if (!foreign.length) return shares;
+
+  const resales = await dbRead.userCosmeticShopItemResale.findMany({
+    where: { userId: packCreatorId, shopItemId: { in: foreign.map((m) => m.listingId) } },
+    select: { shopItemId: true, sellerShare: true },
+  });
+  if (!resales.length) return shares;
+
+  const shareByListing = new Map(resales.map((r) => [r.shopItemId, r.sellerShare]));
+  for (const member of foreign) {
+    const share = shareByListing.get(member.listingId);
+    if (share !== undefined) shares.set(member.cosmeticId, share);
+  }
+  return shares;
 };
 
 export const purchaseCosmeticPack = async ({
@@ -467,6 +505,10 @@ export const purchaseCosmeticPack = async ({
     .filter((t) => t.accountType === 'blue')
     .reduce((sum, t) => sum + t.amount, 0);
 
+  // Loaded once, before the write, and reused by both payout computations so the
+  // attribution written in the transaction and the payout after it agree.
+  const resaleShareByCosmeticId = await packOwnerResaleShares(shopItem.addedById, members);
+
   try {
     await dbWrite.$transaction(async (tx) => {
       await tx.userCosmeticShopPurchases.create({
@@ -485,6 +527,7 @@ export const purchaseCosmeticPack = async ({
         packCreatorId: shopItem.addedById,
         members,
         buyerId: userId,
+        resaleShareByCosmeticId,
       });
       const attributedByCosmetic = new Map<number, number>();
       for (const member of members) attributedByCosmetic.set(member.cosmeticId, member.floorAmount);
@@ -551,6 +594,7 @@ export const purchaseCosmeticPack = async ({
         packCreatorId: shopItem.addedById,
         members,
         buyerId: userId,
+        resaleShareByCosmeticId,
       });
       // Reaching this means a pack sold for less than its members' snapshots,
       // which the floor and the re-snapshot both exist to prevent. Everyone is

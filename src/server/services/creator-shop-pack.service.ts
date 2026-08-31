@@ -31,6 +31,8 @@ type ResolvedMember = PackMemberPricing & {
   createdById: number | null;
   creatorUsername: string | null;
   acceptsBlueBuzz: boolean;
+  /** The resolved listing's resale opt-in — see `isBundlableBy`. */
+  sellableByOthers: boolean;
 };
 
 /**
@@ -85,6 +87,7 @@ export const resolvePackMembers = async (cosmeticIds: number[]): Promise<Resolve
       createdById: listing.cosmetic.createdById,
       creatorUsername: listing.cosmetic.creator?.username ?? null,
       acceptsBlueBuzz: !!meta.acceptsBlueBuzz,
+      sellableByOthers: !!meta.sellableByOthers,
     };
     if (!existing || candidate.listPrice > existing.listPrice)
       byCosmetic.set(listing.cosmeticId, {
@@ -121,6 +124,34 @@ const assertStickerMembersAllowed = (members: ResolvedMember[], stickersEnabled?
   if (stickersEnabled) return;
   if (members.some((m) => m.type === CosmeticType.Sticker))
     throw throwBadRequestError('Stickers cannot be bundled yet');
+};
+
+/**
+ * Who may bundle a member. A creator bundles their own work freely; another
+ * creator's only when its listing opted into resale (`sellableByOthers`) — the
+ * same consent the official shop enforces in `upsertCosmeticShopSection`. A pack
+ * is somebody else selling the item, so an opt-out has to block it here too.
+ *
+ * A member with no creator is a platform cosmetic, which the resale-consent rule
+ * doesn't govern — the official shop scopes its check to `createdById != null`
+ * for the same reason, so this stays in step with it. `resolvePackMembers`
+ * already restricts to Published, non-archived listings, so those guards aren't
+ * repeated here.
+ */
+export const isBundlableBy = (
+  member: { createdById: number | null; sellableByOthers: boolean },
+  ownerId: number
+) => member.createdById == null || member.createdById === ownerId || member.sellableByOthers;
+
+/** Refuses members whose creator has not allowed others to sell them. */
+export const assertMembersResellable = (members: ResolvedMember[], ownerId: number) => {
+  const forbidden = members.filter((m) => !isBundlableBy(m, ownerId));
+  if (forbidden.length)
+    throw throwBadRequestError(
+      `These items can't be bundled — their creator hasn't allowed other creators to sell them: ${forbidden
+        .map((m) => m.name)
+        .join(', ')}`
+    );
 };
 
 const withOwnership = (members: ResolvedMember[], userId: number) =>
@@ -167,6 +198,7 @@ export const submitCreatorShopPack = async ({
 
   const members = withOwnership(await resolvePackMembers(memberCosmeticIds), userId);
   assertMembersBundlable(memberCosmeticIds, members);
+  assertMembersResellable(members, userId);
   assertStickerMembersAllowed(members, stickersEnabled);
 
   const floor = packPriceFloor(members);
@@ -290,8 +322,10 @@ export const updateCreatorShopPack = async ({
   const memberIds = memberCosmeticIds ?? existing.members.map((m) => m.cosmeticId);
   // Re-resolved even when the contents didn't change: the price floor has to be
   // checked against today's list prices, not the ones the pack was built against.
-  const members = withOwnership(await resolvePackMembers(memberIds), existing.addedById ?? userId);
+  const packOwnerId = existing.addedById ?? userId;
+  const members = withOwnership(await resolvePackMembers(memberIds), packOwnerId);
   assertMembersBundlable(memberIds, members);
+  assertMembersResellable(members, packOwnerId);
   assertStickerMembersAllowed(members, stickersEnabled);
 
   const nextPrice = price ?? existing.unitAmount;
@@ -506,12 +540,19 @@ export const getPackDetail = async ({
   };
 };
 
-/** Cosmetics this creator may bundle: anything with a Published listing. */
+/**
+ * Cosmetics this creator may bundle: their own work, plus other creators' items
+ * whose listing opted into resale. Anything a creator placed off limits
+ * (`sellableByOthers` false) is never offered, so the composer can't stage a
+ * member the save would refuse — see `isBundlableBy`.
+ */
 export const getBundlableCosmetics = async ({
+  userId,
   query,
   limit = 50,
   types,
 }: {
+  userId: number;
   query?: string;
   limit?: number;
   types?: CosmeticType[];
@@ -537,6 +578,10 @@ export const getBundlableCosmetics = async ({
     take: limit * 2,
     select: { cosmeticId: true },
   });
-  const cosmeticIds = [...new Set(listings.map((l) => l.cosmeticId as number))].slice(0, limit);
-  return resolvePackMembers(cosmeticIds);
+  // Filter after resolving, on the same highest-priced listing the composer and
+  // payout price against: a cosmetic listed both sellable and not must be judged
+  // by the listing the pack would actually use, not by whichever row matched.
+  const cosmeticIds = [...new Set(listings.map((l) => l.cosmeticId as number))];
+  const resolved = await resolvePackMembers(cosmeticIds);
+  return resolved.filter((m) => isBundlableBy(m, userId)).slice(0, limit);
 };
