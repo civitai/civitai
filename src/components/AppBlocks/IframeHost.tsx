@@ -570,8 +570,9 @@ export function AppBlockChrome({
             data-testid="app-block-menu-trigger"
             // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
             // Without this the ⋯ trigger is a shrinkable flex item and a long name
-            // at a narrow width squeezes it below its 26px resting size; its
-            // sibling on the left has carried `flexShrink: 0` all along.
+            // at a narrow width can squeeze it below its resting `ActionIcon
+            // size="sm"` (22px in @mantine/core 7.17.8); its sibling on the left
+            // has carried `flexShrink: 0` all along.
             style={{ flexShrink: 0 }}
           >
             <IconDots size={16} stroke={1.5} />
