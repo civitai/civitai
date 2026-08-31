@@ -6,7 +6,10 @@ export function ConsentBanner() {
   if (consent !== null) return null;
 
   return (
-    <div className="fixed inset-x-0 bottom-0 z-[201] p-3 sm:p-4">
+    // `max(…)` rather than a bare inset: the existing 12/16px is the design
+    // padding on every device, and the inset only has to win where it is larger
+    // than that. Adding the two would double-pad on a notched phone.
+    <div className="fixed inset-x-0 bottom-0 z-[201] p-3 pb-[max(0.75rem,var(--safe-area-inset-bottom))] sm:p-4 sm:pb-[max(1rem,var(--safe-area-inset-bottom))]">
       <Card p="md" shadow="lg" radius="md" withBorder className="mx-auto max-w-3xl">
         <Stack gap="sm">
           <Stack gap={4}>

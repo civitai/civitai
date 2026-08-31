@@ -14,6 +14,40 @@
   --header-height: 60px;
   --footer-height: 45px;
   --buzz-color: 252, 156, 45;
+
+  /* The display-cutout insets, as plain custom properties.
+
+     `MetaPWA` ships `viewport-fit=cover` (VIEWPORT_META_CONTENT in
+     src/shared/constants/app-layout.constants.ts), so on a notched device the
+     layout viewport now extends UNDER the status bar, the notch and the home
+     indicator. Anything anchored to a viewport edge has to pay the matching
+     inset back or it sits under system UI.
+
+     🔴 THE `, 0px` FALLBACK IS LOAD-BEARING, NOT DEFENSIVE PADDING. A bare
+     `env(safe-area-inset-bottom)` is an INVALID value in a browser that does
+     not know the variable, which makes the whole declaration invalid at
+     computed-value time — so `padding-bottom: env(...)` does not fall back to
+     the author's previous padding, it drops the declaration. Every consumer
+     here goes through `var(--safe-area-inset-*)` so the fallback is written
+     once instead of at each call site.
+
+     🔴 WHY A CUSTOM-PROPERTY LAYER RATHER THAN `env()` AT EACH CALL SITE.
+     Not for the indirection — for the two things it buys that `env()` cannot:
+     (1) a test can OVERRIDE these on `:root` and measure that a component's
+     computed padding actually responds, which is impossible with `env()`
+     because no headless browser reports a cutout; that is what
+     `safe-area-insets.browser.test.tsx` does. (2) they are picked up
+     automatically by the `:root` extraction in `test/component-setup.tsx`, so
+     every component test resolves them instead of computing against an invalid
+     declaration.
+
+     These are DECLARATIONS, not a claim that the values are non-zero: on every
+     device without a cutout, and in any context where the UA insets the page
+     itself, all four resolve to 0px and every consumer below is a no-op. */
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
 }
 
 @layer tailwind-preflight {

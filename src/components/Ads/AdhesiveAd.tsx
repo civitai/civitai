@@ -39,12 +39,26 @@ function AdhesiveAdContent({
     <AdUnitRenderable>
       <div
         className="relative flex justify-center border-t border-gray-3 bg-gray-2 dark:border-dark-4 dark:bg-dark-9"
-        style={{ minHeight: isMobile ? 50 : 90 }}
+        // This bar is the LAST flex child of the 100%-height `#__next` column, so
+        // for every logged-out / free user it defines the viewport's bottom edge —
+        // and it is not `position: fixed`, so no fixed/sticky audit finds it.
+        //
+        // The inset is added to `minHeight` as well as paid as padding: with the
+        // global `box-sizing: border-box`, padding alone would eat the ad's own
+        // 50/90px out of the same box. Together these keep exactly the 50/90px of
+        // ad that was visible before `viewport-fit=cover`, now sitting above the
+        // home indicator instead of partly behind it.
+        style={{
+          minHeight: `calc(${isMobile ? 50 : 90}px + var(--safe-area-inset-bottom))`,
+          paddingBottom: 'var(--safe-area-inset-bottom)',
+        }}
       >
         <AdUnitAdhesive maxHeight={90} preserveLayout={preserveLayout && !isMobile} />
         {canClose && onClose && (
           <button
-            className="absolute inset-y-0 right-0 flex w-9 items-center justify-center bg-gray-0/50 dark:bg-dark-6/50"
+            // `inset-y-0` would stretch the close button through the padding and
+            // put its tap target under the home indicator.
+            className="absolute bottom-[var(--safe-area-inset-bottom)] right-0 top-0 flex w-9 items-center justify-center bg-gray-0/50 dark:bg-dark-6/50"
             onClick={onClose}
             aria-label="Close ad"
           >

@@ -265,7 +265,19 @@ export function ThemeProvider({
         withCssVariables={false}
       >
         <StaticMantineCssVariables />
-        <Notifications />
+        {/* Mantine pins the container at `bottom: var(--mantine-spacing-md)` (16px,
+            verified in @mantine/notifications/styles.css) from the default
+            `position="bottom-right"` — less than the 34px home indicator that
+            `viewport-fit=cover` brought inside the layout viewport.
+
+            🔴 `marginBottom`, NOT `bottom`. `Notifications` renders SIX containers
+            (one per position) and spreads the same props onto every one, so
+            overriding `bottom` would move the three TOP containers as well. On a
+            fixed box placed by `bottom`, `margin-bottom` shifts it up by exactly
+            the inset; on one placed by `top` it has no effect at all. That
+            asymmetry is the whole reason for this spelling — do not "simplify" it
+            to `bottom`. */}
+        <Notifications style={{ marginBottom: 'var(--safe-area-inset-bottom)' }} />
         <DateLocaleProvider>{children}</DateLocaleProvider>
       </MantineProvider>
     </>

@@ -125,8 +125,18 @@ export function AppFooter() {
   return (
     <footer
       ref={footerRef}
-      className="sticky inset-x-0 bottom-0 z-50 mt-3 transition-transform"
-      style={!showFooter ? { transform: 'translateY(var(--footer-height))' } : undefined}
+      // `pb-[…]` extends the bar's own background down through the home-indicator
+      // strip that `viewport-fit=cover` added to the layout viewport, so the
+      // footer's links sit exactly where they sat before the viewport changed.
+      className="sticky inset-x-0 bottom-0 z-50 mt-3 pb-[var(--safe-area-inset-bottom)] transition-transform"
+      // The hide transform has to travel the bar's REAL height. It was
+      // `--footer-height`, which is now short by the inset it pays — leaving the
+      // "hidden" footer peeking by up to 34px on a notched phone.
+      style={
+        !showFooter
+          ? { transform: 'translateY(calc(var(--footer-height) + var(--safe-area-inset-bottom)))' }
+          : undefined
+      }
     >
       <div className="absolute bottom-[var(--footer-height)] right-2 group-[.no-scroll]:right-4">
         <div className="relative mb-2  flex gap-2 group-[.no-scroll]:mb-3">
