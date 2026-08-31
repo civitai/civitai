@@ -81,6 +81,18 @@ const INSET_CONSUMERS = [
 
 const repoPath = (file: string) => path.relative(REPO_ROOT, file).split(path.sep).join('/');
 
+/**
+ * A test file MEASURES the inset layer; it never PAYS an inset, so it belongs in
+ * neither sweep below. `safeAreaInsets.browser.test.tsx` writes
+ * `padding-bottom: var(--safe-area-inset-bottom)` into a string to read the
+ * computed value back, and `stripComments` keeps strings (deliberately — the
+ * viewport sweep's subject IS a string literal), so without this it lands in the
+ * ledger as a twelfth "consumer". No production call site lives under
+ * `__tests__`, so nothing real is hidden by this.
+ */
+const isTestFile = (file: string) =>
+  /(^|\/)__tests__\//.test(repoPath(file)) || /\.test\./.test(file);
+
 function read(file: string): string {
   // Prove the path before trusting a "no match": a comparison against an absent
   // operand reports SAME, not MISSING, so a renamed component would otherwise
@@ -208,7 +220,7 @@ describe('the safe-area custom-property layer', () => {
     // report it. globals.css is the single legal declaration site.
     const offenders: string[] = [];
     for (const file of srcFiles(/\.(css|scss|ts|tsx)$/)) {
-      if (path.resolve(file) === path.resolve(__filename)) continue;
+      if (isTestFile(file)) continue;
       if (path.resolve(file) === path.resolve(GLOBALS_CSS)) continue;
       // Comments out first, in CSS as in TS: this rule is DISCUSSED at length in
       // the very files it governs, and an unstripped scan counted those JSDoc
@@ -228,7 +240,7 @@ describe('the safe-area custom-property layer', () => {
   it('the ledger of inset-paying call sites matches the tree, in both directions', () => {
     const found: string[] = [];
     for (const file of srcFiles(/\.(css|scss|ts|tsx)$/)) {
-      if (path.resolve(file) === path.resolve(__filename)) continue;
+      if (isTestFile(file)) continue;
       if (path.resolve(file) === path.resolve(GLOBALS_CSS)) continue;
       // Comments stripped for the same reason as above — `app-layout.constants.ts`
       // documents the property and was counted as a consumer without this.
