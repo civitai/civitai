@@ -6,6 +6,8 @@ import {
   withSysReadDeadline,
 } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 
 // ---------------------------------------------------------------------------
 // Fail-open sysRedis helpers for the queue used by search-index AND metrics.
@@ -41,12 +43,14 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 // whose `sMembers` failed open is left queued for the next run. Prefer
 // "skip + retry next run" over "proceed on a false-empty read + destructive write".
 //
-// Automatic recovery for a dropped enqueue: for search-index it's the delta
-// `update` job's `updatedAt` range-scan (≤15min) plus the daily
-// `search-index-cleanup` (dropped-delete orphans) — NOT the full-reset job,
-// which runs at UNRUNNABLE_JOB_CRON (manual, unscheduled). Metrics have no such
-// range-scan, so a dropped metrics enqueue just yields momentarily stale metrics
-// until the entity is next touched.
+// Recovery for a dropped enqueue: the ids are parked in Postgres and replayed by
+// `search-index-queue-drain` (see FALLBACK_KEY_PREFIX below). That is the only
+// recovery a dropped DELETE has ever had — the delta `update` job's `updatedAt`
+// range-scan re-derives updates but cannot re-derive a delete, and the daily
+// `search-index-cleanup` reconciles neither images index (`CLEANUP_INDEXES` in
+// meilisearch/cleanup.ts covers models/articles/users/collections/bounties/tools/
+// comics only). Metrics likewise have no range-scan, so the parking lot is their
+// only recovery too.
 //
 // `withSysReadDeadline` is named for reads but is functionally a
 // `Promise.race([op, deadline])` — it unblocks the CALLER even for a write (the
@@ -92,16 +96,21 @@ async function safeSysRead<T>(
 /**
  * Deadline-raced + fail-open sysRedis WRITE. On DOWN or SLOW the write is
  * dropped (best-effort) and a `write-degraded` fail-open warning is logged.
+ *
+ * Returns whether the write landed, so a caller with somewhere durable to put
+ * the work can tell a completed write from a swallowed one.
  */
 async function safeSysWrite(
   op: () => Promise<unknown>,
   fn: string,
   extra?: Record<string, unknown>
-): Promise<void> {
+): Promise<boolean> {
   try {
     await withSysReadDeadline(op());
+    return true;
   } catch (err) {
     logSysRedisFailOpen('write-degraded', fn, err, extra);
+    return false;
   }
 }
 
@@ -137,7 +146,129 @@ function getNewBucket(key: string) {
 
 const QUEUE_ADD_CHUNK_SIZE = 10000;
 
-export async function addToQueue(key: string, ids: number | number[] | Set<number>) {
+/**
+ * Postgres parking lot for enqueues sysRedis refused. `Delete` is why it exists: a
+ * dropped `Update` is re-derived by the delta `updatedAt` range-scan, but nothing can
+ * re-derive a delete from a row that is already gone, so the id is simply lost and the
+ * document stays in the index forever. Postgres is the store that is, by construction,
+ * not the one currently failing.
+ */
+const FALLBACK_KEY_PREFIX = 'search-index-queue-fallback:';
+
+/**
+ * Ceiling per queue key. A single fan-out can carry ~211K ids and this is a JSON column,
+ * not a queue — past this the parking lot stops absorbing rather than growing without
+ * bound through a long outage. Hitting it is itself the signal that the outage needs a
+ * full reindex, not a replay.
+ */
+const FALLBACK_MAX_IDS_PER_KEY = 100000;
+
+async function persistDroppedEnqueue(key: string, ids: number[]) {
+  if (!ids.length) return;
+  try {
+    const [row] = await dbWrite.$queryRaw<{ capped: boolean }[]>`
+      INSERT INTO "KeyValue" ("key", "value")
+      VALUES (${FALLBACK_KEY_PREFIX + key}, ${JSON.stringify(ids)}::jsonb)
+      ON CONFLICT ("key") DO UPDATE SET "value" =
+        CASE
+          WHEN jsonb_array_length("KeyValue"."value") >= ${FALLBACK_MAX_IDS_PER_KEY}
+            THEN "KeyValue"."value"
+          ELSE "KeyValue"."value" || EXCLUDED."value"
+        END
+      RETURNING (jsonb_array_length("value") >= ${FALLBACK_MAX_IDS_PER_KEY}) AS capped
+    `;
+    // The CASE above keeps the old value once the cap is reached, which discards the
+    // incoming ids. Say so: a full parking lot means the outage has outlasted what a
+    // replay can fix and the index needs reconciling, and that has to be louder than
+    // the per-drop warning the caller already logged.
+    if (row?.capped) {
+      logToAxiom({
+        type: 'error',
+        name: 'search-index-queue-fallback',
+        message: `parking lot for ${key} is at the ${FALLBACK_MAX_IDS_PER_KEY} id cap; ${ids.length} id(s) discarded`,
+      }).catch(() => undefined);
+    }
+  } catch (err) {
+    // Both stores are now failing. Nothing left to try — log and let the caller
+    // report the drop, exactly as it did before this fallback existed.
+    logToAxiom({
+      type: 'error',
+      name: 'search-index-queue-fallback',
+      message: `could not park ${ids.length} dropped id(s) for ${key}: ${(err as Error).message}`,
+    }).catch(() => undefined);
+  }
+}
+
+/**
+ * Replay everything parked back onto the real queue.
+ *
+ * 🔴 Reads BEFORE it deletes, and deletes only the row it actually replayed — the same
+ * rule `checkoutQueue` follows below, for the same reason. An earlier version used
+ * `DELETE … RETURNING` as the checkout, which commits the removal before the replay is
+ * attempted: a pod dying in that window destroyed the very ids this table exists to
+ * protect. Nothing else can rebuild them.
+ *
+ * Replaying is safe to repeat, which is what makes read-then-delete affordable here: a
+ * `Delete` for a document already gone and an `Update` for an unchanged row are both
+ * no-ops downstream.
+ */
+export async function drainDroppedEnqueues() {
+  const rows = await dbWrite.$queryRaw<{ key: string; value: unknown }[]>`
+    SELECT "key", "value" FROM "KeyValue" WHERE "key" LIKE ${`${FALLBACK_KEY_PREFIX}%`}
+  `;
+
+  let replayed = 0;
+  let reparked = 0;
+  for (const row of rows) {
+    if (!Array.isArray(row.value)) {
+      // No replay can ever consume this, so retrying it forever is just a leak.
+      await dbWrite.$executeRaw`
+        DELETE FROM "KeyValue"
+        WHERE "key" = ${row.key} AND jsonb_typeof("value") <> 'array'
+      `;
+      continue;
+    }
+
+    const ids = row.value as number[];
+    // `park: false` — the row IS the parking lot entry, and it is still there. Letting
+    // the enqueue re-park on failure would append a second copy of every id.
+    if (ids.length && !(await enqueue(row.key.slice(FALLBACK_KEY_PREFIX.length), ids, false))) {
+      reparked += ids.length;
+      continue; // left parked; the next run retries it
+    }
+    replayed += ids.length;
+
+    // Length guard, not an unconditional delete by key: a drop landing between the read
+    // and here appends to the same row, and deleting it wholesale would swallow ids that
+    // were never replayed. A grown row survives and is replayed in full next run —
+    // duplicated work, which is a no-op, rather than lost work, which is not.
+    await dbWrite.$executeRaw`
+      DELETE FROM "KeyValue"
+      WHERE "key" = ${row.key}
+        AND jsonb_typeof("value") = 'array'
+        AND jsonb_array_length("value") = ${ids.length}
+    `;
+  }
+  return { keys: rows.length, replayed, reparked };
+}
+
+/** @returns whether every id reached the queue; dropped ids are parked for replay. */
+export async function addToQueue(
+  key: string,
+  ids: number | number[] | Set<number>
+): Promise<boolean> {
+  return enqueue(key, ids, true);
+}
+
+/**
+ * @param park whether a dropped id should be written to the Postgres parking lot. Only
+ * the drain passes false, because its ids are already parked.
+ */
+async function enqueue(
+  key: string,
+  ids: number | number[] | Set<number>,
+  park: boolean
+): Promise<boolean> {
   if (!Array.isArray(ids)) {
     if (ids instanceof Set) ids = Array.from(ids);
     else ids = [ids];
@@ -146,36 +277,51 @@ export async function addToQueue(key: string, ids: number | number[] | Set<numbe
   if (degraded) {
     // The bucket-list read failed open (false-empty). Writing a fresh bucket
     // reference here (`hSet(BUCKETS, key, newBucket)`) would OVERWRITE the hash
-    // field and orphan any pre-existing buckets. Skip the enqueue entirely — the
-    // update is dropped (recovered by the delta update-scan / next trigger)
-    // rather than clobbering the queue.
+    // field and orphan any pre-existing buckets, so the enqueue cannot proceed
+    // against redis — it goes to the parking lot instead.
     logSysRedisFailOpen(
       'write-degraded',
       'queues.addToQueue skipped-degraded-read',
       new Error('bucket-list read degraded; enqueue skipped to avoid orphaning existing buckets'),
       { key }
     );
-    return;
+    if (park) await persistDroppedEnqueue(key, ids);
+    return false;
   }
   let targetBucket = currentBuckets[0];
   if (!targetBucket) {
     targetBucket = getNewBucket(key);
-    await safeSysWrite(
+    const registered = await safeSysWrite(
       () => sysRedis.hSet(REDIS_SYS_KEYS.QUEUES.BUCKETS, key, targetBucket),
       'queues.addToQueue hSet',
       { key }
     );
+    // No consumer can reach an unregistered bucket, so writing ids into it would
+    // put them somewhere nothing ever reads — indistinguishable from losing them.
+    if (!registered) {
+      if (park) await persistDroppedEnqueue(key, ids);
+      return false;
+    }
   }
   const content = ids.map((id) => id.toString());
+  const dropped: number[] = [];
   // Chunked because callers can enqueue very large id sets in one go — propagating a model
   // flag to its gallery reaches ~211K images on the largest model — and a single sAdd that
   // size is a multi-MB command that stalls everything else on the connection.
   for (let i = 0; i < content.length; i += QUEUE_ADD_CHUNK_SIZE) {
     const chunk = content.slice(i, i + QUEUE_ADD_CHUNK_SIZE);
-    await safeSysWrite(() => sysRedis.sAdd(targetBucket, chunk), 'queues.addToQueue sAdd', {
-      key,
-    });
+    const written = await safeSysWrite(
+      () => sysRedis.sAdd(targetBucket, chunk),
+      'queues.addToQueue sAdd',
+      { key }
+    );
+    if (!written) dropped.push(...ids.slice(i, i + QUEUE_ADD_CHUNK_SIZE));
   }
+  if (dropped.length) {
+    if (park) await persistDroppedEnqueue(key, dropped);
+    return false;
+  }
+  return true;
 }
 
 export async function checkoutQueue(key: string, isMerge = false, readOnly = false) {
@@ -264,7 +410,8 @@ async function waitForMerge(key: string) {
   // `string`, losing the contextual RedisKeyTemplateSys match the inline literal had (mirrors
   // getNewBucket below). Without this, sysRedis.exists() rejects it (TS2345) — caught only by the
   // preview build's typecheck, not local tsc against stale @civitai/redis types.
-  const mergeKey = `${REDIS_SYS_KEYS.QUEUES.BUCKETS}:${key}:${REDIS_SUB_KEYS.QUEUES.MERGING}` as RedisKeyTemplateSys;
+  const mergeKey =
+    `${REDIS_SYS_KEYS.QUEUES.BUCKETS}:${key}:${REDIS_SUB_KEYS.QUEUES.MERGING}` as RedisKeyTemplateSys;
   for (let i = 0; i < WAIT_FOR_MERGE_MAX_ITERATIONS; i++) {
     const { value: isMerging } = await safeSysRead(
       () => sysRedis.exists(mergeKey),
