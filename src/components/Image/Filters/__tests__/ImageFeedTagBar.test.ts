@@ -196,6 +196,29 @@ describe('ImageFeedTagBar', () => {
     expect(mocks.getFeedTagBar).toHaveBeenCalledWith(undefined, { enabled: true });
   });
 
+  // The other state with no `All` chip, and the one that is NOT transient: `TagChipRow`
+  // draws the reservation and no children while `loading`, and the bar holds it whenever
+  // the chip list is empty — which is where a failed or empty `getFeedTagBar` leaves it
+  // for good. The reservation must survive too, or fixing the dead end reintroduces the
+  // CLS the reservation exists for.
+  it('falls back to the clear control while the chip row is held', () => {
+    mocks.tags = [];
+    mocks.query = { tags: ['999999'], sort: 'Newest' };
+    const container = render();
+
+    expect(buttonLabels(container)).toEqual(['Clear 1 tag filter']);
+    expect(reservedRows(container)).toHaveLength(1);
+  });
+
+  // Negative control: chips present, same deep link. The All chip is the escape hatch
+  // here, and a second one beside it would be the bug this pair is checking for.
+  it('does not add the clear control when the All chip is on the page', () => {
+    mocks.query = { tags: ['999999'], sort: 'Newest' };
+    const container = render();
+
+    expect(buttonLabels(container)).toEqual(['All', 'anime', 'realistic']);
+  });
+
   it('writes ?tags=<id> on select, preserving the rest of the query', () => {
     mocks.query = { sort: 'Newest' };
     const container = render();
@@ -225,9 +248,9 @@ describe('ImageFeedTagBar', () => {
     expect(lastReplacedQuery()).not.toHaveProperty('tags');
   });
 
-  // The reason the All chip is not decoration: ActiveTagFilter is mounted nowhere
-  // (868kuq3jk), so before this bar a ?tags= deep link on /images could not be widened
-  // by any UI. An id that is not a chip here is exactly that case.
+  // The reason the All chip is not decoration: it is what widens a ?tags= deep link on
+  // /images, and an id that is not a chip here is exactly that case. `ActiveTagFilter`
+  // covers only the states where this chip is absent — see the two tests below.
   it('clears a ?tags= deep link whose id is not one of the chips', () => {
     mocks.query = { tags: ['999999'], sort: 'Newest' };
     const container = render();

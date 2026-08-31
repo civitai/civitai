@@ -20,7 +20,7 @@ function PostsPage() {
       />
       <MasonryContainer>
         <Stack gap="xs">
-          <ActiveTagFilter />
+          <ActiveTagFilter tagIds={query.tags ?? []} />
           <IsClient>
             <PostsInfinite filters={query} showEof showAds />
           </IsClient>

@@ -35,7 +35,7 @@ function ArticlesPage() {
       <MasonryContainer>
         <Stack gap="xs">
           {query.favorites && <Title>Your Bookmarked Articles</Title>}
-          <ActiveTagFilter />
+          <ActiveTagFilter tagIds={query.tags ?? []} />
           <ArticlesInfinite filters={query} />
         </Stack>
       </MasonryContainer>

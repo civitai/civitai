@@ -20,9 +20,10 @@ type FeedTagBarFeed = 'images' | 'videos';
  * these feeds. It clears whatever is in `?tags=`, including ids that are not chips on
  * this bar.
  *
- * `feedTagBar` is a kill switch for a bar that may yet be removed, so the off branch
- * falls back to `ActiveTagFilter` rather than rendering nothing: turning the bar off must
- * not take the only escape hatch from a `?tags=` deep link with it (ClickUp 868kuq3jk).
+ * So `ActiveTagFilter` stands in wherever that chip is NOT on the page — the flag being
+ * off, and the chip row being held for its loading reservation, which is also the state a
+ * failed chip-list fetch leaves the bar in permanently. Neither may take the only escape
+ * hatch from a `?tags=` deep link with it (ClickUp 868kuq3jk).
  */
 export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
   const { trackAction } = useTrackEvent();
@@ -72,18 +73,24 @@ export function ImageFeedTagBar({ feed }: { feed: FeedTagBarFeed }) {
     replace({ tags: [] });
   };
 
-  if (!features.feedTagBar) return <ActiveTagFilter />;
+  if (!features.feedTagBar) return <ActiveTagFilter tagIds={tagIds} />;
+
+  // Holding the row until preferences resolve keeps a tag the viewer has personally
+  // hidden from flashing as a chip: the chip list is edge-cached and the preferences are
+  // a per-user fetch, so the list usually wins the race. `TagChipRow` draws the height
+  // reservation and NO chips in that state — the All chip included.
+  const chipsHeld = loadingPreferences || !tags.length;
 
   return (
-    <TagChipRow
-      items={tags.map((tag) => ({ id: tag.id, label: tag.name }))}
-      activeId={activeId}
-      onSelect={handleSelect}
-      onClear={handleClear}
-      // Holding the row until preferences resolve keeps a tag the viewer has personally
-      // hidden from flashing as a chip: the chip list is edge-cached and the preferences
-      // are a per-user fetch, so the list usually wins the race.
-      loading={loadingPreferences || !tags.length}
-    />
+    <>
+      <TagChipRow
+        items={tags.map((tag) => ({ id: tag.id, label: tag.name }))}
+        activeId={activeId}
+        onSelect={handleSelect}
+        onClear={handleClear}
+        loading={chipsHeld}
+      />
+      {chipsHeld && <ActiveTagFilter tagIds={tagIds} />}
+    </>
   );
 }
