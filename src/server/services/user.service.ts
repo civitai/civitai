@@ -363,6 +363,10 @@ export const getUsers = async ({
     select.push(`u."meta"`);
   }
 
+  // ORDER BY goes after every predicate. It used to share a line with `u."id" != -1`, above the
+  // `contestBanned` clause, so a caller passing both emitted `... ORDER BY ... AND ...` and Postgres
+  // rejected the statement with 42601. `user.getAll` routes here whenever a moderator sets
+  // `contestBanned`, and `query` is on the same input schema, so that combination is reachable.
   const result = await dbRead.$queryRaw<GetUsersRow[]>`
     SELECT ${Prisma.raw(select.join(','))}
     FROM "User" u
@@ -378,10 +382,11 @@ export const getUsers = async ({
           : Prisma.sql`TRUE`
       }
       AND u."deletedAt" IS NULL
-      AND u."id" != -1 ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')}
+      AND u."id" != -1
       AND ${
         contestBanned ? Prisma.sql`u."meta"->>'contestBanDetails' IS NOT NULL` : Prisma.sql`TRUE`
       }
+      ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')}
       ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
   `;
 
