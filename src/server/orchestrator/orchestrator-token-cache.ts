@@ -35,7 +35,9 @@
  * Two layers, both per-pod, both in-memory (deliberately not Redis — the
  * whole point is to survive sysRedis being unavailable):
  *
- *   1. LRU cache (size-capped + TTL): cache `userId → token` for ~60s.
+ *   1. LRU cache (size-capped + TTL): cache `userId → <userId>.<token>` for ~60s.
+ *      The value repeats the id so a hit can be verified rather than trusted —
+ *      see orchestrator-token-identity.ts.
  *      Cold-mint hits the DB at most once per user per 60s per pod.
  *
  *   2. In-flight promise coalescing: when N concurrent requests for the
@@ -54,7 +56,7 @@
  *    isolation also caps blast radius (a poisoned cache entry can only
  *    affect one pod's traffic).
  *  - No cache invalidation API. Eviction is implicit-via-TTL.
- *  - Bounded memory: `max` entries × ~40 bytes/token ≈ 2 MB worst case.
+ *  - Bounded memory: `max` entries × ~50 bytes/entry ≈ 2.5 MB worst case.
  *
  * KNOWN BEHAVIOR (ban / logout / API-key rotation / account-deletion)
  * --------------------------------------------------------------------
@@ -135,6 +137,11 @@
  */
 
 import { LRUCache } from 'lru-cache';
+import { observeTokenIdentityMismatch } from '~/server/orchestrator/orchestrator-identity-metrics';
+import {
+  decodeOwnedToken,
+  encodeOwnedToken,
+} from '~/server/orchestrator/orchestrator-token-identity';
 import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
 
 const CACHE_NAME = 'orchestrator-token-cold-mint';
@@ -222,11 +229,16 @@ export async function getOrMintCachedToken(
     return mint();
   }
 
-  const cached = tokenCache.get(userId);
-  if (cached !== undefined) {
+  // Entries carry the userId they were minted for, re-checked here rather than inferred
+  // from the key that found them — see orchestrator-token-identity.ts. Anything not owned
+  // by this user falls through to a fresh mint, so a poisoned entry costs a DB round-trip
+  // instead of billing the wrong account.
+  const owned = decodeOwnedToken(tokenCache.get(userId), userId);
+  if (owned.outcome === 'ok' && owned.token) {
     cacheHitCounter.inc({ cache_name: CACHE_NAME, cache_type: CACHE_TYPE });
-    return cached;
+    return owned.token;
   }
+  if (owned.outcome === 'mismatch') observeTokenIdentityMismatch('lru');
 
   const pending = inflight.get(userId);
   if (pending) {
@@ -234,7 +246,11 @@ export async function getOrMintCachedToken(
     // its promise. Still counts as a miss — the DB call is happening,
     // we're just not duplicating it.
     cacheMissCounter.inc({ cache_name: CACHE_NAME, cache_type: CACHE_TYPE });
-    return pending;
+    // Verified like a cache hit, and for a stronger reason: this map is the ONE structure
+    // here that deliberately hands one user's mint result to a different caller, which
+    // makes it the closest analogue of the fault the encoding exists to catch. The shared
+    // promise therefore resolves ENCODED, and every consumer re-checks the owner.
+    return unwrapInflight(pending, userId, mint);
   }
 
   cacheMissCounter.inc({ cache_name: CACHE_NAME, cache_type: CACHE_TYPE });
@@ -270,8 +286,9 @@ export async function getOrMintCachedToken(
           : mint();
 
       const token = await mintPromise;
-      tokenCache.set(userId, token);
-      return token;
+      const encoded = encodeOwnedToken(userId, token);
+      tokenCache.set(userId, encoded);
+      return encoded;
     } finally {
       if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
       // Always clear the in-flight slot, even on rejection or timeout —
@@ -283,7 +300,25 @@ export async function getOrMintCachedToken(
   })();
 
   inflight.set(userId, promise);
-  return promise;
+  return unwrapInflight(promise, userId, mint);
+}
+
+/**
+ * Strip the owner off a shared in-flight result, refusing it if the owner is not this caller.
+ * Unreachable while the promise and the check share one `userId` binding — which is the point:
+ * the check costs nothing and is the only thing standing between a future refactor of this map
+ * and the failure it would reintroduce. A refusal re-mints rather than throwing, so the caller
+ * that lost the race still gets served; it cannot stampede, because it cannot happen.
+ */
+async function unwrapInflight(
+  pending: Promise<string>,
+  userId: number,
+  mint: () => Promise<string>
+): Promise<string> {
+  const owned = decodeOwnedToken(await pending, userId);
+  if (owned.outcome === 'ok' && owned.token) return owned.token;
+  if (owned.outcome === 'mismatch') observeTokenIdentityMismatch('lru');
+  return mint();
 }
 
 // Test-only escape hatches. Kept on the module export so tests can clear
@@ -298,6 +333,18 @@ export const __testing = {
   },
   isDisabled() {
     return CACHE_DISABLED;
+  },
+  /**
+   * Write a RAW entry, bypassing the encode step, so a test can stage the state
+   * this cache is supposed to refuse. Nothing in the code can produce a wrongly
+   * owned entry on purpose, which is exactly why the guard against one would
+   * otherwise be untestable — and an untested guard is one a refactor deletes.
+   */
+  poison(userId: number, rawValue: string) {
+    // Throws rather than no-ops when the cache is disabled: a silent no-op would leave every
+    // test that stages a poisoned entry asserting nothing, and passing for that reason.
+    if (!tokenCache) throw new Error('__testing.poison: cache is disabled, nothing was staged');
+    tokenCache.set(userId, rawValue);
   },
   // PR #2333 round-4: explicit cleanup for HMR safety in dev + test
   // isolation. `LRUCache` with `ttl > 0` + `ttlAutopurge: true` registers
