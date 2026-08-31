@@ -8,8 +8,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * pixel. Measured across the 89 creators who cashed out in a 30-day window, tallest bar over median
  * day falls 39.5x -> 4.1x once `bank` and `withdrawal` are out.
  *
- * `bank` is the one that matters and is the one an author reaching for the obvious word misses:
- * 443 rows / 50.7M Buzz in 30 days against `withdrawal`'s 52 rows / 2.2M.
+ * Two types reach a creator's chart, on opposite sides: `bank` debits yellow/green (the Spent bar,
+ * 2,174 rows / 180d, max 10,477,563) and `extract` credits them back out of the program bank (the
+ * GAINED bar, 79 rows / 180d, max 500,000). `withdrawal` credits account 0 rather than a creator and
+ * reaches neither today; it debited yellow until 2025-02-27 and is kept for that.
  */
 
 import type * as ClickhouseClient from '~/server/clickhouse/client';
@@ -55,19 +57,19 @@ afterEach(() => {
 
 const sqlOf = () => String($query.mock.calls[0][0]);
 
-// The two halves of the UNION, separated so an assertion can name which branch it is about. A fix
-// that excluded cash-outs from BOTH branches would strip the creator's incoming rows too.
+// The two halves of the UNION, separated so an assertion can name which branch it is about.
 const branches = (sql: string) => {
   const [gained, spent] = sql.split('UNION ALL');
   return { gained, spent };
 };
 
 describe('getTransactionsReport', () => {
-  // 🔴 BOTH branches, deliberately. A `withdrawal` debited yellow until 2025-02-27 and credits it now
-  // (cashSettled -> yellow), and `extract` credits yellow/green out of the program bank — so a cash-out
-  // reaches the chart through the GAINED branch today. Excluding on the spend side alone is a guard
-  // that cannot fire for any window this chart offers. If you are here to "simplify" this back to one
-  // branch, that is the bug, not the redundancy.
+  // 🔴 BOTH branches, deliberately, and the gained one is not redundant: `extract` credits yellow or
+  // green out of the creator program bank, so a cash-out returning reaches the chart through GAINED
+  // and no other filter would remove it. The first version of this fix guarded only the spend branch
+  // and its worked example was July 2024, when a cash-out still debited yellow — the control passed
+  // over a live case it could not see. If you are here to drop the gained-branch filter, check
+  // `extract`'s direction in production first.
   it('excludes cash-out plumbing from the spent series', async () => {
     await getTransactionsReport({ userId: USER, window: 'day', accountType: 'yellow' });
 
@@ -175,11 +177,50 @@ describe('getTransactionsReport', () => {
     // result, which the client renders as "no data on the provided timeframe" over real activity.
     expect(getUserTransactionsReport).toHaveBeenCalledOnce();
     expect(report).toHaveLength(1);
-    expect(report[0].accounts[0].gained).toBe(20);
+    // Both fields the chart keys on, not just the value: it looks the bucket up by a formatted `date`
+    // and picks the account by `accountType`, so a fallback returning either in an unexpected shape
+    // draws every bar at zero while an assertion on `gained` alone stays green.
+    //
+    // The format, not the instant. This path runs the buzz service's payload through
+    // `getTransactionsReportResultSchema`, whose `z.coerce.date()` reads a bare timestamp as LOCAL and
+    // then formats it as UTC — so the value shifts by the host's offset (nothing on a UTC server, six
+    // hours on the box this was written on). Pre-existing on this path; pinning the literal would make
+    // the test fail by timezone rather than by defect.
+    expect(report[0].date).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/);
+    expect(report[0].accounts[0]).toEqual({ accountType: 'yellow', spent: 10, gained: 20 });
+  });
+
+  it('maps a non-yellow account type through the fallback', async () => {
+    $query.mockRejectedValue(new Error('clickhouse is down'));
+    getUserTransactionsReport.mockResolvedValue([
+      {
+        date: '2026-08-31T00:00:00',
+        start: '2026-08-31T00:00:00',
+        end: '2026-09-01T00:00:00',
+        accounts: [{ accountType: 'Green', spent: 0, gained: 5 }],
+      },
+    ]);
+
+    const report = await getTransactionsReport({
+      userId: USER,
+      window: 'day',
+      accountType: 'green',
+    });
+
+    expect(report[0].accounts[0].accountType).toBe('green');
+  });
+
+  it('surfaces a handled error when the fallback fails too', async () => {
+    $query.mockRejectedValue(new Error('clickhouse is down'));
+    getUserTransactionsReport.mockRejectedValue(new Error('buzz service is down'));
+
+    await expect(
+      getTransactionsReport({ userId: USER, window: 'day', accountType: 'yellow' })
+    ).rejects.toThrow('Could not load the Buzz report right now. Please try again shortly.');
   });
 
   it('buckets weeks on Monday, matching ClickHouse toMonday', async () => {
-    // 2026-08-31 is a Monday; the `week` window reaches back one month.
+    // 2026-08-31 is a Monday; the `week` window reaches back five whole weeks.
     $query.mockResolvedValue([{ bucket: '2026-08-31', gained: '500', spent: '0' }]);
 
     const report = await getTransactionsReport({
@@ -189,6 +230,10 @@ describe('getTransactionsReport', () => {
     });
 
     expect(sqlOf()).toContain('toMonday(date)');
+    // Six, the same span a calendar `subtract(1, 'month')` covered before the sequence was rewritten.
+    // Nothing else pins the week window's length, and it lost a period once already.
+    expect(report).toHaveLength(6);
+    expect(report[0].date.slice(0, 10)).toBe('2026-07-27');
     const last = report[report.length - 1];
     expect(last.date.slice(0, 10)).toBe('2026-08-31');
     expect(last.accounts[0].gained).toBe(500);

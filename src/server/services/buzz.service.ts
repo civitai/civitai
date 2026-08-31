@@ -1686,12 +1686,19 @@ type TransactionsReportWindow = GetTransactionsReportSchema['window'];
 // a pixel; measured over the 89 creators who cashed out in a 30-day window, tallest bar over median
 // day falls 39.5x -> 4.1x once they are out.
 //
-// Both directions, because the direction is not stable: a `withdrawal` used to debit yellow and since
-// 2025-02-27 credits it instead (cashSettled -> yellow, 1,214 rows, max 1,121,934), and `extract`
-// credits yellow/green out of the creator program bank. Filtering only the spend branch would leave
-// today's cash-outs destroying the Gained series instead of the Spent one. Nothing legitimate is lost
-// on the credit side: a `bank` never credits a spend account at all, and a `withdrawal`/`extract`
-// credit is the creator's own money coming back, not something they earned.
+// Which side each type lands on, over 180 days of production rows:
+//   bank        yellow/green -> creatorProgramBank   the Spent bar. 2,174 rows, max 10,477,563.
+//   extract     creatorProgramBank -> yellow/green   the GAINED bar. 79 rows, max 500,000.
+//   withdrawal  cashSettled -> yellow, toAccountId 0  neither: it credits the central bank, not a
+//               creator. It debited a creator's yellow until 2025-02-27, and is kept for that.
+//
+// So the gained branch is not defence-in-depth — `extract` reaches it and nothing else would remove
+// it. Nothing legitimate is lost there: an `extract` credit is the creator's own banked Buzz coming
+// back, the mirror of the `bank` debit already excluded on the other side.
+//
+// A `purchase` credit is deliberately NOT here. It is much larger than `extract` (max 3,549,405) but
+// it is buzz the creator bought or was sold — a real gain on a gained/spent chart, and for a creator
+// selling access it is their revenue.
 const CHART_EXCLUDED_TYPES = [
   TransactionType.Bank,
   TransactionType.Withdrawal,
@@ -1769,7 +1776,8 @@ export async function getTransactionsReport({
   // dataset by a `MMM-DD` label, so two buckets that format alike overwrite each other: a 12-month
   // window started a calendar year back spans THIRTEEN months, and its first and last both render as
   // `Aug-01`. Counting back whole buckets from the last one keeps every label distinct and stops the
-  // first bucket being a partial period drawn as a whole one.
+  // first bucket being a partial period drawn as a whole one. The counts reproduce what a calendar
+  // subtraction gave at its widest — 6 weeks, not 5 — so no window lost a period in the rewrite.
   const lastBucket = reportBucketStart(dayjs.utc(), window);
   const firstBucket =
     window === 'hour'
@@ -1777,7 +1785,7 @@ export async function getTransactionsReport({
       : window === 'day'
       ? lastBucket.subtract(7, 'day')
       : window === 'week'
-      ? lastBucket.subtract(4, 'week')
+      ? lastBucket.subtract(5, 'week')
       : lastBucket.subtract(11, 'month');
   // End date is always the start of the next day
   const endDate = dayjs().add(1, 'day').startOf('day');
@@ -1788,14 +1796,24 @@ export async function getTransactionsReport({
   // it degrades to showing the cash-out, which is what the chart did before this. Throwing instead
   // leaves the client rendering "no data on the provided timeframe" over a creator's real activity.
   const fallback = async () => {
-    const data = await buzzService.getUserTransactionsReport(userId, {
-      accountType,
-      window,
-      start: firstBucket.toDate(),
-      end: endDate.toDate(),
-    });
+    try {
+      const data = await buzzService.getUserTransactionsReport(userId, {
+        accountType,
+        window,
+        start: firstBucket.toDate(),
+        end: endDate.toDate(),
+      });
 
-    return getTransactionsReportResultSchema.parse(data);
+      return getTransactionsReportResultSchema.parse(data);
+    } catch (error) {
+      // Both sources down. Without this the raw upstream client error reaches the client — the
+      // handler's try/catch cannot wrap it, being synchronous around an async call.
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Could not load the Buzz report right now. Please try again shortly.',
+        cause: error,
+      });
+    }
   };
 
   if (!clickhouse) return fallback();
@@ -1846,6 +1864,10 @@ export async function getTransactionsReport({
 // Returns undefined rather than throwing so the caller can fall back to the buzz service. An empty
 // array is a real answer here — a creator with no activity in the window — so the two cannot share a
 // value.
+//
+// The trade this makes: a ClickHouse outage silently reverts the chart to its pre-exclusion behaviour
+// — the cash-out bar returns and the page looks normal. That is deliberate (a working chart beats an
+// error), and it means the ONLY signal is this log line. Alert on it rather than on the UI.
 async function queryTransactionsReport(query: string) {
   try {
     return await clickhouse!.$query<ClickhouseReportBucket>(query);
