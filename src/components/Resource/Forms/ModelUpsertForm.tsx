@@ -59,7 +59,10 @@ import {
   ModelUploadType,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
-import { getModelTypeSelectData } from '~/shared/constants/model-type.constants';
+import {
+  getModelTypeSelectData,
+  resolveModelTypeDefaults,
+} from '~/shared/constants/model-type.constants';
 import type { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
@@ -146,13 +149,14 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const colorScheme = useComputedColorScheme('dark');
 
   const defaultCategory = result.success ? result.data.category ?? 0 : 0;
+  const { grandfatheredType, initialType } = resolveModelTypeDefaults(model);
   const defaultValues: ModelUpsertSchema = {
     ...model,
     name: model?.name ?? '',
     description: model?.description ?? '',
     tagsOnModels: model?.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
     status: model?.status ?? 'Draft',
-    type: model?.type ?? 'Checkpoint',
+    type: initialType ?? 'Checkpoint',
     checkpointType: model?.checkpointType,
     uploadType: model?.uploadType ?? 'Created',
     poi: model?.poi == null ? '' : model?.poi ? 'true' : 'false',
@@ -175,9 +179,6 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const queryUtils = trpc.useUtils();
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
-  // Only a saved model grandfathers a retired type. A template seeds `type` without an `id`, and
-  // minting a new model on a retired type is what retiring it was meant to stop.
-  const grandfatheredType = model?.id ? model.type : null;
   const [nsfw, poi, sfwOnly, minor] = form.watch(['nsfw', 'poi', 'sfwOnly', 'minor']);
   const watchedTags = form.watch('tagsOnModels') ?? [];
   const allowCommercialUse = form.watch('allowCommercialUse') as CommercialUse[] | undefined;

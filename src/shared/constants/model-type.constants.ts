@@ -43,7 +43,9 @@ type UncategorisedModelType = Exclude<
 
 /**
  * Both lists are written out rather than one being the other's complement, so that a ModelType added
- * later is a compile error here instead of silently becoming unpickable.
+ * later is caught instead of silently becoming unpickable. Dropping `as const` above widens
+ * `types` and makes this check pass vacuously, so the runtime test that the two lists cover the enum
+ * is the durable half of the pair, not this.
  */
 const _everyModelTypeIsCategorised: [UncategorisedModelType] extends [never]
   ? true
@@ -64,10 +66,9 @@ const toItem = (type: ModelType, group: string): ModelTypeSelectItem => ({
 });
 
 /**
- * `currentType` must be the saved type of an existing model, never the live form value: re-deriving
- * it from the form would drop the grandfathered option the moment the user clicked another type,
- * making the original unrecoverable. Passing it for a new model (a template seeds one) would let a
- * retired type be minted afresh.
+ * `currentType` must come from {@link resolveModelTypeDefaults}, never from the live form value:
+ * re-deriving it from the form would drop the grandfathered option the moment the user clicked
+ * another type, making the original unrecoverable.
  *
  * Returns flat items carrying a `group`, which is what SelectWrapper collapses into Mantine's
  * grouped data.
@@ -82,4 +83,25 @@ export function getModelTypeSelectData(
   if (!currentType || selectableModelTypeSet.has(currentType)) return offered;
 
   return [toItem(currentType as ModelType, currentlySelectedGroupLabel), ...offered];
+}
+
+type ModelTypeSeed = { id?: number | null; type?: ModelType | string | null } | null | undefined;
+
+/**
+ * Splits what the form starts on from what the picker has to keep offering.
+ *
+ * A saved model keeps its type whatever it is, retired or not, and the picker re-offers it. A model
+ * being seeded from someone's template or bounty is a NEW model, so it may only start on a type that
+ * is still offered: leaving a retired one in place renders a blank required field while the form
+ * still holds the retired value, and the submit then creates a model on it.
+ */
+export function resolveModelTypeDefaults(model: ModelTypeSeed) {
+  const seeded = (model?.type ?? null) as ModelType | null;
+  const isSaved = !!model?.id;
+  const seededIsOffered = !!seeded && selectableModelTypeSet.has(seeded);
+
+  return {
+    grandfatheredType: isSaved ? seeded : null,
+    initialType: isSaved || seededIsOffered ? seeded : null,
+  };
 }

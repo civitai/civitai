@@ -5,6 +5,7 @@ import {
   currentlySelectedGroupLabel,
   getModelTypeSelectData,
   modelTypeGroups,
+  resolveModelTypeDefaults,
   retiredModelTypes,
   selectableModelTypes,
 } from '~/shared/constants/model-type.constants';
@@ -110,20 +111,68 @@ describe('model type picker data', () => {
     }
   });
 
-  it('reads the grandfathered type from the saved model, never from the form', () => {
-    // This has to be asserted at the call site: both ways of getting it wrong type-check and pass
-    // every test above. Passing the watched `type` drops the grandfathered option the moment the
-    // user clicks another one, so the original becomes unrecoverable; and a template seeds `type`
-    // with no `id`, so keying off anything but `model?.id` lets `/models/create?templateId=` mint a
-    // new model on a retired type — the thing retiring it was meant to stop.
+  it('grandfathers a saved model, and offers a template only what is still offered', () => {
+    // A saved model keeps a retired type and the picker re-offers it.
+    const saved = resolveModelTypeDefaults({ id: 7, type: ModelType.TextualInversion });
+    expect(saved).toStrictEqual({
+      grandfatheredType: ModelType.TextualInversion,
+      initialType: ModelType.TextualInversion,
+    });
+    expect(getModelTypeSelectData(saved.grandfatheredType).map(({ value }) => value)).toContain(
+      ModelType.TextualInversion
+    );
+
+    // A template seeds `type` with no `id`, so it is a NEW model. Dropping the option alone is not
+    // enough: the form would still hold the retired value behind a blank required field, and the
+    // submit would create a model on it.
+    const fromTemplate = resolveModelTypeDefaults({ type: ModelType.TextualInversion });
+    expect(fromTemplate).toStrictEqual({ grandfatheredType: null, initialType: null });
+
+    // A template on a type that is still offered is untouched.
+    expect(resolveModelTypeDefaults({ type: ModelType.LORA })).toStrictEqual({
+      grandfatheredType: null,
+      initialType: ModelType.LORA,
+    });
+    expect(resolveModelTypeDefaults(undefined)).toStrictEqual({
+      grandfatheredType: null,
+      initialType: null,
+    });
+  });
+
+  it('never leaves the form holding a type the picker will not show', () => {
+    // The pairing is the invariant, not either half: whatever the form starts on must be in the
+    // picker's data, or Mantine renders a blank input over a value the submit still sends.
+    const seeds = [
+      { id: 7, type: ModelType.ComfyWorkflows },
+      { id: 7, type: ModelType.Checkpoint },
+      { type: ModelType.Hypernetwork },
+      { type: ModelType.LORA },
+      undefined,
+    ];
+
+    for (const seed of seeds) {
+      const { grandfatheredType, initialType } = resolveModelTypeDefaults(seed);
+      const offered = getModelTypeSelectData(grandfatheredType).map(({ value }) => value);
+      const startsOn = initialType ?? ModelType.Checkpoint;
+
+      expect(
+        offered,
+        `${JSON.stringify(seed)} starts on ${startsOn}, absent from its picker`
+      ).toContain(startsOn);
+    }
+  });
+
+  it('wires the picker to the resolver rather than to the form value', () => {
+    // Both halves have to come from the same call: passing the watched form value type-checks and
+    // passes every assertion above, while dropping the grandfathered option on the first click.
     const source = readFileSync(
       path.resolve(__dirname, '../../../components/Resource/Forms/ModelUpsertForm.tsx'),
       'utf8'
     );
 
-    expect(source).toContain('const grandfatheredType = model?.id ? model.type : null;');
-    expect(source).toContain('data={getModelTypeSelectData(grandfatheredType)}');
-    expect(source).not.toContain('getModelTypeSelectData(type)');
+    expect(source).toMatch(/resolveModelTypeDefaults\(model\)/);
+    expect(source).toMatch(/getModelTypeSelectData\(grandfatheredType\)/);
+    expect(source).toMatch(/type: initialType \?\? 'Checkpoint'/);
   });
 
   it('labels Checkpoint as Fine-tune', () => {
