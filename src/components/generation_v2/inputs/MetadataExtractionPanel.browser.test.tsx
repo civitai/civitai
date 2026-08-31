@@ -1,24 +1,22 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
+import type * as TrpcModule from '~/utils/trpc';
 
 // The panel uses a bare Zustand hook and two independently gated tRPC queries.
 // Keep those dependencies controlled while exercising both render and local-file paths.
-vi.mock('~/utils/trpc', () => ({
-  trpc: {
-    generation: {
-      getGenerationData: { useQuery: vi.fn() },
-      resolveImageMeta: { useQuery: vi.fn() },
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof TrpcModule>();
+  return {
+    ...actual,
+    trpc: {
+      generation: {
+        getGenerationData: { useQuery: vi.fn() },
+        resolveImageMeta: { useQuery: vi.fn() },
+      },
     },
-  },
-  trpcVanilla: {
-    generation: {
-      getGenerationData: { query: vi.fn() },
-    },
-  },
-  queryClient: {},
-  handleTRPCError: vi.fn(),
-}));
+  };
+});
 
 vi.mock('~/store/metadata-extraction.store', () => ({
   useMetadataExtractionStore: vi.fn(),

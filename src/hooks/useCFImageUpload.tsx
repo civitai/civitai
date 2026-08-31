@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { constants } from '~/server/common/constants';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
 import { auditImageMeta, preprocessFile } from '~/utils/media-preprocessors';
 import { showErrorNotification } from '~/utils/notifications';
