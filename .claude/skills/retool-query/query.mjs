@@ -55,6 +55,14 @@ function loadEnv() {
 loadEnv();
 
 const { Client } = pg;
+
+// `timestamp` (OID 1114) carries no offset and node-postgres parses it in the
+// reader's local timezone, silently shifting every value we print as UTC.
+const parseTimestamp = pg.types.getTypeParser(1114);
+pg.types.setTypeParser(1114, (value) =>
+  /^-?infinity$/i.test(value) ? parseTimestamp(value) : new Date(value + 'Z')
+);
+
 const DEFAULT_TIMEOUT_SECONDS = 30;
 
 // Parse arguments
@@ -109,11 +117,13 @@ Examples:
   process.exit(1);
 }
 
-const connectionString = process.env.RETOOL_DATABASE_URL;
+// MODERATOR_DATABASE_URL first: the Retool and moderator databases were consolidated into one, so that
+// is the surviving name. RETOOL_DATABASE_URL still works for a checkout whose .env predates the merge.
+const connectionString = process.env.MODERATOR_DATABASE_URL ?? process.env.RETOOL_DATABASE_URL;
 
 if (!connectionString) {
-  console.error('Error: RETOOL_DATABASE_URL not set');
-  console.error('Create .claude/skills/retool-query/.env with the Retool database URL');
+  console.error('Error: MODERATOR_DATABASE_URL not set');
+  console.error('Create .claude/skills/retool-query/.env with MODERATOR_DATABASE_URL');
   console.error('See .env.example for details');
   process.exit(1);
 }

@@ -1,6 +1,12 @@
-import { uniq } from 'instantsearch.js/es/lib/utils';
 import { uniqBy } from 'lodash-es';
 import { ModelType } from '~/shared/utils/prisma/enums';
+
+// Inlined from `instantsearch.js/es/lib/utils` to keep that barrel out of the graph for one
+// four-line function. First index wins, and it drops every NaN (indexOf(NaN) is -1). Do not
+// rewrite as `new Set` — that keeps one NaN, and every test still passes.
+function uniq<T>(array: T[]): T[] {
+  return array.filter((value, index, self) => self.indexOf(value) === index);
+}
 
 export const getRandom = <T>(array: T[]) => array[Math.floor(Math.random() * array.length)];
 
@@ -51,17 +57,18 @@ const modelTypeOrder: { [k in ModelType]: number } = {
   [ModelType.Upscaler]: 9,
   [ModelType.Controlnet]: 10,
   [ModelType.Workflows]: 11,
-  [ModelType.Wildcards]: 12,
-  [ModelType.Poses]: 13,
-  [ModelType.MotionModule]: 14,
+  [ModelType.ComfyWorkflows]: 12,
+  [ModelType.Wildcards]: 13,
+  [ModelType.Poses]: 14,
+  [ModelType.MotionModule]: 15,
 
-  [ModelType.AestheticGradient]: 15,
-  [ModelType.Hypernetwork]: 16,
-  [ModelType.Detection]: 17,
-  [ModelType.VisionLanguage]: 18,
-  [ModelType.CLIP]: 19,
-  [ModelType.LLM]: 20,
-  [ModelType.Other]: 21,
+  [ModelType.AestheticGradient]: 16,
+  [ModelType.Hypernetwork]: 17,
+  [ModelType.Detection]: 18,
+  [ModelType.VisionLanguage]: 19,
+  [ModelType.CLIP]: 20,
+  [ModelType.LLM]: 21,
+  [ModelType.Other]: 22,
 };
 
 export function sortByModelTypes<T extends { modelType: ModelType | null }>(data: T[] = []) {

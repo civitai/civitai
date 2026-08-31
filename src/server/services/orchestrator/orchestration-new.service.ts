@@ -40,11 +40,21 @@ import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import { resourceSchema, type ResourceData } from '~/shared/data-graph/generation/common';
 import {
   getGateRules,
-  getGenerationEcosystemConfig,
+  resolveTestingAccess,
   getResourceData,
   getSelfHostedDisabledEcosystems,
 } from '~/server/services/generation/generation.service';
 import { applicableRulesFor } from '~/shared/data-graph/generation/gates';
+import { emitModelSubstitutions } from '~/server/metrics/emit-model-substitutions';
+import {
+  createModelSubstitutionCollector,
+  projectModelSubstitutions,
+  readModelSubstitutionsFromMetadata,
+  WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
+  type GenerationSurface,
+  type PersistedModelSubstitution,
+} from '~/shared/data-graph/generation/model-substitution';
+import { classifyModelSubstitutionReason } from '~/shared/data-graph/generation/workflow-capability';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   redis,
@@ -75,12 +85,16 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { WORKFLOW_TAGS, VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
 import { includesPoi } from '~/utils/metadata/audit';
+import { BlocklistType } from '~/server/common/enums';
+import { stripBenignPhrases } from '~/server/services/blocklist.service';
+import { normalizeText } from '~/utils/normalize-text';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { toStepMetadata } from '~/shared/utils/resource.utils';
 import { randomInt } from 'crypto';
 import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { submitSourceForSurface } from '~/server/services/orchestrator/orchestrator-submit-metrics';
 import { logToAxiom } from '~/server/logging/client';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { expandSnippetsToTargets } from '~/server/services/wildcard-set-resolver.service';
@@ -90,6 +104,7 @@ import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 import { createEcosystemStepInput } from './ecosystems';
 import { createComfyInput, resourcesToImageMetadataResources } from './ecosystems/comfy-input';
 import { extractStepErrors, sanitizeProviderError } from './provider-errors';
+import { resolveSourceImageIds, signProvenance } from './remix-provenance';
 import { removeEmpty } from '~/utils/object-helpers';
 
 // =============================================================================
@@ -135,6 +150,8 @@ export type GenerationContext = {
   // idempotent on retry and lets the funnel dashboard join Generator_Submit to
   // orchestration.jobs.externalId. See civitai/civitai-orchestration#229.
   externalId?: string;
+  /** User saw a soft-block prompt warning and chose to proceed. See `auditPromptServer`. */
+  acknowledgedSoftBlock?: boolean;
 };
 
 /** Options for submitting a generation */
@@ -168,6 +185,14 @@ type StepInput = WorkflowStepTemplate & {
   /** Pre-computed source metadata from step creators via `buildResolvedSource`. */
   resolvedSource?: { metadata: Record<string, unknown>; imageMetadata: string };
 };
+
+const DEFAULT_STEP_TIMEOUT_MINUTES = 20;
+const VIDEO_STEP_TIMEOUT_MINUTES = 40;
+const VIDEO_STEP_TYPES = new Set(['videoGen', 'videoInterpolation']);
+
+function buildStepTimeout(minutes: number) {
+  return new TimeSpan(0, minutes, 0).toString(['hours', 'minutes', 'seconds']);
+}
 
 /** Ecosystem workflows - GenerationGraphOutput where ecosystem is defined */
 type EcosystemGraphOutput = Extract<GenerationGraphOutput, { ecosystem: string }>;
@@ -266,16 +291,29 @@ async function getGenerationStatus(): Promise<GenerationStatus> {
  * @param userTier - The user's subscription tier
  * @param flags - Feature access flags
  * @param user - User info used to resolve mod-only / testing gating
+ * @param surface - 🔴 REQUIRED, and deliberately not defaulted (issue #3520).
+ *   Which caller is validating: `onsite` (the on-site generator under a cookie
+ *   session), `api` (the same tRPC procedures reached with a bearer token —
+ *   #3665; resolve it with `generationSurfaceForRequest(ctx)`, never a literal),
+ *   `block` (the App Blocks bridge) or `preset` (comics / preset generation).
+ *   It becomes the
+ *   `surface` label on `civitai_generation_model_substitutions_total`, and the
+ *   split is load-bearing: #3520 calls the substitution CORRECT on-site and
+ *   unobservable through the bridge, so one un-split series measures a
+ *   contaminated quantity. Required (not optional-with-a-default) so a NEW
+ *   generation entry point is a compile error here rather than silent
+ *   misattribution to whichever surface the default happened to name.
  * @returns GenerationCtx with limits, user info, and gated IDs, plus status for availability checks
  */
 export async function buildGenerationContext(
   userTier: GenerationCtx['user']['tier'] = 'free',
-  flags?: Partial<FeatureAccess>,
-  user?: { id?: number; isModerator?: boolean }
+  flags: Partial<FeatureAccess> | undefined,
+  user: { id?: number; isModerator?: boolean } | undefined,
+  surface: GenerationSurface
 ): Promise<GenerationContextResult> {
-  const [status, ecosystemConfig, gateRules] = await Promise.all([
+  const [status, hasTestingAccess, gateRules] = await Promise.all([
     getGenerationStatus(),
-    getGenerationEcosystemConfig(user ?? {}),
+    resolveTestingAccess(user ?? {}),
     getGateRules(),
   ]);
   const limits = status.limits[userTier];
@@ -307,8 +345,22 @@ export async function buildGenerationContext(
       gateRules: applicableRulesFor(gateRules, {
         isModerator: !!user?.isModerator,
         isMember: userTier !== 'free',
-        hasTestingAccess: ecosystemConfig.hasTestingAccess,
+        hasTestingAccess,
       }),
+      // 🔴 PER-REQUEST, and attached to THIS freshly-built object literal only
+      // (issue #3520). `status` / `gateRules` above are awaited from process-
+      // and redis-level CACHES; hanging a mutable
+      // collector off anything reachable through them would accumulate
+      // substitutions across users and leak one caller's requested model id into
+      // another caller's snapshot. This function returns a brand-new object on
+      // every call with no memoization, so the collector's lifetime is exactly
+      // one request. The `surface` rides on the collector because `validateInput`
+      // (where the metric is emitted) is shared by every surface and cannot tell
+      // them apart.
+      modelSubstitutions: createModelSubstitutionCollector(
+        classifyModelSubstitutionReason,
+        surface
+      ),
     },
     status: {
       mode: status.mode,
@@ -532,6 +584,18 @@ function normalizeInput(input: Record<string, unknown>): Record<string, unknown>
 function validateInput(input: Record<string, unknown>, externalCtx: GenerationCtx) {
   const result = generationGraph.safeParse(normalizeInput(input), externalCtx);
 
+  // Issue #3520 — count silent checkpoint substitutions. This is the single
+  // choke point every SERVER-side graph validation passes through (submit,
+  // whatIf, and the App Blocks bridge), so one emit here covers all of them.
+  // Runs regardless of `result.success`: a parse that substituted and THEN
+  // failed on some other node still substituted, and dropping those would bias
+  // the number toward "this never happens".
+  //
+  // `void` is safe by contract — `emitModelSubstitutions` resolves on every
+  // path and never rejects (see its module note). It is deliberately NOT
+  // awaited: this function is synchronous and on the submit path.
+  void emitModelSubstitutions(externalCtx.modelSubstitutions);
+
   if (!result.success) {
     const errorMessages = Object.entries(result.errors)
       .map(([key, error]) => `${key}: ${error.message}`)
@@ -726,6 +790,7 @@ type StepMetadataCtx = {
   stepMetadata: { params?: Record<string, unknown>; resources?: Array<Record<string, unknown>> };
   isWhatIf: boolean;
   sourceCtx?: SourceCtx;
+  provenance?: string;
 };
 
 /**
@@ -831,7 +896,7 @@ async function createStepInputs(
       input: withImageMetadata(
         rest.input as object,
         rest.$type,
-        buildImageMetadata(mergedMeta.params, mergedMeta.resources)
+        buildImageMetadata(mergedMeta.params, mergedMeta.resources, metadataCtx.provenance)
       ),
       metadata: handlerMeta,
     };
@@ -853,19 +918,27 @@ type SourceCtx = {
   sourceMetadata?: SourceMetadataInput;
   sourceMetadataMap?: Record<string, SourceMetadataInput>;
   workflow: string;
+  provenance?: string;
 };
 
 /**
  * Build the imageMetadata JSON string from params and resources.
  * This is used by all step types to embed generation metadata in the step input.
+ *
+ * `provenance` is a signed statement of which on-site images were inputs to this
+ * job. The orchestrator bakes this blob into the output file, so it comes back
+ * on upload and can be verified without trusting the client — see
+ * remix-provenance.ts.
  */
 function buildImageMetadata(
   params?: Record<string, unknown>,
-  resources?: Array<Record<string, unknown>>
+  resources?: Array<Record<string, unknown>>,
+  provenance?: string
 ): string {
   return JSON.stringify(
     removeEmpty({
       ...params,
+      provenance,
       resources: resourcesToImageMetadataResources(resources),
     })
   );
@@ -899,7 +972,7 @@ function buildResolvedSource(
       resources: resourcesToImageMetadataResources(resources),
       workflow: ctx.workflow,
     },
-    imageMetadata: buildImageMetadata(params, resources),
+    imageMetadata: buildImageMetadata(params, resources, ctx.provenance),
   };
 }
 
@@ -921,6 +994,7 @@ export async function createWorkflowStepsFromGraph({
   sourceMetadata,
   sourceMetadataMap,
   remixOfId,
+  sourceImageIds,
   isGreen,
 }: {
   data: GenerationGraphOutput;
@@ -935,6 +1009,13 @@ export async function createWorkflowStepsFromGraph({
   sourceMetadata?: SourceMetadataInput;
   sourceMetadataMap?: Record<string, SourceMetadataInput>;
   remixOfId?: number;
+  /**
+   * On-site images the server resolved from this submission's input images.
+   * Unlike `remixOfId` — which the client asserts — this is derived from what
+   * the job actually consumes, and is what a verified derivation link is built
+   * from. See remix-provenance.ts.
+   */
+  sourceImageIds?: number[];
   /**
    * Site context — `.com` (SFW) vs `.red` (NSFW). Passed into the snippet
    * resolver so it can filter category rows by `nsfwLevel` and never surface
@@ -962,8 +1043,20 @@ export async function createWorkflowStepsFromGraph({
 
   // Check for POI in prompt
   const prompt = 'prompt' in data ? (data.prompt as string) : undefined;
-  const hasPoi = (prompt && includesPoi(prompt)) || hasPoiResource;
-  if (hasPoi && 'disablePoi' in data && data.disablePoi) {
+  // Gate first: the refusal below is the only reader, and the strip is a redis/DB read that
+  // rejects on failure. Computing it unconditionally would put that read — and a new way to
+  // fail — on `whatIfFromGraph` and the App Blocks path, neither of which audits the prompt.
+  const poiGateActive = 'disablePoi' in data && !!data.disablePoi;
+  const hasPoi =
+    poiGateActive &&
+    (hasPoiResource ||
+      (!!prompt &&
+        !!includesPoi(
+          // Normalize before stripping, as the image-scan POI taggers do. Stripping raw text
+          // leaves the detector reading a different alphabet than the strip matched against.
+          await stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase)
+        )));
+  if (hasPoi) {
     throw throwBadRequestError(
       'Your request contains or attempts to use the likeness of a real person. Generating these type of content while viewing X-XXX ratings is not allowed.'
     );
@@ -989,10 +1082,11 @@ export async function createWorkflowStepsFromGraph({
     seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_RANDOM_SEED),
   };
 
-  // Calculate timeout: base 20 minutes + 1 minute per additional resource
-  const timeSpan = new TimeSpan(0, 20, 0);
-  timeSpan.addMinutes(Math.max(0, enrichedResources.length - 1));
-  const timeout = timeSpan.toString(['hours', 'minutes', 'seconds']);
+  // Calculate timeout: base (20 minutes, 40 for video steps) + 1 minute per
+  // additional resource
+  const extraResourceMinutes = Math.max(0, enrichedResources.length - 1);
+  const timeout = buildStepTimeout(DEFAULT_STEP_TIMEOUT_MINUTES + extraResourceMinutes);
+  const videoTimeout = buildStepTimeout(VIDEO_STEP_TIMEOUT_MINUTES + extraResourceMinutes);
 
   // Convert graph output to legacy {resources, params} format for storage.
   // This is the TEMPLATE snapshot — `params.prompt`/`negativePrompt` still
@@ -1018,10 +1112,15 @@ export async function createWorkflowStepsFromGraph({
 
   const needsSourceMetadata = workflowConfigByKey.get(data.workflow)?.enhancement === true;
 
+  const provenance =
+    !isWhatIf && user?.id && sourceImageIds?.length
+      ? signProvenance({ userId: user.id, sourceImageIds })
+      : undefined;
+
   // Build source context for workflows with source lineage (not needed for what-if)
   const sourceCtx: SourceCtx | undefined =
     !isWhatIf && needsSourceMetadata
-      ? { sourceMetadata, sourceMetadataMap, workflow: data.workflow }
+      ? { sourceMetadata, sourceMetadataMap, workflow: data.workflow, provenance }
       : undefined;
 
   // Snippet fan-out unifies into a single step-build loop by always producing
@@ -1066,6 +1165,7 @@ export async function createWorkflowStepsFromGraph({
           stepMetadata: variantStepMetadata,
           isWhatIf,
           sourceCtx,
+          provenance,
         }
       );
 
@@ -1112,7 +1212,9 @@ export async function createWorkflowStepsFromGraph({
         outputFormat: (step.input as { outputFormat?: string }).outputFormat ?? data.outputFormat,
       },
       priority: data.priority,
-      timeout,
+      // A handler-set timeout wins, so a slow ecosystem can ask for more than the
+      // per-step-type default.
+      timeout: step.timeout ?? (VIDEO_STEP_TYPES.has(step.$type) ? videoTimeout : timeout),
       metadata: isWhatIf
         ? undefined
         : ({
@@ -1149,6 +1251,11 @@ export async function createWorkflowStepsFromGraph({
           params: persistedParams,
           resources: stepMetadata.resources,
           remixOfId,
+          // The read path for outputs whose file carries no embedded metadata —
+          // every video today. The SIGNED token, never the ids themselves:
+          // `orchestrator.updateWorkflow`/`patch` let a user write whatever they
+          // like here, so a plain field would be their claim wearing our name.
+          provenance,
           isPrivateGeneration,
         });
 
@@ -1195,6 +1302,11 @@ export async function createWorkflowStepsFromGraphInput({
   isGreen?: boolean;
 }): Promise<{ steps: WorkflowStepTemplate[]; workflowMetadata?: Record<string, unknown> }> {
   const { data, computedKeys } = validateInput(input, externalCtx);
+  const sourceImageIds = isWhatIf
+    ? undefined
+    : await resolveSourceImageIds(
+        extractInputImageUrls(data as unknown as Record<string, unknown>)
+      );
   // `workflowMetadata` carries `{ params, resources, remixOfId, isPrivateGeneration }`
   // (built by `createWorkflowStepsFromGraph`, run through `removeEmpty`) and is
   // what the queue/remix view reads via `WorkflowData.params/resources/remixOfId`.
@@ -1206,6 +1318,7 @@ export async function createWorkflowStepsFromGraphInput({
     computedKeys,
     user,
     isWhatIf,
+    sourceImageIds,
     isGreen,
   });
   return { steps, workflowMetadata };
@@ -1404,13 +1517,16 @@ export async function generateFromGraph({
   remixOfId,
   track,
   externalId,
+  acknowledgedSoftBlock,
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
+
+  const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
+  const sourceImageIds = await resolveSourceImageIds(inputImages);
 
   // Audit prompt before generation
   if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.trim()) {
     const negativePrompt = 'negativePrompt' in data ? (data.negativePrompt as string) : undefined;
-    const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
     const inputVideo = (
       'video' in data ? (data.video as { url?: string } | null | undefined) : undefined
     )?.url;
@@ -1425,6 +1541,7 @@ export async function generateFromGraph({
         remixOfId,
         inputImages,
         inputVideo,
+        acknowledgedSoftBlock,
       });
     } catch (err) {
       // Legacy regex/external audit blocked the prompt. Fire-and-forget an
@@ -1464,6 +1581,7 @@ export async function generateFromGraph({
       isGreen: !!isGreen,
       isModerator,
       track,
+      acknowledgedSoftBlock,
     });
   }
 
@@ -1478,6 +1596,7 @@ export async function generateFromGraph({
     sourceMetadata,
     sourceMetadataMap,
     remixOfId,
+    sourceImageIds,
     isGreen,
   });
 
@@ -1507,15 +1626,53 @@ export async function generateFromGraph({
   const isPrivateGeneration = !!(workflowMetadata as { isPrivateGeneration?: boolean })
     ?.isPrivateGeneration;
 
+  // Silent checkpoint substitutions recorded by the validation at the top of
+  // this function (#3520 / #3665). Read off THIS request's per-request collector
+  // — never a shared or cached object — so it describes this submit and no one
+  // else's. `ecosystem`/`workflow` are dropped: the caller knows what it sent.
+  const modelSubstitutions = projectModelSubstitutions(externalCtx.modelSubstitutions);
+
+  // 🔴 PERSIST, not just reply. `formatGenerationResponse2` recovers this from
+  // the workflow's own metadata on EVERY later read, which is what lets a caller
+  // that polls or reconnects still find out it was billed for model A and given
+  // model B. A reply-only field is gone the moment the client moves on, and
+  // nothing retains the submitted body to reconstruct it from.
+  //
+  // Byte-identical when nothing was substituted: the key is only added when
+  // there is something to add.
+  const metadataWithSubstitutions =
+    workflowMetadata && modelSubstitutions?.length
+      ? {
+          ...(workflowMetadata as Record<string, unknown>),
+          [WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY]: modelSubstitutions,
+        }
+      : workflowMetadata;
+
   // Submit workflow to orchestrator
   const workflow = (await submitWorkflow({
     token,
+    // THE population this instrument exists to size: the submit leg of `generateFromGraph`, which
+    // carries 82–98% of that procedure's latency.
+    //
+    // 🔴 Derived from the request's OWN surface, not hardcoded. `generateFromGraph` has two entry
+    // points, and only one of them is the tRPC procedure: `preset-image-gen.service` reaches this exact
+    // code with surface `preset`, and one of ITS callers is the `process-enqueued-comic-panels` CRON
+    // JOB, which runs outside the tRPC request path entirely. Stamping a flat `generate` here would
+    // therefore have blended a background job into the very number that gets divided against
+    // `orchestrator.generateFromGraph`'s wall time — the same contamination this label exists to
+    // remove, one level up from where it was first looked for. Reusing `GenerationSurface` (already
+    // bounded, already tested, already fixed at context construction by the caller) rather than
+    // inventing a parallel vocabulary means the two can never drift apart.
+    // The mapping itself lives in the metrics module, where the `source` vocabulary is defined and
+    // where it is unit-tested; `modelSubstitutions` is optional on the ctx type and an absent collector
+    // resolves to `other`, never to `generate`.
+    source: submitSourceForSurface(externalCtx.modelSubstitutions?.surface),
     body: {
       tags,
       steps,
       tips,
       experimental,
-      metadata: workflowMetadata,
+      metadata: metadataWithSubstitutions,
       callbacks: getOrchestratorCallbacks(userId),
       // Private generation restrictions
       nsfwLevel: isPrivateGeneration ? 'pg13' : undefined,
@@ -1528,7 +1685,25 @@ export async function generateFromGraph({
 
   // Format and return response
   const [formatted] = await formatGenerationResponse2([workflow], { id: userId } as any);
-  return formatted;
+
+  // 🔴 ALSO ON THE REPLY, and deliberately not only via the metadata round-trip.
+  // The formatter recovers substitutions from `workflow.metadata`, but only when
+  // that metadata `hasWfMeta` (a `params` key) — a submit whose graph produced no
+  // workflow metadata would round-trip nothing. Attaching the request's own
+  // record here makes the submit reply authoritative for the validation it just
+  // performed, independent of what the orchestrator echoed back.
+  //
+  // Additive: the key is absent when nothing was substituted, so the response is
+  // unchanged in the common case.
+  //
+  // 🔴 A CONDITIONAL SPREAD, NOT A TERNARY OVER THE WHOLE OBJECT. Writing
+  // `cond ? { ...formatted, modelSubstitutions } : formatted` produces a UNION
+  // return type, and TypeScript will not let a consumer read a property that
+  // exists on only one arm — `result.modelSubstitutions` fails with TS2339 from
+  // the typed tRPC client, so the field ships looking done and is unusable from
+  // the web app. The spread form below infers the optional property instead, and
+  // matches what `whatIfFromGraph` does.
+  return { ...formatted, ...(modelSubstitutions?.length ? { modelSubstitutions } : {}) };
 }
 
 // =============================================================================
@@ -1595,11 +1770,29 @@ export async function whatIfFromGraph({
     }
   }
 
+  // Silent checkpoint substitutions from the validation above (#3520 / #3665).
+  //
+  // 🔴 THIS IS THE ONE THAT MATTERS MOST FOR AN EXTERNAL CALLER. A whatIf spends
+  // nothing and creates no persisted workflow, so it is the only place a client
+  // can discover — BEFORE committing buzz — that the model it named is not the
+  // model that will run. It is also the only signal for a SAME-PRICE
+  // substitution: cost divergence only helps if you already knew the expected
+  // price, and a swap between similarly-priced models is otherwise invisible.
+  //
+  // Nothing is persisted on this path, so unlike the submit path the reply is
+  // the only carrier; there is no metadata round-trip to fall back on.
+  const modelSubstitutions = projectModelSubstitutions(externalCtx.modelSubstitutions);
+
   return {
     allowMatureContent: workflow.allowMatureContent,
     transactions: workflow.transactions?.list,
     cost: workflow.cost,
     ready,
+    // Additive and OMITTED when empty, matching the App Blocks snapshot contract.
+    // 🔴 Consequence a client must know: absence means "no substitution" OR "a
+    // server that predates this field" — the two are indistinguishable. Callers
+    // that need to tell them apart should probe a known-bad version id once.
+    ...(modelSubstitutions?.length ? { modelSubstitutions } : {}),
   };
 }
 
@@ -1753,6 +1946,13 @@ export interface NormalizedStepMetadata {
    */
   partialParams?: boolean;
   /**
+   * True when `params`/`resources` are the source generation rather than this step's own
+   * input. The raw `metadata.workflow` marker that distinguishes them doesn't survive
+   * normalization, so readers have no other way to tell. Never set when the source params
+   * are empty — an absent flag always means "fall back to workflow params".
+   */
+  sourceLineage?: boolean;
+  /**
    * Source generation resources (for steps with source lineage).
    * Undefined for standard generation steps (use workflow.metadata.resources instead).
    */
@@ -1832,6 +2032,33 @@ export interface NormalizedWorkflowMetadata {
   remixOfId?: number;
   /** Whether the generation was private */
   isPrivateGeneration?: boolean;
+  /**
+   * Checkpoint versions the graph SILENTLY replaced during the validation that
+   * produced this workflow (issues #3520 / #3665).
+   *
+   * 🔴 PRESENT ON EVERY LATER READ, not just the submit reply — that is the
+   * whole point. It is recovered from the orchestrator workflow's own
+   * `metadata`, so a caller that polls, reconnects, or lists its history still
+   * learns it was billed for model A and given model B. Omitted entirely when
+   * nothing was substituted, which is the overwhelmingly common case.
+   *
+   * 🔴 THE PASSTHROUGH BELOW IS LOAD-BEARING AND EASY TO LOSE. `normalizedWfMeta`
+   * is built from an explicit key ALLOWLIST, so persisting the key is not enough
+   * on its own: before #3665 the generation path could write it and the formatter
+   * would silently drop it on read-back. If you add a field here, add it there.
+   *
+   * 🔴 WHERE AN INTEGRATOR READS IT — three places, and they are not the same:
+   *   - `whatIfFromGraph`      → TOP-LEVEL `modelSubstitutions` on the reply.
+   *                              Nothing is persisted on that path, so the reply
+   *                              is the only carrier.
+   *   - `generateFromGraph`    → BOTH top-level (authoritative for the validation
+   *                              just performed) AND here under `metadata`.
+   *   - any LATER read (poll / queryGeneratedImages / history) → HERE ONLY.
+   * A client that only reads the top-level field will see substitutions on the
+   * submit and never again; one that only reads `metadata` will miss the whatIf
+   * entirely. Read both.
+   */
+  modelSubstitutions?: PersistedModelSubstitution[];
 }
 
 /** Normalized workflow response */
@@ -2349,18 +2576,21 @@ function formatStep(
   let resolvedParams: Record<string, unknown> | undefined;
   let resolvedResources: GenerationResource[] | undefined;
   let remixOfId: number | undefined;
+  let fromSourceLineage = false;
 
   if (Array.isArray(transformations) && transformations.length > 0) {
     // Legacy format (transformations[]): root params/resources are the original generation.
     resolvedParams = rawParams;
     resolvedResources = stepResources;
     remixOfId = metadata.remixOfId as number | undefined;
+    fromSourceLineage = true;
   } else if (metadata.source && typeof metadata.source === 'object') {
     // Legacy format (source field): source has the original generation, root has step's own action.
     const rawSource = metadata.source as Record<string, unknown>;
     const sourceParams = (rawSource.params as Record<string, unknown>) ?? {};
     resolvedParams = sourceParams;
     remixOfId = (rawSource.remixOfId ?? metadata.remixOfId) as number | undefined;
+    fromSourceLineage = true;
 
     // Enrich source resources
     const rawSourceResources = rawSource.resources as Array<Record<string, unknown>> | undefined;
@@ -2378,9 +2608,12 @@ function formatStep(
         : stepResources;
   } else if (hasStepParams) {
     // Step has its own params (legacy standard gen, or enhancement with params at root).
+    // Only buildResolvedSource writes `metadata.workflow`, so it is what separates an
+    // enhancement's source snapshot from a standard gen's own params.
     resolvedParams = rawParams;
     resolvedResources = stepResources;
     remixOfId = metadata.remixOfId as number | undefined;
+    fromSourceLineage = 'workflow' in metadata;
   } else {
     // New format: step has no params/resources (standard gen).
     // Data lives on workflow.metadata — don't fabricate step-level data.
@@ -2434,6 +2667,12 @@ function formatStep(
     metadata: {
       ...removeEmpty({
         params: finalParams,
+        // An empty source snapshot must read as no-lineage, or remix prefers it and
+        // loads a blank form.
+        sourceLineage:
+          fromSourceLineage && finalParams && Object.keys(finalParams).length > 0
+            ? true
+            : undefined,
         remixOfId,
         // Pass both raw keys through. Client merges `output + images` for display
         // via `BlobData.outputMeta`; client's patch builder inspects `output`
@@ -2536,6 +2775,13 @@ export async function formatGenerationResponse2(
 
       // Map params to graph format (workflow, ecosystem, aspectRatio resolution)
       const mapped = mapDataToGraphInput(wfParams, wfResources);
+      // 🔴 THIS IS AN ALLOWLIST, NOT A SPREAD. Every key a caller sees has to be
+      // named here; `rawWfMeta` carries others that are deliberately not
+      // surfaced. That is exactly why `modelSubstitutions` needs an explicit
+      // line: the submit path persists it on the orchestrator metadata, and
+      // before #3665 this formatter dropped it again on read-back — the record
+      // round-tripped perfectly and reached no one.
+      const persistedSubstitutions = readModelSubstitutionsFromMetadata(rawWfMeta);
       normalizedWfMeta = {
         params: removeEmpty({ ...wfParams, ...mapped }),
         resources: wfResources,
@@ -2543,6 +2789,7 @@ export async function formatGenerationResponse2(
         ...(rawWfMeta.isPrivateGeneration
           ? { isPrivateGeneration: rawWfMeta.isPrivateGeneration as boolean }
           : {}),
+        ...(persistedSubstitutions ? { modelSubstitutions: persistedSubstitutions } : {}),
       };
     } else if (steps.length > 0) {
       // Historic workflow — no workflow-level metadata.

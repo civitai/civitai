@@ -25,6 +25,15 @@ import {
   IconPercentage10,
   IconCaretRightFilled,
   IconCircleCheck,
+  IconTrendingUp,
+  IconLicense,
+  IconLock,
+  IconCoin,
+  IconHeart,
+  IconClock,
+  IconShoppingBag,
+  IconChartBar,
+  IconArrowRight,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -48,13 +57,14 @@ import {
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CreatorProgramCapsInfo } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
+import { MIN_CAP, PEAK_EARNING_WINDOW } from '~/shared/constants/creator-program.constants';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 import { Flags } from '~/shared/utils/flags';
 import { OnboardingSteps } from '~/server/common/enums';
 import { Countdown } from '~/components/Countdown/Countdown';
 import classes from './index.module.scss';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import clsx from 'clsx';
+import { TierCapsTable } from '~/components/Subscriptions/TierCapsTable';
 
 const sizing = {
   header: {
@@ -75,76 +85,243 @@ const sizing = {
   },
 } as const;
 
+const CREATOR_STUDIO_URL = 'https://creator-studio.civitai.com';
+
 function CreatorsClubV1() {
   const applyFormUrl = `/user/buzz-dashboard`;
-  const availability = getCreatorProgramAvailability();
-  const [mainBuzzColor] = useAvailableBuzz();
-  const { classNames, colorRgb } = useBuzzCurrencyConfig(mainBuzzColor);
 
   return (
     <>
-      <Meta title="Creator Program | Civitai" canonical="/creator-program" />
+      <Meta title="Earn on Civitai | Civitai" canonical="/creator-program" />
+
+      {/* Zone 1 — being a creator on Civitai */}
       <Container>
         <Stack gap="lg">
-          <Title fz={sizing.header.title} className={classes.highlightColor} lh={1} mb="sm">
-            <Text component="span" fz={32} fw={700}>
-              Introducing the
+          <Stack gap="xs">
+            <Title fz={sizing.header.title} className={classes.highlightColor} lh={1}>
+              Earn on Civitai
+            </Title>
+            <Text fz={sizing.header.subtitle} lh={1.3}>
+              Your models, LoRAs, and images power Civitai. Here&apos;s every way to earn from your
+              work — and how the Creator Program lets you turn the Buzz you earn into real payouts.
             </Text>
-            <br />
-            Civitai Creator Program: Evolved!
-          </Title>
+          </Stack>
 
-          <Text fz={sizing.header.subtitle} lh={1.3} mb="xs">
-            The Civitai Creator Program is our way of supporting our talented Creator community by
-            providing a path to earn from their work. Creators earn Buzz by developing and sharing
-            models, and the Creator Program allows them to turn their contributions into real
-            earnings!
-          </Text>
-          <Grid>
-            <Grid.Col span={12}>
-              <Paper
-                withBorder
-                className={clsx({
-                  [classes.card]: true,
-                  [classes.highlightCard]: true,
-                  [classNames?.gradient ?? '']: !!classNames?.gradient,
-                })}
-                h="100%"
-                style={{
-                  // @ts-ignore
-                  '--buzz-color': colorRgb,
-                }}
-              >
-                <Stack>
-                  <Group justify="space-between" wrap="nowrap">
-                    <Title order={3} c="white">
-                      Turn your Buzz into earnings!{' '}
-                      {!availability.isAvailable && (
-                        <>
-                          Launching in <Countdown endTime={availability.availableDate} />
-                        </>
-                      )}
-                    </Title>
-                    <Group gap={0} wrap="nowrap">
-                      <IconBolt style={{ fill: 'white' }} color="white" size={40} />
-                      <IconBolt style={{ fill: 'white' }} color="white" size={64} />
-                      <IconBolt style={{ fill: 'white' }} color="white" size={40} />
-                    </Group>
-                  </Group>
-                </Stack>
-              </Paper>
-            </Grid.Col>
-          </Grid>
-          <HowItWorksSection />
-          <FunStatsSection />
-          <JoinSection applyFormUrl={applyFormUrl} />
-          <CreatorCapsSection />
-          <FAQ />
+          <WhyCreatorsMatterSection />
+          <HowYouEarnSection />
+          <CreatorStudioSection />
         </Stack>
+      </Container>
+
+      {/* Zone 2 — the Creator Program (distinct band) */}
+      <div className={classes.programBand}>
+        <Container>
+          <Stack gap="lg">
+            <ProgramIntro applyFormUrl={applyFormUrl} />
+            <MonetizationCapsSection />
+            <HowItWorksSection />
+            <FunStatsSection />
+            <JoinSection applyFormUrl={applyFormUrl} />
+            <CreatorCapsSection />
+            <ProgramJoinCta applyFormUrl={applyFormUrl} />
+          </Stack>
+        </Container>
+      </div>
+
+      {/* Zone 3 — FAQ */}
+      <Container>
+        <FAQ />
       </Container>
     </>
   );
 }
+
+const WhyCreatorsMatterSection = () => {
+  return (
+    <Stack className={classes.section}>
+      <Stack gap={0} mb="sm">
+        <Title size={sizing.sections.title} order={2} className={classes.highlightColor}>
+          You make Civitai
+        </Title>
+      </Stack>
+      <Paper withBorder className={classes.card} h="100%">
+        <Text size="lg">
+          Every model, LoRA, and image posted here is what brings people to Civitai and keeps them
+          generating. When your work drives that activity, you should share in what it creates —
+          that&apos;s what earning on Civitai is all about, whether you&apos;re building models or
+          filling the feeds with great generations.
+        </Text>
+      </Paper>
+    </Stack>
+  );
+};
+
+const earnMethods: { text: string; description: string; icon: React.ReactNode }[] = [
+  {
+    text: 'Generation compensation',
+    description: 'Earn every time someone generates with your models.',
+    icon: <IconBolt size={28} />,
+  },
+  {
+    text: 'Generator tips',
+    description: 'Receive tips from the people generating with your work.',
+    icon: <IconCoin size={28} />,
+  },
+  {
+    text: 'Image rewards',
+    description: 'Earn Buzz when the community reacts to the images you post.',
+    icon: <IconHeart size={28} />,
+  },
+  {
+    text: 'Early access',
+    description: 'Offer timed early access to your newest models.',
+    icon: <IconClock size={28} />,
+  },
+  {
+    text: 'Paid access',
+    description: 'Sell permanent access to your models.',
+    icon: <IconLock size={28} />,
+  },
+  {
+    text: 'Licensing fees',
+    description: 'Set a per-generation fee on your models.',
+    icon: <IconLicense size={28} />,
+  },
+  {
+    text: 'Creator Shops',
+    description: 'Sell custom cosmetics, your models, and soon merch, right on your profile.',
+    icon: <IconShoppingBag size={28} />,
+  },
+];
+
+const HowYouEarnSection = () => {
+  return (
+    <Stack className={classes.section}>
+      <Stack gap={0} mb="sm">
+        <Title size={sizing.sections.title} order={2} className={classes.highlightColor}>
+          How you earn
+        </Title>
+        <Text size={sizing.sections.subtitle}>
+          Every creator earns from their work — no membership required. These are open to everyone.
+        </Text>
+      </Stack>
+      <Grid>
+        {earnMethods.map(({ text, description, icon }, index) => (
+          <Grid.Col span={{ base: 12, sm: 6, md: 4 }} key={index}>
+            <Paper withBorder className={classes.card}>
+              <Stack className={classes.earnCard}>
+                {icon}
+                <Text className={classes.highlightColor} size="lg" fw={700}>
+                  {text}
+                </Text>
+                <Text>{description}</Text>
+              </Stack>
+            </Paper>
+          </Grid.Col>
+        ))}
+      </Grid>
+    </Stack>
+  );
+};
+
+const CreatorStudioSection = () => {
+  return (
+    <Stack className={classes.section}>
+      <Stack gap={0} mb="sm">
+        <Title size={sizing.sections.title} order={2} className={classes.highlightColor}>
+          Manage it all in the Creator Studio
+        </Title>
+      </Stack>
+      <Paper withBorder className={classes.card} h="100%">
+        <Group justify="space-between" wrap="nowrap" align="center">
+          <Stack gap="sm">
+            <Group wrap="nowrap">
+              <IconChartBar size={24} className="flex-none" />
+              <Text>
+                See your earnings and analytics, set licensing fees and paid access, and bulk-edit
+                across your whole catalogue — all in one place. The Creator Studio is open to every
+                creator.
+              </Text>
+            </Group>
+          </Stack>
+          <Button
+            component="a"
+            href={CREATOR_STUDIO_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            size="lg"
+            rightSection={<IconArrowRight size={18} />}
+            className="flex-none"
+          >
+            Open Creator Studio
+          </Button>
+        </Group>
+      </Paper>
+    </Stack>
+  );
+};
+
+const ProgramIntro = ({ applyFormUrl }: { applyFormUrl: string }) => {
+  const availability = getCreatorProgramAvailability();
+  return (
+    <Stack gap="sm">
+      <Title fz={40} order={2} className={classes.bandHeader} lh={1}>
+        The Civitai Creator Program
+      </Title>
+      <Text fz={sizing.header.subtitle} lh={1.3}>
+        Get paid for your work.
+      </Text>
+      <Text size="lg" maw={720}>
+        The Creator Program is how you earn more and unlock the ability to cash out. Bank the Buzz
+        you earn to claim your share of our monthly Creator Compensation Pool, then get paid your
+        share.
+      </Text>
+      <Group>
+        <Button
+          component="a"
+          href={applyFormUrl}
+          target="_blank"
+          size="lg"
+          color="green"
+          rightSection={availability.isAvailable ? <IconCaretRightFilled /> : undefined}
+          disabled={!availability.isAvailable}
+        >
+          {availability.isAvailable ? (
+            'Join the Creator Program'
+          ) : (
+            <>
+              Launching in <Countdown endTime={availability.availableDate} />
+            </>
+          )}
+        </Button>
+      </Group>
+    </Stack>
+  );
+};
+
+const ProgramJoinCta = ({ applyFormUrl }: { applyFormUrl: string }) => {
+  const availability = getCreatorProgramAvailability();
+  if (!availability.isAvailable) return null;
+  return (
+    <Center className={classes.section}>
+      <Stack align="center" gap="sm">
+        <Title order={3} className={classes.bandHeader} ta="center">
+          Ready to get paid for your work?
+        </Title>
+        <Button
+          component="a"
+          href={applyFormUrl}
+          target="_blank"
+          size="xl"
+          color="green"
+          rightSection={<IconCaretRightFilled />}
+        >
+          Join the Creator Program
+        </Button>
+      </Stack>
+    </Center>
+  );
+};
 
 const HowItWorks: { text: string; icon: React.ReactNode }[] = [
   {
@@ -168,9 +345,11 @@ const HowItWorksSection = () => {
     <Stack className={classes.section}>
       <Stack gap={0} mb="sm">
         <Title size={sizing.sections.title} order={2} className={classes.highlightColor}>
-          How it Works
+          How cash-out works
         </Title>
-        <Text size={sizing.sections.subtitle}>Generating a lot of Buzz? Bank it to earn cash!</Text>
+        <Text size={sizing.sections.subtitle}>
+          Generating a lot of Buzz? Bank it to claim your share of the pool.
+        </Text>
       </Stack>
       <Grid>
         {HowItWorks.map(({ text, icon }, index) => (
@@ -346,7 +525,7 @@ const FunStatsSection = () => {
             <Table.Tr>
               <Table.Td colSpan={2} className="border-0 border-b border-solid">
                 <div className="flex items-center gap-1">
-                  <span>$ per 1,000 Buzz Banked</span>
+                  <span>Payout per 1,000 Buzz banked</span>
                 </div>
               </Table.Td>
               <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
@@ -447,7 +626,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                   />
                   <CreatorProgramRequirement
                     isMet={!!membership}
-                    title="Be a Civitai Civitai Green Member"
+                    title="Be a Civitai Green Member"
                     content={
                       hasValidMembership ? (
                         <p className="my-0">
@@ -531,7 +710,28 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
 
 const faq: { q: string; a: string | React.ReactNode }[] = [
   {
-    q: 'Is this voluntary?',
+    q: 'Do I need a membership to earn on Civitai?',
+    a: 'No. Generation compensation, tips, image rewards, early access, paid access, licensing fees, and Creator Shops are open to every creator, member or not. The Creator Program is how you earn more and unlock the ability to cash out your Buzz.',
+  },
+  {
+    q: "What's the difference between earning Buzz and the Creator Program?",
+    a: 'You earn Buzz from your work automatically as people generate with, tip, and react to it. The Creator Program lets you bank that Buzz to claim a share of the monthly Creator Compensation Pool and get paid.',
+  },
+  {
+    q: 'Where do I manage my fees, paid access, and earnings?',
+    a: (
+      <Text>
+        In the{' '}
+        <Anchor href={CREATOR_STUDIO_URL} target="_blank" rel="noopener noreferrer">
+          Creator Studio
+        </Anchor>
+        . It shows your earnings and analytics and lets you set licensing fees and paid access
+        across your models. It&apos;s open to every creator.
+      </Text>
+    ),
+  },
+  {
+    q: 'Is the Creator Program voluntary?',
     a: `Yes! If you're eligible for the program, but don't want to participate, nobody's forcing you! Even if you do join the program, but don't want to contribute Buzz, that's fine – there's no requirement to Bank anything.`,
   },
   {
@@ -541,6 +741,20 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
   {
     q: 'Would buying a higher Membership Tier (Silver or Gold) increase my earnings?',
     a: 'Not your earnings, as such, but it does increase the maximum you can Bank each month.',
+  },
+  {
+    q: 'How is my Banking Cap calculated?',
+    a: `Your Cap is your Peak Earning Month multiplied by your membership tier's percentage, up to that tier's ceiling where it has one. Your Peak Earning Month is the single best month of generation compensation and Buzz other people spent on your work that you have had in the last ${PEAK_EARNING_WINDOW} completed months; Tips and rewards can still be Banked, but they do not set your peak. Tiers with a fixed Cap stay at that number, and every member has a minimum Cap of ${abbreviateNumber(
+      MIN_CAP
+    )} Buzz, however small their peak.`,
+  },
+  {
+    q: "Why doesn't this month's earning count toward my Cap?",
+    a: `Only completed months are eligible, so a great month raises your Cap the month after it finishes rather than while it is still running. That way your Peak Earning Month is settled before it is used, and it stays fixed for the whole month while every creator is banking against the same pool. If you are earning more than ever this month, your Cap will reflect it next month with nothing for you to claim or apply for.`,
+  },
+  {
+    q: `Why does the Cap look at the last ${PEAK_EARNING_WINDOW} months?`,
+    a: `Because the Cap is meant to track what you are earning now, not what you earned once. The Compensation Pool is split between everyone who banks into it that month, so a rolling window keeps it shared between creators who are actively earning. The window rolls forward with you, so beating your current peak inside it raises your Cap again.`,
   },
   {
     q: 'Will I get my Banked Buzz back?',
@@ -594,6 +808,63 @@ const FAQ = () => {
           ))}
         </Accordion>
       </Stack>
+    </Stack>
+  );
+};
+
+const MonetizationCapsSection = () => {
+  return (
+    <Stack className={classes.section}>
+      <Stack gap={0} mb="sm">
+        <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
+          Charge more as you climb
+        </Title>
+        <Text size={sizing.sections.subtitle}>
+          Every creator can monetize their work — your membership tier decides how much you can
+          charge. The higher your tier, the higher your caps.
+        </Text>
+      </Stack>
+      <Paper withBorder className={classes.card} h="100%">
+        <Stack gap="sm" maw="unset">
+          <Group wrap="nowrap" w="100%">
+            <IconLicense size={24} className="flex-none" />
+            <Text>
+              <Text component="span" fw={700}>
+                Higher licensing fee caps.
+              </Text>{' '}
+              Set a per-generation licensing fee on your models and raise your ceiling as you move
+              up tiers — Bronze, Silver, then Gold each unlock a higher maximum fee.
+            </Text>
+          </Group>
+          <Divider />
+          <Group wrap="nowrap" w="100%">
+            <IconLock size={24} className="flex-none" />
+            <Text>
+              <Text component="span" fw={700}>
+                Higher paid-access price caps.
+              </Text>{' '}
+              Charge for early or permanent access to your resources. Higher tiers let you set
+              higher access prices, so top-tier members can price their most in-demand work
+              accordingly.
+            </Text>
+          </Group>
+          <Divider />
+          <Group wrap="nowrap" w="100%" align="flex-start">
+            <IconTrendingUp size={24} className="flex-none" />
+            <Stack gap="sm" w="100%">
+              <Text>
+                Here is every tier&apos;s ceiling. Upgrading raises how much you can earn per
+                resource.{' '}
+                <Anchor component={NextLink} href="/pricing">
+                  Compare membership tiers
+                </Anchor>
+                .
+              </Text>
+              <TierCapsTable />
+            </Stack>
+          </Group>
+        </Stack>
+      </Paper>
     </Stack>
   );
 };

@@ -1,5 +1,6 @@
 import { Text } from '@mantine/core';
 import Router from 'next/router';
+import { remixMenuStep } from '~/components/Tours/tours/remix-menu.step';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import type { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
@@ -74,20 +75,15 @@ export const contentGenerationTour: StepWithData[] = [
   {
     target: '[data-tour="gen:remix"]',
     title: 'Remix This Image',
-    content: 'Click this button to remix an image and create something new',
+    content: 'Click this button to see what you can make from this image.',
+    // Below the button is where the remix menu opens; a tooltip there covers it.
+    placement: 'top',
     hideFooter: true,
     disableBeacon: true,
     spotlightClicks: true,
     disableCloseOnEsc: true,
     disableOverlayClose: true,
     spotlightPadding: 10,
-    data: {
-      onNext: async () => {
-        await waitForElement({ selector: '[data-tour="gen:submit"]', interval: 1000 }).catch(
-          () => null
-        );
-      },
-    },
     styles: {
       spotlight: {
         animation: 'shadowGlow 2s infinite',
@@ -95,6 +91,13 @@ export const contentGenerationTour: StepWithData[] = [
       },
     },
   },
+  remixMenuStep('gen:remix-menu', {
+    onNext: async () => {
+      await waitForElement({ selector: '[data-tour="gen:submit"]', interval: 1000 }).catch(
+        () => null
+      );
+    },
+  }),
   {
     target: '[data-tour="gen:submit"]',
     title: 'Create Your Image',

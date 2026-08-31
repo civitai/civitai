@@ -27,6 +27,10 @@ import { useMemo, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { useComputedColorScheme, useMantineTheme } from '@mantine/core';
 import dayjs from '~/shared/utils/dayjs';
+import {
+  endpointBucketLabel,
+  scopeBucketLabel,
+} from '~/components/AppBlocks/analytics-bucket-labels';
 import { trpc } from '~/utils/trpc';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip, Filler);
@@ -36,7 +40,32 @@ type TimePoint = { bucket: string; value: number };
 type AnalyticsData = {
   range: { from: string | Date; to: string | Date; granularity: 'day' | 'week' };
   notOwned: boolean;
-  installs: { total: number; active: number; series: TimePoint[] };
+  unavailable?: 'notEntitled' | 'notOwned';
+  /**
+   * Installs (`block_user_subscriptions`). `notApplicable` is a PER-SECTION
+   * flag: a page app is STATELESS by decision, so an install row cannot exist
+   * for it and the zeros are a category error, not "nobody installed me".
+   *
+   * DISTINCT from `views.unavailable` — that one means "we could not ask", this
+   * one means "we asked and the question is meaningless here". Both render an
+   * em dash rather than a number, but for different reasons, so they get
+   * different copy.
+   *
+   * 🔴 A measured zero (a model-slot app with no installs YET) arrives with the
+   * flag ABSENT and MUST still render `0` — hiding it behind "n/a" would be a
+   * new fabricated-zero bug pointing the other way. The server is what makes
+   * that distinction (it never sets the flag when a counter is non-zero, and
+   * never sets it for an installable app); this renderer must not second-guess
+   * it by inferring anything from the number itself.
+   *
+   * `installs` itself is REQUIRED (unlike `views`), so it is read directly — do
+   * not "restore" optional chaining on it. Only `notApplicable` is optional,
+   * for the same reason `views` is: tRPC output is not zod-validated on the
+   * client, so a rolling deploy can hand this bundle an older pod's payload
+   * with no `notApplicable` key. Absent → falsy → the measured branch, which is
+   * exactly today's behaviour and therefore safe.
+   */
+  installs: { total: number; active: number; series: TimePoint[]; notApplicable?: boolean };
   runs: { count: number; buzzSpent: number; series: TimePoint[] };
   buzzPurchased: { count: number; buzzAmount: number; grossCents: number };
   engagement: {
@@ -45,6 +74,24 @@ type AnalyticsData = {
     errorRate: number;
     topScopes: Array<{ scope: string; count: number }>;
     topEndpoints: Array<{ endpoint: string; count: number }>;
+  };
+  /**
+   * Impressions (`blockRenders`). `unavailable` is a PER-SECTION flag, unlike
+   * the payload-level one above: this is the only section read from ClickHouse,
+   * which can be slow or down while every Postgres-derived number here is
+   * measured. When it is set the counters are placeholders — render an em dash,
+   * not a 0.
+   *
+   * OPTIONAL on purpose. tRPC output is not zod-validated on the client, so a
+   * rolling deploy can hand a new bundle a payload from an old pod that has no
+   * `views` key. That is a third state — absent — and it must render like
+   * `unavailable`, never like a measured zero.
+   */
+  views?: {
+    count: number;
+    uniqueViewers: number;
+    anonCount: number;
+    unavailable?: boolean;
   };
 };
 
@@ -184,6 +231,7 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
     appBlockId: appBlockId ?? undefined,
   });
   const analytics = analyticsRaw as AnalyticsData | undefined;
+  const unavailable = analytics?.unavailable;
 
   const appOptions = [
     { value: '', label: 'All my apps' },
@@ -207,7 +255,7 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
             comboboxProps={{ withinPortal: true }}
           />
         )}
-        {analytics && (
+        {analytics && !unavailable && (
           <Text size="xs" c="dimmed">
             {dayjs(analytics.range.from).format('MMM D, YYYY')} –{' '}
             {dayjs(analytics.range.to).format('MMM D, YYYY')} ({analytics.range.granularity})
@@ -226,14 +274,84 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
         </Text>
       )}
 
-      {analytics && (
+      {unavailable && (
+        <Alert
+          variant="light"
+          color="yellow"
+          icon={<IconInfoCircle size={16} />}
+          title="Analytics unavailable"
+        >
+          <Text size="sm">
+            {unavailable === 'notEntitled'
+              ? 'Your account does not have access to app analytics yet. No metrics were measured for this app — this is not a report of zero activity.'
+              : 'You do not own this app, so its analytics are not available to you. No metrics were measured — this is not a report of zero activity.'}
+          </Text>
+        </Alert>
+      )}
+
+      {analytics && !unavailable && (
         <>
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
+          {/*
+            `type="container"` is load-bearing, not tidiness. This panel renders
+            BOTH full-width (/apps/revenue) and inside AppAnalyticsInline's
+            `Modal size="xl"` (48.75rem ≈ 780px). Mantine's default `media`
+            breakpoints resolve against the VIEWPORT, so on any ≥1200px screen
+            the modal would take the 5-column branch inside 780px — ~135px per
+            card, ~103px usable after Card padding, for a heading number plus a
+            two-clause sub-line. Container queries resolve against the panel's
+            own width, so the embedded copy steps down instead of squeezing.
+
+            🔴 The keys MUST be explicit lengths, not `sm`/`md`/`lg`. Mantine's
+            container branch interpolates the key VERBATIM into the query
+            (`SimpleGridVariables.mjs`: `simple-grid (min-width: ${key})`),
+            unlike the media branch, which resolves `theme.breakpoints[key]`.
+            Named keys therefore emit `(min-width: sm)` — not a valid <length>,
+            so the query NEVER matches and every width silently falls back to
+            `base`, i.e. one column everywhere. Measured: with named keys the
+            full-width page rendered 1 column at 1400px; with lengths, 5. These
+            values are Mantine's own sm/md/lg (48em/62em/75em), which this app
+            does not override — so the rendered result matches what the named
+            keys produced before container mode was introduced.
+
+            Note this trap is specific to `SimpleGrid`. `Grid`/`ContainerGrid2`
+            resolve named keys against the theme in BOTH modes
+            (`GridVariables.mjs`), so the `breakpoints` prop there swaps the
+            SCALE — it is not a workaround for this bug, and `SimpleGrid` has
+            no such prop.
+          */}
+          <SimpleGrid
+            type="container"
+            cols={{ base: 1, '48em': 2, '62em': 3, '75em': 5 }}
+            spacing="md"
+          >
+            {/*
+              A page app CANNOT be installed — it is stateless by design, so no
+              `block_user_subscriptions` row ever exists for it. Rendering "0"
+              there is the same fabricated-zero defect as #3557/#3581, just with
+              a different cause: the author reads "nobody installed my app" from
+              a number that could never have been anything else.
+
+              🔴 The em dash is driven ONLY by the server's `notApplicable`
+              flag, never by `active === 0`. A model-slot app with no installs
+              yet is a TRUTHFUL zero and must keep rendering `0` — that is the
+              case that would regress silently if this branch ever grew a
+              "…|| active === 0" convenience.
+            */}
             <MetricCard
               label="Active installs"
-              value={analytics.installs.active.toLocaleString()}
-              sub={`${analytics.installs.total.toLocaleString()} total (all time)`}
-              tooltip="Currently-enabled installs. Total counts every install ever created."
+              value={
+                analytics.installs.notApplicable ? '—' : analytics.installs.active.toLocaleString()
+              }
+              sub={
+                analytics.installs.notApplicable
+                  ? 'Not applicable to page apps'
+                  : `${analytics.installs.total.toLocaleString()} total (all time)`
+              }
+              tooltip={
+                analytics.installs.notApplicable
+                  ? 'Page apps run standalone and are not installed onto a model, so there is nothing to count here — this is NOT a report of zero installs. Your runs, Buzz and App loads figures are unaffected.'
+                  : 'Currently-enabled installs. Total counts every install ever created.'
+              }
             />
             <MetricCard
               label="Runs (range)"
@@ -255,6 +373,46 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
               sub={`${analytics.engagement.apiCalls.toLocaleString()} API calls`}
               tooltip="Distinct signed-in users who made a scoped API call within the range. See the coverage note below."
             />
+            {/*
+              Impressions come from ClickHouse, which can be unconfigured, slow
+              or down while every other card here is fine. Rendering a plain "0"
+              in that case is the fabricated-zero defect (#3557/#3581): the
+              author cannot tell "nobody looked" from "we never asked". So an
+              unavailable read renders an em dash, never a number.
+
+              🔴 `analytics.views` is read through `?.` because tRPC output is
+              NOT zod-validated on the client: during a rolling deploy a new
+              bundle can hit an old pod whose payload has no `views` key at all,
+              and an unguarded read throws in render. An absent section is an
+              UNKNOWN, so it takes the same branch as an outage — never the
+              zero branch.
+            */}
+            <MetricCard
+              label="App loads (range)"
+              value={
+                !analytics.views || analytics.views.unavailable
+                  ? '—'
+                  : analytics.views.count.toLocaleString()
+              }
+              sub={
+                !analytics.views || analytics.views.unavailable
+                  ? 'Not measured right now'
+                  : `${analytics.views.uniqueViewers.toLocaleString()} unique viewer${
+                      analytics.views.uniqueViewers === 1 ? '' : 's'
+                    }${
+                      analytics.views.anonCount > 0
+                        ? ` · ${analytics.views.anonCount.toLocaleString()} signed-out load${
+                            analytics.views.anonCount === 1 ? '' : 's'
+                          }`
+                        : ''
+                    }`
+              }
+              tooltip={
+                !analytics.views || analytics.views.unavailable
+                  ? 'The impression store could not be read, so this is NOT a report of zero loads. The other metrics on this page are unaffected.'
+                  : 'Times your app was loaded within the range, including by signed-out visitors. A load that FAILED still counts — this measures attempts to open your app, not successful sessions. Unique viewers counts signed-in people once each and approximates signed-out ones by network address, so it is a reach indicator rather than an identity count.'
+              }
+            />
           </SimpleGrid>
 
           <Alert
@@ -264,21 +422,36 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
             title="What engagement counts"
           >
             <Text size="sm">
-              Active users, API calls, and error rate reflect only{' '}
+              The engagement figures below reflect only{' '}
               <strong>authenticated, scope-gated API calls</strong> your app makes. A static block
-              (or one with no scoped API surface) will show installs and revenue but flat
-              engagement, and <strong>anonymous viewers are not counted</strong>. Installs, runs,
-              and Buzz figures are unaffected.
+              (or one with no scoped API surface) will show revenue but flat engagement.{' '}
+              <strong>App loads</strong> is the exception — it is measured on every load, so it
+              counts signed-out visitors and static blocks that the engagement figures cannot see.
+              Runs and Buzz figures are unaffected. The installs figure is blanked out for apps that
+              cannot be installed at all (a page app has no install slot), which is different from a
+              real zero.
             </Text>
           </Alert>
 
-          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+          <SimpleGrid type="container" cols={{ base: 1, '62em': 2 }} spacing="md">
             <Card padding="md" radius="md" withBorder>
               <Title order={5}>New installs over time</Title>
-              <MiniLineChart
-                points={analytics.installs.series}
-                granularity={analytics.range.granularity}
-              />
+              {/*
+                Same discriminator as the card above. An empty series would
+                otherwise render MiniLineChart's "No data in this range." —
+                which reads as a measurement ("nobody installed you this
+                month") for an app that has no install path at all.
+              */}
+              {analytics.installs.notApplicable ? (
+                <Text c="dimmed" size="xs" py="sm">
+                  Not applicable — page apps are not installed.
+                </Text>
+              ) : (
+                <MiniLineChart
+                  points={analytics.installs.series}
+                  granularity={analytics.range.granularity}
+                />
+              )}
             </Card>
             <Card padding="md" radius="md" withBorder>
               <Title order={5}>Runs over time</Title>
@@ -289,7 +462,7 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
             </Card>
           </SimpleGrid>
 
-          <SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+          <SimpleGrid type="container" cols={{ base: 1, '62em': 2 }} spacing="md">
             <Card padding="md" radius="md" withBorder>
               <Group justify="space-between">
                 <Title order={5}>Top scopes</Title>
@@ -304,9 +477,14 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
               ) : (
                 <Table mt="sm">
                   <Table.Tbody>
+                    {/* key stays the RAW scope — labels can collide, keys cannot. */}
                     {analytics.engagement.topScopes.map((s) => (
                       <Table.Tr key={s.scope}>
-                        <Table.Td>{s.scope}</Table.Td>
+                        <Table.Td>
+                          <Text size="sm" lineClamp={1}>
+                            {scopeBucketLabel(s.scope)}
+                          </Text>
+                        </Table.Td>
                         <Table.Td ta="right">{s.count.toLocaleString()}</Table.Td>
                       </Table.Tr>
                     ))}
@@ -327,7 +505,7 @@ export function AppAnalyticsPanel({ scopedAppBlockId }: { scopedAppBlockId?: str
                       <Table.Tr key={e.endpoint}>
                         <Table.Td>
                           <Text size="sm" lineClamp={1}>
-                            {e.endpoint}
+                            {endpointBucketLabel(e.endpoint)}
                           </Text>
                         </Table.Td>
                         <Table.Td ta="right">{e.count.toLocaleString()}</Table.Td>

@@ -27,7 +27,7 @@ import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
-import { ApplyCustomFilter, BrowsingLevelFilter } from './CustomSearchComponents';
+import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import classes from './QuickSearchDropdown.module.scss';
@@ -132,6 +132,15 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   showIndexSelect?: boolean;
   placeholder?: string;
   disableInitialSearch?: boolean;
+  /**
+   * The ids currently on offer, whenever that set changes. OPTIONAL and inert by default.
+   *
+   * Exists so a caller whose selection GRANTS something can screen the candidates against the
+   * server before offering them — a search hit is a cached document, so "search returned it"
+   * is not a statement about the account's current state. Pass a STABLE callback (`useCallback`);
+   * it fires on every hit change.
+   */
+  onHits?: (ids: number[]) => void;
 };
 
 export const QuickSearchDropdown = ({
@@ -147,17 +156,6 @@ export const QuickSearchDropdown = ({
   };
 
   const indexName = searchIndexMap[targetIndex];
-  const indexSupportsNsfwLevel = useMemo(
-    () =>
-      [
-        searchIndexMap.articles,
-        searchIndexMap.bounties,
-        searchIndexMap.models,
-        searchIndexMap.images,
-        searchIndexMap.collections,
-      ].some((i) => i === indexName),
-    [indexName]
-  );
 
   return (
     <InstantSearch
@@ -165,15 +163,11 @@ export const QuickSearchDropdown = ({
       indexName={indexName}
       future={{ preserveSharedStateOnUnmount: true }}
     >
-      {indexSupportsNsfwLevel ? (
-        <BrowsingLevelFilter
-          attributeName="nsfwLevel"
-          filters={filters}
-          hitsPerPage={dropdownItemLimit}
-        />
-      ) : (
-        <ApplyCustomFilter hitsPerPage={dropdownItemLimit} filters={filters} />
-      )}
+      <BrowsingLevelFilter
+        indexKey={targetIndex}
+        filters={filters}
+        hitsPerPage={dropdownItemLimit}
+      />
 
       <QuickSearchDropdownContent
         {...props}
@@ -194,13 +188,14 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   dropdownItemLimit = 5,
   showIndexSelect = true,
   placeholder,
+  onHits,
   ...autocompleteProps
 }: QuickSearchDropdownProps & {
   indexName: TIndex;
   onIndexNameChange: (indexName: TIndex) => void;
 }) {
   // const currentUser = useCurrentUser();
-  const { query, refine: setQuery } = useSearchBox();
+  const { query, refine: setQuery, isSearchStalled } = useSearchBox();
   const { hits, results } = useHitsTransformed<TIndex>();
   const features = useFeatureFlags();
   const [search, setSearch] = useState(query);
@@ -239,6 +234,20 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
     return items;
   }, [filtered]);
 
+  // Report what is on offer. Keyed on the joined id list rather than on `items`, whose identity
+  // changes on every re-render of the memo's inputs — re-firing on an unchanged set would make a
+  // caller that turns this into a query re-issue it forever.
+  const hitIds = useMemo(
+    () => items.map((item) => Number(item.value)).filter((id) => Number.isFinite(id)),
+    [items]
+  );
+  const hitIdsKey = hitIds.join(',');
+  useEffect(() => {
+    if (!onHits) return;
+    onHits(hitIdsKey.length ? hitIdsKey.split(',').map(Number) : []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hitIdsKey, onHits]);
+
   const getItemFromValue = useCallback(
     (value: string) => {
       const item = items.find((item) => item.value === value);
@@ -268,6 +277,10 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
     setQuery(debouncedSearch);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, query]);
+
+  // Covers both halves of the wait: the 300ms debounce before the query is even sent, and the
+  // request itself. `isSearchStalled` alone leaves the first 300ms looking like a dead input.
+  const loading = search.length > 0 && (search !== query || isSearchStalled);
 
   return (
     <Group className={classes.wrapper} gap={0} wrap="nowrap">
@@ -347,6 +360,7 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
         // prevent default filtering behavior
         filter={({ options }) => options}
         clearable={query.length > 0}
+        loading={loading}
         {...autocompleteProps}
       />
     </Group>

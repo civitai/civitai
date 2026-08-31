@@ -18,7 +18,15 @@ const {
   mockReserve,
   mockRefund,
 } = vi.hoisted(() => ({
-  mockCreateTip: vi.fn(async () => undefined),
+  // Models the REAL return shape: the ledger result plus the audit-🔴-2 dedupe
+  // report the endpoint reads to refund a burned cap reservation. (`undefined` here
+  // was a stale model — the handler always returns this object or throws.)
+  mockCreateTip: vi.fn(async () => ({
+    transactions: ['t1'],
+    conflicts: [] as string[],
+    deduped: false,
+    dedupedAmount: 0,
+  })),
   mockUserFindUnique: vi.fn(async () => ({ id: 7, deletedAt: null })),
   mockHydrateSubject: vi.fn(async () => ({ id: 42, bannedAt: null, muted: false })),
   mockCheckRateLimit: vi.fn(async () => ({ allowed: true })),

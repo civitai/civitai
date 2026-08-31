@@ -32,6 +32,24 @@ import type { BlockManifest } from './types';
  *
  * Update alongside any chrome-bar padding / ActionIcon size change in
  * IframeHost.tsx — the slot-reservation test pins this value to catch drift.
+ *
+ * 🔴 THE DERIVATION ABOVE IS WRONG BY 4px, AND THE VALUE IS DELIBERATELY LEFT AT
+ * 35 ANYWAY. Measured 2026-08-31 by rendering the real chrome in Chromium at both
+ * a 360px and a 2560px viewport (`AppBlockChromeResponsive.browser.test.tsx`): the
+ * bar is **31px** tall, not 35, at every width. `--ai-size-sm` is not 26px — the
+ * installed `@mantine/core` 7.17.8 ships
+ * `--ai-size-sm: calc(1.375rem * var(--mantine-scale))` = 22px, and this repo
+ * overrides neither the ActionIcon sizes nor `--mantine-scale`
+ * (`src/providers/ThemeProvider.tsx` sets only `color` / `variant` defaults). So
+ * the true sum is 22 + 8 (`py={4}` ×2) + 1 (border) = 31.
+ *
+ * Left as-is on purpose: 35 > 31 means the slot OVER-reserves, which is the safe
+ * direction for a CLS reservation (a small dead gap, never a shift), and lowering
+ * it changes the server-seeded height of every model-page slot — a behavioural
+ * change on a different surface that wants its own before/after measurement, not a
+ * drive-by edit inside a width-only chrome pass. The browser test asserts the
+ * measured 31 and asserts `CHROME_BAR_PX >= ` it, so the gap stays visible and
+ * cannot silently invert into an UNDER-reservation.
  */
 export const CHROME_BAR_PX = 35;
 
@@ -64,9 +82,7 @@ export interface ReservableInstall {
  *  - only inline blocks   → hasInstall true but reservedHeight 0 (inline
  *    content lays out in-flow and sizes itself; no iframe reserve needed).
  */
-export function computeSlotReservation(
-  installs: ReservableInstall[]
-): SlotReservation {
+export function computeSlotReservation(installs: ReservableInstall[]): SlotReservation {
   if (installs.length === 0) return { hasInstall: false, reservedHeight: 0 };
   let maxMinHeight = 0;
   for (const install of installs) {

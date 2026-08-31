@@ -1,43 +1,35 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Unit tests for upsertArticle's lockedProperties enforcement — locks are read from the
 // stored row, never from the client payload. article.service.ts has a large import graph,
 // so its transitive service/db/search dependencies are stubbed out below.
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    findUniqueOrThrow: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    deleteMany: vi.fn(),
-    count: vi.fn(),
-  });
-  const tx = {
-    article: mk(),
-    image: mk(),
-    imageConnection: mk(),
-    tagsOnArticle: mk(),
-    collectionItem: mk(),
-    $queryRaw: vi.fn(async () => []),
-    $executeRaw: vi.fn(async () => 0),
-  };
+// The old fixture spread its `tx` into `dbWrite`, so a model reached through the transaction and
+// the same model reached directly were one object. The canonical `$transaction` default runs the
+// callback against `dbMock.dbWrite`, which keeps that identity.
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+
+// upsertArticle's UPDATE path does post-commit work that reaches Redis: the
+// count-cache refresh and the replication-lag markers. With no live Redis these
+// awaits never settle and the tests hang. Stub the Redis-backed helpers so the
+// tests exercise the lockedProperties enforcement (which happens before commit)
+// instead of blocking on infra. `importOriginal` keeps every other export real
+// so the rest of the large import graph is untouched.
+vi.mock('~/server/db/db-lag-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/db/db-lag-helpers')>()),
+  preventReplicationLag: vi.fn(async () => {}),
+  getDbWithoutLag: vi.fn(async () => mockDbRead),
+}));
+vi.mock('~/server/redis/caches', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/redis/caches')>();
   return {
-    mockDbRead: { article: mk(), image: mk(), $queryRaw: vi.fn() },
-    mockDbWrite: {
-      ...tx,
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-      $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
-    },
+    ...actual,
+    userArticleCountCache: { ...actual.userArticleCountCache, refresh: vi.fn(async () => {}) },
   };
 });
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
 
 import { upsertArticle } from '~/server/services/article.service';
 
@@ -71,8 +63,12 @@ function mockStored({
   mockDbWrite.article.findFirst.mockResolvedValue(row);
 }
 
+// The FIRST article.update is the form write from the transaction — the one these
+// assertions are about, and not necessarily the last one recorded.
 function updateData() {
-  return mockDbWrite.article.update.mock.calls.at(-1)?.[0]?.data ?? {};
+  // Without this, `?? {}` makes every `not.toHaveProperty` below pass on zero writes.
+  expect(mockDbWrite.article.update).toHaveBeenCalled();
+  return mockDbWrite.article.update.mock.calls[0]?.[0]?.data ?? {};
 }
 
 const upsert = (input: Record<string, unknown>) =>

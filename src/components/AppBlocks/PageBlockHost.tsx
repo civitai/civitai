@@ -1,4 +1,5 @@
-import { Box, Center, Loader } from '@mantine/core';
+import { Avatar, Box, Center, Loader, Stack, Text } from '@mantine/core';
+import { useReducedMotion } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -7,16 +8,28 @@ import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
 import { AppBlockChrome } from './IframeHost';
 import { IframeInitController, shouldStartInit } from './iframeInitController';
+import { blockInitFragmentEnabled, type BlockHostSurface } from './blockInitFragmentGate';
+import { useBlockIframeSrc } from './useBlockIframeSrc';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import {
+  BLOCK_READY_TIMEOUT_MS,
+  TOKEN_WAIT_TIMEOUT_MS,
+  decideAutoRetry,
+  advanceReviewConsentLatch,
+  buildReviewConsentNotification,
   grantedPageScopes,
+  INITIAL_REVIEW_CONSENT_LATCH,
+  MID_SESSION_LOSS_ERROR_CLASS,
   pageFallbackReason,
   resolveCheckpointPickerRequest,
   resolveGetImagesByIdsRequest,
   resolveImageUploadRequest,
   resolvePublishGenerationOutputsRequest,
   resolveResourcePickerRequest,
-  resolveUngrantableConsentScopes,
+  resolveReviewConsentNotice,
+  resolveUngrantableConsentNotice,
+  shouldEmitMidSessionLossBeacon,
+  toHostGateStatus,
 } from './pageBlockHostLogic';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
@@ -24,28 +37,52 @@ import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
 import { BlockImageScanPoller } from './BlockImageScanPoller';
 import type { BlockImageScanResult } from './blockImageScanLogic';
-import { projectBlockInitMaturity } from './projectBlockInit';
+import { projectBlockInitMaturity, withSignedInFlag } from './projectBlockInit';
 import { sendBlockRender } from './sendBlockRender';
+import {
+  computeLaunchTimings,
+  createLaunchMarks,
+  isDocumentHidden,
+  nowMs,
+  resetLaunchMarks,
+  shouldResetLaunchMarks,
+  type LaunchMarks,
+} from './launchTimings';
 import {
   classifyWildcardPackError,
   exceedsPreDownloadCap,
   resolveGetWildcardPackRequest,
   WILDCARD_MAX_CONCURRENT,
+  type WildcardPackErrorCode,
 } from './wildcardPackParse';
 import { resolveRequestConsent } from './requestConsentGate';
 import { resolveRequestSignIn } from './requestSignInGate';
+import {
+  downloadUrlAsBlob,
+  isAllowedSaveImageUrl,
+  resolveSaveImageRequest,
+  sanitizeDownloadFilename,
+  SAVE_IMAGE_MAX_CONCURRENT,
+} from './saveImageDownload';
+import { env } from '~/env/client';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
 import { PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
+import { HEADER_HEIGHT_PX } from '~/shared/constants/app-layout.constants';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, PageContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { showNotification } from '@mantine/notifications';
+import { hideNotification, showNotification } from '@mantine/notifications';
 import { openLoginPopup } from '~/utils/auth-helpers';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 import { trpc } from '~/utils/trpc';
+import {
+  BLOCK_STORAGE_READ_OPTS,
+  invalidatePrivateStorageReads,
+  invalidateSharedStorageReads,
+} from '~/components/AppBlocks/blockStorageCache';
 
 // Lazy-consent UI (REQUEST_CONSENT). Opened on demand when a logged-in viewer
 // clicks an action whose consent-gated scope the page token is missing. Mirrors
@@ -119,8 +156,47 @@ function storageErrorMessage(err: unknown): string {
  *     its page but can't push the host off to an arbitrary route.
  */
 
-const BLOCK_READY_TIMEOUT_MS = 10_000;
-const TOKEN_WAIT_TIMEOUT_MS = 15_000;
+/**
+ * How long the host waits for the block to ack `BLOCK_READY` before settling on
+ * the `timeout` terminal, and how long it waits for a token before settling on
+ * `no_token`.
+ *
+ * 🔴 EXPORTED for the browser tests, which drive these windows on a VIRTUAL clock
+ * (`vi.useFakeTimers`) instead of sleeping through them in real time. Waiting them
+ * out for real cost ~99s in one file and was the single largest contributor to the
+ * component suite overrunning its CI budget; importing the real constants keeps the
+ * tests pinned to the host's actual windows rather than to copies that can drift.
+ *
+ * 🔴 They now LIVE in `pageBlockHostLogic` and are re-exported here. That module
+ * is plain TS with no React graph, so a NODE test can import them — which is what
+ * lets `worstReachableLaunchMs()` derive the launch-sample cap from the real
+ * windows instead of from a hard-coded literal in a comment. Importing them from
+ * this file would drag the whole component graph into the `unit` project.
+ */
+export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
+
+/**
+ * LAUNCH REVEAL (feedback #3: "launching an app should feel magical … subtly
+ * animated"). How long the branded launch overlay cross-fades out while the block
+ * fades in, once the block signals BLOCK_READY.
+ *
+ * 🔴 This is a PURELY COSMETIC, ready-path-only window. It can never delay, mask
+ * or swallow an error, because every terminal state (`timeout` / `fatal` /
+ * `no_token` / `error`) flips `showIframe` to false, which unmounts the entire
+ * iframe+overlay branch and renders `BlockFallback` in the SAME commit — the
+ * fade-out timer below is simply cleaned up. Nothing about the fallback render is
+ * gated on animation state. (Regression-tested: see the "the reveal must NOT gate
+ * the error path" cases in PageBlockHostLaunchReveal.browser.test.tsx, which
+ * assert every terminal state still reaches BlockFallback — promptly, and still
+ * wrapped in AppBlockChrome.)
+ *
+ * Implemented with a plain CSS opacity/transform transition rather than the
+ * `motion` package: `motion` is NOT in the `/apps` route graph today (its only
+ * importers are `src/components/Chat/*` + `src/utils/lazy-motion.ts`, reached via
+ * a `next/dynamic` ChatWindow chunk), so importing it here would pull a new
+ * animation runtime into the run-page bundle for one cross-fade.
+ */
+export const LAUNCH_REVEAL_MS = 260;
 
 // Hard cap on a block-suggested Buy-Buzz amount (mirrors IframeHost) — clamps a
 // malicious/huge `suggestedAmount` so the spend modal can't be pre-seeded with
@@ -135,6 +211,80 @@ type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
 // (gotcha #73). Module-scope so referencing it in a handler adds no effect dep.
 const REVIEW_NACK_MESSAGE = 'not available in review preview';
 
+// 🔴 The ONE reviewMode NACK that must NOT use REVIEW_NACK_MESSAGE.
+// WILDCARD_PACK_RESULT's `error` is a DISCRIMINATED ENUM, not free text: the
+// block-side `isValidWildcardPackResult` rejects any value outside
+// not-found | forbidden | too-large | parse-failed | busy, and a rejected reply
+// is DROPPED by the SDK transport (console.warn only) — so a free-text NACK here
+// never settles the block's pending request and the caller hangs until the
+// transport timeout, the exact opposite of the fail-fast the handler promises.
+// `forbidden` is the in-set code: review preview genuinely is a permission
+// context, and it is the closest member semantically.
+//
+// The annotation is the GUARD — `WildcardPackErrorCode` is the repo's local
+// mirror of the SDK's `BlockWildcardPackErrorCode` (see wildcardPackParse.ts;
+// the pinned @civitai/app-sdk dist does not export the wildcard union yet), so
+// tsc rejects any future edit that swaps in a non-member string.
+const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
+
+/**
+ * The floor a `fit="fill"` host will not shrink below, in px.
+ *
+ * 🔴 WHY A FLOOR EXISTS AT ALL. `fit="fill"` is only correct under a
+ * `Page(…, { scrollable: false })` layout, where EVERY ancestor is
+ * `overflow-hidden`. That is what removes the double scrollbar — and it also
+ * means the page is the only thing left that can offer a scrollbar. The site's
+ * fixed chrome cannot shrink, so with a bare `min-height: 0` the app absorbed
+ * the ENTIRE shortfall on a short viewport and the overflow was simply clipped
+ * away with nothing to scroll. Measured before this floor existed: 153px of host
+ * at a ~360px-tall SHORT DESKTOP window (the 90px ad; a phone in landscape gets
+ * the 50px one and lands at 193 — see the table below), and 0px at 250px, with
+ * `outerScrollbar = false` at every step. That is WCAG 1.4.4 / 1.4.10 — strictly worse than the cosmetic spare
+ * scrollbar `fill` mode was introduced to remove.
+ *
+ * 🔴 THE FLOOR IS A TRADE, NOT A FREE WIN, AND ITS VALUE IS THE WHOLE TRADE.
+ * When `available < FILL_MIN_HEIGHT_PX` the host overflows the page wrapper and
+ * that wrapper grows a scrollbar — beside the block's own, i.e. THIS PR'S BUG in
+ * a narrower window. Below the floor that is the right call (a scrollbar beats
+ * unreachable content), so the number's only job is to make the band as small as
+ * it can be while still catching the degenerate case. Raising it widens the
+ * population that sees two scrollbars, so the value is bounded on BOTH sides —
+ * in `__tests__/pageRunScrollContract.test.ts` (the GATING node suite; that is
+ * the copy that can block a merge) and again in
+ * `PageBlockHostScrollFit.browser.test.tsx` (report-only, which is why it is not
+ * the only one). The NUMBERS deliberately live in those tests, not here: a band
+ * declared beside the value it bounds can be moved in the same edit. What lives
+ * here is the ARITHMETIC that justifies them.
+ *
+ * THE ARITHMETIC, which decides who lands in the band:
+ *
+ *   available = innerHeight − 60 (header) − 57 (AppFooter 45 + its mt-3 12)
+ *                           − AdhesiveAd (90 desktop / 50 mobile / 0 for paid)
+ *                           − RewardsBonusBanner (~32 when active)
+ *
+ * 🔴 `innerHeight`, NOT the screen height — an earlier version of this comment
+ * justified 400 with "a 768px laptop has 561px after chrome, so the floor never
+ * fires there". That subtracted chrome from the PANEL height. A maximised
+ * browser on a 768px screen has `innerHeight ≈ 650` once the OS taskbar, tab
+ * strip, omnibox and bookmarks bar are gone, so the real margin was ~43px, not
+ * 161 — one bookmarks bar or 110% zoom would have eaten it.
+ *
+ * At 300, the floor fires below roughly `innerHeight < 467` (logged-out mobile)
+ * / `< 507` (logged-out desktop). That clears the mainstream portrait phones a
+ * 400 floor caught — 375×667-class Safari (`innerHeight ≈ 553`, available ≈ 386)
+ * and 360×640 Android (`≈ 560`, available ≈ 393) — while still protecting phone
+ * LANDSCAPE (~360 tall → available ≈ 193) and heavy desktop zoom, which is where
+ * the unreachable-content case actually lives.
+ *
+ * It is deliberately NOT derived from `100dvh` — that arithmetic is exactly what
+ * this PR removed. Note the block's own area is `floor − AppBlockChrome`, so the
+ * usable figure is meaningfully smaller than the constant.
+ *
+ * The floor only helps if something can scroll once it binds, so the run page's
+ * wrapper carries `overflowY: 'auto'` as the scroll container of last resort.
+ */
+export const FILL_MIN_HEIGHT_PX = 300;
+
 export interface PageBlockHostProps {
   /** AppBlock id (`apb_*`) — used to build the BLOCK_INIT ids + trust chrome. */
   appBlockId: string;
@@ -145,6 +295,14 @@ export interface PageBlockHostProps {
   appName: string;
   /** The `<slug>.civit.ai` bundle URL (manifest.iframe.src), server-resolved. */
   iframeSrc: string;
+  /**
+   * Which surface mounted this host. REQUIRED, and passed explicitly by each
+   * call site rather than inferred, because it is one of the two axes the
+   * init-fragment gate keys on — and the axis that refuses the DEV TUNNEL
+   * unconditionally, which an allowlist keyed on blockId/slug structurally
+   * cannot do (the tunnel serves the same blockId the author will publish).
+   */
+  surface: BlockHostSurface;
   /** manifest.iframe.sandbox, server-resolved. */
   sandbox: string;
   trustTier: 'unverified' | 'verified' | 'internal';
@@ -165,8 +323,25 @@ export interface PageBlockHostProps {
    *  not granted (the token still mints with the granted subset). */
   needsConsent?: boolean;
   /** #3/#6: the token mint errored. Surface an error state instead of hanging at
-   *  `no_token`. */
+   *  `no_token`. Only escalates a host still in `loading` — see `tokenTerminal`
+   *  for the mid-session case. */
   tokenError?: boolean;
+  /**
+   * The mint has PERMANENTLY failed: no usable token remains AND the upstream
+   * hook's bounded automatic re-mints are exhausted (`useBlockToken.terminal`).
+   *
+   * 🔴 THIS IS THE ONLY THING THAT MAY TEAR DOWN A `ready` PAGE. Before it, the
+   * `tokenError` effect below transitioned out of `loading` ONLY — so a token
+   * that died mid-session left the host sitting at `ready` on a dead credential
+   * with `TOKEN_REFRESH` early-returning on `!token`, and the block just silently
+   * 401'd forever with no signal to the user or the platform. Gating on the
+   * SETTLED signal (rather than a bare `tokenError`) is what keeps a merely
+   * TRANSIENT refresh blip from ripping a working app out from under the user
+   * while it is still being recovered.
+   *
+   * Optional + default false → every existing caller is byte-identical.
+   */
+  tokenTerminal?: boolean;
   /** Advisory color-domain maturity signal (BLOCK_INIT). Server-authoritative
    *  values from the token mint — forwarded, never derived client-side. */
   domain?: 'green' | 'blue' | 'red' | null;
@@ -209,6 +384,102 @@ export interface PageBlockHostProps {
    * the preview surface, not here.
    */
   reviewRunForReal?: boolean;
+  /**
+   * May this viewer open `/apps/run/<blockId>`? Forwarded to `AppBlockChrome`,
+   * where it gates the "Recently run" menu — that section's ONLY link shape is
+   * that route, which 404s fail-closed unless the viewer holds BOTH `appBlocks`
+   * and `appBlocksPages`.
+   *
+   * 🔴 IT IS THE SAME PREDICATE ON EVERY MOUNTER:
+   * `!!(features.appBlocks && features.appBlocksPages)` — the exact conjunction
+   * `/apps/run/[slug]`'s own `getServerSideProps` checks, no more and no less.
+   * Two ways to get it wrong, both of which have been written here:
+   *
+   *   - A PER-SURFACE CONSTANT, justified with "the surfaces gate on DIFFERENT
+   *     flags". That conflates what gates the SURFACE with what gates the LINK
+   *     TARGET. The dev tunnel's own gate and mod review's reviewer check say
+   *     nothing about whether the menu's links resolve. Hardcoding it per
+   *     surface is what silently killed the menu for mods on three of four
+   *     surfaces.
+   *   - HALF THE CONJUNCTION (`!!features.appBlocksPages`). `appBlocks` is the
+   *     block-runtime kill-switch and a Flipt override can disable as well as
+   *     enable, so pages-on/blocks-off is a reachable state in which every one
+   *     of these links 404s. All four surfaces happen to sit behind their own
+   *     `appBlocks` check today, so the one-flag form is not currently a live
+   *     bug — but that makes the menu gate depend on an invariant held in four
+   *     other functions, which is exactly the kind of distant coupling that
+   *     produced the original defect. Encode the target route's predicate here.
+   *
+   * All three mounters (`/apps/run/[slug]`, `/apps/dev/[blockId]`,
+   * `ReviewBlockPreviewHost`) read the conjunction; the source-level guard in
+   * `recentAppsRail.test.ts` enumerates them by scanning the tree, so a NEW
+   * mounter cannot quietly omit it or downgrade it to one flag.
+   *
+   * Default false → a mounter that hasn't wired it shows no dead links.
+   */
+  canOpenPage?: boolean;
+  /**
+   * How the host sizes itself VERTICALLY. This is the double-scrollbar axis, so
+   * it is spelled out rather than inferred from `surface`.
+   *
+   *   'viewport' (DEFAULT, the historical behaviour) — the host claims
+   *     `min-height: calc(100dvh - HEADER_HEIGHT_PX)` and lets whatever is above
+   *     it scroll.
+   *     Correct ONLY for a mounter sitting inside a SCROLLING ancestor that does
+   *     not otherwise bound its height: the dev tunnel (`/apps/dev/<blockId>`,
+   *     default `AppLayout` → `ScrollArea`). Without it that host would be sized
+   *     only by `FILL_MIN_HEIGHT_PX` — measured 300px of host, 31px of chrome,
+   *     269px of iframe, regardless of how much room the page actually has.
+   *     Usable, but no longer FILLING anything.
+   *
+   *     ⚠️ This used to name the mod-review preview here too, and that was the
+   *     WRONG diagnosis of that surface: it is not in an unbounded scrolling
+   *     ancestor, it is in a box that bounds its height and CLIPS
+   *     (`height: 420; overflow: hidden` in the review modal;
+   *     `100dvh − header` on the full-page preview). Claiming
+   *     `100dvh − HEADER_HEIGHT_PX` inside a 420px panel put roughly 600px of app
+   *     out of reach on a 1080px screen, with nothing to scroll to it — and it
+   *     got worse the taller the viewport, because the claim grows while the
+   *     panel does not. `ReviewBlockPreviewHost` is on `'fill'` as of that fix.
+   *
+   *   'fill' — the host fills its parent (`flex: 1`, floored at
+   *     `FILL_MIN_HEIGHT_PX`) and
+   *     claims no viewport-derived height of its own. Requires the mounter's
+   *     ancestor chain to already bound the height — i.e. a page declared
+   *     `Page(…, { scrollable: false })`, whose `AppLayout` branch is
+   *     `flex-1 overflow-hidden` all the way down.
+   *
+   * 🔴 WHY THE DEFAULT IS WRONG FOR A FULL-PAGE APP, and why 'fill' exists.
+   * `calc(100dvh - HEADER_HEIGHT_PX)` subtracts ONLY the site header. Inside the default
+   * scrolling layout the actual space left to the page is
+   * `100dvh − header − subNav − its mb-3 − RewardsBonusBanner − AppFooter −
+   * AdhesiveAd`, every term of which is ≥ 0 and several of which are > 0 on a
+   * normal render. So the host is UNCONDITIONALLY taller than its scroll
+   * viewport: the layout's `ScrollArea` grows a vertical scrollbar it can only
+   * ever scroll by that residue, while the block's own document scrolls inside
+   * the iframe — two scrollbars, side by side, for one scrollable thing. It is
+   * arithmetic, not a race: there is no viewport size at which the two heights
+   * agree. `'fill'` removes the magic number instead of re-tuning it.
+   *
+   * The header term is `HEADER_HEIGHT_PX` from
+   * `~/shared/constants/app-layout.constants`, which `AppHeader` also sets itself
+   * from — it used to be a private `HEADER_HEIGHT = 60` there and a bare `60`
+   * here, so a header resize re-opened this bug on any surface still on
+   * `'viewport'`. One source now, and a guard in `pageRunScrollContract.test.ts`
+   * binds it to the `--header-height` custom property that CSS call sites use.
+   *
+   * ⚠️ This used to carry a prohibition on rewriting the calc to
+   * `calc(100dvh - var(--header-height))`, because the component-test harness
+   * loaded no global stylesheet and the custom property read as `""` there — an
+   * invalid declaration, so the host laid out differently under test than in
+   * production. **That is fixed**: `test/component-setup.tsx` now injects the
+   * `:root` custom properties from `globals.css`. Interpolating `HEADER_HEIGHT_PX`
+   * here is kept deliberately (see the constant's own comment), not because the
+   * var is unsafe.
+   *
+   * Still prefer moving a mounter to `'fill'` over re-tuning this calc.
+   */
+  fit?: 'viewport' | 'fill';
 }
 
 export function PageBlockHost({
@@ -218,6 +489,7 @@ export function PageBlockHost({
   blockInstanceId,
   appName,
   iframeSrc,
+  surface,
   sandbox,
   trustTier,
   slug,
@@ -227,6 +499,7 @@ export function PageBlockHost({
   missingScopes,
   needsConsent,
   tokenError,
+  tokenTerminal = false,
   domain,
   maxBrowsingLevel,
   viewer,
@@ -235,6 +508,8 @@ export function PageBlockHost({
   onRetryToken,
   reviewMode = false,
   reviewRunForReal = false,
+  canOpenPage = false,
+  fit = 'viewport',
 }: PageBlockHostProps) {
   const router = useRouter();
   // MOD REVIEW SANDBOX (#2831): the side-effect NACK gate. Side-effecting handlers
@@ -246,16 +521,78 @@ export function PageBlockHost({
   const reviewNack = reviewMode && !reviewRunForReal;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
-  // Mirror of `status` for the Retry handler to read the prior terminal state
-  // WITHOUT putting a side-effect (onRetryToken) inside the setStatus updater
-  // (which React may double-invoke under StrictMode → a double re-mint). Kept in
-  // sync via the effect below.
+  // Mirror of `status`, read by the Retry handler (for the prior terminal state,
+  // WITHOUT putting a side-effect (onRetryToken) inside the setStatus updater —
+  // which React may double-invoke under StrictMode → a double re-mint) AND by the
+  // four status-gated message handlers via `readGateStatus` below.
+  //
+  // 🔴 ASSIGNED IN THE RENDER BODY, NOT IN AN EFFECT — that placement IS the fix,
+  // and an effect here is the bug. React writes the `data-block-ready` DOM
+  // attribute (and every other commit-time output) during the COMMIT, but flushes
+  // PASSIVE effects in a LATER scheduler task whenever the commit exhausts the 5ms
+  // frame budget (scheduler 0.23.2, MessageChannel transport, `frameYieldMs = 5`).
+  // So an effect-updated mirror is stale for exactly the window in which the host
+  // has already publicly announced readiness — measured with a MutationObserver on
+  // the attribute: at the instant it flips to "true" the gated handlers still drop
+  // the message, 6 runs out of 6. A render-body assignment happens BEFORE the
+  // commit, so by the time anything observable says "ready" the mirror already is.
+  // Updating it from an effect would have precisely the deferral being fixed.
+  //
+  // CONCURRENT-RENDERING SAFETY. Writing a ref during render is impure, so the
+  // three ways that bites were each checked rather than assumed:
+  //   • StrictMode double-render writes the SAME value twice — idempotent.
+  //   • An interrupted/discarded concurrent render can leave the ref holding a
+  //     status that never committed. It converges: React always eventually renders
+  //     the latest state, and that render overwrites the ref.
+  //   • It is only ever written from `status` (component state), never derived
+  //     from props or anything a parent can change mid-render.
+  //
+  // 🔴 WHICH DIRECTION THAT TRANSIENT DISAGREEMENT RUNS IN — read this before
+  // pointing a NEW gate at the ref. "Ref ahead of the DOM" is NOT always the
+  // permissive direction; it inherits the direction of the transition in flight,
+  // and this component has transitions BOTH ways:
+  //   • loading → ready is PERMISSIVE. The ref says ready while `data-block-ready`
+  //     still reads "false", so a gate can open a beat before the host has publicly
+  //     announced readiness. Harmless, and it is the whole point of the fix.
+  //   • ready → error (the mid-session token loss at the `setStatus` below) and
+  //     ready → fatal (`BLOCK_ERROR{fatal:true}`) are RESTRICTIVE. A concurrent
+  //     render writes `statusRef.current = 'error'`, yields before commit, and a
+  //     queued OPEN_BUZZ_PURCHASE arriving in that gap is REFUSED while
+  //     `data-block-ready` still reads "true".
+  // The restrictive case is deliberate and is the safer side of the trade: the ref
+  // is the host's freshest knowledge of its own state, so refusing a spend on a
+  // host that has already decided it is broken is correct, and the DOM attribute is
+  // the thing lagging. A gate that must NOT tighten early (there is none today)
+  // would have to key off the committed `status`, not this ref.
+  //
+  // RESIDUAL WINDOW, stated rather than hidden: this closes the commit→passive-
+  // effect gap, NOT the larger message-received→render gap. `status` becomes
+  // 'ready' only as a RESULT of the block's own BLOCK_READY being processed
+  // (setStatus → render → commit), so a block that posts a gated request in the
+  // SAME turn as BLOCK_READY still meets a 'loading' mirror — React has not
+  // rendered yet. Mirroring the ready transition into the ref from inside the
+  // BLOCK_READY handler was considered and REJECTED: the handler would have to
+  // re-implement the updater's `current === 'loading'` predicate against the ref,
+  // which disagrees with React's own resolution whenever another setStatus is
+  // already queued (the exact eager-updater hazard the impression-beacon comment
+  // below documents at length). The NACKs on the two repliable gates are what
+  // cover that remainder — a drop there fails FAST instead of hanging.
   const statusRef = useRef<Status>('loading');
+  statusRef.current = status;
   // #4 Retry: bumped by the terminal-fallback Retry button to re-key the
   // <iframe> below. Re-keying forces React to unmount + remount the iframe (a
   // fresh `contentWindow`), so the re-armed init handshake talks to a clean
   // frame instead of a wedged one. See `handleRetry`.
   const [reloadNonce, setReloadNonce] = useState<number>(0);
+  // BOUNDED AUTO-RETRY budget for this mount. State (not a ref) because the
+  // scheduling effect AND the render-failure beacon both derive from it, so it
+  // has to drive re-renders. `attempts` counts every automatic attempt;
+  // `reminted` counts the subset that spent a token re-mint (the rate-limit cap).
+  // A MANUAL Retry deliberately touches NEITHER — see handleRetry.
+  const [autoRetryBudget, setAutoRetryBudget] = useState<{
+    attempts: number;
+    reminted: number;
+  }>({ attempts: 0, reminted: 0 });
   // Active async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD).
   // Keyed by the OPEN_IMAGE_UPLOAD requestId; each entry mounts one
   // BlockImageScanPoller (below) that survives the upload modal's close, polls
@@ -274,11 +611,228 @@ export function PageBlockHost({
   // makes the per-mount emit deterministic regardless of ack timing.
   const blockRenderEmittedRef = useRef<boolean>(false);
 
-  // Keep statusRef tracking the live status so handleRetry can branch on the
-  // prior terminal state without reading it inside the setStatus updater.
+  // 🔴 A SEPARATE at-most-once latch for the MID-SESSION credential-loss beacon,
+  // and it MUST NOT be `blockRenderEmittedRef`.
+  //
+  // `blockRenderEmittedRef` encodes an ANALYTICS invariant — exactly ONE
+  // impression per host mount — that the `blockRenders` denominator and the
+  // BlockRenderFailureRate alert both depend on. Reusing it here would be wrong
+  // in both directions: a `ready` host has already consumed it (so the beacon
+  // would never fire — the precise reason a real prod revocation recorded zero
+  // error beacons on 2026-07-31), and clearing/relaxing it to make room would
+  // retroactively change what the already-sent `ok` impression means.
+  //
+  // The teardown is a genuinely DIFFERENT event from the page load, so it gets a
+  // different latch. Net effect on the wire for a revoked session: `ok` (the load
+  // really did succeed) followed by ONE
+  // `error{error_class="token_lost_midsession"}` (it was later revoked). Bounded
+  // per mount by this ref; the impression accounting above is untouched.
+  const midSessionLossEmittedRef = useRef<boolean>(false);
+  // Latches on the first committed `ready`. This is what tells a `ready → error`
+  // teardown apart from a `loading → error` launch failure — `status === 'error'`
+  // alone cannot (both transitions land on it). A ref, not state: it must not
+  // cause a render, and `handleRetry` deliberately does not clear it (a mount
+  // that ever launched has launched).
+  const reachedReadyRef = useRef<boolean>(false);
+
+  // ── LAUNCH LATENCY marks ────────────────────────────────────────────────────
+  // Four `performance.now()` stamps + a sticky hidden-tab flag. All the math
+  // (and every correctness rule) lives in the pure, node-tested `launchTimings`
+  // module; the host only records.
+  //
+  // 🔴 t0 IS THE FIRST CLIENT RENDER, not a mount effect. The `<iframe src>` is
+  // an SSR prop rendered inside `showIframe` (true while status === 'loading',
+  // which is the INITIAL status), so the cross-origin frame load starts in this
+  // very commit — before any token exists. A t0 taken in a post-mount effect
+  // would start the clock after the thing it is timing. The lazy-ref pattern
+  // below is the React-blessed way to do once-per-instance work at render time,
+  // and it is SSR-safe (`performance` is undefined there → `mountedAt: null` →
+  // `computeLaunchTimings` returns null and nothing is reported).
+  const launchMarksRef = useRef<LaunchMarks | null>(null);
+  if (launchMarksRef.current === null)
+    launchMarksRef.current = createLaunchMarks(nowMs(), isDocumentHidden());
+  // Which instance the marks above currently describe. Seeded at RENDER time
+  // with the first `blockInstanceId`, so the `[blockInstanceId]` effect below can
+  // tell "first mount" (no reset — that would throw away the render-time t0)
+  // from "soft nav to another app" (reset).
+  const launchInstanceRef = useRef<string | null>(null);
+  if (launchInstanceRef.current === null) launchInstanceRef.current = blockInstanceId;
+
+  // 🔴 BOTH REFS ABOVE ARE PER-MOUNT, BUT THIS HOST IS NOT ALWAYS REMOUNTED.
+  //
+  // `/apps/run/[slug]/[[...path]]` renders <PageBlockHost> with NO `key`, and
+  // `_app.tsx` renders <Component> with no key either — so a SOFT navigation
+  // between two apps (appA → appB, e.g. via the "Recently run" menu) reuses this
+  // component instance: same mount, different `blockInstanceId`.
+  //
+  // Left alone, app A's latches would leak onto app B and produce a WRONG,
+  // MISATTRIBUTED signal: B's launch failure would inherit `reachedReady === true`
+  // and be reported as `token_lost_midsession` for an app that never launched —
+  // exactly the launch-vs-teardown confusion this whole feature exists to avoid.
+  // (Conversely a spent emit-latch would silently swallow B's genuine loss.)
+  //
+  // So the latches are scoped to the block INSTANCE, not the React mount.
+  //
+  // 🔴 Deliberately conservative: this resets to `false` rather than re-deriving
+  // from `status`, because under host reuse `status` is itself STALE (it is still
+  // app A's 'ready'). Re-deriving would re-create the misattribution this fixes.
+  //
+  // Be precise about the cost, because it is NOT an edge case. `status` inherited
+  // from app A can still move FORWARD out of 'ready' (→ 'error' on a terminal
+  // token, → 'fatal' on BLOCK_ERROR) — it is not frozen. What it cannot do is go
+  // BACK: every `setStatus` here is gated on the current value, and the only
+  // unconditional reset to 'loading' is `performRetry`. Since re-reaching 'ready'
+  // requires passing through 'loading', app B can never earn a genuine `ready`
+  // after a soft nav, so the latch re-arms only via a manual or automatic Retry.
+  //
+  // That costs nothing real TODAY, because on the same path app B never gets a
+  // working session to lose: `shouldStartInit` returns false for any non-'loading'
+  // status, so BLOCK_INIT is never sent and app B cannot reach a genuine ready
+  // state. The missed beacon is therefore unreachable — it describes a state the
+  // pre-existing host-reuse bug already prevents. Net vs. before this reset:
+  // strictly better (we traded a FALSE POSITIVE on app B's launch failure for a
+  // beacon that could not have fired anyway). Under-reporting, never
+  // mis-reporting — the right side to err on for an alerting signal.
+  //
+  // 🔴 The DECLARATION ORDER below is load-bearing: this effect must be declared
+  // BEFORE the reachedReady-latch effect, so that a commit changing both
+  // `blockInstanceId` and `status` resets first and latches second. (That effect
+  // used to sync `statusRef` too; the mirror now lives in the render body — see
+  // its 🔴 note — but the reset/latch ordering constraint is unchanged.)
+  // No current test detects a swap (no reachable case distinguishes them today) —
+  // so if you reorder these, reason it through rather than trusting the suite.
+  //
+  // NOTE: the wider host-reuse problem is PRE-EXISTING and NOT fixed here — stale
+  // `status` and the leaked `blockRenderEmittedRef` (so app B loses its `ok`
+  // impression) both predate this change. The real fix is `key={blockInstanceId}`
+  // on the run page, which would also change impression COUNTS, so it belongs in
+  // its own PR rather than riding along on an observability change.
   useEffect(() => {
-    statusRef.current = status;
+    reachedReadyRef.current = false;
+    midSessionLossEmittedRef.current = false;
+    // Same reasoning for the launch marks: under host reuse app A's `mountedAt`
+    // would be attributed to app B's launch, producing a `total` that includes
+    // however long the user spent in app A. (Today app B can never earn a
+    // genuine `ready` after a soft nav — `shouldStartInit` refuses a non-'loading'
+    // status — so this is belt-and-braces against the pre-existing host-reuse
+    // bug being fixed later, not a live defect.)
+    //
+    // 🔴 BUT NOT ON FIRST MOUNT. This effect runs on mount as well as on change,
+    // and `mountedAt` was deliberately taken at RENDER time — the commit in which
+    // the iframe actually mounts. Resetting here unconditionally would overwrite
+    // it with a post-commit timestamp and silently shorten EVERY `total` by the
+    // render->effect gap, discarding exactly the window t0 exists to capture, in
+    // the flattering direction. `shouldResetLaunchMarks` is unit-tested.
+    if (shouldResetLaunchMarks(launchInstanceRef.current, blockInstanceId)) {
+      if (launchMarksRef.current)
+        resetLaunchMarks(launchMarksRef.current, nowMs(), isDocumentHidden());
+    }
+    launchInstanceRef.current = blockInstanceId;
+  }, [blockInstanceId]);
+
+  // 🔴 HIDDEN-TAB LATCH — sticky from mount until the beacon reads it.
+  //
+  // A run page opened in a background tab (cmd-click, session restore, a tab
+  // group reopened) gets throttled timers and reports a BLOCK_READY seconds late
+  // at ZERO user-felt cost. Without this the p95 measures tab-switching.
+  //
+  // Deliberately NOT the existing visibilitychange listener further down: that
+  // one is gated on `status === 'ready'`, i.e. it starts listening only AFTER
+  // the launch window it would need to observe has closed. This one is
+  // unconditional and mount-scoped.
+  useEffect(() => {
+    const marks = launchMarksRef.current;
+    if (!marks) return;
+    const handler = () => {
+      if (isDocumentHidden()) marks.wasHidden = true;
+    };
+    document.addEventListener('visibilitychange', handler);
+    return () => document.removeEventListener('visibilitychange', handler);
+  }, []);
+
+  // Launch mark: the END of the token-mint leg (first non-null token). The leg
+  // races the frame load; it does not precede it.
+  useEffect(() => {
+    const marks = launchMarksRef.current;
+    if (!marks || !token || marks.tokenAt !== null) return;
+    marks.tokenAt = nowMs();
+  }, [token]);
+
+  // `statusRef` is kept current in the RENDER BODY above (see the 🔴 note there —
+  // an effect is exactly the deferral this component was losing messages to).
+  // This effect keeps ONLY the reachedReady latch, which deliberately wants the
+  // COMMITTED status: for the same reason the impression beacon does (see its
+  // comment), keying off a setStatus updater's side effect silently drops the
+  // observation whenever another state update is already queued on this component.
+  useEffect(() => {
+    if (status === 'ready') reachedReadyRef.current = true;
   }, [status]);
+
+  /**
+   * The ONE way a message handler asks "is the host ready?".
+   *
+   * Reads the RENDER-BODY-updated `statusRef` rather than closing over `status`,
+   * so the answer is current the moment the render that made the host ready is
+   * committed — not one scheduler task later, when React gets around to flushing
+   * passive effects and re-registering the listener with a fresh closure.
+   *
+   * Stable identity (`[]` deps, ref read only) is load-bearing in its own right:
+   * it lets the four gated effects DROP `status` from their dependency arrays, so
+   * they now subscribe ONCE per mount instead of tearing down and re-registering
+   * on every status transition. The window this fix is about cannot exist if the
+   * listener never needs replacing.
+   */
+  const readGateStatus = useCallback(() => toHostGateStatus(statusRef.current), []);
+
+  // BOUNDED AUTO-RETRY — the single decision both consumers read (the scheduling
+  // effect near `handleRetry`, and the render-FAILURE beacon below), so they can
+  // never disagree about whether the host has SETTLED on this terminal state.
+  // `canRemint` is whether a token re-mint is even wired: without it an auth
+  // terminal can never be recovered, so we must not burn an attempt on it.
+  const canRemint = onRetryToken != null;
+  const autoRetry = useMemo(
+    () =>
+      decideAutoRetry({
+        status,
+        attempts: autoRetryBudget.attempts,
+        reminted: autoRetryBudget.reminted,
+        canRemint,
+      }),
+    [status, autoRetryBudget.attempts, autoRetryBudget.reminted, canRemint]
+  );
+  /** True once the host has stopped auto-recovering: this terminal state is final. */
+  const autoRetrySettled = autoRetry.kind === 'none';
+
+  // LAUNCH REVEAL — `prefers-reduced-motion: reduce` collapses the whole thing to
+  // 0ms: no transition is ever emitted, and the overlay is dropped on the effect
+  // tick right after the block turns ready rather than being held for a fade.
+  // (Not literally the same commit as the status flip — but with `opacity: 0` and
+  // no transition it is already invisible, so there is nothing to perceive.)
+  // `initialValue: true` is deliberate and fail-SAFE: `useMediaQuery` commits the
+  // real value in a post-mount effect, so render 1 has to assume something.
+  // Assuming "reduced" means a viewer who opted out of motion never gets a single
+  // frame with a transition/transform applied; a viewer who didn't loses nothing,
+  // because the reveal only runs on BLOCK_READY, long after that first commit.
+  const reduceMotion = useReducedMotion(true);
+  const revealMs = reduceMotion ? 0 : LAUNCH_REVEAL_MS;
+  // The branded launch overlay stays mounted for ONE fade-out after BLOCK_READY,
+  // then unmounts. It is only ever rendered inside the `showIframe` branch, so
+  // every terminal state removes it structurally regardless of this flag — this
+  // state exists solely to give the ready path something to fade.
+  const [overlayMounted, setOverlayMounted] = useState<boolean>(true);
+  useEffect(() => {
+    if (status === 'loading') {
+      setOverlayMounted(true);
+      return;
+    }
+    // Terminal states (or reduced motion) → drop it immediately, no timer.
+    if (status !== 'ready' || revealMs === 0) {
+      setOverlayMounted(false);
+      return;
+    }
+    const t = setTimeout(() => setOverlayMounted(false), revealMs);
+    return () => clearTimeout(t);
+  }, [status, revealMs]);
 
   const expectedOrigin = useMemo(() => {
     try {
@@ -287,6 +841,20 @@ export function PageBlockHost({
       return '';
     }
   }, [iframeSrc]);
+
+  // The `src` actually rendered: the publisher's src plus the init-fragment
+  // fast path, but ONLY when this block+surface is gated on for it. Off by
+  // default for every block, and unconditionally off for `dev-tunnel`.
+  // `expectedOrigin` above is deliberately derived from the BASE src so the
+  // postMessage target can never be influenced by the fragment.
+  //
+  // The page host's render mode is `'iframe'` by construction — the literal
+  // this component already puts in its BLOCK_INIT payload below.
+  const renderedIframeSrc = useBlockIframeSrc(
+    iframeSrc,
+    { theme, renderMode: 'iframe', blockInstanceId },
+    blockInitFragmentEnabled({ surface, blockId, slug })
+  );
 
   // The EFFECTIVE sandbox handed to the iframe attribute below. Derive the
   // transport's opaque-origin mode from the SAME string so the two can never
@@ -331,6 +899,22 @@ export function PageBlockHost({
     return '';
   }, [router.query.path]);
 
+  // 🔴 THIS CONTEXT IS NOT PROJECTED, AND THAT IS THE SECOND IDENTITY CHANNEL.
+  // `IframeHost` runs its slot context through `projectBlockInitContext`, whose
+  // allowlist DROPS `viewerUserId` / `viewerUsername`; this host emits them
+  // verbatim. So the `@deprecated` markers on `BlockInitPayload.viewer.id` /
+  // `.username` reduce unconditional identity disclosure on the model slot and by
+  // ZERO here — a full-page block learns who is looking at it from `context`
+  // whether or not it ever touches `viewer`.
+  //
+  // Deliberately left in place rather than quietly dropped: these are published
+  // SDK contract fields on `PageContext`, and the deployed-population enumeration
+  // that justifies every other keep/drop call in this payload was run for the
+  // `viewer` object, NOT for `context.viewerUserId`. Removing them needs a
+  // PAGE-SHAPED allowlist (the model allowlist would strip `slug` / `subPath` /
+  // `entityType` and break deep-linking) plus that enumeration. Tracked on the
+  // `PageContext.viewerUserId` @deprecated note; pinned as present-today by
+  // PageBlockHostInitContractV2.browser.test.tsx so the removal cannot be silent.
   const buildContext = useCallback(
     (): PageContext => ({
       slotId: 'app.page',
@@ -361,7 +945,18 @@ export function PageBlockHost({
       },
       context: buildContext(),
       settings: { publisherSettings: {}, userSettings: {} },
-      viewer,
+      // 🔴 THE SECOND PRODUCER OF THE BLOCK_INIT `viewer` OBJECT. Unlike
+      // IframeHost — which derives it from the slot context via
+      // `projectBlockInitViewer` — this host receives an ALREADY-RESOLVED
+      // `viewer` prop from the /apps/run/[slug] route and used to pass it
+      // straight through. So the v2 `signedIn` flag added inside
+      // `projectBlockInitViewer` would have reached the model-slot surface only,
+      // and every full-page app would have shipped a viewer object without it —
+      // the classic half-fleet miss this file's THEME_CHANGE comment describes.
+      // Routing through the SHARED `withSignedInFlag` helper is what makes the
+      // two surfaces incapable of drifting: neither host stamps the object by
+      // hand. `null` (anonymous) passes through as `null`.
+      viewer: withSignedInFlag(viewer),
       theme,
       renderMode: 'iframe',
       // Advisory maturity signal — server-authoritative values from the mint.
@@ -385,8 +980,55 @@ export function PageBlockHost({
 
   const sendInitOnce = useCallback(() => {
     initSentRef.current = true;
+    // Launch mark: the FIRST BLOCK_INIT post. The controller re-posts every
+    // INIT_RETRY_INTERVAL_MS until acked, so only the first stamp is kept —
+    // `init_wait` is meant to include the re-post quantization, not exclude it.
+    const marks = launchMarksRef.current;
+    if (marks && marks.initSentAt === null) marks.initSentAt = nowMs();
     send('BLOCK_INIT', (buildInitPayloadRef.current ?? (() => undefined as never))());
   }, [send]);
+
+  // 🔴 DECLARED BEFORE THE INIT-HANDSHAKE EFFECT ON PURPOSE, and IframeHost
+  // places it the same way. React runs effects in declaration order, so on the
+  // FIRST commit this must run while `initSentRef` is still false — otherwise
+  // the gate in it is INERT on mount and the host emits a redundant
+  // THEME_CHANGE immediately after its own BLOCK_INIT. Measured: with this
+  // effect declared after the init effect the mount sequence was
+  // BLOCK_INIT → TOKEN_REFRESH → THEME_CHANGE. (The TOKEN_REFRESH in that
+  // sequence is pre-existing and out of scope here.) Moving this effect below
+  // the init effect silently re-creates that, which is why
+  // `PageBlockHostThemeChange.browser.test.tsx` asserts the mount sequence.
+  // Push a THEME_CHANGE when the viewer toggles light/dark WHILE the block is
+  // mounted. `theme` is a PROP — the route computes it from
+  // `useComputedColorScheme`, so it changes on a toggle and re-renders us.
+  //
+  // Without this the block keeps its mount-time theme until reloaded: BLOCK_INIT
+  // is deduped SDK-side (only the first is honored) and `useBlockIframeSrc`
+  // deliberately FREEZES the URL fragment at mount, so neither existing channel
+  // can carry a later value.
+  //
+  // 🔴 THE SAME WIRING MUST EXIST IN IframeHost.tsx (the model-slot surface).
+  // The two hosts do NOT share a bridge — each registers its own postMessage
+  // handlers by hand (the gotcha-#73 class `hostHandlerParity.ts` documents) —
+  // so wiring one and not the other leaves half the blocks stuck.
+  // `hostHandlerParity` cannot catch this one: its INVENTORY covers block→host
+  // messages, and this is a host→block push. The per-surface browser tests are
+  // the coverage.
+  //
+  // Gated on `initSentRef` for the same reason TOKEN_REFRESH is: before the FIRST
+  // BLOCK_INIT post there is nothing to talk to. (Note the guard flips on that
+  // POST, not on BLOCK_READY — so a toggle between the post and the ack does
+  // push, into a frame that may not be listening yet. That is harmless and NOT
+  // the safety net: `buildInitPayload` reads `theme` fresh on every retry tick,
+  // so the BLOCK_INIT the block finally accepts carries the current theme
+  // regardless of whether any push was heard.)
+  // Deliberately NOT gated on `reviewMode`: the theme is neither
+  // side-effecting nor private, and the review sandbox should render in the
+  // moderator's own color scheme like every other surface.
+  useEffect(() => {
+    if (!initSentRef.current) return;
+    send('THEME_CHANGE', { theme });
+  }, [theme, send]);
 
   // Init handshake — start once token is present (no checkpoint dependency for
   // a page). Retry-until-BLOCK_READY via the shared controller.
@@ -418,6 +1060,80 @@ export function PageBlockHost({
     setStatus((current) => (current === 'loading' ? 'error' : current));
   }, [tokenError, token]);
 
+  // MID-SESSION credential loss. The effect above only escalates a host still in
+  // `loading`, so a token that died AFTER the block went `ready` left the host
+  // parked on `ready` holding nothing: the `TOKEN_REFRESH` push early-returns on
+  // `!token`, so the block kept its now-dead credential and silently 401'd every
+  // call — no signal to the user, none to the platform.
+  //
+  // 🔴 GATED ON `tokenTerminal`, NOT `tokenError`. The upstream hook now retries a
+  // failed refresh on a bounded backoff and KEEPS a still-valid token while it
+  // does, so a transient blip never reaches here at all. Only once recovery has
+  // provably settled with nothing usable left do we replace the running app with
+  // the real terminal state — which also re-arms the bounded auto-retry below
+  // (an `error` status is an AUTH terminal, so its one automatic attempt spends a
+  // re-mint) and surfaces the prominent manual Retry once that settles too.
+  //
+  // 🔴 THE IMPRESSION BEACON IS STILL EXACTLY ONE. A host that reached `ready`
+  // already fired its ONE `ok` impression, and `blockRenderEmittedRef` is
+  // per-mount — so the launch-failure beacon below remains inert here by
+  // construction, and the `ok` already sent still means what it always meant
+  // (the page load succeeded — which it did). The teardown is reported by the
+  // SEPARATE mid-session beacon effect immediately after this one, on its own
+  // latch, so observability is gained without touching impression accounting.
+  useEffect(() => {
+    if (!tokenTerminal || token) return;
+    setStatus((current) => (current === 'ready' ? 'error' : current));
+  }, [tokenTerminal, token]);
+
+  // MID-SESSION credential-loss render beacon — the observability half of the
+  // teardown above.
+  //
+  // 🔴 WHY THIS EXISTS AT ALL (measured on production 2026-07-31): a real
+  // revocation teardown was driven end-to-end against a live app and the
+  // platform recorded ZERO error beacons for it. The only trace of the incident
+  // was the earlier successful `ok` impression, so every render metric said the
+  // app was healthy while it was dead in the viewer's tab. A mid-session
+  // teardown is exactly the failure mode a third-party app platform must be able
+  // to see — it is what a delist/suspend/revoke looks like from the runtime.
+  //
+  // Keys off the COMMITTED `status` (not a setStatus updater's side effect) for
+  // the same batching reason documented on the impression beacon below. The full
+  // decision — including WHY it is gated on `reachedReady` and on the settled
+  // `tokenTerminal` rather than a bare `tokenError` — lives in the pure,
+  // unit-tested `shouldEmitMidSessionLossBeacon`.
+  useEffect(() => {
+    if (
+      !shouldEmitMidSessionLossBeacon({
+        status,
+        reachedReady: reachedReadyRef.current,
+        tokenTerminal,
+        hasToken: !!token,
+        alreadyEmitted: midSessionLossEmittedRef.current,
+      })
+    )
+      return;
+    midSessionLossEmittedRef.current = true;
+    // Fire-and-forget beacon — failures are a no-op. `errorClass` is a member of
+    // the server-side KNOWN_ERROR_CLASSES allowlist, so it survives as a real
+    // `error_class` prom label instead of collapsing into 'other'.
+    //
+    // 🔴 `secondary: true` is REQUIRED here, not decorative. This mount already
+    // sent its `ok` impression, and the `blockRenders` CH row carries no status —
+    // so without this flag the follow-up would write a SECOND byte-identical row
+    // for one mount, un-de-duplicatable, inflating every CH-derived impression
+    // figure for exactly the sessions that were revoked. The flag keeps the prom
+    // counter firing (that is what the alert reads) while skipping the insert.
+    sendBlockRender({
+      appBlockId,
+      blockInstanceId,
+      slotId: 'app.page',
+      status: 'error',
+      errorClass: MID_SESSION_LOSS_ERROR_CLASS,
+      secondary: true,
+    });
+  }, [status, tokenTerminal, token, appBlockId, blockInstanceId]);
+
   // Token never resolves → surface a no_token state instead of an endless
   // skeleton.
   useEffect(() => {
@@ -437,6 +1153,32 @@ export function PageBlockHost({
   }, [token, expiresAt, grantedScopes, send]);
 
   // Answer a block-initiated REQUEST_TOKEN.
+  //
+  // 🔴 A `TOKEN_REFRESH_RESPONSE` WITHOUT A `requestId` IS NOT A REPLY. The
+  // block side's `refresh()` awaits a response correlated STRICTLY by
+  // `requestId` — it resolves the pending promise for that id and nothing else —
+  // so an uncorrelated reply has never resolved anyone's `refresh()`. Where it
+  // appeared to work at all it was via the SDK's incidental side effect of
+  // snapshotting whatever token rides on any `TOKEN_REFRESH_RESPONSE`, while the
+  // caller's promise sat there until its own timeout.
+  //
+  // The old code spread `...(requestId ? { requestId } : {})` — a TRUTHINESS
+  // test, so it ALSO dropped an empty-string requestId, which a block can
+  // legitimately have minted and be waiting on. Now: whatever STRING the block
+  // sent is echoed back verbatim (`''` included), so a reply always correlates.
+  //
+  // And when the inbound message carried no usable requestId at all, we send a
+  // `TOKEN_REFRESH` PUSH instead of a fabricated-id reply — because that is
+  // exactly what the message semantically is: a host-initiated token rotation
+  // with nothing to correlate to. It reaches the block through the same handler
+  // as the rotation push above (which is the only path that ever actually
+  // delivered a token in this case), and it does not put an unanswerable
+  // `TOKEN_REFRESH_RESPONSE` on the wire for the SDK to discard.
+  //
+  // 🔴 IframeHost.tsx CARRIES THE SAME LOGIC AND MUST STAY IN STEP. The two
+  // hosts register their postMessage handlers by hand and share no bridge, so
+  // fixing one leaves half the fleet on the broken shape — each surface has its
+  // own browser test for this.
   useEffect(() => {
     const off = onMessage<{ requestId?: string } | undefined>('REQUEST_TOKEN', (raw) => {
       if (!token || !initSentRef.current) return;
@@ -444,41 +1186,100 @@ export function PageBlockHost({
         raw && typeof raw === 'object' && typeof raw.requestId === 'string'
           ? raw.requestId
           : undefined;
-      send('TOKEN_REFRESH_RESPONSE', {
-        ...(requestId ? { requestId } : {}),
-        token: { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' },
-      });
+      const wrapped = { raw: token, scopes: grantedScopes, expiresAt: expiresAt ?? '' };
+      if (requestId === undefined) {
+        send('TOKEN_REFRESH', { token: wrapped });
+        return;
+      }
+      send('TOKEN_REFRESH_RESPONSE', { requestId, token: wrapped });
     });
     return off;
   }, [token, expiresAt, grantedScopes, send, onMessage]);
 
+  // INVERTED HANDSHAKE: the block announces that its message listener is
+  // attached (`BLOCK_HELLO`) and we push BLOCK_INIT in response rather than
+  // waiting out the current retry tick.
+  //
+  // 🔴 PURELY ADDITIVE — see `IframeInitController.notifyHello`. The immediate
+  // post on start(), the retry interval and the readiness timeout are all
+  // unchanged, so a block that never announces (older SDK) behaves exactly as
+  // today and a block that announces but never acks still times out. The retry
+  // loop is NOT removed: as of 2026-08-05 no deployed block sends BLOCK_HELLO,
+  // so it is still doing all of the work.
+  useEffect(() => {
+    const off = onMessage<unknown>('BLOCK_HELLO', () => {
+      controllerRef.current?.notifyHello();
+    });
+    return off;
+  }, [onMessage]);
+
   // BLOCK_READY → ready.
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_READY', () => {
-      let acked = false;
-      setStatus((current) => {
-        if (current === 'loading') {
-          acked = true;
-          return 'ready';
-        }
-        return current;
-      });
-      if (acked) {
-        controllerRef.current?.notifyReady();
-        // Analytics Phase 2: one render/impression per mount. The `acked` gate
-        // flips on the loading→ready transition; the emit-once ref makes it
-        // deterministic even if duplicate acks land before React commits 'ready'
-        // (so it fires exactly once per mount and never on re-render).
-        // Fire-and-forget beacon — failures are a no-op (and a harmless no-op
-        // until the `blockRenders` ClickHouse table exists; see PR body).
-        if (!blockRenderEmittedRef.current) {
-          blockRenderEmittedRef.current = true;
-          sendBlockRender({ appBlockId, blockInstanceId, slotId: 'app.page' });
-        }
-      }
+      // Launch mark: stamped HERE, in the message handler, not in the beacon
+      // effect. The beacon fires on the committed `status`, which is a React
+      // commit later — timing it there would fold an arbitrary amount of React
+      // scheduling into every sample.
+      const marks = launchMarksRef.current;
+      if (marks && marks.readyAt === null) marks.readyAt = nowMs();
+      setStatus((current) => (current === 'loading' ? 'ready' : current));
+      // Block acked — stop re-posting BLOCK_INIT and cancel the readiness
+      // timeout. Called UNCONDITIONALLY (not behind a "did this ack win the
+      // transition" flag): `notifyReady()` is documented-idempotent
+      // (IframeInitController.notifyReady → stop(), a no-op once stopped), and
+      // making it unconditional removes the only remaining dependence on
+      // observing the updater's side effect (see the note below).
+      controllerRef.current?.notifyReady();
     });
     return off;
-  }, [onMessage, appBlockId, blockInstanceId]);
+  }, [onMessage]);
+
+  // Analytics Phase 2 — render/impression beacon: ONE per host mount, fired on
+  // the loading→ready transition and mutually exclusive with the render-FAILURE
+  // beacon below (they share `blockRenderEmittedRef`).
+  //
+  // 🔴 WHY THIS IS AN EFFECT AND NOT A SIDE EFFECT INSIDE THE BLOCK_READY
+  // HANDLER (a real bug this fixes, not a refactor): it used to live inside the
+  // handler behind an `acked` flag that the `setStatus` UPDATER set —
+  //     let acked = false;
+  //     setStatus((current) => { if (current === 'loading') { acked = true; … } });
+  //     if (acked) { …sendBlockRender… }
+  // — which only works because React *eagerly* evaluates an updater when the
+  // fiber has no other pending update. As soon as ANY unrelated state update is
+  // already queued on this component when BLOCK_READY lands, React skips that
+  // eager path, the updater runs later during render, `acked` is still false at
+  // the `if`, and **the impression is silently dropped**. The host has plenty of
+  // such updates in flight in the real world (token rotation, the image-scan
+  // poller list, the launch-reveal state) — this was latent analytics loss, and
+  // was reproduced deterministically the moment the launch-reveal work added one
+  // more post-mount state update. Keying off the COMMITTED `status` is immune to
+  // batching. Mirrors the failure-beacon effect immediately below.
+  //
+  // 🔴 LAUNCH TIMINGS RIDE THIS BEACON — no second beacon, no second call site,
+  // no second ClickHouse row. `blockRenderEmittedRef` is untouched, `secondary`
+  // is untouched, `error_class` is untouched, and the impression count is
+  // provably unchanged: this is the same one-per-mount emit it always was, with
+  // an optional field attached.
+  //
+  // `timings` is null (and omitted) whenever the sample must not be observed —
+  // a hidden tab, a missing mark, an out-of-range delta. The launch is still
+  // reported as an impression; only the latency observation is skipped. That is
+  // the right asymmetry: an under-counted histogram is honest, a histogram
+  // padded with zeros is not.
+  useEffect(() => {
+    if (status !== 'ready') return;
+    if (blockRenderEmittedRef.current) return;
+    blockRenderEmittedRef.current = true;
+    const marks = launchMarksRef.current;
+    const timings = marks ? computeLaunchTimings(marks) : null;
+    // Fire-and-forget beacon — failures are a no-op.
+    sendBlockRender({
+      appBlockId,
+      blockInstanceId,
+      slotId: 'app.page',
+      ...(timings ? { timings } : {}),
+    });
+  }, [status, appBlockId, blockInstanceId]);
 
   // BLOCK_ERROR{fatal:true} → fatal.
   useEffect(() => {
@@ -497,9 +1298,41 @@ export function PageBlockHost({
   // reported a fatal error ('fatal'), its token never resolved ('no_token'), or
   // the mint hard-failed ('error'). Sharing the SAME emit-once ref makes ok/error
   // mutually exclusive per mount. Fire-and-forget (beacon swallows failures).
+  //
+  // 🔴 BEACON SEMANTICS UNDER AUTO-RETRY (deliberate, and what the alert on
+  // `civitai_app_block_renders_total` measures):
+  //   ONE beacon per host MOUNT, reporting the outcome the host SETTLES on. The
+  //   whole bounded automatic retry sequence is ONE logical page load:
+  //     - `ok`    — the first BLOCK_READY, whichever attempt produced it. A load
+  //                 that succeeds on attempt 2 emits exactly one `ok`, never an
+  //                 `error` first.
+  //     - `error` — a terminal state reached with NO further automatic attempt
+  //                 coming (`autoRetrySettled`). N failed automatic attempts
+  //                 therefore emit ONE `error`, not N.
+  //     - nothing — an intermediate terminal state that will be auto-retried.
+  //   Once either fires, the mount never emits again: `handleRetry` (user-initiated,
+  //   after the host already settled) deliberately does NOT reset the emit-once ref.
+  //   So the metric's denominator stays "page loads" and its numerator stays "page
+  //   loads the platform could not recover on its own" — which is the thing worth
+  //   paging on. Manual user retries are a separate, currently-unmeasured signal.
+  //
+  // 🔴 TWO KNOWN COSTS OF THAT CHOICE, stated so they aren't rediscovered as bugs:
+  //   1. UNMOUNT DURING THE SEQUENCE EMITS NOTHING. A user who navigates away
+  //      while a retry is pending produces no beacon at all, where before they
+  //      produced an `error`. The window grew from ~0s to the length of the whole
+  //      bounded sequence. There is no unmount flush today (adding one is the
+  //      obvious follow-up — `sendBlockRender` already sets `keepalive:true`
+  //      precisely so a beacon survives unload).
+  //   2. THE `error` NUMERATOR NOW MEANS SOMETHING NARROWER — "failures the
+  //      platform could not self-recover", not "failures". A regression that only
+  //      increases TRANSIENT launch failures is invisible to a ratio built on it.
+  //      The `BlockRenderFailureRate` alert in datapacket-talos still describes it
+  //      the old way; its wording needs a companion update.
   useEffect(() => {
     if (status !== 'timeout' && status !== 'fatal' && status !== 'no_token' && status !== 'error')
       return;
+    // Another automatic attempt is scheduled — the host has NOT settled yet.
+    if (!autoRetrySettled) return;
     if (blockRenderEmittedRef.current) return;
     blockRenderEmittedRef.current = true;
     sendBlockRender({
@@ -507,10 +1340,19 @@ export function PageBlockHost({
       blockInstanceId,
       slotId: 'app.page',
       status: 'error',
+      // Kept within the server-side KNOWN_ERROR_CLASSES enum
+      // (timeout|fatal|no_token|error) — the auto-retry adds no new class, so the
+      // existing `error_class` prom label and its alert are unchanged.
       errorClass: status,
     });
-  }, [status, appBlockId, blockInstanceId]);
+  }, [status, autoRetrySettled, appBlockId, blockInstanceId]);
 
+  // MOD REVIEW SANDBOX — anti-spam latch for the reduced-permissions notice in
+  // the consent handler below. Bounded to at most TWO per host MOUNT (one generic
+  // + one scope-named upgrade — see `advanceReviewConsentLatch`). The review
+  // chrome remounts the host on a render-only ↔ run-for-real flip, so each mode
+  // gets its own budget, and the notification ids are mode-specific to match.
+  const reviewConsentLatchRef = useRef(INITIAL_REVIEW_CONSENT_LATCH);
   // Lazy consent (A6): the block (rendered in full for a logged-in viewer whose
   // page token is missing a consent-gated scope, e.g. `ai:write:budgeted` once
   // the page money scope is enabled) asks the host to open the consent UI when
@@ -530,20 +1372,67 @@ export function PageBlockHost({
   // the void and the block hung on "confirm in the Civitai dialog".
   useEffect(() => {
     const off = onMessage<{ scopes?: unknown } | undefined>('REQUEST_CONSENT', (payload) => {
-      // reviewMode: a consent grant re-mints the token with WIDER scopes — never
-      // let untrusted review code pop a permission modal at the mod. Fire-and-
-      // forget ⇒ dropping it never hangs the block.
-      if (reviewMode) return;
-      // PageBlockHost's local Status carries an extra terminal `'error'` variant
-      // (a hard mint failure) the shared gate's HostStatus union doesn't model.
-      // The gate only ever grants when status === 'ready', and `'error'` is a
-      // disjoint terminal state (the iframe isn't even rendered), so collapse it
-      // to a non-ready sentinel before delegating — semantics are unchanged (it
-      // would return null either way), this just satisfies the union type.
-      const gateStatus = status === 'error' ? 'no_token' : status;
+      // `readGateStatus()` (not a closed-over `status`) — see its definition: it
+      // reads the render-body-updated mirror, so it is current at COMMIT rather
+      // than one scheduler task later. The 'error' → 'no_token' collapse lives in
+      // `toHostGateStatus`, one place for all four gates.
+      const gateStatus = readGateStatus();
       // Only act on a post-handshake request; a pre-handshake block never gets a
       // modal OR a toast (same posture as the consent gate itself).
+      //
+      // NO NACK HERE, deliberately. REQUEST_CONSENT is fire-and-forget in both
+      // directions: the SDK sends it with `dispatch` (blocks-react 0.39.0
+      // `useRequestConsent`), its payload is `{ scopes? }` with NO requestId, and
+      // there is no host→block reply message for it — so there is nothing to
+      // reply TO and no promise to fail fast. Dropping it cannot hang the block.
       if (gateStatus !== 'ready') return;
+
+      // reviewMode: a consent grant re-mints the token with WIDER scopes — never
+      // let untrusted review code pop a permission modal at the mod. That stays
+      // absolute; the request is still fire-and-forget (dropping the GRANT never
+      // hangs the block). What changed: dropping it SILENTLY meant the reviewer
+      // got nothing at all — no modal, no toast, no error — while the app parked
+      // forever on its consent card, which reads as "this app is broken" rather
+      // than "the preview deliberately withholds this permission". So review mode
+      // now emits a PASSIVE, non-interactive notice (never a modal, nothing to
+      // click, no scope is granted) pointing at the existing opt-in escape hatch.
+      if (reviewMode) {
+        const notice = resolveReviewConsentNotice(payload?.scopes, grantedScopes);
+        if (!notice.notify) return;
+        // 🔴 ANTI-SPAM (required, not a nicety): the reviewed app is UNTRUSTED
+        // code and can post REQUEST_CONSENT in a loop, so one toast per message
+        // would let a hostile submission carpet-bomb the reviewing mod's screen
+        // (and bury the review chrome). The latch caps this at TWO notices per
+        // host mount — one generic, plus at most one upgrade to the scope-NAMED
+        // copy. It is NOT a plain "already notified" boolean: the SDK's `scopes`
+        // hint is optional, so a hint-less request on load would otherwise win
+        // the latch and permanently suppress the later, informative one.
+        const { show, next } = advanceReviewConsentLatch(
+          reviewConsentLatchRef.current,
+          notice.scopes.length > 0
+        );
+        reviewConsentLatchRef.current = next;
+        if (!show) return;
+        // `notice.scopes` is filtered to the known block-scope vocabulary, so no
+        // attacker-controlled text can reach this string; Mantine renders
+        // `message` as React text (escaped) — never as HTML.
+        const notification = buildReviewConsentNotification({
+          appBlockId,
+          runForReal: reviewRunForReal,
+          scopes: notice.scopes,
+        });
+        // Upgrade path only: retire the generic notice this one replaces, so the
+        // reviewer sees ONE notice, not a stack. A no-op when it already closed.
+        if (notification.supersedesId) hideNotification(notification.supersedesId);
+        showNotification({
+          id: notification.id,
+          color: 'yellow',
+          title: notification.title,
+          message: notification.message,
+        });
+        return;
+      }
+
       const scopesToGrant = resolveRequestConsent(gateStatus, missingScopes ?? []);
       if (scopesToGrant != null) {
         dialogStore.trigger({
@@ -567,12 +1456,43 @@ export function PageBlockHost({
       // and can never be added via consent here — e.g. a dev-tunnel preview token
       // that doesn't carry it). Only the latter, proven from the block's advisory
       // `scopes` hint, surfaces a message so the app doesn't silently look dead.
-      const ungrantable = resolveUngrantableConsentScopes(
+      const ungrantable = resolveUngrantableConsentNotice(
         payload?.scopes,
         grantedScopes,
         missingScopes
       );
-      if (ungrantable.length === 0) return; // already-granted or no hint — drop
+      if (!ungrantable.notify) return; // already-granted or no hint — drop
+      // 🔴 Tell the BLOCK, not just the viewer. The toast below renders in the
+      // HOST frame; before this push nothing came back over the bridge, so the
+      // block could not tell "the user hasn't confirmed the dialog yet" from
+      // "this environment will never grant this scope" — and its own UI went on
+      // telling the developer to retry an action that can never succeed, right
+      // next to a host toast saying the opposite. This is a fire-and-forget PUSH
+      // (REQUEST_CONSENT carries no `requestId`, so there is nothing to correlate
+      // a `*_RESULT` reply to), matching the other uncorrelated host→block pushes
+      // (`TOKEN_REFRESH`, `ROUTE_CHANGED`, `SUSPEND`/`RESUME`).
+      //
+      // It ADDS a channel — the toast is unchanged. The BENIGN already-granted
+      // case returns above and stays silent in BOTH channels: a block that got a
+      // message there would render a permission-unavailable state over a
+      // permission that actually works.
+      //
+      // Sent BEFORE the toast so the block's signal cannot be lost to a throwing
+      // notification layer. That ordering is pinned by
+      // `PageBlockHost.browser.test.tsx` → "the CONSENT_UNAVAILABLE push happens
+      // BEFORE the toast", which asserts the order of the SYNCHRONOUS calls; a
+      // spy on the delivered message cannot see it (delivery is async).
+      //
+      // 🔴 WHAT `scopes` IS. It is NOT the block's raw hint. `notify` above is
+      // decided on the full un-grantable set (requested − granted − missing), but
+      // `ungrantable.scopes` is that set filtered to the known block-scope
+      // vocabulary — the hint is untrusted block input and this payload is
+      // rendered by block UI, so nothing outside the fixed vocabulary is echoed
+      // back out of the host. The two are deliberately different sets: when every
+      // requested scope is unrecognised this still sends, with `scopes: []`. The
+      // refusal is the signal; the names are advisory. Delivered solely to the
+      // frame that asked.
+      send('CONSENT_UNAVAILABLE', { reason: 'ungrantable', scopes: ungrantable.scopes });
       showNotification({
         color: 'yellow',
         title: 'Permission unavailable',
@@ -580,15 +1500,21 @@ export function PageBlockHost({
       });
     });
     return off;
+    // `status` is deliberately ABSENT: the handler reads it through
+    // `readGateStatus` (a render-body-updated ref) instead of closing over it, so
+    // this subscribes ONCE per mount. Re-registering on every status transition is
+    // what opened the commit→passive-effect window in the first place.
   }, [
     onMessage,
-    status,
+    send,
+    readGateStatus,
     missingScopes,
     grantedScopes,
     appBlockId,
     appName,
     onConsentGranted,
     reviewMode,
+    reviewRunForReal,
   ]);
 
   // Deep-link bridge — block requests in-page navigation. The block may push a
@@ -605,7 +1531,11 @@ export function PageBlockHost({
       // review flow (to a page a pending app doesn't even have). Fire-and-forget
       // ⇒ dropping it never hangs the block.
       if (reviewMode) return;
-      if (status !== 'ready') return; // pre-handshake blocks can't drive nav
+      // FIFTH status-gated handler (the four money/permission gates are the
+      // others) — it reads the same render-body mirror for the same reason. No
+      // NACK: NAVIGATE is fire-and-forget with no requestId, so a drop is
+      // incapable of hanging the block.
+      if (readGateStatus() !== 'ready') return; // pre-handshake blocks can't drive nav
       const rawPath = raw && typeof raw === 'object' ? (raw as { path?: unknown }).path : undefined;
       if (typeof rawPath !== 'string') return;
       // Normalize: strip a single leading slash; reject anything unsafe.
@@ -613,11 +1543,14 @@ export function PageBlockHost({
       if (cleaned.startsWith('/') || cleaned.includes('//') || cleaned.split('/').includes('..')) {
         return;
       }
-      const target = cleaned ? `/apps/run/${encodeURIComponent(slug)}/${cleaned}` : `/apps/run/${encodeURIComponent(slug)}`;
+      const target = cleaned
+        ? `/apps/run/${encodeURIComponent(slug)}/${cleaned}`
+        : `/apps/run/${encodeURIComponent(slug)}`;
       void router.push(target, undefined, { shallow: true });
     });
     return off;
-  }, [onMessage, status, router, slug, reviewMode]);
+    // `status` deliberately absent — see the REQUEST_CONSENT deps note.
+  }, [onMessage, readGateStatus, router, slug, reviewMode]);
 
   // Forward host-side navigation (back/forward, or our own shallow push) into
   // the block so it can re-render the right view. Fires whenever the resolved
@@ -723,34 +1656,42 @@ export function PageBlockHost({
 
   // SUBMIT_WORKFLOW → blocks.submitWorkflow → WORKFLOW_SUBMITTED.
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
-      'SUBMIT_WORKFLOW',
-      async (raw) => {
-        if (reviewNack) {
-          // Real Buzz spend — NACK with the failure snapshot the block awaits so
-          // it fails fast (never a hang) and never reaches submitWorkflowMutation.
-          if (raw && typeof raw.requestId === 'string') {
-            send('WORKFLOW_SUBMITTED', {
-              requestId: raw.requestId,
-              snapshot: failureSnapshot(new Error(REVIEW_NACK_MESSAGE)),
-            });
-          }
-          return;
-        }
-        if (!raw || typeof raw.requestId !== 'string' || !token) return;
-        const requestId = raw.requestId;
-        try {
-          const { snapshot } = await submitWorkflowMutation.mutateAsync({
-            blockToken: token,
-            // Schema-validated server-side; the host never trusts this shape.
-            body: raw.body as never,
+    const off = onMessage<
+      { requestId?: unknown; body?: unknown; idempotencyKey?: unknown } | undefined
+    >('SUBMIT_WORKFLOW', async (raw) => {
+      if (reviewNack) {
+        // Real Buzz spend — NACK with the failure snapshot the block awaits so
+        // it fails fast (never a hang) and never reaches submitWorkflowMutation.
+        if (raw && typeof raw.requestId === 'string') {
+          send('WORKFLOW_SUBMITTED', {
+            requestId: raw.requestId,
+            snapshot: failureSnapshot(new Error(REVIEW_NACK_MESSAGE)),
           });
-          send('WORKFLOW_SUBMITTED', { requestId, snapshot });
-        } catch (err) {
-          send('WORKFLOW_SUBMITTED', { requestId, snapshot: failureSnapshot(err) });
         }
+        return;
       }
-    );
+      if (!raw || typeof raw.requestId !== 'string' || !token) return;
+      const requestId = raw.requestId;
+      // Idempotency (item 2, gen half): forward the OPTIONAL client key to the
+      // server so a lost-response retry collapses to one Buzz charge. Host-first:
+      // accept it defensively (only when a non-empty string) so older SDKs that
+      // never send it are unaffected and a garbage value is ignored.
+      const idempotencyKey =
+        typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
+          ? raw.idempotencyKey
+          : undefined;
+      try {
+        const { snapshot } = await submitWorkflowMutation.mutateAsync({
+          blockToken: token,
+          // Schema-validated server-side; the host never trusts this shape.
+          body: raw.body as never,
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+        });
+        send('WORKFLOW_SUBMITTED', { requestId, snapshot });
+      } catch (err) {
+        send('WORKFLOW_SUBMITTED', { requestId, snapshot: failureSnapshot(err) });
+      }
+    });
     return off;
   }, [onMessage, send, token, submitWorkflowMutation, reviewNack]);
 
@@ -1057,31 +1998,28 @@ export function PageBlockHost({
   // handlers' error-carrying result shape. A missing requestId is still dropped
   // without replying (mirrors every other handler — there's nothing to reply to).
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown } | undefined>(
-      'GET_BUZZ_BALANCE',
-      async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string') return;
-        const requestId = raw.requestId;
-        if (reviewNack) {
-          // Private financial read — NACK (the review token has no buzz:read:self).
-          send('BUZZ_BALANCE_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
-          return;
-        }
-        if (!token) {
-          send('BUZZ_BALANCE_RESULT', { requestId, error: 'no block token' });
-          return;
-        }
-        try {
-          const balance = await getMyBuzzBalanceMutation.mutateAsync({ blockToken: token });
-          send('BUZZ_BALANCE_RESULT', { requestId, balance });
-        } catch (err) {
-          send('BUZZ_BALANCE_RESULT', {
-            requestId,
-            error: err instanceof Error ? err.message : 'unknown',
-          });
-        }
+    const off = onMessage<{ requestId?: unknown } | undefined>('GET_BUZZ_BALANCE', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string') return;
+      const requestId = raw.requestId;
+      if (reviewNack) {
+        // Private financial read — NACK (the review token has no buzz:read:self).
+        send('BUZZ_BALANCE_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
+        return;
       }
-    );
+      if (!token) {
+        send('BUZZ_BALANCE_RESULT', { requestId, error: 'no block token' });
+        return;
+      }
+      try {
+        const balance = await getMyBuzzBalanceMutation.mutateAsync({ blockToken: token });
+        send('BUZZ_BALANCE_RESULT', { requestId, balance });
+      } catch (err) {
+        send('BUZZ_BALANCE_RESULT', {
+          requestId,
+          error: err instanceof Error ? err.message : 'unknown',
+        });
+      }
+    });
     return off;
   }, [onMessage, send, token, getMyBuzzBalanceMutation, reviewNack]);
 
@@ -1131,30 +2069,27 @@ export function PageBlockHost({
   // balances (spendable + creator payout pools). Same host-mediated + consent +
   // reply-always contract as GET_BUZZ_TRANSACTIONS.
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown } | undefined>(
-      'GET_BUZZ_ACCOUNTS',
-      async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string') return;
-        const requestId = raw.requestId;
-        if (reviewNack) {
-          send('BUZZ_ACCOUNTS_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
-          return;
-        }
-        if (!token) {
-          send('BUZZ_ACCOUNTS_RESULT', { requestId, error: 'no block token' });
-          return;
-        }
-        try {
-          const result = await getMyBuzzAccountsMutation.mutateAsync({ blockToken: token });
-          send('BUZZ_ACCOUNTS_RESULT', { requestId, result });
-        } catch (err) {
-          send('BUZZ_ACCOUNTS_RESULT', {
-            requestId,
-            error: err instanceof Error ? err.message : 'unknown',
-          });
-        }
+    const off = onMessage<{ requestId?: unknown } | undefined>('GET_BUZZ_ACCOUNTS', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string') return;
+      const requestId = raw.requestId;
+      if (reviewNack) {
+        send('BUZZ_ACCOUNTS_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
+        return;
       }
-    );
+      if (!token) {
+        send('BUZZ_ACCOUNTS_RESULT', { requestId, error: 'no block token' });
+        return;
+      }
+      try {
+        const result = await getMyBuzzAccountsMutation.mutateAsync({ blockToken: token });
+        send('BUZZ_ACCOUNTS_RESULT', { requestId, result });
+      } catch (err) {
+        send('BUZZ_ACCOUNTS_RESULT', {
+          requestId,
+          error: err instanceof Error ? err.message : 'unknown',
+        });
+      }
+    });
     return off;
   }, [onMessage, send, token, getMyBuzzAccountsMutation, reviewNack]);
 
@@ -1206,26 +2141,23 @@ export function PageBlockHost({
   // we reply with the ERROR variant (mirrors GET_BUZZ_BALANCE) rather than
   // dropping. A missing requestId is still dropped without replying.
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown } | undefined>(
-      'GET_VIEWER',
-      async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string') return;
-        const requestId = raw.requestId;
-        if (!token) {
-          send('VIEWER_RESULT', { requestId, error: 'no block token' });
-          return;
-        }
-        try {
-          const viewer = await getMyViewerMutation.mutateAsync({ blockToken: token });
-          send('VIEWER_RESULT', { requestId, viewer });
-        } catch (err) {
-          send('VIEWER_RESULT', {
-            requestId,
-            error: err instanceof Error ? err.message : 'unknown',
-          });
-        }
+    const off = onMessage<{ requestId?: unknown } | undefined>('GET_VIEWER', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string') return;
+      const requestId = raw.requestId;
+      if (!token) {
+        send('VIEWER_RESULT', { requestId, error: 'no block token' });
+        return;
       }
-    );
+      try {
+        const viewer = await getMyViewerMutation.mutateAsync({ blockToken: token });
+        send('VIEWER_RESULT', { requestId, viewer });
+      } catch (err) {
+        send('VIEWER_RESULT', {
+          requestId,
+          error: err instanceof Error ? err.message : 'unknown',
+        });
+      }
+    });
     return off;
   }, [onMessage, send, token, getMyViewerMutation]);
 
@@ -1257,14 +2189,31 @@ export function PageBlockHost({
           }
           return;
         }
-        // PageBlockHost's local Status carries an extra terminal `'error'`
-        // variant the shared gate's HostStatus union doesn't model; collapse it
-        // to a non-ready sentinel (the gate only ever opens when status ===
-        // 'ready', so this is semantics-preserving) — same shim as the consent
-        // gate above.
-        const gateStatus = status === 'error' ? 'no_token' : status;
+        // `readGateStatus()` (not a closed-over `status`) — see its definition.
+        const gateStatus = readGateStatus();
         const requestId = resolveBuzzPurchaseRequest(gateStatus, raw);
-        if (requestId == null || !raw) return; // !raw implied; narrows for TS
+        if (requestId == null || !raw) {
+          // NEVER HANG. `resolveBuzzPurchaseRequest` returns null for TWO
+          // different reasons, and they need different answers:
+          //
+          //   • malformed payload (no string requestId) — UNREPLIABLE. There is
+          //     no id to thread a reply back on, so it can only be dropped.
+          //   • host not ready — REPLIABLE, and it must be replied to. The block
+          //     is awaiting BUZZ_PURCHASE_RESULT on a promise that rejects only
+          //     at the SDK's 30s default request timeout (blocks-react 0.39.0,
+          //     `DEFAULT_REQUEST_TIMEOUT_MS`), so a silent drop costs the user's
+          //     click plus half a minute of nothing happening.
+          //
+          // `purchased: false` is exactly the reply the reviewMode branch above
+          // already sends for its own refusal, and exactly what the SDK's
+          // `useBuzzPurchase` reads as "no purchase happened". Refusing is
+          // unchanged — no modal opens, nothing is charged; the block just finds
+          // out now instead of in 30 seconds.
+          if (raw && typeof raw.requestId === 'string' && raw.requestId.length > 0) {
+            send('BUZZ_PURCHASE_RESULT', { requestId: raw.requestId, purchased: false });
+          }
+          return;
+        }
         const rawAmount =
           typeof raw.suggestedAmount === 'number' && Number.isFinite(raw.suggestedAmount)
             ? raw.suggestedAmount
@@ -1307,7 +2256,8 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, status, appId, appBlockId, blockInstanceId, reviewNack]);
+    // `status` deliberately absent — see the REQUEST_CONSENT deps note.
+  }, [onMessage, send, readGateStatus, appId, appBlockId, blockInstanceId, reviewNack]);
 
   // ── Sign-in bridge: REQUEST_SIGN_IN (anonymous conversion) ─────────────────
   //
@@ -1327,8 +2277,13 @@ export function PageBlockHost({
   // semantics-preserving — same shim as the consent + buzz handlers).
   useEffect(() => {
     const off = onMessage<{ returnUrl?: unknown } | undefined>('REQUEST_SIGN_IN', (raw) => {
-      const gateStatus = status === 'error' ? 'no_token' : status;
+      // `readGateStatus()` (not a closed-over `status`) — see its definition.
+      const gateStatus = readGateStatus();
       const resolved = resolveRequestSignIn(gateStatus, raw);
+      // NO NACK HERE, deliberately — same reason as REQUEST_CONSENT. The SDK
+      // sends this with `dispatch` (blocks-react 0.39.0 `useRequestSignIn`), the
+      // payload is `{ returnUrl? }` with NO requestId, and there is no host→block
+      // reply message for it. Nothing to reply to; a drop cannot hang the block.
       if (resolved == null) return; // not ready — drop (gate centralises the rules)
       // Hub-driven login (popup to auth.civitai.com). Falls back to the current page when the
       // block didn't supply a sanitised same-origin returnUrl. `reason` rides to the hub for the
@@ -1337,7 +2292,8 @@ export function PageBlockHost({
       openLoginPopup(resolved.returnUrl ?? here, 'image-gen');
     });
     return off;
-  }, [onMessage, status]);
+    // `status` deliberately absent — see the REQUEST_CONSENT deps note.
+  }, [onMessage, readGateStatus]);
 
   // ── App Blocks KV datastore bridge (W4-v0) ─────────────────────────────────
   //
@@ -1385,10 +2341,13 @@ export function PageBlockHost({
           return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.storage.get.fetch({
-            blockToken: token,
-            key: raw.key,
-          });
+          const result = await trpcUtils.apps.storage.get.fetch(
+            {
+              blockToken: token,
+              key: raw.key,
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
           send('APP_STORAGE_GET_RESULT', { requestId, value: result.value });
         } catch (err) {
           send('APP_STORAGE_GET_RESULT', {
@@ -1426,6 +2385,9 @@ export function PageBlockHost({
             key: raw.key,
             value: raw.value,
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
+          await invalidatePrivateStorageReads(trpcUtils);
           send('APP_STORAGE_SET_RESULT', {
             requestId,
             ok: true,
@@ -1441,7 +2403,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, storageSetMutation, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, storageSetMutation, reviewNack]);
 
   // APP_STORAGE_DELETE → apps.storage.delete → APP_STORAGE_DELETE_RESULT.
   useEffect(() => {
@@ -1467,6 +2429,9 @@ export function PageBlockHost({
             blockToken: token,
             key: raw.key,
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
+          await invalidatePrivateStorageReads(trpcUtils);
           send('APP_STORAGE_DELETE_RESULT', {
             requestId,
             ok: true,
@@ -1483,7 +2448,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, storageDeleteMutation, reviewNack]);
+  }, [onMessage, send, token, trpcUtils, storageDeleteMutation, reviewNack]);
 
   // APP_STORAGE_LIST → apps.storage.list → APP_STORAGE_LIST_RESULT.
   useEffect(() => {
@@ -1515,17 +2480,21 @@ export function PageBlockHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 200)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
-        const result = await trpcUtils.apps.storage.list.fetch({
-          blockToken: token,
-          prefix,
-          limit,
-          cursor,
-        });
+        const result = await trpcUtils.apps.storage.list.fetch(
+          {
+            blockToken: token,
+            prefix,
+            limit,
+            cursor,
+          },
+          BLOCK_STORAGE_READ_OPTS
+        );
         send('APP_STORAGE_LIST_RESULT', {
           requestId,
           keys: result.keys.map((k) => ({
             key: k.key,
-            updatedAt: k.updatedAt instanceof Date ? k.updatedAt.toISOString() : String(k.updatedAt),
+            updatedAt:
+              k.updatedAt instanceof Date ? k.updatedAt.toISOString() : String(k.updatedAt),
           })),
           nextCursor: result.nextCursor,
         });
@@ -1542,45 +2511,45 @@ export function PageBlockHost({
 
   // APP_STORAGE_QUOTA → apps.storage.getQuota → APP_STORAGE_QUOTA_RESULT.
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown } | undefined>(
-      'APP_STORAGE_QUOTA',
-      async (raw) => {
-        if (reviewNack) {
-          if (raw && typeof raw.requestId === 'string') {
-            send('APP_STORAGE_QUOTA_RESULT', {
-              requestId: raw.requestId,
-              usedBytes: 0,
-              rowCount: 0,
-              limitBytes: 0,
-              limitRows: 0,
-              error: REVIEW_NACK_MESSAGE,
-            });
-          }
-          return;
-        }
-        if (!raw || typeof raw.requestId !== 'string' || !token) return;
-        const requestId = raw.requestId;
-        try {
-          const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token });
+    const off = onMessage<{ requestId?: unknown } | undefined>('APP_STORAGE_QUOTA', async (raw) => {
+      if (reviewNack) {
+        if (raw && typeof raw.requestId === 'string') {
           send('APP_STORAGE_QUOTA_RESULT', {
-            requestId,
-            usedBytes: result.usedBytes,
-            rowCount: result.rowCount,
-            limitBytes: result.limitBytes,
-            limitRows: result.limitRows,
-          });
-        } catch (err) {
-          send('APP_STORAGE_QUOTA_RESULT', {
-            requestId,
+            requestId: raw.requestId,
             usedBytes: 0,
             rowCount: 0,
             limitBytes: 0,
             limitRows: 0,
-            error: storageErrorMessage(err),
+            error: REVIEW_NACK_MESSAGE,
           });
         }
+        return;
       }
-    );
+      if (!raw || typeof raw.requestId !== 'string' || !token) return;
+      const requestId = raw.requestId;
+      try {
+        const result = await trpcUtils.apps.storage.getQuota.fetch(
+          { blockToken: token },
+          BLOCK_STORAGE_READ_OPTS
+        );
+        send('APP_STORAGE_QUOTA_RESULT', {
+          requestId,
+          usedBytes: result.usedBytes,
+          rowCount: result.rowCount,
+          limitBytes: result.limitBytes,
+          limitRows: result.limitRows,
+        });
+      } catch (err) {
+        send('APP_STORAGE_QUOTA_RESULT', {
+          requestId,
+          usedBytes: 0,
+          rowCount: 0,
+          limitBytes: 0,
+          limitRows: 0,
+          error: storageErrorMessage(err),
+        });
+      }
+    });
     return off;
   }, [onMessage, send, token, trpcUtils, reviewNack]);
 
@@ -1610,6 +2579,7 @@ export function PageBlockHost({
   const sharedVoteMutation = trpc.apps.shared.vote.useMutation();
   const sharedUnvoteMutation = trpc.apps.shared.unvote.useMutation();
   const sharedWithdrawMutation = trpc.apps.shared.withdraw.useMutation();
+  const sharedReportMutation = trpc.apps.shared.report.useMutation();
 
   // SHARED_LIST → apps.shared.list → SHARED_LIST_RESULT (query).
   useEffect(() => {
@@ -1633,12 +2603,15 @@ export function PageBlockHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 100)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
-        const result = await trpcUtils.apps.shared.list.fetch({
-          blockToken: token,
-          prefix,
-          limit,
-          cursor,
-        });
+        const result = await trpcUtils.apps.shared.list.fetch(
+          {
+            blockToken: token,
+            prefix,
+            limit,
+            cursor,
+          },
+          BLOCK_STORAGE_READ_OPTS
+        );
         send('SHARED_LIST_RESULT', {
           requestId,
           items: result.items.map((it) => ({
@@ -1650,6 +2623,8 @@ export function PageBlockHost({
               it.createdAt instanceof Date ? it.createdAt.toISOString() : String(it.createdAt),
             updatedAt:
               it.updatedAt instanceof Date ? it.updatedAt.toISOString() : String(it.updatedAt),
+            // item 3: pass the per-viewer vote flag straight through (no logic).
+            viewerVoted: it.viewerVoted,
           })),
           nextCursor: result.nextCursor,
         });
@@ -1669,10 +2644,13 @@ export function PageBlockHost({
           return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.shared.getCount.fetch({
-            blockToken: token,
-            key: raw.key,
-          });
+          const result = await trpcUtils.apps.shared.getCount.fetch(
+            {
+              blockToken: token,
+              key: raw.key,
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
           send('SHARED_GET_COUNT_RESULT', { requestId, count: result.count });
         } catch (err) {
           send('SHARED_GET_COUNT_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -1690,10 +2668,13 @@ export function PageBlockHost({
         if (!raw || typeof raw.requestId !== 'string' || !Array.isArray(raw.keys) || !token) return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.shared.getCounts.fetch({
-            blockToken: token,
-            keys: raw.keys as string[],
-          });
+          const result = await trpcUtils.apps.shared.getCounts.fetch(
+            {
+              blockToken: token,
+              keys: raw.keys as string[],
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
           send('SHARED_GET_COUNTS_RESULT', { requestId, counts: result.counts });
         } catch (err) {
           send('SHARED_GET_COUNTS_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -1734,6 +2715,9 @@ export function PageBlockHost({
             blockToken: token,
             value: raw.value as { title: string; body?: string },
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_APPEND_RESULT', { requestId, key: result.key });
         } catch (err) {
           send('SHARED_APPEND_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -1741,23 +2725,25 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedAppendMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedAppendMutation, reviewMode]);
 
   // SHARED_UPDATE → apps.shared.update → SHARED_UPDATE_RESULT (mutation).
   // Author-scoped in-place edit of an OWN row: the auth/author-gate/belt/quota all
   // live in apps.shared.update (server, #3146); the host only forwards {key, value}
   // and relays the result. Reply is `{ ok, error? }` (SHARED_WITHDRAW-style, NOT
-  // SHARED_APPEND's `{ key }`) — the SDK 0.24 hook treats `!ok || error` as reject,
-  // and its isValidSharedUpdateResult REQUIRES a boolean `ok`, so BOTH paths send
-  // one (the error path MUST carry `ok: false` or the reply is dropped → hang).
+  // SHARED_APPEND's `{ key }`) — the SDK hook treats `!ok || error` as reject.
+  // isValidSharedUpdateResult now ACCEPTS an error reply with or without `ok`, so
+  // omitting it would no longer be dropped; both paths still send `ok` because an
+  // explicit `ok: false` is the clearer signal, not because it is required.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; key?: unknown; value?: unknown } | undefined>(
       'SHARED_UPDATE',
       async (raw) => {
         if (reviewMode) {
           // Cross-user shared datastore WRITE (author-scoped edit) — NACK even in
-          // run-for-real (never a cross-user write). Reply MUST carry ok:false or the
-          // SDK drops it (→ hang). See handler doc.
+          // run-for-real (never a cross-user write). The validator accepts an error
+          // reply with or without `ok`; we send `ok: false` as the clearer signal.
+          // See handler doc.
           if (raw && typeof raw.requestId === 'string') {
             send('SHARED_UPDATE_RESULT', {
               requestId: raw.requestId,
@@ -1785,6 +2771,9 @@ export function PageBlockHost({
             key: raw.key,
             value: raw.value as { title: string; body?: string },
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UPDATE_RESULT', { requestId, ok: true });
         } catch (err) {
           send('SHARED_UPDATE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
@@ -1792,7 +2781,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedUpdateMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedUpdateMutation, reviewMode]);
 
   // SHARED_VOTE → apps.shared.vote → SHARED_VOTE_RESULT (mutation).
   useEffect(() => {
@@ -1811,6 +2800,9 @@ export function PageBlockHost({
         const requestId = raw.requestId;
         try {
           const result = await sharedVoteMutation.mutateAsync({ blockToken: token, key: raw.key });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_VOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
           send('SHARED_VOTE_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -1818,7 +2810,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedVoteMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedVoteMutation, reviewMode]);
 
   // SHARED_UNVOTE → apps.shared.unvote → SHARED_UNVOTE_RESULT (mutation).
   useEffect(() => {
@@ -1836,7 +2828,13 @@ export function PageBlockHost({
           return;
         const requestId = raw.requestId;
         try {
-          const result = await sharedUnvoteMutation.mutateAsync({ blockToken: token, key: raw.key });
+          const result = await sharedUnvoteMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+          });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_UNVOTE_RESULT', { requestId, count: result.count });
         } catch (err) {
           send('SHARED_UNVOTE_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -1844,7 +2842,7 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedUnvoteMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedUnvoteMutation, reviewMode]);
 
   // SHARED_WITHDRAW → apps.shared.withdraw → SHARED_WITHDRAW_RESULT (mutation).
   useEffect(() => {
@@ -1854,7 +2852,10 @@ export function PageBlockHost({
         if (reviewMode) {
           // Cross-user shared datastore WRITE (withdraw) — NACK even in run-for-real.
           if (raw && typeof raw.requestId === 'string') {
-            send('SHARED_WITHDRAW_RESULT', { requestId: raw.requestId, error: REVIEW_NACK_MESSAGE });
+            send('SHARED_WITHDRAW_RESULT', {
+              requestId: raw.requestId,
+              error: REVIEW_NACK_MESSAGE,
+            });
           }
           return;
         }
@@ -1866,6 +2867,9 @@ export function PageBlockHost({
             blockToken: token,
             key: raw.key,
           });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
           send('SHARED_WITHDRAW_RESULT', { requestId, ok: result.ok, deleted: result.deleted });
         } catch (err) {
           send('SHARED_WITHDRAW_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -1873,13 +2877,182 @@ export function PageBlockHost({
       }
     );
     return off;
-  }, [onMessage, send, token, sharedWithdrawMutation, reviewMode]);
+  }, [onMessage, send, token, trpcUtils, sharedWithdrawMutation, reviewMode]);
+
+  // SHARED_GET → apps.shared.get → SHARED_GET_RESULT (query). Single-row deep-link
+  // fetch-by-key. READ (anon-allowed server-side; no reviewMode NACK — reads stay
+  // live). Maps the item exactly like SHARED_LIST (createdAt/updatedAt → ISO, and
+  // the additive viewerVoted flows straight through). A missing/hidden row comes
+  // back as `item: null` (the server applies the same hidden_at gate as list).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'SHARED_GET',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.shared.get.fetch(
+            {
+              blockToken: token,
+              key: raw.key,
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
+          const it = result.item;
+          send('SHARED_GET_RESULT', {
+            requestId,
+            item: it
+              ? {
+                  key: it.key,
+                  authorUserId: it.authorUserId,
+                  value: it.value,
+                  count: it.count,
+                  createdAt:
+                    it.createdAt instanceof Date
+                      ? it.createdAt.toISOString()
+                      : String(it.createdAt),
+                  updatedAt:
+                    it.updatedAt instanceof Date
+                      ? it.updatedAt.toISOString()
+                      : String(it.updatedAt),
+                  viewerVoted: it.viewerVoted,
+                }
+              : null,
+          });
+        } catch (err) {
+          send('SHARED_GET_RESULT', { requestId, item: null, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  // SHARED_REPORT → apps.shared.report → SHARED_REPORT_RESULT (mutation). A user
+  // reports a posted row for mod review; the server already trust-gates + rate-
+  // limits + files the report (endpoint pre-exists). Reply is SHARED_WITHDRAW-
+  // style `{ ok, error? }`. The SDK accepts an error reply whether or not it
+  // carries `ok` (every `{ ok, error }` validator early-accepts on a PRESENT
+  // `error`), so we send `ok: false` because it is the clearer signal, NOT
+  // because omitting it would hang. reviewMode NACK: report is a
+  // shared:write-trust op, never granted
+  // in run-for-real (mirrors the other shared writes).
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown; reason?: unknown } | undefined>(
+      'SHARED_REPORT',
+      async (raw) => {
+        if (reviewMode) {
+          if (raw && typeof raw.requestId === 'string') {
+            send('SHARED_REPORT_RESULT', {
+              requestId: raw.requestId,
+              ok: false,
+              error: REVIEW_NACK_MESSAGE,
+            });
+          }
+          return;
+        }
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string' || !token)
+          return;
+        const requestId = raw.requestId;
+        const reason = typeof raw.reason === 'string' ? raw.reason : undefined;
+        try {
+          await sharedReportMutation.mutateAsync({ blockToken: token, key: raw.key, reason });
+          // Invalidate BEFORE replying: the block may re-read the moment this
+          // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
+          await invalidateSharedStorageReads(trpcUtils);
+          send('SHARED_REPORT_RESULT', { requestId, ok: true });
+        } catch (err) {
+          send('SHARED_REPORT_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils, sharedReportMutation, reviewMode]);
+
+  // F2 concurrency-cap counter for SAVE_IMAGE (see the handler below). A ref (not
+  // state) so increment/decrement never re-renders and the count is read
+  // synchronously in the message handler (single-threaded ⇒ check→increment before
+  // the first await is atomic per message), mirroring wildcardInFlightRef.
+  const saveImageInFlightRef = useRef<number>(0);
+
+  // SAVE_IMAGE → SAVE_IMAGE_RESULT (Batch-D item 1). The host downloads an image
+  // the block already displays, in its UNSANDBOXED top frame (the block's sandbox
+  // has no allow-downloads). TWO variants, each with its own security gate:
+  //   • url  — the block's OWN output. MUST pass the civitai image/blob origin
+  //            allowlist (isAllowedSaveImageUrl) — never a host-side fetch of an
+  //            attacker origin (an opaque-origin block's url/data is untrusted).
+  //   • id   — a cross-user grid image. Resolved through the SAME per-viewer
+  //            gated read (blocks.getImagesByIds) that GET_IMAGES_BY_IDS uses, so
+  //            a withheld/above-ceiling image (status !== 'visible', or omitted)
+  //            can NEVER be saved.
+  // A NON-download UI affordance, so NO reviewMode NACK (it saves what the viewer
+  // already sees). REQUEST-style ⇒ every path replies (ok:false on any refusal)
+  // so the block never hangs.
+  useEffect(() => {
+    const off = onMessage<unknown>('SAVE_IMAGE', async (raw) => {
+      const req = resolveSaveImageRequest(raw);
+      if (!req) return; // missing/invalid requestId — can't correlate, drop
+      const { requestId } = req;
+      if (req.kind === 'invalid') {
+        send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'invalid save-image request' });
+        return;
+      }
+      // F2 concurrency cap (host-side backpressure): bound concurrent host-side
+      // image downloads so a hostile block can't download-bomb the viewer's tab
+      // (memory/bandwidth). check→increment runs synchronously before the first
+      // await (single-threaded), so N concurrent SAVE_IMAGEs can't all pass the
+      // gate; excess replies `busy` (the block retries) rather than fetching.
+      if (saveImageInFlightRef.current >= SAVE_IMAGE_MAX_CONCURRENT) {
+        send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'busy' });
+        return;
+      }
+      saveImageInFlightRef.current += 1;
+      try {
+        if (req.kind === 'url') {
+          if (!isAllowedSaveImageUrl(req.url, env.NEXT_PUBLIC_IMAGE_LOCATION)) {
+            send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'image url is not allowed' });
+            return;
+          }
+          await downloadUrlAsBlob(req.url, sanitizeDownloadFilename(req.filename, req.url));
+          send('SAVE_IMAGE_RESULT', { requestId, ok: true });
+          return;
+        }
+        // id variant — route through the gated per-viewer read.
+        if (!token) {
+          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'no block token' });
+          return;
+        }
+        const result = await getImagesByIdsMutation.mutateAsync({
+          blockToken: token,
+          imageIds: [req.imageId],
+        });
+        const image = result.images.find((i) => i.imageId === req.imageId);
+        if (!image || image.status !== 'visible') {
+          // Withheld (hidden / above-ceiling / unscanned / flagged) or unresolvable
+          // → never saveable. Do NOT leak which reason.
+          send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: 'image is not available' });
+          return;
+        }
+        await downloadUrlAsBlob(image.url, sanitizeDownloadFilename(req.filename, image.url));
+        send('SAVE_IMAGE_RESULT', { requestId, ok: true });
+      } catch (err) {
+        send('SAVE_IMAGE_RESULT', { requestId, ok: false, error: storageErrorMessage(err) });
+      } finally {
+        // Release the slot on EVERY exit that acquired one (success / refusal /
+        // error) so the gate can't leak slots and wedge shut.
+        saveImageInFlightRef.current -= 1;
+      }
+    });
+    return off;
+  }, [onMessage, send, token, getImagesByIdsMutation]);
 
   // ── OPEN_RESOURCE_PICKER → RESOURCE_PICKER_RESULT (Design 1 host-chrome) ────
   //
   // Generalizes the model-slot OPEN_CHECKPOINT_PICKER (IframeHost) to the page
-  // surface and widens it from Checkpoint-only to a typed allowlist (v1:
-  // Checkpoint + LoRA only). The block asks the HOST to open its OWN native
+  // surface and widens it from Checkpoint-only to a typed allowlist (Checkpoint
+  // plus the generator's LoRA family: LORA, LoCon, DoRA — the exact set the
+  // spend-time page-LoRA gate already accepts, so the picker offers nothing
+  // submit would refuse). The block asks the HOST to open its OWN native
   // ResourceSelectModal as host chrome; the viewer searches in host chrome (NOT
   // the iframe); the host posts back ONLY the single chosen resource. The
   // untrusted iframe NEVER receives a list, the search API, or the catalog — it
@@ -1917,10 +3090,13 @@ export function PageBlockHost({
   // (resource-select.types.ts) exposes NO browsing-level / sfwOnly / nsfw
   // constraint — only `canGenerate`, `resources`, `excludeIds`. NSFW filtering
   // is done purely client-side in the SHARED `ResourceHitList` via
-  // `useApplyHiddenPreferences`, which defaults to the site-wide
-  // `useBrowsingLevelDebounced()` context (the Meili query in
-  // useResourceSelectFilters doesn't filter by browsing level at all). Passing a
-  // block-SFW ceiling in would require adding a new option to
+  // `useApplyHiddenPreferences`, which is passed NO `browsingLevel` override and
+  // so defaults to the site-wide `useBrowsingLevelDebounced()` context (the
+  // server-side list query behind it — the tRPC `model.getResourceSelect`
+  // procedure, service `resource-select.service.ts` — doesn't filter by browsing
+  // level at all; the older `useResourceSelectFilters` hook this note used to
+  // name no longer exists). Passing a block-SFW ceiling in would require adding
+  // a new option to
   // `ResourceSelectOptions`, threading it through `ResourceSelectProvider` /
   // `useResourceSelectContext`, and feeding it to that `useApplyHiddenPreferences`
   // call — i.e. modifying the shared modal's filtering internals (higher blast
@@ -2083,122 +3259,146 @@ export function PageBlockHost({
     const off = onMessage<
       { requestId?: unknown; purpose?: unknown; asyncScan?: unknown } | undefined
     >('OPEN_IMAGE_UPLOAD', (raw) => {
-        if (reviewMode) {
-          // Host-mediated upload runs under the MOD's REAL session (createImage /
-          // consumer blob) — never let untrusted review code open it. Reply the
-          // bare (cancelled) result the block awaits so it fails fast (no hang).
-          if (raw && typeof (raw as { requestId?: unknown }).requestId === 'string') {
-            send('IMAGE_UPLOAD_RESULT', {
-              requestId: (raw as { requestId: string }).requestId,
-            });
-          }
-          return;
-        }
-        const gateStatus = status === 'error' ? 'no_token' : status;
-        if (gateStatus !== 'ready') return; // pre-handshake block — drop
-        const req = resolveImageUploadRequest(raw);
-        if (!req) return; // missing / non-string requestId → drop, never open the modal
-        const { requestId, purpose, asyncScan } = req;
-
-        // generationSource: UNSCANNED private img2img source (orchestrator scans
-        // the OUTPUT). Reply carries the source shape { url, width, height }; the
-        // moderated 'display' branch below is untouched.
-        if (purpose === 'generationSource') {
-          let resolvedSource: BlockSourceImageInfo | null = null;
-          dialogStore.trigger({
-            id: `block-generation-source-upload-${requestId}`,
-            component: BlockGenerationSourceUploadModal,
-            props: {
-              onResolved: (result: BlockSourceImageInfo) => {
-                resolvedSource = result;
-              },
-            },
-            options: {
-              onClose: () => {
-                if (resolvedSource) {
-                  send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolvedSource });
-                } else {
-                  send('IMAGE_UPLOAD_RESULT', { requestId });
-                }
-              },
-            },
+      if (reviewMode) {
+        // Host-mediated upload runs under the MOD's REAL session (createImage /
+        // consumer blob) — never let untrusted review code open it. Reply the
+        // bare (cancelled) result the block awaits so it fails fast (no hang).
+        if (raw && typeof (raw as { requestId?: unknown }).requestId === 'string') {
+          send('IMAGE_UPLOAD_RESULT', {
+            requestId: (raw as { requestId: string }).requestId,
           });
-          return;
         }
-
-        // display + asyncScan: NON-BLOCKING moderated path. The host modal resolves
-        // EARLY on persist (returning a PENDING handle — the author's own preview
-        // URL) and CLOSES; a host-mounted BlockImageScanPoller (registered below,
-        // which SURVIVES this modal's unmount) polls the authoritative scan gate and
-        // streams the verdict to the block via the parent→block IMAGE_SCAN_RESOLVED
-        // push. The server gate is UNCHANGED — nothing cross-user is persisted until
-        // the app sees a `scanned` verdict, and `gate` still only ever returns a
-        // moderated projection on Scanned + within-SFW-ceiling + unflagged.
-        if (asyncScan) {
-          let accepted = false;
-          dialogStore.trigger({
-            id: `block-image-upload-${requestId}`,
-            component: BlockImageUploadModal,
-            props: {
-              // BLOCKING-mode callback — unused in async mode (onAccepted drives the
-              // early resolve); a no-op that satisfies the modal's required prop.
-              onResolved: () => undefined,
-              onAccepted: ({ imageId, url }: { imageId: number; url: string }) => {
-                accepted = true;
-                // Early-resolve: the upload is accepted (image persisted, scan still
-                // in-flight). Hand the block the PENDING handle and register the
-                // background poller keyed by requestId.
-                send('IMAGE_UPLOAD_RESULT', {
-                  requestId,
-                  selected: { status: 'pending', imageId, url },
-                });
-                setImageScanPollers((prev) =>
-                  prev.some((p) => p.requestId === requestId)
-                    ? prev
-                    : [...prev, { requestId, imageId }]
-                );
-              },
-            },
-            options: {
-              onClose: () => {
-                // Dismissed WITHOUT accepting → bare (cancelled) result, no poller.
-                // On accept, onClose fires AFTER onAccepted set `accepted`, so the
-                // early-resolve reply is not followed by a spurious cancel.
-                if (!accepted) send('IMAGE_UPLOAD_RESULT', { requestId });
-              },
-            },
+        return;
+      }
+      // `readGateStatus()` (not a closed-over `status`) — see its definition.
+      const gateStatus = readGateStatus();
+      if (gateStatus !== 'ready') {
+        // NEVER HANG — pre-handshake block: refuse the modal (unchanged) but
+        // REPLY, exactly as the reviewMode branch six lines above already does
+        // for its own refusal ("so it fails fast (no hang)"). This branch is the
+        // one that didn't, and it is the expensive one to get wrong: the SDK's
+        // `useImageUpload` sends OPEN_IMAGE_UPLOAD with
+        // `PICKER_REQUEST_TIMEOUT_MS` (blocks-react 0.39.0 — 10 MINUTES, not the
+        // 30s default), so a silent drop strands the block's promise for ten
+        // minutes with no error anywhere.
+        //
+        // A bare `{ requestId }` is the cancelled/dismissed shape the SDK
+        // already handles (`if (!selected) return null; // dismissed`). Nothing
+        // is uploaded and no modal opens — the refusal is unchanged.
+        if (raw && typeof (raw as { requestId?: unknown }).requestId === 'string') {
+          send('IMAGE_UPLOAD_RESULT', {
+            requestId: (raw as { requestId: string }).requestId,
           });
-          return;
         }
+        return;
+      }
+      const req = resolveImageUploadRequest(raw);
+      // Legitimately UNREPLIABLE: a missing / non-string requestId leaves no id
+      // to thread a reply back on. Drop, never open the modal. (Not a hang risk
+      // either — the SDK always mints a requestId, so a payload without one
+      // never came from a promise anybody is awaiting.)
+      if (!req) return;
+      const { requestId, purpose, asyncScan } = req;
 
-        // display (default): moderated public-image path — UNCHANGED.
-        let resolved: BlockUploadedImageInfo | null = null;
+      // generationSource: UNSCANNED private img2img source (orchestrator scans
+      // the OUTPUT). Reply carries the source shape { url, width, height }; the
+      // moderated 'display' branch below is untouched.
+      if (purpose === 'generationSource') {
+        let resolvedSource: BlockSourceImageInfo | null = null;
         dialogStore.trigger({
-          // Per-request id so multiple OPEN_IMAGE_UPLOAD calls don't dedup against
-          // each other in the dialog store's exists-check.
-          id: `block-image-upload-${requestId}`,
-          component: BlockImageUploadModal,
+          id: `block-generation-source-upload-${requestId}`,
+          component: BlockGenerationSourceUploadModal,
           props: {
-            onResolved: (result: BlockUploadedImageInfo) => {
-              resolved = result;
+            onResolved: (result: BlockSourceImageInfo) => {
+              resolvedSource = result;
             },
           },
           options: {
             onClose: () => {
-              // A successful upload set `resolved` before the modal closed itself;
-              // otherwise the user cancelled → reply with a bare (cancelled) result.
-              if (resolved) {
-                send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolved });
+              if (resolvedSource) {
+                send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolvedSource });
               } else {
                 send('IMAGE_UPLOAD_RESULT', { requestId });
               }
             },
           },
         });
+        return;
       }
-    );
+
+      // display + asyncScan: NON-BLOCKING moderated path. The host modal resolves
+      // EARLY on persist (returning a PENDING handle — the author's own preview
+      // URL) and CLOSES; a host-mounted BlockImageScanPoller (registered below,
+      // which SURVIVES this modal's unmount) polls the authoritative scan gate and
+      // streams the verdict to the block via the parent→block IMAGE_SCAN_RESOLVED
+      // push. The server gate is UNCHANGED — nothing cross-user is persisted until
+      // the app sees a `scanned` verdict, and `gate` still only ever returns a
+      // moderated projection on Scanned + within-SFW-ceiling + unflagged.
+      if (asyncScan) {
+        let accepted = false;
+        dialogStore.trigger({
+          id: `block-image-upload-${requestId}`,
+          component: BlockImageUploadModal,
+          props: {
+            // BLOCKING-mode callback — unused in async mode (onAccepted drives the
+            // early resolve); a no-op that satisfies the modal's required prop.
+            onResolved: () => undefined,
+            onAccepted: ({ imageId, url }: { imageId: number; url: string }) => {
+              accepted = true;
+              // Early-resolve: the upload is accepted (image persisted, scan still
+              // in-flight). Hand the block the PENDING handle and register the
+              // background poller keyed by requestId.
+              send('IMAGE_UPLOAD_RESULT', {
+                requestId,
+                selected: { status: 'pending', imageId, url },
+              });
+              setImageScanPollers((prev) =>
+                prev.some((p) => p.requestId === requestId)
+                  ? prev
+                  : [...prev, { requestId, imageId }]
+              );
+            },
+          },
+          options: {
+            onClose: () => {
+              // Dismissed WITHOUT accepting → bare (cancelled) result, no poller.
+              // On accept, onClose fires AFTER onAccepted set `accepted`, so the
+              // early-resolve reply is not followed by a spurious cancel.
+              if (!accepted) send('IMAGE_UPLOAD_RESULT', { requestId });
+            },
+          },
+        });
+        return;
+      }
+
+      // display (default): moderated public-image path — UNCHANGED.
+      let resolved: BlockUploadedImageInfo | null = null;
+      dialogStore.trigger({
+        // Per-request id so multiple OPEN_IMAGE_UPLOAD calls don't dedup against
+        // each other in the dialog store's exists-check.
+        id: `block-image-upload-${requestId}`,
+        component: BlockImageUploadModal,
+        props: {
+          onResolved: (result: BlockUploadedImageInfo) => {
+            resolved = result;
+          },
+        },
+        options: {
+          onClose: () => {
+            // A successful upload set `resolved` before the modal closed itself;
+            // otherwise the user cancelled → reply with a bare (cancelled) result.
+            if (resolved) {
+              send('IMAGE_UPLOAD_RESULT', { requestId, selected: resolved });
+            } else {
+              send('IMAGE_UPLOAD_RESULT', { requestId });
+            }
+          },
+        },
+      });
+    });
     return off;
-  }, [onMessage, send, status, reviewMode]);
+    // `status` deliberately absent — see the REQUEST_CONSENT deps note.
+  }, [onMessage, send, readGateStatus, reviewMode]);
 
   // ── SET_USER_CHECKPOINT → USER_CHECKPOINT_SET (fail-fast NACK on a page) ──────
   //
@@ -2290,8 +3490,11 @@ export function PageBlockHost({
         // pending block could drive the MOD's real download entitlements to
         // resolve+fetch+unzip+parse an arbitrary modelVersionId's wildcard pack and
         // read the contents into the sandboxed iframe. NACK before resolving or
-        // downloading anything (fail-fast, never a hang).
-        send('WILDCARD_PACK_RESULT', { requestId, error: REVIEW_NACK_MESSAGE });
+        // downloading anything (fail-fast, never a hang) — with the ENUM code, not
+        // REVIEW_NACK_MESSAGE: this reply's `error` is validated against a closed
+        // set block-side, so free text would be dropped and hang. See
+        // WILDCARD_REVIEW_NACK_CODE.
+        send('WILDCARD_PACK_RESULT', { requestId, error: WILDCARD_REVIEW_NACK_CODE });
         return;
       }
       // Concurrency cap (host-side backpressure): bound the per-tab memory. The
@@ -2337,6 +3540,13 @@ export function PageBlockHost({
     return off;
   }, [onMessage, send, resolveWildcardPackMutation, reviewMode]);
 
+  // ONE sanitized label for the whole launch surface — the avatar initial, the
+  // Loader's accessible name and the visible "Starting …" copy all derive from
+  // this, so they can never disagree about the fallback. Same sanitizer the
+  // visible chrome uses (anti-spoof: strips control/bidi/zalgo from a
+  // publisher-controlled name); 'app' when nothing legible remains.
+  const launchName = sanitizeAppChromeName(appName) || 'app';
+
   const showIframe = status === 'loading' || status === 'ready';
   const isReady = status === 'ready';
 
@@ -2351,8 +3561,7 @@ export function PageBlockHost({
   //      (defensive — the init effect's cleanup already disposes + nulls it when
   //      status left 'loading'; this guarantees no orphaned interval/timeout
   //      survives a retry).
-  //   2. Reset the per-mount handshake/analytics guards so init re-fires and a
-  //      successful retry re-emits exactly one impression.
+  //   2. Reset the per-mount handshake guard so init re-fires.
   //   3. Bump `reloadNonce` → re-keys the <iframe> → React remounts it (fresh
   //      contentWindow), so the re-armed handshake talks to a clean frame.
   //   4. Flip status back to 'loading'. shouldStartInit then re-passes and the
@@ -2375,38 +3584,115 @@ export function PageBlockHost({
   // token flips the props, init re-fires, and a successful mint loads the block.
   // For `fatal`/`timeout` the token was fine — the block crashed or didn't ack —
   // so remount-only (no re-mint) is the right, unchanged behavior. refresh()
-  // aborts any in-flight mint and the endpoint is rate-limited (60/min); Retry is
-  // user-initiated, so no auto-retry loop is added.
+  // aborts any in-flight mint and the endpoint is rate-limited (60/min) — which is
+  // why the AUTOMATIC re-mints are capped at MAX_AUTO_REMINTS. A manual Retry is
+  // user-initiated and stays uncapped here (the double-click guard below plus that
+  // server-side limit bound it).
+  //
+  // The re-arm itself is shared by the MANUAL button and the BOUNDED AUTO-RETRY
+  // below — one recovery path, not two (a second path is how the two drift).
+  //
+  // 🔴 It deliberately no longer resets `blockRenderEmittedRef`. See the
+  // BEACON-SEMANTICS block on the render-failure beacon: one beacon per mount
+  // describing the outcome the host settles on.
+  const performRetry = useCallback(
+    ({ remint }: { remint: boolean }) => {
+      if (remint) onRetryToken?.();
+      controllerRef.current?.dispose();
+      controllerRef.current = null;
+      initSentRef.current = false;
+      setReloadNonce((n) => n + 1);
+      setStatus('loading');
+    },
+    [onRetryToken]
+  );
+
   const handleRetry = useCallback(() => {
     const prior = statusRef.current;
     // Double-click no-op guard (mirrors the pre-fix gate): a Retry while the
     // status is already loading/ready does nothing — no re-mint, no remount.
     if (prior === 'loading' || prior === 'ready') return;
     // AUTH failures (`error`/`no_token`) need a token re-mint — the local reset
-    // below alone can't change the upstream `token`/`tokenError` props. Fire it
-    // BEFORE the local re-arm (the rotated token then flips props → init
-    // re-fires). `fatal`/`timeout` are not auth failures → remount only.
-    if (prior === 'error' || prior === 'no_token') onRetryToken?.();
-    controllerRef.current?.dispose();
-    controllerRef.current = null;
-    initSentRef.current = false;
-    blockRenderEmittedRef.current = false;
-    setReloadNonce((n) => n + 1);
-    setStatus('loading');
-  }, [onRetryToken]);
+    // alone can't change the upstream `token`/`tokenError` props. `fatal`/`timeout`
+    // are not auth failures → remount only.
+    //
+    // A manual Retry while an automatic one is still PENDING is coherent by
+    // construction: `performRetry` flips the status back to 'loading', which makes
+    // `decideAutoRetry` return 'none', which tears down the pending backoff timer
+    // in the scheduling effect's cleanup — so exactly ONE attempt runs, the one
+    // the user asked for. It also does NOT consume the automatic budget: the user
+    // taking over shouldn't spend the platform's remaining recovery attempts.
+    performRetry({ remint: prior === 'error' || prior === 'no_token' });
+  }, [performRetry]);
+
+  // 🔴 The backoff timer must NOT depend on `performRetry`'s IDENTITY. `performRetry`
+  // is rebuilt whenever the `onRetryToken` PROP changes identity, and a caller is
+  // free to pass an inline arrow (`onRetryToken={() => refresh()}`) — that makes it a
+  // new function on every parent render. If the scheduling effect depended on it,
+  // every such render would tear down and re-arm the pending timer, so the backoff
+  // would never elapse and auto-retry would SILENTLY NEVER FIRE. Reading it through
+  // a ref keeps the effect keyed on the DECISION alone.
+  const performRetryRef = useRef(performRetry);
+  useEffect(() => {
+    performRetryRef.current = performRetry;
+  }, [performRetry]);
+
+  // BOUNDED AUTO-RETRY — arm the backoff timer for the next automatic attempt.
+  //
+  // Placed here (after `performRetry`) rather than beside the other status
+  // effects purely for declaration order. `autoRetry` is the SAME memoized
+  // decision the failure beacon reads, so a scheduled retry and a suppressed
+  // beacon can never disagree.
+  //
+  // No timer leak: the cleanup clears the pending timeout on unmount AND whenever
+  // the decision changes (a manual Retry, a recovery, a status change) — so at
+  // most one backoff timer exists at a time and none survives the component.
+  useEffect(() => {
+    if (autoRetry.kind !== 'retry') return;
+    const { delayMs, remint } = autoRetry;
+    const t = setTimeout(() => {
+      // Consume the budget FIRST so the decision recomputes to the next attempt
+      // (or to 'none') even if the retry re-fails instantly.
+      setAutoRetryBudget((b) => ({
+        attempts: b.attempts + 1,
+        reminted: b.reminted + (remint ? 1 : 0),
+      }));
+      performRetryRef.current({ remint });
+    }, delayMs);
+    return () => clearTimeout(t);
+  }, [autoRetry]);
 
   return (
     <Box
       style={{
         display: 'flex',
         flexDirection: 'column',
-        // Full viewport under the global header. The host chrome sits on top;
-        // the iframe fills the rest.
-        height: '100%',
-        minHeight: 'calc(100dvh - 60px)',
         width: '100%',
+        // See the `fit` prop for why these are the two modes and why the
+        // viewport arithmetic can never agree with its own scroll viewport.
+        ...(fit === 'fill'
+          ? {
+              // Fill the (already bounded) parent — but never below
+              // `FILL_MIN_HEIGHT_PX`. See that constant for why a bare
+              // `minHeight: 0` here was a WCAG regression rather than a tidier
+              // fix. Above the floor `flex: 1` still resolves to exactly the
+              // parent's height, so nothing overflows and no outer scrollbar
+              // appears; the floor is inert at every ordinary viewport.
+              flex: 1,
+              minHeight: FILL_MIN_HEIGHT_PX,
+            }
+          : {
+              // Full viewport under the global header. The host chrome sits on
+              // top; the iframe fills the rest.
+              height: '100%',
+              minHeight: `calc(100dvh - ${HEADER_HEIGHT_PX}px)`,
+            }),
       }}
       data-testid="app-page-frame"
+      // Observable sizing mode, so a regression test (and DevTools) can assert
+      // WHICH branch a surface took rather than re-deriving it from computed
+      // styles that jsdom does not resolve.
+      data-fit={fit}
       data-block-instance-id={blockInstanceId}
       // #3/#6: surface the consent signal as an observable attribute. The page
       // token still mints with the granted subset (so the block loads — consent
@@ -2421,6 +3707,7 @@ export function PageBlockHost({
         appBlockId={appBlockId}
         appName={appName}
         slotId={PAGE_SLOT_ID}
+        canOpenPage={canOpenPage}
       />
       {/* Async cosmetic-image scan pollers (non-blocking OPEN_IMAGE_UPLOAD). Each
           renders nothing; it polls the authoritative scan gate in the background —
@@ -2449,14 +3736,33 @@ export function PageBlockHost({
         // terminal path (timeout / fatal / no_token / error, which also flip
         // `showIframe` to false and render the BlockFallback below) — so it can
         // never spin forever.
-        <Box style={{ position: 'relative', flex: 1, display: 'flex' }}>
+        <Box
+          style={{
+            position: 'relative',
+            flex: 1,
+            display: 'flex',
+            // 🔴 CONFINE THE LAUNCH-REVEAL TRANSFORM. While the block is still
+            // handshaking the iframe carries `translateY(8px)`, and a transform
+            // does not change layout but DOES extend the SCROLLABLE OVERFLOW
+            // region — so those 8px pushed past this wrapper and asked the
+            // nearest scrolling ancestor for a scrollbar. Measured, not
+            // inferred: wrapper `bottom=716`, iframe `bottom=724`, container
+            // `scrollHeight 724` vs `clientHeight 716`. Purely decorative
+            // motion should never be able to do that. Clipping here is also
+            // free — the iframe fills this box exactly, so nothing else can be
+            // cut off. Covered by the GREEN ARM in
+            // `PageBlockHostScrollFit.browser.test.tsx`, which asserts exact
+            // equality precisely so an 8px leak cannot hide in a tolerance.
+            overflow: 'hidden',
+          }}
+        >
           <iframe
             // #4 Retry: re-key on `reloadNonce` so a retry UNMOUNTS + REMOUNTS
             // the iframe (fresh contentWindow), not just reloads its src — the
             // re-armed init handshake then talks to a clean frame.
             key={reloadNonce}
             ref={iframeRef}
-            src={iframeSrc}
+            src={renderedIframeSrc}
             sandbox={effectiveSandbox}
             referrerPolicy="no-referrer"
             // Sanitize the publisher-controlled appName for the iframe title too
@@ -2473,35 +3779,122 @@ export function PageBlockHost({
               width: '100%',
               border: 0,
               pointerEvents: isReady ? 'auto' : 'none',
+              // LAUNCH REVEAL: the block fades + settles up as it becomes ready,
+              // cross-fading with the branded overlay below. Under reduced motion
+              // `revealMs` is 0 → no transition is emitted and the opacity flip is
+              // instantaneous (the pre-animation behaviour).
+              opacity: isReady ? 1 : 0,
+              transform: isReady || revealMs === 0 ? 'none' : 'translateY(8px)',
+              transition:
+                revealMs === 0
+                  ? undefined
+                  : `opacity ${revealMs}ms ease-out, transform ${revealMs}ms ease-out`,
             }}
           />
-          {status === 'loading' && (
+          {overlayMounted && (
             <Center
               data-testid="app-page-loading"
               // Announce the loading state on the REGION, not just the graphic:
               // role="status" + aria-busy mark the overlay container as a live
               // busy region so a screen reader announces "loading" when it
               // appears (the bare <Loader> below only exposes a labeled graphic).
-              role="status"
-              aria-busy={true}
-              aria-live="polite"
-              style={{ position: 'absolute', inset: 0, background: 'var(--mantine-color-body)' }}
+              // Once the block IS ready the overlay is a purely decorative
+              // fading-out veil, so it drops the live-region roles and hides from
+              // the a11y tree instead of announcing a stale "loading".
+              {...(isReady
+                ? { 'aria-hidden': true }
+                : { role: 'status', 'aria-busy': true, 'aria-live': 'polite' as const })}
+              // Observable reveal state (DevTools / manual QA): 'false' while the
+              // block is still handshaking, 'true' for the one cross-fade after
+              // BLOCK_READY, then the node unmounts.
+              data-revealing={isReady ? 'true' : 'false'}
+              style={{
+                position: 'absolute',
+                inset: 0,
+                background: 'var(--mantine-color-body)',
+                // Never intercept clicks: during loading the iframe is already
+                // pointer-inert, and during the fade-out the block is live
+                // underneath — the veil must not swallow that first click.
+                pointerEvents: 'none',
+                opacity: isReady ? 0 : 1,
+                transition: revealMs === 0 ? undefined : `opacity ${revealMs}ms ease-out`,
+              }}
             >
-              {/* Run the publisher-controlled appName through the SAME sanitizer
-                  the visible chrome uses (sanitizeAppChromeName) so the accessible
-                  name a screen reader reads can't carry control/bidi/zalgo
-                  spoofing — consistency with AppBlockChrome, not a new gate. Falls
-                  back to 'app' when nothing legible remains. */}
-              <Loader aria-label={`Loading ${sanitizeAppChromeName(appName) || 'app'}`} />
+              {/* Branded launch state. The app's initial in the same Avatar
+                  treatment the store card uses gives a visual through-line from
+                  card → run page, so opening an app feels continuous rather than
+                  landing on a bare spinner. Purely presentational: every string is
+                  run through the SAME sanitizer the visible chrome uses
+                  (sanitizeAppChromeName) so the publisher-controlled appName can't
+                  carry control/bidi/zalgo spoofing here either — consistency with
+                  AppBlockChrome, not a new gate. Falls back to 'app' when nothing
+                  legible remains. */}
+              <Stack align="center" gap="sm">
+                <Avatar radius="md" size={56} alt="" aria-hidden>
+                  {/* `Array.from(...)[0]` not `charAt(0)`: charAt splits a
+                      surrogate pair, so an emoji-leading app name would render a
+                      broken half-glyph. Falls back to the SAME string as the
+                      visible copy below so the two can't disagree. */}
+                  {(Array.from(launchName)[0] ?? '').toUpperCase()}
+                </Avatar>
+                <Loader size="sm" aria-label={`Loading ${launchName}`} />
+                <Text size="sm" c="dimmed">
+                  {/* IN-PROGRESS FEEDBACK. `reloadNonce` counts re-attempts
+                      (manual AND automatic — both go through performRetry), so
+                      a re-attempt reads as a retry-in-progress rather than an
+                      identical "Starting …" that looks like nothing happened.
+                      This is the half of the reported defect where pressing
+                      Retry against a still-down host silently waited ~10s and
+                      re-rendered the same error.
+
+                      Deliberately NO "of N" here, and no attempt NUMBER: the
+                      fallback's pending-retry line counts AUTOMATIC attempts
+                      against a bounded ceiling, while this would count EVERY
+                      re-attempt including manual ones. Showing both put two
+                      counters on the same flow seconds apart, disagreeing —
+                      the card's "attempt 1 of 2" followed by this saying
+                      "attempt 2", and after a few manual clicks "attempt 7"
+                      against a stated maximum of 2. The bounded count belongs to
+                      the terminal card, where the budget is meaningful; this line
+                      only has to say that something is happening again. */}
+                  {reloadNonce > 0 ? `Retrying ${launchName}…` : `Starting ${launchName}…`}
+                </Text>
+              </Stack>
             </Center>
           )}
         </Box>
       ) : fallbackReason ? (
-        <Box style={{ flex: 1, padding: 'var(--mantine-spacing-md)' }} data-testid="app-page-fallback">
+        <Box
+          style={{ flex: 1, padding: 'var(--mantine-spacing-md)' }}
+          data-testid="app-page-fallback"
+        >
           <BlockFallback
             reason={fallbackReason}
             blockName={sanitizeAppChromeName(appName) || blockId}
             onRetry={handleRetry}
+            // 🔴 The REAL terminal message renders the instant the status goes
+            // terminal — a pending automatic attempt is surfaced INSIDE it, never
+            // instead of it. The user is never held in a loading state waiting on
+            // a quiet retry (the silent-blank failure class), and the manual
+            // affordance stays available the whole time.
+            autoRetry={
+              autoRetry.kind === 'retry'
+                ? {
+                    attempt: autoRetry.attempt,
+                    // The ceiling REACHABLE from here, not the raw attempt cap —
+                    // an auth terminal is bounded by the lower re-mint budget, so
+                    // showing MAX_AUTO_RETRIES would promise a retry that will
+                    // never happen. Derived in decideAutoRetry.
+                    maxAttempts: autoRetry.maxAttempts,
+                    // prefers-reduced-motion: reduce → no spinner.
+                    animate: !reduceMotion,
+                  }
+                : undefined
+            }
+            autoRetriesSpent={autoRetryBudget.attempts}
+            // Automatic recovery has settled (exhausted, or never applicable):
+            // the button is now the only path forward, so make it unmissable.
+            prominentRetry={autoRetrySettled}
           />
         </Box>
       ) : null}

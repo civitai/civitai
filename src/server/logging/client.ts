@@ -5,13 +5,40 @@
 import { TRPCError } from '@trpc/server';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { createAxiomLogger, safeError } from '@civitai/axiom/client';
-import { env } from '~/env/server';
+import { structuredLogSink } from '~/server/logging/structured-log-sink';
+import { IS_BUILD } from '~/env/is-build';
+import { isEscalatedServerFault } from '~/server/logging/server-fault-override';
 
 // The build guard is a Next.js concern, so it lives here in the app shim — not in
 // the app-agnostic @civitai/axiom package. Skip the client during `next build`.
 const noopLog = async (_data: MixedObject, _datastream?: string) => {};
 
-export const logToAxiom = env.IS_BUILD ? noopLog : createAxiomLogger().logToAxiom;
+// 🔴 THIS MODULE IS IN THE **CLIENT** BUNDLE. It looks server-only and is not:
+// `src/pages/_app.tsx` → `~/server/services/feature-flags.service` → `~/server/flipt/client`
+// reaches it, so anything imported here at module scope is bundled for the browser too.
+// (A dynamic `import()` does not exempt a module — the chunk is compiled, just not fetched.
+// `no-server-infra-in-app-graph.test.ts` tracks this edge in `KNOWN_REACHABLE`.)
+// A static `import { emitOtelLog } from '@civitai/telemetry/otel-logs'` here pulled
+// prom-client into the browser graph and broke `next build` with
+// `Can't resolve 'cluster' / 'fs' / 'v8'`. Nothing else catches that — typecheck, eslint
+// and both vitest projects all stayed green, because only the bundler walks this edge.
+//
+// So the OTel sink is REGISTERED, not imported: `src/instrumentation.node.ts` (server-only
+// by construction) calls `setStructuredLogSink(emitOtelLog)` at boot. (That import is
+// `~/server/logging/structured-log-sink`, whose only import is an `import type`, so it adds
+// no FURTHER edges — though the module itself is still compiled into the client graph, and
+// `no-server-infra-in-app-graph.test.ts` records it as such.)
+//
+// 🔴 The sink object is NOT declared here, and must not be. The bundler emits THIS module
+// 14 times into one server build (measured; see the header of ./structured-log-sink), so a
+// module-scope `const sink = {}` here is 14 separate objects and the single boot-time
+// `setStructuredLogSink()` call reaches exactly one of them — which is precisely the bug
+// that made the OTel bridge deliver 1.3% of records. It is imported from the
+// globalThis-pinned singleton instead, which every copy shares by construction.
+//
+// The sink is read per call from that stable object, so registering it after the logger
+// is built still takes effect. Pinned by a test in @civitai/axiom.
+export const logToAxiom = IS_BUILD ? noopLog : createAxiomLogger({}, structuredLogSink).logToAxiom;
 export { safeError };
 
 /**
@@ -22,6 +49,9 @@ export { safeError };
  *
  * Everything NOT in this set (notably INTERNAL_SERVER_ERROR, TIMEOUT) — and any
  * non-TRPCError thrown value — is treated as a SERVER fault worth an error log.
+ *
+ * A code in this set can still be forced to SERVER severity for one specific error
+ * via `escalateToServerFault` — see `classifyErrorFault` and `server-fault-override.ts`.
  */
 const CLIENT_FAULT_TRPC_CODES: ReadonlySet<TRPC_ERROR_CODE_KEY> = new Set([
   'BAD_REQUEST',
@@ -37,8 +67,15 @@ const CLIENT_FAULT_TRPC_CODES: ReadonlySet<TRPC_ERROR_CODE_KEY> = new Set([
  * Classify a thrown value as a client fault (expected user feedback) or a server
  * fault (a real failure worth an error log). A non-TRPCError is always a server
  * fault — there was no deliberate validation rejection, so the cause is unknown.
+ *
+ * The explicit `escalateToServerFault` override is checked FIRST, so a failure that is a
+ * 4xx to the caller but a server-side fault in origin (an unusable response from an
+ * upstream dependency) is logged at error severity without changing the HTTP status
+ * the caller receives. Ordinary rejections are untouched: only errors a thrower has
+ * deliberately marked take this branch.
  */
 export function classifyErrorFault(e: unknown): 'client' | 'server' {
+  if (isEscalatedServerFault(e)) return 'server';
   if (e instanceof TRPCError && CLIENT_FAULT_TRPC_CODES.has(e.code)) return 'client';
   return 'server';
 }

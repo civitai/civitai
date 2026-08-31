@@ -37,7 +37,11 @@ import {
   getOutputTypeForWorkflow,
 } from '~/shared/data-graph/generation/config/workflows';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
-import { useGenerationGraphStore, generationGraphStore } from '~/store/generation-graph.store';
+import {
+  useGenerationGraphStore,
+  generationGraphStore,
+  generationGraphPanel,
+} from '~/store/generation-graph.store';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 
 import {
@@ -51,6 +55,7 @@ import type { GenerationResource } from '~/shared/types/generation.types';
 import { type VersionGroup, getAllVersionIds } from '~/shared/data-graph/generation/common';
 import { decodeGenerationHandoff, GENERATION_HANDOFF_PARAM } from './utils/generation-url-handoff';
 import { setGenerationSnapshotCache } from './utils/generation-snapshot-cache';
+import { ExperimentalRulesSync } from './Experimental';
 
 // =============================================================================
 // Constants
@@ -208,6 +213,15 @@ const storageAdapter = createLocalStorageAdapter({
         return group.ecosystemIds.includes(eco.id);
       },
     })),
+    // MiniMax H3's turbo is a toggle on one model version rather than a separate
+    // version, so model.id alone doesn't separate the two step ranges (1-20 turbo
+    // vs 10-60 base) — scope on the toggle as well.
+    {
+      name: 'ecosystem',
+      keys: ['steps'],
+      scope: ['ecosystem', 'model.id', 'turbo'],
+      condition: (ctx) => ctx.ecosystem === 'MiniMaxH3' && ctx.turbo !== undefined,
+    },
     // cfgScale + steps are scoped per model version for ecosystems that ship
     // a turbo (or otherwise distilled) variant alongside a base variant, where
     // the two have meaningfully different slider ranges. Without this, turbo's
@@ -407,6 +421,30 @@ function InnerProvider({
     });
   }, []);
 
+  // `/generate?modelVersionId=…` deep link. Scoped to the generate route on
+  // purpose: model pages use the same param to pick a version, and the panel
+  // mounts there too — without the guard, opening a model page would yank the
+  // generator open. Yields to a `?gen=` handoff, which has already queued data
+  // by the time this runs.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!window.location.pathname.startsWith('/generate')) return;
+
+    const url = new URL(window.location.href);
+    const raw = url.searchParams.get('modelVersionId');
+    if (!raw) return;
+
+    url.searchParams.delete('modelVersionId');
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+
+    if (useGenerationGraphStore.getState().data) return;
+
+    const id = Number(raw);
+    if (!Number.isInteger(id) || id <= 0) return;
+
+    generationGraphPanel.open({ type: 'modelVersion', id });
+  }, []);
+
   // Sync generation graph store data into the graph
   // - Remix/Replay: full override (reset + set)
   // - Run/Patch: partial update (set only)
@@ -455,13 +493,16 @@ function InnerProvider({
         if (isPolyGenRemix) {
           // 3D path: keep an incoming `txt2model3d` / `img2model3d` verbatim.
           // Tripo/Hunyuan3D are image-to-3D only; only PolyGen (Meshy) has a
-          // text branch, so consult `process` for it. Falls back to a sensible
-          // default so the user lands on the form even if both fields were lost.
+          // text branch, so consult `process` for it — `multiImageTo3D` is
+          // Meshy v7's multi-view operation and is equally image-driven. Falls
+          // back to a sensible default so the user lands on the form even if
+          // both fields were lost.
           resolvedWorkflow =
             incomingWorkflow === 'txt2model3d' || incomingWorkflow === 'img2model3d'
               ? incomingWorkflow
               : model3dEcosystem !== 'PolyGen' ||
-                paramsWithoutOutputSettings.process === 'imageTo3D'
+                paramsWithoutOutputSettings.process === 'imageTo3D' ||
+                paramsWithoutOutputSettings.process === 'multiImageTo3D'
               ? 'img2model3d'
               : 'txt2model3d';
         } else if (incomingWorkflow && workflowConfigByKey.has(incomingWorkflow)) {
@@ -906,6 +947,7 @@ export function GenerationFormProvider({
 }: GenerationFormProviderProps) {
   return (
     <InnerProvider defaultValues={defaultValues} debug={debug} skipStorage={skipStorage}>
+      <ExperimentalRulesSync />
       {children}
     </InnerProvider>
   );

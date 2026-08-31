@@ -1,7 +1,7 @@
 import { Title } from '@mantine/core';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
+import { ImageFeedTagBar } from '~/components/Image/Filters/ImageFeedTagBar';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -24,8 +24,8 @@ export default Page(
           {/* <Announcements /> */}
           {hidden && <Title>Your Hidden Images</Title>}
           <div className="flex flex-col gap-2.5">
-            <ImageCategories />
-            <ImagesInfinite showEof showAds />
+            <ImageFeedTagBar feed="images" />
+            <ImagesInfinite showEof showAds showFeedbackPrompt />
           </div>
         </MasonryContainer>
       </>

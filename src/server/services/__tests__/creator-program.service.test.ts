@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterAll, beforeAll } from 'vitest';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────────
 const {
-  mockDbWrite,
   mockClickhouse,
   mockCreateBuzzTransaction,
   mockGetCounterPartyBuzzTransactions,
@@ -15,13 +15,13 @@ const {
   mockCreateNotification,
   mockPayToTipaltiAccount,
   mockSignalClient,
-  mockSysRedis,
   mockFetchThroughCache,
   mockBustFetchThroughCache,
   mockClearCacheByPattern,
   mockCachedObject,
   mockCreateCachedObject,
   mockGetHighestTierSubscription,
+  capturedCacheConfigs,
 } = vi.hoisted(() => {
   const mockCachedObject = {
     fetch: vi.fn().mockResolvedValue({}),
@@ -29,21 +29,13 @@ const {
     flush: vi.fn().mockResolvedValue(undefined),
   };
 
+  // Plain array rather than reading mockCreateCachedObject.mock.calls: the caches are created
+  // lazily once per module, so whichever test triggers creation may run before a beforeEach
+  // clearAllMocks wipes the record of it.
+  const capturedCacheConfigs: any[] = [];
+
   return {
-    mockDbWrite: {
-      user: { findFirstOrThrow: vi.fn(), findFirst: vi.fn() },
-      customerSubscription: { findFirst: vi.fn() },
-      cashWithdrawal: {
-        findMany: vi.fn(),
-        findUniqueOrThrow: vi.fn(),
-        create: vi.fn(),
-        update: vi.fn(),
-      },
-      userPaymentConfiguration: { findUnique: vi.fn() },
-      $executeRaw: vi.fn(),
-      $queryRaw: vi.fn(),
-      $queryRawUnsafe: vi.fn(),
-    },
+    capturedCacheConfigs,
     mockClickhouse: {
       $query: vi.fn().mockResolvedValue([]),
     },
@@ -61,18 +53,18 @@ const {
       paymentRefCode: 'ref-1',
     }),
     mockSignalClient: { topicSend: vi.fn() },
-    mockSysRedis: { get: vi.fn().mockResolvedValue(null) },
     mockFetchThroughCache: vi.fn(async (_key: string, fn: () => Promise<any>) => fn()),
     mockBustFetchThroughCache: vi.fn().mockResolvedValue(undefined),
     mockClearCacheByPattern: vi.fn().mockResolvedValue(undefined),
     mockCachedObject,
-    mockCreateCachedObject: vi.fn(() => mockCachedObject),
+    mockCreateCachedObject: vi.fn((config: any) => {
+      capturedCacheConfigs.push(config);
+      return mockCachedObject;
+    }),
     mockGetHighestTierSubscription: vi.fn().mockResolvedValue(null),
   };
 });
 
-// ── Module mocks ───────────────────────────────────────────────────────────────
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: mockClickhouse }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mockCreateBuzzTransaction,
@@ -95,21 +87,6 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   clearCacheByPattern: mockClearCacheByPattern,
   createCachedObject: mockCreateCachedObject,
 }));
-vi.mock('~/server/redis/client', () => ({
-  REDIS_KEYS: {
-    CREATOR_PROGRAM: {
-      CAPS: 'cp:caps',
-      BANKED: 'cp:banked',
-      CASH: 'cp:cash',
-      POOL_VALUE: 'cp:pool-value',
-      POOL_SIZE: 'cp:pool-size',
-      POOL_FORECAST: 'cp:pool-forecast',
-      PREV_MONTH_STATS: 'cp:prev-month-stats',
-    },
-  },
-  REDIS_SYS_KEYS: { CREATOR_PROGRAM: { FLIP_PHASES: 'cp:flip' } },
-  sysRedis: mockSysRedis,
-}));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: mockGetHighestTierSubscription,
 }));
@@ -117,6 +94,13 @@ vi.mock('~/utils/signal-client', () => ({ signalClient: mockSignalClient }));
 vi.mock('~/server/prom/client', () => ({ userUpdateCounter: { inc: vi.fn() } }));
 vi.mock('~/utils/errorHandling', () => ({
   withRetries: vi.fn(async (fn: () => Promise<any>) => fn()),
+}));
+// NOTE: a DIFFERENT module from `~/utils/errorHandling` above — this is the server-side one that
+// owns `handleLogError` / `throwBadRequestError`. Spread the original so the throw helpers stay real.
+const { mockHandleLogError } = vi.hoisted(() => ({ mockHandleLogError: vi.fn() }));
+vi.mock('~/server/utils/errorHandling', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/utils/errorHandling')>()),
+  handleLogError: mockHandleLogError,
 }));
 
 // ── Import the service under test ──────────────────────────────────────────────
@@ -127,9 +111,16 @@ import {
   getCompensationPool,
   getCreatorRequirements,
   getPoolParticipantsV2,
+  getUserCapCache,
   joinCreatorsProgram,
   withdrawCash,
 } from '~/server/services/creator-program.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+// Globally stubbed in `src/__tests__/setup.ts` — imported here only to drive its rejection.
+import { refreshSession } from '~/server/auth/session-invalidation';
+const mockDbWrite = dbMock.dbWrite;
+const mockSysRedis = redisMock.sysRedis;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 const userId = 42;
@@ -174,6 +165,66 @@ beforeEach(() => {
   mockSysRedis.get.mockResolvedValue(null);
   // Default fetchThroughCache: just call the function
   mockFetchThroughCache.mockImplementation(async (_key: string, fn: () => Promise<any>) => fn());
+});
+
+// ─── user cap cache (peak earning) ─────────────────────────────────────────────
+describe('userCapCache peak-earning query', () => {
+  /** Run the cap cache's lookupFn and return the ClickHouse SQL it issued. */
+  async function runLookup(ids: number[], peakRows: any[] = []) {
+    getUserCapCache();
+    const config = capturedCacheConfigs.find((c) => c.key === REDIS_KEYS.CREATOR_PROGRAM.CAPS);
+    if (!config) throw new Error('cap cache was never created');
+
+    mockClickhouse.$query.mockResolvedValueOnce(peakRows);
+    const result = await config.lookupFn(ids);
+
+    const call = mockClickhouse.$query.mock.calls.at(-1);
+    if (!call) throw new Error('peak-earning query was never issued');
+    const [parts, ...values] = call as [string[], ...any[]];
+    const sql = parts.reduce((acc, part, i) => acc + part + (values[i] ?? ''), '');
+
+    return { sql, result };
+  }
+
+  beforeEach(() => {
+    mockDbWrite.$queryRawUnsafe.mockResolvedValue([{ userId, tier: 'gold' }]);
+  });
+
+  it('excludes system-minted tips, which are manual support credits and not earnings', async () => {
+    const { sql } = await runLookup([userId]);
+
+    expect(sql).not.toMatch(/'tip'/);
+  });
+
+  it('still counts generation compensation and early-access purchases', async () => {
+    const { sql } = await runLookup([userId]);
+
+    expect(sql).toMatch(/type IN \('compensation'\)/);
+    expect(sql).toMatch(/type = 'purchase' AND fromAccountId != 0/);
+  });
+
+  // This clause decides which Buzz counts toward Peak Earning Month, and so toward a creator's Cap,
+  // and a wrong one returns a plausible number rather than an error. Column and list are asserted
+  // together, anchored to the line: asserting the list alone left `toAccountType` free, and
+  // narrowing it to `fromAccountType` passed every test in this block. The anchor is what makes
+  // commenting the clause out fail, since the text would otherwise still be present in the query.
+  it('narrows the peak-earning sum to the bankable types arriving in the account', async () => {
+    const { sql } = await runLookup([userId]);
+
+    const bankable = buzzBankTypes.map((type) => `'${type}'`).join(', ');
+    // String.raw, not a plain template: `\s` in one is the letter s, which cannot consume the
+    // query's indentation, so the pattern matches nothing and this test fails outright.
+    expect(sql).toMatch(new RegExp(String.raw`\n\s*AND toAccountType IN \(${bankable}\)`));
+  });
+
+  it('derives the cap from the peak month returned by ClickHouse', async () => {
+    const month = new Date('2026-01-01T00:00:00Z');
+    const { result } = await runLookup([userId], [{ id: userId, month, earned: 800000 }]);
+
+    // gold: peak x 1.5, uncapped
+    expect(result[userId].cap).toBe(1200000);
+    expect(result[userId].peakEarning).toEqual({ id: userId, month, earned: 800000 });
+  });
 });
 
 // ─── getCreatorRequirements ────────────────────────────────────────────────────
@@ -246,6 +297,59 @@ describe('joinCreatorsProgram', () => {
     );
 
     await expect(joinCreatorsProgram(userId)).rejects.toThrow();
+  });
+
+  // ── #4304: a failed cache bust must not 500 a committed join ────────────────
+  //
+  // Same shape as the five sites in the issue's PR, and the same COLUMN as
+  // `completeOnboardingHandler`: the `onboarding` bitmask is written by the raw UPDATE above, then
+  // the session cache is busted. Reachable from tRPC `creatorProgram.joinCreatorsProgram`
+  // (protectedProcedure) and `pages/api/v1/creator-program/join.ts`, so an unreachable cache redis
+  // used to hand the user a 500 for a membership they had already joined — and the client's retry
+  // re-runs a requirements check that now passes against a row that already has the flag set.
+  const armJoin = () => {
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([
+      { score: MIN_CREATOR_SCORE + 1000, membership: 'silver' },
+    ]);
+    mockDbWrite.user.findFirstOrThrow.mockResolvedValueOnce(mockUser());
+    mockDbWrite.$executeRaw.mockResolvedValueOnce(undefined);
+  };
+
+  it('positive control — the bust is actually reached on the happy path', async () => {
+    armJoin();
+
+    await joinCreatorsProgram(userId);
+
+    expect(vi.mocked(refreshSession)).toHaveBeenCalledWith(userId, { caller: 'membership' });
+  });
+
+  it('still resolves when the session bust fails, after the join is committed', async () => {
+    armJoin();
+    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('cache redis unreachable'));
+
+    await expect(joinCreatorsProgram(userId)).resolves.not.toThrow();
+    // The bitmask really was written — that is what makes a 500 here a lie rather than a warning.
+    expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
+  });
+
+  it('logs the failed bust rather than swallowing it', async () => {
+    armJoin();
+    vi.mocked(refreshSession).mockRejectedValueOnce(new Error('cache redis unreachable'));
+
+    await joinCreatorsProgram(userId);
+
+    expect(mockHandleLogError).toHaveBeenCalledTimes(1);
+    expect((mockHandleLogError.mock.calls[0][0] as Error).message).toBe('cache redis unreachable');
+  });
+
+  it('STILL fails when the join write itself fails — the guard is narrow', async () => {
+    mockDbWrite.$queryRaw.mockResolvedValueOnce([
+      { score: MIN_CREATOR_SCORE + 1000, membership: 'silver' },
+    ]);
+    mockDbWrite.user.findFirstOrThrow.mockResolvedValueOnce(mockUser());
+    mockDbWrite.$executeRaw.mockRejectedValueOnce(new Error('db write failed'));
+
+    await expect(joinCreatorsProgram(userId)).rejects.toThrow('db write failed');
   });
 });
 
@@ -363,8 +467,10 @@ describe('bankBuzz', () => {
   it('busts banked and pool size caches after banking', async () => {
     await bankBuzz(userId, 10000, 'yellow');
 
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(`cp:banked:${userId}`);
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith('cp:pool-size');
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(
+      `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`
+    );
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
   });
 
   it('sends compensation pool update signal after banking', async () => {
@@ -477,8 +583,10 @@ describe('extractBuzz', () => {
 
     await extractBuzz(userId);
 
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(`cp:banked:${userId}`);
-    expect(mockBustFetchThroughCache).toHaveBeenCalledWith('cp:pool-size');
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(
+      `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`
+    );
+    expect(mockBustFetchThroughCache).toHaveBeenCalledWith(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
   });
 });
 
@@ -507,12 +615,12 @@ describe('getCompensationPool', () => {
 
     // fetchThroughCache should be called for pool value and forecast (not size)
     expect(mockFetchThroughCache).toHaveBeenCalledWith(
-      'cp:pool-value',
+      REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE,
       expect.any(Function),
       expect.any(Object)
     );
     expect(mockFetchThroughCache).toHaveBeenCalledWith(
-      'cp:pool-forecast',
+      REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST,
       expect.any(Function),
       expect.any(Object)
     );

@@ -1,3 +1,22 @@
+/* eslint-disable local-rules/no-module-scope-cache --
+ * 22 module-scope caches, every one of them keyed off REDIS_KEYS during module
+ * evaluation. This is a tracked BACKLOG, not a safe shape: it is structurally the
+ * same tripwire as the eager `capTierCache` that broke three suites at collection
+ * and turned `Unit tests` red on main (#3505 / #3506), and this module is imported
+ * far more widely than paid-access.service.ts was. Any suite that wholesale-mocks
+ * `~/server/redis/client` without `REDIS_KEYS.CACHES` and reaches this file
+ * unmocked dies during COLLECTION — the three suites in #3505 stay green only
+ * because they additionally mock this module.
+ *
+ * Disabled file-wide rather than converted here because that is 22 call-site
+ * migrations across the busiest cache module in the repo, and it wants to be its
+ * own reviewable change. The file-wide form also silences a NEW cache added here,
+ * which is accepted: a 23rd cache in this file adds no NEW tripwire, because
+ * anything reaching this module already has to mock it. A new cache in a SERVICE
+ * does add one, and that is what the rule is scoped to catch.
+ *
+ * Delete this disable once the caches below are lazy — the rule then guards them.
+ */
 import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
@@ -28,6 +47,8 @@ import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import { L1_CACHE_BYTE_BUDGETS } from '~/server/redis/l1-cache-budget';
+import type { UserMultiplierRow, UserMultipliers } from '~/server/redis/user-multipliers';
+import { foldUserMultipliers } from '~/server/redis/user-multipliers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { stringifyAIR } from '~/shared/utils/air';
@@ -36,8 +57,14 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import dayjs from '~/shared/utils/dayjs';
-import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
-import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
+import type { Availability, CosmeticSource } from '~/shared/utils/prisma/enums';
+import {
+  CosmeticEntity,
+  CosmeticType,
+  ModelStatus,
+  TagSource,
+  TagType,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { styleTags, subjectTags } from '~/libs/tags';
 
@@ -147,6 +174,55 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
   },
   ttl: CacheTTL.day,
 });
+
+type UserOwnedStickerLookup = {
+  userId: number;
+  cosmeticIds: number[];
+};
+/**
+ * Sticker are owned, never equipped, so `userCosmeticCache` — which only holds
+ * equipped cosmetics — can't answer "may this user send this sticker".
+ */
+export const lookupOwnedSticker = async (ids: number[], fromWrite?: boolean) => {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const owned = await db.userCosmetic.findMany({
+    where: { userId: { in: goodIds }, cosmetic: { type: CosmeticType.Sticker } },
+    select: { userId: true, cosmeticId: true },
+  });
+  return owned.reduce((acc, { userId, cosmeticId }) => {
+    acc[userId] ??= { userId, cosmeticIds: [] };
+    if (!acc[userId].cosmeticIds.includes(cosmeticId)) acc[userId].cosmeticIds.push(cosmeticId);
+    return acc;
+  }, {} as Record<number, UserOwnedStickerLookup>);
+};
+
+export const userOwnedStickerCache = createCachedObject<UserOwnedStickerLookup>({
+  key: REDIS_KEYS.CACHES.USER_OWNED_STICKER,
+  idKey: 'userId',
+  staleWhileRevalidate: false,
+  lookupFn: lookupOwnedSticker,
+  // Deliberately minutes, not the day the caches around this one use: a stale
+  // entry means someone can't send an sticker they paid for, and the bulk-SQL
+  // cosmetic crons grant without surfacing whose entry to drop. Cheap to rebuild
+  // (one small row) and read once per message send.
+  ttl: 60 * 5,
+});
+
+/**
+ * Call wherever a UserCosmetic write already has the affected user ids in hand,
+ * including paths that can't grant an sticker today — a redundant delete costs
+ * nothing next to the Postgres write it follows. Paths that would need a query
+ * change to learn the ids are left to the TTL above instead.
+ */
+export async function refreshOwnedStickerCache(userIds: (number | null | undefined)[]) {
+  const ids = [...new Set(userIds.filter(isDefined))];
+  if (!ids.length) return;
+  // `refresh` is already best-effort internally; this catch is belt-and-braces
+  // because every caller runs it after a committed grant.
+  await userOwnedStickerCache.refresh(ids).catch(() => undefined);
+}
 
 type CosmeticLookup = {
   id: number;
@@ -258,12 +334,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
   ])
 ) as Record<CosmeticEntity, CachedObject<WithClaimKey<ContentDecorationCosmetic>>>;
 
-type CachedUserMultiplier = {
-  userId: number;
-  rewardsMultiplier: number;
-  purchasesMultiplier: number;
-  rewardsIneligible: boolean;
-};
+type CachedUserMultiplier = UserMultipliers;
 export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
   key: REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER,
   idKey: 'userId',
@@ -273,63 +344,21 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
     if (!goodIds.length) return {};
 
     const db = fromWrite ? dbWrite : dbRead;
-    // Get the highest tier subscription for each user
-    // Tier priority: founder > gold > silver > bronze > free
-    const multipliers = await db.$queryRaw<CachedUserMultiplier[]>`
-      WITH ranked_subscriptions AS (
-        SELECT
-          cs."userId",
-          cs.status,
-          p.metadata,
-          CASE (p.metadata->>'tier')::text
-            WHEN 'gold' THEN 4
-            WHEN 'silver' THEN 3
-            WHEN 'bronze' THEN 2
-            WHEN 'founder' THEN 2
-            ELSE 1
-          END as tier_rank,
-          ROW_NUMBER() OVER (
-            PARTITION BY cs."userId"
-            ORDER BY
-              -- Active/trialing subs take priority so a stale expired_claimable
-              -- record can't out-rank a current sub at the same tier.
-              CASE WHEN cs.status IN ('active', 'trialing') THEN 0 ELSE 1 END,
-              CASE (p.metadata->>'tier')::text
-                WHEN 'gold' THEN 4
-                WHEN 'silver' THEN 3
-                WHEN 'bronze' THEN 2
-                WHEN 'founder' THEN 2
-                ELSE 1
-              END DESC,
-              cs."currentPeriodEnd" DESC NULLS LAST
-          ) as rn
-        FROM "CustomerSubscription" cs
-        JOIN "Product" p ON p.id = cs."productId"
-        WHERE cs."userId" IN (${Prisma.join(goodIds)})
-          AND cs.status NOT IN ('canceled', 'expired_claimable', 'paused')
-      )
+    const rows = await db.$queryRaw<UserMultiplierRow[]>`
       SELECT
         u.id as "userId",
-        CASE
-          WHEN u."rewardsEligibility" = 'Ineligible'::"RewardsEligibility" THEN 0
-          WHEN rs.status IS NULL OR rs.status NOT IN ('active', 'trialing') THEN 1
-          ELSE COALESCE((rs.metadata->>'rewardsMultiplier')::float, 1)
-        END as "rewardsMultiplier",
-        CASE
-          WHEN rs.status IS NULL OR rs.status NOT IN ('active', 'trialing') THEN 1
-          ELSE COALESCE((rs.metadata->>'purchasesMultiplier')::float, 1)
-        END as "purchasesMultiplier",
-        (u."rewardsEligibility" = 'Ineligible'::"RewardsEligibility") as "rewardsIneligible"
+        (u."rewardsEligibility" = 'Ineligible'::"RewardsEligibility") as "rewardsIneligible",
+        (p.metadata->>'rewardsMultiplier')::float as "rewardsMultiplier",
+        (p.metadata->>'purchasesMultiplier')::float as "purchasesMultiplier"
       FROM "User" u
-      LEFT JOIN ranked_subscriptions rs ON u.id = rs."userId" AND rs.rn = 1
+      LEFT JOIN "CustomerSubscription" cs
+        ON cs."userId" = u.id AND cs.status IN ('active', 'trialing')
+        AND cs."currentPeriodEnd" >= now()
+      LEFT JOIN "Product" p ON p.id = cs."productId"
       WHERE u.id IN (${Prisma.join(goodIds)});
     `;
 
-    const records: Record<number, CachedUserMultiplier> = Object.fromEntries(
-      multipliers.map((m) => [m.userId, m])
-    );
-
-    return records;
+    return foldUserMultipliers(rows);
   },
 });
 
@@ -367,7 +396,43 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
   localMaxBytes: L1_CACHE_BYTE_BUDGETS.userBasic, // ~4MB (tiny records)
 });
 
-type ModelVersionAccessCache = EntityAccessDataType & { publishedAt: Date; status: ModelStatus };
+export type ModelVersionAccessCache = EntityAccessDataType & {
+  publishedAt: Date;
+  status: ModelStatus;
+};
+
+/**
+ * The authoritative availability read behind modelVersionAccessCache. Exported because
+ * `dontCacheFn` below means the cache is *allowed* to hold nothing for an id, and callers that
+ * gate access on the result (hasEntityAccess) must be able to resolve those ids for real rather
+ * than assume the worst.
+ */
+export async function lookupModelVersionAccess(
+  ids: number[],
+  fromWrite?: boolean
+): Promise<Record<string, ModelVersionAccessCache>> {
+  const goodIds = ids.filter(isDefined);
+  if (!goodIds.length) return {};
+  const db = fromWrite ? dbWrite : dbRead;
+  const entityAccessData = await db.$queryRaw<ModelVersionAccessCache[]>(Prisma.sql`
+    SELECT
+      mv.id AS "entityId",
+      mmv."userId" AS "userId",
+      -- Model availability prevails if it's private
+      CASE
+        WHEN mmv.availability = 'Private'
+          THEN mmv."availability"
+        ELSE mv."availability"
+      END AS "availability",
+      mv."publishedAt" AS "publishedAt",
+      mv."status" as "status"
+    FROM "ModelVersion" mv
+         JOIN "Model" mmv ON mv."modelId" = mmv.id
+    WHERE
+      mv.id IN (${Prisma.join(goodIds, ',')})
+  `);
+  return Object.fromEntries(entityAccessData.map((x) => [x.entityId, x]));
+}
 
 export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCache>({
   key: REDIS_KEYS.CACHES.ENTITY_AVAILABILITY.MODEL_VERSIONS,
@@ -388,29 +453,7 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
       data.status !== ModelStatus.Published
     );
   },
-  lookupFn: async (ids, fromWrite) => {
-    const goodIds = ids.filter(isDefined);
-    if (!goodIds.length) return {};
-    const db = fromWrite ? dbWrite : dbRead;
-    const entityAccessData = await db.$queryRaw<ModelVersionAccessCache[]>(Prisma.sql`
-      SELECT
-        mv.id AS "entityId",
-        mmv."userId" AS "userId",
-        -- Model availability prevails if it's private
-        CASE
-          WHEN mmv.availability = 'Private'
-            THEN mmv."availability"
-          ELSE mv."availability"
-        END AS "availability",
-        mv."publishedAt" AS "publishedAt",
-        mv."status" as "status"
-      FROM "ModelVersion" mv
-           JOIN "Model" mmv ON mv."modelId" = mmv.id
-      WHERE
-        mv.id IN (${Prisma.join(goodIds, ',')})
-    `);
-    return Object.fromEntries(entityAccessData.map((x) => [x.entityId, x]));
-  },
+  lookupFn: (ids, fromWrite) => lookupModelVersionAccess(ids as number[], fromWrite),
 });
 
 type TagLookup = {
@@ -1522,6 +1565,53 @@ export const userFollowsCache = createCachedObject<UserFollowsCacheItem>({
 export async function getUserFollows(userId: number) {
   const userFollows = await userFollowsCache.fetch(userId);
   return userFollows[userId]?.follows ?? [];
+}
+
+/**
+ * Apply one follow/unfollow to the cached set instead of re-deriving it.
+ *
+ * Every follow / hide / block toggle used to end in `userFollowsCache.refresh`,
+ * which refetches the user's ENTIRE follow set from the primary. Measured on prod
+ * (868kurkd0): 19,224 buffers and ~100 ms for a user with 130k follows, per click,
+ * three orders of magnitude above the toggle's own statements — with no
+ * single-flight in front of it.
+ *
+ * The refetch stays as the fallback rather than being replaced. It reads the
+ * PRIMARY deliberately: the replica can be behind the write that just happened, and
+ * the point of touching the cache here is that the user sees their own action.
+ *
+ * Call this ONLY where the resulting follow state is known for certain. Where it is
+ * not — an un-hide or an unblock that matched no row, which leaves a pair that may
+ * still hold a Follow — call `userFollowsCache.refresh` and take the cost.
+ */
+export async function setUserFollowCached({
+  userId,
+  targetUserId,
+  following,
+}: {
+  userId: number;
+  targetUserId: number;
+  following: boolean;
+}) {
+  const updated = await userFollowsCache.update(userId, (current) => {
+    // `indexOf` rather than a Set round trip. This runs on the single Next.js thread
+    // for the whole toggle, and the tail user's follow set is 130k elements: measured
+    // 13.9 ms to rebuild through a Set against 1.3 ms here, on a payload that costs
+    // 3.8 ms to decode and re-encode. The PK (userId, targetUserId) already makes the
+    // array duplicate-free, so the Set was buying nothing.
+    const at = current.follows.indexOf(targetUserId);
+    if (following) {
+      if (at !== -1) return current;
+      return { ...current, follows: [...current.follows, targetUserId] };
+    }
+    if (at === -1) return current;
+    return {
+      ...current,
+      follows: [...current.follows.slice(0, at), ...current.follows.slice(at + 1)],
+    };
+  });
+
+  if (!updated) await userFollowsCache.refresh(userId);
 }
 
 type ImageTagsCacheItem = {

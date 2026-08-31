@@ -1,35 +1,64 @@
 import { getByIdSchema } from '~/server/schema/base.schema';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 import {
+  checkStickerSlugSchema,
+  getCommunityCosmeticsSchema,
   getCreatorShopSchema,
   getCreatorShopSettingsSchema,
   getEarlyAccessPricesSchema,
   getManageItemsSchema,
   getPublicShopItemsSchema,
   getReviewQueueSchema,
+  getSimilarCosmeticsSchema,
+  getShopItemResellersSchema,
+  reorderResoldItemsSchema,
   resoldItemSchema,
   reviewCreatorShopItemSchema,
+  setCreatorShopItemListedSchema,
   submitCreatorShopItemSchema,
+  submitCreatorShopPackSchema,
+  takedownCosmeticShopItemSchema,
+  updateCreatorShopPackSchema,
   updateCreatorShopItemSchema,
   updateCreatorShopSettingsSchema,
 } from '~/server/schema/creator-shop.schema';
 import {
   archiveCreatorShopItem,
+  setCreatorShopItemListed,
   deleteCreatorShopItem,
+  getCommunityCosmetics,
   getCreatorShop,
   getCreatorShopManageItems,
+  getCreatorShopResaleStats,
   getEarlyAccessModelPrices,
   addResoldItem,
   getPublicShopItemsForResale,
   getResoldItemsForManage,
+  getShopItemResellers,
   removeResoldItem,
+  reorderResoldItems,
   getCreatorShopReviewQueue,
+  getCreatorShopReviewQueueCreators,
   getCreatorShopSettings,
   reviewCreatorShopItem,
   submitCreatorShopItem,
+  takedownCosmeticShopItem,
   unarchiveCreatorShopItem,
   updateCreatorShopItem,
   updateCreatorShopSettings,
 } from '~/server/services/creator-shop.service';
+import {
+  getBundlableCosmetics,
+  getPackDetail,
+  submitCreatorShopPack,
+  updateCreatorShopPack,
+} from '~/server/services/creator-shop-pack.service';
+import { getCreatorShopFees } from '~/server/services/creator-shop-fees.service';
+import { getSimilarCosmetics } from '~/server/services/cosmetic-phash.service';
+import { isStickerSlugAvailable } from '~/server/services/cosmetic.service';
+import * as z from 'zod';
 import {
   isFlagProtected,
   moderatorProcedure,
@@ -41,16 +70,73 @@ import {
 // Every Creator Shop endpoint is gated on the `creatorShop` feature flag
 // server-side (the flag also hides the UI). The flag falls back to `['mod']` but
 // is Flipt-controllable (`creator-shop`), so testers can be unlocked without a
-// deploy. Creator mutations additionally enforce Creator-Program eligibility
-// (submitCreatorShopItem → getCreatorRequirements) — the flag alone is not
-// sufficient at GA.
+// deploy. Shops are open to all users (ClickUp 868kj4q5a) — the flag is the only
+// gate.
 const creatorShopProcedure = protectedProcedure.use(isFlagProtected('creatorShop'));
+
+// Creating stickers is flag-gated; rendering and owning them are not, so this
+// guards the write paths only.
+// Packs are flag-gated at the mutation, not just hidden from lists: an id in
+// hand would otherwise be enough to build or edit one.
+const assertPacksEnabled = (features: FeatureAccess) => {
+  if (!features.cosmeticPacks) throw throwAuthorizationError('Packs are not available yet');
+};
+
+const assertStickersEnabled = (features: FeatureAccess, type?: CosmeticType) => {
+  if (type === CosmeticType.Sticker && !features.stickers)
+    throw throwAuthorizationError('Stickers are not available yet');
+};
 
 export const creatorShopRouter = router({
   // #region [Creator: submit & manage]
-  submitItem: creatorShopProcedure
-    .input(submitCreatorShopItemSchema)
-    .mutation(({ input, ctx }) => submitCreatorShopItem({ ...input, userId: ctx.user.id })),
+  submitItem: creatorShopProcedure.input(submitCreatorShopItemSchema).mutation(({ input, ctx }) => {
+    assertStickersEnabled(ctx.features, input.cosmeticType);
+    return submitCreatorShopItem({ ...input, userId: ctx.user.id });
+  }),
+  // #region [Packs]
+  submitPack: creatorShopProcedure.input(submitCreatorShopPackSchema).mutation(({ input, ctx }) => {
+    assertPacksEnabled(ctx.features);
+    return submitCreatorShopPack({
+      ...input,
+      userId: ctx.user.id,
+      stickersEnabled: ctx.features.stickers,
+    });
+  }),
+  updatePack: creatorShopProcedure.input(updateCreatorShopPackSchema).mutation(({ input, ctx }) => {
+    assertPacksEnabled(ctx.features);
+    return updateCreatorShopPack({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+      stickersEnabled: ctx.features.stickers,
+    });
+  }),
+  getPack: publicProcedure.input(getByIdSchema).query(({ input, ctx }) =>
+    getPackDetail({
+      shopItemId: input.id,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+    })
+  ),
+  getBundlable: creatorShopProcedure
+    .input(
+      z.object({
+        query: z.string().optional(),
+        limit: z.number().min(1).max(100).optional(),
+        types: z.array(z.enum(CosmeticType)).optional(),
+      })
+    )
+    .query(({ input, ctx }) =>
+      getBundlableCosmetics({
+        ...input,
+        // Stickers stay out of the picker while the flag is off; the submit
+        // mutation refuses them regardless.
+        types: ctx.features.stickers
+          ? input.types
+          : (input.types ?? Object.values(CosmeticType)).filter((t) => t !== CosmeticType.Sticker),
+      })
+    ),
+  // #endregion
   updateItem: creatorShopProcedure
     .input(updateCreatorShopItemSchema)
     .mutation(({ input, ctx }) =>
@@ -63,6 +149,16 @@ export const creatorShopRouter = router({
       isModerator: ctx.user.isModerator,
     })
   ),
+  setItemListed: creatorShopProcedure
+    .input(setCreatorShopItemListedSchema)
+    .mutation(({ input, ctx }) =>
+      setCreatorShopItemListed({
+        id: input.id,
+        listed: input.listed,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   unarchiveItem: creatorShopProcedure.input(getByIdSchema).mutation(({ input, ctx }) =>
     unarchiveCreatorShopItem({
       id: input.id,
@@ -83,10 +179,22 @@ export const creatorShopRouter = router({
       userId: ctx.user.isModerator && input.userId ? input.userId : ctx.user.id,
     })
   ),
+  getResaleStats: creatorShopProcedure.input(getManageItemsSchema).query(({ input, ctx }) =>
+    getCreatorShopResaleStats({
+      userId: ctx.user.isModerator && input.userId ? input.userId : ctx.user.id,
+    })
+  ),
   // Cross-creator selling: browse public cosmetics + list one in your own shop.
-  getPublicShopItems: creatorShopProcedure
-    .input(getPublicShopItemsSchema)
-    .query(({ input, ctx }) => getPublicShopItemsForResale({ ...input, userId: ctx.user.id })),
+  getPublicShopItems: creatorShopProcedure.input(getPublicShopItemsSchema).query(({ input, ctx }) =>
+    getPublicShopItemsForResale({
+      ...input,
+      userId: ctx.user.id,
+      stickersEnabled: ctx.features.stickers,
+    })
+  ),
+  checkStickerSlug: creatorShopProcedure
+    .input(checkStickerSlugSchema)
+    .query(({ input }) => isStickerSlugAvailable(input)),
   getResoldItems: creatorShopProcedure.query(({ ctx }) =>
     getResoldItemsForManage({ userId: ctx.user.id })
   ),
@@ -96,6 +204,17 @@ export const creatorShopRouter = router({
   removeResoldItem: creatorShopProcedure
     .input(resoldItemSchema)
     .mutation(({ input, ctx }) => removeResoldItem({ ...input, userId: ctx.user.id })),
+  reorderResoldItems: creatorShopProcedure
+    .input(reorderResoldItemsSchema)
+    .mutation(({ input, ctx }) => reorderResoldItems({ ...input, userId: ctx.user.id })),
+  // Who resells one of YOUR items — the service refuses anyone else's.
+  getItemResellers: creatorShopProcedure.input(getShopItemResellersSchema).query(({ input, ctx }) =>
+    getShopItemResellers({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+    })
+  ),
   // #endregion
 
   // #region [Public: storefront]
@@ -106,14 +225,31 @@ export const creatorShopRouter = router({
       getCreatorShop({
         ...input,
         viewerId: ctx.user?.id,
+        stickersEnabled: ctx.features.stickers,
+        packsEnabled: ctx.features.cosmeticPacks,
         isModerator: ctx.user?.isModerator,
         preview: input.preview && !!ctx.user?.isModerator,
       })
     ),
+  // Deliberately uncached: the form quotes these numbers and the submission is
+  // rejected if they no longer match what the server charges.
+  getFees: publicProcedure.query(() => getCreatorShopFees()),
   getEarlyAccessPrices: publicProcedure
     .use(isFlagProtected('creatorShop'))
     .input(getEarlyAccessPricesSchema)
     .query(({ input }) => getEarlyAccessModelPrices(input)),
+  // Site-wide community cosmetics hub feed on /shop.
+  getCommunityCosmetics: publicProcedure
+    .use(isFlagProtected('creatorShop'))
+    .input(getCommunityCosmeticsSchema)
+    .query(({ input, ctx }) =>
+      getCommunityCosmetics({
+        ...input,
+        viewerId: ctx.user?.id,
+        stickersEnabled: ctx.features.stickers,
+        packsEnabled: ctx.features.cosmeticPacks,
+      })
+    ),
   // #endregion
 
   // #region [Shop settings]
@@ -136,9 +272,24 @@ export const creatorShopRouter = router({
     .use(isFlagProtected('creatorShop'))
     .input(getReviewQueueSchema)
     .query(({ input }) => getCreatorShopReviewQueue(input)),
+  getReviewQueueCreators: moderatorProcedure
+    .use(isFlagProtected('creatorShop'))
+    .query(() => getCreatorShopReviewQueueCreators()),
+  // Flag-gated so the flag turns the LOOKUP off, not just the panel: a match list
+  // built on a hash too narrow to separate imitations from unrelated artwork is
+  // worse than no list, because a mod reads a ranked list as a ranking.
+  getSimilarCosmetics: moderatorProcedure
+    .use(isFlagProtected('cosmeticSimilarity'))
+    .input(getSimilarCosmeticsSchema)
+    .query(({ input }) => getSimilarCosmetics(input)),
   reviewItem: moderatorProcedure
     .use(isFlagProtected('creatorShop'))
     .input(reviewCreatorShopItemSchema)
     .mutation(({ input, ctx }) => reviewCreatorShopItem({ ...input, reviewerId: ctx.user.id })),
+  // Deliberately not flag-gated: takedowns cover official shop items too, and
+  // pulling infringing content can't wait on the Creator Shop rollout.
+  takedownItem: moderatorProcedure
+    .input(takedownCosmeticShopItemSchema)
+    .mutation(({ input, ctx }) => takedownCosmeticShopItem({ ...input, moderatorId: ctx.user.id })),
   // #endregion
 });

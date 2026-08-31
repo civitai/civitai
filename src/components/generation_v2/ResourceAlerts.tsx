@@ -4,17 +4,18 @@
  * Displays alerts related to selected resources including:
  * - Unstable resources (high failure rate)
  * - Content restricted resources (minor/SFW flagged)
- * - Experimental ecosystem alerts (based on ecosystem config)
  * - Ready state alerts (resources need to be downloaded)
+ *
+ * Experimental state is not here — it lives in `Experimental.tsx`, marked by a
+ * flask at each level a rule can target and warned about above the submit row.
  */
 
 import { Alert, List, Text } from '@mantine/core';
 
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { ecosystemByKey, isEcosystemExperimental } from '~/shared/constants/basemodel.constants';
+import { useAppContext } from '~/providers/AppProvider';
 import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
 import { useWhatIfContext } from './WhatIfProvider';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
 // =============================================================================
 // Types
@@ -78,6 +79,7 @@ function getSelectedResources(model: unknown, resources: unknown, vae: unknown):
  */
 export function ResourceAlerts({ model, resources, vae }: ResourceAlertsProps) {
   const { unstableResources: allUnstableResources } = useGenerationConfig();
+  const { domain } = useAppContext();
 
   // Extract resource-related values (may be undefined depending on active discriminator branch)
   const selectedResources = getSelectedResources(model, resources, vae);
@@ -87,13 +89,13 @@ export function ResourceAlerts({ model, resources, vae }: ResourceAlertsProps) {
     allUnstableResources.some((r) => r === x.id)
   );
 
-  // Filter to get content restricted resources
-  const minorFlaggedResources = selectedResources.filter((x) => x.model?.minor);
-  const sfwFlaggedResources = selectedResources.filter((x) => x.model?.sfwOnly);
-  const hasContentRestriction = minorFlaggedResources.length > 0 || sfwFlaggedResources.length > 0;
+  // On green nothing mature can be generated regardless of resource, so the alert says nothing.
+  const restrictedResources = domain.green
+    ? []
+    : selectedResources.filter((x) => x.model?.minor || x.model?.sfwOnly);
 
   // Early return if no alerts
-  if (unstableResources.length === 0 && !hasContentRestriction) {
+  if (unstableResources.length === 0 && restrictedResources.length === 0) {
     return null;
   }
 
@@ -118,72 +120,28 @@ export function ResourceAlerts({ model, resources, vae }: ResourceAlertsProps) {
       )}
 
       {/* Content Restricted Alert */}
-      {hasContentRestriction && (
+      {restrictedResources.length > 0 && (
         <Alert color="yellow" title="Content Restricted" radius="md">
           <Text size="xs">
-            {minorFlaggedResources.length > 0
-              ? `A resource you selected does not allow the generation of non-PG level content. If you attempt to generate non-PG`
-              : `A resource you selected does not allow the generation of content rated above PG level. If you attempt to generate sexualized`}{' '}
-            content with this resource the image will not be returned, but you{' '}
+            {restrictedResources.length > 1
+              ? `The following resources cannot be used to generate mature content. If you attempt to generate mature content with them,`
+              : `The following resource cannot be used to generate mature content. If you attempt to generate mature content with it,`}{' '}
+            the image will not be returned, but you{' '}
             <Text span italic inherit>
               will
             </Text>
             {` be charged Buzz.`}
           </Text>
-          {minorFlaggedResources.length > 0 && (
-            <List size="xs" mt="xs">
-              {minorFlaggedResources.map((resource) => (
-                <List.Item key={resource.id}>
-                  {resource.model.name} - {resource.name}
-                </List.Item>
-              ))}
-            </List>
-          )}
+          <List size="xs" mt="xs">
+            {restrictedResources.map((resource) => (
+              <List.Item key={resource.id}>
+                {resource.model.name} - {resource.name}
+              </List.Item>
+            ))}
+          </List>
         </Alert>
       )}
     </div>
-  );
-}
-
-// =============================================================================
-// Experimental Model Alert
-// =============================================================================
-
-interface ExperimentalModelAlertProps {
-  /** The ecosystem key (e.g., 'Qwen', 'SD3') */
-  ecosystem?: string;
-}
-
-/**
- * Displays an alert when the selected ecosystem has experimental base models.
- * Should be used inside a Controller for 'baseModel'.
- *
- * Sources unioned: the static `isEcosystemExperimental` check (derived from
- * base-model `experimental` flags) plus `experimentalEcosystems` from the
- * Redis-backed `generation:ecosystem-config` — operators flip the latter to
- * mark an ecosystem experimental without a code change.
- */
-export function ExperimentalModelAlert({ ecosystem }: ExperimentalModelAlertProps) {
-  const { experimentalEcosystems = [] } = useGenerationConfig();
-  const isExperimental = ecosystem
-    ? isEcosystemExperimental(ecosystem) || experimentalEcosystems.includes(ecosystem)
-    : false;
-
-  if (!isExperimental || !ecosystem) {
-    return null;
-  }
-
-  // Get ecosystem display name for the message
-  const ecoRecord = ecosystemByKey.get(ecosystem);
-  const displayName = ecoRecord?.displayName ?? ecosystem;
-
-  return (
-    <DismissibleAlert color="yellow" title="Experimental Build" radius="md" id={ecosystem}>
-      <Text size="xs">
-        {displayName} support is currently in an experimental phase. Some features may not work as
-        expected. Please report any issues you encounter.
-      </Text>
-    </DismissibleAlert>
   );
 }
 

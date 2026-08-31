@@ -31,7 +31,6 @@ import {
   bulkSaveItems,
   checkUserOwnsCollectionAndItem,
   deleteCollectionById,
-  enableCollectionYoutubeSupport,
   getAllCollections,
   getCollectionById,
   getCollectionCoverImages,
@@ -39,8 +38,10 @@ import {
   getCollectionItemCount,
   getCollectionItemsByCollectionId,
   getContributorCount,
+  getPendingReviewCount,
   getUserCollectionItemsByItem,
   getUserCollectionPermissionsById,
+  getUserCollectionPermissionsByIds,
   getUserCollectionsWithPermissions,
   removeCollectionItem,
   removeContributorFromCollection,
@@ -51,6 +52,9 @@ import {
   updateCollectionItemsStatus,
   upsertCollection,
 } from '~/server/services/collection.service';
+import { enableCollectionYoutubeSupport } from '~/server/services/collection-youtube.service';
+import type { Collaborator } from '~/server/services/collection-collaborator.service';
+import { getCollectionRoster } from '~/server/services/collection-collaborator.service';
 import { setModelShowcaseCollection } from '~/server/services/model.service';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import {
@@ -199,12 +203,31 @@ export const getCollectionByIdHandler = async ({
       return {
         collection: null,
         permissions,
+        collaborators: [] as Collaborator[],
+        pendingReviewCount: 0,
       };
     }
 
     const collection = await getCollectionById({ input });
 
-    return { collection, permissions };
+    // The catch covers the roster read alone — the reads above must still surface — because
+    // getById backs the whole detail page and every other useCollection consumer.
+    const collaborators = permissions.read
+      ? await getCollectionRoster(collection).catch((error) => {
+          logToAxiom({
+            type: 'error',
+            name: 'collection-roster-failed',
+            message: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+            collectionId: input.id,
+          }).catch(() => undefined);
+          return [] as Collaborator[];
+        })
+      : [];
+
+    const pendingReviewCount = permissions.manage ? await getPendingReviewCount(collection.id) : 0;
+
+    return { collection, permissions, collaborators, pendingReviewCount };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -346,7 +369,12 @@ export const upsertCollectionHandler = async ({
 
   try {
     const collection = await upsertCollection({
-      input: { ...input, userId: user.id, isModerator: user.isModerator },
+      input: {
+        ...input,
+        userId: user.id,
+        isModerator: user.isModerator,
+        isMember: !!user.tier && user.tier !== 'free',
+      },
     });
 
     const [itemId] = [input.articleId, input.modelId, input.postId, input.imageId].filter(
@@ -433,8 +461,8 @@ export const followHandler = ({
 
   try {
     return addContributorToCollection({
-      targetUserId: input.userId || user?.id,
-      userId: user?.id,
+      targetUserId: user.id,
+      userId: user.id,
       collectionId,
     });
   } catch (error) {
@@ -454,8 +482,8 @@ export const unfollowHandler = ({
 
   try {
     return removeContributorFromCollection({
-      targetUserId: input.userId || user?.id,
-      userId: user?.id,
+      targetUserId: user.id,
+      userId: user.id,
       collectionId,
     });
   } catch (error) {
@@ -595,26 +623,28 @@ export const getPermissionDetailsHandler = async ({
     },
   });
 
-  // Get permissions for each of these
-  const permissions = await Promise.all(
-    collections.map((c) =>
-      getUserCollectionPermissionsById({
-        id: c.id,
-        userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      })
-    )
-  );
+  // Get permissions for each of these in a single query rather than one per collection.
+  const permissions = await getUserCollectionPermissionsByIds({
+    ids: collections.map((c) => c.id),
+    userId: ctx.user.id,
+    isModerator: ctx.user.isModerator,
+  });
+  const permissionsByCollectionId = new Map(permissions.map((p) => [p.collectionId, p]));
 
-  return collections.map((c) => ({
-    ...c,
-    tags: c.tags.map((t) => ({
-      ...t.tag,
-      filterableOnly: t.filterableOnly,
-    })),
-    metadata: (c.metadata ?? {}) as CollectionMetadataSchema,
-    permissions: permissions.find((p) => p.collectionId === c.id),
-  }));
+  return collections.flatMap((c) => {
+    const permission = permissionsByCollectionId.get(c.id);
+    if (!permission?.read) return [];
+
+    return {
+      ...c,
+      tags: c.tags.map((t) => ({
+        ...t.tag,
+        filterableOnly: t.filterableOnly,
+      })),
+      metadata: (c.metadata ?? {}) as CollectionMetadataSchema,
+      permissions: permission,
+    };
+  });
 };
 
 export const removeCollectionItemHandler = async ({

@@ -16,7 +16,11 @@ import { useMemo, useState } from 'react';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { getPrimaryFile, groupFilesByVariant } from '~/server/utils/model-helpers';
+import {
+  getPrimaryFile,
+  groupFilesByVariant,
+  resolveActiveFile,
+} from '~/server/utils/model-helpers';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { getFileDescription, getFileLabel } from '~/utils/file-display-helpers';
@@ -31,6 +35,8 @@ interface DownloadVariantDropdownProps {
   userPreferences?: UserFilePreferences;
   canDownload: boolean;
   downloadPrice?: number;
+  /** What buyers pay; shown to the owner, who already has access. */
+  listedPrice?: number;
   isLoadingAccess?: boolean;
   archived?: boolean;
   onPurchase?: () => void;
@@ -50,6 +56,7 @@ export function DownloadVariantDropdown({
   userPreferences,
   canDownload,
   downloadPrice,
+  listedPrice,
   isLoadingAccess,
   archived,
   onPurchase,
@@ -88,8 +95,7 @@ export function DownloadVariantDropdown({
     if (isControlled) onSelectFileId!(fileId);
     else setInternalFileId(fileId);
   };
-  const activeFile =
-    modelFiles.find((f) => f.id === selectedFileId) ?? bestMatchFile ?? modelFiles[0];
+  const activeFile = resolveActiveFile(modelFiles, selectedFileId, { metadata: userPreferences });
 
   // Calculate download URL
   const downloadUrl = activeFile
@@ -151,6 +157,7 @@ export function DownloadVariantDropdown({
             onClick={handleDownloadClick}
             canDownload={canDownload}
             downloadPrice={downloadPrice}
+            listedPrice={listedPrice}
             disabled={archived || isLoadingAccess}
             fullWidth
             variant="light"
@@ -243,8 +250,8 @@ export function DownloadVariantDropdown({
               className="hover:bg-gray-1 dark:hover:bg-dark-6/30"
             >
               <Group justify="space-between" wrap="nowrap">
-                <Group gap={8}>
-                  <Box w={16}>
+                <Group gap={8} wrap="nowrap">
+                  <Box w={16} miw={16} style={{ flexShrink: 0 }}>
                     {isSelected && <IconCheck size={16} color={theme.colors.green[5]} />}
                   </Box>
                   <Box>
@@ -257,7 +264,13 @@ export function DownloadVariantDropdown({
                       )}
                     </Group>
                     {label && (
-                      <Text size="xs" c="dimmed" truncate style={{ maxWidth: 200 }} title={file.name}>
+                      <Text
+                        size="xs"
+                        c="dimmed"
+                        truncate
+                        style={{ maxWidth: 200 }}
+                        title={file.name}
+                      >
                         {file.name}
                       </Text>
                     )}
@@ -380,6 +393,7 @@ export function DownloadVariantDropdown({
           onClick={handleDownloadClick}
           canDownload={canDownload}
           downloadPrice={downloadPrice}
+          listedPrice={listedPrice}
           disabled={!activeFile || archived || isLoadingAccess}
           fullWidth
           style={{

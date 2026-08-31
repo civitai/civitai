@@ -22,9 +22,15 @@ type ProcessingFile = PreprocessFileReturnType & {
   file: File;
   blockedFor?: string;
   meta?: Record<string, unknown>;
+  generationWorkflowId?: string;
 };
 
-type MediaUploadDataProps = PreprocessFileReturnType & { url: string; index: number };
+type MediaUploadDataProps = PreprocessFileReturnType & {
+  url: string;
+  index: number;
+  /** Set when the file came straight from the generator, so the server can look up provenance. */
+  generationWorkflowId?: string;
+};
 
 export type MediaUploadOnCompleteProps = {
   status: 'added' | 'blocked' | 'error';
@@ -158,7 +164,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
 
   // #region [file processor]
   async function processFiles(
-    data: { file: File; meta?: Record<string, unknown> }[],
+    data: { file: File; meta?: Record<string, unknown>; generationWorkflowId?: string }[],
     context?: TContext
   ) {
     setLoading(true);
@@ -184,7 +190,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       // process media metadata
       const mapped = (
         await Promise.all(
-          sliced.map(async ({ file, meta: fileMeta }) => {
+          sliced.map(async ({ file, meta: fileMeta, generationWorkflowId }) => {
             let data: PreprocessFileReturnType | null;
             try {
               data = await preprocessFile(file, { allowAnimatedWebP: currentUser?.isModerator });
@@ -217,6 +223,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
             })();
             const processing: ProcessingFile = {
               ...data,
+              generationWorkflowId,
               meta: {
                 ...fileMeta,
                 ...data.meta,

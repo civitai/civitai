@@ -92,34 +92,12 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({ auditPromptServer: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ getUserById: vi.fn() }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlock: { findUnique: vi.fn() } },
-  dbWrite: {},
-}));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
-  return {
-    ...actual,
-    redis: { get: vi.fn(), set: vi.fn() },
-    sysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
-  };
-});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
-}));
-vi.mock('~/server/rewards/active/appBlockReview.reward', () => ({
-  appBlockReviewReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
-}));
-vi.mock('~/server/services/appBlockReview.service', () => ({
-  upsertAppBlockReview: vi.fn(),
-  listAppBlockReviews: vi.fn(),
-  getMyAppBlockReview: vi.fn(),
-  setAppReviewExcluded: vi.fn(),
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
   return { rateLimit: () => middleware(async ({ next }) => next()) };
@@ -128,6 +106,9 @@ vi.mock('~/server/middleware.trpc', async () => {
 import { blocksRouter } from '../blocks.router';
 import { dbRead } from '~/server/db/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 function fakeCtx(user: unknown) {
   return {
@@ -449,6 +430,82 @@ describe('blocks.updateManifest — Phase 1 web manifest editor', () => {
         })
       ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
       expect(mockCommitFiles).not.toHaveBeenCalled();
+    });
+  });
+
+
+  // The public SOURCE-REPOSITORY link is manifest-governed on exactly the same terms
+  // as tagline/category, so the same SET / CLEAR / OMIT contract has to hold for it.
+  // 🔴 These live in the BLOCKING node project deliberately: the browser tier is
+  // report-only, so the rule that an explicit `null` must DELETE the key cannot be
+  // gated there alone — a dropped `undefined` would silently retain a stale published
+  // repository link, which is the exact failure the null was introduced for.
+  describe('repository (the manifest-governed public source-repo link)', () => {
+    it('accepts + commits a repository link', async () => {
+      findUnique.mockResolvedValue(approvedBlock);
+      const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+      await caller.updateManifest({
+        appBlockId: 'ab_1',
+        patch: { ...validPatch, repository: 'https://github.com/civitai/my-app' },
+      });
+
+      const commitArg = mockCommitFiles.mock.calls[0][0];
+      const committed = JSON.parse(commitArg.files[0].content.toString('utf8'));
+      expect(committed.repository).toBe('https://github.com/civitai/my-app');
+      // The validator (the authoritative gate) saw it too — the router never decides
+      // whether a link is acceptable.
+      const validated = mockValidate.mock.calls[0][0] as Record<string, unknown>;
+      expect(validated.repository).toBe('https://github.com/civitai/my-app');
+    });
+
+    it('🔴 an explicit null DELETES the key (clear) — a null VALUE would fail validation', async () => {
+      findUnique.mockResolvedValue({
+        ...approvedBlock,
+        manifest: { ...approvedBlock.manifest, repository: 'https://github.com/old/repo' },
+      });
+      const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+      await caller.updateManifest({
+        appBlockId: 'ab_1',
+        patch: { ...validPatch, repository: null },
+      });
+
+      const validated = mockValidate.mock.calls[0][0] as Record<string, unknown>;
+      expect('repository' in validated).toBe(false);
+      const commitArg = mockCommitFiles.mock.calls[0][0];
+      const committed = JSON.parse(commitArg.files[0].content.toString('utf8'));
+      expect('repository' in committed).toBe(false);
+      // The stale link is genuinely gone from the committed bytes — not merely
+      // overwritten by a null the reader would have to interpret.
+      expect(commitArg.files[0].content.toString('utf8')).not.toContain('old/repo');
+    });
+
+    it('OMITTING it preserves the stored link (sparse patch — the merge is unchanged)', async () => {
+      findUnique.mockResolvedValue({
+        ...approvedBlock,
+        manifest: { ...approvedBlock.manifest, repository: 'https://github.com/kept/repo' },
+      });
+      const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+      await caller.updateManifest({ appBlockId: 'ab_1', patch: validPatch });
+
+      const validated = mockValidate.mock.calls[0][0] as Record<string, unknown>;
+      expect(validated.repository).toBe('https://github.com/kept/repo');
+    });
+
+    it('a validator-rejected repository is a BAD_REQUEST — nothing committed', async () => {
+      findUnique.mockResolvedValue(approvedBlock);
+      mockValidate.mockReturnValue({
+        valid: false,
+        errors: ['repository host "gist.github.com" is not an accepted source host'],
+      });
+      const caller = blocksRouter.createCaller(fakeCtx(ownerUser) as never);
+      await expect(
+        caller.updateManifest({
+          appBlockId: 'ab_1',
+          patch: { ...validPatch, repository: 'https://gist.github.com/x/y' },
+        })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockCommitFiles).not.toHaveBeenCalled();
+      expect(mockRecordPending).not.toHaveBeenCalled();
     });
   });
 

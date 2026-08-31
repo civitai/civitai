@@ -1,22 +1,47 @@
 import { Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import sharp from 'sharp';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { refreshOwnedStickerCache } from '~/server/redis/caches';
+import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
+import {
+  revokeCosmeticsFromUsers,
+  validateStickerCosmetic,
+} from '~/server/services/cosmetic.service';
+import { removePlacementsByCosmetic } from '~/server/services/placement-moderation.service';
+import {
+  REJECTED_IS_FINAL,
+  appendItemHistory,
+  buildCosmeticData,
+  creatorGrantRemaining,
+  patchCosmeticData,
+  wasLastReviewARejection,
+} from '~/server/services/creator-shop.data';
+import type { StickerEconomics } from '~/shared/utils/sticker-token';
+import { stickerEconomicsFromCosmeticData } from '~/shared/utils/sticker-token';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { hasValidCreatorMembership } from '~/server/services/creator-program.service';
+import {
+  createBuzzTransaction,
+  refundMultiAccountTransaction,
+  refundTransaction,
+} from '~/server/services/buzz.service';
+import {
+  assertQuotedFee,
+  getCreatorShopSubmissionFee,
+} from '~/server/services/creator-shop-fees.service';
 import { createNotification } from '~/server/services/notification.service';
-import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
-import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
-import { NotificationCategory, OnboardingSteps } from '~/server/common/enums';
-import { Flags } from '~/shared/utils/flags';
+import { getBlockedPairIds } from '~/server/services/user-preferences.service';
+import { CosmeticShopSort, NotificationCategory } from '~/server/common/enums';
+import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
+  withRetries,
 } from '~/server/utils/errorHandling';
+import { logToAxiom } from '~/server/logging/client';
 import {
   CosmeticShopItemStatus,
   CosmeticSource,
@@ -24,8 +49,13 @@ import {
   MediaType,
   ModelStatus,
 } from '~/shared/utils/prisma/enums';
-import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import type {
+  CosmeticPurchaseMeta,
+  CosmeticShopItemHistoryChange,
+  CosmeticShopItemMeta,
+} from '~/server/schema/cosmetic-shop.schema';
 import { cosmeticShopItemSelect } from '~/server/selectors/cosmetic-shop.selector';
+import { delistPacksContaining } from '~/server/services/creator-shop-pack.service';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 
@@ -35,6 +65,11 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 // and badge. Only used by the creator storefront.
 const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
   ...cosmeticShopItemSelect,
+  // Approval time, so a storefront's "Newest" means the same thing the
+  // community hub's does rather than falling back to submission order.
+  reviewedAt: true,
+  // A pack has no cosmetic creator; its author is whoever listed it.
+  addedBy: { select: userWithCosmeticsSelect },
   cosmetic: {
     select: {
       ...simpleCosmeticSelect,
@@ -43,32 +78,69 @@ const creatorStorefrontItemSelect = Prisma.validator<Prisma.CosmeticShopItemSele
     },
   },
 });
+
+// A pack's card art and size live in meta rather than on a cosmetic, so every
+// meta whitelist has to carry them or the card renders empty and "Pack of 0".
+const packDisplayMeta = (meta: CosmeticShopItemMeta | null) => ({
+  ...(meta?.coverUrl ? { coverUrl: meta.coverUrl } : {}),
+  ...(meta?.coverTiles?.length ? { coverTiles: meta.coverTiles } : {}),
+  ...(meta?.packMemberCount ? { packMemberCount: meta.packMemberCount } : {}),
+});
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
+import { bustUserSettings, patchUserSettings } from '~/server/services/user.service';
 import {
-  CREATOR_SHOP_SUBMISSION_FEE,
+  STICKER_DEFAULT_USES,
+  STICKER_MIN_BUZZ_PER_USE,
+  cosmeticPriceFloor,
+  stickerPerUseFloor,
   MAX_ANIMATION_FPS,
   MAX_ANIMATION_FRAMES,
   MIN_ANIMATION_FRAME_DELAY_MS,
   PRICE_REVIEW_THRESHOLD,
+  RIGHTS_AFFIRMATION_STATEMENT,
+  RIGHTS_AFFIRMATION_VERSION,
+  PACK_FILTER_VALUE,
   cosmeticDimensionsLabel,
   cosmeticDimensionsPass,
   cosmeticImageRequirements,
+  computeCreatorShopSplit,
 } from '~/server/schema/creator-shop.schema';
 import type {
   AutoCheck,
   CosmeticImageMeta,
   CosmeticOffsets,
+  GetCommunityCosmeticsInput,
   GetEarlyAccessPricesInput,
   GetPublicShopItemsInput,
   GetReviewQueueInput,
+  GetShopItemResellersInput,
+  ReorderResoldItemsInput,
   ResoldItemInput,
   ReviewCreatorShopItemInput,
   SubmitCreatorShopItemInput,
+  TakedownCosmeticShopItemInput,
   UpdateCreatorShopItemInput,
   UpdateCreatorShopSettingsInput,
 } from '~/server/schema/creator-shop.schema';
-import type { ModelVersionTerms } from '@civitai/buzz';
-import { getPaidAccess } from '~/server/services/paid-access.service';
+import { type ModelVersionTerms } from '@civitai/buzz';
+import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-access.service';
+
+// Shop surfaces hide stickers until the flag is on. Rendering is never gated —
+// an owned sticker in a comment or DM shows for everyone regardless.
+// A `cosmetic` relation filter is an EXISTS on a nullable to-one, so ANY
+// condition nested under it silently excludes every pack. The pack branch keeps
+// them visible; a pack containing stickers is refused at purchase either way.
+const hideStickers = (stickersEnabled?: boolean, packsEnabled?: boolean) =>
+  stickersEnabled
+    ? packsEnabled
+      ? {}
+      : { cosmeticId: { not: null } }
+    : {
+        OR: [
+          ...(packsEnabled ? [{ cosmeticId: null }] : []),
+          { cosmetic: { type: { not: CosmeticType.Sticker } } },
+        ],
+      };
 
 // Card/listing shape for the creator management + moderator views.
 const creatorShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()({
@@ -80,6 +152,7 @@ const creatorShopItemSelect = Prisma.validator<Prisma.CosmeticShopItemSelect>()(
   availableFrom: true,
   availableTo: true,
   status: true,
+  listed: true,
   rejectionReason: true,
   reviewedAt: true,
   createdAt: true,
@@ -110,20 +183,6 @@ const withRemaining = (item: CreatorShopItemRow) => {
 };
 
 // The cosmetic `data` blob is built server-side (never trust client-shaped data).
-const buildCosmeticData = (
-  type: CosmeticType,
-  imageUrl: string,
-  animated?: boolean,
-  offsets?: CosmeticOffsets | null
-) => {
-  if (type === CosmeticType.ProfileBackground)
-    return { url: imageUrl, type: MediaType.image, animated: !!animated };
-  if (type === CosmeticType.ProfileDecoration)
-    return { url: imageUrl, animated: !!animated, ...(offsets ? { offsets } : {}) };
-  if (type === CosmeticType.Badge) return { url: imageUrl, animated: !!animated };
-  return { url: imageUrl };
-};
-
 // Server-side artwork validation (source of truth). Fetches the original upload
 // and inspects it with sharp against the per-type requirements.
 const validateArtwork = async (imageUrl: string, type: CosmeticType) => {
@@ -207,28 +266,21 @@ const findDuplicateArtwork = async (imageHash: string, excludeId?: number) => {
   });
 };
 
+// The affirmation is stored with its wording, not just a flag, so a later
+// takedown challenge can show what the submitter actually agreed to.
+const buildRightsAffirmation = (userId: number) => ({
+  userId,
+  affirmedAt: new Date().toISOString(),
+  version: RIGHTS_AFFIRMATION_VERSION,
+  statement: RIGHTS_AFFIRMATION_STATEMENT,
+});
+
+const offsetsLabel = (offsets?: CosmeticOffsets | null) =>
+  offsets ? `T${offsets.top} R${offsets.right} B${offsets.bottom} L${offsets.left}` : undefined;
+
 // ---------------------------------------------------------------------------
 // Creator: submit & manage
 // ---------------------------------------------------------------------------
-
-// The shop is gated on Creator Program *membership* — i.e. the creator has
-// joined (OnboardingSteps.CreatorProgram), which requires a valid subscription,
-// the minimum creator score, and not being banned. A qualifying-but-not-joined
-// subscription is not enough.
-const assertCreatorProgramMember = async (userId: number) => {
-  const user = await dbRead.user.findUnique({
-    where: { id: userId },
-    select: { onboarding: true },
-  });
-  const joined = !!user && Flags.hasFlag(user.onboarding, OnboardingSteps.CreatorProgram);
-  if (!joined)
-    throw throwAuthorizationError('The Creator Shop is available to Creator Program members only');
-  // Membership must still be active — a lapsed membership loses shop access.
-  if (!(await hasValidCreatorMembership(userId)))
-    throw throwAuthorizationError(
-      'An active Creator Program membership is required. Renew your membership to use your shop.'
-    );
-};
 
 export const submitCreatorShopItem = async ({
   userId,
@@ -242,10 +294,41 @@ export const submitCreatorShopItem = async ({
   buzzType,
   sellableByOthers,
   sellerShare,
+  acceptsBlueBuzz,
   offsets,
+  slug,
+  uses,
+  pricePerUse,
+  rightsAffirmed,
+  quotedFee,
 }: SubmitCreatorShopItemInput & { userId: number }) => {
-  // The Creator Shop is a Creator Program member benefit.
-  await assertCreatorProgramMember(userId);
+  // The zod schema already requires it; this keeps the item from ever being
+  // created without the record if the service is called from anywhere else.
+  if (!rightsAffirmed)
+    throw throwBadRequestError('You must confirm you have the rights to sell this artwork');
+
+  // The zod floor is the cross-type minimum; this is the real, type-dependent one.
+  const priceFloor = cosmeticPriceFloor(cosmeticType);
+  if (price < priceFloor)
+    throw throwBadRequestError(`This cosmetic type must be listed for at least ${priceFloor} Buzz`);
+
+  // Stickers are consumable, so the price also has to clear a per-use floor —
+  // otherwise a cheap listing with a huge use count undercuts the economics.
+  const stickerUses =
+    cosmeticType === CosmeticType.Sticker ? uses ?? STICKER_DEFAULT_USES : undefined;
+  if (stickerUses && price < stickerUses * STICKER_MIN_BUZZ_PER_USE)
+    throw throwBadRequestError(
+      `${stickerUses} uses needs at least ${
+        stickerUses * STICKER_MIN_BUZZ_PER_USE
+      } Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
+    );
+
+  // Top-up price is sticker-only and has its own floor — the list floor governs
+  // an offer of N uses, which is a different thing from one use.
+  const stickerPricePerUse = cosmeticType === CosmeticType.Sticker ? pricePerUse : undefined;
+  const perUseFloor = stickerPerUseFloor(cosmeticType);
+  if (stickerPricePerUse && stickerPricePerUse < perUseFloor)
+    throw throwBadRequestError(`A single use must cost at least ${perUseFloor} Buzz`);
 
   // Validate the artwork server-side BEFORE charging anything.
   const { checks, imageMeta, imageHash, allPassed } = await validateArtwork(imageUrl, cosmeticType);
@@ -257,12 +340,19 @@ export const submitCreatorShopItem = async ({
     throw throwBadRequestError('This artwork has already been submitted to the shop.');
   checks.push({ key: 'duplicate', label: 'Original artwork', passed: true });
 
+  // Slug format + collision, also before charging: finding out your slug is
+  // taken after paying a non-refundable fee is the worst version of this.
+  const normalizedSlug = slug?.trim().toLowerCase();
+  await validateStickerCosmetic({ type: cosmeticType, data: { slug: normalizedSlug } });
+
   // Charge the (non-refundable) submission fee; refunded only if the write fails.
+  const submissionFee = await getCreatorShopSubmissionFee(cosmeticType);
+  assertQuotedFee(quotedFee, submissionFee);
   const feeTx = await createBuzzTransaction({
     fromAccountId: userId,
     fromAccountType: buzzType as BuzzSpendType,
     toAccountId: 0,
-    amount: CREATOR_SHOP_SUBMISSION_FEE,
+    amount: submissionFee,
     type: TransactionType.Purchase,
     description: `Creator Shop submission fee - ${name}`,
     externalTransactionId: `creator-shop-submit-${userId}-${Date.now()}`,
@@ -271,7 +361,13 @@ export const submitCreatorShopItem = async ({
   if (!feeTxId) throw throwBadRequestError('Unable to charge the submission fee');
 
   try {
-    return await dbWrite.$transaction(async (tx) => {
+    // Captured out of the transaction so the hash can be queued after it commits
+    // — the request is a network round-trip and has no business inside a write
+    // transaction, and a cosmetic that exists without a hash is invisible to
+    // review. This path is why 228 of the 231 unhashed cosmetics on 2026-08-14
+    // were creator submissions.
+    let submittedCosmeticId: number | undefined;
+    const created = await dbWrite.$transaction(async (tx) => {
       const cosmetic = await tx.cosmetic.create({
         data: {
           name,
@@ -279,15 +375,14 @@ export const submitCreatorShopItem = async ({
           type: cosmeticType,
           source: CosmeticSource.Purchase,
           permanentUnlock: true,
-          data: buildCosmeticData(
-            cosmeticType,
-            imageUrl,
-            animated,
-            offsets
-          ) as Prisma.InputJsonValue,
+          data: buildCosmeticData(cosmeticType, imageUrl, animated, offsets, normalizedSlug, {
+            uses: stickerUses,
+            pricePerUse: stickerPricePerUse,
+          }) as Prisma.InputJsonValue,
           createdById: userId,
         },
       });
+      submittedCosmeticId = cosmetic.id;
 
       return tx.cosmeticShopItem.create({
         data: {
@@ -301,16 +396,32 @@ export const submitCreatorShopItem = async ({
           meta: {
             purchases: 0,
             submissionTxId: feeTxId,
+            submissionFee,
             autoChecks: checks,
             imageMeta,
             imageHash,
             sellableByOthers,
             sellerShare: sellableByOthers ? sellerShare : 0,
+            acceptsBlueBuzz,
+            rightsAffirmation: buildRightsAffirmation(userId),
+            history: [
+              {
+                at: new Date().toISOString(),
+                userId,
+                kind: 'submitted',
+                status: CosmeticShopItemStatus.PendingReview,
+              },
+            ],
           } satisfies CosmeticShopItemMeta,
         },
         select: creatorShopItemSelect,
       });
     });
+
+    if (submittedCosmeticId)
+      queueCosmeticPerceptualHash({ id: submittedCosmeticId, url: imageUrl });
+
+    return created;
   } catch (error) {
     await refundTransaction(feeTxId, 'Creator Shop submission failed');
     throw error;
@@ -326,9 +437,16 @@ const getOwnedItemOrThrow = async (id: number, userId: number, isModerator = fal
       cosmeticId: true,
       unitAmount: true,
       status: true,
+      title: true,
       meta: true,
       addedById: true,
-      cosmetic: { select: { createdById: true, type: true, data: true } },
+      // Archiving overwrites `status`, so on the restore path this column is the
+      // only thing left on an item that predates the history log.
+      rejectionReason: true,
+      // Prior values, so an edit can record what it moved from.
+      description: true,
+      availableQuantity: true,
+      cosmetic: { select: { id: true, createdById: true, type: true, data: true } },
       _count: { select: { purchases: true } },
     },
   });
@@ -350,12 +468,22 @@ export const updateCreatorShopItem = async ({
   animated,
   price,
   availableQuantity,
+  acceptsBlueBuzz,
+  sellableByOthers,
+  sellerShare,
   offsets,
+  slug,
+  uses,
+  pricePerUse,
+  rightsAffirmed,
 }: UpdateCreatorShopItemInput & { userId: number; isModerator?: boolean }) => {
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  // A pack has no cosmetic of its own; everything below edits one.
+  if (existing.cosmeticId == null || existing.cosmetic == null)
+    throw throwBadRequestError('Packs are edited through the pack editor');
   // Rejected is terminal; archived items must be restored before editing.
   if (existing.status === CosmeticShopItemStatus.Rejected)
-    throw throwBadRequestError('Rejected items cannot be edited');
+    throw throwBadRequestError(REJECTED_IS_FINAL);
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be edited');
 
@@ -371,16 +499,71 @@ export const updateCreatorShopItem = async ({
     ? existingData.offsets ?? null
     : offsets;
 
+  // Slug rules are Sticker-only — the schema accepts `slug` on any type, so
+  // without this gate a crafted request would hit them on a Badge.
+  const isStickerItem = existing.cosmetic.type === CosmeticType.Sticker;
+  const existingSlug = (existing.cosmetic.data as { slug?: string } | null)?.slug;
+  const requestedSlug = isStickerItem ? slug?.trim().toLowerCase() : undefined;
+  // Rebuilding `data` from scratch would drop the slug on an artwork swap, and
+  // owners' `:slug:` text depends on it — so carry the existing one forward.
+  const nextSlug = requestedSlug ?? existingSlug;
+  const slugChange = requestedSlug !== undefined && requestedSlug !== existingSlug;
+  // Same carry-forward reasoning as the slug: rebuilding `data` would drop the
+  // economics, and buyers' balances and top-ups were priced by them. Read as one
+  // object so a field added later is carried without a new call site to update.
+  const existingEconomics = stickerEconomicsFromCosmeticData(existing.cosmetic.data);
+  const requestedUses = isStickerItem ? uses : undefined;
+  const requestedPricePerUse = isStickerItem ? pricePerUse : undefined;
+  const nextEconomics: StickerEconomics = {
+    ...existingEconomics,
+    ...(requestedUses !== undefined ? { uses: requestedUses } : {}),
+    ...(requestedPricePerUse !== undefined ? { pricePerUse: requestedPricePerUse } : {}),
+  };
+  const nextUses = nextEconomics.uses;
+  const usesChange = requestedUses !== undefined && requestedUses !== existingEconomics.uses;
+  const pricePerUseChange =
+    requestedPricePerUse !== undefined && requestedPricePerUse !== existingEconomics.pricePerUse;
+  const economicsChange = usesChange || pricePerUseChange;
+
   // Cross-listings point at another creator's shared cosmetic — the seller may
-  // never touch its art/name/description, only price & quantity.
+  // never touch its art/name/description/payment terms, only price & quantity.
+  // The slug belongs to the original creator too: a reseller renaming it would
+  // break every owner's typed `:slug:` on someone else's cosmetic.
   const isOriginalCreator = isModerator || existing.cosmetic.createdById === userId;
   if (
     !isOriginalCreator &&
-    (name !== undefined || description !== undefined || imageUrl !== undefined || offsetsChange)
+    (name !== undefined ||
+      description !== undefined ||
+      imageUrl !== undefined ||
+      acceptsBlueBuzz !== undefined ||
+      sellableByOthers !== undefined ||
+      sellerShare !== undefined ||
+      offsetsChange ||
+      slugChange ||
+      economicsChange)
   )
     throw throwBadRequestError(
       "You can only change price and quantity for another creator's cosmetic"
     );
+
+  if (price != null) {
+    const priceFloor = cosmeticPriceFloor(existing.cosmetic.type);
+    if (price < priceFloor)
+      throw throwBadRequestError(
+        `This cosmetic type must be listed for at least ${priceFloor} Buzz`
+      );
+  }
+  // Re-check the per-use floor whenever either side of it moves.
+  const effectivePrice = price ?? existing.unitAmount;
+  if (nextUses && effectivePrice < nextUses * STICKER_MIN_BUZZ_PER_USE)
+    throw throwBadRequestError(
+      `${nextUses} uses needs at least ${
+        nextUses * STICKER_MIN_BUZZ_PER_USE
+      } Buzz (${STICKER_MIN_BUZZ_PER_USE} per use)`
+    );
+  const perUseFloor = stickerPerUseFloor(existing.cosmetic.type);
+  if (nextEconomics.pricePerUse && nextEconomics.pricePerUse < perUseFloor)
+    throw throwBadRequestError(`A single use must cost at least ${perUseFloor} Buzz`);
 
   const isPublished = existing.status === CosmeticShopItemStatus.Published;
   const artChanged = imageUrl !== undefined;
@@ -393,9 +576,28 @@ export const updateCreatorShopItem = async ({
     (name !== undefined || description !== undefined || artChanged || offsetsChange)
   )
     throw throwBadRequestError('Published items can only change price and quantity');
+  // The slug is the token owners type, not metadata. Renaming it breaks every
+  // owner's muscle memory and their picker search, while already-sent messages
+  // keep working off the id — so the creator gets no signal they broke anything.
+  // Mods can still fix a genuine typo.
+  if (isPublished && !isModerator && slugChange)
+    throw throwBadRequestError('The sticker slug cannot be changed once published');
   // Buyers already have the art — it can't change once sold.
   if (artChanged && existing._count.purchases > 0)
     throw throwBadRequestError('Artwork cannot be changed once an item has sold');
+  // The stored affirmation covers the art it was made against, so swapping the
+  // art needs a fresh one. A moderator swapping art isn't claiming any rights of
+  // their own, so they neither affirm nor overwrite the creator's record.
+  const requiresAffirmation = artChanged && !isModerator;
+  if (requiresAffirmation && !rightsAffirmed)
+    throw throwBadRequestError('You must confirm you have the rights to sell this artwork');
+
+  if (slugChange)
+    await validateStickerCosmetic({
+      id: existing.cosmetic.id,
+      type: existing.cosmetic.type,
+      data: { slug: nextSlug },
+    });
 
   // Validate + build replaced artwork server-side.
   let artwork:
@@ -417,11 +619,17 @@ export const updateCreatorShopItem = async ({
       throw throwBadRequestError('This artwork has already been submitted to the shop.');
     checks.push({ key: 'duplicate', label: 'Original artwork', passed: true });
     artwork = {
+      // The economics matter here: replacing artwork REBUILDS `data` rather than
+      // patching it (patchCosmeticData returns artworkData wholesale), so
+      // omitting uses silently turned a finite sticker into an unlimited one for
+      // every future buyer.
       data: buildCosmeticData(
         existing.cosmetic.type,
         imageUrl,
         animated,
-        nextOffsets
+        nextOffsets,
+        nextSlug,
+        nextEconomics
       ) as Prisma.InputJsonValue,
       checks,
       imageMeta,
@@ -430,11 +638,25 @@ export const updateCreatorShopItem = async ({
   }
 
   const contentChanged =
-    name !== undefined || description !== undefined || artChanged || offsetsChange;
+    name !== undefined ||
+    description !== undefined ||
+    artChanged ||
+    offsetsChange ||
+    slugChange ||
+    economicsChange;
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const base = meta.lastApprovedAmount ?? existing.unitAmount;
   const bigPriceChange =
     price != null && base > 0 && Math.abs(price - base) / base > PRICE_REVIEW_THRESHOLD;
+
+  // Resale terms are an offer to future resellers, not a term of anyone's
+  // existing listing — those carry their own `sellerShare` on the resale row, so
+  // nothing here can reach a creator who already listed the item.
+  const resaleChanged = sellableByOthers !== undefined || sellerShare !== undefined;
+  const nextSellableByOthers = sellableByOthers ?? meta.sellableByOthers ?? false;
+  // Mirrors submit: an item nobody may resell carries no share, so switching
+  // resale off and back on can't quietly restore an old number.
+  const nextSellerShare = nextSellableByOthers ? sellerShare ?? meta.sellerShare ?? 0 : 0;
 
   // Published re-enters review only on a >±25% price change (a small tweak stays
   // live). RequestedChanges & PendingReview edits (re)enter the queue.
@@ -444,15 +666,50 @@ export const updateCreatorShopItem = async ({
     existing.status === CosmeticShopItemStatus.PendingReview;
   const status = backToReview ? CosmeticShopItemStatus.PendingReview : existing.status;
 
+  const changes: CosmeticShopItemHistoryChange[] = [];
+  const recordChange = (
+    field: string,
+    from: string | number | null | undefined,
+    to: string | number | null | undefined
+  ) => {
+    if (from !== to) changes.push({ field, from, to });
+  };
+  if (name !== undefined) recordChange('name', existing.title, name);
+  if (description !== undefined) recordChange('description', existing.description, description);
+  // The pre-swap url, captured before `data` is rebuilt — it's the only way the
+  // queue can show what the artwork used to be.
+  if (artChanged) recordChange('artwork', existingData.url as string | undefined, imageUrl);
+  if (offsetsChange)
+    recordChange('offsets', offsetsLabel(existingData.offsets), offsetsLabel(nextOffsets));
+  if (slugChange) recordChange('slug', existingSlug, nextSlug);
+  if (usesChange) recordChange('uses', existingEconomics.uses, nextEconomics.uses);
+  if (pricePerUseChange)
+    recordChange('pricePerUse', existingEconomics.pricePerUse, nextEconomics.pricePerUse);
+  if (price != null) recordChange('price', existing.unitAmount, price);
+  if (availableQuantity !== undefined)
+    recordChange('quantity', existing.availableQuantity, availableQuantity);
+
+  const reviewNote = !backToReview
+    ? undefined
+    : isPublished
+    ? `Returned to review: price moved more than ${Math.round(
+        PRICE_REVIEW_THRESHOLD * 100
+      )}% from the approved ${base} Buzz`
+    : existing.status === CosmeticShopItemStatus.RequestedChanges
+    ? 'Resubmitted for review after requested changes'
+    : 'Edited while awaiting review';
+
   if (contentChanged) {
-    // Offsets-only edits patch the existing data blob; art replacement rebuilds
-    // it (with the effective offsets already folded in above).
-    const { offsets: _prevOffsets, ...restData } = existingData;
-    const patchedData = artwork
-      ? artwork.data
-      : offsetsChange
-      ? ((nextOffsets ? { ...restData, offsets: nextOffsets } : restData) as Prisma.InputJsonValue)
-      : undefined;
+    const patchedData = patchCosmeticData({
+      existingData,
+      artworkData: artwork?.data as Record<string, unknown> | undefined,
+      offsetsChange,
+      slugChange,
+      economicsChange,
+      nextOffsets,
+      nextSlug,
+      nextEconomics,
+    }) as Prisma.InputJsonValue | undefined;
     await dbWrite.cosmetic.update({
       where: { id: existing.cosmeticId },
       data: {
@@ -461,7 +718,40 @@ export const updateCreatorShopItem = async ({
         ...(patchedData !== undefined ? { data: patchedData } : {}),
       },
     });
+    // A raw update replaces `data.url` without going near updateCosmetic, so
+    // nothing else re-hashes it: the old hash survives against new artwork and
+    // `pHashUrl` is what tells the two apart afterwards.
+    if (artChanged && imageUrl)
+      queueCosmeticPerceptualHash({ id: existing.cosmeticId, url: imageUrl });
   }
+
+  const updatedMeta: CosmeticShopItemMeta = {
+    ...meta,
+    ...(acceptsBlueBuzz !== undefined ? { acceptsBlueBuzz } : {}),
+    ...(resaleChanged
+      ? { sellableByOthers: nextSellableByOthers, sellerShare: nextSellerShare }
+      : {}),
+    ...(artwork
+      ? {
+          autoChecks: artwork.checks,
+          imageMeta: artwork.imageMeta,
+          imageHash: artwork.imageHash,
+        }
+      : {}),
+    ...(requiresAffirmation ? { rightsAffirmation: buildRightsAffirmation(userId) } : {}),
+  };
+  // An edit that moved nothing (e.g. a resubmit with identical values) isn't
+  // worth a row in the history.
+  const nextMeta = changes.length
+    ? appendItemHistory(updatedMeta, {
+        at: new Date().toISOString(),
+        userId,
+        kind: 'edited',
+        status,
+        note: reviewNote,
+        changes,
+      })
+    : updatedMeta;
 
   return dbWrite.cosmeticShopItem.update({
     where: { id },
@@ -473,19 +763,59 @@ export const updateCreatorShopItem = async ({
       status,
       // Clear the prior verdict whenever it re-enters the review queue.
       ...(backToReview ? { rejectionReason: null, reviewedById: null, reviewedAt: null } : {}),
-      meta: {
-        ...meta,
-        ...(artwork
-          ? {
-              autoChecks: artwork.checks,
-              imageMeta: artwork.imageMeta,
-              imageHash: artwork.imageHash,
-            }
-          : {}),
-      } as Prisma.InputJsonValue,
+      meta: nextMeta as Prisma.InputJsonValue,
     },
     select: creatorShopItemSelect,
   });
+};
+
+/**
+ * Withdrawing an item from sale ends every resale listing of it, and tells the
+ * creators who were selling it. They are not left with a dead card, and — since
+ * the listing carried the share they were promised — they don't silently keep a
+ * claim to terms on an item that no longer sells.
+ *
+ * Coming back is deliberately not the mirror image of this: re-listing re-enters
+ * review (see `setCreatorShopItemListed` / `unarchiveCreatorShopItem`), so the
+ * withdraw → re-list cycle can't be used as a cheap way to clear your resellers
+ * and re-offer the item on worse terms.
+ */
+const endResaleListings = async ({ shopItemId, title }: { shopItemId: number; title: string }) => {
+  const listings = await dbRead.userCosmeticShopItemResale.findMany({
+    where: { shopItemId },
+    select: { userId: true, user: { select: { username: true } } },
+  });
+  await dbWrite.userCosmeticShopItemResale.deleteMany({ where: { shopItemId } });
+  if (!listings.length) return;
+
+  const at = Date.now();
+  // The listings are already gone; failing the withdrawal over an undelivered
+  // notification would leave the creator unable to retry it, and one bad row
+  // shouldn't cost the other resellers their notice either.
+  const results = await Promise.allSettled(
+    listings.map(({ userId, user }) =>
+      createNotification({
+        type: 'creator-shop-resale-ended',
+        userId,
+        category: NotificationCategory.System,
+        // Stamped: an item can be withdrawn, brought back, and withdrawn again.
+        key: `creator-shop-resale-ended:${shopItemId}:${userId}:${at}`,
+        details: { title, username: user.username ?? undefined },
+      })
+    )
+  );
+  const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failures.length)
+    logToAxiom({
+      level: 'error',
+      message: 'Failed to notify resellers of a withdrawn shop item',
+      data: {
+        shopItemId,
+        failed: failures.length,
+        total: results.length,
+        errors: failures.map((f) => f.reason),
+      },
+    });
 };
 
 export const archiveCreatorShopItem = async ({
@@ -500,21 +830,86 @@ export const archiveCreatorShopItem = async ({
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   if (existing.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Item is already archived');
-  const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
+  // Archiving is how a rejection used to be laundered: Archived overwrites the
+  // status, and restoring re-enters review with the verdict cleared.
+  if (existing.status === CosmeticShopItemStatus.Rejected)
+    throw throwBadRequestError(REJECTED_IS_FINAL);
   const updated = await dbWrite.cosmeticShopItem.update({
     where: { id },
-    data: {
-      status: CosmeticShopItemStatus.Archived,
-      archivedAt: new Date(),
-      // Remember where to restore it to when unarchived.
-      meta: { ...meta, preArchiveStatus: existing.status } as Prisma.InputJsonValue,
-    },
+    data: { status: CosmeticShopItemStatus.Archived, archivedAt: new Date() },
     select: creatorShopItemSelect,
   });
+
+  await endResaleListings({ shopItemId: id, title: existing.title });
+
+  // D14: withdrawing a cosmetic delists every pack that bundles it. `listed`,
+  // not Archived, so the pack's creator can swap the member out and relist.
+  if (existing.cosmeticId != null) await delistPacksContaining(existing.cosmeticId);
 
   // An archived item can't be featured — free up its featured slot (owner must
   // re-feature it after unarchiving).
   if (existing.addedById) {
+    const settings = await getCreatorShopSettings({ userId: existing.addedById });
+    const featuredItemIds = settings.featuredItemIds ?? [];
+    if (featuredItemIds.includes(id))
+      await updateCreatorShopSettings({
+        userId: existing.addedById,
+        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+      });
+  }
+
+  return updated;
+};
+
+/**
+ * Delisting withdraws an item from individual sale while leaving it Published,
+ * so other creators can still bundle it. Archiving removes it from both. Either
+ * way the item's resale listings end.
+ *
+ * Coming back is not free: re-listing re-enters review rather than going
+ * straight back on sale. Without that, withdraw → re-list would be a one-click
+ * way to clear every reseller and re-offer the item at a worse share, which is
+ * exactly the bait-and-switch grandfathering exists to prevent.
+ */
+export const setCreatorShopItemListed = async ({
+  userId,
+  isModerator,
+  id,
+  listed,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  id: number;
+  listed: boolean;
+}) => {
+  const existing = await getOwnedItemOrThrow(id, userId, isModerator);
+  if (existing.status === CosmeticShopItemStatus.Archived)
+    throw throwBadRequestError('Restore this item before changing its listing');
+  // Listing resets an item to PendingReview and clears the verdict, so without
+  // this a rejected item is one call away from being back in the queue unedited.
+  if (existing.status === CosmeticShopItemStatus.Rejected)
+    throw throwBadRequestError(REJECTED_IS_FINAL);
+
+  const updated = await dbWrite.cosmeticShopItem.update({
+    where: { id },
+    data: {
+      listed,
+      ...(listed
+        ? {
+            status: CosmeticShopItemStatus.PendingReview,
+            rejectionReason: null,
+            reviewedById: null,
+            reviewedAt: null,
+          }
+        : {}),
+    },
+    select: creatorShopItemSelect,
+  });
+
+  if (!listed) await endResaleListings({ shopItemId: id, title: existing.title });
+
+  // A delisted item can't sit in a featured slot, same as an archived one.
+  if (!listed && existing.addedById) {
     const settings = await getCreatorShopSettings({ userId: existing.addedById });
     const featuredItemIds = settings.featuredItemIds ?? [];
     if (featuredItemIds.includes(id))
@@ -539,14 +934,35 @@ export const unarchiveCreatorShopItem = async ({
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
   if (existing.status !== CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Only archived items can be restored');
+  // `preArchiveStatus` is a leftover from when restoring returned an item to
+  // where it was; it now re-enters review either way, so drop any stored value.
   const { preArchiveStatus, ...meta } = (existing.meta ?? {}) as CosmeticShopItemMeta & {
     preArchiveStatus?: CosmeticShopItemStatus;
   };
+  if (meta.takedown)
+    throw throwBadRequestError('This item was taken down and cannot be restored to sale');
+  // Archiving a rejected item is blocked now, but items archived before that was
+  // true still exist, and restoring one would clear its verdict. Nothing appends
+  // to an archived item's history, so a verdict recorded there is still the last
+  // one — it cannot have aged out of the cap while the item sat archived.
+  //
+  // An item old enough to have no history at all leaves only `rejectionReason`,
+  // which a change request sets too. That is not enough to convict, so it is
+  // refused for the creator (who must never be able to resubmit a rejection) and
+  // left to a moderator, who can read the reason and decide.
+  const rejectionUnprovable = !meta.history?.length && !!existing.rejectionReason;
+  if (wasLastReviewARejection(meta.history) || (rejectionUnprovable && !isModerator))
+    throw throwBadRequestError(REJECTED_IS_FINAL);
   return dbWrite.cosmeticShopItem.update({
     where: { id },
     data: {
-      status: preArchiveStatus ?? CosmeticShopItemStatus.Published,
+      // Same rule as re-listing: archiving ended this item's resale listings, so
+      // bringing it back is a fresh submission, not an undo.
+      status: CosmeticShopItemStatus.PendingReview,
       archivedAt: null,
+      rejectionReason: null,
+      reviewedById: null,
+      reviewedAt: null,
       meta: meta as Prisma.InputJsonValue,
     },
     select: creatorShopItemSelect,
@@ -565,13 +981,13 @@ export const deleteCreatorShopItem = async ({
   // Deleting wipes purchase records — a moderator-only action; creators archive.
   if (!isModerator) throw throwAuthorizationError('Only moderators can delete shop items');
   const existing = await getOwnedItemOrThrow(id, userId, isModerator);
-  // Hard delete. FK cascades wipe the purchase records (sales totals) and any
-  // official-shop section links. Buyers keep what they bought: UserCosmetic is
-  // keyed by cosmeticId and the Cosmetic row is intentionally left in place.
+  // Hard delete. FK cascades wipe the purchase records (sales totals), any
+  // official-shop section links, and other creators' resale listings. Buyers
+  // keep what they bought: UserCosmetic is keyed by cosmeticId and the Cosmetic
+  // row is intentionally left in place.
   await dbWrite.cosmeticShopItem.delete({ where: { id } });
 
-  // Free its featured slot. Stale ids in other creators' resoldItemIds
-  // self-heal — the lookups drop ids that no longer resolve to an item.
+  // Free its featured slot.
   if (existing.addedById) {
     const settings = await getCreatorShopSettings({ userId: existing.addedById });
     const featuredItemIds = settings.featuredItemIds ?? [];
@@ -590,10 +1006,25 @@ export const deleteCreatorShopItem = async ({
 export const getCreatorShopManageItems = async ({ userId }: { userId: number }) => {
   const items = await dbRead.cosmeticShopItem.findMany({
     where: { addedById: userId },
-    select: creatorShopItemSelect,
+    // The reseller count tells the creator what's at stake before they touch the
+    // item's resale terms — existing resellers keep the ones they listed under.
+    // Deleted accounts are filtered out to match `getShopItemResellers`, or the
+    // count disagrees with the list the creator opens from it.
+    select: {
+      ...creatorShopItemSelect,
+      _count: {
+        select: {
+          ...creatorShopItemSelect._count.select,
+          resales: { where: { user: { deletedAt: null } } },
+        },
+      },
+    },
     orderBy: { createdAt: 'desc' },
   });
-  return items.map(withRemaining);
+  return items.map(({ _count, ...item }) => ({
+    ...withRemaining({ ...item, _count }),
+    resellerCount: _count.resales,
+  }));
 };
 
 // ---------------------------------------------------------------------------
@@ -603,11 +1034,15 @@ export const getCreatorShopManageItems = async ({ userId }: { userId: number }) 
 export const getCreatorShop = async ({
   userId,
   viewerId,
+  stickersEnabled,
+  packsEnabled,
   isModerator,
   preview,
 }: {
   userId: number;
   viewerId?: number;
+  stickersEnabled?: boolean;
+  packsEnabled?: boolean;
   isModerator?: boolean;
   // Moderator-only design aid: ignore this creator's own inventory/config and
   // fill every section with real site-wide sample data (see the router — only
@@ -615,46 +1050,44 @@ export const getCreatorShop = async ({
   preview?: boolean;
 }) => {
   const settings = await getCreatorShopSettings({ userId });
-  // A shop is only public if it's enabled AND the owner still has an active
-  // Creator Program membership. Query membership only for enabled shops (draft
-  // shops are hidden regardless).
-  const membershipActive =
-    settings.enabled !== true ? true : await hasValidCreatorMembership(userId);
-  // Enabled but hidden because the owner's membership lapsed — surfaced to the
-  // owner so they know to renew.
-  const membershipLapsed = !preview && settings.enabled === true && !membershipActive;
-
-  // Owners and moderators can always see the shop (to renew / moderate); a
-  // lapsed membership shutters it for everyone else.
-  if (
-    !preview &&
-    viewerId !== userId &&
-    !isModerator &&
-    (settings.enabled !== true || !membershipActive)
-  )
+  // Owners and moderators can always see the shop (to edit / moderate); a
+  // disabled shop is hidden from everyone else.
+  if (!preview && viewerId !== userId && !isModerator && settings.enabled !== true)
     throw throwNotFoundError('Shop not found');
 
   // A block between viewer and shop owner (either direction) hides the whole
   // shop — same NotFound as a private shop so the block isn't revealed.
-  if (
-    !preview &&
-    !isModerator &&
-    viewerId &&
-    viewerId !== userId &&
-    (await getBlockedPairIds(viewerId)).includes(userId)
-  )
-    throw throwNotFoundError('Shop not found');
+  const viewerPairIds =
+    !preview && !isModerator && viewerId && viewerId !== userId
+      ? await getBlockedPairIds(viewerId)
+      : [];
+  if (viewerPairIds.includes(userId)) throw throwNotFoundError('Shop not found');
 
   const now = new Date();
-  const resoldIds = settings.resoldItemIds ?? [];
-  // A block between the shop owner and an item's creator (either direction,
-  // possibly after the listing was added) removes it from the storefront; the
-  // owner still sees it in their manage list so they can remove it.
-  const blockedPairIds = preview ? [] : await getBlockedPairIds(userId);
+  // The resale rows ARE the permission and the terms: a listing survives its
+  // creator switching resale back off, and carries the share it was made under.
+  const resales = preview
+    ? []
+    : await dbRead.userCosmeticShopItemResale.findMany({
+        where: { userId },
+        orderBy: [{ index: 'asc' }, { shopItemId: 'asc' }],
+        select: { shopItemId: true, sellerShare: true },
+      });
+  const resoldIds = resales.map((r) => r.shopItemId);
+  const resaleShares = new Map(resales.map((r) => [r.shopItemId, r.sellerShare]));
+  // Blocks remove a resold item from the storefront: owner↔item-creator (the
+  // block forbids the resale pairing; the owner still sees it in their manage
+  // list so they can remove it) and viewer↔item-creator (a creator who blocked
+  // the viewer shouldn't surface in any shop the viewer browses).
+  const blockedPairIds = preview
+    ? []
+    : [...new Set([...(await getBlockedPairIds(userId)), ...viewerPairIds])];
   const [items, resoldItems, earlyAccessModelCount] = await Promise.all([
     dbRead.cosmeticShopItem.findMany({
       where: {
         status: CosmeticShopItemStatus.Published,
+        listed: true,
+        ...hideStickers(stickersEnabled, packsEnabled),
         // Preview draws cosmetics from every creator so the section is populated
         // regardless of whose (possibly empty) shop is being viewed.
         ...(preview ? {} : { addedById: userId }),
@@ -676,7 +1109,13 @@ export const getCreatorShop = async ({
       where: {
         ...(preview ? {} : { id: { in: resoldIds } }),
         status: CosmeticShopItemStatus.Published,
-        meta: { path: ['sellableByOthers'], equals: true },
+        // Withdrawing an item ends its resale listings outright (see
+        // `endResaleListings`), so a delisted one has nothing left to show.
+        listed: true,
+        ...hideStickers(stickersEnabled, packsEnabled),
+        // Preview has no resale rows to draw on, so it falls back to any item
+        // currently on offer for resale.
+        ...(preview ? { meta: { path: ['sellableByOthers'], equals: true } } : {}),
         // Hide resold items whose owner has since made their shop private.
         addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
         ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
@@ -699,19 +1138,27 @@ export const getCreatorShop = async ({
     `.then((r) => r[0]?.count ?? 0),
   ]);
 
-  // Sanitize meta to only the purchase count the card needs — never the creator
+  // Sanitize meta to what the card/checkout needs — never the creator
   // payout/fee internals.
   const sanitize = (item: (typeof items)[number]) => ({
     ...item,
-    meta: { purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0 },
+    meta: {
+      purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
+      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
+      ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
+    },
   });
   const cosmetics = items.map(sanitize);
-  // Resold items keep the seller share so the buyer can see the split at checkout.
+  // Resold items keep the seller share so the buyer can see the split at
+  // checkout — the listing's own, so it matches what the payout will pay.
   const sanitizeResold = (item: (typeof resoldItems)[number]) => ({
     ...item,
     meta: {
       purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
-      sellerShare: (item.meta as CosmeticShopItemMeta)?.sellerShare ?? 0,
+      sellerShare:
+        resaleShares.get(item.id) ?? (item.meta as CosmeticShopItemMeta)?.sellerShare ?? 0,
+      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
+      ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
     },
   });
   const resold = preview
@@ -740,8 +1187,176 @@ export const getCreatorShop = async ({
     resold,
     settings: effectiveSettings,
     earlyAccessModelCount,
-    membershipLapsed,
   };
+};
+
+/**
+ * Order for the community hub.
+ *
+ * "Newest" reads `reviewedAt` (when a moderator approved the item), not
+ * `createdAt`/`id` (when the creator submitted it) — otherwise an item that sat
+ * a week in the review queue would publish already buried under everything
+ * submitted while it waited. `id` breaks every tie so a page boundary can't
+ * drop or repeat a row. Rows with no `reviewedAt` (published without ever
+ * passing through review) sort as the oldest in both directions.
+ */
+const communityCosmeticsOrderBy = (
+  sort: CosmeticShopSort
+): Prisma.CosmeticShopItemOrderByWithRelationInput[] => {
+  switch (sort) {
+    case CosmeticShopSort.Oldest:
+      return [{ reviewedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }];
+    case CosmeticShopSort.PriceLowToHigh:
+      return [{ unitAmount: 'asc' }, { id: 'desc' }];
+    case CosmeticShopSort.PriceHighToLow:
+      return [{ unitAmount: 'desc' }, { id: 'desc' }];
+    case CosmeticShopSort.MostPopular:
+      // The purchase rows, not `meta.purchases` — a JSON counter can't be
+      // ordered on, and the rows are what a refund/takedown actually removes.
+      return [{ purchases: { _count: 'desc' } }, { id: 'desc' }];
+    case CosmeticShopSort.Name:
+      return [{ title: 'asc' }, { id: 'desc' }];
+    case CosmeticShopSort.Newest:
+    default:
+      return [{ reviewedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }];
+  }
+};
+
+// Site-wide hub of every published community cosmetic (creator-submitted items
+// from public shops). Powers the /shop marketplace section.
+export const getCommunityCosmetics = async ({
+  viewerId,
+  limit,
+  page,
+  cosmeticTypes,
+  sort,
+  wishlisted,
+  owned,
+  limited,
+  acceptsBlueBuzz,
+  query,
+  stickersEnabled,
+  packsEnabled,
+}: GetCommunityCosmeticsInput & {
+  viewerId?: number;
+  stickersEnabled?: boolean;
+  packsEnabled?: boolean;
+}) => {
+  const now = new Date();
+  // A block between viewer and a cosmetic's creator (either direction) hides
+  // that creator's items from the feed.
+  const blockedPairIds = viewerId ? await getBlockedPairIds(viewerId) : [];
+  const { take, skip } = getPagination(limit, page);
+  // 'Pack' rides in the same filter but is not a CosmeticType.
+  const realTypes = (cosmeticTypes ?? []).filter((t): t is CosmeticType => t !== PACK_FILTER_VALUE);
+  const where: Prisma.CosmeticShopItemWhereInput = {
+    status: CosmeticShopItemStatus.Published,
+    // Discovery surface that leads straight to checkout — a delisted item
+    // here would be a dead end.
+    listed: true,
+    // Creator-submitted only (official cosmetics have no creator). Blocks
+    // filter both the original creator and the lister — they can differ on
+    // cross-listed items.
+    //
+    // A pack is creator-submitted too, just via `addedById`, and a `cosmetic`
+    // relation filter is an EXISTS that would drop every one of them. This is
+    // the only site-wide discovery surface, so packs belong in it. A type
+    // filter still excludes them: a pack has no type to match.
+    OR: [
+      // Packs show when nothing is filtered, or when the Pack chip is on.
+      ...(packsEnabled && (!cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE))
+        ? [{ cosmeticId: null }]
+        : []),
+      ...(cosmeticTypes?.length && !realTypes.length
+        ? []
+        : [
+            {
+              cosmetic: {
+                createdById: {
+                  not: null,
+                  ...(blockedPairIds.length ? { notIn: blockedPairIds } : {}),
+                },
+                // Merged into one `type` filter: a second `type` key would silently
+                // overwrite the caller's requested types.
+                ...(realTypes.length || !stickersEnabled
+                  ? {
+                      type: {
+                        ...(realTypes.length ? { in: realTypes } : {}),
+                        ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+                      },
+                    }
+                  : {}),
+              },
+            },
+          ]),
+    ],
+    // Only items whose owner's shop is public.
+    addedBy: { settings: { path: ['creatorShop', 'enabled'], equals: true } },
+    ...(blockedPairIds.length ? { addedById: { notIn: blockedPairIds } } : {}),
+    ...(viewerId && wishlisted ? { wishlists: { some: { userId: viewerId } } } : {}),
+    ...(acceptsBlueBuzz ? { meta: { path: ['acceptsBlueBuzz'], equals: true } } : {}),
+    AND: [
+      { OR: [{ availableFrom: null }, { availableFrom: { lte: now } }] },
+      { OR: [{ availableTo: null }, { availableTo: { gte: now } }] },
+      ...(limited
+        ? [{ OR: [{ availableQuantity: { not: null } }, { availableTo: { not: null } }] }]
+        : []),
+      // Content decorations stay in a "not owned" view: owning one doesn't stop
+      // you buying another, which is also why the card never marks them owned.
+      // `browseShopItems` applies the same rule to the client-paged surfaces.
+      // Packs have no single cosmetic to own, so neither modifier speaks to
+      // them — they'd otherwise vanish from "not owned" via the EXISTS.
+      ...(viewerId && owned === 'notOwned'
+        ? [
+            {
+              OR: [
+                { cosmeticId: null },
+                { cosmetic: { type: CosmeticType.ContentDecoration } },
+                { cosmetic: { UserCosmetic: { none: { userId: viewerId } } } },
+              ],
+            },
+          ]
+        : []),
+      ...(viewerId && owned === 'owned'
+        ? [{ cosmetic: { UserCosmetic: { some: { userId: viewerId } } } }]
+        : []),
+      // In `AND` rather than beside the branches above: a second top-level `OR`
+      // key would replace the creator/pack one and widen the feed to every
+      // official item.
+      ...(query
+        ? [
+            {
+              OR: [
+                { title: { contains: query, mode: Prisma.QueryMode.insensitive } },
+                { cosmetic: { name: { contains: query, mode: Prisma.QueryMode.insensitive } } },
+              ],
+            },
+          ]
+        : []),
+    ],
+  };
+
+  const [raw, count] = await Promise.all([
+    dbRead.cosmeticShopItem.findMany({
+      where,
+      take,
+      skip,
+      orderBy: communityCosmeticsOrderBy(sort),
+      // addedById lets the client attribute the purchase to the owner's shop.
+      select: { ...creatorStorefrontItemSelect, addedById: true },
+    }),
+    dbRead.cosmeticShopItem.count({ where }),
+  ]);
+  // Same meta sanitation as the storefront.
+  const items = raw.map((item) => ({
+    ...item,
+    meta: {
+      purchases: (item.meta as CosmeticShopItemMeta)?.purchases ?? 0,
+      acceptsBlueBuzz: (item.meta as CosmeticShopItemMeta)?.acceptsBlueBuzz ?? false,
+      ...packDisplayMeta(item.meta as CosmeticShopItemMeta | null),
+    },
+  }));
+  return getPagingData({ items, count }, limit, page);
 };
 
 // Early Access download prices for the shop's Models section, keyed by model
@@ -750,9 +1365,20 @@ export const getEarlyAccessModelPrices = async ({ modelVersionIds }: GetEarlyAcc
   const prices: Record<number, number> = {};
   if (!modelVersionIds.length) return prices;
   const paidAccess = await getPaidAccess('ModelVersion', modelVersionIds);
-  for (const id of modelVersionIds) {
-    const terms = paidAccess[id]?.terms as ModelVersionTerms | undefined;
-    if (terms?.download?.price) prices[id] = terms.download.price;
+  const gatedIds = modelVersionIds.filter((id) => paidAccess[id]?.terms);
+  if (!gatedIds.length) return prices;
+
+  // A public listing: no viewer, so everyone is quoted the buyer price — which means a live sale
+  // discounts it. Reading the gate rows directly would advertise the pre-sale number.
+  const monetization = await getViewerMonetization({
+    versions: gatedIds.map((id) => ({ id })),
+    viewer: {},
+  });
+
+  for (const id of gatedIds) {
+    const terms = monetization[id]?.paidAccess?.terms as ModelVersionTerms | undefined;
+    const price = terms?.download?.price ?? 0;
+    if (price > 0) prices[id] = price;
   }
   return prices;
 };
@@ -769,15 +1395,23 @@ export const getPublicShopItemsForResale = async ({
   cursor,
   cosmeticTypes,
   query,
-}: GetPublicShopItemsInput & { userId: number }) => {
-  const settings = await getCreatorShopSettings({ userId });
-  const alreadyResold = settings.resoldItemIds ?? [];
+  stickersEnabled,
+}: GetPublicShopItemsInput & { userId: number; stickersEnabled?: boolean }) => {
+  const alreadyResold = (
+    await dbRead.userCosmeticShopItemResale.findMany({
+      where: { userId },
+      select: { shopItemId: true },
+    })
+  ).map((r) => r.shopItemId);
   // A block in either direction removes the pairing from the resale gallery.
   const blockedPairIds = await getBlockedPairIds(userId);
   const raw = await dbRead.cosmeticShopItem.findMany({
     where: {
       status: CosmeticShopItemStatus.Published,
       meta: { path: ['sellableByOthers'], equals: true },
+      // Packs are not resellable by reference: the resale split is computed from
+      // one cosmetic's creator, and a pack has several.
+      cosmeticId: { not: null },
       addedById: {
         not: userId,
         ...(blockedPairIds.length ? { notIn: blockedPairIds } : {}),
@@ -792,7 +1426,16 @@ export const getPublicShopItemsForResale = async ({
             ],
           }
         : {}),
-      ...(cosmeticTypes?.length ? { cosmetic: { type: { in: cosmeticTypes } } } : {}),
+      ...(cosmeticTypes?.length || !stickersEnabled
+        ? {
+            cosmetic: {
+              type: {
+                ...(cosmeticTypes?.length ? { in: cosmeticTypes } : {}),
+                ...(stickersEnabled ? {} : { not: CosmeticType.Sticker }),
+              },
+            },
+          }
+        : {}),
     },
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor } } : {}),
@@ -802,6 +1445,7 @@ export const getPublicShopItemsForResale = async ({
       unitAmount: true,
       availableQuantity: true,
       meta: true,
+      listed: true,
       cosmetic: { select: { id: true, name: true, type: true, data: true } },
       addedBy: { select: { id: true, username: true, image: true } },
     },
@@ -813,29 +1457,18 @@ export const getPublicShopItemsForResale = async ({
     sellerShare: (meta as CosmeticShopItemMeta | null)?.sellerShare ?? 0,
     // Already in this creator's shop — the picker shows it as added/removable.
     isResold: alreadyResold.includes(i.id),
+    // Delisted items stay in the picker, badged but unaddable — hiding them
+    // would just make the reseller hunt for the item again once it's back.
+    listed: i.listed,
   }));
   return { items, nextCursor };
-};
-
-// User ids the given user has a block relationship with, in either direction —
-// a block forbids resale pairings between the two users.
-const getBlockedPairIds = async (userId: number) => {
-  const [blockedBy, blocked] = await Promise.all([
-    BlockedByUsers.getCached({ userId }),
-    BlockedUsers.getCached({ userId }),
-  ]);
-  return boundExcludedUserIds(
-    [],
-    blockedBy.map((u) => u.id),
-    blocked.map((u) => u.id)
-  );
 };
 
 // Load + validate a sellable shop item the caller may resell.
 const getResellableItemOrThrow = async (shopItemId: number, userId: number) => {
   const item = await dbRead.cosmeticShopItem.findUnique({
     where: { id: shopItemId },
-    select: { id: true, status: true, addedById: true, meta: true },
+    select: { id: true, status: true, listed: true, addedById: true, meta: true },
   });
   if (!item) throw throwNotFoundError('Shop item not found');
   const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
@@ -843,6 +1476,11 @@ const getResellableItemOrThrow = async (shopItemId: number, userId: number) => {
     throw throwAuthorizationError('This item is not available for other creators to sell');
   if (item.status !== CosmeticShopItemStatus.Published)
     throw throwBadRequestError('Only published items can be resold');
+  // Existing listings outlive the creator pulling the item off sale, so a new
+  // one must not be creatable while it's off — otherwise delisting is undone by
+  // anyone who adds it, and a row could exist that was never a live agreement.
+  if (!item.listed)
+    throw throwBadRequestError('This item is not currently for sale — try again if it comes back');
   if (item.addedById === userId) throw throwBadRequestError('This is already your own item');
   // NotFound (not authorization) so the block itself isn't revealed, mirroring
   // the read-side block enforcement.
@@ -855,49 +1493,127 @@ export const addResoldItem = async ({
   userId,
   shopItemId,
 }: ResoldItemInput & { userId: number }) => {
-  await assertCreatorProgramMember(userId);
-  await getResellableItemOrThrow(shopItemId, userId);
-  const settings = await getCreatorShopSettings({ userId });
-  const resoldItemIds = settings.resoldItemIds ?? [];
-  if (resoldItemIds.includes(shopItemId))
-    throw throwBadRequestError('You are already reselling this item');
-  return updateCreatorShopSettings({ userId, resoldItemIds: [...resoldItemIds, shopItemId] });
+  const item = await getResellableItemOrThrow(shopItemId, userId);
+  const existing = await dbRead.userCosmeticShopItemResale.findUnique({
+    where: { userId_shopItemId: { userId, shopItemId } },
+    select: { shopItemId: true },
+  });
+  if (existing) throw throwBadRequestError('You are already reselling this item');
+  // Append after the current last index rather than counting rows: removing a
+  // listing doesn't reindex the rest, so a count can collide with an index that
+  // is still in use ([0, 2] → 2).
+  const { _max } = await dbRead.userCosmeticShopItemResale.aggregate({
+    where: { userId },
+    _max: { index: true },
+  });
+  // The row records the share on offer right now and is never rewritten: from
+  // here on this reseller is paid what they signed up for, whatever the original
+  // creator changes the item to later.
+  return dbWrite.userCosmeticShopItemResale.create({
+    data: {
+      userId,
+      shopItemId,
+      sellerShare: (item.meta as CosmeticShopItemMeta | null)?.sellerShare ?? 0,
+      index: (_max.index ?? -1) + 1,
+    },
+  });
 };
 
 export const removeResoldItem = async ({
   userId,
   shopItemId,
 }: ResoldItemInput & { userId: number }) => {
-  const settings = await getCreatorShopSettings({ userId });
-  const resoldItemIds = (settings.resoldItemIds ?? []).filter((id) => id !== shopItemId);
-  return updateCreatorShopSettings({ userId, resoldItemIds });
+  // Deleting the row drops the grandfathered share with it — relisting later is
+  // a fresh agreement to whatever the item offers then.
+  await dbWrite.userCosmeticShopItemResale.deleteMany({ where: { userId, shopItemId } });
+};
+
+// Storefront order for the resold section. Ids the caller doesn't resell are
+// ignored rather than rejected — a stale client list shouldn't fail the drop.
+export const reorderResoldItems = async ({
+  userId,
+  shopItemIds,
+}: ReorderResoldItemsInput & { userId: number }) => {
+  await dbWrite.$transaction(
+    shopItemIds.map((shopItemId, index) =>
+      dbWrite.userCosmeticShopItemResale.updateMany({
+        where: { userId, shopItemId },
+        data: { index },
+      })
+    )
+  );
 };
 
 // The creator's own resell listings, in their saved order — powers the manage
 // picker's reorder list. Unlike the storefront query this keeps items whose
 // source shop is currently private so the owner can still see and remove them.
 export const getResoldItemsForManage = async ({ userId }: { userId: number }) => {
-  const settings = await getCreatorShopSettings({ userId });
-  const resoldIds = settings.resoldItemIds ?? [];
-  if (!resoldIds.length) return [];
-  const rows = await dbRead.cosmeticShopItem.findMany({
-    where: { id: { in: resoldIds } },
+  const rows = await dbRead.userCosmeticShopItemResale.findMany({
+    where: { userId },
+    orderBy: [{ index: 'asc' }, { shopItemId: 'asc' }],
     select: {
-      id: true,
-      unitAmount: true,
-      meta: true,
-      cosmetic: { select: { id: true, name: true, type: true, data: true } },
-      addedBy: { select: { id: true, username: true, image: true } },
+      sellerShare: true,
+      shopItem: {
+        select: {
+          id: true,
+          unitAmount: true,
+          cosmetic: { select: { id: true, name: true, type: true, data: true } },
+          addedBy: { select: { id: true, username: true, image: true } },
+        },
+      },
     },
   });
-  const byId = new Map(rows.map((r) => [r.id, r]));
-  return resoldIds
-    .map((id) => byId.get(id))
-    .filter((r): r is (typeof rows)[number] => !!r)
-    .map(({ meta, ...r }) => ({
-      ...r,
-      sellerShare: (meta as CosmeticShopItemMeta | null)?.sellerShare ?? 0,
+  return rows.map(({ shopItem, sellerShare }) => ({ ...shopItem, sellerShare }));
+};
+
+// Who resells one of your items, and on what terms — the question the settings
+// blob couldn't answer without scanning every user. Ordered oldest-first, so the
+// creators with the longest-standing grandfathered terms read first.
+export const getShopItemResellers = async ({
+  shopItemId,
+  userId,
+  isModerator,
+}: GetShopItemResellersInput & { userId: number; isModerator?: boolean }) => {
+  await getOwnedItemOrThrow(shopItemId, userId, isModerator);
+  const rows = await dbRead.userCosmeticShopItemResale.findMany({
+    where: { shopItemId },
+    orderBy: { createdAt: 'asc' },
+    select: {
+      sellerShare: true,
+      createdAt: true,
+      // The list renders UserAvatar with decorations and username, which reads
+      // the profile picture AND the equipped cosmetics. Selecting less than this
+      // renders a bare placeholder for nearly every reseller.
+      user: { select: userWithCosmeticsSelect },
+    },
+  });
+  return rows
+    .filter((r) => !r.user.deletedAt)
+    .map(({ user: { deletedAt, ...user }, sellerShare, createdAt }) => ({
+      user,
+      sellerShare,
+      listedAt: createdAt,
     }));
+};
+
+/**
+ * Headline resale numbers for the manage view, both directions of the table in
+ * one round trip. `resellers` is DISTINCT creators, not listings — one creator
+ * reselling three of your items is one creator.
+ */
+export const getCreatorShopResaleStats = async ({ userId }: { userId: number }) => {
+  const [stats] = await dbRead.$queryRaw<
+    { resellers: number; resoldItems: number; reselling: number }[]
+  >`
+    SELECT
+      COUNT(DISTINCT r."userId") FILTER (WHERE si."addedById" = ${userId})::int AS "resellers",
+      COUNT(DISTINCT r."shopItemId") FILTER (WHERE si."addedById" = ${userId})::int AS "resoldItems",
+      COUNT(*) FILTER (WHERE r."userId" = ${userId})::int AS "reselling"
+    FROM "UserCosmeticShopItemResale" r
+    JOIN "CosmeticShopItem" si ON si.id = r."shopItemId"
+    WHERE si."addedById" = ${userId} OR r."userId" = ${userId}
+  `;
+  return stats ?? { resellers: 0, resoldItems: 0, reselling: 0 };
 };
 
 // ---------------------------------------------------------------------------
@@ -906,48 +1622,109 @@ export const getResoldItemsForManage = async ({ userId }: { userId: number }) =>
 
 export const getCreatorShopReviewQueue = async ({
   limit,
-  cursor,
+  page,
+  sort,
   status,
   username,
   userId,
   cosmeticTypes,
 }: GetReviewQueueInput) => {
-  const items = await dbRead.cosmeticShopItem.findMany({
-    where: {
-      // A specific status filters to it (including Archived); no status = every
-      // status except Archived (the "All" option in the review queue).
-      ...(status ? { status } : { status: { not: CosmeticShopItemStatus.Archived } }),
+  // A pack has no cosmetic, so a `cosmetic` relation filter excludes it outright
+  // — which is why packs never reached this queue at all. They are matched on
+  // their lister instead.
+  const types = cosmeticTypes?.filter((t): t is CosmeticType => t !== PACK_FILTER_VALUE) ?? [];
+  const packsWanted = !cosmeticTypes?.length || cosmeticTypes.includes(PACK_FILTER_VALUE);
+  const singlesWanted = !cosmeticTypes?.length || types.length > 0;
+
+  const where: Prisma.CosmeticShopItemWhereInput = {
+    // A specific status filters to it (including Archived); no status = every
+    // status except Archived (the "All" option in the review queue).
+    ...(status ? { status } : { status: { not: CosmeticShopItemStatus.Archived } }),
+    OR: [
       // Only creator-submitted items (exclude official/admin cosmetics).
-      cosmetic: {
-        createdById: userId ?? { not: null },
-        ...(cosmeticTypes?.length ? { type: { in: cosmeticTypes } } : {}),
-        ...(username ? { creator: { username: { contains: username, mode: 'insensitive' } } } : {}),
-      },
-    },
-    take: limit + 1,
-    ...(cursor ? { cursor: { id: cursor } } : {}),
-    orderBy: { createdAt: 'asc' },
-    select: {
-      ...creatorShopItemSelect,
-      cosmetic: {
-        select: {
-          id: true,
-          name: true,
-          type: true,
-          data: true,
-          videoUrl: true,
-          createdById: true,
-          source: true,
-          description: true,
-          creator: { select: { id: true, username: true, image: true } },
+      ...(singlesWanted
+        ? [
+            {
+              cosmetic: {
+                createdById: userId ?? { not: null },
+                ...(types.length ? { type: { in: types } } : {}),
+                ...(username
+                  ? {
+                      creator: { username: { contains: username, mode: 'insensitive' as const } },
+                    }
+                  : {}),
+              },
+            },
+          ]
+        : []),
+      ...(packsWanted
+        ? [
+            {
+              cosmeticId: null,
+              addedById: userId ?? { not: null },
+              ...(username
+                ? { addedBy: { username: { contains: username, mode: 'insensitive' as const } } }
+                : {}),
+            },
+          ]
+        : []),
+    ],
+  };
+
+  const { take, skip } = getPagination(limit, page);
+
+  const [items, count] = await Promise.all([
+    dbRead.cosmeticShopItem.findMany({
+      where,
+      take,
+      skip,
+      // `id` breaks ties so a page boundary can't drop or repeat an item when
+      // two submissions share a createdAt.
+      orderBy: [
+        { createdAt: sort === 'newest' ? 'desc' : 'asc' },
+        { id: sort === 'newest' ? 'desc' : 'asc' },
+      ],
+      select: {
+        ...creatorShopItemSelect,
+        // A pack has no cosmetic, so its author is the lister — without this the
+        // review panel has nobody to attribute it to.
+        addedBy: { select: { id: true, username: true, image: true } },
+        cosmetic: {
+          select: {
+            id: true,
+            name: true,
+            type: true,
+            data: true,
+            videoUrl: true,
+            createdById: true,
+            source: true,
+            description: true,
+            creator: { select: { id: true, username: true, image: true } },
+          },
         },
       },
-    },
-  });
+    }),
+    dbRead.cosmeticShopItem.count({ where }),
+  ]);
 
-  let nextCursor: number | undefined;
-  if (items.length > limit) nextCursor = items.pop()?.id;
-  return { items, nextCursor };
+  return getPagingData({ items, count }, take, page);
+};
+
+// Backs the review queue's creator filter: every user who has ever submitted a
+// shop item, mirroring the queue's own creator predicate (a creator-owned
+// cosmetic with at least one shop item). Deliberately not scoped to the active
+// status/type filters so the selection survives flipping between them. The set
+// is small enough to send whole — no cursor.
+export const getCreatorShopReviewQueueCreators = async () => {
+  const creators = await dbRead.user.findMany({
+    where: {
+      username: { not: null },
+      createdCosmetics: { some: { cosmeticShopItems: { some: {} } } },
+    },
+    select: { id: true, username: true },
+    orderBy: { username: 'asc' },
+  });
+  return creators.map(({ id, username }) => ({ id, username: username as string }));
 };
 
 export const reviewCreatorShopItem = async ({
@@ -966,18 +1743,53 @@ export const reviewCreatorShopItem = async ({
       meta: true,
       title: true,
       addedById: true,
-      cosmetic: { select: { createdById: true, creator: { select: { username: true } } } },
+      cosmetic: {
+        // type + data feed creatorGrantRemaining below.
+        select: {
+          createdById: true,
+          type: true,
+          data: true,
+          creator: { select: { username: true } },
+        },
+      },
     },
   });
   if (!item) throw throwNotFoundError('Shop item not found');
   if (item.status === CosmeticShopItemStatus.Archived)
     throw throwBadRequestError('Archived items cannot be reviewed');
+  // Rejected is deliberately NOT blocked here: this procedure is
+  // moderatorProcedure, so a second verdict is the one way back from a mistaken
+  // rejection, and it stays out of the creator's hands. Every path a creator can
+  // reach — edit, list, archive, restore — refuses a rejected item.
   if (action === 'revert' && item.status !== CosmeticShopItemStatus.Published)
     throw throwBadRequestError('Only published items can be reverted to pending review');
 
   const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
   const now = new Date();
   const reviewFields = { reviewedById: reviewerId, reviewedAt: now };
+  const nextStatus =
+    action === 'approve'
+      ? CosmeticShopItemStatus.Published
+      : action === 'reject'
+      ? CosmeticShopItemStatus.Rejected
+      : action === 'revert'
+      ? CosmeticShopItemStatus.PendingReview
+      : CosmeticShopItemStatus.RequestedChanges;
+  // The verdict is recorded on the history too, not just on rejectionReason —
+  // the next edit clears that column, and a re-review needs to see what was
+  // said last time.
+  const reviewedMeta = (extra: Partial<CosmeticShopItemMeta>) =>
+    appendItemHistory(
+      { ...meta, ...extra },
+      {
+        at: now.toISOString(),
+        userId: reviewerId,
+        kind: 'reviewed',
+        status: nextStatus,
+        action,
+        note: rejectionReason ?? undefined,
+      }
+    ) as Prisma.InputJsonValue;
 
   const updated =
     action === 'approve'
@@ -987,9 +1799,9 @@ export const reviewCreatorShopItem = async ({
           where: { id },
           data: {
             ...reviewFields,
-            status: CosmeticShopItemStatus.Published,
+            status: nextStatus,
             rejectionReason: null,
-            meta: { ...meta, lastApprovedAmount: item.unitAmount } as Prisma.InputJsonValue,
+            meta: reviewedMeta({ lastApprovedAmount: item.unitAmount }),
           },
           select: creatorShopItemSelect,
         })
@@ -1000,30 +1812,33 @@ export const reviewCreatorShopItem = async ({
           where: { id },
           data: {
             ...reviewFields,
-            status:
-              action === 'reject'
-                ? CosmeticShopItemStatus.Rejected
-                : action === 'revert'
-                ? CosmeticShopItemStatus.PendingReview
-                : CosmeticShopItemStatus.RequestedChanges,
+            status: nextStatus,
             rejectionReason: rejectionReason ?? null,
+            meta: reviewedMeta({}),
           },
           select: creatorShopItemSelect,
         });
 
-  // On approval, grant the creator their own cosmetic (idempotent).
-  if (action === 'approve' && item.cosmetic.createdById) {
+  // On approval, grant the creator their own cosmetic (idempotent). A pack has
+  // none of its own, and its members were granted when they were approved.
+  if (action === 'approve' && item.cosmeticId != null && item.cosmetic?.createdById) {
     await dbWrite.userCosmetic.createMany({
       data: [
         {
           userId: item.cosmetic.createdById,
           cosmeticId: item.cosmeticId,
           claimKey: 'creator-shop',
+          remaining: creatorGrantRemaining(item.cosmetic.type, item.cosmetic.data),
         },
       ],
       skipDuplicates: true,
     });
+    await refreshOwnedStickerCache([item.cosmetic.createdById]);
   }
+
+  // D14: an item leaving Published is no longer bundlable, so packs holding it
+  // have to come off sale too.
+  if (action !== 'approve' && item.cosmeticId != null) await delistPacksContaining(item.cosmeticId);
 
   // An unpublished item can't stay featured — free up its slot.
   if (action === 'revert' && item.addedById) {
@@ -1037,9 +1852,10 @@ export const reviewCreatorShopItem = async ({
   }
 
   // Let the creator know the review outcome (best-effort).
-  const creatorId = item.cosmetic.createdById;
+  // A pack is authored by its lister, not by any one member's creator.
+  const creatorId = item.cosmetic?.createdById ?? item.addedById;
   if (creatorId) {
-    const username = item.cosmetic.creator?.username ?? undefined;
+    const username = item.cosmetic?.creator?.username ?? undefined;
     const type =
       action === 'approve'
         ? 'creator-shop-item-approved'
@@ -1059,6 +1875,528 @@ export const reviewCreatorShopItem = async ({
   }
 
   return updated;
+};
+
+type TakedownFailure = {
+  stage: 'refund' | 'clawback';
+  userId: number;
+  amount?: number;
+  error: string;
+};
+
+const errorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error ?? 'Unknown error');
+
+// A takedown can run for minutes across hundreds of Buzz calls, so every money
+// move gets a few attempts before it's written off as a failure a human has to
+// finish. Transient 5xx/timeouts from the Buzz service are the common case.
+const TAKEDOWN_MONEY_RETRIES = 3;
+const TAKEDOWN_RETRY_DELAY_MS = 1000;
+
+const takedownMoneyMove = <T>(fn: () => Promise<T>) =>
+  withRetries(fn, TAKEDOWN_MONEY_RETRIES, TAKEDOWN_RETRY_DELAY_MS);
+
+const logTakedown = (level: 'info' | 'error', message: string, data: MixedObject) =>
+  logToAxiom({ level, name: 'cosmetic-takedown', message, data }).catch(() => undefined);
+
+/**
+ * Pull a cosmetic that can't stay on sale (IP infringement / TOS) in one
+ * operation: stop sales, refund every buyer, take back the Buzz the seller was
+ * paid for those sales, and strip the cosmetic from everyone who owns or has it
+ * equipped.
+ *
+ * The creator's submission fee is deliberately NOT refunded — a takedown is a
+ * terms violation, and the fee paid for the review that caught it.
+ *
+ * Money moves are best-effort per buyer: one failed refund doesn't abort the
+ * rest, it lands in `failures` for a moderator to finish by hand.
+ */
+export const takedownCosmeticShopItem = async ({
+  id,
+  reason,
+  moderatorId,
+}: TakedownCosmeticShopItemInput & { moderatorId: number }) => {
+  const item = await dbRead.cosmeticShopItem.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      cosmeticId: true,
+      title: true,
+      meta: true,
+      addedById: true,
+      cosmetic: { select: { createdById: true, creator: { select: { username: true } } } },
+    },
+  });
+  if (!item) throw throwNotFoundError('Shop item not found');
+
+  const meta = (item.meta ?? {}) as CosmeticShopItemMeta;
+  const now = new Date();
+
+  // Stop sales first so nothing can be bought while the refunds run.
+  const updated = await dbWrite.cosmeticShopItem.update({
+    where: { id },
+    data: {
+      status: CosmeticShopItemStatus.Archived,
+      listed: false,
+      archivedAt: now,
+      meta: appendItemHistory(
+        { ...meta, takedown: { reason, moderatorId, at: now.toISOString() } },
+        {
+          at: now.toISOString(),
+          userId: moderatorId,
+          kind: 'takedown',
+          status: CosmeticShopItemStatus.Archived,
+          note: reason,
+        }
+      ) as Prisma.InputJsonValue,
+    },
+    select: creatorShopItemSelect,
+  });
+  // Official-shop placements are curated rows, not a status filter — drop them
+  // or the item keeps rendering in its section.
+  await dbWrite.cosmeticShopSectionItem.deleteMany({ where: { shopItemId: id } });
+  await endResaleListings({ shopItemId: id, title: item.title });
+
+  if (item.addedById) {
+    const settings = await getCreatorShopSettings({ userId: item.addedById });
+    const featuredItemIds = settings.featuredItemIds ?? [];
+    if (featuredItemIds.includes(id))
+      await updateCreatorShopSettings({
+        userId: item.addedById,
+        featuredItemIds: featuredItemIds.filter((fid) => fid !== id),
+      });
+  }
+
+  // Primary, not the replica: a sale made seconds ago may not have replicated
+  // yet, and missing it would strip that buyer's cosmetic without refunding it.
+  const purchases = await dbWrite.userCosmeticShopPurchases.findMany({
+    where: { shopItemId: id, refunded: false },
+    select: { userId: true, buzzTransactionId: true, unitAmount: true, meta: true },
+  });
+
+  const failures: TakedownFailure[] = [];
+  // Payouts we can undo by refunding the exact transaction that paid them.
+  const refundablePayouts: { userId: number; amount: number; transactionId: string }[] = [];
+  // Everything else has to be reversed by charging the recipient, keyed per
+  // recipient AND color: payouts were made in the colors the buyer paid with, so
+  // they have to come back the same way.
+  const clawback = new Map<string, number>();
+  const addClawback = (userId: number, color: BuzzSpendType, amount: number) => {
+    if (amount <= 0) return;
+    const key = `${userId}:${color}`;
+    clawback.set(key, (clawback.get(key) ?? 0) + amount);
+  };
+
+  const isPack = item.cosmeticId == null;
+  // A pack's author is its lister; it has no cosmetic creator of its own.
+  const creatorId = item.cosmetic?.createdById ?? item.addedById;
+  let unrecoveredResellerShare = 0;
+  // Kept separate from the reseller slice: for a single item that counter means
+  // "the part we couldn't claw back because we don't know who took it", and the
+  // creator's own slice WAS recovered. For a pack nothing is recovered, so
+  // folding the two together would make a total loss read like a partial one.
+  let unrecoveredPackPool = 0;
+  let refundedValue = 0;
+  const refundedUserIds: number[] = [];
+
+  await logTakedown('info', 'Takedown started', {
+    shopItemId: id,
+    moderatorId,
+    reason,
+    purchases: purchases.length,
+  });
+
+  for (const purchase of purchases) {
+    const price = purchase.unitAmount;
+    // Unreachable for anything the current code writes — a purchase computing to
+    // zero is refused rather than completed. Kept because the failure mode if a
+    // zero-price row ever appears by another route (a backfill, a data fix) is
+    // that the refund is asked to reverse a transaction the Buzz service never
+    // saw, which fails on every re-run while the cosmetics are already revoked.
+    // Logged rather than silently swallowed: this branch marks a purchase
+    // refunded without refunding it, which should never be routine.
+    if (price === 0) {
+      void logToAxiom({
+        level: 'warn',
+        message: 'Takedown skipped the refund for a zero-price purchase',
+        data: {
+          shopItemId: id,
+          userId: purchase.userId,
+          transactionId: purchase.buzzTransactionId,
+        },
+      }).catch(() => undefined);
+      await dbWrite.userCosmeticShopPurchases.update({
+        where: { buzzTransactionId: purchase.buzzTransactionId },
+        data: { refunded: true },
+      });
+      refundedUserIds.push(purchase.userId);
+      continue;
+    }
+    let refund: Awaited<ReturnType<typeof refundMultiAccountTransaction>>;
+    try {
+      refund = await takedownMoneyMove(() =>
+        refundMultiAccountTransaction({
+          externalTransactionIdPrefix: purchase.buzzTransactionId,
+          description: `Cosmetic removed - ${item.title}`,
+        })
+      );
+    } catch (error) {
+      failures.push({
+        stage: 'refund',
+        userId: purchase.userId,
+        amount: price,
+        error: errorMessage(error),
+      });
+      // The buyer loses the cosmetic below regardless, so an unrefunded sale is
+      // money owed to a real person — loud, and with the ids needed to finish it.
+      await logTakedown('error', 'Buyer refund failed', {
+        shopItemId: id,
+        userId: purchase.userId,
+        buzzTransactionId: purchase.buzzTransactionId,
+        amount: price,
+        error: errorMessage(error),
+      });
+      continue;
+    }
+
+    await dbWrite.userCosmeticShopPurchases.update({
+      where: { buzzTransactionId: purchase.buzzTransactionId },
+      data: { refunded: true },
+    });
+    refundedUserIds.push(purchase.userId);
+    refundedValue += price;
+
+    // Sales made since the payout-recording migration carry exactly who was paid
+    // what, in which color — reverse those verbatim, refunding the payout
+    // transaction itself where its id was recorded.
+    const recordedPayouts = (purchase.meta as CosmeticPurchaseMeta | null)?.payouts;
+    if (recordedPayouts?.length) {
+      for (const payout of recordedPayouts) {
+        if (payout.amount <= 0) continue;
+        if (payout.transactionId)
+          refundablePayouts.push({
+            userId: payout.userId,
+            amount: payout.amount,
+            transactionId: payout.transactionId,
+          });
+        else addClawback(payout.userId, payout.color as BuzzSpendType, payout.amount);
+      }
+      continue;
+    }
+
+    // A pack has no single creator to re-derive a split from: its payout is
+    // spread across each member's creator and their resellers, in proportions
+    // only the recorded payouts know. Charging the pack's lister for the whole
+    // creator pool would bill the wrong person for money they never received —
+    // so it goes to `failures` for a moderator to settle by hand instead.
+    if (isPack) {
+      // A pack listing carries no sellerShare; the pool is the whole 70%.
+      const { creatorPool } = computeCreatorShopSplit(price);
+      // Counted as unrecovered rather than left out of the summary: the whole
+      // pool really is unrecovered, and a report that only says so in `failures`
+      // reads as a smaller loss than it was.
+      // An upper bound, not the exact figure: scaling or a skipped sub-1 basis
+      // means less was actually paid, and this branch only runs when the record
+      // that would say so is missing. Over-stating a loss is the safe direction.
+      unrecoveredPackPool += creatorPool;
+      failures.push({
+        stage: 'clawback',
+        userId: item.addedById ?? 0,
+        amount: creatorPool,
+        error: `Pack purchase ${purchase.buzzTransactionId} has no recorded payouts; the split cannot be re-derived`,
+      });
+      continue;
+    }
+
+    // Legacy rows (pre-migration): the split has to be re-derived from the item.
+    const bluePaid = refund.refundedTransactions
+      .filter((t) => t.accountType === 'blue')
+      .reduce((sum, t) => sum + t.amount, 0);
+    const domainColor = (refund.refundedTransactions.find((t) => t.accountType !== 'blue')
+      ?.accountType ?? 'yellow') as BuzzSpendType;
+
+    const { creatorPool, creatorAmount, sellerAmount } = computeCreatorShopSplit(
+      price,
+      meta.sellerShare ?? 0
+    );
+    let recipients: { userId: number; amount: number }[];
+    if (creatorId) {
+      // Without a payout record there's no way to tell whether another creator's
+      // storefront or the platform took the seller share, so a resellable item
+      // only claws back what the creator is certain to have received.
+      recipients = [
+        { userId: creatorId, amount: meta.sellableByOthers ? creatorAmount : creatorPool },
+      ];
+      if (meta.sellableByOthers) unrecoveredResellerShare += sellerAmount;
+    } else {
+      const paidToUserIds = meta.paidToUserIds ?? [];
+      recipients = paidToUserIds.map((uid) => ({
+        userId: uid,
+        amount: Math.floor(price / paidToUserIds.length),
+      }));
+    }
+
+    for (const recipient of recipients) {
+      const blue = price > 0 ? Math.floor((recipient.amount * bluePaid) / price) : 0;
+      addClawback(recipient.userId, 'blue', blue);
+      addClawback(recipient.userId, domainColor, recipient.amount - blue);
+    }
+  }
+
+  let clawedBack = 0;
+  // Refunding the payout transaction is the cleanest reversal: the Buzz service
+  // ties it to the original, so it can't double-apply and needs no external id of
+  // our own.
+  for (const payout of refundablePayouts) {
+    try {
+      await takedownMoneyMove(() =>
+        refundTransaction(payout.transactionId, `Cosmetic removed - ${item.title}`)
+      );
+      clawedBack += payout.amount;
+    } catch (error) {
+      failures.push({
+        stage: 'clawback',
+        userId: payout.userId,
+        amount: payout.amount,
+        error: errorMessage(error),
+      });
+      await logTakedown('error', 'Payout refund failed', {
+        shopItemId: id,
+        userId: payout.userId,
+        payoutTransactionId: payout.transactionId,
+        amount: payout.amount,
+        error: errorMessage(error),
+      });
+    }
+  }
+
+  for (const [key, amount] of clawback) {
+    const [recipientId, color] = key.split(':') as [string, BuzzSpendType];
+    // Retried on the same external id on purpose: if an attempt actually landed
+    // before erroring, the duplicate is rejected rather than charged twice.
+    const externalTransactionId = `cosmetic-takedown-${id}:clawback:${recipientId}:${color}:${now.getTime()}`;
+    try {
+      await takedownMoneyMove(() =>
+        createBuzzTransaction({
+          fromAccountId: Number(recipientId),
+          fromAccountType: color,
+          toAccountId: 0,
+          amount,
+          type: TransactionType.Refund,
+          description: `Cosmetic removed - earnings reversed - ${item.title}`,
+          // Stamped per run: the amount is an aggregate over the sales refunded in
+          // THIS run, so a second takedown pass (sales that failed or landed late)
+          // must not be swallowed as a duplicate of the first.
+          externalTransactionId,
+        })
+      );
+      clawedBack += amount;
+    } catch (error) {
+      failures.push({
+        stage: 'clawback',
+        userId: Number(recipientId),
+        amount,
+        error: errorMessage(error),
+      });
+      await logTakedown('error', 'Earnings clawback failed', {
+        shopItemId: id,
+        userId: Number(recipientId),
+        color,
+        amount,
+        externalTransactionId,
+        error: errorMessage(error),
+      });
+    }
+  }
+
+  // Everyone loses the cosmetic — buyers, the creator's own grant, and anyone it
+  // was gifted to. Equipped placements are cleaned up by the revoke helper.
+  //
+  // A pack revokes only what it granted, keyed by the purchase transactions it
+  // was bought through. Its members are sold individually too, and taking down
+  // the bundle is not grounds for stripping a member someone bought on its own.
+  // D14 again: a taken-down cosmetic can never be sold, in a pack or otherwise.
+  if (item.cosmeticId != null) await delistPacksContaining(item.cosmeticId);
+
+  const memberIds = isPack
+    ? (
+        await dbRead.cosmeticShopItemCosmetic.findMany({
+          where: { shopItemId: id },
+          select: { cosmeticId: true },
+        })
+      ).map((m) => m.cosmeticId)
+    : [item.cosmeticId as number];
+  // Empty is meaningful, and must not read as "unscoped": a pack that never
+  // sold (or whose only sale was already refunded) grants nothing, so there is
+  // nothing to revoke. Widening it here would strip every member cosmetic from
+  // everyone who ever obtained one, by any route, with no refund.
+  const packClaimKeys = isPack ? purchases.map((p) => p.buzzTransactionId) : undefined;
+  const owners =
+    memberIds.length && (!isPack || packClaimKeys?.length)
+      ? await dbWrite.userCosmetic.findMany({
+          where: {
+            cosmeticId: { in: memberIds },
+            ...(packClaimKeys ? { claimKey: { in: packClaimKeys } } : {}),
+          },
+          select: { userId: true },
+        })
+      : [];
+  const ownerIds = [...new Set(owners.map((o) => o.userId))];
+  const { revoked } =
+    ownerIds.length && memberIds.length
+      ? await revokeCosmeticsFromUsers({
+          userIds: ownerIds,
+          cosmeticIds: memberIds,
+          claimKeys: packClaimKeys,
+        })
+      : { revoked: 0 };
+
+  // Revoking the holding does not touch stickers already placed on other
+  // people's images — those live in `Placement` with the cosmetic id inside a
+  // JSON payload, and the overlay resolves artwork by cosmetic id with no join
+  // to `UserCosmetic`, so a revoked sticker keeps rendering at full opacity on
+  // everything it was placed on. Taking it down there is the whole point.
+  //
+  // Drained rather than run once: the helper is bounded per batch,
+  // and one pass would report a clean takedown with the artwork still up.
+  // Capped so a runaway cannot hold the request; `hasMore` says to run again.
+  //
+  // Not scoped to `ownerIds`, though the revoke above is. A pack's claim keys
+  // exclude every holding obtained by another route, and the sharpest of those
+  // is the maker's own creator grant — scoping the sweep the same way leaves the
+  // abusive artwork up on everything its author placed it on. See the note on
+  // `removePlacementsByCosmetic`; the trade is deliberate and was tried the
+  // other way first.
+  //
+  // **Single items only, by decision.** Taking a pack down takes down the
+  // bundle, not the artwork in it (Justin, 2026-08-09) — its members stay on
+  // sale, which is why nothing delists them above. Sweeping here would remove
+  // every placement of every member site-wide while those members remain
+  // purchasable and immediately re-placeable, judging artwork nobody judged.
+  // Abusive artwork is taken down per member, and that path does sweep.
+  // Rows a batch could not settle, excluded once they have failed twice.
+  // `ORDER BY id` is stable, so a permanently failing row is re-selected first
+  // every time and would otherwise burn all ten iterations. Excluding on the
+  // FIRST failure instead would give a transient Buzz or Redis blip zero
+  // retries, and nothing re-runs a takedown afterwards — so each row gets one
+  // more go before the sweep stops spending batches on it.
+  const failureCount = new Map<number, number>();
+  const unsettled: number[] = [];
+  let placementsRemoved = {
+    settled: 0,
+    takenDown: 0,
+    failed: 0,
+    hasMore: false,
+    // Reported, not just logged. A moderator taking a pack down over abusive
+    // artwork will otherwise reasonably believe the artwork is gone from the
+    // images it was placed on, and it is still there and still rendering.
+    skippedForPack: false,
+  };
+  for (let batch = 0; batch < 10 && memberIds.length && !isPack; batch++) {
+    let result: Awaited<ReturnType<typeof removePlacementsByCosmetic>>;
+    try {
+      result = await removePlacementsByCosmetic({
+        cosmeticIds: memberIds,
+        skipIds: unsettled,
+        actorId: moderatorId,
+      });
+    } catch (error) {
+      await logTakedown('error', 'Placement takedown failed', {
+        shopItemId: id,
+        cosmeticIds: memberIds,
+        error: errorMessage(error),
+      });
+      break;
+    }
+
+    for (const placementId of result.failed) {
+      const failures = (failureCount.get(placementId) ?? 0) + 1;
+      failureCount.set(placementId, failures);
+      if (failures > 1) unsettled.push(placementId);
+    }
+    placementsRemoved = {
+      ...placementsRemoved,
+      settled: placementsRemoved.settled + result.settled,
+      takenDown: placementsRemoved.takenDown + result.takenDown,
+      // Distinct rows, not attempts — a row is selected again on its retry, so
+      // summing per-batch failures reports double what is actually stuck.
+      failed: failureCount.size,
+      hasMore: result.hasMore,
+    };
+    if (!result.hasMore) break;
+  }
+
+  if (isPack && memberIds.length) {
+    placementsRemoved.skippedForPack = true;
+    await logTakedown('info', 'Placement sweep skipped for a pack takedown', {
+      shopItemId: id,
+      cosmeticIds: memberIds,
+    });
+  }
+
+  if (placementsRemoved.hasMore || placementsRemoved.failed)
+    await logTakedown('error', 'Placement takedown left work behind', {
+      shopItemId: id,
+      ...placementsRemoved,
+    });
+
+  if (creatorId) {
+    await createNotification({
+      type: 'creator-shop-item-taken-down',
+      userId: creatorId,
+      category: NotificationCategory.System,
+      key: `creator-shop-item-taken-down:${id}:${now.getTime()}`,
+      details: { title: item.title, reason },
+    });
+  }
+  for (const userId of new Set(refundedUserIds)) {
+    await createNotification({
+      type: 'cosmetic-shop-item-taken-down',
+      userId,
+      category: NotificationCategory.System,
+      key: `cosmetic-shop-item-taken-down:${id}:${userId}`,
+      details: { title: item.title },
+    });
+  }
+
+  const owedBack =
+    refundablePayouts.reduce((sum, p) => sum + p.amount, 0) +
+    [...clawback.values()].reduce((sum, amount) => sum + amount, 0);
+
+  // One record per run with the totals, so a partially-completed takedown can be
+  // reconciled without replaying the individual failure logs.
+  await logTakedown(failures.length ? 'error' : 'info', 'Takedown finished', {
+    shopItemId: id,
+    moderatorId,
+    purchases: purchases.length,
+    refunded: refundedUserIds.length,
+    refundedValue,
+    owedBack,
+    clawedBack,
+    unrecoveredResellerShare,
+    unrecoveredPackPool,
+    revokedFrom: revoked,
+    placementsRemoved,
+    failures,
+  });
+
+  return {
+    item: updated,
+    purchases: purchases.length,
+    refunded: refundedUserIds.length,
+    refundedValue,
+    // What the sellers were paid for the refunded sales, and the share of those
+    // sales it represents — `clawedBack` is what actually moved back, `owedBack`
+    // what was due, so a failed transfer is visible as the gap between them.
+    owedBack,
+    clawedBack,
+    clawedBackPct: refundedValue > 0 ? Math.round((owedBack / refundedValue) * 100) : 0,
+    unrecoveredResellerShare,
+    unrecoveredPackPool,
+    revokedFrom: revoked,
+    placementsRemoved,
+    failures,
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -1081,27 +2419,27 @@ export const updateCreatorShopSettings = async ({
   userId,
   ...patch
 }: UpdateCreatorShopSettingsInput & { userId: number }) => {
-  // Read-merge-write the JSON blob so we only touch the creatorShop key.
-  return dbWrite.$transaction(async (tx) => {
+  // The merge happens in Postgres, over the stored column. Reading the blob into JS
+  // and writing the whole object back replaced every other settings key with the value
+  // it held at read time, discarding any write that landed in between (a notice
+  // dismissal, a feature toggle, a content preference).
+  const settings = await dbWrite.$transaction(async (tx) => {
     if (patch.enabled === true) {
-      // Can't (re)open a shop without an active Creator Program membership.
-      if (!(await hasValidCreatorMembership(userId)))
-        throw throwBadRequestError(
-          'An active Creator Program membership is required to open your shop.'
-        );
       // Don't let a creator publish an empty shop — there'd be nothing to show.
       const itemCount = await tx.cosmeticShopItem.count({ where: { addedById: userId } });
       if (itemCount === 0)
         throw throwBadRequestError('Add at least one item to your shop before publishing.');
     }
 
-    const user = await tx.user.findUnique({ where: { id: userId }, select: { settings: true } });
-    const settings = (user?.settings ?? {}) as UserSettingsSchema;
-    const creatorShop: CreatorShopSettings = { ...(settings.creatorShop ?? {}), ...patch };
-    await tx.user.update({
-      where: { id: userId },
-      data: { settings: { ...settings, creatorShop } as Prisma.InputJsonValue },
-    });
-    return creatorShop;
+    // Every field of the input is optional, so `patch` can be empty. `patchUserSettings`
+    // then writes nothing and returns the row read inside this transaction — the same
+    // value the old read-merge-write returned for an empty patch, and deliberately not
+    // the Redis-cached blob, which can be hours old.
+    return patchUserSettings(userId, { mergeInto: { creatorShop: patch } }, tx);
   });
+
+  // After commit — the settings cache is Redis, and it was never busted here at all,
+  // so `getUserSettings` served a pre-shop blob for up to its 4h TTL.
+  await bustUserSettings(userId);
+  return (settings.creatorShop ?? {}) as CreatorShopSettings;
 };

@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
 import { classifyDecision } from '~/server/games/new-order/consensus-backfill';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 describe('classifyDecision', () => {
   it('same level', () => expect(classifyDecision(4, 4)).toBe('same_level'));

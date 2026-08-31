@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+// Type-only namespace import for the `importOriginal` mock below. Erased at compile time, so it
+// does not participate in mock hoisting. `@typescript-eslint/consistent-type-imports` rejects
+// the `typeof import('...')` form, which is why this is a named namespace.
+import type * as TrpcUtils from '~/utils/trpc';
+import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
 
 // =============================================================================
 // Gallery lazy per-post carousel (`galleryLazyPostImages`).
@@ -23,7 +28,7 @@ import { page, userEvent } from 'vitest/browser';
 // exhaustive per-dimension `images`-filter drop cases are covered by node unit
 // tests (lazyPostImages.test.ts, images-as-posts-wire.test.ts,
 // useApplyHiddenPreferences.test.ts). Here we boundary-stub the slide's heavy
-// leaves and drive the REAL SimpleImageCarousel + REAL hidden-prefs filter.
+// leaves and drive the REAL carousel (either engine) + REAL hidden-prefs filter.
 // =============================================================================
 
 const mocks = vi.hoisted(() => {
@@ -53,11 +58,16 @@ const mocks = vi.hoisted(() => {
   });
   // Per-test knobs (reset in beforeEach).
   const state = { error: false };
+  // The active slide's `getState` — what its `RoutedDialogLink` hands the detail modal.
+  // Captured rather than clicked: the mocked slide leaves render at zero size, so a real
+  // click never passes playwright's actionability check.
+  const link = { getState: undefined as undefined | (() => any) };
   const ctx = {
     browsingLevel: 1,
     hiddenImageIds: [] as number[],
     hiddenTags: [] as number[],
     hiddenUsers: [] as number[],
+    swipeGalleryCards: false,
   };
   // getInfinite returns the tail ONLY when enabled (mirrors react-query gating), so
   // asserting on the returned data also proves the enable-on-approach wiring; on
@@ -66,15 +76,26 @@ const mocks = vi.hoisted(() => {
     if (!opts?.enabled) return { data: undefined, isError: false };
     if (state.error) return { data: undefined, isError: true };
     return {
-      data: { items: Array.from({ length: 14 }, (_, i) => tailImage(i + 7)), nextCursor: undefined },
+      data: {
+        items: Array.from({ length: 14 }, (_, i) => tailImage(i + 7)),
+        nextCursor: undefined,
+      },
       isError: false,
     };
   });
-  return { tailImage, state, ctx, getInfiniteUseQuery };
+  return { tailImage, state, ctx, link, getInfiniteUseQuery };
 });
 
 // --- tail fetch ---------------------------------------------------------------
-vi.mock('~/utils/trpc', () => ({
+// `importOriginal`-spread, not a hand-written factory. This mock applies to the WHOLE module
+// graph, so every module the test transitively reaches must find the names it imports here.
+// `~/utils/trpc` has 12 exports and a factory listing only the two this file uses breaks the
+// moment the graph reaches a third: browser mode serves native ESM, so a missing named export
+// is a LINK-time error that kills the entire FILE — 0 tests collected, no failing assertion,
+// and the suite total silently drops. That is exactly how this file lost all 9 of its tests
+// (#3859 routed it through Remix/remix.utils, which needs `trpcVanilla` among others).
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcUtils>()),
   trpc: {
     image: { getInfinite: { useQuery: mocks.getInfiniteUseQuery } },
     useUtils: () => ({}),
@@ -89,6 +110,7 @@ vi.mock('~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider', () => ({
     hiddenImageIds: mocks.ctx.hiddenImageIds,
     hiddenTags: mocks.ctx.hiddenTags,
     hiddenUsers: mocks.ctx.hiddenUsers,
+    swipeGalleryCards: mocks.ctx.swipeGalleryCards,
     source: { kind: 'model', model: { id: 1, user: { id: 9 } } },
     modelVersions: [],
   }),
@@ -155,8 +177,19 @@ vi.mock('~/components/Image/ContextMenu/ImagesAsPostsContextMenu', () => ({
 }));
 vi.mock('~/components/Image/Meta/ImageMetaPopover', () => ({ ImageMetaPopover2: () => null }));
 vi.mock('~/components/Cards/components/HoverActionButton', () => ({ default: () => null }));
-vi.mock('~/components/Dialog/RoutedDialogLink', () => ({
-  RoutedDialogLink: ({ children }: any) => <a>{children}</a>,
+// Spread the real module and override only what this test renders. A WHOLESALE
+// factory would replace the module, pinning its export surface to whatever was
+// needed the day it was written: #4364 pulled RemixedCardFlyout into
+// ImagesAsPostsCard, that component imports `triggerRoutedDialog` from here, and
+// the then-current factory listed only RoutedDialogLink — so the whole FILE died
+// at import with a SyntaxError and collected 0 tests for ~17h without going red
+// in any pass/fail count. Spreading is immune to the next export added upstream.
+vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
+  ...(await importOriginal<typeof RoutedDialogLinkModule>()),
+  RoutedDialogLink: ({ children, getState }: any) => {
+    mocks.link.getState = getState;
+    return <a>{children}</a>;
+  },
 }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ imageGeneration: false }),
@@ -164,7 +197,6 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 vi.mock('~/components/TrackView/track.utils', () => ({
   useTrackEvent: () => ({ trackAction: vi.fn().mockResolvedValue(undefined) }),
 }));
-vi.mock('~/store/generation-graph.store', () => ({ generationGraphPanel: { open: vi.fn() } }));
 
 // Import AFTER the mocks are registered.
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -204,11 +236,13 @@ const walkToTail = async () => {
 
 beforeEach(() => {
   mocks.getInfiniteUseQuery.mockClear();
+  mocks.link.getState = undefined;
   mocks.state.error = false;
   mocks.ctx.browsingLevel = 1;
   mocks.ctx.hiddenImageIds = [];
   mocks.ctx.hiddenTags = [];
   mocks.ctx.hiddenUsers = [];
+  mocks.ctx.swipeGalleryCards = false;
 });
 
 describe('LazyPostImagesCarousel', () => {
@@ -298,6 +332,27 @@ describe('LazyPostImagesCarousel', () => {
     }
   });
 
+  test('hands the detail modal the descriptor for the rest of the post, not just the seed', async () => {
+    // A cover click happens at index 0 — six slides short of the approach threshold —
+    // so the seed the modal receives is the bare first slice. Without the descriptor
+    // riding along, images 7..20 are unreachable by that route.
+    mocks.ctx.hiddenImageIds = [42];
+    const data = { postId: 100, imageCount: 20, images: slice(6) } as any;
+    renderWithProviders(<LazyPostImagesCarousel data={data} postId={100} />);
+    await expect.element(activeSlideId()).toHaveAttribute('data-image-id', '1');
+
+    const state = mocks.link.getState!();
+    expect(state.images).toHaveLength(6);
+    expect(state.postTail).toMatchObject({
+      postId: 100,
+      imageCount: 20,
+      browsingLevel: 1,
+      // The owner-curation lists travel too — `getInfinite` re-derives none of them.
+      hiddenImageIds: [42],
+      filters: { modelId: 1, modelVersionId: 2 },
+    });
+  });
+
   test('never enables the tail query when postId is null (no broadening to the general feed)', async () => {
     const data = { postId: null, imageCount: 20, images: slice(6) } as any;
     renderWithProviders(<LazyPostImagesCarousel data={data} postId={null as any} />);
@@ -323,5 +378,71 @@ describe('StaticPostImagesCarousel', () => {
 
     // No lazy tail fetch on the static path.
     expect(mocks.getInfiniteUseQuery).not.toHaveBeenCalled();
+  });
+});
+
+// The `swipeGalleryCards` setting picks the carousel engine. Off (the default)
+// keeps the cheap one, which mounts only the active slide. On swaps in embla,
+// which owns a scrollable track — the cost the setting exists to gate.
+describe('swipeGalleryCards picks the carousel engine', () => {
+  // Embla measures its viewport; a zero-width one reports every slide in view and
+  // would quietly void these assertions.
+  const Sized = ({ children }: { children: React.ReactNode }) => (
+    <div style={{ width: 400, height: 400 }}>{children}</div>
+  );
+  const indicators = () => Array.from(document.querySelectorAll('button[aria-hidden]'));
+  const activeIndicator = () => indicators().findIndex((el) => el.hasAttribute('data-active'));
+  // Only `EmblaSlide` carries this class, so counting it identifies the engine
+  // AND its track length. Asserting on rendered images instead would not: with a
+  // degenerate viewport embla reports nothing in view and mounts one slide's
+  // content, which is indistinguishable from the cheap carousel.
+  const emblaSlides = () => document.querySelectorAll('.transform-3d').length;
+
+  test('off: the cheap engine, mounting only the active slide', async () => {
+    renderWithProviders(
+      <Sized>
+        <StaticPostImagesCarousel images={slice(3)} postId={100} />
+      </Sized>
+    );
+
+    await expect.element(activeSlideId()).toHaveAttribute('data-image-id', '1');
+    expect(emblaSlides()).toBe(0);
+    expect(document.querySelectorAll('[data-testid="slide"]').length).toBe(1);
+  });
+
+  test('on: the setting reaches the card and navigation moves the track', async () => {
+    mocks.ctx.swipeGalleryCards = true;
+    renderWithProviders(
+      <Sized>
+        <StaticPostImagesCarousel images={slice(3)} postId={100} />
+      </Sized>
+    );
+
+    // Nothing is passed as a prop — this only works if the setting travelled
+    // through the gallery context to the card.
+    await vi.waitFor(() => expect(emblaSlides()).toBe(3));
+    await vi.waitFor(() => expect(activeIndicator()).toBe(0));
+    await clickNext();
+    await vi.waitFor(() => expect(activeIndicator()).toBe(1));
+  });
+
+  // `EmblaContainer` re-renders its children a second time when embla reports it
+  // can't loop cleanly. Two full-width slides is the tightest case that still has
+  // to loop — it clears embla's threshold by exactly zero, so pin it. Counting
+  // slides rather than indicators is deliberate: indicators are driven by our own
+  // list, so they'd read 2 either way.
+  test('on: a two-image post is not duplicated by loop', async () => {
+    mocks.ctx.swipeGalleryCards = true;
+    renderWithProviders(
+      <Sized>
+        <StaticPostImagesCarousel images={slice(2)} postId={100} />
+      </Sized>
+    );
+
+    await vi.waitFor(() => expect(emblaSlides()).toBe(2));
+    // `shouldDuplicate` lands in an effect, so 2 at first paint proves nothing on
+    // its own — settle, then confirm it stayed 2.
+    await vi.waitFor(() => expect(activeIndicator()).toBe(0));
+    expect(emblaSlides()).toBe(2);
   });
 });

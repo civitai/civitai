@@ -141,7 +141,7 @@ describe('ReviewDetailView — sticky action bar', () => {
       <ReviewDetailView selection={{ request: PENDING, mode: 'pending' }} onClose={vi.fn()} />
     );
     // Body content is present (shared review body).
-    await expect.element(page.getByText('View full source')).toBeInTheDocument();
+    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
     // The pinned action bar (labelled group) with both terminal actions.
     const bar = page.getByRole('group', { name: 'Review actions' });
     await expect.element(bar).toBeInTheDocument();

@@ -24,6 +24,9 @@ import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.ut
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { getModelUrl } from '~/utils/string-helpers';
+import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
+import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 export function ModelVersionMenu({
   modelVersionId,
@@ -150,6 +153,92 @@ export function ModelVersionMenu({
     },
   });
 
+  const unpublishVersionMutation = trpc.modelVersion.unpublish.useMutation({
+    async onSuccess() {
+      await queryUtils.model.getById.invalidate({ id: modelId });
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: 'Unable to unpublish version',
+      });
+    },
+  });
+
+  const handleUnpublishVersion = async () => {
+    try {
+      // staleTime 0: the cached figure is what the owner is consenting to move Buzz over, and a
+      // purchase can land between opening the menu twice. The server prices this at the scope the
+      // unpublish will actually run at — taking down the last published version takes the model —
+      // so `scope` decides the wording rather than the caller assuming.
+      const impact = await queryUtils.modelVersion.getUnpublishImpact.fetch(
+        { id: modelVersionId },
+        { staleTime: 0 }
+      );
+      const cascades = impact.scope === 'model';
+      const subject = cascades ? 'this model' : 'this version';
+      const exemptNote =
+        impact.exemptBuyerCount > 0
+          ? ` ${impact.exemptBuyerCount} earlier buyer(s) bought more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago; they lose access and are not refunded.`
+          : '';
+      // Said before the money, because it is the part that surprises: the creator opened a menu on
+      // one version.
+      const cascadeNote = cascades
+        ? 'This is the only published version, so unpublishing it takes the whole model down with it — every version, its posts, and any active auction bids. '
+        : '';
+
+      if (impact.purchaseCount > 0) {
+        dialogStore.trigger({
+          id: 'unpublish-version-refund',
+          component: ConfirmDialog,
+          props: {
+            title: cascades ? 'Unpublish model & refund buyers' : 'Refund early access buyers',
+            message: `${cascadeNote}${
+              impact.buyerCount
+            } member(s) bought access to ${subject} in the last ${PAID_ACCESS_REFUND_WINDOW_DAYS} days. Unpublishing now will refund them a total of ${impact.totalBuzz.toLocaleString()} Buzz from your account and revoke their access.${exemptNote} Do you want to continue?`,
+            labels: { cancel: 'Cancel', confirm: 'Refund & Unpublish' },
+            confirmProps: { color: 'yellow' },
+            // Echo back what this dialog priced. The server refuses if the scope widened or the
+            // debit grew while the dialog was open, rather than acting on a stale yes.
+            onConfirm: () =>
+              unpublishVersionMutation.mutate({
+                id: modelVersionId,
+                refundEarlyAccess: true,
+                expected: { scope: impact.scope, totalBuzz: impact.totalBuzz },
+              }),
+          },
+        });
+        return;
+      }
+
+      dialogStore.trigger({
+        id: 'unpublish-version',
+        component: ConfirmDialog,
+        props: {
+          title: cascades ? 'Unpublish model' : 'Unpublish version',
+          message:
+            impact.exemptBuyerCount > 0
+              ? `${cascadeNote}${impact.exemptBuyerCount} member(s) bought access to ${subject}, all more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago. They lose access and are not refunded, and nothing is taken from your account. Do you want to continue?`
+              : cascades
+              ? `${cascadeNote}Do you want to continue?`
+              : 'This version will be hidden from the model page and can be published again later. Do you want to continue?',
+          labels: { cancel: 'Cancel', confirm: 'Unpublish' },
+          confirmProps: { color: 'yellow' },
+          onConfirm: () =>
+            unpublishVersionMutation.mutate({
+              id: modelVersionId,
+              expected: { scope: impact.scope, totalBuzz: impact.totalBuzz },
+            }),
+        },
+      });
+    } catch (error) {
+      showErrorNotification({
+        error: error as Error,
+        title: 'Unable to check early access purchases',
+      });
+    }
+  };
+
   const handleDeleteVersion = () => {
     dialogStore.trigger({
       id: 'delete-version',
@@ -183,19 +272,6 @@ export function ModelVersionMenu({
       </Menu.Target>
 
       <Menu.Dropdown>
-        {currentUser?.isModerator && (
-          <Menu.Item
-            leftSection={<IconShieldHalf size={14} stroke={1.5} />}
-            color="yellow"
-            onClick={(e: React.MouseEvent) => {
-              e.stopPropagation();
-              e.preventDefault();
-              handleEnqueueNsfwLevelUpdate();
-            }}
-          >
-            Enqueue NsfwLevel Update
-          </Menu.Item>
-        )}
         {canDelete && (
           <Menu.Item
             color="red"
@@ -209,76 +285,19 @@ export function ModelVersionMenu({
             Delete version
           </Menu.Item>
         )}
-        {currentUser?.isModerator && published && (
+        {!currentUser?.isModerator && published && (
           <Menu.Item
             color="yellow"
-            leftSection={<IconBan size={14} stroke={1.5} />}
-            onClick={() =>
-              openUnpublishModal({
-                props: {
-                  modelId: modelId,
-                  versionId: modelVersionId,
-                },
-              })
-            }
-          >
-            Unpublish as Violation
-          </Menu.Item>
-        )}
-        {currentUser?.isModerator && (
-          <Menu.Item
-            leftSection={<IconCloudX size={14} stroke={1.5} />}
-            color="yellow"
+            leftSection={<IconPlaylistX size={14} stroke={1.5} />}
             onClick={(e: React.MouseEvent) => {
               e.stopPropagation();
               e.preventDefault();
-              handleBustCache();
+              handleUnpublishVersion();
             }}
           >
-            Bust Cache
+            Unpublish version
           </Menu.Item>
         )}
-
-        {currentUser?.isModerator && showToggleCoverage && features.impersonation && (
-          <>
-            <Menu.Item
-              disabled={isLoading}
-              leftSection={isLoading ? <Loader size="xs" /> : <IconAi size={14} stroke={1.5} />}
-              color="yellow"
-              onClick={() =>
-                handleToggleCoverage({
-                  modelId: modelId,
-                  versionId: modelVersionId,
-                })
-              }
-              closeMenuOnClick={false}
-            >
-              {canGenerate ? 'Remove from generation' : 'Add to generation'}
-            </Menu.Item>
-          </>
-        )}
-
-        {currentUser?.isModerator && (
-          <Menu.Item
-            disabled={toggleGenerationDisabledMutation.isPending}
-            leftSection={
-              toggleGenerationDisabledMutation.isPending ? (
-                <Loader size="xs" />
-              ) : (
-                <IconPlaylistX size={14} stroke={1.5} />
-              )
-            }
-            color="yellow"
-            onClick={(e: React.MouseEvent) => {
-              e.stopPropagation();
-              e.preventDefault();
-              handleToggleGeneration();
-            }}
-          >
-            {generationDisabled ? 'Unblock generation' : 'Block generation'}
-          </Menu.Item>
-        )}
-
         <Menu.Item
           component={Link}
           href={`/models/${modelId}/model-versions/${modelVersionId}/edit`}
@@ -320,6 +339,89 @@ export function ModelVersionMenu({
           >
             Add images
           </Menu.Item>
+        )}
+
+        {currentUser?.isModerator && (
+          <>
+            <Menu.Label>Moderation</Menu.Label>
+            <ModeratorLookupMenuItem
+              path={moderatorBulkImageManagerPath('modelVersion', modelVersionId)}
+            >
+              Lookup Version
+            </ModeratorLookupMenuItem>
+            {published && (
+              <Menu.Item
+                color="yellow"
+                leftSection={<IconBan size={14} stroke={1.5} />}
+                onClick={() =>
+                  openUnpublishModal({
+                    props: {
+                      modelId: modelId,
+                      versionId: modelVersionId,
+                    },
+                  })
+                }
+              >
+                Unpublish as Violation
+              </Menu.Item>
+            )}
+            <Menu.Item
+              leftSection={<IconShieldHalf size={14} stroke={1.5} />}
+              color="yellow"
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                e.preventDefault();
+                handleEnqueueNsfwLevelUpdate();
+              }}
+            >
+              Enqueue NsfwLevel Update
+            </Menu.Item>
+            <Menu.Item
+              leftSection={<IconCloudX size={14} stroke={1.5} />}
+              color="yellow"
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                e.preventDefault();
+                handleBustCache();
+              }}
+            >
+              Bust Cache
+            </Menu.Item>
+            {showToggleCoverage && features.impersonation && (
+              <Menu.Item
+                disabled={isLoading}
+                leftSection={isLoading ? <Loader size="xs" /> : <IconAi size={14} stroke={1.5} />}
+                color="yellow"
+                onClick={() =>
+                  handleToggleCoverage({
+                    modelId: modelId,
+                    versionId: modelVersionId,
+                  })
+                }
+                closeMenuOnClick={false}
+              >
+                {canGenerate ? 'Remove from generation' : 'Add to generation'}
+              </Menu.Item>
+            )}
+            <Menu.Item
+              disabled={toggleGenerationDisabledMutation.isPending}
+              leftSection={
+                toggleGenerationDisabledMutation.isPending ? (
+                  <Loader size="xs" />
+                ) : (
+                  <IconPlaylistX size={14} stroke={1.5} />
+                )
+              }
+              color="yellow"
+              onClick={(e: React.MouseEvent) => {
+                e.stopPropagation();
+                e.preventDefault();
+                handleToggleGeneration();
+              }}
+            >
+              {generationDisabled ? 'Unblock generation' : 'Block generation'}
+            </Menu.Item>
+          </>
         )}
       </Menu.Dropdown>
     </Menu>

@@ -13,13 +13,21 @@ import type {
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
+import {
+  buildCentralErrorLog,
+  classifyErrorFault,
+  logToAxiom,
+  markServerFaultLogged,
+} from '~/server/logging/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import { resolveEpochOffset } from '~/shared/utils/training-epochs';
 import type {
   AiToolkitTrainingParams,
   ImageTrainingStepSchema,
   ImageTrainingWorkflowSchema,
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
+import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
@@ -391,10 +399,20 @@ export const createTrainingWorkflow = async ({
 
   const stepRun = createTrainingStep(runArgs);
 
+  // `type` and `baseModel` are fixed at submit, so tagging them here is what makes those two
+  // filters answerable orchestrator-side later — tags are the only server-side filter
+  // `queryWorkflows` offers. Nothing reads them yet.
+  const trainingType = modelVersion.trainingDetails.type;
+
   const workflow = await submitWorkflow({
     token,
     body: {
-      tags: ['training', `modelVersion:${modelVersionId}`],
+      tags: [
+        TRAINING_WORKFLOW_TAG,
+        `modelVersion:${modelVersionId}`,
+        `baseModel:${baseModel}`,
+        ...(trainingType ? [`trainingType:${trainingType}`] : []),
+      ],
       steps: [stepRun],
       callbacks: [
         {
@@ -421,6 +439,10 @@ export const createTrainingWorkflow = async ({
     startedAt: null,
     completedAt: null,
     epochs: existingTrainingResults.epochs ?? [],
+    epochOffset: resolveEpochOffset(
+      existingTrainingResults.epochOffset,
+      modelVersion.trainingDetails.continueFromEpoch?.epochNumber
+    ),
     history: [...existingHistory, { time: now, status: TrainingStatus.Submitted }],
     sampleImagesPrompts: samplePrompts,
     transactionData: workflow.transactions?.list ?? [],
@@ -453,8 +475,9 @@ export const createTrainingWorkflow = async ({
 export const createTrainingWhatIfWorkflow = async ({
   token,
   currencies,
+  userId,
   ...input
-}: ImageTraininWhatIfWorkflowSchema) => {
+}: ImageTraininWhatIfWorkflowSchema & { userId?: number }) => {
   const { model, priority, engine, trainingDataImagesCount, samplePrompts, ...trainingParams } =
     input;
 
@@ -485,22 +508,61 @@ export const createTrainingWhatIfWorkflow = async ({
     negativePrompt: '',
   };
 
+  const whatIfLogData = {
+    userId,
+    engine,
+    ecosystem: 'ecosystem' in params ? params.ecosystem : undefined,
+    modelVariant: 'modelVariant' in params ? params.modelVariant : undefined,
+    model,
+    trainingDataImagesCount,
+  };
+
   const stepRun = createTrainingStep(runArgs);
 
-  const workflow = await submitWorkflow({
-    token,
-    body: {
-      steps: [stepRun],
-      // @ts-ignore - BuzzSpendType is properly supported.
-      currencies,
-    },
-    query: { whatif: true },
-  });
+  let workflow: Awaited<ReturnType<typeof submitWorkflow>>;
+  try {
+    workflow = await submitWorkflow({
+      token,
+      body: {
+        steps: [stepRun],
+        // @ts-ignore - BuzzSpendType is properly supported.
+        currencies,
+      },
+      query: { whatif: true },
+    });
+  } catch (e) {
+    // This query re-fires on a 100ms debounce over every param, so logging a rejected settings
+    // combination (4xx) at error severity would be a keystroke storm on the error board.
+    logToAxiom(
+      {
+        name: 'training-whatif',
+        ...buildCentralErrorLog(e),
+        data: whatIfLogData,
+      },
+      'webhooks'
+    ).catch();
+    if (classifyErrorFault(e) === 'server') markServerFaultLogged(e);
+    throw e;
+  }
 
   const cost = workflow.cost?.total;
   // Per-resource licensing fees (keyed by resource AIR) are already included in
   // `cost.total`; surface their sum so the UI can break out the license fee.
   const licenseFee = Object.values(workflow.cost?.fees ?? {}).reduce((sum, fee) => sum + fee, 0);
+
+  // `0` stays out of this guard: a zero estimate is spendable, and TrainingSubmit gates on the same
+  // `!isDefined(cost) || cost < 0`. Widening one side alone logs a cost the UI is charging.
+  if (cost == null || cost < 0) {
+    logToAxiom(
+      {
+        name: 'training-whatif',
+        type: 'error',
+        message: 'Orchestrator returned an unusable cost',
+        data: { ...whatIfLogData, cost },
+      },
+      'webhooks'
+    ).catch();
+  }
 
   const _step = workflow.steps?.[0] as ImageResourceTrainingStep | undefined;
   // console.dir(_step);

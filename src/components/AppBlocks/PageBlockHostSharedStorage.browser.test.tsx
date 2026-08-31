@@ -1,8 +1,10 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { BLOCK_STORAGE_READ_STALE_TIME_MS } from '~/components/AppBlocks/blockStorageCache';
 import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { SAVE_IMAGE_MAX_CONCURRENT } from '~/components/AppBlocks/saveImageDownload';
 
 /**
  * App Blocks SHARED (cross-user / app-global) storage bridge — host side (Phase 2b).
@@ -38,25 +40,43 @@ import { renderWithProviders } from '../../../test/component-setup';
 const mocks = vi.hoisted(() => ({
   // shared reads
   list: vi.fn(),
+  get: vi.fn(),
   getCount: vi.fn(),
   getCounts: vi.fn(),
+  // shared read-cache invalidation (apps.shared namespace-level)
+  invalidate: vi.fn(),
   // shared writes
   append: vi.fn(),
   update: vi.fn(),
   vote: vi.fn(),
   unvote: vi.fn(),
   withdraw: vi.fn(),
+  report: vi.fn(),
+  // gated cross-user image read (backs the SAVE_IMAGE id variant)
+  getImagesByIds: vi.fn(),
+  // the top-frame blob download (stubbed so no real network fetch in the test);
+  // the origin allowlist + request parse stay REAL (see the partial mock below).
+  saveDownload: vi.fn(),
   // per-user storage reads/writes (also wired at render; inert here)
   storageGet: vi.fn(),
   storageSet: vi.fn(),
   storageDelete: vi.fn(),
   storageList: vi.fn(),
   storageGetQuota: vi.fn(),
+  storageInvalidate: vi.fn(),
 }));
 
 // AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
 // moderator gate; these suites render the real host without a CivitaiSessionProvider.
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+
+// Partial mock: keep the REAL origin allowlist + filename sanitizer + request
+// parser (the security-critical pure logic), stub ONLY the top-frame blob
+// download so the SAVE_IMAGE tests never hit the network.
+vi.mock('~/components/AppBlocks/saveImageDownload', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./saveImageDownload')>();
+  return { ...actual, downloadUrlAsBlob: mocks.saveDownload };
+});
 
 vi.mock('~/utils/trpc', () => ({
   // FeatureFlagsProvider (in PageBlockHost's real render graph) statically imports
@@ -81,7 +101,7 @@ vi.mock('~/utils/trpc', () => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
-      getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      getImagesByIds: { useMutation: () => ({ mutateAsync: mocks.getImagesByIds }) },
     },
     apps: {
       storage: {
@@ -94,6 +114,7 @@ vi.mock('~/utils/trpc', () => ({
         vote: { useMutation: () => ({ mutateAsync: mocks.vote }) },
         unvote: { useMutation: () => ({ mutateAsync: mocks.unvote }) },
         withdraw: { useMutation: () => ({ mutateAsync: mocks.withdraw }) },
+        report: { useMutation: () => ({ mutateAsync: mocks.report }) },
       },
     },
     useUtils: () => ({
@@ -102,11 +123,18 @@ vi.mock('~/utils/trpc', () => ({
           get: { fetch: mocks.storageGet },
           list: { fetch: mocks.storageList },
           getQuota: { fetch: mocks.storageGetQuota },
+          invalidate: mocks.storageInvalidate,
         },
         shared: {
           list: { fetch: mocks.list },
+          get: { fetch: mocks.get },
           getCount: { fetch: mocks.getCount },
           getCounts: { fetch: mocks.getCounts },
+          // Router-level invalidate: what the hosts call after every shared
+          // WRITE so the next read is not served from the staleTime:Infinity
+          // cache. Present on the real utils; omitting it here would let a
+          // broken wiring pass silently (the helper swallows throws by design).
+          invalidate: mocks.invalidate,
         },
       },
     }),
@@ -159,6 +187,8 @@ const baseProps = {
   blockInstanceId: 'page_apb_test',
   appName: 'Requests',
   iframeSrc: SAME_ORIGIN_SRC,
+  // The public run surface. Required since the init-fragment gate keys on it.
+  surface: 'page-run' as const,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -187,6 +217,7 @@ async function driveToReady() {
 describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', () => {
   beforeEach(() => {
     mocks.list.mockReset();
+    mocks.get.mockReset();
     mocks.getCount.mockReset();
     mocks.getCounts.mockReset();
     mocks.append.mockReset();
@@ -194,6 +225,11 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     mocks.vote.mockReset();
     mocks.unvote.mockReset();
     mocks.withdraw.mockReset();
+    mocks.report.mockReset();
+    mocks.invalidate.mockReset();
+    mocks.invalidate.mockResolvedValue(undefined);
+    mocks.getImagesByIds.mockReset();
+    mocks.saveDownload.mockReset();
     useDialogStore.getState().closeAll();
   });
 
@@ -229,12 +265,15 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     });
 
     await vi.waitFor(() => {
-      expect(mocks.list).toHaveBeenCalledWith({
-        blockToken: 'tok_abc',
-        prefix: 'p',
-        limit: 100,
-        cursor: 'cur1',
-      });
+      expect(mocks.list).toHaveBeenCalledWith(
+        {
+          blockToken: 'tok_abc',
+          prefix: 'p',
+          limit: 100,
+          cursor: 'cur1',
+        },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('SHARED_LIST_RESULT');
@@ -286,7 +325,10 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     postFromBlock('SHARED_GET_COUNT', { requestId: 'rq_gc', key: '01ABC', blockToken: 'SPOOFED' });
 
     await vi.waitFor(() => {
-      expect(mocks.getCount).toHaveBeenCalledWith({ blockToken: 'tok_abc', key: '01ABC' });
+      expect(mocks.getCount).toHaveBeenCalledWith(
+        { blockToken: 'tok_abc', key: '01ABC' },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('SHARED_GET_COUNT_RESULT');
@@ -326,7 +368,10 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     });
 
     await vi.waitFor(() => {
-      expect(mocks.getCounts).toHaveBeenCalledWith({ blockToken: 'tok_abc', keys: ['a', 'b'] });
+      expect(mocks.getCounts).toHaveBeenCalledWith(
+        { blockToken: 'tok_abc', keys: ['a', 'b'] },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('SHARED_GET_COUNTS_RESULT');
@@ -569,6 +614,349 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     replies.stop();
   });
 
+  // ── item 3: viewerVoted passes through SHARED_LIST ───────────────────────────
+  test('SHARED_LIST passes the per-viewer viewerVoted flag through to the block', async () => {
+    mocks.list.mockResolvedValue({
+      items: [
+        {
+          key: '01ABC',
+          authorUserId: 7,
+          value: { title: 'voted' },
+          count: 3,
+          createdAt: new Date('2026-06-17T00:00:00.000Z'),
+          updatedAt: new Date('2026-06-17T00:00:00.000Z'),
+          viewerVoted: true,
+        },
+      ],
+    });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_LIST', { requestId: 'rq_vv' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_LIST_RESULT');
+      if (!r) throw new Error('no reply yet');
+      const payload = r.payload as { items: Array<{ viewerVoted?: boolean }> };
+      expect(payload.items[0].viewerVoted).toBe(true);
+    });
+    replies.stop();
+  });
+
+  // ── item 6: SHARED_GET (single-row fetch-by-key) ─────────────────────────────
+  test('SHARED_GET forwards key + host token and posts SHARED_GET_RESULT (item incl. viewerVoted)', async () => {
+    mocks.get.mockResolvedValue({
+      item: {
+        key: '01ABC',
+        authorUserId: 7,
+        value: { title: 'Add dark mode' },
+        count: 5,
+        createdAt: new Date('2026-06-17T00:00:00.000Z'),
+        updatedAt: new Date('2026-06-18T00:00:00.000Z'),
+        viewerVoted: true,
+      },
+    });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_GET', { requestId: 'rq_get', key: '01ABC', blockToken: 'SPOOFED' });
+
+    await vi.waitFor(() => {
+      expect(mocks.get).toHaveBeenCalledWith(
+        { blockToken: 'tok_abc', key: '01ABC' },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_GET_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_get',
+        item: {
+          key: '01ABC',
+          authorUserId: 7,
+          value: { title: 'Add dark mode' },
+          count: 5,
+          createdAt: '2026-06-17T00:00:00.000Z',
+          updatedAt: '2026-06-18T00:00:00.000Z',
+          viewerVoted: true,
+        },
+      });
+    });
+    replies.stop();
+  });
+
+  test('SHARED_GET returns item:null for a missing/hidden key', async () => {
+    mocks.get.mockResolvedValue({ item: null });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_GET', { requestId: 'rq_get_null', key: 'gone' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_GET_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_get_null', item: null });
+    });
+    replies.stop();
+  });
+
+  test('SHARED_GET error path posts { requestId, item:null, error } (no hang)', async () => {
+    mocks.get.mockRejectedValue(new Error('shared storage is not enabled'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_GET', { requestId: 'rq_get_err', key: 'k' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_GET_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_get_err',
+        item: null,
+        error: 'shared storage is not enabled',
+      });
+    });
+    replies.stop();
+  });
+
+  // ── item 5: SHARED_REPORT ────────────────────────────────────────────────────
+  test('SHARED_REPORT forwards key + reason + host token and posts SHARED_REPORT_RESULT {ok:true}', async () => {
+    mocks.report.mockResolvedValue({ ok: true });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_REPORT', {
+      requestId: 'rq_rep',
+      key: '01ABC',
+      reason: 'harassment',
+      blockToken: 'SPOOFED',
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.report).toHaveBeenCalledWith({
+        blockToken: 'tok_abc',
+        key: '01ABC',
+        reason: 'harassment',
+      });
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_REPORT_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_rep', ok: true });
+    });
+    replies.stop();
+  });
+
+  test('SHARED_REPORT error path posts { requestId, ok:false, error } (no hang)', async () => {
+    mocks.report.mockRejectedValue(new Error('request not found'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_REPORT', { requestId: 'rq_rep_err', key: 'missing' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_REPORT_RESULT');
+      if (!r) throw new Error('no reply yet');
+      // ok:false REQUIRED (the SDK validator drops a reply without a boolean ok).
+      expect(r.payload).toEqual({ requestId: 'rq_rep_err', ok: false, error: 'request not found' });
+    });
+    replies.stop();
+  });
+
+  // ── item 1: SAVE_IMAGE (host download bridge) ────────────────────────────────
+  test('SAVE_IMAGE url variant: an ALLOWLISTED civitai origin downloads + replies ok', async () => {
+    mocks.saveDownload.mockResolvedValue(undefined);
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_url',
+      url: 'https://image.civitai.com/xG/77/original.jpeg',
+      filename: 'render.png',
+    });
+
+    await vi.waitFor(() => {
+      expect(mocks.saveDownload).toHaveBeenCalledWith(
+        'https://image.civitai.com/xG/77/original.jpeg',
+        'render.png'
+      );
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_url', ok: true });
+    });
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE url variant: an ARBITRARY origin is REFUSED (ok:false, NO download)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_evil', url: 'https://evil.example/x.png' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_evil',
+        ok: false,
+        error: 'image url is not allowed',
+      });
+    });
+    // The disallowed URL was NEVER fetched host-side.
+    expect(mocks.saveDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE id variant: a VISIBLE image routes through the gated read + downloads', async () => {
+    mocks.getImagesByIds.mockResolvedValue({
+      images: [
+        {
+          imageId: 55,
+          status: 'visible',
+          nsfwLevel: 1,
+          contentRating: 'g',
+          url: 'https://image.civitai.com/edge/55.jpeg',
+          width: 512,
+          height: 512,
+        },
+      ],
+    });
+    mocks.saveDownload.mockResolvedValue(undefined);
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_id', imageId: 55 });
+
+    await vi.waitFor(() => {
+      // Routed through the SAME gated per-viewer read (host token bound).
+      expect(mocks.getImagesByIds).toHaveBeenCalledWith({ blockToken: 'tok_abc', imageIds: [55] });
+    });
+    await vi.waitFor(() => {
+      expect(mocks.saveDownload).toHaveBeenCalledWith(
+        'https://image.civitai.com/edge/55.jpeg',
+        '55.jpeg'
+      );
+    });
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_save_id', ok: true });
+    });
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE id variant: a WITHHELD (hidden) image is NEVER downloaded (ok:false)', async () => {
+    mocks.getImagesByIds.mockResolvedValue({ images: [{ imageId: 55, status: 'hidden' }] });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_hidden', imageId: 55 });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_hidden',
+        ok: false,
+        error: 'image is not available',
+      });
+    });
+    // The gated read ran, but a hidden image is never handed to the downloader.
+    expect(mocks.getImagesByIds).toHaveBeenCalled();
+    expect(mocks.saveDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE id variant: an UNRESOLVABLE id (omitted from the gated read) is refused', async () => {
+    mocks.getImagesByIds.mockResolvedValue({ images: [] });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', { requestId: 'rq_save_gone', imageId: 999 });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_gone',
+        ok: false,
+        error: 'image is not available',
+      });
+    });
+    expect(mocks.saveDownload).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('SAVE_IMAGE with BOTH url and imageId is an invalid request (ok:false, no download)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_save_both',
+      url: 'https://image.civitai.com/x.jpeg',
+      imageId: 5,
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_save_both',
+        ok: false,
+        error: 'invalid save-image request',
+      });
+    });
+    expect(mocks.saveDownload).not.toHaveBeenCalled();
+    expect(mocks.getImagesByIds).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test(`F2: caps concurrent SAVE_IMAGE downloads — the (N+1)th gets busy (N=${SAVE_IMAGE_MAX_CONCURRENT})`, async () => {
+    // Make the host-side download hang so the first N requests each hold an
+    // in-flight slot; the (N+1)th must be refused `busy` BEFORE it fetches (so a
+    // hostile block can't download-bomb the tab).
+    mocks.saveDownload.mockReturnValue(new Promise(() => {}));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    for (let i = 0; i < SAVE_IMAGE_MAX_CONCURRENT; i++) {
+      postFromBlock('SAVE_IMAGE', {
+        requestId: `rq_c${i}`,
+        url: 'https://image.civitai.com/xG/77/original.jpeg',
+      });
+    }
+    postFromBlock('SAVE_IMAGE', {
+      requestId: 'rq_overflow',
+      url: 'https://image.civitai.com/xG/77/original.jpeg',
+    });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SAVE_IMAGE_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_overflow', ok: false, error: 'busy' });
+    });
+    // Only the N that acquired a slot reached the downloader; the overflow
+    // short-circuited to busy BEFORE fetching a byte.
+    expect(mocks.saveDownload).toHaveBeenCalledTimes(SAVE_IMAGE_MAX_CONCURRENT);
+    replies.stop();
+  });
+
   // ── Gating: pre-ready / no requestId / null token ────────────────────────────
   test('a shared message with NO requestId is dropped (no proc call, no reply)', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
@@ -594,5 +982,165 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     });
     expect(mocks.vote).not.toHaveBeenCalled();
     expect(mocks.list).not.toHaveBeenCalled();
+  });
+  // ── Shared read-cache invalidation (write → own next read) ───────────────────
+  //
+  // civitai's QueryClient is `staleTime: Infinity` (~/utils/trpc), and every
+  // shared READ here goes through `trpcUtils.apps.shared.*.fetch` — React Query
+  // `fetchQuery`, which never refetches a non-stale entry. So without an explicit
+  // invalidation a block's own write is invisible to its own next read for the
+  // whole page lifetime. See sharedStorageInvalidation.ts.
+
+  test('SHARED_APPEND invalidates the shared read cache', async () => {
+    mocks.append.mockResolvedValue({ key: '01NEW' });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_APPEND', { requestId: 'rq_inv', value: { title: 'x' } });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_APPEND_RESULT');
+      if (!r) throw new Error('no reply yet');
+    });
+    expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+    replies.stop();
+  });
+
+  test('SHARED_VOTE invalidates the shared read cache', async () => {
+    mocks.vote.mockResolvedValue({ count: 2 });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_VOTE', { requestId: 'rq_inv_v', key: '01ABC' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_VOTE_RESULT');
+      if (!r) throw new Error('no reply yet');
+    });
+    expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+    replies.stop();
+  });
+
+  test('the reply is WITHHELD until invalidation settles (ordering, not just presence)', async () => {
+    // The ordering is the load-bearing half: the SDK hook resolves on the reply
+    // and the block may re-read IMMEDIATELY, so invalidating after the reply
+    // races the very read it exists to serve.
+    //
+    // This cannot be asserted by recording a call-order array: `send` posts a
+    // message and the listener fires asynchronously, so a synchronous
+    // `invalidate` would be recorded first whether it ran before or after the
+    // send — a vacuous pass. Instead, hold invalidation OPEN and prove no reply
+    // escapes while it is pending.
+    let release!: () => void;
+    mocks.invalidate.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          release = () => resolve();
+        })
+    );
+    mocks.append.mockResolvedValue({ key: '01GATED' });
+
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_APPEND', { requestId: 'rq_gate', value: { title: 'gated' } });
+
+    // The write itself has landed...
+    await vi.waitFor(() => {
+      expect(mocks.append).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      expect(mocks.invalidate).toHaveBeenCalledTimes(1);
+    });
+    // ...but the reply must NOT have been posted while invalidation is pending.
+    //
+    // 🔴 The wait is load-bearing, and its absence made an earlier version of
+    // this test VACUOUS. `send` posts via postMessage, whose delivery is itself
+    // async, so asserting absence immediately passes even when the reply was
+    // already sent — it simply has not been DELIVERED yet. Measured: with the
+    // invalidation moved to AFTER the send, the un-waited assertion still
+    // passed (mutant survived).
+    //
+    // This is a fixed delay, not a queue drain: a postMessage task is queued
+    // ahead of a 100ms timer, so by the time this resolves any already-posted
+    // reply has been delivered. Its failure mode under extreme load is a
+    // vacuous PASS, which is why the mutant above is re-run rather than trusted.
+    await new Promise((r) => setTimeout(r, 100));
+    expect(replies.last('SHARED_APPEND_RESULT')).toBeUndefined();
+
+    release();
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_APPEND_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_gate', key: '01GATED' });
+    });
+    replies.stop();
+  });
+
+  test('a FAILED write does not invalidate (nothing changed server-side)', async () => {
+    // Positive control on the negative: proves the invalidation is wired to the
+    // success path specifically, not fired unconditionally on every message.
+    mocks.append.mockRejectedValue(new Error('nope'));
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_APPEND', { requestId: 'rq_fail', value: { title: 'x' } });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_APPEND_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect((r.payload as { error?: string }).error).toBeTruthy();
+    });
+    expect(mocks.invalidate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('an invalidation FAILURE still reports the write as succeeded', async () => {
+    // The helper swallows invalidation errors, and that property is
+    // load-bearing rather than defensive: the write is already COMMITTED when
+    // invalidation runs, so a throw escaping into the handler's try/catch would
+    // send SHARED_APPEND_RESULT { error } for a row that exists. The block
+    // would tell the user it failed, and a retry would duplicate it.
+    //
+    // Without this test the property had ZERO coverage — deleting the entire
+    // try/catch left the whole suite green (found by adversarial audit).
+    mocks.invalidate.mockRejectedValue(new Error('invalidation exploded'));
+    mocks.append.mockResolvedValue({ key: '01COMMITTED' });
+
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_APPEND', { requestId: 'rq_inv_fail', value: { title: 'x' } });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_APPEND_RESULT');
+      if (!r) throw new Error('no reply yet');
+      // Success shape, NOT an error shape.
+      expect(r.payload).toEqual({ requestId: 'rq_inv_fail', key: '01COMMITTED' });
+    });
+    replies.stop();
+  });
+
+  test('a READ does not invalidate', async () => {
+    // The other half of the same control: reads must not churn the cache.
+    mocks.list.mockResolvedValue({ items: [], nextCursor: undefined });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_LIST', { requestId: 'rq_read' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('SHARED_LIST_RESULT');
+      if (!r) throw new Error('no reply yet');
+    });
+    expect(mocks.invalidate).not.toHaveBeenCalled();
+    replies.stop();
   });
 });

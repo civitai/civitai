@@ -3,21 +3,27 @@ import { comicNotifications } from '~/server/notifications/comics.notifications'
 import { articleRatingReviewNotifications } from '~/server/notifications/article-rating-review.notifications';
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
 import { appBlockNotifications } from '~/server/notifications/app-block.notifications';
+import { appCollaboratorNotifications } from '~/server/notifications/app-collaborator.notifications';
 import { appListingNotifications } from '~/server/notifications/app-listing.notifications';
+import { appModeratorMessageNotifications } from '~/server/notifications/app-moderator-message.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
 import type { BareNotification } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 import { buzzNotifications } from '~/server/notifications/buzz.notifications';
+import { membershipGiftNotifications } from '~/server/notifications/membership-gift.notifications';
 import { challengeNotifications } from '~/server/notifications/challenge.notifications';
 import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
 import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.notifications';
+import { placementNotifications } from '~/server/notifications/placement.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
+import { creatorAnnouncementNotifications } from '~/server/notifications/creator-announcement.notifications';
 import { followNotifications } from '~/server/notifications/follow.notifications';
 import { generationMuteNotifications } from '~/server/notifications/generation-mute.notifications';
 import { imageNotifications } from '~/server/notifications/image.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
+import { minorFlagNotifications } from '~/server/notifications/minor-flag.notifications';
 import { modelNotifications } from '~/server/notifications/model.notifications';
 import { knightsNewOrderNotifications } from '~/server/notifications/new-order.notifications';
 import { strikeNotifications } from '~/server/notifications/strike.notifications';
@@ -30,6 +36,7 @@ import { userJourneyNotifications } from '~/server/notifications/user-journey.no
 import { referralNotifications } from '~/server/notifications/referral.notifications';
 
 export const notificationProcessors = {
+  ...creatorAnnouncementNotifications,
   ...mentionNotifications,
   ...modelNotifications,
   ...reviewNotifications,
@@ -38,14 +45,18 @@ export const notificationProcessors = {
   ...systemNotifications,
   ...userJourneyNotifications,
   ...unpublishNotifications,
+  ...minorFlagNotifications,
   ...articleNotifications,
   ...articleUnpublishNotifications,
   ...appListingNotifications,
   ...appBlockNotifications,
+  ...appCollaboratorNotifications,
+  ...appModeratorMessageNotifications,
   ...articleRatingReviewNotifications,
   ...reportNotifications,
   ...featuredNotifications,
   ...bountyNotifications,
+  ...placementNotifications,
   ...buzzNotifications,
   ...collectionNotifications,
   ...imageNotifications,
@@ -59,6 +70,7 @@ export const notificationProcessors = {
   ...comicNotifications,
   ...strikeNotifications,
   ...referralNotifications,
+  ...membershipGiftNotifications,
 };
 
 // Sort notifications by priority and group them by priority
@@ -74,9 +86,13 @@ for (const notification of notifications) {
   notificationPriorities[priority] ??= [];
   notificationPriorities[priority].push(notification);
 }
+// Numeric sort, not lexicographic: `send-notifications` runs these batches in order and the comment
+// family relies on that order to decide which of several competing notifications wins the shared dedupe
+// key. A default .sort() would put priority 10 ahead of priority 2.
 export const notificationBatches = Object.keys(notificationPriorities)
-  .sort()
-  .map((key) => notificationPriorities[key as unknown as number]);
+  .map(Number)
+  .sort((a, b) => a - b)
+  .map((key) => notificationPriorities[key]);
 
 export function getNotificationMessage(notification: Omit<BareNotification, 'id'>) {
   const { prepareMessage } = notificationProcessors[notification.type] ?? {};
@@ -86,27 +102,33 @@ export function getNotificationMessage(notification: Omit<BareNotification, 'id'
 
 function getNotificationTypes() {
   const notificationTypes: string[] = [];
+  const optInNotificationTypes: string[] = [];
   const notificationCategoryTypes: Record<
     string,
-    { displayName: string; type: string; defaultDisabled: boolean }[]
+    { displayName: string; type: string; optIn: boolean }[]
   > = {};
-  for (const [
-    type,
-    { displayName, toggleable, category, defaultDisabled, showCategory },
-  ] of Object.entries(notificationProcessors)) {
+  for (const [type, { displayName, toggleable, category, optIn, showCategory }] of Object.entries(
+    notificationProcessors
+  )) {
     if (toggleable === false && !showCategory) continue;
     notificationCategoryTypes[category] ??= [];
-    notificationCategoryTypes[category]!.push({
-      type,
-      displayName,
-      defaultDisabled: defaultDisabled ?? false,
-    });
-    notificationTypes.push(type);
+    notificationCategoryTypes[category]!.push({ type, displayName, optIn: optIn ?? false });
+    if (optIn) optInNotificationTypes.push(type);
+    else notificationTypes.push(type);
   }
 
   return {
     notificationCategoryTypes,
     notificationTypes,
+    optInNotificationTypes,
   };
 }
-export const { notificationCategoryTypes, notificationTypes } = getNotificationTypes();
+/**
+ * `notificationTypes` deliberately EXCLUDES opt-in types — it is the list the bulk on/off toggles
+ * send, and for an opt-in type "off" writes the row that subscribes you. Those types are still
+ * present in `notificationCategoryTypes` so they render their own checkbox.
+ */
+export const { notificationCategoryTypes, notificationTypes, optInNotificationTypes } =
+  getNotificationTypes();
+
+export const isOptInNotification = (type: string) => optInNotificationTypes.includes(type);

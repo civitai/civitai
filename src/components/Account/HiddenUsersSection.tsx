@@ -3,6 +3,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { useMemo, useRef, useState } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { toHideableOptions } from '~/components/Account/hidden-users-options';
 import { BasicMasonryGrid } from '~/components/MasonryGrid/BasicMasonryGrid';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 
@@ -14,7 +15,7 @@ export function HiddenUsersSection() {
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const [sort, setSort] = useState<string>('newest');
 
-  const hiddenUsers = useHiddenPreferencesData().hiddenUsers;
+  const { hiddenUsers, blockedUsers } = useHiddenPreferencesData();
 
   const sortedHiddenUsers = useMemo(() => {
     if (sort === 'newest') return hiddenUsers;
@@ -39,9 +40,7 @@ export function HiddenUsersSection() {
     { query: debouncedSearch.trim(), limit: 10 },
     { enabled: debouncedSearch !== '' }
   );
-  const options =
-    data?.filter((x) => x.username).map(({ id, username }) => ({ id, value: username ?? '' })) ??
-    [];
+  const options = toHideableOptions(data, blockedUsers);
 
   const toggleHiddenMutation = useToggleHiddenPreferences();
 

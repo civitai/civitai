@@ -44,7 +44,9 @@ export const swarmUIMetadataProcessor = createMetadataProcessor({
       height: generationDetails.height,
       sampler: generationDetails.sampler,
       scheduler: generationDetails.scheduler,
-      version: generationDetails.swarmVersion,
+      // SwarmUI writes `swarm_version` (per its Image Metadata Format doc); the old
+      // `swarmVersion` read never matched, so version was silently always absent
+      version: generationDetails.swarm_version ?? generationDetails.swarmVersion,
       Model: generationDetails.model,
       resources: getResources(parsed),
     });
@@ -67,7 +69,7 @@ export const swarmUIMetadataProcessor = createMetadataProcessor({
         sampler: meta.originalSampler ?? meta.sampler,
         scheduler: meta.scheduler,
         model: meta.Model,
-        swarmVersion: meta.version,
+        swarm_version: meta.version,
       },
       sui_models: meta.resources?.map(({ type, name, weight, hash }) => ({
         name: name!,

@@ -263,10 +263,7 @@ function InstalledAppCard({ app, onManage }: InstalledAppCardProps) {
                 </Tooltip>
               )}
               {blanketViewer && (
-                <Tooltip
-                  label="Visible only to you, on every model page you open."
-                  withArrow
-                >
+                <Tooltip label="Visible only to you, on every model page you open." withArrow>
                   <Badge
                     size="sm"
                     variant="light"
@@ -403,8 +400,8 @@ function HiddenBlocksPanel() {
         <Stack align="center" gap="xs">
           <IconEyeOff size={28} opacity={0.5} />
           <Text size="sm" c="dimmed" ta="center" maw={420}>
-            You haven't hidden any apps. Use the ⋯ menu on an app to hide it on this
-            device — it only affects what you see, never the publisher or other viewers.
+            You haven't hidden any apps. Use the ⋯ menu on an app to hide it on this device — it
+            only affects what you see, never the publisher or other viewers.
           </Text>
         </Stack>
       </Center>
@@ -459,10 +456,7 @@ export default function InstalledAppsPage() {
     enabled: !!features.appBlocks,
   });
 
-  const groupedApps = useMemo(
-    () => groupSubscriptionsByApp(subs ?? []),
-    [subs]
-  );
+  const groupedApps = useMemo(() => groupSubscriptionsByApp(subs ?? []), [subs]);
 
   function handleManage(sub: SubscriptionRecord) {
     // Build an AvailableBlock-shaped object from the subscription's
@@ -480,9 +474,6 @@ export default function InstalledAppsPage() {
       // An installed app is on-platform by definition (external-link apps have
       // no install) — never an external listing on this path.
       externalUrl: null,
-      // Marketplace reviews — unused on the Manage path (modal-only).
-      avgRating: null,
-      reviewCount: 0,
       // Card cover — unused on the Manage path (the modal renders no cover) and
       // the subscription row carries no screenshot data, so null.
       coverUrl: null,
@@ -502,7 +493,6 @@ export default function InstalledAppsPage() {
     <>
       <Meta title="Installed Apps — Civitai" deIndex />
       <AppsPageLayout
-        size="lg"
         title="Your installed apps"
         subtitle="Manage where Civitai Apps show up across the site."
         actions={
@@ -517,75 +507,70 @@ export default function InstalledAppsPage() {
         }
       >
         <Tabs defaultValue="subscriptions" variant="outline">
-            <Tabs.List>
-              <Tabs.Tab value="subscriptions" leftSection={<IconPlugConnected size={14} />}>
-                Installs
-              </Tabs.Tab>
-              <Tabs.Tab value="permissions" leftSection={<IconShieldLock size={14} />}>
-                Apps & permissions
-              </Tabs.Tab>
-              <Tabs.Tab value="activity" leftSection={<IconHistory size={14} />}>
-                Recent activity
-              </Tabs.Tab>
-              <Tabs.Tab value="hidden" leftSection={<IconEyeOff size={14} />}>
-                Hidden
-              </Tabs.Tab>
-            </Tabs.List>
+          <Tabs.List>
+            <Tabs.Tab value="subscriptions" leftSection={<IconPlugConnected size={14} />}>
+              Installs
+            </Tabs.Tab>
+            <Tabs.Tab value="permissions" leftSection={<IconShieldLock size={14} />}>
+              Apps & permissions
+            </Tabs.Tab>
+            <Tabs.Tab value="activity" leftSection={<IconHistory size={14} />}>
+              Recent activity
+            </Tabs.Tab>
+            <Tabs.Tab value="hidden" leftSection={<IconEyeOff size={14} />}>
+              Hidden
+            </Tabs.Tab>
+          </Tabs.List>
 
-            <Tabs.Panel value="subscriptions" pt="md">
-              {isLoading ? (
-                <Center py="xl">
-                  <Loader />
-                </Center>
-              ) : groupedApps.length === 0 ? (
-                <EmptyState label="Nothing installed yet — browse the marketplace." />
-              ) : (
-                <Stack gap="md">
-                  {groupedApps.map((app) => (
-                    <InstalledAppCard
-                      key={app.appBlockId}
-                      app={app}
-                      onManage={handleManage}
-                    />
-                  ))}
-                </Stack>
-              )}
-            </Tabs.Panel>
-
-            <Tabs.Panel value="permissions" pt="md">
-              <Stack gap="sm">
-                <Text size="sm" c="dimmed">
-                  What each app you've installed can request, and where you have it. This is a
-                  reflection of the current state — to revoke access, remove the install or
-                  subscription on the Subscriptions tab.
-                </Text>
-                <ScopeGrantsPanel />
+          <Tabs.Panel value="subscriptions" pt="md">
+            {isLoading ? (
+              <Center py="xl">
+                <Loader />
+              </Center>
+            ) : groupedApps.length === 0 ? (
+              <EmptyState label="Nothing installed yet — browse the marketplace." />
+            ) : (
+              <Stack gap="md">
+                {groupedApps.map((app) => (
+                  <InstalledAppCard key={app.appBlockId} app={app} onManage={handleManage} />
+                ))}
               </Stack>
-            </Tabs.Panel>
+            )}
+          </Tabs.Panel>
 
-            <Tabs.Panel value="activity" pt="md">
-              <Stack gap="sm">
-                <Text size="sm" c="dimmed">
-                  Recent actions apps have taken on your behalf — Buzz spends plus every
-                  scope-gated API call (read profile, read model, etc.).
-                </Text>
-                <AppActivityPanel />
-              </Stack>
-            </Tabs.Panel>
+          <Tabs.Panel value="permissions" pt="md">
+            <Stack gap="sm">
+              <Text size="sm" c="dimmed">
+                What each app you've installed can request, and where you have it. This is a
+                reflection of the current state — to revoke access, remove the install or
+                subscription on the Subscriptions tab.
+              </Text>
+              <ScopeGrantsPanel />
+            </Stack>
+          </Tabs.Panel>
 
-            <Tabs.Panel value="hidden" pt="md">
-              <Stack gap="sm">
-                <Text size="sm" c="dimmed">
-                  Apps you've hidden on this device. Hiding is local to your browser —
-                  it never affects the publisher's install or other viewers. Restore one to
-                  have it show on its model page again.
-                </Text>
-                <HiddenBlocksPanel />
-              </Stack>
-            </Tabs.Panel>
+          <Tabs.Panel value="activity" pt="md">
+            <Stack gap="sm">
+              <Text size="sm" c="dimmed">
+                Recent actions apps have taken on your behalf — Buzz spends plus every scope-gated
+                API call (read profile, read model, etc.).
+              </Text>
+              <AppActivityPanel />
+            </Stack>
+          </Tabs.Panel>
+
+          <Tabs.Panel value="hidden" pt="md">
+            <Stack gap="sm">
+              <Text size="sm" c="dimmed">
+                Apps you've hidden on this device. Hiding is local to your browser — it never
+                affects the publisher's install or other viewers. Restore one to have it show on its
+                model page again.
+              </Text>
+              <HiddenBlocksPanel />
+            </Stack>
+          </Tabs.Panel>
         </Tabs>
       </AppsPageLayout>
     </>
   );
 }
-

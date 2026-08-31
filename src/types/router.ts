@@ -78,6 +78,7 @@ export type CollectionGetAllUserModel = CollectionRouter['getAllUser'][number];
 export type CollectionByIdModel = CollectionRouter['getById']['collection'];
 export type CollectionGetInfinite = CollectionRouter['getInfinite']['items'];
 export type CollectionGetAllItems = CollectionRouter['getAllCollectionItems'];
+export type CollectionMyInvite = CollectionRouter['getMyInvites'][number];
 
 type TrainingRouter = RouterOutput['training'];
 export type TrainingModelData = TrainingRouter['getModelBasic'];
@@ -92,9 +93,6 @@ export type BountyEntryGetById = BountyEntryRouter['getById'];
 
 export type UserOverview = RouterOutput['userProfile']['overview'];
 export type UserWithProfile = RouterOutput['userProfile']['get'];
-
-export type ImageModerationReviewQueueImage =
-  RouterOutput['image']['getModeratorReviewQueue']['items'][number];
 
 export type UserPaymentMethod = RouterOutput['user']['getPaymentMethods'][number];
 
@@ -112,9 +110,7 @@ export type CosmeticGetById = Exclude<RouterOutput['cosmetic']['getById'], null>
 export type CosmeticShopItemGetById = RouterOutput['cosmeticShop']['getShopItemById'];
 export type CosmeticShopSectionGetById = RouterOutput['cosmeticShop']['getSectionById'];
 
-export type ModelVersionDonationGoal = NonNullable<
-  RouterOutput['modelVersion']['donationGoal']
->;
+export type ModelVersionDonationGoal = NonNullable<RouterOutput['modelVersion']['donationGoal']>;
 export type PostContestCollectionItem =
   RouterOutput['post']['getContestCollectionDetails']['items'][number];
 

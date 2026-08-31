@@ -14,6 +14,7 @@ import {
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import {
+  IconArrowUp,
   IconCircle,
   IconCrown,
   IconEye,
@@ -592,6 +593,22 @@ export const ModelMyRecurringBidCard = memo(function ModelMyRecurringBidCard({
       });
     },
   });
+  const { mutate: moveRecurringBid, isPending: movingRecurringBid } =
+    trpc.auction.moveRecurringBidToLatest.useMutation({
+      onSuccess: async (res) => {
+        showSuccessNotification({
+          message: `Recurring bid moved to "${res.name}"!`,
+        });
+
+        await queryUtils.auction.getMyRecurringBids.invalidate();
+      },
+      onError(error) {
+        showErrorNotification({
+          title: 'Failed to move recurring bid',
+          error: new Error(error.message),
+        });
+      },
+    });
   const { mutate: togglePauseRecurringBid } = trpc.auction.togglePauseRecurringBid.useMutation({
     onSuccess: (res) => {
       showSuccessNotification({
@@ -630,6 +647,25 @@ export const ModelMyRecurringBidCard = memo(function ModelMyRecurringBidCard({
     });
   };
 
+  const moveToLatestLabel =
+    data.moveToLatest?.status === 'available'
+      ? `Move to latest version: ${data.moveToLatest.targetName}`
+      : 'You already have a recurring bid on the latest version';
+
+  const handleMoveToLatest = () => {
+    if (data.moveToLatest?.status !== 'available') return;
+    const { targetName } = data.moveToLatest;
+    openConfirmModal({
+      title: 'Move bid to latest version',
+      children: `Are you sure you want to move this recurring bid to "${targetName}"? Today's bid is not affected — the new version will be used starting tomorrow.`,
+      centered: true,
+      labels: { confirm: 'Move', cancel: 'No, keep it' },
+      onConfirm: () => {
+        moveRecurringBid({ bidId: data.id });
+      },
+    });
+  };
+
   const handleTogglePause = () => {
     openConfirmModal({
       title: `${data.isPaused ? 'Resume' : 'Pause'} bid`,
@@ -661,6 +697,27 @@ export const ModelMyRecurringBidCard = memo(function ModelMyRecurringBidCard({
             aboveThreshold={false}
             top={
               <Group gap={4} className="absolute right-1 top-1 z-10">
+                {!!data.moveToLatest && (
+                  <Tooltip
+                    className={!mobile ? 'opacity-0 group-hover:opacity-100' : ''}
+                    label={moveToLatestLabel}
+                  >
+                    {/* Wrapper so the tooltip still fires when the icon is disabled */}
+                    <div>
+                      <LegacyActionIcon
+                        size="sm"
+                        color="blue"
+                        variant="filled"
+                        aria-label={moveToLatestLabel}
+                        disabled={data.moveToLatest.status !== 'available'}
+                        loading={movingRecurringBid}
+                        onClick={handleMoveToLatest}
+                      >
+                        <IconArrowUp size={16} />
+                      </LegacyActionIcon>
+                    </div>
+                  </Tooltip>
+                )}
                 <Tooltip
                   className={!mobile ? 'opacity-0 group-hover:opacity-100' : ''}
                   label={data.isPaused ? 'Resume' : 'Pause'}

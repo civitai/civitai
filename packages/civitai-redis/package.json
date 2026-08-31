@@ -13,10 +13,11 @@
     "msgpackr": "^1.10.2",
     "redis": "^5.8.3",
     "slugify": "^1.6.5",
-    "zod": "^4.0.17"
+    "zod": "^4.0.17",
+    "lru-cache": "^11.2.2"
   },
   "devDependencies": {
     "@types/lodash-es": "^4.17.7",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.11"
   }
 }

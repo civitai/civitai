@@ -1,21 +1,19 @@
-import { CacheTTL, constants } from '~/server/common/constants';
-import { BlocklistType, NotificationCategory } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { constants } from '~/server/common/constants';
+import { BlocklistType } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { stripBenignPhrases } from '~/server/services/blocklist.service';
-import { createNotification } from '~/server/services/notification.service';
-import { updateUserById } from '~/server/services/user.service';
-import { fetchThroughCache, bustFetchThroughCache } from '~/server/utils/cache-helpers';
+import { applyPendingReviewMute } from '~/server/services/user-restriction.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { normalizeText } from '~/utils/normalize-text';
 import {
   auditPromptEnriched,
+  isSoftBlock,
   type PromptTrigger,
   type PromptTriggerCategory,
 } from '~/utils/metadata/audit';
-import { refreshSession } from '~/server/auth/session-invalidation';
 
 // --- Blocked Prompt Store ---
 // Single Redis list stores both count (list length) and prompt data.
@@ -45,6 +43,9 @@ export interface BlockedPromptEntry {
 // have had in steady state. Keeping these in lockstep prevents the previous behavior
 // where many users effectively accumulated forever in Redis but only recovered the
 // last 24h after a wipe.
+const GREEN_SFW_REDIRECT =
+  'Civitai.com is intended for SFW content only. For NSFW content generation, please visit civitai.red where you have more freedom to generate mature content.';
+
 const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
 const RESET_MARKER = '__RESET__';
@@ -190,45 +191,6 @@ async function clearBlockedPromptsAfterMute(userId: number) {
   await sysRedis.del(key);
 }
 
-// --- Prompt Allowlist Cache ---
-// Caches the set of allowlisted (trigger, category) pairs used to filter out
-// false positives from prompt auditing before counting toward mute thresholds.
-type AllowlistEntry = { trigger: string; category: string };
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-async function getCachedPromptAllowlist(): Promise<Set<string>> {
-  const entries = await fetchThroughCache(
-    REDIS_KEYS.SYSTEM.PROMPT_ALLOWLIST,
-    async () => {
-      const rows = await dbRead.promptAllowlist.findMany({
-        select: { trigger: true, category: true },
-      });
-      return rows as AllowlistEntry[];
-    },
-    { ttl: CacheTTL.day }
-  );
-  // Build a Set of "trigger:category" keys for O(1) lookup
-  return new Set(entries.map((e) => `${e.trigger}:${e.category}`));
-}
-
-/** Bust the prompt allowlist cache (call after adding/removing entries). */
-export async function bustPromptAllowlistCache() {
-  await bustFetchThroughCache(REDIS_KEYS.SYSTEM.PROMPT_ALLOWLIST);
-}
-
-/** Filter triggers against the allowlist, returning only non-allowlisted triggers. */
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function filterAllowlistedTriggers(
-  triggers: PromptTrigger[],
-  allowlist: Set<string>
-): PromptTrigger[] {
-  if (allowlist.size === 0) return triggers;
-  return triggers.filter((t) => {
-    if (!t.matchedWord) return true; // no specific word to match — keep it
-    return !allowlist.has(`${t.matchedWord}:${t.category}`);
-  });
-}
-
 export interface AuditPromptOptions {
   prompt: string;
   negativePrompt?: string;
@@ -240,6 +202,8 @@ export interface AuditPromptOptions {
   remixOfId?: number; // The original image being remixed
   inputImages?: string[]; // Base/source image URLs attached to the job
   inputVideo?: string; // Source video URL (vid2vid)
+  // Only honored when every trigger is soft — see `isSoftBlock`.
+  acknowledgedSoftBlock?: boolean;
 }
 
 /**
@@ -265,6 +229,7 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     remixOfId,
     inputImages,
     inputVideo,
+    acknowledgedSoftBlock,
   } = options;
 
   // Skip auditing if prompt is empty (will be caught by validation elsewhere)
@@ -277,20 +242,19 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     // If isGreen is false (civitai.com/red), run standard NSFW blocking
     const checkProfanity = isGreen;
 
-    // NOTE: Allowlist runtime filtering is disabled for now. The allowlist management
-    // endpoints remain active so moderators can curate entries. To re-enable, uncomment
-    // the allowlist fetch below and use filterAllowlistedTriggers() on each trigger set.
-    // const allowlist = await getCachedPromptAllowlist();
-    const allowlist = new Set<string>();
-
     // Moderator-managed benign phrases (proper nouns / technical terms that
     // coincidentally contain a detection token) are blanked before auditing, so the
     // generation gate and the post-generation scan audit agree on what's benign.
     // Only the audited copy is cleaned — the original prompt is what gets generated,
     // reported to ClickHouse, and stored on the blocked-prompt entry below.
+    //
+    // 🔴 Strip the NORMALIZED copy. `auditPromptEnriched` folds accents before the
+    // detector runs, so stripping raw text matches one alphabet while the detector
+    // reads another and a whitelisted `emma stone` still blocks `émma stone`. The
+    // scan paths in image-scan-result.service.ts already normalize first.
     const [auditedPrompt, auditedNegativePrompt] = await Promise.all([
-      stripBenignPhrases(prompt, BlocklistType.PromptBenignPhrase),
-      stripBenignPhrases(negativePrompt, BlocklistType.NegativeBenignPhrase),
+      stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase),
+      stripBenignPhrases(normalizeText(negativePrompt), BlocklistType.NegativeBenignPhrase),
     ]);
 
     // Run regex-based audit (enriched to capture structured trigger data)
@@ -300,15 +264,22 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       checkProfanity
     );
 
+    let softRegexBlock: { blockedFor: string[]; triggers: PromptTrigger[]; type: string } | null =
+      null;
+
     if (!success) {
-      // Filter out allowlisted triggers before counting toward mute
-      const remainingTriggers = filterAllowlistedTriggers(triggers, allowlist);
-      if (remainingTriggers.length > 0) {
-        throw {
-          blockedFor: remainingTriggers.map((t) => t.message),
-          triggers: remainingTriggers,
+      if (triggers.length > 0) {
+        const regexBlock = {
+          blockedFor: triggers.map((t) => t.message),
+          triggers,
           type: 'regex',
         };
+        // A hard block short-circuits. A soft one must NOT — throwing here would
+        // skip the external classifier below, so appending any overridable word
+        // ("… pee") to a prompt would buy a click-through past it. Hold the block
+        // and let external moderation run first; it can only escalate.
+        if (!isSoftBlock(triggers)) throw regexBlock;
+        softRegexBlock = regexBlock;
       }
     }
 
@@ -326,27 +297,69 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
         message: cat,
         matchedWord: cat,
       }));
-      // Filter out allowlisted external triggers
-      const remainingTriggers = filterAllowlistedTriggers(externalTriggers, allowlist);
-      if (remainingTriggers.length > 0) {
+      if (externalTriggers.length > 0) {
         throw {
-          blockedFor: remainingTriggers.map((t) => t.message),
-          triggers: remainingTriggers,
+          blockedFor: externalTriggers.map((t) => t.message),
+          triggers: externalTriggers,
           type: 'external',
         };
       }
     }
+
+    // External moderation cleared it; now honor the held soft block.
+    if (softRegexBlock) throw softRegexBlock;
   } catch (e) {
     const error = e as { blockedFor: string[]; triggers: PromptTrigger[]; type: string };
+
+    const softBlock = isSoftBlock(error.triggers ?? []);
+
+    if (softBlock) {
+      // A soft block never counts toward the auto-mute, acknowledged or not.
+      // Counting the warning would auto-mute exactly the users this exists to help
+      // (`daughter` alone blocks 139 of them) while offering them a proceed button.
+      await reportProhibitedRequest({
+        prompt,
+        negativePrompt,
+        userId,
+        isModerator,
+        track,
+        source: error.type === 'external' ? 'External' : 'Regex',
+        count: 0,
+        remixOfId,
+        inputImages,
+        inputVideo,
+      });
+
+      // ClickHouse `source` is Enum8('Regex','External') and cannot record the
+      // override, so this is the only trail of it until a column migration lands.
+      if (acknowledgedSoftBlock) {
+        logToAxiom({
+          name: 'prompt-soft-block-override',
+          type: 'info',
+          userId,
+          details: {
+            triggers: error.triggers.map((t) => ({
+              category: t.category,
+              matchedWord: t.matchedWord,
+            })),
+          },
+        }).catch(() => null);
+        return;
+      }
+    }
 
     // Build error message based on domain
     let message: string;
 
-    if (isGreen) {
-      // SFW-only domain (civitai.com) - stricter message
-      message = `Your prompt was flagged: ${error.blockedFor.join(
-        ', '
-      )}.\n\nCivitai.com is intended for SFW content only. For NSFW content generation, please visit civitai.red where you have more freedom to generate mature content.`;
+    if (softBlock) {
+      // No escalating "sent for review" tail (not counted), and on green no
+      // "go to civitai.red" redirect. Soft means we are NOT confident this is
+      // mature — that uncertainty is the whole reason we offer a proceed button,
+      // so sending them to the adult domain would contradict it and push users
+      // there over a false positive.
+      message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
+    } else if (isGreen) {
+      message = `Your prompt was flagged: ${error.blockedFor.join(', ')}.\n\n${GREEN_SFW_REDIRECT}`;
     } else {
       const source = error.type === 'external' ? 'External' : 'Regex';
 
@@ -395,7 +408,8 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       }
     }
 
-    throw throwBadRequestError(message);
+    // Flag rides `cause`; trpc.ts's errorFormatter lifts it onto data.softBlock.
+    throw throwBadRequestError(message, softBlock ? { softBlock: true } : undefined);
   }
 }
 
@@ -450,41 +464,16 @@ async function reportProhibitedRequest(options: {
   // Auto-mute when count exceeds the muted threshold
   if (count > constants.imageGeneration.requestBlocking.muted) {
     try {
-      // Retrieve all blocked prompts from Redis for the UserRestriction record
       const allBlockedPrompts = await getBlockedPrompts(userId);
 
-      // Create a UserRestriction record with ALL trigger data for moderator review
-      await dbWrite.userRestriction.create({
-        data: {
-          userId,
-          type: 'generation',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          triggers: allBlockedPrompts as any,
-        },
-      });
-
-      // Only gate the user via `muted`. `mutedAt` is reserved for moderator
-      // confirmation (uphold) — setting it here would make a Pending restriction
-      // display as "Upheld" and trip the confirm-mutes cron.
-      await updateUserById({
-        id: userId,
-        data: { muted: true },
+      await applyPendingReviewMute({
+        userId,
+        triggers: allBlockedPrompts,
         updateSource: 'promptAuditing:autoMute',
       });
 
-      await refreshSession(userId);
-
       // Clear the blocked prompts from Redis now that they're stored in the DB
       await clearBlockedPromptsAfterMute(userId);
-
-      // Notify the user about the restriction
-      await createNotification({
-        type: 'generation-muted',
-        key: `generation-muted:${userId}:${Date.now()}`,
-        category: NotificationCategory.System,
-        userId,
-        details: {},
-      }).catch();
     } catch (banError) {
       logToAxiom({
         name: 'user-ban-creation-error',

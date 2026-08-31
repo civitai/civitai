@@ -327,7 +327,7 @@ function BuzzTippingBadge({
   const typeToBuzzTipType: Partial<Record<ReactionEntityType, string>> = {
     image: 'Image',
   };
-  const buzzTipEntryType = typeToBuzzTipType[entityType];
+  const buzzTipEntryType = typeToBuzzTipType[entityType as ReactionEntityType];
   const tippedAmount = useBuzzTippingStore({ entityType: buzzTipEntryType ?? 'Image', entityId });
 
   if (!buzzTipEntryType) {

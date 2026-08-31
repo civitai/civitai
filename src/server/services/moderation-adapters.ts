@@ -1,6 +1,7 @@
 import { articleModerationAdapter } from '~/server/services/article-moderation.adapter';
 import { challengeModerationAdapter } from '~/server/services/challenge-moderation.adapter';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
+import { modelModerationAdapter } from '~/server/services/model-moderation.adapter';
 import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-category-audit.service';
 
 // Central registry of `ModerationAdapter`s keyed by entityType. Adding a new
@@ -14,6 +15,7 @@ import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-ca
 const moderationAdapters: Record<string, ModerationAdapter> = {
   Article: articleModerationAdapter,
   Challenge: challengeModerationAdapter,
+  Model: modelModerationAdapter,
   WildcardSetCategory: wildcardCategoryModerationAdapter,
 };
 

@@ -38,8 +38,6 @@ function makeBlock(id: string, name: string): AvailableBlock {
     category: null,
     externalUrl: null,
     scopesSummary: [],
-    avgRating: null,
-    reviewCount: 0,
     coverUrl: null,
   };
 }
@@ -60,8 +58,6 @@ function makePageBlock(id: string, name: string): AvailableBlock {
     category: null,
     externalUrl: null,
     scopesSummary: [],
-    avgRating: null,
-    reviewCount: 0,
     coverUrl: null,
   };
 }
@@ -117,8 +113,21 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: mocks.appBlocksPages }),
 }));
 
+/**
+ * The signed-in viewer this suite mounts as. 🔴 Load-bearing, not a detail:
+ * recents are ACCOUNT-scoped (#4048), so every store read below must use THIS
+ * id — a read with any other id has to come back empty, which is what the
+ * `records it OWNED` case at the bottom of this file exercises.
+ *
+ * Hoisted, because a `vi.mock` factory is hoisted above module-scope consts and
+ * would otherwise read it before initialisation.
+ */
+const session = vi.hoisted(() => ({ userId: 1, otherUserId: 2 }));
+const SESSION_USER_ID = session.userId;
+const OTHER_USER_ID = session.otherUserId;
+
 vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 1, username: 'tester', isModerator: false }),
+  useCurrentUser: () => ({ id: session.userId, username: 'tester', isModerator: false }),
 }));
 
 // The settings modal is a global side-effecting opener — stub it to a spy so we
@@ -154,10 +163,11 @@ describe('/apps marketplace body (top controls row)', () => {
     // Search is a textbox labelled "Search".
     await expect.element(page.getByRole('textbox', { name: 'Search' })).toBeInTheDocument();
     // Sort is a Mantine Select — its input is a textbox labelled "Sort" showing
-    // the default "Top rated" sort.
+    // the default "Most popular" sort. (It used to show "Top rated"; that option
+    // was the 5-star `AppBlockReview` Bayesian sort and went with that system.)
     await expect.element(page.getByRole('textbox', { name: 'Sort' })).toBeInTheDocument();
     expect((page.getByRole('textbox', { name: 'Sort' }).element() as HTMLInputElement).value).toBe(
-      'Top rated'
+      'Most popular'
     );
   });
 
@@ -208,7 +218,7 @@ describe('/apps marketplace body (explore-all CTA clears filters)', () => {
 
 describe('/apps marketplace body (opening an app records it to recents)', () => {
   test('opening an app writes it to the recents localStorage list and surfaces the section', async () => {
-    expect(getRecentlyOpenedApps()).toEqual([]);
+    expect(getRecentlyOpenedApps(SESSION_USER_ID)).toEqual([]);
     renderWithProviders(<MarketplaceBody />);
 
     // Each grid card exposes an "Open app" / settings open affordance. The
@@ -225,8 +235,14 @@ describe('/apps marketplace body (opening an app records it to recents)', () => 
     // handleOpen fired the settings opener…
     expect(mocks.openSettings).toHaveBeenCalledTimes(1);
     // …and recorded the app to localStorage (newest-first, the helper's job).
-    const recents = getRecentlyOpenedApps();
+    const recents = getRecentlyOpenedApps(SESSION_USER_ID);
     expect(recents.length).toBeGreaterThanOrEqual(1);
+    // 🔴 BEHAVIOURAL: the write landed OWNED by the mounted session (#4048).
+    // A call site that passed `null` — or dropped the owner entirely — still
+    // satisfies the line above and fails this one, because the entry would then
+    // sit in the anonymous bucket instead of this viewer's.
+    expect(getRecentlyOpenedApps(OTHER_USER_ID)).toEqual([]);
+    expect(getRecentlyOpenedApps(null)).toEqual([]);
     // The raw store is populated under the documented key.
     expect(window.localStorage.getItem(RECENTLY_OPENED_APPS_KEY)).toBeTruthy();
 
@@ -254,7 +270,7 @@ describe('/apps marketplace body — PAGE app open records to recents (M1)', () 
   test('clicking "Open app" (route link) on a PAGE app records it to recents', async () => {
     mocks.appBlocksPages = true; // unlock the "Open app" route link
     mocks.listAvailableItems = [makePageBlock('p', 'Page App')];
-    expect(getRecentlyOpenedApps()).toEqual([]);
+    expect(getRecentlyOpenedApps(SESSION_USER_ID)).toEqual([]);
 
     renderWithProviders(<MarketplaceBody />);
     await expect.element(page.getByText('Page App')).toBeInTheDocument();
@@ -267,7 +283,7 @@ describe('/apps marketplace body — PAGE app open records to recents (M1)', () 
     // The install/settings opener did NOT fire (page app has no install) —
     // recents was populated purely by the route open.
     expect(mocks.openSettings).not.toHaveBeenCalled();
-    const recents = getRecentlyOpenedApps();
+    const recents = getRecentlyOpenedApps(SESSION_USER_ID);
     expect(recents.map((r) => r.id)).toContain('p');
     expect(window.localStorage.getItem(RECENTLY_OPENED_APPS_KEY)).toBeTruthy();
     // The "Recently opened" section renders for the page app.
@@ -278,7 +294,7 @@ describe('/apps marketplace body — PAGE app open records to recents (M1)', () 
     // Title link is present regardless of the pages flag — assert it records too.
     mocks.appBlocksPages = false;
     mocks.listAvailableItems = [makePageBlock('p', 'Page App')];
-    expect(getRecentlyOpenedApps()).toEqual([]);
+    expect(getRecentlyOpenedApps(SESSION_USER_ID)).toEqual([]);
 
     renderWithProviders(<MarketplaceBody />);
     // The card title links to the detail page; it is the open path here.
@@ -287,21 +303,27 @@ describe('/apps marketplace body — PAGE app open records to recents (M1)', () 
     await userEvent.click(titleLink.element());
 
     expect(mocks.openSettings).not.toHaveBeenCalled();
-    expect(getRecentlyOpenedApps().map((r) => r.id)).toContain('p');
-    await expect.element(page.getByRole('heading', { name: 'Recently opened' })).toBeInTheDocument();
+    expect(getRecentlyOpenedApps(SESSION_USER_ID).map((r) => r.id)).toContain('p');
+    await expect
+      .element(page.getByRole('heading', { name: 'Recently opened' }))
+      .toBeInTheDocument();
   });
 });
 
 describe('/apps marketplace body — sort default + fallback (M3)', () => {
-  test('the listing query uses the visible default sort "rating" on first render', async () => {
+  test('the listing query uses the visible default sort "popular" on first render', async () => {
     renderWithProviders(<MarketplaceBody />);
-    // The Sort select shows the default "Top rated" (= rating) on first render,
-    // and the listing query is invoked with sort:'rating'.
+    // The Sort select shows the default "Most popular" (= popular) on first
+    // render, and the listing query is invoked with sort:'popular'. The point of
+    // the test is the AGREEMENT between the two — a label showing one sort while
+    // the query asks for another is the bug this pins.
     await expect.element(page.getByRole('textbox', { name: 'Sort' })).toBeInTheDocument();
     expect(
       (page.getByRole('textbox', { name: 'Sort' }).element() as HTMLInputElement).value
-    ).toBe('Top rated');
-    expect(mocks.lastListArgs?.sort).toBe('rating');
+    ).toBe('Most popular');
+    expect(mocks.lastListArgs?.sort).toBe('popular');
+    // Negative control: the removed 5-star sort must not come back through here.
+    expect(mocks.lastListArgs?.sort).not.toBe('rating');
   });
 });
 

@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
 
 // Full-stack proof (no eligibility-service mock) that:
 //  - EDIT re-checks account standing only — a good-standing owner whose creator score has
@@ -6,25 +8,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //  - CREATE still enforces the full gate (standing + score).
 // Only the DB layer (dbRead.user / dbRead.userStrike) backing the real eligibility checks is
 // mocked, so the actual assertUserAccountInGoodStanding / assertUserInGoodStanding logic runs.
-const { mockDbRead, mockGetChallengeConfig, mockResolveJudgingCategories } = vi.hoisted(() => {
+const { mockGetChallengeConfig, mockResolveJudgingCategories } = vi.hoisted(() => {
   return {
-    mockDbRead: {
-      $queryRaw: vi.fn(),
-      user: { findUnique: vi.fn() },
-      userStrike: { count: vi.fn() },
-      modelVersion: { findMany: vi.fn() },
-      image: { findUnique: vi.fn(), findFirst: vi.fn() },
-      challenge: { findUnique: vi.fn(), count: vi.fn() },
-    },
     mockGetChallengeConfig: vi.fn(),
     mockResolveJudgingCategories: vi.fn(),
   };
 });
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: {},
-}));
 
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: vi.fn(() => null),
@@ -139,7 +128,7 @@ describe('upsertUserChallenge — real eligibility gate (no mocked assert* funct
   beforeEach(() => {
     vi.clearAllMocks();
     mockDbRead.image.findFirst.mockResolvedValue({ id: 555 });
-    mockDbRead.userStrike.count.mockResolvedValue(0);
+    mockDbRead.userStrike.aggregate.mockResolvedValue({ _sum: { points: 0 } });
     mockResolveJudgingCategories.mockResolvedValue([]);
   });
 
@@ -149,9 +138,9 @@ describe('upsertUserChallenge — real eligibility gate (no mocked assert* funct
     // this rejection is by first clearing the real (unmocked) standing-only check.
     mockDbRead.challenge.findUnique.mockResolvedValueOnce(null);
 
-    await expect(
-      upsertUserChallenge({ ...baseInput, id: 42 } as never)
-    ).rejects.toThrow('Challenge not found');
+    await expect(upsertUserChallenge({ ...baseInput, id: 42 } as never)).rejects.toThrow(
+      'Challenge not found'
+    );
   });
 
   it('EDIT: a muted owner is still blocked (account standing enforced)', async () => {
@@ -172,12 +161,12 @@ describe('upsertUserChallenge — real eligibility gate (no mocked assert* funct
     );
   });
 
-  it('EDIT: an owner with an active strike is still blocked (account standing enforced)', async () => {
+  it('EDIT: an owner at the mute threshold is still blocked (account standing enforced)', async () => {
     mockUser();
-    mockDbRead.userStrike.count.mockResolvedValueOnce(1);
+    mockDbRead.userStrike.aggregate.mockResolvedValueOnce({ _sum: { points: 2 } });
 
     await expect(upsertUserChallenge({ ...baseInput, id: 42 } as never)).rejects.toThrow(
-      'Resolve your active strikes before creating a challenge.'
+      'Your account has active strikes and cannot create challenges right now.'
     );
   });
 

@@ -18,6 +18,9 @@ vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
 
 import {
   appBlockTag,
+  assertCheckpointVersionSupportsWorkflow,
+  MAX_BLOCK_POLL_WAIT_SECONDS,
+  resolveBlockPollWaitSeconds,
   buildCustomComfyWorkflowInput,
   buildImageWorkflowInput,
   buildTextToImageInput,
@@ -25,6 +28,8 @@ import {
   BLOCK_IMAGE_WORKFLOW_TYPES,
   createBlockCustomComfyStep,
   isPageLoraResource,
+  assertSourceImageCount,
+  normalizeBlockSourceImages,
   projectAppWorkflow,
   resolveBlockImageWorkflowType,
   resolveBlockVersionContext,
@@ -33,13 +38,23 @@ import {
 } from '../workflow.service';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import { getRecipe, REGISTERED_RECIPE_IDS } from '../recipes';
+import {
+  getStepByOrchestratorType,
+  listRegisteredSteps,
+  NATIVELY_EXTRACTED_STEP_TYPES,
+  postureProducesMedia,
+  type AnyBlockStep,
+} from '../steps';
+import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
 // REAL param-building path (no mocks): the generation graph validator and the
 // step-metadata snapshot fn are the exact functions the orchestrator's
 // `createWorkflowStepsFromGraph` runs to derive `workflowMetadata.params`. Both
 // live in the browser-safe `shared/` tree (no DB/redis), so we import and run
 // them for real in the integration-style test below.
 import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
-import { ECO } from '~/shared/constants/basemodel.constants';
+import { ECO, ecosystems } from '~/shared/constants/basemodel.constants';
+import { isWorkflowAvailable } from '~/shared/data-graph/generation/config/workflows';
+import { getImagesLimit } from '~/shared/data-graph/generation/images-limit';
 import { toStepMetadata } from '~/shared/utils/resource.utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
@@ -153,6 +168,141 @@ describe('snapshotFromWorkflow', () => {
     expect(snap.imageUrls).toBeUndefined();
   });
 
+  // ---- #3520: silent model substitutions surfaced on the snapshot ----------
+  //
+  // The substitution happens during graph validation, before anything is
+  // submitted, so it arrives EITHER as an explicit second argument (submit /
+  // estimate replies, where the request's collector is still in scope) OR — and
+  // this is the one that matters — off the workflow's persisted `metadata`, which
+  // is what makes it survive to the TERMINAL POLL, the snapshot a block actually
+  // renders from. The invariant being protected is "a caller billed for model A
+  // and given model B must be able to find that out".
+  it('surfaces modelSubstitutions passed alongside the workflow', () => {
+    const snap = snapshotFromWorkflow(fakeWorkflow() as never, {
+      modelSubstitutions: [{ requested: 2558804, applied: 2552908, reason: 'wrong-workflow' }],
+    });
+    expect(snap.modelSubstitutions).toEqual([
+      { requested: 2558804, applied: 2552908, reason: 'wrong-workflow' },
+    ]);
+  });
+
+  it('OMITS modelSubstitutions when nothing was substituted (byte-identical to before)', () => {
+    // Three shapes that all mean "nothing to report": no second argument at all
+    // (every pre-existing call site), an empty object, and an empty array. None
+    // may add a key to the wire payload.
+    for (const extra of [undefined, {}, { modelSubstitutions: [] }]) {
+      const snap = snapshotFromWorkflow(fakeWorkflow() as never, extra);
+      expect('modelSubstitutions' in snap).toBe(false);
+    }
+  });
+
+  // ---- 🔴 #3520 FIX 1: the record must SURVIVE TO THE POLL -----------------
+  //
+  // `pollWorkflow` / `cancelWorkflow` call `snapshotFromWorkflow(workflow)` with
+  // NO second argument — they only have a freshly fetched Workflow. The poll is
+  // also the only snapshot that carries `imageUrls`, i.e. the one a block renders
+  // from. A submit-reply-only field is therefore gone before there is anything to
+  // display beside it, and `block_workflows` does not retain the submitted body
+  // to recover it from. These pin the metadata round-trip that closes that.
+  describe('recovered from the workflow metadata (the poll path)', () => {
+    const persisted = [
+      { requested: 2558804, applied: 2552908, reason: 'wrong-workflow' },
+      { requested: 987654321, applied: 2552908, reason: 'unrecognized' },
+    ];
+
+    it('reads modelSubstitutions off workflow.metadata with NO extra argument', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          metadata: { params: { prompt: 'a cat' }, modelSubstitutions: persisted },
+        }) as never
+      );
+      expect(snap.modelSubstitutions).toEqual(persisted);
+    });
+
+    it('is present on the TERMINAL poll shape — alongside the imageUrls it describes', () => {
+      // The shape `pollWorkflow` actually hands to the block: succeeded, with
+      // outputs. This is the exact call the fix exists for.
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          status: 'succeeded',
+          metadata: { modelSubstitutions: persisted },
+          steps: [
+            {
+              $type: 'textToImage',
+              name: 's1',
+              status: 'succeeded',
+              metadata: {},
+              output: {
+                images: [{ id: 'b1', url: 'https://cdn/img1.png', available: true, type: 'image' }],
+              },
+            },
+          ],
+        }) as never
+      );
+      expect(snap.imageUrls).toEqual(['https://cdn/img1.png']);
+      expect(snap.modelSubstitutions).toEqual(persisted);
+    });
+
+    it('an EXPLICIT extra wins over the metadata (the submit reply is authoritative)', () => {
+      const fromRequest = [{ requested: 1, applied: 2, reason: 'gated' as const }];
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({ metadata: { modelSubstitutions: persisted } }) as never,
+        { modelSubstitutions: fromRequest }
+      );
+      expect(snap.modelSubstitutions).toEqual(fromRequest);
+    });
+
+    it('still OMITS the field when the metadata has none (unchanged wire payload)', () => {
+      for (const metadata of [
+        {},
+        { params: { prompt: 'x' } },
+        { modelSubstitutions: [] },
+        { modelSubstitutions: null },
+        { modelSubstitutions: 'nope' },
+      ]) {
+        const snap = snapshotFromWorkflow(fakeWorkflow({ metadata }) as never);
+        expect('modelSubstitutions' in snap).toBe(false);
+      }
+    });
+
+    // 🔴 The metadata crosses a service boundary and feeds a PUBLIC wire field
+    // whose `reason` is also a bounded prom label, so it is validated, not cast.
+    it.each([
+      ['a non-array', { modelSubstitutions: { requested: 1, applied: 2, reason: 'gated' } }],
+      ['a null entry', { modelSubstitutions: [null] }],
+      [
+        'a non-numeric requested',
+        { modelSubstitutions: [{ requested: '1', applied: 2, reason: 'gated' }] },
+      ],
+      [
+        'a NaN applied',
+        { modelSubstitutions: [{ requested: 1, applied: Number.NaN, reason: 'gated' }] },
+      ],
+      ['a missing reason', { modelSubstitutions: [{ requested: 1, applied: 2 }] }],
+      [
+        'an unknown reason',
+        { modelSubstitutions: [{ requested: 1, applied: 2, reason: 'because' }] },
+      ],
+    ])('DROPS %s from the metadata rather than putting it on the wire', (_label, metadata) => {
+      const snap = snapshotFromWorkflow(fakeWorkflow({ metadata }) as never);
+      expect('modelSubstitutions' in snap).toBe(false);
+    });
+
+    it('keeps the VALID entries when a malformed one rides alongside', () => {
+      const snap = snapshotFromWorkflow(
+        fakeWorkflow({
+          metadata: {
+            modelSubstitutions: [
+              { requested: 1, applied: 2, reason: 'because' },
+              { requested: 3, applied: 4, reason: 'gated' },
+            ],
+          },
+        }) as never
+      );
+      expect(snap.modelSubstitutions).toEqual([{ requested: 3, applied: 4, reason: 'gated' }]);
+    });
+  });
+
   // ---- image extraction across ALL image-producing step types --------------
   // The extractor accepts THREE step types (textToImage / imageGen / comfy);
   // the happy-path test above only exercises textToImage. These pin the other
@@ -238,9 +388,7 @@ describe('snapshotFromWorkflow', () => {
     });
 
     it('omits spentAccountType when the transactions list is empty', () => {
-      const snap = snapshotFromWorkflow(
-        fakeWorkflow({ transactions: { list: [] } }) as never
-      );
+      const snap = snapshotFromWorkflow(fakeWorkflow({ transactions: { list: [] } }) as never);
       expect(snap.spentAccountType).toBeUndefined();
     });
 
@@ -631,18 +779,21 @@ describe('buildTextToImageInput', () => {
     modelType: 'Checkpoint',
     checkpointVersionId: 99,
     checkpointBaseModel: 'SDXL 1.0',
+    additionalResourceTypes: new Map<number, string>(),
   };
   const sd1CheckpointResolved = {
     baseModel: 'SD 1.5',
     modelType: 'Checkpoint',
     checkpointVersionId: 99,
     checkpointBaseModel: 'SD 1.5',
+    additionalResourceTypes: new Map<number, string>(),
   };
   const fluxLoraResolved = {
     baseModel: 'Flux.1 D',
     modelType: 'LORA',
     checkpointVersionId: 691639,
     checkpointBaseModel: 'Flux.1 D',
+    additionalResourceTypes: new Map<number, string>(),
   };
 
   // New shape: the function now emits the flat generation-graph `input`
@@ -708,8 +859,44 @@ describe('buildTextToImageInput', () => {
     // fixture); the host doesn't second-guess what the resolver returned. The
     // bound LoRA (body model 99) is the only additional network.
     expect(out.model).toEqual({ id: 691639 });
-    expect(out.resources).toEqual([{ id: 99, strength: 1 }]);
+    // #4159 — `model.type` is the RESOLVED type, carried from
+    // `resolveBlockVersionContext`, not a literal. `resourceSchema` (the
+    // resources node's OUTPUT schema) requires it.
+    expect(out.resources).toEqual([{ id: 99, strength: 1, model: { type: 'LORA' } }]);
   });
+
+  // #4159 — the resolved type is THREADED, not hardcoded. A LoCon-bound install
+  // must emit `LoCon`, so a mutant that pins the literal `'LORA'` dies here.
+  it('carries the bound model’s own resolved type (LoCon, not a hardcoded LORA)', () => {
+    const out = buildTextToImageInput(baseBody as never, {
+      ...fluxLoraResolved,
+      modelType: 'LoCon',
+    });
+    expect(out.resources).toEqual([{ id: 99, strength: 1, model: { type: 'LoCon' } }]);
+  });
+
+  // #4159 scope bound. Reviving the bound-model push must not let a type the
+  // graph routes to its OWN singleton node be submitted as an additional
+  // network. Both singleton types are covered — one is not evidence about the
+  // other, and a mutant naming only one would otherwise survive.
+  it.each([['VAE'], ['Upscaler']])(
+    'refuses a bound model of singleton-slot type %s rather than billing it as a network',
+    (modelType) => {
+      expect(() =>
+        buildTextToImageInput(baseBody as never, { ...fluxLoraResolved, modelType })
+      ).toThrow(new RegExp(`bound to a ${modelType} model`));
+    }
+  );
+
+  // …and the LoRA family is NOT caught by that guard — otherwise the guard
+  // would pass by rejecting everything, including the case the fix exists for.
+  it.each([['LORA'], ['LoCon'], ['DoRA'], ['TextualInversion']])(
+    'still admits an additional-network bound type (%s)',
+    (modelType) => {
+      const out = buildTextToImageInput(baseBody as never, { ...fluxLoraResolved, modelType });
+      expect(out.resources).toEqual([{ id: 99, strength: 1, model: { type: modelType } }]);
+    }
+  );
 
   it('forwards block-supplied sampler/steps/seed overrides', () => {
     const body = {
@@ -723,6 +910,14 @@ describe('buildTextToImageInput', () => {
   });
 
   // ── Page-LoRA (Increment 1): fan additionalResources into `resources` ──────
+  //
+  // #4159 — every entry now carries `model: { type }`, taken from the caller's
+  // resolved `additionalResourceTypes` map (the types `resolvePageLoraGates`
+  // already read). Types are deliberately MIXED across the fixtures below so a
+  // hardcoded literal cannot satisfy them.
+  const types = (m: Record<number, string>) =>
+    new Map<number, string>(Object.entries(m).map(([k, v]) => [Number(k), v]));
+
   it('fans N additional LoRAs into the resources array (checkpoint stays on `model`)', () => {
     const body = {
       ...baseBody,
@@ -732,13 +927,32 @@ describe('buildTextToImageInput', () => {
         { modelVersionId: 203, strength: -0.5 },
       ],
     };
-    const out = buildTextToImageInput(body as never, checkpointResolved);
+    const out = buildTextToImageInput(body as never, {
+      ...checkpointResolved,
+      additionalResourceTypes: types({ 201: 'LORA', 202: 'LoCon', 203: 'DoRA' }),
+    });
     expect(out.model).toEqual({ id: 99 });
     expect(out.resources).toEqual([
-      { id: 201, strength: 0.8 },
-      { id: 202, strength: 1.2 },
-      { id: 203, strength: -0.5 },
+      { id: 201, strength: 0.8, model: { type: 'LORA' } },
+      { id: 202, strength: 1.2, model: { type: 'LoCon' } },
+      { id: 203, strength: -0.5, model: { type: 'DoRA' } },
     ]);
+  });
+
+  // #4159 fail-closed: a resource whose type the caller did not resolve is a
+  // server wiring bug, not something to paper over with a default that would
+  // mis-slot a non-LoRA once the deferred VAE/embedding increment lands.
+  it('throws rather than guessing when an additionalResource has no resolved type', () => {
+    const body = {
+      ...baseBody,
+      additionalResources: [{ modelVersionId: 201, strength: 0.8 }],
+    };
+    expect(() =>
+      buildTextToImageInput(body as never, {
+        ...checkpointResolved,
+        additionalResourceTypes: types({ 999: 'LORA' }),
+      })
+    ).toThrow(/additional resource type was not resolved/);
   });
 
   it('does NOT duplicate the checkpoint when an additionalResource repeats it', () => {
@@ -749,11 +963,14 @@ describe('buildTextToImageInput', () => {
         { modelVersionId: 201, strength: 1 },
       ],
     };
-    const out = buildTextToImageInput(body as never, checkpointResolved);
+    const out = buildTextToImageInput(body as never, {
+      ...checkpointResolved,
+      additionalResourceTypes: types({ 99: 'LORA', 201: 'LORA' }),
+    });
     // The checkpoint stays as the `model` anchor (no double-bill); only the
     // genuinely-new LoRA lands in resources.
     expect(out.model).toEqual({ id: 99 });
-    expect(out.resources).toEqual([{ id: 201, strength: 1 }]);
+    expect(out.resources).toEqual([{ id: 201, strength: 1, model: { type: 'LORA' } }]);
   });
 
   it('does NOT duplicate the bound-model network when the body model is a LoRA', () => {
@@ -768,11 +985,14 @@ describe('buildTextToImageInput', () => {
         { modelVersionId: 300, strength: 0.9 }, // genuinely new
       ],
     };
-    const out = buildTextToImageInput(body as never, fluxLoraResolved);
+    const out = buildTextToImageInput(body as never, {
+      ...fluxLoraResolved,
+      additionalResourceTypes: types({ 691639: 'LORA', 99: 'LORA', 300: 'DoRA' }),
+    });
     expect(out.model).toEqual({ id: 691639 });
     expect(out.resources).toEqual([
-      { id: 99, strength: 1 },
-      { id: 300, strength: 0.9 },
+      { id: 99, strength: 1, model: { type: 'LORA' } },
+      { id: 300, strength: 0.9, model: { type: 'DoRA' } },
     ]);
   });
 
@@ -784,8 +1004,12 @@ describe('buildTextToImageInput', () => {
         { modelVersionId: 201, strength: 0.9 }, // duplicate id
       ],
     };
-    const out = buildTextToImageInput(body as never, checkpointResolved);
-    expect(out.resources).toEqual([{ id: 201, strength: 0.3 }]); // first occurrence kept
+    const out = buildTextToImageInput(body as never, {
+      ...checkpointResolved,
+      additionalResourceTypes: types({ 201: 'LoCon' }),
+    });
+    // first occurrence kept
+    expect(out.resources).toEqual([{ id: 201, strength: 0.3, model: { type: 'LoCon' } }]);
   });
 
   it('emits no additional resources when additionalResources is absent', () => {
@@ -1001,6 +1225,7 @@ describe('block input yields populated workflow metadata params (real graph path
       modelType: 'Checkpoint',
       checkpointVersionId: 99,
       checkpointBaseModel: 'SDXL 1.0',
+      additionalResourceTypes: new Map<number, string>(),
     };
 
     // REAL translator → REAL graph validation → REAL param snapshot.
@@ -1025,9 +1250,7 @@ describe('block input yields populated workflow metadata params (real graph path
     // The checkpoint anchor shows up in the resources snapshot (this is the part
     // of `workflowMetadata.resources` the graph resolves without enrichment).
     expect(resources).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: 99, model: { type: 'Checkpoint' } }),
-      ])
+      expect.arrayContaining([expect.objectContaining({ id: 99, model: { type: 'Checkpoint' } })])
     );
   });
 
@@ -1045,6 +1268,7 @@ describe('block input yields populated workflow metadata params (real graph path
       modelType: 'Checkpoint',
       checkpointVersionId: 99,
       checkpointBaseModel: 'SD 1.5',
+      additionalResourceTypes: new Map<number, string>(),
     };
     const input = buildTextToImageInput(body as never, resolved);
     const { params } = paramsFromRealGraph(input);
@@ -1076,6 +1300,7 @@ describe('block input yields populated workflow metadata params (real graph path
       modelType: 'Checkpoint',
       checkpointVersionId: 99,
       checkpointBaseModel: 'SDXL 1.0',
+      additionalResourceTypes: new Map<number, string>(),
     };
     const input = buildImageWorkflowInput(body as never, resolved);
     const result = generationGraph.safeParse(input, externalCtx);
@@ -1131,7 +1356,11 @@ describe('block input yields populated workflow metadata params (real graph path
       if (!result.success) {
         throw new Error(`img2img:edit graph validation failed: ${JSON.stringify(result.errors)}`);
       }
-      const data = result.data as { workflow: string; ecosystem: string; images?: Array<{ url: string }> };
+      const data = result.data as {
+        workflow: string;
+        ecosystem: string;
+        images?: Array<{ url: string }>;
+      };
       expect(data.workflow).toBe('img2img:edit');
       expect(data.ecosystem).toBe(ecoKey);
       // The bounded source image rides into the graph's reference `images` node.
@@ -1157,6 +1386,7 @@ describe('buildImageWorkflowInput (generalized image-workflow bridge)', () => {
     modelType: 'Checkpoint',
     checkpointVersionId: 99,
     checkpointBaseModel: 'SDXL 1.0',
+    additionalResourceTypes: new Map<number, string>(),
   };
   const validSourceImage = {
     url: 'https://image.civitai.com/abc/def.jpeg',
@@ -1258,12 +1488,18 @@ describe('buildImageWorkflowInput (generalized image-workflow bridge)', () => {
         { modelVersionId: 202, strength: 1.2 },
       ],
     };
-    const out = buildImageWorkflowInput(body as never, checkpointResolved);
+    const out = buildImageWorkflowInput(body as never, {
+      ...checkpointResolved,
+      additionalResourceTypes: new Map([
+        [201, 'LORA'],
+        [202, 'DoRA'],
+      ]),
+    });
     expect(out.workflow).toBe('img2img');
     expect(out.model).toEqual({ id: 99 });
     expect(out.resources).toEqual([
-      { id: 201, strength: 0.8 },
-      { id: 202, strength: 1.2 },
+      { id: 201, strength: 0.8, model: { type: 'LORA' } },
+      { id: 202, strength: 1.2, model: { type: 'DoRA' } },
     ]);
     // The init image rides alongside the resources — both are present.
     expect(out.images).toHaveLength(1);
@@ -1367,6 +1603,374 @@ describe('buildImageWorkflowInput img2img variant selection + ecosystem guard', 
     const out = buildImageWorkflowInput(txtBody as never, resolved('Flux.1 D'));
     expect(out.workflow).toBe('txt2img');
     expect(out.ecosystem).toBe('Flux1');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Edit-only checkpoint version submitted with NO sourceImage
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The bridge chooses its workflow purely from `sourceImage` presence, so naming
+// an EDIT-ONLY checkpoint version and omitting `sourceImage` resolves to
+// `txt2img`. What the graph does with that then depends on whether the
+// ecosystem is `modelLocked`:
+//
+//   modelLocked (Qwen, MageFlow, 23 of 35 image ecosystems)
+//     The `checkpointInputSchema` clamp in common.ts replaces the id with the
+//     workflow's `defaultModelId` and returns SUCCESS. The caller is billed and
+//     gets images from a checkpoint it never asked for, with nothing in the
+//     response or the `block_workflows` read-model revealing the swap.
+//   not modelLocked (Boogu, SDXL, Flux1, …)
+//     The id survives, the mode discriminator routes to the edit subgraph, and
+//     validation then FAILS on the missing image. A plain error, not a swap.
+//
+// So this guard is a correctness fix on the first group and an
+// earlier/clearer error on the second. Both are covered below.
+//
+// The version lists are real config (qwen-graph / boogu-graph / mage-flow-graph
+// `workflowVersions`), read through `workflow-capability`'s graph probe — no
+// hardcoded id table lives in the guard.
+describe('edit-only checkpoint version + no sourceImage', () => {
+  // Qwen (modelLocked, txt2img default 2552908). Model 2268063 hosts BOTH:
+  // 2558804 is "Image Edit 2511" (img2img:edit only), 2552908 is v2512 (txt2img
+  // only). Same model, disjoint workflows.
+  const QWEN_EDIT_V2511 = 2558804;
+  const QWEN_TXT_V2512 = 2552908;
+  // The INDEX-0 members of each list — the discriminator pair. Index-mapping
+  // would send QWEN_EDIT_V2509 to QWEN_TXT_V2509; the clamp sends it to the
+  // default, QWEN_TXT_V2512.
+  const QWEN_EDIT_V2509 = 2133258;
+  const QWEN_TXT_V2509 = 2110043;
+  // Boogu: Edit / Edit Turbo are img2img:edit-only; Base / Turbo are
+  // txt2img-only. NOT modelLocked — see the characterization test below.
+  const BOOGU_EDIT = 3049824;
+  const BOOGU_BASE = 3049541;
+  // MageFlow (modelLocked, txt2img default 3172038): Standard(edit) vs
+  // Standard(txt2img).
+  const MAGEFLOW_EDIT_STANDARD = 3172043;
+  const MAGEFLOW_TXT_STANDARD = 3172038;
+  // MageFlow's INDEX-1 pair, the second discriminator: index-mapping would send
+  // edit_turbo to txt2img_turbo (3172039); the clamp sends it to 3172038.
+  const MAGEFLOW_EDIT_TURBO = 3172044;
+  const MAGEFLOW_TXT_TURBO = 3172039;
+
+  const body = (over: Record<string, unknown> = {}) => ({
+    kind: 'textToImage' as const,
+    modelId: 2268063,
+    modelVersionId: QWEN_EDIT_V2511,
+    params: { prompt: 'a cat', quantity: 1 },
+    ...over,
+  });
+  const resolved = (checkpointVersionId: number, checkpointBaseModel = 'Qwen') => ({
+    baseModel: checkpointBaseModel,
+    modelType: 'Checkpoint',
+    checkpointVersionId,
+    checkpointBaseModel,
+  });
+  const sourceImage = {
+    url: 'https://image.civitai.com/abc/def.jpeg',
+    width: 1024,
+    height: 1024,
+  };
+
+  function catchError(fn: () => unknown): unknown {
+    try {
+      fn();
+    } catch (e) {
+      return e;
+    }
+    return undefined;
+  }
+
+  // ── WHAT THE GUARD REJECTS ─────────────────────────────────────────────────
+  //
+  // Qwen and MageFlow are the SILENT-SWAP cases (`modelLocked`) — those are the
+  // correctness fix. Boogu is NOT `modelLocked`: it already failed loudly with
+  // "An image is required", so the guard only moves that error earlier and
+  // makes it name the remedy. Rejecting all three uniformly is the point; the
+  // difference is in what was happening before, not in what happens now.
+  it.each([
+    ['Qwen', QWEN_EDIT_V2511, 'Qwen'],
+    ['Boogu', BOOGU_EDIT, 'Boogu'],
+    ['MageFlow', MAGEFLOW_EDIT_STANDARD, 'MageFlow'],
+  ])(
+    'rejects an edit-only %s version submitted with no sourceImage',
+    (_eco, versionId, baseModel) => {
+      const caught = catchError(() =>
+        buildImageWorkflowInput(
+          body({ modelVersionId: versionId }) as never,
+          resolved(versionId, baseModel)
+        )
+      );
+      expect(caught).toBeInstanceOf(TRPCError);
+      expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
+    }
+  );
+
+  it('names the actual fix in the error message', () => {
+    const caught = catchError(() =>
+      buildImageWorkflowInput(body() as never, resolved(QWEN_EDIT_V2511))
+    ) as TRPCError;
+    // Points at the offending version, the workflow it IS for, the sourceImage
+    // remedy, AND the concrete txt2img version to use instead.
+    expect(caught.message).toContain(String(QWEN_EDIT_V2511));
+    expect(caught.message).toContain('img2img:edit');
+    expect(caught.message).toContain('sourceImage');
+    expect(caught.message).toContain(String(QWEN_TXT_V2512));
+  });
+
+  // NOTE: same-position is the GUARD's own suggestion policy (it reads the
+  // graph's `buildVersionMappings` pairing to name a useful alternative in the
+  // error). It is NOT what the graph does when it substitutes — that is the
+  // default-clamp, pinned by the characterization tests at the bottom.
+  it.each([
+    [BOOGU_EDIT, 'Boogu', BOOGU_BASE],
+    [MAGEFLOW_EDIT_STANDARD, 'MageFlow', MAGEFLOW_TXT_STANDARD],
+  ])(
+    'suggests the same-position txt2img sibling for version %s',
+    (versionId, baseModel, expectedSuggestion) => {
+      const caught = catchError(() =>
+        buildImageWorkflowInput(
+          body({ modelVersionId: versionId }) as never,
+          resolved(versionId, baseModel)
+        )
+      ) as TRPCError;
+      expect(caught.message).toContain(String(expectedSuggestion));
+    }
+  );
+
+  it('guards the RESOLVED CHECKPOINT version, not body.modelVersionId (LoRA install)', () => {
+    // A LoRA-bound install: the body names the LoRA, the resolver picked the
+    // edit-only checkpoint. The guard must fire on the checkpoint.
+    const caught = catchError(() =>
+      buildImageWorkflowInput(body({ modelVersionId: 555001 }) as never, {
+        baseModel: 'Qwen',
+        modelType: 'LORA',
+        checkpointVersionId: QWEN_EDIT_V2511,
+        checkpointBaseModel: 'Qwen',
+      })
+    );
+    expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  // ── NO REGRESSION ──────────────────────────────────────────────────────────
+  it('still accepts an edit-only version WITH a sourceImage (img2img:edit)', () => {
+    const out = buildImageWorkflowInput(body({ sourceImage }) as never, resolved(QWEN_EDIT_V2511));
+    expect(out.workflow).toBe('img2img:edit');
+    expect(out.ecosystem).toBe('Qwen');
+    // The version the caller asked for is the one that anchors the graph.
+    expect(out.model).toEqual({ id: QWEN_EDIT_V2511 });
+  });
+
+  it.each([
+    [QWEN_TXT_V2512, 'Qwen'],
+    [BOOGU_BASE, 'Boogu'],
+    [MAGEFLOW_TXT_STANDARD, 'MageFlow'],
+  ])('still accepts a txt2img-capable version %s with no sourceImage', (versionId, baseModel) => {
+    const out = buildImageWorkflowInput(
+      body({ modelVersionId: versionId }) as never,
+      resolved(versionId, baseModel)
+    );
+    expect(out.workflow).toBe('txt2img');
+    expect(out.model).toEqual({ id: versionId });
+  });
+
+  // An ecosystem whose txt2img and img2img:edit offer the SAME version list is
+  // not workflow-scoped at all — both modes must keep working on one version.
+  it.each([
+    ['Flux.2 D', 'Flux2', 2439067],
+    ['OpenAI', 'OpenAI', 1733399],
+  ])(
+    'keeps BOTH modes working for the dual-capable ecosystem %s',
+    (baseModel, ecoKey, versionId) => {
+      const txt = buildImageWorkflowInput(
+        body({ modelVersionId: versionId }) as never,
+        resolved(versionId, baseModel)
+      );
+      expect(txt.workflow).toBe('txt2img');
+      expect(txt.ecosystem).toBe(ecoKey);
+      expect(txt.model).toEqual({ id: versionId });
+
+      const edit = buildImageWorkflowInput(
+        body({ modelVersionId: versionId, sourceImage }) as never,
+        resolved(versionId, baseModel)
+      );
+      expect(edit.workflow).toBe('img2img:edit');
+      expect(edit.ecosystem).toBe(ecoKey);
+      expect(edit.model).toEqual({ id: versionId });
+    }
+  );
+
+  it('leaves an UNLISTED community checkpoint of a scoped ecosystem alone', () => {
+    // Not in ANY of Qwen's workflow version lists → the graph would not have
+    // substituted it, so the guard must not invent a rejection.
+    const out = buildImageWorkflowInput(
+      body({ modelVersionId: 987654321 }) as never,
+      resolved(987654321)
+    );
+    expect(out.workflow).toBe('txt2img');
+    expect(out.model).toEqual({ id: 987654321 });
+  });
+
+  it('leaves an ecosystem with no version scoping alone (SDXL)', () => {
+    const out = buildImageWorkflowInput(
+      body({ modelVersionId: 128078 }) as never,
+      resolved(128078, 'SDXL 1.0')
+    );
+    expect(out.workflow).toBe('txt2img');
+  });
+
+  // ── REVERSE DIRECTION UNCHANGED ────────────────────────────────────────────
+  it('leaves the pre-existing "neither img2img variant" rejection unchanged', () => {
+    const caught = catchError(() =>
+      buildImageWorkflowInput(body({ sourceImage }) as never, resolved(99, 'SD 3.5'))
+    ) as TRPCError;
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect(caught.message).toMatch(/img2img \(source image\) is not supported/);
+  });
+
+  // ── THE UNDERLYING PLATFORM BEHAVIOUR THIS DEFENDS AGAINST ─────────────────
+  //
+  // Characterization tests, run against the REAL graph: this is what used to
+  // happen — and still happens to anything that reaches the graph with this
+  // shape. If the graph ever starts rejecting instead of substituting, or
+  // starts substituting by a DIFFERENT rule, these fail and tell us the guard's
+  // premise changed.
+  //
+  // The mechanism is the `modelLocked` clamp in `createCheckpointGraph`'s
+  // `checkpointInputSchema` (`shared/data-graph/generation/common.ts`): on a
+  // `modelLocked` ecosystem, any id not in the CURRENT workflow's visible list
+  // is replaced with that workflow's `defaultModelId`. It is NOT
+  // `buildModelTransform`'s same-index sibling mapping: that transform is gated
+  // on `!isDirectUpdate`, and a one-shot `safeParse` passing `model` explicitly
+  // is a direct update, so it never runs on this path at all.
+  //
+  // Naming the right mechanism is load-bearing, so these cases are chosen to
+  // DISCRIMINATE between the two candidates rather than merely to observe that
+  // "some substitution happens". The two hypotheses agree only where the input's
+  // same-index sibling happens to BE the workflow default (Qwen's index-1 pair,
+  // the row the original test used); every other row below is a case where they
+  // predict different ids, and the graph picks the default every time.
+  const graphCtx: GenerationCtx = {
+    limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
+    user: { isMember: false, tier: 'free' },
+    flags: {},
+    selfHostedDisabledEcosystems: [],
+    selfHostedMode: 'enabled',
+    gateRules: [],
+  };
+  // The exact input the bridge used to emit for "edit version, no sourceImage".
+  const parseGraph = (over: Record<string, unknown>) =>
+    generationGraph.safeParse(
+      {
+        workflow: 'txt2img',
+        resources: [],
+        prompt: 'a cat',
+        sampler: 'Euler',
+        steps: 25,
+        quantity: 1,
+        priority: 'low',
+        aspectRatio: { value: '1024:1024', width: 1024, height: 1024 },
+        ...over,
+      },
+      graphCtx
+    );
+  const parsedModelId = (r: ReturnType<typeof parseGraph>) =>
+    (r.data as { model?: { id?: number } } | undefined)?.model?.id;
+
+  it.each([
+    // label                                  | eco        | input             | index-map predicts | actual
+    ['index 1 — both hypotheses agree', 'Qwen', QWEN_EDIT_V2511, QWEN_TXT_V2512, QWEN_TXT_V2512],
+    // ↓ THE DISCRIMINATOR. Index-mapping predicts QWEN_TXT_V2509 (2110043);
+    //   the default-clamp predicts QWEN_TXT_V2512 (2552908). The graph returns
+    //   the default. Delete the clamp and this case changes answer.
+    ['index 0 — DISCRIMINATOR', 'Qwen', QWEN_EDIT_V2509, QWEN_TXT_V2509, QWEN_TXT_V2512],
+    // ↓ MageFlow's index-1 pair is a second, independent discriminator:
+    //   index-mapping predicts txt2img_turbo (3172039), the clamp predicts the
+    //   ecosystem default txt2img_standard (3172038).
+    [
+      'index 1 — DISCRIMINATOR',
+      'MageFlow',
+      MAGEFLOW_EDIT_TURBO,
+      MAGEFLOW_TXT_TURBO,
+      MAGEFLOW_TXT_STANDARD,
+    ],
+  ])(
+    'graph SILENTLY SUBSTITUTES to the workflow DEFAULT, not the same-index sibling (%s, %s)',
+    (_label, ecosystem, inputId, sameIndexSibling, expected) => {
+      const result = parseGraph({ ecosystem, model: { id: inputId } });
+      expect(result.success).toBe(true);
+      // Success — with a DIFFERENT checkpoint than the one that was asked for.
+      expect(parsedModelId(result)).toBe(expected);
+      // …and specifically NOT the same-index sibling, wherever the two differ.
+      // This is the assertion that makes the test mechanism-specific: without
+      // it, an index-mapping implementation would pass the row above too.
+      if (sameIndexSibling !== expected) {
+        expect(parsedModelId(result)).not.toBe(sameIndexSibling);
+      }
+    }
+  );
+
+  // The wider class the guard does NOT close, pinned so #3520's scope is a
+  // measured fact rather than a description. An id the ecosystem has never
+  // heard of is substituted just the same on a `modelLocked` ecosystem — it is
+  // NOT "left alone".
+  it.each([
+    ['Qwen', QWEN_TXT_V2512],
+    ['MageFlow', MAGEFLOW_TXT_STANDARD],
+  ])(
+    'graph substitutes even an UNRECOGNIZED id on modelLocked %s (tracked in #3520)',
+    (ecosystem, expectedDefault) => {
+      const result = parseGraph({ ecosystem, model: { id: 987654321 } });
+      expect(result.success).toBe(true);
+      expect(parsedModelId(result)).toBe(expectedDefault);
+    }
+  );
+
+  // The contrast case that proves the clamp — not the workflow routing — is
+  // what does the substituting. Boogu ships the same per-workflow version
+  // scoping but is NOT `modelLocked`, so an unrecognized id survives untouched
+  // and an edit-only id fails loudly instead of being swapped.
+  it('does NOT substitute on a NON-modelLocked ecosystem (Boogu)', () => {
+    const unknown = parseGraph({ ecosystem: 'Boogu', model: { id: 987654321 } });
+    expect(unknown.success).toBe(true);
+    expect(parsedModelId(unknown)).toBe(987654321);
+
+    // The edit-only version resolves to the edit subgraph and then trips on the
+    // missing image — a plain error, never a silent swap. So for Boogu this
+    // PR's guard is an earlier, better-worded error, not a correctness fix.
+    const editOnly = parseGraph({ ecosystem: 'Boogu', model: { id: BOOGU_EDIT } });
+    expect(editOnly.success).toBe(false);
+  });
+
+  // The reverse direction is the same substitution, and is deliberately NOT
+  // rejected by this PR (see #3520 / the guard's SCOPE docblock).
+  it('graph substitutes in the REVERSE direction too (txt2img-only version + images)', () => {
+    const result = parseGraph({
+      workflow: 'img2img:edit',
+      ecosystem: 'Qwen',
+      model: { id: QWEN_TXT_V2512 },
+      images: [sourceImage],
+    });
+    expect(result.success).toBe(true);
+    expect(parsedModelId(result)).toBe(QWEN_EDIT_V2511);
+  });
+
+  // ── The exported helper itself ─────────────────────────────────────────────
+  it('assertCheckpointVersionSupportsWorkflow is direction-agnostic', () => {
+    // The txt2img-only version offered on img2img:edit is equally wrong; the
+    // helper reports it even though the bridge only calls it for txt2img today.
+    const caught = catchError(() =>
+      assertCheckpointVersionSupportsWorkflow({
+        ecosystem: 'Qwen',
+        ecosystemId: ECO.Qwen,
+        workflow: 'img2img:edit',
+        checkpointVersionId: QWEN_TXT_V2512,
+      })
+    ) as TRPCError;
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect(caught.message).toContain('txt2img');
+    expect(caught.message).toContain(String(QWEN_EDIT_V2511));
   });
 });
 
@@ -1475,7 +2079,11 @@ describe('buildCustomComfyWorkflowInput (translator)', () => {
   const recipe = getRecipe('seamless-pano-360')!;
 
   it('applies the recipe param schema then runs its pure builder', () => {
-    const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1, engine: 'zimage-turbo' });
+    const input = buildCustomComfyWorkflowInput(recipe, {
+      prompt: 'a lake',
+      seed: 1,
+      engine: 'zimage-turbo',
+    });
     expect(input.trace).toBe('binary');
     expect(input.resources[0]).toContain('z_image_turbo');
     expect(input.workflow['1'].class_type).toBe('UNETLoader');
@@ -1509,12 +2117,16 @@ describe('createBlockCustomComfyStep (step wrapper)', () => {
   it('formats the timeout per engine: zimage 90s → 00:01:30, flux2 150s → 00:02:30', () => {
     const input = buildCustomComfyWorkflowInput(recipe, { prompt: 'a lake', seed: 1 });
     expect(
-      createBlockCustomComfyStep(input, recipe.budgetFor({ prompt: 'a lake', engine: 'zimage-turbo' }).stepTimeoutSeconds)
-        .timeout
+      createBlockCustomComfyStep(
+        input,
+        recipe.budgetFor({ prompt: 'a lake', engine: 'zimage-turbo' }).stepTimeoutSeconds
+      ).timeout
     ).toBe('00:01:30');
     expect(
-      createBlockCustomComfyStep(input, recipe.budgetFor({ prompt: 'a lake', engine: 'flux2-klein' }).stepTimeoutSeconds)
-        .timeout
+      createBlockCustomComfyStep(
+        input,
+        recipe.budgetFor({ prompt: 'a lake', engine: 'flux2-klein' }).stepTimeoutSeconds
+      ).timeout
     ).toBe('00:02:30');
   });
 });
@@ -1558,7 +2170,13 @@ describe('projectAppWorkflow: customComfy blobs', () => {
           metadata: {},
           output: {
             blobs: [
-              { id: 'p1', type: 'image', url: 'https://cdn/pano.png', available: true, nsfwLevel: 'pg' },
+              {
+                id: 'p1',
+                type: 'image',
+                url: 'https://cdn/pano.png',
+                available: true,
+                nsfwLevel: 'pg',
+              },
               { id: 'p2', type: 'image', url: 'https://blocked/', available: false },
             ],
           },
@@ -1572,5 +2190,540 @@ describe('projectAppWorkflow: customComfy blobs', () => {
       cost: 47,
       createdAt: '2026-07-17T00:00:00.000Z',
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔴 FIX 1 — REGISTERED STEP OUTPUT must be reachable on BOTH read surfaces.
+//
+// Both extractors used to `continue` on any `$type` outside
+// `customComfy | textToImage | imageGen | comfy`, and `convertImage`'s output is
+// `{ blob }` — SINGULAR, not `images` and not `blobs`. So they were blind to a
+// registered step in TWO independent ways: the `$type` AND the key. The lived
+// consequence: an app submits, is charged Buzz, polls to `succeeded`, and
+// `snapshot.imageUrls` is absent on every poll while `queryAppWorkflows` returns
+// `images: []`. It paid for a result it can never retrieve.
+//
+// These tests run over the REAL REGISTRY population, so a step registered
+// tomorrow whose output is unreachable fails here — the property a fourth
+// hardcoded `if ($type === 'convertImage')` branch could never have.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('🔴 registered step output — surfaced on the snapshot AND the projection', () => {
+  /**
+   * Build a fake completed workflow carrying the registry entry's OWN canonical
+   * completed-step object, which is itself copied from a real captured
+   * orchestrator response. Nothing here re-describes the output shape — a test
+   * that invented its own would only prove the test agrees with the test.
+   */
+  function workflowWithRegisteredStep(step: AnyBlockStep, variant: string) {
+    return fakeWorkflow({
+      id: 'wf_step',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      status: 'succeeded',
+      cost: { total: 1 },
+      steps: [step.canonicalOutputFor(variant)],
+    });
+  }
+
+  // 🔴 POSTURE-GATED, ON THE REGISTRY'S OWN PREDICATE — not on
+  // `extractOutput != null`. Both loops below used to call `step.extractOutput`
+  // for EVERY entry, which was silently fine only while every registered entry
+  // produced media. The first `'textOutput'` entry made it a raw
+  // `TypeError: step.extractOutput is not a function`, because a text entry has
+  // no media extractor BY CONSTRUCTION (`TextOutputSurface.extractOutput?: never`
+  // plus load-time clause 8-ii).
+  //
+  // 🔴 THE GATE MUST NOT MAKE THE TEXT HALF VACUOUS. Skipping text entries would
+  // turn a population test into one that covers only the population it already
+  // covered. So each loop asserts the MIRROR property for a text entry: it
+  // contributes NOTHING to the media channel. That is the read-path half of the
+  // anti-smuggling rule — `StepOutputMedia.url` is a bare string that reaches
+  // `imageUrls` / `images[].url` without ever meeting
+  // `attachModeratedStepTextOutputs`, so a text step appearing there at all
+  // would be generated text published unscanned.
+  //
+  // Keyed on `postureProducesMedia` because that is what `snapshotFromWorkflow`
+  // and `projectAppWorkflow` themselves key on — one rule, one predicate, and
+  // the test cannot drift from the code by asking a different question.
+  it('EVERY registered step surfaces its output on snapshotFromWorkflow.imageUrls', () => {
+    for (const [id, step] of listRegisteredSteps()) {
+      for (const variant of step.variants) {
+        const snap = snapshotFromWorkflow(workflowWithRegisteredStep(step, variant) as never);
+        if (!postureProducesMedia(step.moderationPosture)) {
+          expect(
+            snap.imageUrls ?? [],
+            `step '${id}' variant '${variant}': a TEXT-posture step reached the media channel, ` +
+              'which does not pass through the output scan — that is unscanned generated text'
+          ).toEqual([]);
+          continue;
+        }
+        const expected = step.extractOutput!(step.canonicalOutputFor(variant)).map((m) => m.url);
+        expect(expected.length, `step '${id}' produced no expected urls`).toBeGreaterThan(0);
+        expect(
+          snap.imageUrls,
+          `step '${id}' variant '${variant}': the caller is CHARGED for this step and its ` +
+            'result is absent from every poll'
+        ).toEqual(expected);
+      }
+    }
+  });
+
+  it('EVERY registered step surfaces its output on projectAppWorkflow.images', () => {
+    for (const [id, step] of listRegisteredSteps()) {
+      for (const variant of step.variants) {
+        const projected = projectAppWorkflow(workflowWithRegisteredStep(step, variant) as never);
+        if (!postureProducesMedia(step.moderationPosture)) {
+          expect(
+            projected.images,
+            `step '${id}' variant '${variant}': a TEXT-posture step reached the media channel, ` +
+              'which does not pass through the output scan — that is unscanned generated text'
+          ).toEqual([]);
+          continue;
+        }
+        const expected = step.extractOutput!(step.canonicalOutputFor(variant));
+        expect(
+          projected.images.map((i) => i.url),
+          `step '${id}' variant '${variant}': queryAppWorkflows returns images: [] for a ` +
+            'generation the app paid for'
+        ).toEqual(expected.map((m) => m.url));
+        expect(projected.images.map((i) => [i.width, i.height])).toEqual(
+          expected.map((m) => [m.width, m.height])
+        );
+      }
+    }
+  });
+
+  // 🔴 A POSITIVE CONTROL ON THE GATE ITSELF. The two loops above now `continue`
+  // on a text entry, and a gate that skips everything is indistinguishable from
+  // a gate that works. This asserts the population actually contains BOTH
+  // shapes, so neither branch above is vacuous — and it fails loudly if the last
+  // entry of either kind is ever removed, rather than leaving a silently
+  // one-sided test behind.
+  it('the registered population contains BOTH a media entry and a text entry', () => {
+    const shapes = listRegisteredSteps().map(([, s]) => postureProducesMedia(s.moderationPosture));
+    expect(
+      shapes.filter(Boolean).length,
+      'no MEDIA entry — the media branch above is vacuous'
+    ).toBeGreaterThan(0);
+    expect(
+      shapes.filter((m) => !m).length,
+      'no TEXT entry — the text branch above is vacuous'
+    ).toBeGreaterThan(0);
+  });
+
+  // The concrete shape, pinned literally rather than derived from the extractor
+  // — so this fails if `convertImage`'s output key or availability rule changes.
+  it('convert-image: the SINGULAR output.blob reaches both surfaces', () => {
+    const wf = fakeWorkflow({
+      id: 'wf_conv',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      status: 'succeeded',
+      cost: { total: 1 },
+      steps: [
+        {
+          $type: 'convertImage',
+          name: 'block-step',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            blob: {
+              id: 'b1',
+              url: 'https://orchestration/blobs/out.webp',
+              available: true,
+              width: 797,
+              height: 1024,
+              nsfwLevel: 'pg13',
+            },
+          },
+        },
+      ],
+    });
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual([
+      'https://orchestration/blobs/out.webp',
+    ]);
+    expect(projectAppWorkflow(wf as never).images).toEqual([
+      {
+        url: 'https://orchestration/blobs/out.webp',
+        width: 797,
+        height: 1024,
+        // Mapped through the SAME canonical helper the native branches use — the
+        // registry hands over the raw rating string, never a bitflag.
+        nsfwLevel: nsfwLevelFromContentRating('pg13'),
+      },
+    ]);
+  });
+
+  it('convert-image: a NOT-YET-AVAILABLE blob is dropped, not surfaced as a dead link', () => {
+    // The real orchestrator returns `available: false` at submit time and flips
+    // it to true when the blob lands (observed live 2026-08-02).
+    const wf = fakeWorkflow({
+      id: 'wf_conv_pending',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      status: 'processing',
+      steps: [
+        {
+          $type: 'convertImage',
+          name: 'block-step',
+          status: 'processing',
+          metadata: {},
+          output: {
+            blob: { id: 'b1', url: 'https://orchestration/blobs/out.webp', available: false },
+          },
+        },
+      ],
+    });
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toBeUndefined();
+    expect(projectAppWorkflow(wf as never).images).toEqual([]);
+  });
+
+  // 🔴 NO-REGRESSION. The registry branch is evaluated BEFORE the native `$type`
+  // filter, so this pins that it cannot shadow the pre-existing kinds. The
+  // structural guarantee is the load-time invariant forbidding a registered
+  // entry from claiming a natively-extracted `$type`; this is the behavioural
+  // half of the same claim.
+  it('does NOT change extraction for the natively-handled $types', () => {
+    for (const nativeType of NATIVELY_EXTRACTED_STEP_TYPES) {
+      expect(getStepByOrchestratorType(nativeType)).toBeUndefined();
+    }
+    const wf = fakeWorkflow({
+      id: 'wf_native',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      status: 'succeeded',
+      cost: { total: 5 },
+      steps: [
+        {
+          $type: 'textToImage',
+          name: 'txt2img',
+          status: 'succeeded',
+          metadata: {},
+          output: {
+            images: [
+              {
+                id: 'i1',
+                url: 'https://cdn/a.png',
+                available: true,
+                width: 8,
+                height: 9,
+                nsfwLevel: 'pg',
+              },
+              { id: 'i2', url: 'https://cdn/b.png', available: false },
+            ],
+          },
+        },
+      ],
+    });
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/a.png']);
+    expect(projectAppWorkflow(wf as never).images).toEqual([
+      {
+        url: 'https://cdn/a.png',
+        width: 8,
+        height: 9,
+        nsfwLevel: nsfwLevelFromContentRating('pg'),
+      },
+    ]);
+  });
+
+  // An UNREGISTERED, non-native `$type` must still be skipped — the branch is
+  // additive for registered steps only, not a wildcard that starts reading
+  // arbitrary step outputs.
+  it('still skips an unregistered, non-native $type', () => {
+    const wf = fakeWorkflow({
+      id: 'wf_other',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'imageBackgroundRemoval',
+          name: 'x',
+          status: 'succeeded',
+          metadata: {},
+          output: { blob: { id: 'b', url: 'https://cdn/nope.png', available: true } },
+        },
+      ],
+    });
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toBeUndefined();
+    expect(projectAppWorkflow(wf as never).images).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-image conditioning: sourceImages[] + PER-ECOSYSTEM cap
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The graph layer has always accepted N reference images (`imagesNode({min,max})`);
+// the block bridge could only express one. The cap is NOT a constant — it is
+// declared per ecosystem in the graph files and the real spread is 1 / 3 / 4 /
+// 5 / 7. These tests read the same real config the guard does, and pin the
+// ecosystem-specific behaviour rather than a flat number.
+describe('sourceImages[] — normalization + per-ecosystem cap', () => {
+  const IMG = (n = 0) => ({
+    url: `https://image.civitai.com/abc/${n}.jpeg`,
+    width: 1024,
+    height: 1024,
+  });
+  const body = (over: Record<string, unknown> = {}) => ({
+    kind: 'textToImage' as const,
+    modelId: 7,
+    modelVersionId: 99,
+    params: { prompt: 'edit the cat', quantity: 1 },
+    ...over,
+  });
+  const resolved = (checkpointBaseModel: string) => ({
+    baseModel: checkpointBaseModel,
+    modelType: 'Checkpoint',
+    checkpointVersionId: 99,
+    checkpointBaseModel,
+  });
+  const images = (n: number) => Array.from({ length: n }, (_, i) => IMG(i));
+  function catchError(fn: () => unknown): unknown {
+    try {
+      fn();
+    } catch (e) {
+      return e;
+    }
+    return undefined;
+  }
+
+  // ── normalization ──────────────────────────────────────────────────────────
+  it('normalizes the deprecated singular sourceImage to a 1-element array', () => {
+    expect(normalizeBlockSourceImages(body({ sourceImage: IMG(1) }) as never)).toEqual([IMG(1)]);
+  });
+
+  it('passes an array through unchanged', () => {
+    expect(normalizeBlockSourceImages(body({ sourceImages: images(3) }) as never)).toEqual(
+      images(3)
+    );
+  });
+
+  it('returns an empty array when the body carries neither (txt2img)', () => {
+    expect(normalizeBlockSourceImages(body() as never)).toEqual([]);
+  });
+
+  // ── the emitted graph input ────────────────────────────────────────────────
+  it('emits EVERY array element into the graph images[] (order preserved)', () => {
+    const out = buildImageWorkflowInput(
+      body({ sourceImages: images(3) }) as never,
+      resolved('Qwen')
+    );
+    expect(out.workflow).toBe('img2img:edit');
+    expect(out.images).toEqual([
+      { url: 'https://image.civitai.com/abc/0.jpeg', width: 1024, height: 1024 },
+      { url: 'https://image.civitai.com/abc/1.jpeg', width: 1024, height: 1024 },
+      { url: 'https://image.civitai.com/abc/2.jpeg', width: 1024, height: 1024 },
+    ]);
+  });
+
+  it('produces an IDENTICAL graph input for the singular alias and a 1-element array', () => {
+    const singular = buildImageWorkflowInput(
+      body({ sourceImage: IMG(0) }) as never,
+      resolved('Qwen')
+    );
+    const array = buildImageWorkflowInput(
+      body({ sourceImages: [IMG(0)] }) as never,
+      resolved('Qwen')
+    );
+    expect(array).toEqual(singular);
+  });
+
+  it('routes an array on an SD-family checkpoint to plain img2img', () => {
+    const out = buildImageWorkflowInput(
+      body({ sourceImages: [IMG(0)] }) as never,
+      resolved('SDXL 1.0')
+    );
+    expect(out.workflow).toBe('img2img');
+    expect(out.images).toHaveLength(1);
+  });
+
+  // ── PER-ECOSYSTEM CAP ──────────────────────────────────────────────────────
+  // Caps read from each ecosystem's own imagesNode config. A flat constant would
+  // over-allow Boogu (1) and under-allow Flux.2 (7).
+  it.each([
+    ['Qwen', 'Qwen', 3],
+    ['Flux.2 D', 'Flux2', 7],
+    ['Boogu', 'Boogu', 1],
+    ['OpenAI', 'OpenAI', 7],
+    ['SDXL 1.0', 'SDXL', 1],
+    ['HiDream-O1', 'HiDream-O1', 4],
+  ])('accepts exactly the cap for %s (%s = %i)', (baseModel, _ecoKey, cap) => {
+    const out = buildImageWorkflowInput(
+      body({ sourceImages: images(cap) }) as never,
+      resolved(baseModel)
+    );
+    expect(out.images).toHaveLength(cap);
+  });
+
+  it.each([
+    ['Qwen', 4, 3],
+    ['Flux.2 D', 8, 7],
+    ['Boogu', 2, 1],
+    ['SDXL 1.0', 2, 1],
+  ])('REJECTS over-cap for %s (%i sent, cap %i)', (baseModel, count, cap) => {
+    const caught = catchError(() =>
+      buildImageWorkflowInput(body({ sourceImages: images(count) }) as never, resolved(baseModel))
+    ) as TRPCError;
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
+    // The error names the limit AND the ecosystem, not a generic "too many".
+    expect(caught.message).toContain(String(cap));
+    expect(caught.message).toContain(String(count));
+    expect(caught.message).toMatch(/ecosystem/);
+  });
+
+  // The cap really is per-ecosystem: the SAME count is accepted on one and
+  // rejected on another. A flat constant cannot satisfy both of these.
+  it('accepts 3 images on Qwen but rejects 3 on Boogu (cap is per-ecosystem)', () => {
+    expect(
+      buildImageWorkflowInput(body({ sourceImages: images(3) }) as never, resolved('Qwen')).images
+    ).toHaveLength(3);
+    expect(
+      catchError(() =>
+        buildImageWorkflowInput(body({ sourceImages: images(3) }) as never, resolved('Boogu'))
+      )
+    ).toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('accepts 7 images on Flux.2 but rejects 7 on Qwen', () => {
+    expect(
+      buildImageWorkflowInput(body({ sourceImages: images(7) }) as never, resolved('Flux.2 D'))
+        .images
+    ).toHaveLength(7);
+    expect(
+      catchError(() =>
+        buildImageWorkflowInput(body({ sourceImages: images(7) }) as never, resolved('Qwen'))
+      )
+    ).toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  // ── the over-cap behaviour we are preventing ───────────────────────────────
+  it('documents that the graph SILENTLY TRUNCATES an over-cap images array', () => {
+    // imagesNode's input transform does `arr.slice(0, effectiveMax)`. Without
+    // the guard, an over-cap block body would be billed for a generation
+    // conditioned on fewer images than it sent, with nothing saying so.
+    const externalCtx: GenerationCtx = {
+      limits: { maxQuantity: 4, maxResources: 10, vidQuantity: 1 },
+      user: { isMember: false, tier: 'free' },
+      flags: {},
+      selfHostedDisabledEcosystems: [],
+      selfHostedMode: 'enabled',
+      gateRules: [],
+    };
+    const result = generationGraph.safeParse(
+      {
+        workflow: 'img2img:edit',
+        ecosystem: 'Qwen',
+        model: { id: 2558804 },
+        resources: [],
+        prompt: 'edit the cat',
+        sampler: 'Euler',
+        steps: 25,
+        quantity: 1,
+        priority: 'low',
+        images: images(6),
+      },
+      externalCtx
+    );
+    expect(result.success).toBe(true);
+    // 6 sent, 3 kept — silently.
+    expect((result.data as { images: unknown[] }).images).toHaveLength(3);
+  });
+
+  // ── fail-closed when the cap cannot be determined ──────────────────────────
+  //
+  // Unreachable through buildImageWorkflowInput today — the ecosystem/variant
+  // guard rejects a checkpoint whose ecosystem doesn't support the variant
+  // before we get here, and the population test below proves every supported
+  // pair HAS a readable cap. Exercised directly so the branch is not shipped
+  // untested: if the two guards ever drift apart, this must reject rather than
+  // hand the graph an images[] it has no node for.
+  it('REJECTS fail-closed when the (ecosystem, workflow) pair has no images node', () => {
+    // Flux1 is txt2img-only — no img2img node, so no derivable limit.
+    const caught = catchError(() =>
+      assertSourceImageCount({ ecosystem: 'Flux1', workflow: 'img2img', count: 1 })
+    ) as TRPCError;
+    expect(caught).toBeInstanceOf(TRPCError);
+    expect(caught).toMatchObject({ code: 'BAD_REQUEST' });
+    expect(caught.message).toMatch(/does not accept source images/);
+  });
+
+  it('REJECTS fail-closed for a pair the graph would re-route (unknown ecosystem)', () => {
+    expect(
+      catchError(() =>
+        assertSourceImageCount({ ecosystem: 'NotAnEcosystem', workflow: 'img2img:edit', count: 1 })
+      )
+    ).toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  // ── every edit-capable ecosystem has a READABLE cap ────────────────────────
+  //
+  // Audit the POPULATION, not a handful: enumerate every ecosystem the real
+  // config marks as supporting an img2img variant and assert the bridge can
+  // read a cap for it. If a new ecosystem ships whose limit is not derivable,
+  // this fails instead of that ecosystem silently falling into the fail-closed
+  // "does not accept source images" branch.
+  it('derives a cap for EVERY ecosystem supporting an img2img variant', () => {
+    const missing: string[] = [];
+    let checked = 0;
+    for (const workflow of ['img2img', 'img2img:edit'] as const) {
+      for (const eco of ecosystems) {
+        if (!isWorkflowAvailable(workflow, eco.id)) continue;
+        checked += 1;
+        const limit = getImagesLimit(eco.key, workflow);
+        if (!limit || !(limit.max >= 1) || !(limit.min >= 0)) {
+          missing.push(`${eco.key}/${workflow}`);
+        }
+      }
+    }
+    expect(missing).toEqual([]);
+    // Guard the guard: if the enumeration ever silently matches nothing, an
+    // empty `missing` would look like a pass.
+    expect(checked).toBeGreaterThan(15);
+  });
+});
+
+describe('resolveBlockPollWaitSeconds', () => {
+  /**
+   * The clamp that decides how long `blocks.pollWorkflow` asks the orchestrator
+   * to hold a read open. Pure, so it is tested directly rather than through the
+   * router — the router test proves it is WIRED, this one proves it is RIGHT.
+   */
+  it('returns undefined (no hold) for an absent / zero / negative / non-finite value', () => {
+    // `undefined` and not `0`, so the caller omits the query entirely and the
+    // request stays byte-identical to the pre-long-poll one.
+    for (const input of [undefined, 0, -1, -0.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(resolveBlockPollWaitSeconds(input), `input=${String(input)}`).toBeUndefined();
+    }
+  });
+
+  it('passes a value inside the bound through unchanged', () => {
+    expect(resolveBlockPollWaitSeconds(1)).toBe(1);
+    expect(resolveBlockPollWaitSeconds(7)).toBe(7);
+    expect(resolveBlockPollWaitSeconds(MAX_BLOCK_POLL_WAIT_SECONDS)).toBe(
+      MAX_BLOCK_POLL_WAIT_SECONDS
+    );
+  });
+
+  it('CLAMPS anything above the bound instead of rejecting it', () => {
+    // A block asking for more than we allow is not an error — failing the poll
+    // would break a generation over a tuning value.
+    expect(resolveBlockPollWaitSeconds(MAX_BLOCK_POLL_WAIT_SECONDS + 1)).toBe(
+      MAX_BLOCK_POLL_WAIT_SECONDS
+    );
+    expect(resolveBlockPollWaitSeconds(3600)).toBe(MAX_BLOCK_POLL_WAIT_SECONDS);
+  });
+
+  it('FLOORS a fractional value, so 0.9 reads as no hold rather than a hold', () => {
+    expect(resolveBlockPollWaitSeconds(0.9)).toBeUndefined();
+    expect(resolveBlockPollWaitSeconds(2.9)).toBe(2);
+  });
+
+  it('🔴 stays strictly BELOW the shared getWorkflow abort backstop (20s)', () => {
+    // ORCHESTRATOR_GET_TIMEOUT_MS in ~/server/services/orchestrator/workflows is
+    // applied unconditionally to every single-workflow read. A bound at or above
+    // it makes every long poll die as a TimeoutError → 503, i.e. the feature
+    // would look like an orchestrator outage. Deliberately hard-coded here
+    // rather than imported: this test's job is to fail if EITHER number moves.
+    expect(MAX_BLOCK_POLL_WAIT_SECONDS).toBeLessThan(20);
+    // …and to leave real slack for connect + response, not just one second.
+    expect(20 - MAX_BLOCK_POLL_WAIT_SECONDS).toBeGreaterThanOrEqual(5);
   });
 });

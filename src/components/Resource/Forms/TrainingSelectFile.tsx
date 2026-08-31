@@ -48,6 +48,10 @@ import type {
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
 import { getEpochJobAndFileName } from '~/server/utils/model-helpers';
+import { trainingEpochModelFileName } from '~/shared/utils/training-file-names';
+import { TrainingRunSummary } from '~/components/Training/TrainingRunSummary/TrainingRunSummary';
+import { trainingArchitectureKey } from '~/utils/training/run-summary';
+import { epochsCompletedForRun } from '~/shared/utils/training-epochs';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { stringifyAIR } from '~/shared/utils/air';
 import { ModelType, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
@@ -58,7 +62,7 @@ import type { TrainingBaseModelType } from '~/utils/training';
 import type { ModelVersionById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { bytesToKB, formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './TrainingSelectFile.module.css';
@@ -83,6 +87,7 @@ const EpochRow = ({
   canGenerate,
   isVideo,
   modelName,
+  architecture,
 }: {
   epoch: TrainingResultsV2['epochs'][number];
   epochIndex: number;
@@ -102,6 +107,7 @@ const EpochRow = ({
   canGenerate?: boolean;
   isVideo: boolean;
   modelName: string;
+  architecture?: string | null;
 }) => {
   const currentUser = useCurrentUser();
   // On small containers the 4 labeled actions overflow the card, so collapse the
@@ -113,7 +119,12 @@ const EpochRow = ({
     // Use direct navigation so the browser streams to disk without buffering in memory
     const link = document.createElement('a');
     link.href = `/api/download/training/${modelVersionId}?epochNumber=${epoch.epochNumber}`;
-    link.download = `${modelName}_epoch_${epoch.epochNumber}.safetensors`;
+    link.download = trainingEpochModelFileName({
+      modelName,
+      versionId: modelVersionId,
+      architecture,
+      epochNumber: epoch.epochNumber,
+    });
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -304,7 +315,7 @@ const EpochRow = ({
                             className="size-full object-cover"
                           />
                         )}
-                        <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
+                        <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 transition-opacity group-hover:opacity-100">
                           <IconZoomIn size={28} color="white" />
                         </span>
                       </button>
@@ -411,13 +422,23 @@ export default function TrainingSelectFile({
   const trainingDataFiles = modelVersion.files.filter((f) => f.type === 'Training Data');
   const modelFile = pickBestTrainingFile(trainingDataFiles);
   const existingModelFile = modelVersion.files.find((f) => f.type === 'Model');
-  const trainingResults = modelFile?.metadata?.trainingResults;
   const isVideo = modelVersion.trainingDetails?.mediaType === 'video';
+
+  // This screen is driven by the orchestrator: the epochs the user picks between, and the status
+  // gating that choice, come from the live workflow. `getRunState` returns the stored copy itself
+  // once the workflow is past retention, so there is nothing to fall back to separately here —
+  // only the window before it has answered, and the flag-off path.
+  const { data: runState } = trpc.training.getRunState.useQuery(
+    { modelVersionId: modelVersion.id },
+    { enabled: features.trainingOrchestratorState && !!modelVersion.id }
+  );
+
+  const trainingResults = runState?.trainingResults ?? modelFile?.metadata?.trainingResults;
+  const trainingStatus = runState?.trainingStatus ?? modelVersion.trainingStatus;
 
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl
   );
-  const [downloading, setDownloading] = useState(false);
 
   const upsertFileMutation = trpc.modelFile.upsert.useMutation({
     async onSuccess() {
@@ -450,6 +471,7 @@ export default function TrainingSelectFile({
       await queryUtils.modelVersion.getByIdForEdit.invalidate({ id: vData.id, withFiles: true });
       await queryUtils.model.getById.invalidate({ id: model?.id });
       await queryUtils.model.getMyTrainingModels.invalidate();
+      await queryUtils.training.getRunState.invalidate({ modelVersionId: vData.id });
 
       setAwaitInvalidate(false);
       onNextClick();
@@ -465,6 +487,38 @@ export default function TrainingSelectFile({
   });
 
   const moveAssetMutation = trpc.training.moveAsset.useMutation();
+  // The orchestrator bundles every blob the run produced (epoch models + sample media)
+  // into one zip and hands back a short-lived signed URL, so nothing streams through us.
+  const archiveMutation = trpc.training.getEpochArchive.useMutation({
+    onSuccess: ({ url, unresolvedCount, cappedCount }) => {
+      const reasons: string[] = [];
+      if (unresolvedCount > 0)
+        reasons.push(
+          `${unresolvedCount} file${unresolvedCount > 1 ? 's are' : ' is'} no longer available.`
+        );
+      if (cappedCount > 0)
+        reasons.push(
+          `${cappedCount} file${
+            cappedCount > 1 ? 's were' : ' was'
+          } left out because the archive hit its file limit.`
+        );
+      if (reasons.length > 0) {
+        showWarningNotification({
+          title: 'Some files could not be included',
+          message: reasons.join(' '),
+          autoClose: false,
+        });
+      }
+      window.location.assign(url);
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to prepare download',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
+  });
 
   // -- "Train Further" (steps-based pricing, AI Toolkit only) --------------------------
   // Starts a new training run that continues from a selected epoch: creates a new Pending
@@ -475,10 +529,11 @@ export default function TrainingSelectFile({
   const [continuingFrom, setContinuingFrom] = useState<number | undefined>();
 
   const thisTrainingDetails = modelVersion.trainingDetails as TrainingDetailsObj | undefined;
+  const architecture = trainingArchitectureKey(thisTrainingDetails);
   const trainingEnded =
-    modelVersion.trainingStatus === TrainingStatus.InReview ||
-    modelVersion.trainingStatus === TrainingStatus.Approved ||
-    modelVersion.trainingStatus === TrainingStatus.Failed;
+    trainingStatus === TrainingStatus.InReview ||
+    trainingStatus === TrainingStatus.Approved ||
+    trainingStatus === TrainingStatus.Failed;
   const canTrainFurther =
     features.trainingStepsPricing &&
     trainingEnded &&
@@ -666,9 +721,9 @@ export default function TrainingSelectFile({
 
   // Check if training files have been purged (completed training but no training data file)
   const trainingCompleted =
-    modelVersion.trainingStatus === TrainingStatus.InReview ||
-    modelVersion.trainingStatus === TrainingStatus.Approved ||
-    modelVersion.trainingStatus === TrainingStatus.Failed;
+    trainingStatus === TrainingStatus.InReview ||
+    trainingStatus === TrainingStatus.Approved ||
+    trainingStatus === TrainingStatus.Failed;
 
   if (!modelFile && trainingCompleted) {
     return (
@@ -749,47 +804,27 @@ export default function TrainingSelectFile({
   const epochImagesMayBeBlurred = buzzType !== 'yellow';
 
   const errorMessage =
-    modelVersion.trainingStatus === TrainingStatus.Paused
+    trainingStatus === TrainingStatus.Paused
       ? 'Your training will resume or terminate within 1 business day. No action is required on your part.'
-      : modelVersion.trainingStatus === TrainingStatus.Failed
+      : trainingStatus === TrainingStatus.Failed
       ? 'The training job failed. You can still access any completed epochs below, or contact us for help.'
-      : modelVersion.trainingStatus === TrainingStatus.Denied
+      : trainingStatus === TrainingStatus.Denied
       ? 'The training job was denied for violating the TOS. Please contact us with any questions.'
-      : modelVersion.trainingStatus === TrainingStatus.Expired
+      : trainingStatus === TrainingStatus.Expired
       ? 'The training data review was not completed in time. Please submit your training again.'
       : undefined;
   const noEpochs = !epochs || !epochs.length;
   // Allow access to epochs for failed trainings if epochs exist
-  const hasFailedWithEpochs = modelVersion.trainingStatus === TrainingStatus.Failed && !noEpochs;
+  const hasFailedWithEpochs = trainingStatus === TrainingStatus.Failed && !noEpochs;
   const resultsLoading =
-    (modelVersion.trainingStatus !== TrainingStatus.InReview &&
-      modelVersion.trainingStatus !== TrainingStatus.Approved &&
+    (trainingStatus !== TrainingStatus.InReview &&
+      trainingStatus !== TrainingStatus.Approved &&
       !hasFailedWithEpochs) ||
     noEpochs;
 
-  const downloadAll = async () => {
-    if (noEpochs || downloading) return;
-
-    setDownloading(true);
-
-    // Trigger browser-native downloads sequentially with a small delay
-    // so the browser can handle multiple concurrent downloads to disk
-    for (let i = 0; i < epochs.length; i++) {
-      const epochData = epochs[i];
-      const link = document.createElement('a');
-      link.href = `/api/download/training/${modelVersion.id}?epochNumber=${epochData.epochNumber}`;
-      link.download = `${model.name}_epoch_${epochData.epochNumber}.safetensors`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-
-      // Small delay between downloads to avoid browser throttling
-      if (i < epochs.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      }
-    }
-
-    setDownloading(false);
+  const downloadAll = () => {
+    if (noEpochs || archiveMutation.isPending) return;
+    archiveMutation.mutate({ modelVersionId: modelVersion.id });
   };
 
   const canGenerateWithEpochBool = canGenerateWithEpoch(completeDate);
@@ -801,12 +836,17 @@ export default function TrainingSelectFile({
   // prompts are still saved server-side but are otherwise only visible in the page source.
   // Surface them so they can be copied/reused (Freshdesk #66457).
   const showFailedSamplePrompts =
-    modelVersion.trainingStatus === TrainingStatus.Failed &&
+    trainingStatus === TrainingStatus.Failed &&
     noEpochs &&
     samplePrompts.some((p) => p.trim().length > 0);
 
   return (
     <Stack>
+      <TrainingRunSummary
+        modelName={model.name}
+        versionName={modelVersion.name}
+        trainingDetails={thisTrainingDetails}
+      />
       {showBlockingError ? (
         <Stack p="xl" align="center">
           <IconAlertCircle size={52} />
@@ -828,14 +868,14 @@ export default function TrainingSelectFile({
         </Stack>
       ) : (
         <>
-          {modelVersion.trainingStatus === TrainingStatus.Processing && (
+          {trainingStatus === TrainingStatus.Processing && (
             <Stack p="xl" align="center">
               <Loader />
               <Stack gap="sm" align="center">
                 <Text>
                   Models are currently training{' '}
                   {modelVersion.trainingDetails?.params?.maxTrainEpochs
-                    ? `(${epochs[0]?.epochNumber ?? 0}/${
+                    ? `(${epochsCompletedForRun(trainingResults ?? {})}/${
                         modelVersion.trainingDetails.params.maxTrainEpochs
                       })`
                     : '...'}
@@ -917,14 +957,21 @@ export default function TrainingSelectFile({
           )}
           <Stack gap="xs">
             <Flex justify="flex-end" align="center" gap="md">
-              <Button
-                color="cyan"
-                leftSection={<IconFileDownload size={18} />}
-                onClick={downloadAll}
-                loading={downloading}
+              <Tooltip
+                label="Bundles every epoch model file and sample image from this run into a single zip"
+                withArrow
+                multiline
+                maw={260}
               >
-                Download All ({epochs.length})
-              </Button>
+                <Button
+                  color="cyan"
+                  leftSection={<IconFileDownload size={18} />}
+                  onClick={downloadAll}
+                  loading={archiveMutation.isPending}
+                >
+                  Download All ({epochs.length})
+                </Button>
+              </Tooltip>
             </Flex>
           </Stack>
           <Center>
@@ -948,6 +995,7 @@ export default function TrainingSelectFile({
             canGenerate={features.privateModels && !!modelVersion.id && canGenerateWithEpochBool}
             isVideo={isVideo}
             modelName={model.name}
+            architecture={architecture}
           />
           {epochs.length > 1 && (
             <>
@@ -978,6 +1026,7 @@ export default function TrainingSelectFile({
                   }
                   isVideo={isVideo}
                   modelName={model.name}
+                  architecture={architecture}
                 />
               ))}
             </>

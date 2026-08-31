@@ -1,6 +1,6 @@
 # `/licensing` — Licensing fees (bulk editor)
 
-> **v1 if it lands, else fast-follow** ([plan §8](../creator-studio-plan.md#8-phasing) — "bulk editing / default
+> **v1 (decided 2026-07-09, B7)** — bulk fee editing is the point of the tool, not a fast-follow; ~~if it lands, else fast-follow~~ ([plan §8](../creator-studio-plan.md#8-phasing) — "bulk editing / default
 > suggestions can trail the per-version editor"). The multi-version companion to [models.md](./models.md): set, clear,
 > and default a **licensing fee** across MANY of the creator's versions in one pass. Ops in
 > [plan §5.3](../creator-studio-plan.md#53-new-monetization-operations-creator-studio-module-extract-to-a-package-at-consolidation).

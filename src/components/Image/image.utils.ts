@@ -1,8 +1,10 @@
+import { resolveFeedSort } from '~/components/Filters/sort-availability';
+import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { isEqual } from 'lodash-es';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -54,9 +56,11 @@ export const imagesQueryParamSchema = z
       .optional(),
     collectionId: numericString(),
     collectionTagId: numericString(),
+    hubId: numericString(),
     hideAutoResources: booleanString(),
     hideManualResources: booleanString(),
     followed: booleanString(),
+    newCreators: booleanString(),
     fromPlatform: booleanString(),
     hidden: booleanString(),
     includeBaseModel: booleanString(),
@@ -97,8 +101,28 @@ export const imagesQueryParamSchema = z
     disableMinor: booleanString(),
     remixesOnly: booleanString(),
     nonRemixesOnly: booleanString(),
+    hideChallenges: booleanString(),
   })
   .partial();
+
+/**
+ * The pair that routes an own-content submit picker off the search index.
+ *
+ * 🔴 These two are not two independent preferences. Together they are the signal
+ * `requiresImageDbPath` reads to serve the picker from the database instead of
+ * Meilisearch, and `getInfiniteImagesHandler` additionally requires the `userId`
+ * to be the caller's own. Measured on prod 2026-08-27: an image is absent from
+ * `metrics_images_v1` for 10-30 minutes after publish, so without this the one
+ * image someone opened the picker to submit is the one that is missing.
+ *
+ * It lives here, spread into all three pickers, because it used to be written out
+ * three times. Two of those copies had no test: deleting `publishedOnly` from an
+ * inline ten-key filter block sent that picker silently back to the index — the
+ * grid still rendered, still returned rows, and only the newest image was gone.
+ * One chokepoint means one assertion covers all three.
+ */
+export const ownContentPickerFilters = (userId: number | undefined) =>
+  ({ userId, publishedOnly: true } as const);
 
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
@@ -118,8 +142,12 @@ export const getDefaultMediaTypes = (
 export const useImageFilters = (type: FilterKeys<'images' | 'videos' | 'modelImages'>) => {
   const storeFilters = useFiltersContext((state) => state[type]);
   const { query } = useImageQueryParams(); // router params are the overrides
+  const availability = useSortAvailability();
 
-  return removeEmpty({ ...storeFilters, ...query });
+  const filters = removeEmpty({ ...storeFilters, ...query });
+  // A sort the menu withholds is still a sort the query runs on, whether it came
+  // from the store, a link or the schema default.
+  return { ...filters, sort: resolveFeedSort({ type, value: filters.sort }, availability) };
 };
 
 export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesInput>) => {
@@ -132,6 +160,58 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
     filtersUpdated,
   };
 };
+
+/** A page that reported no backend. Both branches name themselves now, so this can
+ * only be an index page that returned nothing: the end of a feed, or a blocked-tag
+ * query zeroed at page one. Never a DB page, which reports 'db'. */
+export const FEED_SOURCE_NONE = 'none';
+
+/** Which backend served each loaded page, as emitted by the server. */
+export function getFeedSources(pages: unknown[] | undefined): string[] {
+  return (pages ?? []).map(
+    (page) => (page as { source?: string } | undefined)?.source ?? FEED_SOURCE_NONE
+  );
+}
+
+/**
+ * The backend currently serving the feed.
+ *
+ * BitDex falls back to Meili PER PAGE — on an error, and routinely whenever a
+ * pass accumulates zero documents — so the answer is the LAST page's backend,
+ * not whether any page was BitDex. Only genuinely sourceless pages are skipped:
+ * an empty terminal page is what scrolling to the end looks like and must not
+ * retract a notice the whole scroll earned, while a DB page names itself 'db'
+ * and DOES answer, because that is the flag going off mid-session.
+ */
+export function resolveFeedSource(sources: string[]): string | undefined {
+  for (let i = sources.length - 1; i >= 0; i--) {
+    if (sources[i] !== FEED_SOURCE_NONE) return sources[i];
+  }
+  return undefined;
+}
+
+export type FeedSnapshot = ReturnType<typeof buildFeedSnapshot>;
+
+/**
+ * The pages and the filters that fetched them, built together. Assembling these
+ * from separate reads pairs new filters with old pages under keepPreviousData,
+ * describing a feed that never existed.
+ */
+export function buildFeedSnapshot(
+  pages: unknown[] | undefined,
+  filters: { sort?: unknown; period?: unknown; browsingLevel?: number },
+  browsingLevel: number
+) {
+  const sources = getFeedSources(pages);
+  return {
+    sources,
+    source: resolveFeedSource(sources),
+    pagesLoaded: pages?.length ?? 0,
+    sort: String(filters.sort ?? ''),
+    period: String(filters.period ?? ''),
+    browsingLevel: filters.browsingLevel ?? browsingLevel,
+  };
+}
 
 export const useQueryImages = (
   filters?: GetInfiniteImagesInput,
@@ -188,6 +268,19 @@ export const useQueryImages = (
     }
   );
 
+  // A ref, not useMemo: pairing the filters with the pages they fetched is
+  // correctness here, and useMemo is a hint React may discard — a recompute on
+  // the transition render would read the NEW filters against the OLD data and
+  // reproduce exactly the mismatch this exists to prevent.
+  const snapshotRef = useRef<{ data: typeof data; snapshot: FeedSnapshot } | null>(null);
+  if (!snapshotRef.current || snapshotRef.current.data !== data) {
+    snapshotRef.current = {
+      data,
+      snapshot: buildFeedSnapshot(data?.pages, filters, contextBrowsingLevel),
+    };
+  }
+  const feedSnapshot = snapshotRef.current.snapshot;
+
   // Deduplicate items to prevent duplicates from offset pagination drift
   const flatData = useMemo(() => {
     const allItems = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
@@ -222,6 +315,7 @@ export const useQueryImages = (
   return {
     data,
     flatData,
+    feedSnapshot,
     images: items,
     removedImages: hiddenCount,
     fetchedImages: flatData?.length,

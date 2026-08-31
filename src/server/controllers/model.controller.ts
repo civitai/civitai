@@ -1,7 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { isPaidAccessActive } from '@civitai/buzz';
-import { getPaidAccess, toModelVersionPaidAccessDto } from '~/server/services/paid-access.service';
+import {
+  getViewerMonetization,
+  toModelVersionPaidAccessDto,
+} from '~/server/services/paid-access.service';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
@@ -14,6 +17,12 @@ import {
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
+import {
+  applyTrainingWorkflowOverlay,
+  collectTrainingWorkflowRefs,
+  emptyTrainingOverlay,
+} from '~/server/services/orchestrator/training/workflow-state';
 import { eventEngine } from '~/server/events';
 import {
   getValidCreatorMembershipMap,
@@ -48,6 +57,7 @@ import type {
   GetAllModelsOutput,
   GetAssociatedResourcesInput,
   GetDownloadSchema,
+  GetModelTemplateFieldsInput,
   GetModelVersionsSchema,
   GetMyTrainingModelsSchema,
   GetSimpleModelsInfiniteSchema,
@@ -111,6 +121,7 @@ import {
   upsertModel,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { getLatestModelAppeal } from '~/server/services/report.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags, getCreationBlockedTags } from '~/server/services/system-cache';
 import {
@@ -130,6 +141,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { getRequestBoardDomainColor } from '~/server/utils/server-domain';
 import { getPrimaryFile, selectLiveLinkedComponents } from '~/server/utils/model-helpers';
 import {
   GET_ALL_IMAGES_PER_MODEL,
@@ -137,6 +149,11 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import {
+  filterModelMetaForClient,
+  resolveMinorAppeal,
+  resolveMinorFlagged,
+} from '~/server/utils/minor-flag-meta';
 import {
   allBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
@@ -261,10 +278,14 @@ export const getModelHandler = async ({
       userId: ctx.user?.id,
     });
 
-    const paidAccessByVersion = await getPaidAccess(
-      'ModelVersion',
-      filteredVersions.map((x) => x.id)
-    );
+    const monetizationByVersion = await getViewerMonetization({
+      versions: filteredVersions.map((x) => ({
+        id: x.id,
+        ownerId: model.user.id,
+        licensingFee: x.licensingFee != null ? Number(x.licensingFee) : null,
+      })),
+      viewer: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
+    });
     // The DTO donationGoal seeds ONLY the owner's edit form → raw owner read (unfiltered by the
     // public EA-window/opt-out), and owner/mod only. Public display reads modelVersion.donationGoal.
     const donationGoalsByVersion = isOwner
@@ -351,7 +372,7 @@ export const getModelHandler = async ({
     const hideIf = (hidden: boolean, value: number) => (hidden ? null : value);
 
     const mappedVersions = filteredVersions.map((version) => {
-      const paidAccess = paidAccessByVersion[version.id];
+      const { paidAccess, licensingFee, sale } = monetizationByVersion[version.id];
       const eaDonationGoal = donationGoalsByVersion[version.id] ?? null;
       const paidAccessGated =
         features.earlyAccessModel && !!paidAccess && isPaidAccessActive(paidAccess);
@@ -416,7 +437,7 @@ export const getModelHandler = async ({
 
       return {
         ...version,
-        licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+        licensingFee,
         metrics: undefined,
         hiddenMetrics: versionHidden,
         rank: {
@@ -432,7 +453,7 @@ export const getModelHandler = async ({
         posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
         hashes,
         earlyAccessDeadline,
-        paidAccess: toModelVersionPaidAccessDto(paidAccess),
+        paidAccess: toModelVersionPaidAccessDto(paidAccess, sale),
         donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
         canDownload,
         canGenerate,
@@ -487,6 +508,10 @@ export const getModelHandler = async ({
       };
     });
 
+    // Gated here to skip the query for the vast majority of page views (visitors);
+    // resolveMinorAppeal below is the actual enforced boundary, independent of this.
+    const minorAppeal = isOwner ? await getLatestModelAppeal(model.id, model.user.id) : null;
+
     return {
       ...model,
       metrics: undefined,
@@ -503,8 +528,16 @@ export const getModelHandler = async ({
       },
       canGenerate: mappedVersions.some((v) => v.canGenerate),
       hasSuggestedResources: suggestedResources > 0,
+      // Owner-only: this is a publicProcedure, and whether a model is flagged
+      // (and by whom) is not a visitor's business.
+      minorFlagged: resolveMinorFlagged({
+        isOwner,
+        minor: model.minor,
+        meta: model.meta as ModelMeta | null,
+      }),
+      minorAppeal: resolveMinorAppeal({ isOwner, appeal: minorAppeal }),
       meta: model.meta
-        ? filterSensitiveProfanityData(model.meta as ModelMeta, ctx?.user?.isModerator)
+        ? filterModelMetaForClient(model.meta as ModelMeta, ctx?.user?.isModerator)
         : null,
       tagsOnModels:
         tagsOnModels[model.id]?.tags
@@ -553,6 +586,7 @@ export const getModelsInfiniteHandler = async ({
       const result = await getModelsWithImagesAndModelVersions({
         input,
         user: ctx.user,
+        domain: getRequestBoardDomainColor(ctx.req),
         imagesPerModel,
         biasImageSlice: slim,
         metricPrivacyEnabled,
@@ -600,6 +634,10 @@ export const getModelsPagedSimpleHandler = async ({
     },
   });
 
+  // Same signal getModelsInfiniteHandler acts on: getModels reports when the row
+  // set it returned depends on who asked, which no cache key can express.
+  if (results.isPrivate && ctx.cache) ctx.cache.canCache = false;
+
   const isModerator = ctx?.user?.isModerator;
   const parsedResults = {
     ...results,
@@ -608,9 +646,7 @@ export const getModelsPagedSimpleHandler = async ({
 
       return {
         ...model,
-        meta: model.meta
-          ? filterSensitiveProfanityData(model.meta as ModelMeta, isModerator)
-          : null,
+        meta: model.meta ? filterModelMetaForClient(model.meta as ModelMeta, isModerator) : null,
         modelVersion: version
           ? {
               ...version,
@@ -709,6 +745,7 @@ export const upsertModelHandler = async ({
         ...gallerySettings,
         level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : gallerySettings?.level,
       },
+      tracker: ctx.track,
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id as number}`);
 
@@ -1331,10 +1368,24 @@ export const getMyTrainingModelsHandler = async ({
       db
     );
 
+    // Live state for every run still inside the orchestrator's 30-day retention window; older
+    // rows, and every row when the flag is off or the orchestrator is unreachable, fall through
+    // to the stored copy. Note the asymmetry this creates: `trainingStatus` filtering and the
+    // total count are still computed in SQL from the stored value, so a row whose live status
+    // has moved on can display a status outside the active filter. Fixing that needs
+    // orchestrator-side filtering — see docs/features/training-orchestrator-source-of-truth.md.
+    const overlay = ctx.features.trainingOrchestratorState
+      ? await getTrainingWorkflowOverlay({
+          userId,
+          ctx,
+          refs: collectTrainingWorkflowRefs(results.items),
+        })
+      : emptyTrainingOverlay();
+
     return {
       ...results,
       items: results.items.map((item) => ({
-        ...item,
+        ...applyTrainingWorkflowOverlay(item, overlay),
         model: {
           ...item.model,
           _count: { modelVersions: versionCountByModelId.get(item.model.id) ?? 0 },
@@ -1459,8 +1510,7 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
 
     const meta = (model.meta as ModelMeta | null) || {};
     // Deliberately not upsertModel: this only sets meta, and routing it through the full
-    // upsert ran the non-moderator profanity filter over the model name and re-triggered
-    // ingestModel (the select omits `description`, so descriptionChanged was always true).
+    // upsert ran the non-moderator profanity filter over the model name.
     const updatedModel = await updateModelById({
       id: model.id,
       data: { meta: { ...meta, needsReview: true } as Prisma.JsonObject },
@@ -1821,6 +1871,11 @@ export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesI
     return [];
   }
 
+  // `ModelFileHash.hash` is citext, so the ::citext[] cast is what makes this case-insensitive
+  // AND indexable on modelFileHash_hash_cs. Do not "simplify" it to a plain IN over text or a
+  // subquery: citext compared against an explicitly-typed text value degrades to a
+  // case-sensitive text comparison, stored hashes are UPPERCASE, and the query then silently
+  // returns nothing.
   const modelsByHashes = await dbRead.$queryRaw<
     { userId: number; modelId: number; hash: string }[]
   >`
@@ -1831,7 +1886,7 @@ export const getModelByHashesHandler = async ({ input }: { input: ModelByHashesI
            JOIN "ModelFile" mf ON mf."id" = mfh."fileId"
            JOIN "ModelVersion" mv ON mv."id" = mf."modelVersionId"
            JOIN "Model" m ON mv."modelId" = m.id
-    WHERE LOWER(mfh."hash") IN (${Prisma.join(hashes.map((h) => h.toLowerCase()))})
+    WHERE mfh."hash" = ANY(ARRAY[${Prisma.join(hashes.map((h) => h.toLowerCase()))}]::citext[])
       AND m."deletedAt" IS NULL;
   `;
 
@@ -1871,11 +1926,12 @@ export async function getModelTemplateFieldsHandler({
   input,
   ctx,
 }: {
-  input: GetByIdInput;
+  input: GetModelTemplateFieldsInput;
   ctx: ProtectedContext;
 }) {
   try {
     const { id: userId } = ctx.user;
+    const omit = new Set(input.omit);
 
     const model = await getModel({
       id: input.id,
@@ -1917,11 +1973,17 @@ export async function getModelTemplateFieldsHandler({
 
     return {
       ...restModel,
+      description: omit.has('description') ? null : restModel.description,
       status: ModelStatus.Draft,
       uploadType: ModelUploadType.Created,
-      tagsOnModels: restModel.tagsOnModels
-        .filter(({ tag }) => !tag.unlisted)
-        .map(({ tag }) => ({ ...tag, isCategory: modelCategories.some((c) => c.id === tag.id) })),
+      tagsOnModels: omit.has('tags')
+        ? []
+        : restModel.tagsOnModels
+            .filter(({ tag }) => !tag.unlisted)
+            .map(({ tag }) => ({
+              ...tag,
+              isCategory: modelCategories.some((c) => c.id === tag.id),
+            })),
       version: version
         ? {
             ...version,

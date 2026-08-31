@@ -1,34 +1,25 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { pack, unpack } from 'msgpackr';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // Backing store for the fake Redis. Values are stored as msgpackr-PACKED Buffers and
 // unpacked on read — the SAME codec the real `redis.packed` client uses (set -> pack(value),
 // get -> unpack(buffer)) — so the byte-identical claim is exercised through the real
 // serializer end-to-end, not a pass-through fake. Cache hit/miss semantics stay real (a
 // Map), letting us assert exactly when the origin DB query is re-run.
-const { store, dbReadQueryRaw, redisPackedGet, redisPackedSet, redisDel } = vi.hoisted(() => ({
-  store: new Map<string, Buffer>(),
-  dbReadQueryRaw: vi.fn(),
-  redisPackedGet: vi.fn(),
-  redisPackedSet: vi.fn(),
-  redisDel: vi.fn(),
-}));
+const store = new Map<string, Buffer>();
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: dbReadQueryRaw },
-  dbWrite: {},
-}));
-// Keep the real REDIS_KEYS (so the key we build matches the production constant) and only
-// swap the live client for the in-memory fake.
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/redis/client')>();
-  return {
-    ...actual,
-    redis: { del: redisDel, packed: { get: redisPackedGet, set: redisPackedSet } },
-  };
-});
+// The client comes from the canonical shared mock; the in-memory fake above is
+// installed onto it in `beforeEach`. The canonical registration keeps the real
+// REDIS_KEYS, so the key this file builds still matches the production constant
+// — which is what the direct mock's `importOriginal` spread was protecting.
+const redisPackedGet = redisMock.redis.packed.get;
+const redisPackedSet = redisMock.redis.packed.set;
+const redisDel = redisMock.redis.del;
 
 import { getTagWithModelCount } from '~/server/services/tag.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
 
 const KEY_PREFIX = 'packed:caches:tag-with-model-count';
 

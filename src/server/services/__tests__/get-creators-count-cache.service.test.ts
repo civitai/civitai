@@ -30,17 +30,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //   - cache-throws fallback → a fetchThroughCache throw still returns a correct
 //     count via the inline fallback (no 500)
 
-const { mockDb } = vi.hoisted(() => ({
-  mockDb: {
-    user: {
-      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
-      count: vi.fn(async (..._a: unknown[]): Promise<number> => 0),
-    },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
-
 // user.service reaches into the user-preferences module surface at import time;
 // stub it the same way the sibling idempotent tests do so the module loads.
 vi.mock('~/server/services/user-preferences.service', () => ({
@@ -93,6 +82,8 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => {
 });
 
 import { getCreators } from '~/server/services/user.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDb = dbMock.dbRead;
 
 const select = { username: true, image: true } as const;
 
@@ -136,7 +127,13 @@ describe('getCreators — count cache', () => {
     // runs, and the cache machinery is never consulted.
     mockDb.user.findMany.mockResolvedValueOnce([{ username: 'a' }, { username: 'b' }]);
 
-    const result = await getCreators({ select, count: true, excludeIds: [-1], query: 'foo', take: 20 });
+    const result = await getCreators({
+      select,
+      count: true,
+      excludeIds: [-1],
+      query: 'foo',
+      take: 20,
+    });
 
     expect(mockDb.user.count).not.toHaveBeenCalled();
     expect(cacheStore.size).toBe(0);
@@ -153,7 +150,13 @@ describe('getCreators — count cache', () => {
       { username: 'c' },
     ]);
 
-    const result = await getCreators({ select, count: true, excludeIds: [-1], query: 'foo', take: 3 });
+    const result = await getCreators({
+      select,
+      count: true,
+      excludeIds: [-1],
+      query: 'foo',
+      take: 3,
+    });
 
     // over-fetched take+1 = 4 rows
     expect(mockDb.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 4 }));
@@ -171,7 +174,13 @@ describe('getCreators — count cache', () => {
       { username: 'd' },
     ]);
 
-    const result = await getCreators({ select, count: true, excludeIds: [-1], query: 'foo', take: 3 });
+    const result = await getCreators({
+      select,
+      count: true,
+      excludeIds: [-1],
+      query: 'foo',
+      take: 3,
+    });
 
     expect(mockDb.user.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 4 }));
     expect((result as { hasMore: boolean }).hasMore).toBe(true);

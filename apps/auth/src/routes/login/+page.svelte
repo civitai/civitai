@@ -178,7 +178,9 @@
     </div>
     <h1>Sign Up or Log In</h1>
 
-    {#if data.error}
+    {#if data.error === 'BlockedDomain'}
+      <p class="error">That email domain isn't allowed. Try a different address.</p>
+    {:else if data.error}
       <p class="error">Login error: {data.error}</p>
     {/if}
 

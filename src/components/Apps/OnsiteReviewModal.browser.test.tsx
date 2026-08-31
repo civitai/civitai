@@ -9,8 +9,10 @@ import { renderWithProviders } from '../../../test/component-setup';
  * `OnsiteReviewModal.tsx` (mirrors #3154) so it is importable WITHOUT the page's
  * `getServerSideProps` server graph — this suite is the coverage that extraction
  * unlocks. Asserts:
- *  - onsite-specific visibility (View full source link + the mod Review-preview panel +
- *    the structured manifest render);
+ *  - onsite-specific visibility (the in-app code-diff affordance + the mod
+ *    Review-preview panel + the structured manifest render), and that NO
+ *    raw-source deep-link is offered (retired in #3498 — in-review snapshots are
+ *    private, so such a link would 404 for the moderator who clicked it);
  *  - Approve FIRES `blocks.approveRequest` with the request id;
  *  - the reject reason gate (disabled < 3 chars) AND that Reject FIRES
  *    `blocks.rejectRequest` with `{ publishRequestId, rejectionReason }`;
@@ -165,14 +167,25 @@ beforeEach(() => {
 });
 
 describe('OnsiteReviewModal — onsite-specific contract', () => {
-  test('a pending selection renders the View full source link, the mod Review-preview panel, and the structured manifest', async () => {
+  test('a pending selection renders the in-app code diff, the mod Review-preview panel, and the structured manifest — and NO raw-source link', async () => {
     renderWithProviders(
-      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
     );
-    // The on-site code-review affordance (off-site has no bundle/code).
-    await expect.element(page.getByText('View full source')).toBeInTheDocument();
-    // The old "View code in Forgejo" copy is gone.
+    // The on-site code-review affordance (off-site has no bundle/code) is the
+    // in-app diff, not an external link.
+    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
+    // 🔴 #3498 regression guard: the modal's own raw-source affordances are
+    // retired and may not come back. (The per-FILE fallback that used to sit
+    // inside an elided diff row is guarded where it actually renders —
+    // `src/tests/pages/apps/review-diff-panels.browser.test.tsx`. Asserting it
+    // here would prove nothing: the code-diff panel is collapsed by default, so
+    // no file row is mounted at this point.)
+    expect(page.getByText('View full source').elements()).toHaveLength(0);
     expect(page.getByText('View code in Forgejo').elements()).toHaveLength(0);
+    expect(document.querySelectorAll(`a[href="${ONSITE_PENDING.reviewRepoUrl}"]`).length).toBe(0);
     // The mod Review-preview sandbox panel — on-site pending only.
     await expect.element(page.getByText('Review preview')).toBeInTheDocument();
     await expect.element(page.getByRole('button', { name: 'Start preview' })).toBeInTheDocument();
@@ -190,7 +203,10 @@ describe('OnsiteReviewModal — onsite-specific contract', () => {
 
   test('the iframe + other-manifest-fields sections render as collapsed-by-default disclosures the mod can expand', async () => {
     renderWithProviders(
-      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
     );
     // Both disclosure CONTROLS render — the moderator security signal (risky
     // iframe sandbox flags; unexpected/novel manifest keys) is one click away,
@@ -252,16 +268,30 @@ describe('OnsiteReviewModal — store-visible copy is surfaced INLINE for the mo
         ...ONSITE_PENDING.manifest,
         tagline: 'The fastest way to remix a model',
         category: 'generation',
+        contentRating: 'pg13',
       },
     };
     renderWithProviders(
       <OnsiteReviewModal selection={{ request: withCopy, mode: 'pending' }} onClose={vi.fn()} />
     );
     // Both are visible WITHOUT expanding any disclosure.
-    await expect
-      .element(page.getByText('The fastest way to remix a model'))
-      .toBeInTheDocument();
-    await expect.element(page.getByText('generation')).toBeInTheDocument();
+    await expect.element(page.getByText('The fastest way to remix a model')).toBeInTheDocument();
+    /**
+     * 🔴 CALL-SITE ASSERTION — and a REPAIR of one that could not fail.
+     *
+     * This line was `getByText('generation')`. Without `exact`, Playwright matches
+     * a case-insensitive SUBSTRING, so it resolved happily against both the raw
+     * `generation` this modal used to render AND the `Generation` it renders now —
+     * it named the value without ever being able to discriminate it. The audit
+     * counted this site as uncovered, and it was right: the assertion was inert
+     * for the property that matters.
+     */
+    await expect.element(page.getByText('Generation', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('generation', { exact: true }).query()).toBeNull();
+    // 🔴 The rating badge beside it, on the rung that separates the shared map from
+    // every mechanical transformation of the key (`PG13`, `Pg13`, `pg13`).
+    await expect.element(page.getByText('PG-13', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('pg13', { exact: true }).query()).toBeNull();
     // They are HANDLED keys, so the "Other manifest fields" count is unchanged
     // (still just the one novel key from the base fixture) — i.e. they did not
     // fall through to the raw-JSON dump.
@@ -273,11 +303,16 @@ describe('OnsiteReviewModal — store-visible copy is surfaced INLINE for the mo
   test('omitting them renders no empty tagline/category chrome', async () => {
     // The base fixture declares neither.
     renderWithProviders(
-      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
     );
     await expect.element(page.getByText('My Onsite Block')).toBeInTheDocument();
     expect(page.getByText('The fastest way to remix a model').elements()).toHaveLength(0);
-    expect(page.getByText('generation').elements()).toHaveLength(0);
+    // Neither spelling renders when the manifest declares no category.
+    expect(page.getByText('generation', { exact: true }).elements()).toHaveLength(0);
+    expect(page.getByText('Generation', { exact: true }).elements()).toHaveLength(0);
   });
 });
 
@@ -361,10 +396,7 @@ describe('OnsiteReviewModal — sensitive scopes are grouped + flagged for the m
       },
     };
     renderWithProviders(
-      <OnsiteReviewModal
-        selection={{ request: normalOnly, mode: 'pending' }}
-        onClose={vi.fn()}
-      />
+      <OnsiteReviewModal selection={{ request: normalOnly, mode: 'pending' }} onClose={vi.fn()} />
     );
     // The normal group still shows all of them.
     await expect.element(page.getByText('Permissions (2)')).toBeInTheDocument();
@@ -381,11 +413,17 @@ describe('OnsiteReviewModal — live preview links to the full-page route (not t
     // new button must ignore it and link to the internal /apps/review/preview route.
     mocks.reviewStatus = {
       state: 'preview-live',
-      detail: { host: 'my-onsite-block.civit.ai', url: 'https://my-onsite-block.civit.ai/my-onsite-block' },
+      detail: {
+        host: 'my-onsite-block.civit.ai',
+        url: 'https://my-onsite-block.civit.ai/my-onsite-block',
+      },
       previewUrl: 'https://my-onsite-block.civit.ai/my-onsite-block?mr=raw-entry-token',
     };
     renderWithProviders(
-      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
     );
 
     const link = page.getByRole('link', { name: /Open full-page preview/ });
@@ -411,7 +449,10 @@ describe('OnsiteReviewModal — live preview links to the full-page route (not t
 describe('OnsiteReviewModal — onsite approve fires the mutation', () => {
   test('clicking Approve + build fires blocks.approveRequest with the request id', async () => {
     renderWithProviders(
-      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
     );
     await page.getByRole('button', { name: 'Approve + build' }).click();
     expect(mocks.mutate).toHaveBeenCalledWith(
@@ -423,7 +464,10 @@ describe('OnsiteReviewModal — onsite approve fires the mutation', () => {
   test('an approve mutation error surfaces via showErrorNotification', async () => {
     mocks.errorMode = true;
     renderWithProviders(
-      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
     );
     await page.getByRole('button', { name: 'Approve + build' }).click();
     expect(showError).toHaveBeenCalledWith(expect.objectContaining({ title: 'Approve failed' }));
@@ -449,7 +493,10 @@ describe('OnsiteReviewModal — onsite approve fires the mutation', () => {
 describe('OnsiteReviewModal — onsite reject: reason gate + fired mutation', () => {
   test('the reject confirm is disabled under the 3-char reason floor, then fires blocks.rejectRequest with the trimmed reason', async () => {
     renderWithProviders(
-      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={vi.fn()} />
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={vi.fn()}
+      />
     );
     // No rejection textarea until "Reject…" is clicked.
     expect(page.getByTestId('apps-review-reject-reason').elements()).toHaveLength(0);
@@ -564,10 +611,13 @@ describe('OnsiteReviewModal — busy close-guard while a mutation is in flight',
     mocks.pending = true;
     const onClose = vi.fn();
     renderWithProviders(
-      <OnsiteReviewModal selection={{ request: ONSITE_PENDING, mode: 'pending' }} onClose={onClose} />
+      <OnsiteReviewModal
+        selection={{ request: ONSITE_PENDING, mode: 'pending' }}
+        onClose={onClose}
+      />
     );
     // Modal is open (body rendered).
-    await expect.element(page.getByText('View full source')).toBeInTheDocument();
+    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
 
     // Close vector 1 — the modal's close (X) button (Mantine static class).
     const closeBtn = document.querySelector<HTMLButtonElement>('.mantine-Modal-close');
@@ -580,7 +630,7 @@ describe('OnsiteReviewModal — busy close-guard while a mutation is in flight',
     // The busy guard swallowed both — the parent onClose was never called and the
     // modal is still mounted.
     expect(onClose).not.toHaveBeenCalled();
-    await expect.element(page.getByText('View full source')).toBeInTheDocument();
+    await expect.element(page.getByText('Show code diff')).toBeInTheDocument();
   });
 });
 

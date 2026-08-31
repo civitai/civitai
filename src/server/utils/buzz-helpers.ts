@@ -51,10 +51,7 @@ export const getBuzzBulkMultiplier = ({
  * Any `yellow`/`green` already present in the seed is stripped so the maturity
  * branch is the single source of truth for which domain currency applies.
  */
-function appendDomainCurrency(
-  baseTypes: BuzzSpendType[],
-  isSfw: boolean
-): BuzzSpendType[] {
+function appendDomainCurrency(baseTypes: BuzzSpendType[], isSfw: boolean): BuzzSpendType[] {
   const domainTypes: BuzzSpendType[] = baseTypes.filter(
     // Remove default yellow/green if provided.
     (type) => !['yellow', 'green'].includes(type)
@@ -74,6 +71,47 @@ export function getAllowedAccountTypes(
   baseTypes: BuzzSpendType[] = []
 ): BuzzSpendType[] {
   return appendDomainCurrency(baseTypes, features.isGreen);
+}
+
+/**
+ * Where a paid-access purchase made BEFORE payouts went in-kind credited the seller.
+ *
+ * A record, not a policy. The charge used to name no destination account, so the buzz service
+ * applied its yellow default and every green purchase paid the seller yellow — 2,409 legs from
+ * 2025-10-30 until the charge started naming the buyer's own account. Purchases from then on pay in
+ * kind and never reach this function.
+ *
+ * It survives for ONE reader: the unpublish-refund guard, which sizes a refund by the account
+ * reversing a purchase would debit, and cannot learn that from the ledger — the multi-transaction
+ * listing reports each leg by the account the BUYER spent from and carries no destination.
+ *
+ * ⚠️ That makes the guard right for pre-cutover purchases and increasingly wrong for post-cutover
+ * green ones, where it checks a seller's YELLOW balance against money now held in GREEN. The
+ * consequences are a misleading refusal on unpublish, or a refund that takes a green balance
+ * negative, since the ledger exempts refunds from its own sufficiency check — both accepted
+ * deliberately (Justin, 2026-08-14) rather than blocking the currency fix on a schema change.
+ *
+ * The real fix is to record the payout account per purchase, the way `Placement.spendType` does, at
+ * which point this function has no readers and goes. `EntityAccess.meta` already carries the
+ * transaction ids, so it needs no migration. Before writing it, confirm which account a refund
+ * DEBITS against the buzz service rather than reasoning from this comment: sampled prod refunds
+ * credit the account the payer was debited from, and the seller side is unverified here.
+ */
+export function paidAccessPayoutAccount(spendType: BuzzSpendType): BuzzSpendType {
+  return spendType === 'blue' ? 'blue' : 'yellow';
+}
+
+/**
+ * The single currency a request may spend, from the domain it arrived on.
+ *
+ * `getAllowedAccountTypes` with no seed returns exactly the domain currency, so
+ * this is that list's one element named rather than indexed. Surfaces that must
+ * spend one currency and no other — placements — take it from here so there is
+ * no second derivation to drift from the generator's.
+ */
+export function domainSpendType(features: FeatureAccess): BuzzSpendType {
+  const [type] = getAllowedAccountTypes(features);
+  return type;
 }
 
 /**

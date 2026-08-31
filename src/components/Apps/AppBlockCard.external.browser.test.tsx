@@ -12,7 +12,7 @@ import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema'
  *   - renders an "Open ↗" link to the external URL with target=_blank +
  *     rel="noopener noreferrer",
  *   - HIDES the Install / Manage button (an external app has no install),
- *   - shows an "Off-site" badge so the off-platform nature is visually clear,
+ *   - shows a "Standalone" badge so the off-platform nature is visually clear,
  *   - keeps the universal "View details" affordance.
  * A normal on-platform app (externalUrl=null) is unchanged.
  */
@@ -42,8 +42,6 @@ function makeExternalBlock(overrides: Partial<AvailableBlock> = {}): AvailableBl
     category: null,
     scopesSummary: [],
     externalUrl: 'https://example.com/launch',
-    avgRating: null,
-    reviewCount: 0,
     coverUrl: null,
     ...overrides,
   };
@@ -61,8 +59,6 @@ function makeModelBlock(overrides: Partial<AvailableBlock> = {}): AvailableBlock
     category: null,
     scopesSummary: [],
     externalUrl: null,
-    avgRating: null,
-    reviewCount: 0,
     coverUrl: null,
     ...overrides,
   };
@@ -109,11 +105,11 @@ describe('AppBlockCard — external-link (off-site) app', () => {
     expect(page.getByRole('button', { name: /^install$/i }).query()).toBeNull();
   });
 
-  test('shows an "Off-site" badge', async () => {
+  test('shows a "Standalone" badge', async () => {
     renderWithProviders(
       <AppBlockCard block={makeExternalBlock()} alreadySubscribed={false} onOpen={onOpen} />
     );
-    await expect.element(page.getByText('Off-site', { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText('Standalone', { exact: true })).toBeInTheDocument();
   });
 
   test('still renders the universal "View details" affordance', async () => {
@@ -143,13 +139,13 @@ describe('AppBlockCard — external-link (off-site) app', () => {
 });
 
 describe('AppBlockCard — on-platform app unchanged (no external affordance)', () => {
-  test('a model-slot app shows Install, NO "Open" link, NO "Off-site" badge', async () => {
+  test('a model-slot app shows Install, NO "Open" link, NO "Standalone" badge', async () => {
     renderWithProviders(
       <AppBlockCard block={makeModelBlock()} alreadySubscribed={false} onOpen={onOpen} />
     );
     await expect.element(page.getByRole('button', { name: /^install$/i })).toBeInTheDocument();
     // The external "Open" link is a link named exactly "Open" — must be absent.
     expect(page.getByRole('link', { name: /^open$/i }).query()).toBeNull();
-    expect(page.getByText('Off-site', { exact: true }).query()).toBeNull();
+    expect(page.getByText('Standalone', { exact: true }).query()).toBeNull();
   });
 });

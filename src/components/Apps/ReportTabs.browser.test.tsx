@@ -78,6 +78,9 @@ describe('ReportTabs — tab IA (Item 1/2: drop Summary, reorder, default Scopes
   test('renders exactly three tabs in order Scopes → Security → Code review, no Summary', async () => {
     renderWithProviders(<ReportTabs report={REPORT} costCapped={false} />);
 
+    // Browser-mode render is ASYNC-committed, so the sync `.elements()` read below races
+    // the mount and sees an empty DOM unless we anchor on an awaited element first.
+    await expect.element(page.getByRole('tab', { name: /Scopes/ })).toBeInTheDocument();
     const tabs = page.getByRole('tab').elements();
     expect(tabs).toHaveLength(3);
     const labels = tabs.map((t) => t.textContent ?? '');

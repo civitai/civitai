@@ -497,6 +497,7 @@ export const miscModelTypes: ModelType[] = [
   'Poses',
   'Wildcards',
   'Workflows',
+  'ComfyWorkflows',
   'Detection',
   'VisionLanguage',
   'CLIP',
@@ -544,8 +545,8 @@ export const SDCPP_SUPPORTED_ECOSYSTEMS: string[] = [
 export const SDCPP_EXCLUDED_MODEL_IDS: number[] = [fluxProAirId, fluxUltraAirId];
 
 // Per-tier per-request video quantity for ecosystems that batch multiple
-// outputs in a single job (currently LTXV23). Drives `ext.limits.vidQuantity`
-// and the LTXV23 quantity node max. Founder treated as gold so legacy paid
+// outputs in a single job. Drives `ext.limits.vidQuantity` and the quantity
+// node max for those ecosystems. Founder treated as gold so legacy paid
 // members retain the highest cap.
 export const VID_QUANTITY_BY_TIER: Record<
   'free' | 'founder' | 'bronze' | 'silver' | 'gold',
@@ -557,7 +558,12 @@ export const VID_QUANTITY_BY_TIER: Record<
   silver: 3,
   gold: 4,
 };
-export const LTXV23_MAX_QUANTITY = Math.max(...Object.values(VID_QUANTITY_BY_TIER));
+export const VID_MAX_QUANTITY = Math.max(...Object.values(VID_QUANTITY_BY_TIER));
+
+// Ecosystems whose engine produces several videos from one job (Seed +
+// slotIndex), so the quantity node applies to video output and the tier cap
+// is worth upselling against.
+export const VID_QUANTITY_ECOSYSTEMS = new Set<string>(['LTXV23', 'LTXV25']);
 export const fluxModeOptions = [
   { label: 'Draft', value: fluxDraftAir },
   { label: 'Standard', value: fluxStandardAir },
@@ -645,6 +651,7 @@ export const aspectRatioDimensions: Record<
     '9:16': { width: 1080, height: 1920 },
   },
   '2K': {
+    '21:9': { width: 3360, height: 1440 },
     '16:9': { width: 2560, height: 1440 },
     '4:3': { width: 2304, height: 1728 },
     '1:1': { width: 2048, height: 2048 },

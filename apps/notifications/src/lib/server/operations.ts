@@ -29,12 +29,17 @@ export async function createNotificationsBulk(rows: CreateNotificationRow[]): Pr
     // calls nextval() for every VALUES row before the conflict check, so an all-conflict batch burns one
     // id per row. UPDATE the existing keys, then INSERT only the misses.
     const updateValues = batch
-      .map((d) => format('(%L, %L)', d.key, `{${d.users.join(',')}}`))
+      .map((d) => format('(%L, %L, %L)', d.key, `{${d.users.join(',')}}`, d.dedupeKey ?? null))
       .join(',');
+    // COALESCE, not a bare assign: the queued row may predate this column (a pending row written by the
+    // previous build carries NULL), and re-claiming it here is what keeps that deploy window deduped.
+    // An existing key is never overwritten — the same `key` always implies the same source event.
     const updateResp = await write.cancellableQuery<{ key: string }>(`
       UPDATE "PendingNotification" pn
-      SET "users" = ARRAY(SELECT DISTINCT unnest(pn."users" || u.users::int[])), "lastTriggered" = NOW()
-      FROM (VALUES ${updateValues}) AS u(key, users)
+      SET "users" = ARRAY(SELECT DISTINCT unnest(pn."users" || u.users::int[])),
+          "lastTriggered" = NOW(),
+          "dedupeKey" = COALESCE(pn."dedupeKey", u."dedupeKey")
+      FROM (VALUES ${updateValues}) AS u(key, users, "dedupeKey")
       WHERE pn."key" = u.key
       RETURNING pn."key"
     `);
@@ -45,18 +50,19 @@ export async function createNotificationsBulk(rows: CreateNotificationRow[]): Pr
       const insertValues = toInsert
         .map((d) =>
           format(
-            '(%L, %L, %L::"NotificationCategory", %L, %L::jsonb, %L)',
+            '(%L, %L, %L::"NotificationCategory", %L, %L::jsonb, %L, %L)',
             d.key,
             d.type,
             d.category,
             `{${d.users.join(',')}}`,
             JSON.stringify(d.details),
-            d.debounceSeconds ?? null
+            d.debounceSeconds ?? null,
+            d.dedupeKey ?? null
           )
         )
         .join(',');
       const insertResp = await write.cancellableQuery(`
-        INSERT INTO "PendingNotification" (key, type, category, users, details, "debounceSeconds")
+        INSERT INTO "PendingNotification" (key, type, category, users, details, "debounceSeconds", "dedupeKey")
         VALUES ${insertValues}
         ON CONFLICT (key) DO UPDATE SET "users" = ARRAY(SELECT DISTINCT unnest("PendingNotification"."users" || excluded."users")), "lastTriggered" = NOW()
       `);
@@ -268,9 +274,7 @@ export function markNotificationsRead(input: MarkReadInput): void {
   });
 }
 
-async function runMarkReadWithRetry(
-  input: MarkReadInput & { all: boolean }
-): Promise<void> {
+async function runMarkReadWithRetry(input: MarkReadInput & { all: boolean }): Promise<void> {
   const { userId, all, category } = input;
   for (let attempt = 1; attempt <= MARK_READ_MAX_ATTEMPTS; attempt++) {
     try {
@@ -351,6 +355,7 @@ async function markReadImpl(input: MarkReadInput & { all: boolean }): Promise<vo
       [id]
     );
     const catData = await catQuery.result();
-    if (catData.length) notificationCache.decrementUser(userId, catData[0].category).catch(() => null);
+    if (catData.length)
+      notificationCache.decrementUser(userId, catData[0].category).catch(() => null);
   }
 }

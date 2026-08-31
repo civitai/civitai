@@ -4,9 +4,15 @@ import dayjs from '~/shared/utils/dayjs';
 import type { SessionUser } from '~/types/session';
 import type { UserMeta } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { getMaxEarlyAccessDays, getMaxEarlyAccessModels } from '~/server/utils/early-access-helpers';
+import {
+  getMaxEarlyAccessDays,
+  getMaxEarlyAccessModels,
+} from '~/server/utils/early-access-helpers';
 import { env } from '~/env/server';
+import type { Tracker } from '~/server/clickhouse/client';
+import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
 import { clickhouse } from '~/server/clickhouse/client';
+import { diffEntityChanges, resolveActorRole } from '~/server/utils/entity-change-helpers';
 import {
   CacheTTL,
   constants,
@@ -24,6 +30,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getDbWithoutLag,
   preventModelVersionLag,
+  preventModelVersionLagBatch,
   preventReplicationLag,
 } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
@@ -44,8 +51,6 @@ import {
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
-import { Flags } from '~/shared/utils/flags';
 import type { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   MergeVersionsInput,
@@ -59,7 +64,6 @@ import type {
   ModelVersionsGeneratedImagesOnTimeframeSchema,
   ModelVersionUpsertInput,
   PublishVersionInput,
-  QueryModelVersionSchema,
   RecommendedSettingsSchema,
   AddLinkedComponentInput,
   LinkedComponentSettings,
@@ -78,17 +82,32 @@ import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import {
   assertPaidAccessInput,
   getPaidAccess,
+  getFreshSalesForPermanentGate,
+  bustModelSaleCache,
+  bustPaidAccessCache,
   materializePaidAccessEndsAt,
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
 import {
   type ModelVersionTerms,
+  discountedPrice,
+  isPermanentGate,
+  acceptsBlueBuzz,
   generationPrice,
   isPaidAccessActive,
   isTimedGateActive,
+  migrateTermsForUsageControl,
+  paidAccessCharges,
   paidGenerationGrant,
 } from '@civitai/buzz';
+import { applyModelMonetizationPolicy } from '~/server/services/model-monetization-policy';
+import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import {
+  expandBlurbs,
+  getReferencedBlurbIds,
+  reconcileBlurbReferences,
+} from '~/server/services/blurb-materialize.service';
 import { findOfficialFileByHash } from '~/server/services/model-file.service';
 import {
   createMultiAccountBuzzTransaction,
@@ -108,10 +127,15 @@ import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   sleep,
+  throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import {
+  getModelVersionEarlyAccessRefundRequirement,
+  refundModelEarlyAccessPurchases,
+} from '~/server/services/model-early-access-refund.service';
 import type {
   ModelType,
   ModelVersionEngagementType,
@@ -123,13 +147,10 @@ import {
   ModelStatus,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import type {
-  LicensingFeeSettlementCurrency,
-  LicensingFeeType,
-} from '~/shared/utils/prisma/enums';
+import type { LicensingFeeSettlementCurrency, LicensingFeeType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { ingestModelById, updateModelLastVersionAt } from './model.service';
-import { markFileReplaced, filesForModelVersionCache } from './model-file.service';
+import { updateModelLastVersionAt } from './model.service';
+import { markFileReplaced, deleteFilesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { deregisterFileLocations } from '~/utils/storage-resolver';
@@ -252,14 +273,18 @@ export const toggleModelVersionEngagement = async ({
     select: { type: true },
   });
 
+  // Scoped by the `type` the row was READ as, never by the PK alone.
+  // `ModelVersionEngagementType` has exactly one member today, so a PK-addressed
+  // write here is not yet a bug — it becomes one silently the day a second value is
+  // added, which is the only reason this reads as belt-and-braces.
   if (engagement) {
     if (engagement.type === type)
-      await dbWrite.modelVersionEngagement.delete({
-        where: { userId_modelVersionId: { userId, modelVersionId: versionId } },
+      await dbWrite.modelVersionEngagement.deleteMany({
+        where: { userId, modelVersionId: versionId, type },
       });
-    else if (engagement.type !== type)
-      await dbWrite.modelVersionEngagement.update({
-        where: { userId_modelVersionId: { userId, modelVersionId: versionId } },
+    else
+      await dbWrite.modelVersionEngagement.updateMany({
+        where: { userId, modelVersionId: versionId, type: engagement.type },
         data: { type },
       });
 
@@ -320,6 +345,33 @@ export async function assertUserEarlyAccessLimits({
   versionId?: number;
 }) {
   if (!timeframeDays || isModerator) return;
+
+  // A timed window can't be STARTED on a version that has ever been published: it's meant to precede
+  // release, and on expiry process-ending-early-access bumps `publishedAt`, which would resurface an old
+  // model as New. `initialPublishedAt` is the test — `publishedAt` is what that job rewrites, and a
+  // Scheduled version carries a FUTURE anchor, so only a date that has passed counts.
+  //
+  // Lives here rather than in the REST endpoint because both write paths (the endpoint and tRPC
+  // `modelVersion.upsert`) already call this, and enforcing in one of the two left the other open.
+  // Editing a window a version already has stays allowed.
+  if (versionId) {
+    const existing = await dbRead.modelVersion.findUnique({
+      where: { id: versionId },
+      select: { initialPublishedAt: true, status: true },
+    });
+    const everPublished =
+      (!!existing?.initialPublishedAt && existing.initialPublishedAt <= new Date()) ||
+      existing?.status === ModelStatus.Published;
+    if (everPublished) {
+      const gate = (await getPaidAccess('ModelVersion', [versionId]))[versionId];
+      const hasActiveTimedGate =
+        !!gate && gate.timeframeDays != null && (gate.endsAt == null || gate.endsAt > new Date());
+      if (!hasActiveTimedGate)
+        throw throwBadRequestError(
+          "Early access can't be started on a version that has already been published."
+        );
+    }
+  }
 
   if (timeframeDays > getMaxEarlyAccessDays({ userMeta, features })) {
     throw throwBadRequestError('Early access days exceeds user limit');
@@ -407,6 +459,52 @@ async function writeModelVersionGateAndGoal(
   ]);
 }
 
+// Entity-change audit shapes (docs/entity-change-tracking-plan.md): normalize the
+// PaidAccess row and the write input to one comparable shape so the differ only emits
+// when the effective gate config changes. `null` = no gate, matching
+// writePaidAccessForModelVersion (an ungated input clears the row). endsAt is excluded
+// on purpose — it's materialized at publish, which isn't a settings change.
+function toPaidAccessAuditState(input: ModelVersionPaidAccessInputSchema | null | undefined) {
+  const permanent = !!input?.permanent;
+  const timeframeDays = input?.timeframeDays ?? 0;
+  if (!input || (!permanent && timeframeDays <= 0)) return null;
+  return { permanent, timeframeDays: permanent ? null : timeframeDays, terms: input.terms };
+}
+
+async function readPaidAccessAuditState(versionId: number) {
+  const row = await dbWrite.paidAccess.findUnique({
+    where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
+    select: { timeframeDays: true, terms: true },
+  });
+  if (!row) return null;
+  return {
+    permanent: row.timeframeDays == null,
+    timeframeDays: row.timeframeDays,
+    terms: row.terms,
+  };
+}
+
+function toMonetizationAuditShape(
+  m?: {
+    type?: string | null;
+    unitAmount?: number | null;
+    sponsorshipSettings?: { type?: string | null; unitAmount?: number | null } | null;
+  } | null
+) {
+  return m?.type
+    ? {
+        type: m.type,
+        unitAmount: m.unitAmount ?? null,
+        sponsorshipSettings: m.sponsorshipSettings
+          ? {
+              type: m.sponsorshipSettings.type ?? null,
+              unitAmount: m.sponsorshipSettings.unitAmount ?? null,
+            }
+          : null,
+      }
+    : null;
+}
+
 export const upsertModelVersion = async ({
   id,
   monetization,
@@ -415,31 +513,106 @@ export const upsertModelVersion = async ({
   templateId,
   paidAccess,
   donationGoal,
+  rightsAffirmed,
   meta: metaInput,
+  tracker,
+  actorUserId,
+  isModerator,
+  licensingSourceCoercedReason,
   ...data
 }: Omit<ModelVersionUpsertInput, 'trainingDetails'> & {
   meta?: Prisma.ModelVersionCreateInput['meta'];
   trainingDetails?: Prisma.ModelVersionCreateInput['trainingDetails'];
+  tracker?: Tracker;
+  actorUserId?: number;
+  isModerator?: boolean;
+  /**
+   * Why the controller cleared `licensingSourceVersionId` — `model-type-mismatch`,
+   * `base-model-mismatch`, `not-a-root` or `model-not-found`. A rule acting, not the actor, and the
+   * audit says which rule: otherwise the repairs land in the change log as edits by creators who did
+   * nothing, and a moderator reading the history cannot tell a type mismatch from an unreadable model.
+   */
+  licensingSourceCoercedReason?: LicensingSourceRejection;
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
 
-  const existingFlags = id
-    ? (await dbRead.modelVersion.findUnique({ where: { id }, select: { flags: true } }))?.flags ?? 0
-    : 0;
+  // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
+  // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
+  // absent as cleared would wipe a creator's fee when a moderator declines a review.
+  // Note the model-level strip below bypasses this: on a POI model the fee columns are cleared even when
+  // the caller sent no fee at all, which is how a partial write (a moderator review action) stops
+  // carrying one forward.
+  const feeProvided = data.licensingFee !== undefined;
+  const hasLicensingFee = data.licensingFee != null && data.licensingFee > 0;
 
-  // Versions with a license fee earn through that channel, so they opt out of
-  // tip + creator-comp payouts. We only ever ADD the flag — clearing the fee
-  // doesn't strip it, since a creator may have set the bit independently.
-  let flagsOverride: number | undefined;
-  if (data.licensingFee != null && data.licensingFee > 0) {
-    flagsOverride = Flags.addFlag(existingFlags, ModelVersionFlag.DisablePayout);
+  // A cleared fee persists NULL, not 0: the monetization guard below (and the studio's fee filters)
+  // read a stored 0 as "still has a fee".
+  if (feeProvided && !hasLicensingFee) {
+    data.licensingFee = null;
+    data.licensingFeeType = null;
+    data.licensingFeeSettlementCurrency = null;
   }
 
   // Get model information to check NSFW + restricted base model combination
   const model = await dbWrite.model.findUniqueOrThrow({
     where: { id: data.modelId },
-    select: { nsfw: true, meta: true, userId: true },
+    select: { nsfw: true, meta: true, userId: true, poi: true, availability: true },
   });
+
+  // Model-level monetization policy, enforced here because the editors are only the explanation. A POI
+  // model earns nothing; a private model can't be sold. STRIPPED rather than rejected: every edit
+  // resubmits the whole version, and 207 POI versions already carry a stored fee — rejecting would make
+  // each of them unsavable until someone cleared it by hand, which is the "blocked version saves
+  // entirely" shape hot-fixed in 82f64846ba. Callers that explicitly ASK to create a charge (the REST
+  // endpoint, Creator Studio) refuse instead, where there is nothing to strand.
+  const policy = applyModelMonetizationPolicy(model, {
+    paidAccess,
+    donationGoal,
+    monetization,
+    licensingFee: data.licensingFee,
+  });
+  paidAccess = policy.paidAccess;
+  donationGoal = policy.donationGoal;
+  monetization = policy.monetization;
+  if (policy.clearFee) {
+    data.licensingFee = null;
+    data.licensingFeeType = null;
+    data.licensingFeeSettlementCurrency = null;
+  }
+
+  // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
+  // so what is stored is what the blurb actually says. A moderator saving someone else's version
+  // resolves none of their blurbs, so they get the ids the version already references instead of
+  // stripping every span.
+  const actorId = actorUserId ?? model.userId;
+  // `id` alone is not "the row this lands on" — a templated write creates a NEW version even with
+  // an id present, and that new row references nothing yet.
+  const editsExistingVersion = !!id && !templateId;
+  const restrictToBlurbIds =
+    model.userId === actorId
+      ? undefined
+      : editsExistingVersion
+      ? () => getReferencedBlurbIds({ entityType: 'ModelVersion', entityId: id as number })
+      : // A new row references nothing yet, so there is no set to keep — and `undefined` here
+        // would leave a moderator adding a version to someone else's model free to guess
+        // `data-id`s and read the creator's private blurb text out of the response.
+        () => [];
+  // Whether the CALLER supplied the column, captured before the expansion overwrites it below.
+  // A write that omits `description` — the review handlers select without it — must not
+  // reconcile: Prisma leaves the column alone, so an empty expansion would delete every
+  // reference row while the blurb markup stays in the body, stranding it permanently.
+  const descriptionSupplied = data.description != null;
+  const expansion = await expandBlurbs({
+    userId: model.userId,
+    html: data.description ?? '',
+    restrictToBlurbIds,
+  });
+  if (descriptionSupplied) {
+    data.description = expansion.html;
+    // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
+    // since, so the string about to be written is one it never checked.
+    await throwOnBlockedLinkDomain(data.description);
+  }
 
   // Validate NSFW + restricted base model combination
   if (
@@ -461,9 +634,7 @@ export const upsertModelVersion = async ({
   // versions on commercial base models can still monetize.
   if (isNonCommercialBaseModel(data.baseModel)) {
     const attemptsMonetization =
-      (data.licensingFee != null && data.licensingFee > 0) ||
-      !!monetization?.type ||
-      !!paidAccess;
+      (data.licensingFee != null && data.licensingFee > 0) || !!monetization?.type || !!paidAccess;
     if (attemptsMonetization) {
       throw throwBadRequestError(
         `The base model "${data.baseModel}" is licensed for non-commercial use and cannot be monetized.`
@@ -479,9 +650,43 @@ export const upsertModelVersion = async ({
     );
   }
 
+  // Paid access is limited to downloadable or on-site-generation versions; API-only generation can't be
+  // gated, and a gen-only version can't charge for download (mirrors updateModelVersionPaidAccess).
+  if (
+    !!paidAccess &&
+    data.usageControl !== ModelUsageControl.Download &&
+    data.usageControl !== ModelUsageControl.Generation
+  ) {
+    throw throwBadRequestError('Paid access is not available for this version’s usage control.');
+  }
+  // Migrate rather than refuse — same rule Creator Studio applies (see docs/features/monetization-rules.md).
+  if (paidAccess?.terms)
+    paidAccess.terms = migrateTermsForUsageControl(
+      paidAccess.terms,
+      data.usageControl !== ModelUsageControl.Download
+    ) as typeof paidAccess.terms;
+
   assertPaidAccessInput(paidAccess);
 
-  if (!id || templateId) {
+  // Selling access — or charging per generation — needs the creator on record as holding the rights to
+  // do so. Both channels are gated here because both are settable from this one write.
+  // `versionId` must be the row this write will actually land on. A templated write creates a NEW
+  // version even with an `id` present (see the branch below), so reading the affirmation off `id`
+  // would let one affirmed version vouch for unlimited new monetized ones.
+  const createsNewVersion = !id || !!templateId;
+  const rightsAffirmation = await resolveRightsAffirmation({
+    userId: actorUserId ?? model.userId,
+    ownerId: model.userId,
+    versionId: createsNewVersion ? undefined : id,
+    // Post-policy, not `hasLicensingFee` above it: a POI version whose stored fee was just stripped
+    // monetizes nothing, and asking it to affirm rights it no longer exercises makes the save impossible
+    // — for a fee field the editor no longer shows.
+    monetizes: policy.feeMonetizes || paidAccessCharges(paidAccess),
+    rightsAffirmed,
+    isModerator,
+  });
+
+  if (createsNewVersion) {
     const existingVersions = await dbWrite.modelVersion.findMany({
       where: { modelId: data.modelId },
       select: {
@@ -501,55 +706,70 @@ export const upsertModelVersion = async ({
       throw throwBadRequestError('You cannot add versions to a private model.');
     }
 
-    const [version] = await dbWrite.$transaction([
-      dbWrite.modelVersion.create({
-        data: {
-          ...data,
-          meta: (metaInput as Prisma.ModelVersionCreateInput['meta']) ?? undefined,
-          flags: flagsOverride,
-          availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
-            (s) => s === data?.status
-          )
-            ? Availability.Public
-            : Availability.Private,
-          settings: settings !== null ? settings : Prisma.JsonNull,
-          monetization:
-            monetization && monetization.type
+    const version = await dbWrite.$transaction(
+      async (tx) => {
+        const created = await tx.modelVersion.create({
+          data: {
+            ...data,
+            meta:
+              ((rightsAffirmation
+                ? { ...((metaInput as Record<string, unknown> | null) ?? {}), rightsAffirmation }
+                : metaInput) as Prisma.ModelVersionCreateInput['meta']) ?? undefined,
+            availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
+              (s) => s === data?.status
+            )
+              ? Availability.Public
+              : Availability.Private,
+            settings: settings !== null ? settings : Prisma.JsonNull,
+            monetization:
+              monetization && monetization.type
+                ? {
+                    create: {
+                      type: monetization.type,
+                      unitAmount: monetization.unitAmount,
+                      currency: constants.defaultCurrency,
+                      sponsorshipSettings: monetization.sponsorshipSettings
+                        ? {
+                            create: {
+                              type: monetization.sponsorshipSettings?.type,
+                              currency: constants.defaultCurrency,
+                              unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                            },
+                          }
+                        : undefined,
+                    },
+                  }
+                : undefined,
+            index: 0,
+            recommendedResources: recommendedResources
               ? {
-                  create: {
-                    type: monetization.type,
-                    unitAmount: monetization.unitAmount,
-                    currency: constants.defaultCurrency,
-                    sponsorshipSettings: monetization.sponsorshipSettings
-                      ? {
-                          create: {
-                            type: monetization.sponsorshipSettings?.type,
-                            currency: constants.defaultCurrency,
-                            unitAmount: monetization?.sponsorshipSettings?.unitAmount,
-                          },
-                        }
-                      : undefined,
+                  createMany: {
+                    data: recommendedResources?.map((resource) => ({
+                      resourceId: resource.resourceId,
+                      settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
+                    })),
                   },
                 }
               : undefined,
-          index: 0,
-          recommendedResources: recommendedResources
-            ? {
-                createMany: {
-                  data: recommendedResources?.map((resource) => ({
-                    resourceId: resource.resourceId,
-                    settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
-                  })),
-                },
-              }
-            : undefined,
-          baseModelType: data.baseModelType ?? undefined,
-        },
-      }),
-      ...existingVersions.map(({ id }, index) =>
-        dbWrite.modelVersion.update({ where: { id }, data: { index: index + 1 } })
-      ),
-    ]);
+            baseModelType: data.baseModelType ?? undefined,
+          },
+        });
+
+        for (const [index, { id: existingId }] of existingVersions.entries())
+          await tx.modelVersion.update({ where: { id: existingId }, data: { index: index + 1 } });
+
+        if (descriptionSupplied && expansion.evaluated)
+          await reconcileBlurbReferences({
+            entityType: 'ModelVersion',
+            entityId: created.id,
+            uses: expansion.uses,
+            tx,
+          });
+
+        return created;
+      },
+      { maxWait: 10000, timeout: 30000 }
+    );
 
     // Native: derive the gate straight from the config input (endsAt materialized at publish for a
     // timed window), and create the EA donation goal here (option A) instead of at publish.
@@ -566,6 +786,14 @@ export const upsertModelVersion = async ({
         trainedWords: true,
         publishedAt: true,
         meta: true,
+        baseModel: true,
+        usageControl: true,
+        flags: true,
+        licensingFee: true,
+        // Read for the audit diff, not for the write. `watchedEntityFields` compares before/after by
+        // key, so a watched field missing from this select silently produces no row rather than an
+        // error — the audit would look wired up and record nothing.
+        licensingSourceVersionId: true,
         model: {
           select: {
             id: true,
@@ -581,6 +809,8 @@ export const upsertModelVersion = async ({
             sponsorshipSettings: {
               select: {
                 id: true,
+                type: true,
+                unitAmount: true,
               },
             },
           },
@@ -596,108 +826,258 @@ export const upsertModelVersion = async ({
       );
     }
 
-    const mergedMeta = metaInput
-      ? {
-          ...((existingVersion.meta as Record<string, unknown> | null) ?? {}),
-          ...(metaInput as Record<string, unknown>),
-        }
-      : undefined;
+    // `status` is client-settable on this route (`z.enum(ModelStatus)`, unconstrained) and rides the
+    // general `...data` spread into the update, so an edit-and-save could move a published version to
+    // any other status. Downloads and the public reads both gate on `status === 'Published'`, so
+    // EVERY other value takes the version off the page — Draft as surely as Unpublished — and none of
+    // them computes the refund that unpublishModelVersionById owes its buyers. So this refuses
+    // LEAVING Published rather than listing the values that do it: an enumeration of forbidden
+    // statuses is not a control, and ModelStatus has eight members.
+    //
+    // ⚠️ This closes the take-down, NOT every way this route can defeat the gate. The same save
+    // clears the PaidAccess row when `paidAccess` is omitted (writePaidAccessForModelVersion →
+    // deleteMany), and the requirement returns empty with no active gate — so one save then an
+    // ordinary unpublish still refunds nobody. That is tracked separately; do not read this guard
+    // as "the editor can no longer strand a buyer".
+    if (
+      existingVersion.status === ModelStatus.Published &&
+      data.status !== undefined &&
+      data.status !== ModelStatus.Published
+    ) {
+      throw throwBadRequestError(
+        'Use the unpublish action to take a published version down — it settles any refunds owed to buyers.'
+      );
+    }
 
-    const version = await dbWrite.modelVersion.update({
-      where: { id },
-      data: {
-        ...data,
-        meta: (mergedMeta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined,
-        flags: flagsOverride,
-        availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
-        settings: settings !== null ? settings : Prisma.JsonNull,
-        monetization:
-          existingVersion.monetization?.id && !monetization
-            ? { delete: true }
-            : monetization && monetization.type
-            ? {
-                upsert: {
-                  create: {
-                    type: monetization.type,
-                    unitAmount: monetization.unitAmount,
-                    currency: constants.defaultCurrency,
-                    sponsorshipSettings: monetization.sponsorshipSettings
-                      ? {
-                          create: {
-                            type: monetization.sponsorshipSettings?.type,
-                            currency: constants.defaultCurrency,
-                            unitAmount: monetization?.sponsorshipSettings?.unitAmount,
-                          },
-                        }
-                      : undefined,
-                  },
-                  update: {
-                    type: monetization.type,
-                    unitAmount: monetization.unitAmount,
-                    currency: constants.defaultCurrency,
-                    sponsorshipSettings:
-                      existingVersion.monetization?.sponsorshipSettings &&
-                      !monetization.sponsorshipSettings
-                        ? { delete: true }
-                        : monetization.sponsorshipSettings
-                        ? {
-                            upsert: {
+    const mergedMeta =
+      metaInput || rightsAffirmation
+        ? {
+            ...((existingVersion.meta as Record<string, unknown> | null) ?? {}),
+            ...((metaInput as Record<string, unknown> | null) ?? {}),
+            ...(rightsAffirmation ? { rightsAffirmation } : {}),
+          }
+        : undefined;
+
+    const version = await dbWrite.$transaction(
+      async (tx) => {
+        const updated = await tx.modelVersion.update({
+          where: { id },
+          data: {
+            ...data,
+            meta: (mergedMeta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined,
+            availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
+            settings: settings !== null ? settings : Prisma.JsonNull,
+            monetization:
+              existingVersion.monetization?.id && !monetization
+                ? { delete: true }
+                : monetization && monetization.type
+                ? {
+                    upsert: {
+                      create: {
+                        type: monetization.type,
+                        unitAmount: monetization.unitAmount,
+                        currency: constants.defaultCurrency,
+                        sponsorshipSettings: monetization.sponsorshipSettings
+                          ? {
                               create: {
                                 type: monetization.sponsorshipSettings?.type,
                                 currency: constants.defaultCurrency,
                                 unitAmount: monetization?.sponsorshipSettings?.unitAmount,
                               },
-                              update: {
-                                type: monetization.sponsorshipSettings?.type,
-                                currency: constants.defaultCurrency,
-                                unitAmount: monetization?.sponsorshipSettings?.unitAmount,
-                              },
-                            },
-                          }
-                        : undefined,
+                            }
+                          : undefined,
+                      },
+                      update: {
+                        type: monetization.type,
+                        unitAmount: monetization.unitAmount,
+                        currency: constants.defaultCurrency,
+                        sponsorshipSettings:
+                          existingVersion.monetization?.sponsorshipSettings &&
+                          !monetization.sponsorshipSettings
+                            ? { delete: true }
+                            : monetization.sponsorshipSettings
+                            ? {
+                                upsert: {
+                                  create: {
+                                    type: monetization.sponsorshipSettings?.type,
+                                    currency: constants.defaultCurrency,
+                                    unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                                  },
+                                  update: {
+                                    type: monetization.sponsorshipSettings?.type,
+                                    currency: constants.defaultCurrency,
+                                    unitAmount: monetization?.sponsorshipSettings?.unitAmount,
+                                  },
+                                },
+                              }
+                            : undefined,
+                      },
+                    },
+                  }
+                : undefined,
+            recommendedResources: recommendedResources
+              ? {
+                  deleteMany: {
+                    id: {
+                      notIn: recommendedResources.map((resource) => resource.id).filter(isDefined),
+                    },
                   },
-                },
-              }
-            : undefined,
-        recommendedResources: recommendedResources
-          ? {
-              deleteMany: {
-                id: {
-                  notIn: recommendedResources.map((resource) => resource.id).filter(isDefined),
-                },
-              },
-              createMany: {
-                data: recommendedResources
-                  .filter((resource) => !resource.id)
-                  .map((resource) => ({
-                    resourceId: resource.resourceId,
-                    settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
-                  })),
-              },
-              update: recommendedResources
-                .filter((resource) => resource.id)
-                .map((resource) => ({
-                  where: { id: resource.id },
-                  data: {
-                    settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
+                  createMany: {
+                    data: recommendedResources
+                      .filter((resource) => !resource.id)
+                      .map((resource) => ({
+                        resourceId: resource.resourceId,
+                        settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
+                      })),
                   },
-                })),
-            }
-          : undefined,
-        baseModelType: data.baseModelType ?? undefined,
-      },
-    });
+                  update: recommendedResources
+                    .filter((resource) => resource.id)
+                    .map((resource) => ({
+                      where: { id: resource.id },
+                      data: {
+                        settings: resource.settings !== null ? resource.settings : Prisma.JsonNull,
+                      },
+                    })),
+                }
+              : undefined,
+            baseModelType: data.baseModelType ?? undefined,
+          },
+        });
 
+        if (descriptionSupplied && expansion.evaluated)
+          await reconcileBlurbReferences({
+            entityType: 'ModelVersion',
+            entityId: updated.id,
+            uses: expansion.uses,
+            tx,
+          });
+
+        return updated;
+      },
+      { maxWait: 10000, timeout: 30000 }
+    );
+
+    const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;
     await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
 
-    // Run it in the background to avoid blocking the request.
-    ingestModelById({ id: version.modelId }).catch((error) =>
-      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
-    );
+    if (tracker) {
+      const changeRows = diffEntityChanges({
+        entityType: 'ModelVersion',
+        entityId: version.id,
+        ownerId: model.userId,
+        before: {
+          ...existingVersion,
+          licensingFee:
+            existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null,
+          monetization: toMonetizationAuditShape(existingVersion.monetization),
+          paidAccess: paidAccessBefore,
+        },
+        after: {
+          ...data,
+          // Mirror the write semantics above: paidAccess + monetization are always
+          // applied (absent input = gate cleared / monetization deleted).
+          paidAccess: toPaidAccessAuditState(paidAccess),
+          monetization: toMonetizationAuditShape(monetization),
+        },
+        actorRole: resolveActorRole({
+          actorUserId: actorUserId ?? 0,
+          ownerId: model.userId,
+          isModerator,
+        }),
+        systemFields: licensingSourceCoercedReason
+          ? { licensingSourceVersionId: `cleared: ${licensingSourceCoercedReason}` }
+          : undefined,
+      });
+      tracker.entityChanges(changeRows).catch(() => null);
+    }
+
+    // The orchestrator caches fee + payoutEnabled per version, and payoutEnabled now derives from the
+    // fee, so a fee change that doesn't invalidate it keeps pricing and paying against the old value.
+    // Never rejects: the write has already committed, and a failed bust must not surface as a failed save.
+    const feeBefore =
+      existingVersion.licensingFee != null ? Number(existingVersion.licensingFee) : null;
+    const feeAfter = feeProvided ? data.licensingFee ?? null : feeBefore;
+    if (feeBefore !== feeAfter)
+      await bustMvCache(version.id, version.modelId, actorUserId).catch(() => undefined);
+
+    if (version.description !== existingVersion.description)
+      await applyModelVersionContentChange({
+        id: version.id,
+        description: version.description ?? '',
+        context: { modelId: version.modelId },
+      });
 
     return version;
   }
 };
+
+/**
+ * The one path for "a model version's description changed": the column write plus the follow-up
+ * that change implies. `upsertModelVersion` calls it, and so does the blurb fan-out — which is
+ * what stops the two drifting.
+ *
+ * Deliberately narrow. `upsertModelVersion` is form-shaped, so a caller holding only new HTML
+ * cannot use it without clearing the base model, files, monetization and recommended resources.
+ *
+ * The follow-up mirrors what `upsertModelVersionHandler` runs after a save, inlined rather than
+ * imported: it lives in model.service.ts, which already imports this module.
+ */
+export async function applyModelVersionContentChange({
+  id,
+  description,
+  context,
+  expectedDescription,
+}: {
+  /**
+   * Compare-and-set: the body this caller READ before splicing. The fan-out does load → splice →
+   * save with nothing held across it, so a creator saving in that window had their edit silently
+   * reverted by the replay — no error, and the save it clobbered had already returned success.
+   * Supplied, a mismatch writes nothing and returns false; the reference stays pending and the
+   * next pass re-reads. Omitted, the write is unconditional as before.
+   */
+  expectedDescription?: string;
+  id: number;
+  description: string;
+  /**
+   * A caller that has ALREADY written this body passes its post-write snapshot here. Delete it
+   * from such a call site and the write below replays the body over a save that committed in
+   * between.
+   */
+  context?: { modelId: number };
+}) {
+  // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
+  // catch it — same reason `applyArticleContentChange` re-checks.
+  await throwOnBlockedLinkDomain(description);
+
+  let modelId: number;
+  if (context) {
+    modelId = context.modelId;
+  } else {
+    const stored = await dbWrite.modelVersion.findUnique({
+      where: { id },
+      select: { modelId: true },
+    });
+    if (!stored) throw throwNotFoundError(`No model version with id ${id}`);
+    modelId = stored.modelId;
+
+    // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
+    // re-materialization is not a creator edit.
+    const affected =
+      await dbWrite.$executeRaw`UPDATE "ModelVersion" SET description = ${description} WHERE id = ${id}${
+        expectedDescription === undefined
+          ? Prisma.empty
+          : Prisma.sql` AND description = ${expectedDescription}`
+      }`;
+    if (expectedDescription !== undefined && !affected) return false;
+    await preventModelVersionLagBatch(modelId, [id]);
+  }
+
+  // The public GET /api/v1/models/[id] body carries the version rows, so all of these serve the
+  // pre-rewrite text until they are dropped.
+  await bustModelLevelVersionCaches(modelId);
+
+  return true;
+}
 
 // Narrow write for just the paid-access config — the studio (and any caller that only wants to edit
 // monetization) doesn't have to round-trip the whole version payload through `upsertModelVersion`.
@@ -706,7 +1086,15 @@ export const updateModelVersionPaidAccess = async ({
   id,
   paidAccess,
   donationGoal,
-}: UpdateModelVersionPaidAccessInput) => {
+  rightsAffirmed,
+  tracker,
+  actorUserId,
+  isModerator,
+}: UpdateModelVersionPaidAccessInput & {
+  tracker?: Tracker;
+  actorUserId?: number;
+  isModerator?: boolean;
+}) => {
   const existingVersion = await dbWrite.modelVersion.findUniqueOrThrow({
     where: { id },
     select: {
@@ -714,6 +1102,7 @@ export const updateModelVersionPaidAccess = async ({
       baseModel: true,
       usageControl: true,
       modelId: true,
+      meta: true,
       model: { select: { userId: true } },
     },
   });
@@ -724,25 +1113,68 @@ export const updateModelVersionPaidAccess = async ({
     );
   }
 
+  // Only downloadable or on-site-generation versions can be gated; API-only generation can't.
   if (
+    !!paidAccess &&
     existingVersion.usageControl !== ModelUsageControl.Download &&
-    !!paidAccess?.terms.download
+    existingVersion.usageControl !== ModelUsageControl.Generation
   ) {
-    throw throwBadRequestError(
-      'Cannot charge for download if downloads are disabled for this model version'
-    );
+    throw throwBadRequestError('Paid access is not available for this version’s usage control.');
   }
+
+  if (paidAccess?.terms)
+    paidAccess.terms = migrateTermsForUsageControl(
+      paidAccess.terms,
+      existingVersion.usageControl !== ModelUsageControl.Download
+    ) as typeof paidAccess.terms;
 
   assertPaidAccessInput(paidAccess);
 
+  const rightsAffirmation = await resolveRightsAffirmation({
+    userId: actorUserId ?? existingVersion.model.userId,
+    ownerId: existingVersion.model.userId,
+    versionId: id,
+    monetizes: paidAccessCharges(paidAccess),
+    rightsAffirmed,
+    isModerator,
+    existingMeta: existingVersion.meta,
+  });
   const { modelId } = existingVersion;
+  const paidAccessBefore = tracker ? await readPaidAccessAuditState(id) : null;
   // Native: paid access + donation goal are written directly (a published version's existing goal is
   // never replaced — ensureDonationGoal is create-once). Shares upsertModelVersion's write+bust tail.
-  await writeModelVersionGateAndGoal({ id, modelId }, existingVersion.model.userId, paidAccess, donationGoal);
-
-  ingestModelById({ id: modelId }).catch((error) =>
-    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId })
+  await writeModelVersionGateAndGoal(
+    { id, modelId },
+    existingVersion.model.userId,
+    paidAccess,
+    donationGoal
   );
+
+  // After the gate write, so a failed write can't leave the version marked as having affirmed a price
+  // it never got. Merged in SQL rather than read-modify-write: `meta` is shared with moderation flags
+  // (needsReview / declinedReason), and rewriting the whole object would clobber a concurrent change.
+  if (rightsAffirmation)
+    await dbWrite.$executeRaw`
+      UPDATE "ModelVersion"
+      SET meta = COALESCE(meta, '{}'::jsonb) || ${JSON.stringify({ rightsAffirmation })}::jsonb
+      WHERE id = ${id}
+    `;
+
+  if (tracker) {
+    const changeRows = diffEntityChanges({
+      entityType: 'ModelVersion',
+      entityId: id,
+      ownerId: existingVersion.model.userId,
+      before: { paidAccess: paidAccessBefore },
+      after: { paidAccess: toPaidAccessAuditState(paidAccess) },
+      actorRole: resolveActorRole({
+        actorUserId: actorUserId ?? 0,
+        ownerId: existingVersion.model.userId,
+        isModerator,
+      }),
+    });
+    tracker.entityChanges(changeRows).catch(() => null);
+  }
 
   return { id, modelId };
 };
@@ -1113,7 +1545,11 @@ export const publishModelVersionsWithEarlyAccess = async ({
           // only flips status here). Materialize the pending timed gate from the version's already-set
           // publishedAt — otherwise a scheduled EA version keeps endsAt NULL and becomes a PERMANENT
           // gate that never releases. materializePaidAccessEndsAt no-ops on permanent/tombstoned gates.
-          await materializePaidAccessEndsAt(currentVersion.id, currentVersion.publishedAt, dbClient);
+          await materializePaidAccessEndsAt(
+            currentVersion.id,
+            currentVersion.publishedAt,
+            dbClient
+          );
         }
 
         await bustMvCache(updatedVersion.id, updatedVersion.modelId);
@@ -1370,40 +1806,129 @@ export const publishModelVersionById = async ({
     images.map((image) => ({ id: image.id, action: SearchIndexUpdateQueueAction.Update }))
   );
 
-  // Run it in the background to avoid blocking the request.
-  ingestModelById({ id: version.modelId }).catch((error) =>
-    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
-  );
-
   return version;
+};
+
+/**
+ * Whether unpublishing this version takes the whole model down with it.
+ *
+ * It removes the SURPRISE, not the state: unpublishing a Published version while a Scheduled one
+ * waits leaves the model up (correct — a release is coming), and unpublishing that scheduled version
+ * afterwards takes the early return, so a model can still end up published with nothing live under
+ * it in two ordinary steps. Closing that needs a rule about scheduled versions, not a bigger count.
+ *
+ * 🔴 Read from the PRIMARY. On a replica this decides a take-down against lagged rows: stale-low
+ * unpublishes a model whose sibling has just been published, and stale-high leaves a model
+ * Published with nothing published under it — the state the cascade exists to prevent.
+ *
+ * The dialog and the mutation both call this, so what a creator consents to and what the server
+ * does come from one answer rather than two that have to agree.
+ */
+export type UnpublishScope = 'model' | 'version';
+
+export const resolveUnpublishScope = async (
+  id: number
+): Promise<{ kind: UnpublishScope; modelId: number }> => {
+  const version = await dbWrite.modelVersion.findUniqueOrThrow({
+    where: { id },
+    select: { modelId: true, status: true },
+  });
+  // A version that is not itself published cannot be the last published one; treating it as such
+  // would run a full model unpublish off an edit to a draft.
+  if (version.status !== ModelStatus.Published)
+    return { kind: 'version', modelId: version.modelId };
+
+  // Scheduled counts as a sibling. unpublishModelById takes Published AND Scheduled versions down,
+  // so cascading past a pending release would silently unpublish tomorrow's launch on a confirm
+  // whose copy said "this is the only published version" — true, and not what the creator agreed to.
+  // Leaving the model published with a scheduled release under it is the correct outcome: something
+  // is coming.
+  const liveSiblings = await dbWrite.modelVersion.count({
+    where: {
+      modelId: version.modelId,
+      status: { in: [ModelStatus.Published, ModelStatus.Scheduled] },
+      id: { not: id },
+    },
+  });
+  return { kind: liveSiblings === 0 ? 'model' : 'version', modelId: version.modelId };
 };
 
 export const unpublishModelVersionById = async ({
   id,
   reason,
   customMessage,
+  refundEarlyAccess,
   meta,
   user,
 }: UnpublishModelSchema & { meta?: ModelMeta; user: SessionUser }) => {
+  // Same obligation as unpublishing the whole model, scoped to this version: taking a version down
+  // revokes its buyers' access, so recent purchases have to be refunded first. Moderators bypass it
+  // exactly as they do in unpublishModelById.
+  if (!user.isModerator) {
+    // Same rule as unpublishModelById: only a moderator gives a reason. Without it the preserve
+    // guard below has a precondition rather than an assumption on one half and not the other — an
+    // owner supplying a reason takes the non-preserve branch, overwrites a moderator's verdict and
+    // attribution on the version they took down, and re-fires the per-version notification.
+    if (reason || customMessage)
+      throw throwAuthorizationError('Only a moderator can give a reason for unpublishing.');
+
+    const requirement = await getModelVersionEarlyAccessRefundRequirement({ id });
+    if (requirement.purchases.length > 0) {
+      if (!refundEarlyAccess) {
+        throw throwBadRequestError(
+          `Cannot unpublish a version with active early access purchases without refunding buyers. ${requirement.buyerCount} member(s) must be refunded a total of ${requirement.totalBuzz} Buzz.`
+        );
+      }
+      const { modelId } = await dbWrite.modelVersion.findUniqueOrThrow({
+        where: { id },
+        select: { modelId: true },
+      });
+      await refundModelEarlyAccessPurchases({ modelId, requirement, scope: 'version' });
+    }
+  }
+
   const unpublishedAt = new Date().toISOString();
   const version = await dbWrite.$transaction(
     async (tx) => {
+      // 🔴 Same rule as unpublishModelById, and this is the SHORTER path to the same place: a
+      // moderator takes one version down, the owner calls unpublish on it with no reason, and
+      // without this it lands at plain Unpublished with the owner as the actor — which is all the
+      // status-keyed republish gate checks. One call, no setup.
+      //
+      // Preserves any moderator-only status, not UnpublishedViolation alone: Deleted is the other
+      // one, and clearing it lets an owner republish a soft-deleted version.
+      const existing = await tx.modelVersion.findUniqueOrThrow({
+        where: { id },
+        select: { status: true },
+      });
+      const preserveModStatus =
+        !reason && constants.modPublishOnlyStatuses.includes(existing.status);
+
       const updatedVersion = await tx.modelVersion.update({
         where: { id },
         data: {
-          status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+          status: reason
+            ? ModelStatus.UnpublishedViolation
+            : preserveModStatus
+            ? existing.status
+            : ModelStatus.Unpublished,
 
-          meta: {
-            ...meta,
-            ...(reason
-              ? {
-                  unpublishedReason: reason,
-                  customMessage,
-                }
-              : {}),
-            unpublishedAt,
-            unpublishedBy: user.id,
-          },
+          // Untouched on the preserve path: the moderator's explanation is what the take-down
+          // notification and the model-page banner render, and refreshing unpublishedAt re-fires
+          // that notification against the creator with the owner named as the actor.
+          meta: preserveModStatus
+            ? (meta as Prisma.ModelVersionUpdateInput['meta']) ?? undefined
+            : {
+                ...meta,
+                ...(reason
+                  ? {
+                      unpublishedReason: reason,
+                      customMessage,
+                    }
+                  : {}),
+                unpublishedAt,
+                unpublishedBy: user.id,
+              },
         },
         select: { id: true, model: { select: { id: true, userId: true, nsfw: true } } },
       });
@@ -1757,10 +2282,6 @@ export const earlyAccessPurchase = async ({
   type: 'generation' | 'download';
   buzzType: BuzzSpendType;
 }) => {
-  if (buzzType === 'blue') {
-    throw throwBadRequestError('You cannot use Blue Buzz for early access purchases.');
-  }
-
   const permission =
     type === 'generation'
       ? EntityAccessPermission.EarlyAccessGeneration
@@ -1774,6 +2295,7 @@ export const earlyAccessPurchase = async ({
       status: true,
       name: true,
       meta: true,
+      baseModel: true,
       model: {
         select: {
           id: true,
@@ -1802,12 +2324,21 @@ export const earlyAccessPurchase = async ({
   const terms = paidAccess.terms as ModelVersionTerms;
   const generationTier = paidGenerationGrant(terms);
 
+  if (buzzType === 'blue' && !acceptsBlueBuzz(terms)) {
+    throw throwBadRequestError('This model version does not accept Blue Buzz.');
+  }
+
   // The EA donation goal is the forward relation (DonationGoal entity target), not a config back-link.
   // Only an active goal receives the purchase's donation record. We use the raw owner accessor (not the
   // public getDonationGoals, whose display filters would drop the goal for permanent/opted-out gates) —
   // safe on this buyer path because we only read `.id`/`.active` internally to attach the donation and
   // trip completion; the goal is never returned to the purchaser.
-  const ownerGoal = (await getOwnerDonationGoals('ModelVersion', [modelVersionId]))[modelVersionId];
+  // A completed goal ends the early-access window early, so a blue purchase must not advance one:
+  // blue is granted by rewards, which would let farmed credit close a paid window for everyone.
+  const ownerGoal =
+    buzzType === 'blue'
+      ? null
+      : (await getOwnerDonationGoals('ModelVersion', [modelVersionId]))[modelVersionId];
   const earlyAccessDonationGoal = ownerGoal?.active ? ownerGoal : null;
 
   if (modelVersion.status !== ModelStatus.Published) {
@@ -1840,8 +2371,16 @@ export const earlyAccessPurchase = async ({
   let buzzTransactionId: string | undefined;
   // Generation `price` is optional — `generationPrice` applies the download-price fallback (and is
   // unit-tested in @civitai/buzz, so the charged amount stays covered).
-  const amount =
-    type === 'download' ? (terms.download?.price as number) : (generationPrice(terms) as number);
+  //
+  // The stored price is the pre-sale price, permanent or timed alike.
+  const storedPrice = (type === 'download' ? terms.download?.price : generationPrice(terms)) ?? 0;
+  const permanent = isPermanentGate(paidAccess);
+  // Sales are read from the PRIMARY, not the cached gate: a cancelled sale must stop discounting the
+  // moment the creator ends it, and the cache is an hour behind with a fire-and-forget bust. The same
+  // `discountedPrice` runs in getViewerMonetization, which also owns the floor — the two must agree or
+  // buyers are billed a price they were never shown. Two copies of this arithmetic drifted apart once.
+  const sales = await getFreshSalesForPermanentGate(modelVersionId, permanent, paidAccess.ownerId);
+  const amount = discountedPrice(storedPrice, sales);
 
   const accessRecord = await dbWrite.entityAccess.findFirst({
     where: {
@@ -1853,16 +2392,29 @@ export const earlyAccessPurchase = async ({
   });
 
   try {
-    const externalTransactionIdPrefix = `early-access-${modelVersionId}-${type}-${userId}`;
+    // A timed early-access window and a permanent paid-access sale are different products and must be
+    // separable in the ledger. They previously shared the `early-access-` prefix, leaving the description
+    // string as the only signal — which made a copy edit enough to silently reclassify revenue. Both
+    // prefixes are two segments, so the `<versionId>` position is unchanged for anything parsing them.
+    // Readers must match BOTH: rows written before this change carry `early-access-` either way.
+    const externalTransactionIdPrefix = `${
+      permanent ? 'permanent-access' : 'early-access'
+    }-${modelVersionId}-${type}-${userId}`;
     const data = await createMultiAccountBuzzTransaction({
       fromAccountId: userId,
       toAccountId: modelVersion.model.userId,
       amount,
       type: TransactionType.Purchase,
-      description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
-      details: { modelVersionId, type, earlyAccessPurchase: true },
+      description: `${permanent ? 'Gain access to model' : 'Gain early access on model'}: ${
+        modelVersion.model.name
+      } - ${modelVersion.name}`,
+      details: { modelVersionId, type, earlyAccessPurchase: true, permanent },
       externalTransactionIdPrefix: externalTransactionIdPrefix,
       fromAccountTypes: [buzzType],
+      // Paid in kind. Naming the buyer's own account is what stops the buzz
+      // service applying its yellow default, which had converted every green
+      // purchase into yellow for the seller since green became spendable.
+      toAccountType: buzzType,
     });
 
     if (data?.transactionCount === 0)
@@ -2120,39 +2672,6 @@ export const modelVersionDonationGoal = async ({
   return (await getOwnerDonationGoals('ModelVersion', [id]))[id] ?? null;
 };
 
-export async function queryModelVersions<TSelect extends Prisma.ModelVersionSelect & { id: true }>({
-  user,
-  query,
-  select,
-}: {
-  user?: SessionUser;
-  query: QueryModelVersionSchema;
-  select: TSelect;
-}) {
-  const { cursor, limit, trainingStatus } = query;
-  const AND: Prisma.Enumerable<Prisma.ModelVersionWhereInput> = [];
-  if (trainingStatus) AND.push({ trainingStatus });
-
-  const where: Prisma.ModelVersionWhereInput = { AND };
-
-  // TODO(replica-toast): moderator-only training-review caller reads ModelFile.metadata; revert to dbRead once replication fixed.
-  const items = await dbWrite.modelVersion.findMany({
-    where,
-    cursor: cursor ? { id: cursor } : undefined,
-    take: limit + 1,
-    select: select,
-    orderBy: { id: 'desc' },
-  });
-
-  let nextCursor: number | undefined;
-  if (items.length > limit) {
-    const nextItem = (items as { id: number }[]).pop();
-    nextCursor = nextItem?.id;
-  }
-
-  return { items, nextCursor };
-}
-
 // Public-response cache (origin-side cache for GET /api/v1/models/[id]) toggle —
 // only populated on Datapacket (see PUBLIC_MODEL_RESPONSE_TTL in the handler).
 const PUBLIC_MODEL_RESPONSE_CACHE_ENABLED = env.IS_DATAPACKET;
@@ -2184,6 +2703,27 @@ export async function bustPublicModelResponseCache(modelId: number | number[]) {
   await redis.del(keys).catch(() => undefined);
 }
 
+/**
+ * The model-level caches that carry a version's data. Both callers below reach it: `bustMvCache`
+ * after a status/takedown change, and `applyModelVersionContentChange` after a fan-out rewrite.
+ *
+ * One function because cache invalidation is the worst place for a second copy — the next cache
+ * added here would otherwise reach one path and not the other, and the symptom ("the fan-out ran
+ * but the model page still shows the old text") points nowhere near the omission.
+ */
+export async function bustModelLevelVersionCaches(modelIds: number | number[]) {
+  const mIds = Array.isArray(modelIds) ? modelIds : [modelIds];
+  // Stale entries here filter the model out of feeds (versions with status='Draft' get dropped by
+  // the post-fetch transform), and `dataForModelsCache` carries `mv."description"`.
+  await dataForModelsCache.refresh(mIds);
+  // Drop the origin-side public GET /api/v1/models/[id] response cache for these models so a
+  // takedown / unpublish / update stops serving a stale 200.
+  await bustPublicModelResponseCache(mIds);
+  await modelsSearchIndex.queueUpdate(
+    mIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+  );
+}
+
 export const bustMvCache = async (
   ids: number | number[],
   modelIds?: number | number[],
@@ -2191,6 +2731,27 @@ export const bustMvCache = async (
 ) => {
   const versionIds = Array.isArray(ids) ? ids : [ids];
   await resourceDataCache.bust(versionIds);
+  // The sale badge is cached per MODEL and reached only from here — Creator Studio's bust POSTs to the
+  // endpoint that calls this, so without it a cancelled sale stayed advertised for the whole TTL.
+  try {
+    await bustModelSaleCache(versionIds);
+  } catch (error) {
+    // Best-effort, like the busts around it: a stale badge is not worth failing an unpublish over.
+    // Logged rather than silent — a sustained Redis fault otherwise advertises stale sales for a full
+    // TTL with nothing recorded anywhere.
+    logToAxiom({ type: 'error', name: 'bust-model-sale-cache', message: 'sale badge', error });
+  }
+  // Not covered by the badge bust above: the gate row caches the sale windows too, and it is what the
+  // model page prices from. Busting one and not the other left the card and the page disagreeing about
+  // the same sale for the rest of the hour (868kwp6ne). Guarded like the badge for the same reason, and
+  // separately from it so one Redis fault cannot take both — this row self-heals on its TTL, while the
+  // search-index enqueue at the end of this function does not.
+  try {
+    await bustPaidAccessCache('ModelVersion', versionIds);
+  } catch (error) {
+    // Best-effort: a stale price on the model page is not worth failing an unpublish over.
+    logToAxiom({ type: 'error', name: 'bust-paid-access-cache', message: 'gate row', error });
+  }
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);
   // Refresh imagesForModelVersionsCache too — TTL is up to 1 day on Datapacket,
@@ -2198,19 +2759,7 @@ export const bustMvCache = async (
   // from feeds (the feed render drops items with no images for non-self
   // viewers) until the next image upload or natural expiry.
   await imagesForModelVersionsCache.refresh(versionIds);
-  if (modelIds) {
-    const mIds = Array.isArray(modelIds) ? modelIds : [modelIds];
-    // Refresh dataForModelsCache so callers don't have to remember to do it
-    // separately. Stale entries here filter the model out of feeds (versions
-    // with status='Draft' get dropped by the post-fetch transform).
-    await dataForModelsCache.refresh(mIds);
-    // Drop the origin-side public GET /api/v1/models/[id] response cache for these
-    // models so a takedown / unpublish / update stops serving a stale 200.
-    await bustPublicModelResponseCache(mIds);
-    await modelsSearchIndex.queueUpdate(
-      mIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
-  }
+  if (modelIds) await bustModelLevelVersionCaches(modelIds);
 };
 
 export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
@@ -2944,8 +3493,8 @@ export const mergeVersions = async ({
   await Promise.all([
     bustMvCache(allVersionIds2, modelId, userId),
     dataForModelsCache.bust(modelId),
-    filesForModelVersionCache.bust(targetVersionId),
-    ...sourceVersionIds.map((id) => filesForModelVersionCache.bust(id)),
+    deleteFilesForModelVersionCache(targetVersionId),
+    ...sourceVersionIds.map((id) => deleteFilesForModelVersionCache(id)),
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);

@@ -36,6 +36,7 @@ export const CosmeticShopSectionUpsertForm = ({ section, onSuccess, onCancel }: 
       ...section,
       meta: {
         hideTitle: false,
+        communityHub: false,
         ...((section?.meta ?? {}) as CosmeticShopSectionMeta),
       },
       items:
@@ -48,7 +49,7 @@ export const CosmeticShopSectionUpsertForm = ({ section, onSuccess, onCancel }: 
     shouldUnregister: false,
   });
 
-  const [image] = form.watch(['image']);
+  const [image, communityHub] = form.watch(['image', 'meta.communityHub']);
   const { upsertShopSection, upsertingShopSection } = useMutateCosmeticShop();
 
   const handleSubmit = async (data: z.infer<typeof formSchema>) => {
@@ -94,6 +95,11 @@ export const CosmeticShopSectionUpsertForm = ({ section, onSuccess, onCancel }: 
             label="Published"
             description="Makes this section visible on the store"
           />
+          <InputCheckbox
+            name="meta.communityHub"
+            label="Community Cosmetics Hub"
+            description="Shows the sitewide feed of every creator-made cosmetic (with type filters) instead of hand-picked items. Only visible to users with Creator Shop access"
+          />
           <InputRTE
             name="description"
             description="This description will be shown in the shop"
@@ -103,11 +109,13 @@ export const CosmeticShopSectionUpsertForm = ({ section, onSuccess, onCancel }: 
             withAsterisk
             stickyToolbar
           />
-          <InputSectionItems
-            name="items"
-            label="Items in section"
-            description="Items that will be sold in this section. The order displayed here is the order they will appear in"
-          />
+          {!communityHub && (
+            <InputSectionItems
+              name="items"
+              label="Items in section"
+              description="Items that will be sold in this section. The order displayed here is the order they will appear in"
+            />
+          )}
         </Stack>
         <Group justify="flex-end">
           {onCancel && (

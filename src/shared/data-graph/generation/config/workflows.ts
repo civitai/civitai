@@ -23,6 +23,7 @@ import type { OutputType } from './types';
 // graphs import helpers from this file, so importing them back here would form a
 // graph <-> config/workflows cycle (the cause of "X is undefined" at module-eval).
 import {
+  grokVersionIds,
   happyHorseVersionIds,
   klingVersionIds,
   viduVersionIds,
@@ -51,6 +52,7 @@ const DRAFT_IDS = [...SD_FAMILY_IDS, ECO.Flux1];
 const EDIT_IMG_IDS = [
   ECO.Qwen,
   ECO.Qwen2,
+  ECO.Qwen3,
   ECO.Seedream,
   ECO.NanoBanana,
   ECO.OpenAI,
@@ -67,6 +69,7 @@ const EDIT_IMG_IDS = [
   ECO.Boogu,
   ECO.Reve,
   ECO.MageFlow,
+  ECO.Krea2,
 ];
 
 /** Image ecosystems that support image:create */
@@ -91,6 +94,7 @@ const TXT2IMG_IDS = [
   ECO.Chroma,
   ECO.Qwen,
   ECO.Qwen2,
+  ECO.Qwen3,
   ECO.HiDream,
   ECO.HiDreamO1,
   ECO.NanoBanana,
@@ -116,21 +120,24 @@ const TXT2VID_IDS = [
   ECO.HyV1,
   ECO.LTXV2,
   ECO.LTXV23,
+  ECO.LTXV25,
   ECO.WanVideo14B_T2V,
   ECO.WanVideo22_TI2V_5B,
   ECO.WanVideo22_T2V_A14B,
   ECO.WanVideo25_T2V,
   ECO.WanVideo27,
+  ECO.WanVideo30,
   ECO.Veo3,
   ECO.Sora2,
   ECO.Vidu,
-  // ECO.MiniMax,
+  ECO.MiniMaxH3,
   ECO.Kling,
   // ECO.Haiper,
   // ECO.Lightricks,
   ECO.Grok,
   ECO.Seedance,
   ECO.HappyHorse,
+  ECO.Flux3Video,
 ];
 
 /** I2V-only Wan ecosystems (no T2V support) — added to video:create with required images */
@@ -165,6 +172,8 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate an AI image from text',
     category: 'image',
     ecosystemIds: TXT2IMG_IDS,
+    // Grok v1.5 is video-only.
+    excludeModelVersionIds: [grokVersionIds['v1.5']],
   },
 
   'txt2img:draft': {
@@ -202,6 +211,7 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate or edit using reference images',
     category: 'image',
     ecosystemIds: EDIT_IMG_IDS,
+    excludeModelVersionIds: [grokVersionIds['v1.5']],
   },
 
   'img2img:face-fix': {
@@ -279,6 +289,8 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate video from text',
     category: 'video',
     ecosystemIds: TXT2VID_IDS,
+    // Grok v2.0 is image-only.
+    excludeModelVersionIds: [grokVersionIds['v2.0']],
   },
 
   img2vid: {
@@ -286,13 +298,24 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate video from an image',
     category: 'video',
     ecosystemIds: [...TXT2VID_IDS, ...I2V_ONLY_IDS],
+    excludeModelVersionIds: [grokVersionIds['v2.0']],
   },
 
   'img2vid:first-last': {
     label: 'First/Last Frame',
     description: 'Generate video from start and end images',
     category: 'video',
-    ecosystemIds: [ECO.Vidu, ECO.Kling, ECO.LTXV2, ECO.LTXV23, ECO.WanVideo27],
+    ecosystemIds: [
+      ECO.Vidu,
+      ECO.Kling,
+      ECO.LTXV2,
+      ECO.LTXV23,
+      ECO.LTXV25,
+      ECO.WanVideo27,
+      ECO.WanVideo30,
+      ECO.MiniMaxH3,
+      ECO.Flux3Video,
+    ],
     excludeModelVersionIds: [klingVersionIds.v1_6, klingVersionIds.v2, klingVersionIds.v2_5_turbo],
     variantOf: 'img2vid',
   },
@@ -301,8 +324,19 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Reference to Video',
     description: 'Generate video using a reference image',
     category: 'video',
-    ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling, ECO.LTXV23, ECO.WanVideo27, ECO.HappyHorse],
-    excludeModelVersionIds: [viduVersionIds.q3],
+    ecosystemIds: [
+      ECO.Vidu,
+      ECO.Veo3,
+      ECO.Kling,
+      ECO.LTXV23,
+      ECO.LTXV25,
+      ECO.WanVideo27,
+      ECO.HappyHorse,
+      ECO.MiniMaxH3,
+      ECO.Grok,
+    ],
+    // Grok referenceToVideo is a v1.5-only operation.
+    excludeModelVersionIds: [viduVersionIds.q3, grokVersionIds['v1.0'], grokVersionIds['v2.0']],
   },
 
   // ===========================================================================
@@ -331,7 +365,12 @@ export const workflowConfigs: WorkflowConfigs = {
     category: 'video',
     ecosystemIds: [ECO.Grok, ECO.WanVideo27, ECO.HappyHorse],
     // HappyHorse v1.1 has no videoEdit operation — v1.0 only.
-    excludeModelVersionIds: [happyHorseVersionIds['v1.1']],
+    // Grok edit-video is likewise v1.0-only.
+    excludeModelVersionIds: [
+      happyHorseVersionIds['v1.1'],
+      grokVersionIds['v1.5'],
+      grokVersionIds['v2.0'],
+    ],
   },
 
   // Disabled — LTXV23 extendVideo is producing poor results. Re-enable once
@@ -388,7 +427,8 @@ export const workflowConfigs: WorkflowConfigs = {
     category: 'model3d',
     // Image-to-3D is supported by all three 3D ecosystems; the user picks one
     // via the `BaseModelInput` "Eco" picker. Text-to-3D (txt2model3d) stays
-    // PolyGen-only — Tripo/Hunyuan3D have no text-to-3D operation.
+    // PolyGen-only — Tripo/Hunyuan3D have no text-to-3D operation, and neither
+    // does Meshy v7 (a version inside PolyGen, see polygen-graph.ts).
     ecosystemIds: [ECO.PolyGen, ECO.Tripo, ECO.Hunyuan3D],
     featureFlag: 'model3dGenerator',
     isNew: true,

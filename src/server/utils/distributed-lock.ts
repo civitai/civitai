@@ -8,6 +8,13 @@ export interface DistributedLockOptions {
   ttl?: number; // TTL in seconds, default 5 on DP / 30 on DOKS
   retryDelay?: number; // Retry delay in ms, default 100
   maxRetries?: number; // Max retries, default 10
+  /**
+   * Extend the lock on a timer for as long as the holder is alive. Opt-in: without
+   * it the TTL is a hard deadline, so an operation that outruns its TTL keeps
+   * running while a second holder acquires the same lock and does the work twice.
+   * A dead holder stops renewing and the TTL still reclaims the lock.
+   */
+  autoRenew?: boolean;
 }
 
 export class DistributedLock {
@@ -15,6 +22,8 @@ export class DistributedLock {
   private readonly ttl: number;
   private readonly retryDelay: number;
   private readonly maxRetries: number;
+  private readonly autoRenew: boolean;
+  private renewTimer: NodeJS.Timeout | null = null;
   private lockValue: string | null = null;
 
   constructor(options: DistributedLockOptions) {
@@ -22,6 +31,43 @@ export class DistributedLock {
     this.ttl = options.ttl ?? (env.IS_DATAPACKET ? 5 : 30);
     this.retryDelay = options.retryDelay ?? 100;
     this.maxRetries = options.maxRetries ?? 10;
+    this.autoRenew = options.autoRenew ?? false;
+  }
+
+  /**
+   * Compare-and-extend: only the holder whose value still matches may push the
+   * expiry out, so a lock already reclaimed and retaken is never extended by its
+   * previous owner.
+   */
+  private startRenewal(): void {
+    if (!this.autoRenew || !redis) return;
+
+    const script = `
+      if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("pexpire", KEYS[1], ARGV[2])
+      else
+        return 0
+      end
+    `;
+
+    this.renewTimer = setInterval(() => {
+      if (!this.lockValue) return;
+      redis
+        .eval(script, {
+          keys: [this.lockKey],
+          arguments: [this.lockValue, String(this.ttl * 1000)],
+        })
+        .catch((error) => handleLogError(error as Error, `Failed to renew lock: ${this.lockKey}`));
+    }, Math.max((this.ttl * 1000) / 3, 1000));
+
+    // Renewal must never be the reason a process stays alive.
+    this.renewTimer.unref?.();
+  }
+
+  private stopRenewal(): void {
+    if (!this.renewTimer) return;
+    clearInterval(this.renewTimer);
+    this.renewTimer = null;
   }
 
   async acquire(): Promise<boolean> {
@@ -37,6 +83,7 @@ export class DistributedLock {
         });
 
         if (result === 'OK') {
+          this.startRenewal();
           return true;
         }
 
@@ -53,6 +100,7 @@ export class DistributedLock {
   }
 
   async release(): Promise<void> {
+    this.stopRenewal();
     if (!redis || !this.lockValue) return;
 
     try {

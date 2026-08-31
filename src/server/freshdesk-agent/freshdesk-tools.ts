@@ -1,10 +1,11 @@
 import type { ToolDefinitionJson } from '@openrouter/sdk/models';
-import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
-import { dbRead } from '~/server/db/client';
+import { queryWithTimeout } from '~/server/db/db-helpers';
+import { pgDbRead } from '~/server/db/pgDb';
 import { freshdeskCaller } from '~/server/http/freshdesk/freshdesk.caller';
 import type { FreshdeskWebhookPhase } from '~/server/http/freshdesk/freshdesk.schema';
 import { agentLog, getDebugContext } from './freshdesk-debug';
+import { FRESHDESK_QUERY_TABLES, checkQueryScope } from './freshdesk-query-scope';
 import {
   investigateUserAccount,
   investigateCosmetics,
@@ -14,6 +15,73 @@ import {
   checkSiteStatus,
   investigateCryptoPayments,
 } from './freshdesk-investigation-tools';
+
+/**
+ * Ceiling for a single `query_database` statement. Applied as a Postgres
+ * `statement_timeout` inside the query's own transaction, so the database
+ * cancels the backend and releases the pooled connection. The tool
+ * description states this as a guarantee, so it has to be the real mechanism.
+ */
+const DB_QUERY_TIMEOUT_MS = 30_000;
+const DB_QUERY_TIMEOUT_SECONDS = DB_QUERY_TIMEOUT_MS / 1000;
+
+/** Rows `query_database` will hand back to the model. */
+const MAX_RESULT_ROWS = 50;
+
+/**
+ * Rows actually asked of the database: one more than we return, so a full page
+ * is distinguishable from a truncated one. Slicing a buffered array cannot make
+ * that distinction, which is why the old code could not say whether "50 rows"
+ * meant "50 rows existed" or "we threw the rest away".
+ */
+const ROW_FETCH_LIMIT = MAX_RESULT_ROWS + 1;
+
+/**
+ * Alias for the bounding subquery. Postgres requires a derived table be named,
+ * and the name is unlikely enough to collide with a model-chosen alias — though
+ * a collision would be harmless anyway: an inner alias lives at its own query
+ * level, verified against Postgres 18.
+ */
+const ROW_BOUND_ALIAS = '__civitai_row_bound';
+
+/**
+ * Wrap the model's statement so the ROW BOUND is the database's to enforce,
+ * matching the other two bounds (`checkQueryScope` for relations, `SET LOCAL
+ * statement_timeout` for time).
+ *
+ * Why this is not a `rows.slice(0, 50)`: `queryWithTimeout` goes through
+ * node-postgres `client.query()`, which is NOT streaming — it accumulates every
+ * row of the result into the Node heap before the promise resolves. A
+ * model-written `SELECT * FROM "User"` with no LIMIT therefore materialised the
+ * whole table in-process and only then discarded all but 50 rows, so the 50 was
+ * a bound on the model's context window, not on this process's memory. The tool
+ * description promises the bounds are "enforced by the server, not by
+ * convention"; an outer LIMIT is what makes that true of the row count too.
+ *
+ * Semantics of the wrap were verified against a real Postgres rather than
+ * reasoned about — `ORDER BY` (including on an unprojected column, by ordinal,
+ * and across a `UNION`), `UNION`/`UNION ALL`, `DISTINCT ON`, `GROUP BY`/
+ * `HAVING`, window functions, and an inner `LIMIT`/`OFFSET` all survive it, and
+ * duplicate output column names in the inner statement are legal in a derived
+ * table (`SELECT * FROM (SELECT 1 AS a, 2 AS a) x` is accepted, both columns
+ * preserved). The plan is `Limit -> ...`, so the scan really stops early rather
+ * than filtering afterwards.
+ *
+ * The trailing `;` that `checkQueryScope` permits has to go first, or the wrap
+ * is a syntax error.
+ *
+ * 🔴 This rewrite CHANGES THE PARSE of the model's text — it supplies a `(` and
+ * a `)`, so it can turn text that Postgres would reject outright into a valid
+ * statement. That is only safe because two things hold at the call site, and it
+ * must not be called anywhere they do not: `checkQueryScope` refuses
+ * paren-unbalanced input, and the caller re-runs that check on the string this
+ * returns. Skipping either one reopens a scope escape, not a syntax error.
+ */
+function boundRowCount(sql: string): string {
+  const trimmed = sql.trim();
+  const withoutTerminator = trimmed.endsWith(';') ? trimmed.slice(0, -1) : trimmed;
+  return `SELECT * FROM (${withoutTerminator}) ${ROW_BOUND_ALIAS} LIMIT ${ROW_FETCH_LIMIT}`;
+}
 
 // --- Tool definitions ---
 
@@ -256,15 +324,24 @@ const queryDatabaseTool: ToolDefinitionJson = {
   type: 'function',
   function: {
     name: 'query_database',
-    description:
-      'Execute a read-only SQL query against the Civitai database. Use this to verify facts, look up user info, check system data, etc. Only SELECT queries are allowed. Queries have a 30 second timeout.',
+    description: [
+      'Execute a SELECT query against the Civitai database. Use this to verify facts, look up user info, or check system data when the purpose-built investigation tools do not cover what you need.',
+      'The following are enforced by the server, not by convention — a query that breaks any of them is rejected, cancelled, or truncated, so write to them up front:',
+      `- It can only read these tables: ${FRESHDESK_QUERY_TABLES.map((t) => `"${t}"`).join(', ')}.`,
+      '- It runs inside a read-only transaction, so nothing can be written.',
+      `- The database cancels the statement after ${DB_QUERY_TIMEOUT_SECONDS} seconds. Always use LIMIT and filter on indexed columns.`,
+      '- One statement only. No comments, no CTEs (WITH), no schema prefixes, no table functions.',
+      '- Reference tables by their exact double-quoted name, e.g. FROM "User".',
+      "- FROM-inside-a-function-call is not supported: use date_part('epoch', col) rather than EXTRACT(EPOCH FROM col), and substr(...) rather than SUBSTRING(x FROM 1).",
+      `- At most ${MAX_RESULT_ROWS} rows come back. The server wraps the statement in its own outer LIMIT, so this holds whether or not you wrote a LIMIT, and the result says so explicitly when it truncated. Your own LIMIT is still worth writing — the outer one caps what is returned, not how much the database has to sort or aggregate first.`,
+    ].join('\n'),
     parameters: {
       type: 'object',
       properties: {
         sql: {
           type: 'string',
           description:
-            'A read-only SQL SELECT query. Must start with SELECT. Keep results small — use LIMIT.',
+            'A single SELECT statement over the allowed tables. Must start with SELECT. Keep results small — use LIMIT.',
         },
       },
       required: ['sql'],
@@ -382,7 +459,8 @@ const investigateCryptoPaymentsTool: ToolDefinitionJson = {
 
 // --- Tool execution ---
 
-const DB_QUERY_TIMEOUT_MS = 30_000;
+/** Postgres `query_canceled` — what `statement_timeout` raises. */
+const PG_QUERY_CANCELED = '57014';
 
 async function executeQueryDatabase(sql: string): Promise<string> {
   // Safety: only allow SELECT queries
@@ -391,14 +469,73 @@ async function executeQueryDatabase(sql: string): Promise<string> {
     return 'Error: Only SELECT queries are allowed.';
   }
 
+  // Bound WHICH relations the statement can reach before it touches a
+  // connection. The model's ORIGINAL text is checked first so the rejection the
+  // model reads is about the SQL it actually wrote.
+  const scope = checkQueryScope(sql);
+  if (!scope.ok) return scope.error;
+
+  // ...and then the statement that will actually EXECUTE is checked too.
+  //
+  // These are two different strings, and only the second one reaches Postgres.
+  // An earlier revision of this function checked the original alone, arguing
+  // that checking the rewrite would "audit our own wrapper". That conflated two
+  // questions: which text should produce the model-facing error message (the
+  // original — still true), and which text must be PROVEN in scope (the one
+  // that runs — this was wrong). It was wrong in an exploitable way: a
+  // paren-unbalanced statement could pass the check as written and become a
+  // valid query over an out-of-scope table once `boundRowCount` supplied the
+  // missing parenthesis.
+  //
+  // `checkQueryScope` now refuses unbalanced parentheses, which closes that
+  // specific escape at its source. This second call is the structural version
+  // of the same guarantee: whatever string we hand the driver has been through
+  // the scope check itself, so no future edit to `boundRowCount` — or any
+  // rewriter added later — can widen what the statement reads without this
+  // check seeing it. The wrapper's own tokens are a fixed prefix and suffix that
+  // pass the walk, so this cannot reject a statement the first check accepted;
+  // that is asserted over the whole allowlist corpus in the scope test suite.
+  //
+  // Reaching this branch therefore means an internal invariant broke, not that
+  // the model wrote something bad — so it gets a generic refusal rather than a
+  // description of our rewriting.
+  const boundedSql = boundRowCount(sql);
+  const boundedScope = checkQueryScope(boundedSql);
+  if (!boundedScope.ok) {
+    agentLog('QUERY_DATABASE REWRITE FAILED SCOPE', {
+      sql,
+      boundedSql,
+      error: boundedScope.error,
+    });
+    return 'Error: query_database could not verify this statement stays within its allowed tables. Rewrite it as a simple SELECT over the allowed tables.';
+  }
+
   try {
-    const results = await dbRead.$queryRaw(Prisma.raw(sql));
-    const rows = results as Record<string, unknown>[];
+    // `queryWithTimeout` wraps the statement in BEGIN READ ONLY + SET LOCAL
+    // statement_timeout, so both of those bounds are the database's to enforce.
+    // A `Promise.race` here would only abandon the promise — the backend would
+    // keep running and keep holding its pooled connection. `boundRowCount`
+    // makes the row bound the database's too: node-postgres buffers the whole
+    // result set into the heap, so a bound applied after the await is not a
+    // bound on this process at all.
+    const { rows } = await queryWithTimeout<Record<string, unknown>>(
+      pgDbRead,
+      DB_QUERY_TIMEOUT_MS,
+      boundedSql
+    );
     if (rows.length === 0) return 'No results found.';
-    // Limit output size
-    const truncated = rows.slice(0, 50);
-    return JSON.stringify(truncated, null, 2);
+    if (rows.length > MAX_RESULT_ROWS) {
+      const shown = JSON.stringify(rows.slice(0, MAX_RESULT_ROWS), null, 2);
+      return `${shown}\n\nTruncated: more than ${MAX_RESULT_ROWS} rows matched and only the first ${MAX_RESULT_ROWS} are shown. Narrow the query — add a WHERE filter, an ORDER BY, or a smaller LIMIT.`;
+    }
+    return JSON.stringify(rows, null, 2);
   } catch (err) {
+    if (
+      typeof err === 'object' &&
+      err !== null &&
+      (err as { code?: string }).code === PG_QUERY_CANCELED
+    )
+      return `Query error: cancelled after ${DB_QUERY_TIMEOUT_SECONDS}s. Narrow the query — add a LIMIT and filter on indexed columns.`;
     return `Query error: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
@@ -543,12 +680,7 @@ export async function executeToolCall(
         break;
       }
       case 'query_database': {
-        result = await Promise.race([
-          executeQueryDatabase(args.sql as string),
-          new Promise<string>((_, reject) =>
-            setTimeout(() => reject(new Error('Query timed out after 30s')), DB_QUERY_TIMEOUT_MS)
-          ),
-        ]);
+        result = await executeQueryDatabase(args.sql as string);
         break;
       }
       default:

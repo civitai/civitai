@@ -1,6 +1,23 @@
-import { Alert, Box, Button, Code, Group, Modal, Stack, Text, Textarea, TextInput, Tooltip } from '@mantine/core';
+import {
+  Alert,
+  Box,
+  Button,
+  Code,
+  Group,
+  Modal,
+  Stack,
+  Text,
+  Textarea,
+  TextInput,
+  Tooltip,
+} from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+
+import {
+  reasonGatedFieldDescription,
+  reasonGatedFieldError,
+} from '~/components/Apps/reasonGatedFieldCopy';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
 
 /**
@@ -42,6 +59,7 @@ export function ReasonGatedField({
   onChange,
   disabled,
   minLength = OFFSITE_MOD_REASON_MIN,
+  maxLength,
   required = true,
   label,
   placeholder,
@@ -53,6 +71,17 @@ export function ReasonGatedField({
   onChange: (value: string) => void;
   disabled?: boolean;
   minLength?: number;
+  /**
+   * An optional CEILING, surfaced the same way the floor is.
+   *
+   * 🔴 OPTIONAL AND INERT WHEN OMITTED — every pre-existing caller (reset / hide /
+   * relist / claim / purge / the two reject panels / the report notes) passes no
+   * ceiling and renders the byte-identical description and error it always did. It
+   * exists because `appListings.messageAppOwner` is the first moderator free-text
+   * field with a server-side MAXIMUM zod actually rejects (2000); without it, a long
+   * message opens the gate, fires, and comes back as an unattributed BAD_REQUEST.
+   */
+  maxLength?: number;
   /** When false, this is an OPTIONAL note — no counter, no floor, no inline error. */
   required?: boolean;
   label?: ReactNode;
@@ -62,7 +91,11 @@ export function ReasonGatedField({
   maxRows?: number;
 }) {
   const len = value.trim().length;
-  const tooShort = required && len < minLength;
+  // Both strings come from the pure `reasonGatedFieldCopy` module rather than being
+  // built inline. Built here they were pinned ONLY by the report-only browser tier, so
+  // dropping the ceiling from the counter — the one thing this prop was added for —
+  // left every blocking suite green. See that module's header.
+  const copy = { length: len, minLength, maxLength, required };
   return (
     <Textarea
       label={label}
@@ -70,11 +103,8 @@ export function ReasonGatedField({
       minRows={minRows}
       maxRows={maxRows}
       placeholder={placeholder}
-      // Live counter — only meaningful when a floor applies.
-      description={required ? `${len}/${minLength} characters minimum` : undefined}
-      // Inline error once the mod has typed SOMETHING but not enough (an empty field
-      // shows the neutral counter, not a red error).
-      error={tooShort && len > 0 ? `Enter at least ${minLength} characters.` : undefined}
+      description={reasonGatedFieldDescription(copy)}
+      error={reasonGatedFieldError(copy)}
       value={value}
       onChange={(e) => onChange(e.currentTarget.value)}
       disabled={disabled}

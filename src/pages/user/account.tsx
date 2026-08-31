@@ -10,6 +10,7 @@ import { DeleteCard } from '~/components/Account/DeleteCard';
 
 import { ProfileCard } from '~/components/Account/ProfileCard';
 import { SettingsCard } from '~/components/Account/SettingsCard';
+import { MembershipGiftsCard } from '~/components/Account/MembershipGiftsCard';
 import { SubscriptionCard } from '~/components/Account/SubscriptionCard';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -22,6 +23,7 @@ import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 import { CreatorControlsCard } from '~/components/Account/CreatorControlsCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
 import { StrikesCard } from '~/components/Account/StrikesCard';
+import { StickerInventoryCard } from '~/components/Account/StickerInventoryCard';
 import { GenerationSettingsCard } from '~/components/Account/GenerationSettingsCard';
 import dynamic from 'next/dynamic';
 
@@ -50,10 +52,25 @@ export default function Account() {
           <ContentControlsCard />
           <GenerationSettingsCard />
           {features.canViewNsfw && <ModerationCard />}
-          {features.creatorControls && <CreatorControlsCard />}
+          {/* Any one flag mounts the card; each section gates itself inside.
+              ANDing them here put the sticker controls behind `creator-controls`,
+              which is dark by default and whose Flipt flag does not exist — so
+              nobody could price their space, and the review queue nothing else
+              links to became unreachable. The same omission hid remix galleries
+              entirely: the settings section was shipped, mounted, and gated by a
+              flag this condition did not mention. */}
+          {(features.creatorControls || features.stickerPlacement || features.remixGallery) && (
+            <CreatorControlsCard />
+          )}
+          <StickerInventoryCard />
           <AccountsCard />
           <UserPaymentConfigurationCard />
-          {currentUser?.subscriptionId && <SubscriptionCard />}
+          {/* No `subscriptionId` guard: a Buzz-purchased membership writes a
+              CustomerSubscription row but never sets User.subscriptionId, so gating here
+              kept the card unmounted no matter what the query returned. The card already
+              self-hides when it resolves no subscriptions. */}
+          <SubscriptionCard />
+          <MembershipGiftsCard />
           <PaymentMethodsCard />
           {/* {buzz && <UserReferralCodesCard />} */}
           <NotificationsCard />

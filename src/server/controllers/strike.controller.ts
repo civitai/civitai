@@ -8,6 +8,7 @@ import type {
   VoidStrikeInput,
 } from '~/server/schema/strike.schema';
 import {
+  acceptTosAfterMute,
   createStrike,
   getStrikeHistoryForMod,
   getStrikesForMod,
@@ -107,6 +108,19 @@ export const getMyStrikesHandler = async ({
       includeExpired: input.includeExpired,
       includeInternalNotes: false, // Never expose internal notes to users
     });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+/**
+ * The user accepting the Terms after a strike mute. Returns whether it actually released them, so the
+ * client can tell "you are unblocked" from "a moderator is reviewing this" without a second call.
+ */
+export const acceptTosAfterMuteHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
+  try {
+    return await acceptTosAfterMute({ userId: ctx.user.id, domain: ctx.domain });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

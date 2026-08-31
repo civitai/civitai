@@ -96,14 +96,20 @@ kubectl $CTX -n civitai-dp-prod get events --field-selector type=Warning --sort-
 
 Useful when you can't reach the cluster or want to confirm the `github-create-deploy` task's view. This is the **secondary** source now.
 
+The environment name is **not** `prod` — it is cluster-prefixed, and which prefix you see depends on
+when you look: a run is created as `dp-prod` and settles to `do-prod`, so the same deployment id
+reports different values minutes apart (`original_environment` keeps the first). Match on the suffix.
+An `== "prod"` filter returns an empty list for every deployment this repo has ever created, and an
+empty list reads as "no prod deploys found" rather than as a broken filter.
+
 ```bash
 # Latest prod deployment + state
-DEPLOY_ID=$(gh api repos/civitai/civitai/deployments --jq '[.[] | select(.environment == "prod")] | .[0].id')
+DEPLOY_ID=$(gh api repos/civitai/civitai/deployments --jq '[.[] | select(.environment | endswith("prod"))] | .[0].id')
 gh api "repos/civitai/civitai/deployments/$DEPLOY_ID" --jq '{sha: (.sha[:7]), env: .environment, created: .created_at}'
 gh api "repos/civitai/civitai/deployments/$DEPLOY_ID/statuses" --jq '.[0] | {state: .state, description: .description, updated: .updated_at}'
 
 # Recent prod deployments with current state
-gh api repos/civitai/civitai/deployments --jq '[.[] | select(.environment == "prod")] | .[:5] | .[].id' | while read id; do
+gh api repos/civitai/civitai/deployments --jq '[.[] | select(.environment | endswith("prod"))] | .[:5] | .[].id' | while read id; do
   INFO=$(gh api "repos/civitai/civitai/deployments/$id" --jq '"\(.sha[:7]) \(.created_at)"')
   STATUS=$(gh api "repos/civitai/civitai/deployments/$id/statuses" --jq '.[0] | "\(.state)\t\(.description)"' 2>/dev/null || echo "unknown")
   echo "$id  $INFO  $STATUS"
@@ -134,7 +140,7 @@ Dashboard (browser, GitHub-org auth) for a run: `https://tekton.civitai.com/#/na
 
 - **Build stuck/slow**: check `build-image` TaskRun + pod logs (above). Common: OOM on Next.js build, BuildKit lock/disk on worker-spare.
 - **Image not picked up**: Flux ImagePolicy `latestImage` not advancing — tag must match `^\d{14}-[a-f0-9]+$`. Check ImageRepository `civitai-prod-release` scan.
-- **Canary rollback**: `get events --field-selector type=Warning` on ns `civitai-dp-prod`; Flagger needs 99% success rate + P99 < 5000ms, rolls back after 5 failed checks. Check `.status.failedChecks` on **both** canaries.
+- **Canary rollback**: `get events --field-selector type=Warning` on the prod namespace. Flagger rolls back when the success-rate / latency checks fail repeatedly; the configured thresholds live in the Canary CR, not here. Check `.status.failedChecks` on **both** canaries.
 - **Prod stuck on old image**: confirm both primaries' images; if policy has the new tag but primaries don't after >10m, the ImageUpdateAutomation commit or Kustomization reconcile is lagging — escalate to talos-infra (`dp-build-deploy` skill).
 
 ## Access levels

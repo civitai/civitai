@@ -3,6 +3,7 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   Divider,
   Group,
   Loader,
@@ -42,11 +43,10 @@ import { useSelectedBuzzType, BuzzTypeSelector } from '~/components/generation_v
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import {
-  blockedCustomModels,
-  goBack,
-  minsToHours,
-} from '~/components/Training/Form/TrainingCommon';
+import { goBack, minsToHours } from '~/components/Training/Form/TrainingCommon';
+import { BaseModelWarningAlert } from '~/components/Model/BaseModelWarningAlert/BaseModelWarningAlert';
+import { getBaseModelWarning } from '~/shared/constants/base-model-warnings.constants';
+import { blockedCustomModels } from '~/shared/constants/training.constants';
 import {
   type NumberTrainingSettingsType,
   trainingSettings,
@@ -251,6 +251,15 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const [multiMode, setMultiMode] = useState(runs.length > 1);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
+  const [acknowledgedBases, setAcknowledgedBases] = useState<string[]>([]);
+
+  const baseModelNameFor = (base: string) =>
+    trainingModelInfo[base as TrainingDetailsBaseModelList]?.baseModel;
+  const selectedRunBaseModel = baseModelNameFor(selectedRun.base);
+  const selectedRunWarning = getBaseModelWarning(selectedRunBaseModel);
+  const unacknowledgedRun = runs.find(
+    (r) => !!getBaseModelWarning(baseModelNameFor(r.base)) && !acknowledgedBases.includes(r.base)
+  );
 
   const status = useTrainingServiceStatus();
   const blockedModels = status.blockedModels ?? blockedCustomModels;
@@ -574,6 +583,16 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
       if (blockedModels.includes(r.base)) {
         showErrorNotification({
           error: new Error('This model has been blocked from training - please try another one.'),
+          autoClose: false,
+        });
+        return;
+      }
+
+      const warning = getBaseModelWarning(baseModelNameFor(r.base));
+      if (warning && !acknowledgedBases.includes(r.base)) {
+        showErrorNotification({
+          error: new Error(warning.acknowledgement),
+          title: "Please confirm you understand this base model's limits",
           autoClose: false,
         });
         return;
@@ -1133,6 +1152,24 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         </Paper>
       )}
 
+      {selectedRunWarning && (
+        <Stack gap="xs" mt="sm">
+          <BaseModelWarningAlert baseModel={selectedRunBaseModel} />
+          <Checkbox
+            checked={acknowledgedBases.includes(selectedRun.base)}
+            onChange={(event) => {
+              const checked = event.currentTarget.checked;
+              setAcknowledgedBases((prev) =>
+                checked
+                  ? [...prev, selectedRun.base]
+                  : prev.filter((base) => base !== selectedRun.base)
+              );
+            }}
+            label={selectedRunWarning.acknowledgement}
+          />
+        </Stack>
+      )}
+
       {prefersCaptions.includes(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'caption' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
@@ -1528,6 +1565,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             loading={awaitInvalidate || dryRunResult.isLoading}
             disabled={
               blockedModels.includes(formBaseModel ?? '') ||
+              !!unacknowledgedRun ||
               !status.available ||
               !allLabeled ||
               awaitInvalidate ||

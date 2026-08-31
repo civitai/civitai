@@ -1,4 +1,5 @@
 import dayjs from '~/shared/utils/dayjs';
+import { uniq } from 'lodash-es';
 import { find as findLinks } from 'linkifyjs';
 import { unfurl } from 'unfurl.js';
 import { linkifyOptions } from '~/components/Chat/util';
@@ -8,24 +9,33 @@ import { SignalMessages } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { CreateChatInput, CreateMessageInput } from '~/server/schema/chat.schema';
-import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
+import { DEFAULT_CHAT_SETTINGS, resolveDmPolicy } from '~/server/schema/chat.schema';
+import {
+  chatReferenceMessageSelect,
+  latestChat,
+  singleChatSelect,
+} from '~/server/selectors/chat.selector';
 import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { getUserSettings } from '~/server/services/user.service';
 import { withSignals } from '~/server/signals/wrapper';
-import { getChatHash } from '~/server/utils/chat';
+import { decideDmRouting } from '~/server/utils/chat';
+import { normalizeChatName, resolveChatIdentity } from '~/server/utils/chat-group';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   throwOnBlockedLinkDomain,
   throwOnBlockedMessagePattern,
 } from '~/server/services/blocklist.service';
+import { getOwnedStickerCosmetics } from '~/server/services/cosmetic.service';
 import { createLimiter } from '~/server/utils/rate-limiting';
-import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
+import { resolveStickerTokens, stripStickerTokens } from '~/shared/utils/sticker-token';
+import { MAX_CHAT_MEMBERS } from '~/shared/utils/chat';
+import { ChatMemberStatus, ChatMessageType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages, ChatCreateChat } from '~/types/router';
 
 export const maxChats = 1000;
 export const maxChatsPerDay = 10;
-export const maxUsersPerChat = 10;
+export const maxUsersPerChat = MAX_CHAT_MEMBERS;
 
 // Message rate limiting — stricter for new accounts (< 7 days old)
 const newAccountAgeDays = 7;
@@ -39,54 +49,215 @@ const messageLimiter = createLimiter({
   refetchInterval: 60 * 60, // 1 hour window
 });
 
-export const upsertChat = async ({
-  userIds,
-  isModerator,
-  isSupporter,
+/**
+ * Split recipients by `decideDmRouting`: `refused` are dropped from the chat
+ * entirely, `filtered` join it but land in Requests.
+ */
+const evaluateDmPolicies = async ({
   userId,
-}: CreateChatInput & { userId: number; isModerator?: boolean; isSupporter?: boolean }) => {
-  const hash = getChatHash(userIds);
-  // filter out blocked users from userIds
+  recipientIds,
+}: {
+  userId: number;
+  recipientIds: number[];
+}) => {
+  const refused = new Set<number>();
+  const filtered = new Set<number>();
+  if (!recipientIds.length) return { refused, filtered };
+
+  const [recipientSettings, sender, follows] = await Promise.all([
+    Promise.all(recipientIds.map((id) => getUserSettings(id))),
+    dbRead.user.findUnique({ where: { id: userId }, select: { createdAt: true } }),
+    dbRead.userEngagement.findMany({
+      where: {
+        type: UserEngagementType.Follow,
+        OR: [
+          { userId: { in: recipientIds }, targetUserId: userId },
+          { userId, targetUserId: { in: recipientIds } },
+        ],
+      },
+      select: { userId: true, targetUserId: true },
+    }),
+  ]);
+
+  const followsSender = new Set(
+    follows.filter((f) => f.targetUserId === userId).map((f) => f.userId)
+  );
+  const followedBySender = new Set(
+    follows.filter((f) => f.userId === userId).map((f) => f.targetUserId)
+  );
+  const senderIsNew = !!sender && dayjs().diff(dayjs(sender.createdAt), 'day') < newAccountAgeDays;
+
+  recipientIds.forEach((recipientId, i) => {
+    const settings = recipientSettings[i] ?? {};
+    const routing = decideDmRouting({
+      policy: resolveDmPolicy(settings),
+      holdNewAccounts:
+        settings.chat?.holdNewAccounts ?? DEFAULT_CHAT_SETTINGS.holdNewAccounts ?? false,
+      senderIsNew,
+      recipientFollowsSender: followsSender.has(recipientId),
+      senderFollowsRecipient: followedBySender.has(recipientId),
+    });
+
+    if (routing === 'refuse') refused.add(recipientId);
+    else if (routing === 'filter') filtered.add(recipientId);
+  });
+
+  return { refused, filtered };
+};
+
+/**
+ * Who out of `recipientIds` may actually be pulled into a conversation with
+ * `userId`, and which of them land in Requests rather than an inbox. Shared by
+ * chat creation and by adding members to an existing group, so a group invite
+ * cannot be used to route around a block or a DM policy that a new chat would
+ * have honoured.
+ */
+export const resolveChatRecipients = async ({
+  userId,
+  recipientIds,
+  isModerator,
+}: {
+  userId: number;
+  recipientIds: number[];
+  isModerator?: boolean;
+}) => {
   const blockedUsers = await Promise.all([
     BlockedUsers.getCached({ userId }),
     BlockedByUsers.getCached({ userId }),
   ]);
-  const blockedUserIds = [...new Set(blockedUsers.flat().map((u) => u.id))];
-  userIds = userIds.filter((u) => !blockedUserIds.includes(u));
+  const blockedUserIds = new Set(blockedUsers.flat().map((u) => u.id));
+  let allowed = recipientIds.filter((u) => u !== userId && !blockedUserIds.has(u));
 
-  // filter out recipients who have disabled chat in their settings (mods bypass).
-  // Like blocked users, these are silently dropped from the member list so a
-  // disabled account never receives an unsolicited chat request.
-  if (!isModerator) {
-    const recipientIds = userIds.filter((u) => u !== userId);
-    if (recipientIds.length) {
-      const recipientSettings = await Promise.all(recipientIds.map((id) => getUserSettings(id)));
-      const chatDisabledIds = new Set(
-        recipientIds.filter((_, i) => recipientSettings[i]?.features?.chat === false)
-      );
-      if (chatDisabledIds.size) userIds = userIds.filter((u) => !chatDisabledIds.has(u));
-    }
+  // Apply each recipient's DM policy (mods bypass). Only `nobody` refuses; a
+  // sender who fails a `following`/`mutuals` policy still gets a chat, it just
+  // lands in the recipient's Requests instead of their inbox.
+  let filteredIds = new Set<number>();
+  if (!isModerator && allowed.length) {
+    const { refused, filtered } = await evaluateDmPolicies({ userId, recipientIds: allowed });
+    if (refused.size) allowed = allowed.filter((u) => !refused.has(u));
+    filteredIds = filtered;
   }
 
-  // `userIds` includes the creator; everyone else is a recipient. If every
-  // requested recipient was filtered out (blocked or chat-disabled), there is
-  // no one to talk to — surface a friendly error instead of silently creating
-  // a chat that only contains the creator.
-  const remainingRecipients = userIds.filter((u) => u !== userId);
-  if (remainingRecipients.length === 0) {
+  return { allowed, filteredIds };
+};
+
+/**
+ * A group name is user-authored text shown to every member, so it goes through
+ * the same blocklists as a message rather than being trusted because it is short.
+ */
+export const assertChatNameAllowed = async (name: string | null) => {
+  if (!name) return;
+  await throwOnBlockedLinkDomain(name);
+  await throwOnBlockedMessagePattern(name);
+};
+
+/**
+ * Tell every side of a conversation that its membership moved.
+ *
+ * The payload is the chat id and nothing else. Member rows are per-recipient —
+ * `scopeMemberPrivacy` scrubs another member's `filteredAt`, `pinnedAt` and
+ * read receipt out of a query result — and a group broadcast has one body for
+ * everyone, so shipping the rows here would hand each member the fields the
+ * query deliberately withholds. Recipients refetch instead.
+ *
+ * `userIds` names people the group broadcast cannot reach: someone just removed
+ * (their signals group membership is already gone) or just invited (they only
+ * join the group on accept).
+ */
+export const signalChatMembersUpdated = async ({
+  chatId,
+  userIds = [],
+}: {
+  chatId: number;
+  userIds?: number[];
+}) => {
+  const body = JSON.stringify({ chatId });
+  const urls = [
+    `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatMembersUpdated}`,
+    ...uniq(userIds).map(
+      (uid) => `${env.SIGNALS_ENDPOINT}/users/${uid}/signals/${SignalMessages.ChatMembersUpdated}`
+    ),
+  ];
+
+  await Promise.all(
+    urls.map((url) =>
+      withSignals(() =>
+        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+      ).catch(() => undefined)
+    )
+  );
+};
+
+export const upsertChat = async ({
+  userIds,
+  isGroup,
+  name,
+  isModerator,
+  isSupporter,
+  userId,
+}: CreateChatInput & { userId: number; isModerator?: boolean; isSupporter?: boolean }) => {
+  const { allowed, filteredIds } = await resolveChatRecipients({
+    userId,
+    recipientIds: uniq(userIds),
+    isModerator,
+  });
+
+  // If every requested recipient was dropped (blocked, or not accepting chat),
+  // there is no one to talk to — surface a friendly error instead of silently
+  // creating a chat that only contains the creator.
+  if (allowed.length === 0) {
     throw throwBadRequestError('This user is not accepting chat requests');
   }
 
-  const existing = await dbWrite.chat.findFirst({
-    where: { hash },
-    select: {
-      ...singleChatSelect,
-      ...latestChat,
-    },
-    // select: { id: true },
-  });
+  userIds = [userId, ...allowed];
+  const identity = resolveChatIdentity({ userIds, isGroup });
+  const chatName = identity.isGroup ? normalizeChatName(name) : null;
+  await assertChatNameAllowed(chatName);
+
+  // A group's identity is its row id, so it never dedupes: asking for a group
+  // with people you already have a group with is a request for a second group.
+  const existing = identity.hash
+    ? await dbWrite.chat.findFirst({
+        where: { hash: identity.hash },
+        select: {
+          ...singleChatSelect,
+          ...latestChat,
+        },
+      })
+    : null;
 
   if (!!existing) {
+    // Re-opening a chat still has to respect the recipient's policy. Returning
+    // here without stamping `filteredAt` let anyone who had ever messaged you
+    // walk back into your inbox, which made the policy a one-time check rather
+    // than a standing one.
+    // Only ever mark a membership that is still open. Writing `status` here as
+    // well would let a sender undo a kick, an ignore or a leave, and would demote
+    // an accepted thread the recipient never left — the opposite of the promise
+    // that a policy change is not retroactive. `filteredAt` alone is what the
+    // rail buckets on.
+    const toFilter = existing.chatMembers.filter(
+      (cm) => filteredIds.has(cm.userId) && !cm.filteredAt && cm.status === ChatMemberStatus.Invited
+    );
+    if (toFilter.length) {
+      const filteredAt = new Date();
+      await dbWrite.chatMember.updateMany({
+        where: { id: { in: toFilter.map((cm) => cm.id) } },
+        data: { filteredAt },
+      });
+      for (const cm of toFilter) cm.filteredAt = filteredAt;
+    }
+
+    // The preview rides along on `latestChat` unfiltered. Re-opening a chat the
+    // caller cleared would hand back a message from before their watermark —
+    // the one path that broke the clean slate.
+    const callerClearedAt = existing.chatMembers.find((cm) => cm.userId === userId)?.clearedAt;
+    if (callerClearedAt) {
+      return {
+        ...existing,
+        messages: existing.messages.filter((msg) => msg.createdAt > callerClearedAt),
+      };
+    }
     return existing;
   }
 
@@ -122,7 +293,12 @@ export const upsertChat = async ({
 
   const createdChat = await dbWrite.$transaction(async (tx) => {
     const newChat = await tx.chat.create({
-      data: { hash, ownerId: userId },
+      data: {
+        hash: identity.hash,
+        ownerId: userId,
+        isGroup: identity.isGroup,
+        name: chatName,
+      },
       select: { id: true, createdAt: true },
     });
 
@@ -133,6 +309,7 @@ export const upsertChat = async ({
         isOwner: u === userId,
         status: u === userId || isModerator ? ChatMemberStatus.Joined : ChatMemberStatus.Invited,
         joinedAt: u === userId || isModerator ? newChat.createdAt : undefined,
+        filteredAt: filteredIds.has(u) ? newChat.createdAt : undefined,
       })),
     });
 
@@ -225,9 +402,12 @@ export const createMessage = async ({
     select: {
       chatMembers: {
         select: {
+          id: true,
           userId: true,
           status: true,
           isOwner: true,
+          clearedAt: true,
+          filteredAt: true,
           user: {
             select: {
               isModerator: true,
@@ -275,18 +455,42 @@ export const createMessage = async ({
   }
 
   if (referenceMessageId) {
+    // Scoped to THIS chat. Existence alone let a caller quote any message id in
+    // the database, and the reply's stored reference is now joined and returned
+    // to them — so an unscoped check hands back the content of other people's
+    // conversations.
     const existingReference = await dbWrite.chatMessage.count({
-      where: { id: referenceMessageId },
+      where: { id: referenceMessageId, chatId, deletedAt: null },
     });
     if (existingReference === 0) {
       throw throwBadRequestError(`Reference message does not exist: (${referenceMessageId})`);
     }
   }
 
+  // The client's `:slug:` resolution is optimistic; this is the authority.
+  if (userId !== -1) {
+    const owned = await getOwnedStickerCosmetics(userId);
+    const ownedIds = new Set(owned.map((x) => x.id));
+    const ownedBySlug = new Map<string, number>();
+    for (const sticker of owned)
+      if (!ownedBySlug.has(sticker.slug)) ownedBySlug.set(sticker.slug, sticker.id);
+
+    content = resolveStickerTokens(content, {
+      resolveSlug: (slug) => ownedBySlug.get(slug),
+      isOwnedId: (id) => ownedIds.has(id),
+    }).trim();
+
+    if (!content.length) {
+      throw throwBadRequestError('Message cannot be empty');
+    }
+  }
+
   // Enforce blocklists and rate limits on message content
   if (userId !== -1 && !isModerator) {
-    await throwOnBlockedLinkDomain(content);
-    await throwOnBlockedMessagePattern(content);
+    // Sticker tokens are stripped, not split around: `fu:sticker:1:ck` must still read as one word.
+    const scannableContent = stripStickerTokens(content);
+    await throwOnBlockedLinkDomain(scannableContent);
+    await throwOnBlockedMessagePattern(scannableContent);
 
     // Rate limit messages — stricter for new accounts
     const user = await dbRead.user.findUnique({
@@ -301,16 +505,73 @@ export const createMessage = async ({
     }
   }
 
+  // Answering a request accepts it. Without this the sender's reply left their
+  // own membership marked, so the conversation stayed in their Requests tab with
+  // no way out but the Accept button they had already implicitly used.
+  if (userId !== -1) {
+    const me = chat.chatMembers.find((cm) => cm.userId === userId);
+    if (me?.filteredAt) {
+      await dbWrite.chatMember.update({ where: { id: me.id }, data: { filteredAt: null } });
+    }
+  }
+
+  // Someone who deleted this conversation asked not to have it. The first
+  // message that reaches them afterwards is a new approach, not a continuation,
+  // so it re-enters the request flow regardless of their policy — the delete is
+  // the stronger signal. Only the first: once they accept, later messages land
+  // normally.
+  if (userId !== -1 && !isModerator) {
+    const clearedMembers = chat.chatMembers.filter(
+      (cm) =>
+        cm.userId !== userId &&
+        !!cm.clearedAt &&
+        !cm.filteredAt &&
+        // Never reopen a membership the user closed: re-arming a Left, Kicked or
+        // Ignored member would undo their own decision — or an owner's kick.
+        (cm.status === ChatMemberStatus.Joined || cm.status === ChatMemberStatus.Invited)
+    );
+    for (const member of clearedMembers) {
+      // findFirst, not count: this asks whether anything exists, and the answer
+      // is permanently "yes" once they accept — `clearedAt` is never unset, so a
+      // count would re-scan the whole conversation on every send forever.
+      // Scoped to real messages: an embed or a "X left" system row landing after
+      // the clear would otherwise consume the first-message slot and let the next
+      // real approach skip Requests entirely.
+      const since = await dbWrite.chatMessage.findFirst({
+        where: {
+          chatId,
+          createdAt: { gt: member.clearedAt as Date },
+          deletedAt: null,
+          userId: { not: -1 },
+          contentType: { not: ChatMessageType.Embed },
+        },
+        select: { id: true },
+      });
+      if (since) continue;
+
+      await dbWrite.chatMember.update({
+        where: { id: member.id },
+        data: { filteredAt: new Date() },
+      });
+    }
+  }
+
   const resp = await dbWrite.chatMessage.create({
     data: { chatId, contentType, content, referenceMessageId, userId },
+    // Same shape as a `getInfiniteMessages` item, so the optimistic push and the
+    // signal payload both carry the quote a reply needs to render immediately.
+    include: { referenceMessage: { select: chatReferenceMessageSelect } },
   });
 
   withSignals(() =>
-    fetch(`${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(resp as ChatAllMessages[number]),
-    })
+    fetch(
+      `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatNewMessage}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(resp as ChatAllMessages[number]),
+      }
+    )
   ).catch(() => undefined);
 
   if (userId !== -1) {
@@ -366,6 +627,7 @@ export const createMessage = async ({
                   userId: -1,
                   referenceMessageId: resp.id,
                 },
+                include: { referenceMessage: { select: chatReferenceMessageSelect } },
               });
 
               withSignals(() =>

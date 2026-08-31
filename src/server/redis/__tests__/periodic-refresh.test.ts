@@ -22,12 +22,14 @@ vi.mock('redis', () => {
     };
     return client;
   };
-  return {
+  // See the note in ./client.test.ts: `default` is required for the pre-bundled CJS interop.
+  const mocked = {
     createClient: vi.fn(noopClient),
     createCluster: vi.fn(noopClient),
     createSentinel: vi.fn(noopClient),
     RESP_TYPES: { BLOB_STRING: 'BLOB_STRING' },
   };
+  return { ...mocked, default: mocked };
 });
 vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: { REDIS_CLUSTER_ENHANCED_FAILOVER: 'redis_cluster_enhanced_failover' },

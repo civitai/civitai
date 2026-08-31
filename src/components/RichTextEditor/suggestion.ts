@@ -38,7 +38,7 @@ export function getSuggestions(options?: Options) {
 
           document.body.appendChild(component.element);
 
-          updatePosition(props.editor, component.element);
+          updateSuggestionPosition(props.editor, component.element);
 
           // @tiptap/suggestion 3.4.0 removed the built-in document mousedown
           // handler that closed popups on outside click. Restore that behavior
@@ -57,7 +57,7 @@ export function getSuggestions(options?: Options) {
           component.updateProps(props);
           if (!props.clientRect) return;
 
-          updatePosition(props.editor, component.element);
+          updateSuggestionPosition(props.editor, component.element);
         },
 
         onKeyDown(props) {
@@ -79,7 +79,7 @@ export function getSuggestions(options?: Options) {
   return suggestion;
 }
 
-const updatePosition = (editor: any, element: any) => {
+export const updateSuggestionPosition = (editor: any, element: any) => {
   const virtualElement = {
     getBoundingClientRect: () =>
       posToDOMRect(editor.view, editor.state.selection.from, editor.state.selection.to),

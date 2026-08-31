@@ -38,22 +38,17 @@ const mocks = vi.hoisted(() => {
   return { findManyMock, deleteObjectCalls, deleteManyObjectsCalls };
 });
 
-// Refcount check inside deleteModelFileObject(s) hits dbWrite.modelFile.findMany.
-// Default: 0 referenced rows → all URLs are "safe to delete".
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    modelFile: {
-      findMany: mocks.findManyMock,
-    },
-  },
-  dbRead: {},
-}));
-
 // Capture deleteObject / deleteManyObjects calls so we can assert which
 // (bucket, key) tuples actually reach the S3 client.
+// 🔴 `importOriginal` does NOT cover the interop case, which is why this file needs the same
+// `default` key as the hand-listed factories: the spread copies the original's NAMED exports
+// and does not synthesise a `default`. Pre-bundling wraps this CJS dep for interop, so the
+// consumer resolves through `default`; without one it gets undefined, and the file collects
+// almost no tests instead of going red. This file is 66 of the six files' 106 tests, so its
+// count is worth asserting on its own rather than through the total.
 vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@aws-sdk/client-s3')>();
-  return {
+  const mocked = {
     ...actual,
     S3Client: class {
       send = vi.fn(
@@ -78,6 +73,7 @@ vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
       );
     },
   };
+  return { ...mocked, default: mocked };
 });
 
 import {
@@ -86,7 +82,15 @@ import {
   deleteModelFileObject,
   deleteModelFileObjects,
   classifyS3MultipartError,
+  checkFileExists,
+  headObject,
+  objectExists,
 } from '~/utils/s3-utils';
+import { env } from '~/env/server';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbWrite.modelFile.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.findManyMock as (...a: unknown[]) => unknown)(...args)
+);
 
 beforeEach(() => {
   mocks.deleteObjectCalls.length = 0;
@@ -302,7 +306,7 @@ describe('classifyS3MultipartError', () => {
     // an unambiguous parts fault.
     const err = Object.assign(
       new Error(
-        'One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part\'s entity tag.'
+        "One or more of the specified parts could not be found. The part may not have been uploaded, or the specified entity tag may not match the part's entity tag."
       ),
       { name: 'InvalidPart' }
     );
@@ -340,5 +344,191 @@ describe('classifyS3MultipartError', () => {
   it('handles null / undefined without throwing', () => {
     expect(classifyS3MultipartError(null)).toBe('other');
     expect(classifyS3MultipartError(undefined)).toBe('other');
+  });
+});
+
+describe('checkFileExists — SDK error shape → tri-state mapping', () => {
+  // 🔴 This mapping is load-bearing for the cover-image guard, which REJECTS a user's save on
+  // `false`. Every rejection shape the AWS SDK can hand back has to land on the right side of
+  // that line: only a definitive "the bucket says this key is not there" may be `false`.
+  // Everything else — throttling, auth, transport, an abort — is `null`, i.e. "we do not know",
+  // and the caller proceeds. Reasoning about this from the source is not the same as running it.
+  function s3Throwing(error: unknown) {
+    return { send: vi.fn().mockRejectedValue(error) } as never;
+  }
+
+  const key = '0d5f0a4e-0000-4000-8000-000000000001';
+
+  it('returns true when HeadObject succeeds', async () => {
+    const s3 = { send: vi.fn().mockResolvedValue({}) } as never;
+    await expect(checkFileExists(key, { s3, bucket: 'uploads-bucket' })).resolves.toBe(true);
+  });
+
+  it.each([
+    ['NotFound', { name: 'NotFound', $metadata: { httpStatusCode: 404 } }],
+    ['NoSuchKey', { name: 'NoSuchKey', $metadata: { httpStatusCode: 404 } }],
+    // A 404 whose name the SDK did not map — still definitively absent.
+    ['a bare 404', { name: 'UnrecognizedClientError', $metadata: { httpStatusCode: 404 } }],
+  ])('maps %s to false (definitively absent)', async (_label, error) => {
+    await expect(
+      checkFileExists(key, { s3: s3Throwing(error), bucket: 'uploads-bucket' })
+    ).resolves.toBe(false);
+  });
+
+  it.each([
+    // 🔴 The throttle case the cover-image audit could only verify by inspection. A backend
+    // shedding load must never read as "the user's upload is gone".
+    ['a 503 SlowDown throttle', { name: 'SlowDown', $metadata: { httpStatusCode: 503 } }],
+    [
+      'a 403 from a rotated/insufficient key',
+      { name: 'Forbidden', $metadata: { httpStatusCode: 403 } },
+    ],
+    ['a 500 from the backend', { name: 'InternalError', $metadata: { httpStatusCode: 500 } }],
+    // No `$metadata` at all: the request never got an HTTP answer.
+    [
+      'a transport error with no status',
+      Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }),
+    ],
+    // What `AbortSignal.timeout` surfaces as through the node HTTP handler — the timeout
+    // budget must fail OPEN, not reject the save.
+    ['an aborted request', Object.assign(new Error('Request aborted'), { name: 'AbortError' })],
+  ])('maps %s to null (unknown — caller fails open)', async (_label, error) => {
+    await expect(
+      checkFileExists(key, { s3: s3Throwing(error), bucket: 'uploads-bucket' })
+    ).resolves.toBeNull();
+  });
+
+  it('forwards an abort signal to the SDK send call', async () => {
+    const s3 = { send: vi.fn().mockResolvedValue({}) };
+    const abortSignal = AbortSignal.timeout(5_000);
+
+    await checkFileExists(key, { s3: s3 as never, bucket: 'uploads-bucket', abortSignal });
+
+    expect(s3.send).toHaveBeenCalledTimes(1);
+    // Second arg is the SDK's per-call HttpHandlerOptions — the only place a caller can bound
+    // a request that otherwise inherits default retries and no timeout.
+    expect(s3.send.mock.calls[0][1]).toEqual({ abortSignal });
+  });
+});
+
+describe('headObject — presence AND size, as a three-state result', () => {
+  // 🔴 This mapping guards /api/upload/complete, which can REJECT a finished upload on
+  // `absent`. Only a definitive "the bucket says this key is not there" may be `absent`;
+  // every other rejection shape — throttle, auth, transport, abort — is `unknown`, i.e.
+  // "we could not consult the bucket", and the caller passes the request through.
+  const s3Throwing = (error: unknown) => ({ send: vi.fn().mockRejectedValue(error) } as never);
+  const s3Returning = (out: unknown) => ({ send: vi.fn().mockResolvedValue(out) } as never);
+
+  const BUCKET = 'test-bucket';
+  const KEY = 'model/1/x.safetensors';
+
+  it('returns the ContentLength the backend reported', async () => {
+    await expect(headObject(BUCKET, KEY, s3Returning({ ContentLength: 4096 }))).resolves.toEqual({
+      status: 'present',
+      size: 4096,
+    });
+  });
+
+  it('reports a real ZERO length as zero, not as "no length"', async () => {
+    await expect(headObject(BUCKET, KEY, s3Returning({ ContentLength: 0 }))).resolves.toEqual({
+      status: 'present',
+      size: 0,
+    });
+  });
+
+  // 🔴 `size: null` is "the backend reported no length", NOT zero. A caller that treats
+  // it as zero rejects healthy uploads on any backend that omits ContentLength.
+  it.each([
+    ['an omitted ContentLength', {}],
+    ['a non-numeric ContentLength', { ContentLength: '4096' }],
+  ])('maps %s to size null while still present', async (_label, out) => {
+    await expect(headObject(BUCKET, KEY, s3Returning(out))).resolves.toEqual({
+      status: 'present',
+      size: null,
+    });
+  });
+
+  it.each([
+    ['NotFound', { name: 'NotFound', $metadata: { httpStatusCode: 404 } }],
+    ['NoSuchKey', { name: 'NoSuchKey', $metadata: { httpStatusCode: 404 } }],
+    ['a bare 404', { name: 'UnrecognizedClientError', $metadata: { httpStatusCode: 404 } }],
+  ])('maps %s to absent (definitively not there)', async (_label, error) => {
+    await expect(headObject(BUCKET, KEY, s3Throwing(error))).resolves.toEqual({
+      status: 'absent',
+    });
+  });
+
+  it.each([
+    ['a 503 SlowDown throttle', { name: 'SlowDown', $metadata: { httpStatusCode: 503 } }],
+    ['a 403 from a rotated key', { name: 'Forbidden', $metadata: { httpStatusCode: 403 } }],
+    ['a 500 from the backend', { name: 'InternalError', $metadata: { httpStatusCode: 500 } }],
+    ['a transport error', Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' })],
+    ['an aborted request', Object.assign(new Error('Request aborted'), { name: 'AbortError' })],
+  ])('maps %s to unknown (caller fails open)', async (_label, error) => {
+    await expect(headObject(BUCKET, KEY, s3Throwing(error))).resolves.toEqual({
+      status: 'unknown',
+    });
+  });
+
+  // 🔴 The bound is the only thing stopping this probe from hanging a finished upload
+  // against a degraded backend: the client has SDK-default retries and no request
+  // timeout. Asserting the signal REACHES the send is what makes removing it fail —
+  // injecting an AbortError instead only proves the error mapping.
+  it('forwards an abort signal to the SDK send call', async () => {
+    const s3 = { send: vi.fn().mockResolvedValue({ ContentLength: 1 }) };
+    const abortSignal = AbortSignal.timeout(5_000);
+
+    await headObject(BUCKET, KEY, s3 as never, { abortSignal });
+
+    expect(s3.send).toHaveBeenCalledTimes(1);
+    expect(s3.send.mock.calls[0][1]).toEqual({ abortSignal });
+  });
+
+  /**
+   * 🔴 STRUCTURAL, not spelled. The handler's fail-open rests on `headObject` never
+   * throwing, and the case that actually threw before was CLIENT RESOLUTION — an
+   * unconfigured environment makes `getS3Client()` throw. Passing a client object can
+   * never reach that line, so a test that does so passes with the resolution back
+   * outside the try. This strips a required env var and passes no client, which is the
+   * only shape that exercises it.
+   */
+  it('resolves to unknown when the client cannot be constructed at all', async () => {
+    const envRecord = env as unknown as Record<string, unknown>;
+    const saved = envRecord.S3_UPLOAD_KEY;
+    delete envRecord.S3_UPLOAD_KEY;
+    try {
+      await expect(headObject(BUCKET, KEY, null)).resolves.toEqual({ status: 'unknown' });
+    } finally {
+      envRecord.S3_UPLOAD_KEY = saved;
+    }
+  });
+});
+
+describe('objectExists — the boolean view of headObject keeps its tri-state', () => {
+  // 🔴 `null` (couldn't consult the bucket) must stay distinct from `false` (definitely
+  // absent). Collapsing them makes /api/upload/complete report a terminal 409 for an
+  // infrastructure hiccup, stranding bytes with no DB row — the exact failure the
+  // not-found branch was written to avoid.
+  it.each([
+    ['a successful head', 'true', { ContentLength: 1 }, null, true],
+    [
+      'a definitive 404',
+      'false',
+      null,
+      { name: 'NotFound', $metadata: { httpStatusCode: 404 } },
+      false,
+    ],
+    [
+      'a 403 that cannot answer',
+      'null',
+      null,
+      { name: 'Forbidden', $metadata: { httpStatusCode: 403 } },
+      null,
+    ],
+  ])('maps %s to %s', async (_label, _expectedLabel, resolved, rejected, expected) => {
+    const s3 = {
+      send: rejected ? vi.fn().mockRejectedValue(rejected) : vi.fn().mockResolvedValue(resolved),
+    } as never;
+    await expect(objectExists('test-bucket', 'k', s3)).resolves.toBe(expected);
   });
 });

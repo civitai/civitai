@@ -13,11 +13,8 @@ import {
   upsertArticleInput,
   articleRateLimits,
   unpublishArticleSchema,
-  restoreArticleSchema,
   createArticleRatingReviewSchema,
   getMyArticleRatingReviewSchema,
-  getArticleRatingReviewsSchema,
-  resolveArticleRatingReviewSchema,
   resolveArticleImageScanSchema,
   rescanArticleImageSchema,
 } from '~/server/schema/article.schema';
@@ -33,22 +30,17 @@ import {
   rescanArticle,
   createArticleRatingReview,
   getArticleRatingReviewForOwner,
-  getArticleRatingReviews,
-  getArticleRatingReviewCounts,
-  resolveArticleRatingReview,
   resolveArticleImageScan,
   rescanArticleImage,
 } from '~/server/services/article.service';
 import {
   unpublishArticleHandler,
   upsertArticleHandler,
-  restoreArticleHandler,
 } from '~/server/controllers/article.controller';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { isModerator } from '~/server/routers/base.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
@@ -129,12 +121,6 @@ export const articleRouter = router({
     .use(isFlagProtected('articles'))
     .use(isOwnerOrModerator)
     .mutation(unpublishArticleHandler),
-  restore: protectedProcedure
-    .meta({ requiredScope: TokenScope.Full })
-    .input(restoreArticleSchema)
-    .use(isFlagProtected('articles'))
-    .use(isModerator)
-    .mutation(restoreArticleHandler),
   rescan: protectedProcedure
     .meta({ requiredScope: TokenScope.ArticlesWrite })
     .input(getByIdSchema)
@@ -189,31 +175,4 @@ export const articleRouter = router({
     .query(({ input, ctx }) =>
       getArticleRatingReviewForOwner({ articleId: input.articleId, userId: ctx.user.id })
     ),
-  getRatingReviews: moderatorProcedure
-    .use(isFlagProtected('articleRatingDispute'))
-    .input(getArticleRatingReviewsSchema)
-    .query(({ input }) => getArticleRatingReviews(input)),
-  getRatingReviewCounts: moderatorProcedure
-    .use(isFlagProtected('articleRatingDispute'))
-    .query(() => getArticleRatingReviewCounts()),
-  resolveRatingReview: moderatorProcedure
-    .use(isFlagProtected('articleRatingDispute'))
-    .input(resolveArticleRatingReviewSchema)
-    .mutation(async ({ input, ctx }) => {
-      const result = await resolveArticleRatingReview({
-        ...input,
-        moderatorId: ctx.user.id,
-      });
-      // Fire-and-forget — see note on createRatingReview above.
-      ctx.track
-        .articleRatingReviewResolved({
-          reviewId: result.reviewId,
-          articleId: result.articleId,
-          status: result.status,
-          appliedLevel: result.appliedLevel,
-          moderatorId: ctx.user.id,
-        })
-        .catch(() => undefined);
-      return result;
-    }),
 });

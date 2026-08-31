@@ -10,15 +10,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * signDevScopedPageToken) with only the DB, the JWT signer, and the audit log mocked.
  */
 
-const { mockSign, mockFindUnique, mockLogToAxiom } = vi.hoisted(() => ({
+const { mockSign,  } = vi.hoisted(() => ({
   mockSign: vi.fn(async (input: unknown) => ({
     token: 'review.jwt.signed',
     expiresAt: '2099-01-01T00:00:00Z',
     jti: 'j',
     _input: input,
   })),
-  mockFindUnique: vi.fn(),
-  mockLogToAxiom: vi.fn(async () => undefined),
+  
 }));
 
 // Sign is the real signDevScopedPageToken's downstream — mock it so we can inspect
@@ -26,14 +25,6 @@ const { mockSign, mockFindUnique, mockLogToAxiom } = vi.hoisted(() => ({
 vi.mock('~/server/services/block-token.service', () => ({
   BlockTokenService: { sign: mockSign },
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlockPublishRequest: { findUnique: mockFindUnique } },
-  dbWrite: {},
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
-}));
-
 import { mintReviewBlockToken } from '~/server/services/blocks/publish-request.service';
 import {
   DEV_BUZZ_BUDGET_CAP,
@@ -41,6 +32,10 @@ import {
   FORCED_SFW_CEILING,
 } from '~/server/services/blocks/dev-scoped-mint.service';
 import { REVIEW_RUN_FOR_REAL_BUZZ_CAP } from '~/shared/constants/block-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockFindUnique = dbMock.dbRead.appBlockPublishRequest.findUnique;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 const PUBREQ = 'pubreq_0123456789ABCDEFGHJKMNPQRS';
 const MOD_ID = 4242;
@@ -228,7 +223,8 @@ describe('mintReviewBlockToken', () => {
         'models:read:self',
         'user:read:self',
       ]);
-      // Spend-IN survived (keyCanSpend:true) — but every money-OUT / cross-user /
+      // Spend-IN survived (both spend predicates = runForReal = true) — but every
+      // money-OUT / cross-user /
       // private scope the manifest declared is ABSENT.
       expect(scopes).toContain('ai:write:budgeted');
       for (const withheld of [

@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import type { BuzzWriteOptions } from '@civitai/buzz';
 import { createBuzzClient } from '@civitai/buzz';
 import type { Dayjs } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
@@ -47,9 +48,11 @@ import {
   getTransactionsReportResultSchema,
 } from '~/server/schema/buzz.schema';
 import {
+  buzzBankTypesSql,
   BuzzTypes,
   buzzSpendTypes,
   CASH_SETTLED_ALIASES,
+  coercePurchasedBuzzType,
   TransactionType,
 } from '~/shared/constants/buzz.constants';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
@@ -84,18 +87,22 @@ type AccountType = 'User' | 'CreatorProgramBank' | 'CashPending' | 'CashSettled'
 export const buzzService = createBuzzClient({
   endpoint: env.BUZZ_ENDPOINT,
   log: isDev ? (message, ...args) => console.log(message, ...args) : undefined,
+  // Every branch carries the BuzzApiError as `cause`: the mapping is lossy (400 and 409 share one
+  // code and message), so a caller that has to tell them apart has nothing else to read. Recover it
+  // with `getBuzzApiStatus`; tRPC's error shape does not send `cause` to clients.
   mapError: (error) => {
     switch (error.status) {
       case 400:
-        throw throwBadRequestError();
+        throw throwBadRequestError(null, error);
       case 404:
-        throw new TRPCError({ code: 'NOT_FOUND', message: 'Not found' });
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Not found', cause: error });
       case 409:
-        throw throwBadRequestError('There is a conflict with the transaction');
+        throw throwBadRequestError('There is a conflict with the transaction', error);
       default:
         throw new TRPCError({
           code: 'INTERNAL_SERVER_ERROR',
           message: 'An unexpected error ocurred, please try again later',
+          cause: error,
         });
     }
   },
@@ -747,19 +754,23 @@ function counterpartyName(accountId: number, username?: string) {
   return username ?? `User ${accountId}`;
 }
 
-export async function createBuzzTransaction({
-  entityId,
-  entityType,
-  toAccountId,
-  amount,
-  details,
-  insufficientFundsErrorMsg,
-  ...payload
-}: CreateBuzzTransactionInput & {
-  fromAccountId: number;
-  fromAccountType?: BuzzAccountType;
-  insufficientFundsErrorMsg?: string;
-}) {
+export async function createBuzzTransaction(
+  {
+    entityId,
+    entityType,
+    toAccountId,
+    amount,
+    details,
+    insufficientFundsErrorMsg,
+    ...payload
+  }: CreateBuzzTransactionInput & {
+    fromAccountId: number;
+    fromAccountType?: BuzzAccountType;
+    insufficientFundsErrorMsg?: string;
+  },
+  // Optional per-call bound. Absent means today's behaviour: unbounded.
+  opts?: BuzzWriteOptions
+) {
   if (entityType && entityId && toAccountId === undefined) {
     const [{ userId } = { userId: undefined }] = await dbWrite.$queryRawUnsafe<
       [{ userId?: number }]
@@ -801,16 +812,19 @@ export async function createBuzzTransaction({
     throw throwInsufficientFundsError(insufficientFundsErrorMsg);
   }
 
-  const data = await buzzService.createTransaction({
-    ...payload,
-    details: {
-      ...(details ?? {}),
-      entityId: entityId ?? details?.entityId,
-      entityType: entityType ?? details?.entityType,
+  const data = await buzzService.createTransaction(
+    {
+      ...payload,
+      details: {
+        ...(details ?? {}),
+        entityId: entityId ?? details?.entityId,
+        entityType: entityType ?? details?.entityType,
+      },
+      amount,
+      toAccountId,
     },
-    amount,
-    toAccountId,
-  });
+    opts
+  );
 
   return data;
 }
@@ -990,7 +1004,7 @@ export async function completeStripeBuzzTransaction({
       amount: buzzAmount,
       fromAccountId: 0,
       toAccountId: userId,
-      toAccountType: (metadata.buzzType as any) ?? 'yellow', // Default to yellow if not specified
+      toAccountType: coercePurchasedBuzzType(metadata.buzzType),
       type: TransactionType.Purchase,
       description: `Purchase of ${amount} Buzz via Stripe. ${
         purchasesMultiplier && purchasesMultiplier > 1
@@ -1099,18 +1113,42 @@ export async function refundTransaction(
   return buzzService.refundTransaction(transactionId, { description, details });
 }
 
+/**
+ * The bank (account 0) is a system ledger, not a balance-constrained account, so what it is
+ * credited in is bookkeeping: it pays out in colours it was never credited in. Callers paying the
+ * bank may omit the destination type and land here; callers paying a USER may not, because for
+ * them the colour is the payout.
+ */
+const BANK_LEDGER_ACCOUNT_TYPE = 'yellow' satisfies BuzzAccountType;
+
+type MultiAccountBuzzDestination =
+  | { toAccountId: 0; toAccountType?: BuzzAccountType }
+  | { toAccountId: number; toAccountType: BuzzAccountType };
+
 export async function createMultiAccountBuzzTransaction(
-  input: CreateMultiAccountBuzzTransactionInput & { fromAccountId: number }
+  input: Omit<CreateMultiAccountBuzzTransactionInput, 'toAccountId' | 'toAccountType'> & {
+    fromAccountId: number;
+  } & MultiAccountBuzzDestination,
+  opts?: BuzzWriteOptions
 ) {
-  // Default user acc:
-  input.toAccountType = input.toAccountType ?? 'yellow'; // Default to bank if not provided
-  const data = await buzzService.createMultiTransaction(input);
+  if (input.toAccountId !== 0 && !input.toAccountType)
+    throw throwBadRequestError(
+      `toAccountType is required when paying account ${input.toAccountId}; only the bank (account 0) may omit it`
+    );
+
+  const data = await buzzService.createMultiTransaction(
+    { ...input, toAccountType: input.toAccountType ?? BANK_LEDGER_ACCOUNT_TYPE },
+    opts
+  );
 
   return createMultiAccountBuzzTransactionResponse.parse(data);
 }
 
-export async function refundMultiAccountTransaction(input: RefundMultiAccountTransactionInput) {
-  const data = await buzzService.refundMultiTransaction(input);
+export async function refundMultiAccountTransaction(
+  input: RefundMultiAccountTransactionInput,
+  opts?: BuzzWriteOptions
+) {
+  const data = await buzzService.refundMultiTransaction(input, opts);
 
   return refundMultiAccountTransactionResponse.parse(data);
 }
@@ -1417,7 +1455,7 @@ const earnedCache = createCachedObject<{ id: number; earned: number }>({
         (type IN ('compensation')) -- Generation
         OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
       )
-      AND toAccountType = 'yellow'
+      AND toAccountType IN (${buzzBankTypesSql})
       AND toAccountId IN (${ids})
       AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1))
       GROUP BY toAccountId;
@@ -1445,7 +1483,7 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
         SELECT
           SUM(amount) AS balance
         FROM buzzTransactions
-        WHERE toAccountType = 'yellow'
+        WHERE toAccountType IN (${buzzBankTypesSql})
         AND (
           (type IN ('compensation')) -- Generation
           OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
@@ -1466,7 +1504,7 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
         SELECT
             SUM(amount) / 1000 AS balance
         FROM buzzTransactions
-        WHERE toAccountType = 'yellow'
+        WHERE toAccountType IN (${buzzBankTypesSql})
         AND type = 'purchase'
         AND fromAccountId = 0
         AND externalTransactionId NOT LIKE 'renewalBonus:%'
@@ -1496,6 +1534,10 @@ type Row = {
   accountType: string;
   total: number;
 };
+
+// Cash spellings seen in orchestration.resourceCompensations for licenseFee rows; the table also carries the
+// lower-cased variants elsewhere, so both are listed.
+const CASH_ACCOUNT_TYPES_SQL = "'CashSettled', 'cashSettled', 'CashPending', 'cashPending'";
 
 export const getDailyCompensationRewardByUser = async ({
   userId,
@@ -1540,12 +1582,17 @@ export const getDailyCompensationRewardByUser = async ({
         AND amount > 0
         AND source ${source === 'licenseFee' ? '=' : '!='} 'licenseFee'
         -- We do this weird conversion here because the DB sometimes has Yellow and sometimes User. Yellow being the alias for User.
-        -- License fees can settle to cash OR buzz, so we ignore the accountType filter on that source and surface all of them together.
+        -- License fees can also settle to CASH, which the caller renders in its own panel rather than under the
+        -- buzz selector — so cash rows bypass the filter. The buzz rows must not: summing yellow+blue+green under
+        -- a control that says "Yellow" made the chart disagree with the yellow transaction list by exactly the
+        -- blue+green amount, which reads as missing payouts.
         AND ${
-          accountType && source !== 'licenseFee'
-            ? `accountType IN ('${BuzzTypes.toApiType(accountType)}', '${toPascalCase(
+          accountType
+            ? `(accountType IN ('${BuzzTypes.toApiType(accountType)}', '${toPascalCase(
                 accountType
-              )}')`
+              )}')${
+                source === 'licenseFee' ? ` OR accountType IN (${CASH_ACCOUNT_TYPES_SQL})` : ''
+              })`
             : '1=1'
         }
       GROUP BY modelVersionId, accountType, date

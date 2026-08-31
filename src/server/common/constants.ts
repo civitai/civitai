@@ -21,6 +21,42 @@ export const lipsum = `
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 `;
 
+/**
+ * Comment surfaces laid out full-width, so a conversation can render open and deeply nested
+ * without the indentation running out of room. Everything else gets the shallower defaults —
+ * `image` and `bountyEntry` sit in narrow columns and are shallower still.
+ *
+ * Deep threads reach the end of an article's ceiling for 99.5% of article threads (prod,
+ * Aug 2026); bounty and challenge threads have not been measured, and share the ceiling
+ * because they share the layout.
+ */
+const wideCommentSurfaces = new Set(['article', 'bounty', 'challenge']);
+
+function getCommentMaxDepth(entityType: string) {
+  if (wideCommentSurfaces.has(entityType)) return 10;
+  switch (entityType) {
+    case 'image':
+    case 'bountyEntry':
+      return 3;
+    default:
+      return 5;
+  }
+}
+
+/**
+ * Surfaces that open fewer reply levels than they can hold, because something below the section
+ * has to stay reachable. A challenge puts its entry gallery *underneath* the discussion, and
+ * opening every thread put that gallery 7.5 screens down (measured, 131-comment challenge);
+ * one level costs 4.2. Bounty and article have nothing below their discussion to scroll to.
+ */
+const autoExpandDepthOverrides: Record<string, number> = { challenge: 1 };
+
+function getCommentAutoExpandDepth(entityType: string) {
+  if (!wideCommentSurfaces.has(entityType)) return 0;
+  const ceiling = getCommentMaxDepth(entityType) - 1;
+  return Math.min(autoExpandDepthOverrides[entityType] ?? ceiling, ceiling);
+}
+
 export const constants = {
   modelFilterDefaults: {
     sort: ModelSort.HighestRated,
@@ -141,9 +177,6 @@ export const constants = {
   imageFormats: ['optimized', 'metadata'],
   tagFilterDefaults: {
     trendingTagsLimit: 20,
-  },
-  reportingFilterDefaults: {
-    limit: 50,
   },
   modelFileOrder: {
     Model: 0,
@@ -344,15 +377,25 @@ export const constants = {
     },
   },
   comments: {
+    /**
+     * Deepest reply level a surface renders inline. Past it, "show replies" re-roots the
+     * section on that comment instead. Resolve it against the *surface* entity type, never
+     * the nested `comment` type every reply thread carries.
+     */
     getMaxDepth({ entityType }: { entityType: string }) {
-      switch (entityType) {
-        case 'image':
-        case 'bountyEntry':
-          return 3;
-        default:
-          return 5;
-      }
+      return getCommentMaxDepth(entityType);
     },
+    /** How many reply levels a surface opens up front. 0 leaves every thread behind its button. */
+    getAutoExpandDepth({ entityType }: { entityType: string }) {
+      return getCommentAutoExpandDepth(entityType);
+    },
+    /**
+     * Most replies a single page may open up front, shallowest first. Threads past it stay behind
+     * "show replies" — a 1k-comment article opening every thread is what made these pages
+     * unresponsive before pagination, and this is what keeps a page a page's worth of work.
+     */
+    autoExpandBudget: 40,
+    replyPageSize: 5,
     maxLength: 50000, // 50k characters
   },
   altTruncateLength: 125,
@@ -444,6 +487,32 @@ export const constants = {
     maxCollaborators: 15,
   },
 
+  /**
+   * App Listing COLLABORATORS (editor seats on an App Block).
+   *
+   * Mirrors `entityCollaborators` deliberately, so the two collaborator surfaces
+   * stay comparable. The cap counts PENDING + ACCEPTED seats (a rejected seat is
+   * inert and does not occupy one) — see `app-collaborator.service.ts`.
+   */
+  appCollaborators: {
+    /** Max pending+accepted editor seats per app. */
+    maxCollaborators: 15,
+    /**
+     * Minimum gap between re-invite NOTIFICATIONS to the same (app, user).
+     *
+     * 🔴 The `EntityCollaborator` sibling's equivalent throttle is INVERTED —
+     * `entity-collaborator.service.ts` compares `lastMessageSentAt >= (now - 1d)`
+     * where the semantically identical `sendMessagesToCollaborators` correctly uses
+     * `lte`. As written it re-notifies precisely when it should stay silent. This
+     * one is written the correct way round (`lastNotifiedAt <= now - window`), and
+     * `app-collaborator.service.test.ts` pins BOTH sides of the boundary so the bug
+     * cannot be re-imported by copy-paste.
+     */
+    inviteNotifyThrottleHours: 24,
+    /** An unaccepted ownership transfer stops being acceptable after this. */
+    transferExpiryDays: 7,
+  },
+
   autoLabel: {
     labelTypes: ['tag', 'caption'] as const,
   },
@@ -508,6 +577,10 @@ type LicenseDetails = {
   name: string;
   notice?: string;
   poweredBy?: string;
+  // Set only when the licence obliges us to name the model in the product's own
+  // UI, and holds the exact string it demands. Distinct from `poweredBy`, which
+  // several licences use for a liability disclaimer rather than an attribution.
+  attribution?: string;
   restrictedNsfwLevels?: NsfwLevel[];
   // When true, mature content is restricted (auto-derives `restrictedNsfwLevels`
   // to MATURE_NSFW_LEVELS). Use this instead of hand-listing levels.
@@ -516,6 +589,9 @@ type LicenseDetails = {
   // permission override (-> [None]) and the per-version monetization block. The set
   // of affected base models is derived from this flag (see nonCommercialBaseModels).
   nonCommercial?: boolean;
+  // When true, the license requires derivatives to carry the same license, so the
+  // creator's `allowDifferentLicense` cannot apply (see getEffectiveDifferentLicense).
+  requiresSameLicense?: boolean;
 };
 
 // Levels considered "mature" — restricted whenever a license sets disableMature.
@@ -602,7 +678,7 @@ const baseLicenses: Record<string, LicenseDetails> = {
     name: 'Illustrious License',
   },
   'ltxv license': {
-    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/main/License.txt',
+    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/8984fa25007f376c1a299016d0957a37a2f797bb/LTX-Video-Open-Weights-License-0.X.txt',
     name: 'LTX Video License',
   },
   'cogvideox license': {
@@ -638,8 +714,22 @@ const baseLicenses: Record<string, LicenseDetails> = {
     name: 'Pony',
   },
   ltxv2: {
-    url: 'https://github.com/Lightricks/LTX-2/blob/main/LICENSE',
-    name: 'LTXV2',
+    // Permalinked to the Jan 5 2026 revision these weights shipped under. Not
+    // github.com/Lightricks/LTX-2, which serves a later rewrite scoped to 2.5+.
+    url: 'https://huggingface.co/Lightricks/LTX-2.3/blob/6f3520585aa27248020550da2f453aa0c572398c/LICENSE',
+    name: 'LTX-2 Community License Agreement',
+  },
+  ltxv25: {
+    // Permalinked to the Aug 11 2026 revision. `blob/main` tracks the latest, so the next
+    // rewrite Lightricks pushes there would silently relabel these weights — the same trap
+    // baseLicenses.ltxv2 avoids.
+    url: 'https://github.com/Lightricks/LTX-2/blob/2362161611a61154d342e02724fb8fe58efd455d/LICENSE.md',
+    name: 'LTX-2.x Community License Agreement',
+    // Section 3.6 permits only additive terms on derivatives, dropping the "or different"
+    // that the Jan 2026 text (baseLicenses.ltxv2) still allows.
+    requiresSameLicense: true,
+    notice:
+      'LTX Video 2.5 and its derivatives, including LoRAs and fine-tunes, are licensed by Lightricks Ltd. under the LTX-2.x Community License Agreement and must be redistributed under that same agreement, with a copy included. Use is subject to the use restrictions in its Attachment A. Entities with annual revenues of at least $10,000,000 must obtain a paid commercial license from Lightricks before any commercial use.',
   },
   anima: {
     url: 'https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md',
@@ -669,6 +759,18 @@ const baseLicenses: Record<string, LicenseDetails> = {
     disableMature: true,
     // Ideogram Non-Commercial Model Agreement forbids commercial use.
     nonCommercial: true,
+  },
+  'minimax h3': {
+    // Permalinked to the 2 Aug 2026 revision. The model page tracks the latest
+    // commit, and section III.1 obliges us to hand over a stable copy.
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/42ed227ee7df40d41602854ae760620d6eb651fe/LICENSE',
+    name: 'MiniMax H3 Community License Agreement',
+    notice:
+      'MiniMax H3 is licensed by MiniMax under the MiniMax H3 Community License Agreement. That agreement’s Applicable Territory excludes the European Union, the United Kingdom, the Republic of Korea and the United States of America. Your use of H3 and of any H3 derivative is subject to that agreement and its Acceptable Use Policy.',
+    // Section IV.2 demands this exact string in the product UI. "Powered by
+    // MiniMax H3" is the separate, merely encouraged notice in III.3(a).
+    attribution: 'MiniMax H3',
+    poweredBy: 'MiniMax H3',
   },
 };
 
@@ -724,6 +826,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   LTXV: baseLicenses['ltxv license'],
   LTXV2: baseLicenses['ltxv2'],
   'LTXV 2.3': baseLicenses['ltxv2'],
+  'LTXV 2.5': baseLicenses['ltxv25'],
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
   HiDream: baseLicenses['mit'],
@@ -751,6 +854,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Vidu Q1': baseLicenses['vidu'],
   Seedance: baseLicenses['seedream'],
   'Ideogram 4.0': baseLicenses['ideogram nc'],
+  'MiniMax H3': baseLicenses['minimax h3'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -794,6 +898,26 @@ export function getEffectiveCommercialUse(
   baseModel?: string | null
 ): CommercialUse[] {
   return isNonCommercialBaseModel(baseModel) ? [CommercialUse.None] : allowCommercialUse;
+}
+
+// Base models whose license requires derivatives to carry the same license.
+export const sameLicenseBaseModels: BaseModel[] = Object.entries(baseModelLicenses)
+  .filter(([, license]) => !!license?.requiresSameLicense)
+  .map(([baseModel]) => baseModel as BaseModel);
+
+export function requiresSameLicenseBaseModel(baseModel?: string | null): boolean {
+  return !!baseModel && !!baseModelLicenses[baseModel as BaseModel]?.requiresSameLicense;
+}
+
+// Effective "different permissions on merges" for a resource given its base model.
+// Mirrors getEffectiveCommercialUse: derived at read time so it tracks the license
+// config, and because the permission is stored per-model while the base model that
+// constrains it is per-version.
+export function getEffectiveDifferentLicense(
+  allowDifferentLicense: boolean,
+  baseModel?: string | null
+): boolean {
+  return requiresSameLicenseBaseModel(baseModel) ? false : allowDifferentLicense;
 }
 
 export function isNsfwLevelRestrictedForBaseModel(
@@ -1626,6 +1750,16 @@ export const banReasonDetails: Record<
     publicBanReasonLabel: 'Community Abuse',
     privateBanReasonLabel: 'Harassing or spamming users',
   },
+  [BanReasonCode.SpamBot]: {
+    code: BanReasonCode.SpamBot,
+    publicBanReasonLabel: 'Community Abuse',
+    privateBanReasonLabel: 'Spambot or automated account',
+  },
+  [BanReasonCode.BotAccount]: {
+    code: BanReasonCode.BotAccount,
+    publicBanReasonLabel: 'Community Abuse',
+    privateBanReasonLabel: 'Automated / bot account',
+  },
   [BanReasonCode.LeaderboardCheating]: {
     code: BanReasonCode.LeaderboardCheating,
     publicBanReasonLabel: 'Leaderboard manipulation',
@@ -1754,4 +1888,24 @@ export const EARLY_ACCESS_CONFIG: {
 export const KEY_VALUE_KEYS = {
   REDEEM_CODE_GIFT_NOTICES: 'redeemCodeGiftNotices',
   MODEL_FILE_OPTIONS: 'modelFileOptions',
+  CONTEST_SCORING: 'contestScoring',
+  CREATOR_SHOP_FEES: 'creatorShopFees',
 } as const;
+
+// Snapshot rows are one KeyValue per run: `contestSnapshot:<collectionId>:<takenAt ISO>`.
+export const CONTEST_SNAPSHOT_KEY_PREFIX = 'contestSnapshot';
+
+/**
+ * Bumped whenever a change to contest scoring could move a ranking. Recorded in every
+ * snapshot so a disputed result can be traced to the code that produced it, and read
+ * by the results UI to mark a snapshot taken by an older scorer.
+ *
+ * It lives HERE rather than beside the scorer because the client reads it: a value
+ * import from `contest-score.service` would pull `~/server/db/client` and `~/env/server`
+ * into the browser bundle, and neither module can be tree-shaken away (both run side
+ * effects at import). That failure only surfaces at `next build`.
+ */
+export const CONTEST_SCORE_CODE_VERSION = 5;
+
+/** Scoring counted every version of a model before this. */
+export const CONTEST_VERSION_SCOPING_CODE_VERSION = 3;

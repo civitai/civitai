@@ -281,10 +281,16 @@ export async function submitPresetImageGen({
     versionId,
   });
 
-  const { externalCtx } = await buildGenerationContext(user.tier ?? 'free', flags, {
-    id: user.id,
-    isModerator: user.isModerator,
-  });
+  const { externalCtx } = await buildGenerationContext(
+    user.tier ?? 'free',
+    flags,
+    { id: user.id, isModerator: user.isModerator },
+    // #3520: comics / preset generation composes the graph input SERVER-side, so
+    // a substitution here is a config/preset-registry problem, not an app-author
+    // or a stale-localStorage one. Its own `surface` keeps it out of both the
+    // on-site and the App Blocks numbers.
+    'preset'
+  );
 
   return generateFromGraph({
     input,
@@ -329,10 +335,16 @@ export async function whatIfPresetImageGen({
     versionId,
   });
 
-  const { externalCtx } = await buildGenerationContext(user.tier ?? 'free', flags, {
-    id: user.id,
-    isModerator: user.isModerator,
-  });
+  const { externalCtx } = await buildGenerationContext(
+    user.tier ?? 'free',
+    flags,
+    { id: user.id, isModerator: user.isModerator },
+    // #3520: comics / preset generation composes the graph input SERVER-side, so
+    // a substitution here is a config/preset-registry problem, not an app-author
+    // or a stale-localStorage one. Its own `surface` keeps it out of both the
+    // on-site and the App Blocks numbers.
+    'preset'
+  );
 
   const result = await whatIfFromGraph({
     input,

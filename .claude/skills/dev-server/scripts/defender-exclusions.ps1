@@ -1,0 +1,41 @@
+# Windows Defender exclusions for the dev environment.
+#
+# Real-time protection scans every file Turbopack and pnpm touch — ~210k files in
+# node_modules plus a multi-GB build cache per branch. Excluding them is the single
+# biggest win for cold-start and branch-switch time on Windows.
+#
+# Must run from an ELEVATED PowerShell (Run as Administrator).
+
+#Requires -RunAsAdministrator
+
+# Defaults to the repo this script lives in. A hardcoded root was wrong on any machine using a
+# different layout, and Add-MpPreference accepts a path that does not exist — so it reported success
+# and excluded nothing. Pass -ReposRoot to cover a whole repos parent directory instead.
+param([string]$ReposRoot = (& git -C $PSScriptRoot rev-parse --show-toplevel))
+
+if (-not $ReposRoot -or -not (Test-Path $ReposRoot)) {
+  throw "ReposRoot '$ReposRoot' does not exist. Add-MpPreference would accept it silently and exclude nothing."
+}
+
+$paths = @(
+  (Resolve-Path $ReposRoot).Path,
+  "$env:LOCALAPPDATA\pnpm",
+  "$env:LOCALAPPDATA\pnpm-store"
+)
+
+$processes = @('node.exe', 'pnpm.exe', 'npm.exe')
+
+foreach ($p in $paths) {
+  Add-MpPreference -ExclusionPath $p
+  Write-Host "excluded path:    $p"
+}
+
+foreach ($p in $processes) {
+  Add-MpPreference -ExclusionProcess $p
+  Write-Host "excluded process: $p"
+}
+
+Write-Host "`nCurrent exclusions:"
+$pref = Get-MpPreference
+$pref.ExclusionPath | ForEach-Object { "  path    $_" }
+$pref.ExclusionProcess | ForEach-Object { "  process $_" }

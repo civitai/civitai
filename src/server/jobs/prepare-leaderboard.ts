@@ -7,7 +7,11 @@ import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import { applyDiscordLeaderboardRoles } from '~/server/jobs/apply-discord-roles';
 import { logToAxiom } from '~/server/logging/client';
 import { redis } from '~/server/redis/client';
-import { isLeaderboardPopulated } from '~/server/services/leaderboard.service';
+import {
+  getUnpopulatedLeaderboards,
+  isLeaderboardPopulated,
+} from '~/server/services/leaderboard.service';
+import { leaderboardPopulatedKey } from '~/server/services/new-creators.service';
 import { updateLeaderboardRank } from '~/server/services/user.service';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -91,6 +95,8 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
             throw e;
           }
 
+          await markLeaderboardPopulated(id, addDays);
+
           log(`Leaderboard ${id} - Done - ${(Date.now() - start) / 1000}s`);
           logToAxiom({
             type: 'leaderboard-done',
@@ -110,6 +116,39 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     throw error;
   }
 });
+
+/**
+ * Record that a board finished populating, and for which date.
+ *
+ * Readers cannot infer this from the rows. The ClickHouse path assigns
+ * `position = positionStart + row_number()` per batch, where `positionStart` is the
+ * batch's offset in the PRE-filter array — so every user dropped by the eligibility
+ * join leaves a permanent hole, and a completed board is neither gapless nor of
+ * predictable size (prod: `generators` has 978 rows spanning 992 positions). Batches
+ * also land out of order, so a row count proves nothing about which slice is present.
+ * Only the job knows when it is done.
+ *
+ * Written AFTER the population call returns, so a crash mid-populate leaves the
+ * previous date marked and readers keep serving the last complete board. The
+ * `hasData` early return above deliberately skips this: a retry that finds a
+ * half-written board must not bless it.
+ *
+ * Re-evaluates `current_date + interval` rather than reusing the value the INSERTs
+ * used, so a run spanning midnight UTC would mark a date its rows aren't on. The job
+ * currently finishes ~2 minutes after its 23:00 cron (measured across four nights),
+ * leaving ~58 minutes of margin — fixing it properly means threading one date through
+ * every population path, which is a change to shared cron behavior for all 34 boards.
+ */
+async function markLeaderboardPopulated(id: string, addDays: number) {
+  const { rows } = await pgDbWrite.query<{ date: string }>(
+    `SELECT (current_date + interval '${addDays} days')::date::text as date`
+  );
+  await dbWrite.keyValue.upsert({
+    where: { key: leaderboardPopulatedKey(id) },
+    create: { key: leaderboardPopulatedKey(id), value: rows[0].date },
+    update: { value: rows[0].date },
+  });
+}
 
 type LegendsBoardResult = {
   userId: number;
@@ -195,7 +234,17 @@ const updateUserDiscordLeaderboardRoles = createJob(
   'update-user-discord-leaderboard-roles',
   '10 0 * * *',
   async () => {
-    if (!(await isLeaderboardPopulated())) throw new Error('Leaderboard not populated');
+    // Roles are driven by UserRank, not by any single board, so an unpopulated board only means the ranks may
+    // lag a day. Skipping the run instead costs the whole day's role sync, with no retry.
+    const unpopulated = await getUnpopulatedLeaderboards();
+    if (unpopulated.length)
+      logToAxiom({
+        type: 'warn',
+        name: 'leaderboard-partially-populated',
+        // civitai-prod is at its column cap, so `error` is the only top-level container new fields can go in.
+        error: { unpopulated },
+      });
+
     await applyDiscordLeaderboardRoles();
   }
 );

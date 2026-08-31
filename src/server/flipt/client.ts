@@ -1,4 +1,4 @@
-import { FliptClient } from '@flipt-io/flipt-client-js';
+import { createFliptClient } from '@civitai/flipt';
 import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
 
@@ -30,9 +30,13 @@ export enum FLIPT_FEATURE_FLAGS {
   FLUX2_KLEIN_TRAINING = 'flux2-klein-training',
   LTX2_TRAINING = 'ltx2-training',
   LTX23_TRAINING = 'ltx23-training',
+  LTX25_TRAINING = 'ltx25-training',
   WAN22_TRAINING = 'wan22-training',
   IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
+  // Gates every non-legacy judging engine. Default-off, so a challenge whose `judgingEngine`
+  // column points at the pairwise ladder still runs the legacy absolute path until this is on.
+  CHALLENGE_PAIRWISE_JUDGING = 'challenge-pairwise-judging',
   COMIC_CREATOR = 'comic-creator',
   GENERATION_PRESETS = 'generation-presets',
   GENERATION_TESTING = 'generation-testing',
@@ -45,6 +49,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // Gates the reemit-bitdex-ops job (BitDex publish re-emitter). Default-off: the
   // job is registered but no-ops until this flag is flipped on.
   BITDEX_PUBLISH_REEMITTER = 'bitdex-publish-reemitter',
+  // Gates the audit-bitdex-consistency job (standing PG<->BitDex comparison).
+  // Separate from the re-emitter flag on purpose: the audit is read-only and the
+  // healer is write-side, so switching one off must not blind or unblind the other.
+  // Default-off, like every flag here — isFlipt returns false for an unknown flag.
+  BITDEX_CONSISTENCY_AUDIT = 'bitdex-consistency-audit',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
@@ -60,36 +69,64 @@ export enum FLIPT_FEATURE_FLAGS {
   // DEFAULT-OFF (feature ships dormant; the timeout applies only when this is
   // explicitly ON). Flip ON to activate. See fetchTimeoutSignal.
   HOT_PATH_FETCH_TIMEOUTS = 'hot-path-fetch-timeouts',
+  // Kill switch for BOTH unattended paths that flag a model minor by SHA256
+  // match: the scan-time hook and the nightly sweep job. DEFAULT-OFF — isFlipt
+  // returns false for an unknown flag or an unreachable Flipt, and for a path
+  // that auto-restricts other people's models, not flagging is the safe
+  // failure. Deliberately does NOT gate /api/admin/temp/minor-hash-sweep, so
+  // rollback stays usable after the switch is thrown.
+  MINOR_HASH_AUTO_FLAG = 'minor-hash-auto-flag',
+  // Gates SUBMISSION of model name+description to XGuard from upsertModel. Keyed on
+  // modelId so a percentage rollout picks a deterministic, sticky subset of content.
+  // DEFAULT-OFF — isFlipt returns false for an unknown flag or an unreachable Flipt.
+  MODEL_TEXT_MODERATION_XGUARD = 'model-text-moderation-xguard',
+  // Gates APPLYING the verdict (the `nsfw` write). Separate from the submit flag so the
+  // scan can run in shadow — verdicts recorded to EntityModeration and the audit log while
+  // the profanity filter stays solely in charge of the column. For a path that
+  // auto-restricts other people's models, not flagging is the safe failure.
+  MODEL_TEXT_MODERATION_XGUARD_APPLY = 'model-text-moderation-xguard-apply',
+  // Arms the reaction reconciliation audit's repair path to WRITE compensating
+  // events to ClickHouse. Default-off — isFlipt returns false for an unknown flag
+  // or an unreachable Flipt, and for a path that mutates production metrics that
+  // is the safe failure. Off, the hourly path does nothing at all and the nightly
+  // one runs its diff as a dry run for visibility.
+  METRIC_REACTION_REPAIR = 'metric-reaction-repair',
+  // Lets the auto-feature job top up the Featured Images collection from the featured
+  // collections pool. Default-off, and the job's config carries its own `dryRun` on top,
+  // so the homepage cannot change until both are deliberately turned on.
+  AUTO_FEATURE_IMAGES = 'auto-feature-images',
+  // Arms the placement Buzz reconcile sweep. Default-off, and it must STAY off
+  // until the migration's backfill has been re-run against the deployed code —
+  // everything approved between the ALTER and that re-run carries no
+  // `metricCountedAt` while already having been counted, so a sweep running
+  // first re-emits all of it and roughly doubles those counters permanently.
+  PLACEMENT_METRIC_SWEEP = 'placement-metric-sweep',
+  // Early-adopter cohort gate. Segments on the `isEarlyAdopter` Flipt context property
+  // that `buildFliptContext` emits from the user's opt-in setting, so background paths
+  // (no request context) can gate on the same flag the request path does.
+  //
+  // 🔴 NOT default-off in the usual sense. `isFlipt` returns false for an UNKNOWN flag, but
+  // once this flag exists its answer for a non-matching entity is the flag's own `enabled`
+  // value, which Flipt returns when no rollout matches. So a caller that evaluates this
+  // WITHOUT the `isEarlyAdopter` context — which is every background path, since there is
+  // no request user to build a context from — gets that default, not false. It is false
+  // only because flipt-state pins the flag `enabled: false`. Pass a real context, or treat
+  // a bare `isFlipt(EARLY_ADOPTER)` as "is the programme switched on at all", never as
+  // "is this user an early adopter".
+  EARLY_ADOPTER = 'early-adopter',
+  // Gates the blurb editor control and the save-path expansion — NOT the fan-out job, which
+  // stays ungated so a creator who leaves the rollout keeps their existing references maintained.
+  // DEFAULT-OFF — isFlipt returns false for an unknown flag, and not expanding is
+  // the safe failure for a feature that rewrites published content.
+  //
+  // 🔴 RAMP BY PERCENTAGE OR BOOLEAN ONLY — A SEGMENT ROLLOUT MATCHES NOTHING. The server-side
+  // gate (blurb-materialize.service.ts) evaluates this with an entityId and NO context, because
+  // the entity is the content OWNER and no SessionUser for the owner is on hand there. Every
+  // identity/tier/cohort segment in flipt-state is a STRING_COMPARISON constraint that reads the
+  // context, so a segment rule here returns the flag default and looks exactly like "blurbs are
+  // off". The site is recorded in ENTITY_WITHOUT_CONTEXT_LEDGER (flipt-eval-context.test.ts).
+  TEXT_BLURBS = 'text-blurbs',
 }
-
-const FLIPT_INIT_TIMEOUT_MS = 5000;
-const FLIPT_FAILURE_COOLDOWN_MS = 30_000;
-
-// Per-request wasm `evaluateBoolean`/`evaluateVariant` calls showed up as a
-// top-10 CPU frame under load (~1500 req/s on a single JS thread). The wasm
-// engine result for a given (flag, entityId, context) is stable between config
-// refreshes, and the client only pulls new config every `updateInterval` (60s).
-// A short in-process TTL cache collapses the wasm call rate.
-//
-// Staleness note: the TTL is ADDITIVE to the 60s config poll, not absorbed by
-// it — worst-case propagation of a flipped flag is ~(60s + TTL) per pod, and
-// pods converge independently. That's fine for gradual rollout flags; incident
-// kill-switches that must take effect ASAP are listed in BYPASS below. Tune via
-// FLIPT_EVAL_CACHE_TTL_MS (set to 0 to disable).
-const FLIPT_EVAL_CACHE_TTL_MS = (() => {
-  // parseInt is intentional (integer ms). Note a non-integer env like "0.5"
-  // parses to 0 → cache disabled, and "1e4" parses to 1 — both surprising, so
-  // the resolved value is logged below for operator visibility.
-  const parsed = parseInt(process.env.FLIPT_EVAL_CACHE_TTL_MS ?? '', 10);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 10_000;
-})();
-console.log(`[flipt] eval cache TTL: ${FLIPT_EVAL_CACHE_TTL_MS}ms (0 = disabled)`);
-// Per-generation entry cap. entityId/context are per-user for some flags, so the
-// keyspace is unbounded; we rotate generations at this size (see TtlCache).
-// Steady-state live entries are bounded to ~2x this; a burst of distinct
-// promoting reads with no intervening insert can transiently reach ~4x before
-// the next insert rotates — still bounded, and entries are tiny.
-const FLIPT_EVAL_CACHE_MAX = 10_000;
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
 // flip to take effect ASAP and the eval is either rare (cold path) or the extra
@@ -115,279 +152,92 @@ const FLIPT_EVAL_CACHE_MAX = 10_000;
 const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
   FLIPT_FEATURE_FLAGS.HIGH_REPLICATION_LAG_MODE,
+  // Thrown when auto-flagging is misfiring, so propagation should be the 60s
+  // config poll alone. Evaluated once per model-file scan and once per nightly
+  // job run — nowhere near hot enough for the cache to be worth the extra lag.
+  FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG,
+  // The stop button for a sweep that can permanently double production counters
+  // — nothing takes a counter back down. Evaluated about ten times per
+  // five-minute tick, so the cache saves nothing measurable and the staleness is
+  // all cost at the moment someone is trying to turn it off.
+  FLIPT_FEATURE_FLAGS.PLACEMENT_METRIC_SWEEP,
 ]);
 
-type FliptCacheEntry<T> = { value: T; expiresAt: number };
-
-// TTL cache with generational rotation instead of full-clear eviction. On
-// overflow the current generation becomes the "previous" one (the old previous
-// is dropped) and a fresh generation starts, so hot keys survive at least one
-// rotation and we never thrash to worse-than-no-cache under high key
-// cardinality. Single-threaded, so Map ops need no locking.
-class TtlCache<T> {
-  private current = new Map<string, FliptCacheEntry<T>>();
-  private previous = new Map<string, FliptCacheEntry<T>>();
-
-  get(key: string, now: number): { hit: boolean; value?: T } {
-    const cur = this.current.get(key);
-    if (cur) {
-      if (cur.expiresAt > now) return { hit: true, value: cur.value };
-      this.current.delete(key);
-    }
-    const prev = this.previous.get(key);
-    if (prev) {
-      if (prev.expiresAt > now) {
-        // Promote into the current generation so hot keys aren't lost on rotate.
-        this.previous.delete(key);
-        this.current.set(key, prev);
-        return { hit: true, value: prev.value };
-      }
-      this.previous.delete(key);
-    }
-    return { hit: false };
-  }
-
-  set(key: string, value: T, now: number): void {
-    if (FLIPT_EVAL_CACHE_TTL_MS === 0) return;
-    if (this.current.size >= FLIPT_EVAL_CACHE_MAX) {
-      this.previous = this.current;
-      this.current = new Map();
-    }
-    this.current.set(key, { value, expiresAt: now + FLIPT_EVAL_CACHE_TTL_MS });
-  }
+// 🔴 SHARED_STATE — this module is emitted TWICE in the production server build.
+// Measured, not assumed: `[flipt] eval cache TTL:` appears exactly 2x on every pod
+// (488 lines across 244 pod streams), against ONE `[instrumentation] Running in
+// nodejs runtime`.
+//
+// Without the globalThis pin below, each emitted copy owned a PRIVATE wasm client,
+// a private config poller and a private pair of eval caches. Two consequences, and
+// the second is why this is pinned rather than documented:
+//
+//   1. Duplicated work per pod — two wasm engines and two 60s config polls.
+//   2. Any reader that closes over "the" client sees ONE of the two. That is
+//      exactly how `civitai_app_heavy_bulkhead_active`/`_rejects` emitted zero
+//      series for 74 days while looking registered, deployed and healthy (#4173),
+//      and it is why `src/server/utils/request-bulkhead.ts` is enrolled in
+//      scripts/server-graph-watchlist.mjs. `getFliptCacheStats` below is precisely
+//      such a reader, so an unpinned client would make the eval-cache metrics a
+//      confident half-measurement — worse than their absence, because the number
+//      they exist to arbitrate (TTL-bound vs capacity-bound) is biased by the
+//      split: one key space divided across two caches at the same ceiling rotates
+//      far less than one cache holding all of it, which reads as "TTL-bound" and
+//      sends you to the knob that changes nothing.
+//
+// Enrolled as SHARED_STATE on `__civitaiFliptClient` in server-graph-watchlist.mjs,
+// so a future refactor that drops this pin fails that gate. Vitest cannot see this
+// (it loads each module once).
+// `scripts/__tests__/check-server-graph-singletons.test.ts` asserts this EXACT shape
+// against comment-stripped source, so an aliased handle
+// (`const g = globalThis as …; g.__civitaiFliptClient ??= …`) does NOT satisfy it —
+// the gate must be able to recognise the pin inside a bundled chunk. `??=`
+// specifically, not `=`: `=` makes the second copy REPLACE the first's client
+// instead of adopting it, which is the original bug in one character.
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiFliptClient: ReturnType<typeof createFliptClient> | undefined;
 }
 
-const boolEvalCache = new TtlCache<boolean>();
-const variantEvalCache = new TtlCache<string | null>();
+const flipt = (globalThis.__civitaiFliptClient ??= createFliptClient({
+  url: env.FLIPT_URL,
+  clientToken: env.FLIPT_FETCHER_SECRET,
+  cacheBypass: FLIPT_EVAL_CACHE_BYPASS,
+  onInitError: (error) => {
+    logToAxiom(
+      {
+        type: 'init-flipt-error',
+        error: error.message,
+        cause: error.cause,
+        stack: error.stack,
+      },
+      'temp-search'
+    ).catch();
+  },
+}));
 
-// Build a collision-proof cache key. Components are URI-encoded so that a `|`,
-// `&`, or `=` inside an entityId or context value can't alias another key (the
-// context signature today is operator-controlled, but encoding makes the cache
-// safe for any future caller passing free-form values).
-function fliptCacheKey(flag: string, entityId: string, context: Record<string, string>): string {
-  const keys = Object.keys(context);
-  if (keys.length === 0) return `${flag}|${encodeURIComponent(entityId)}`;
-  const ctx = keys
-    .sort()
-    .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(context[k])}`)
-    .join('&');
-  return `${flag}|${encodeURIComponent(entityId)}|${ctx}`;
-}
-
-// Evaluate a boolean flag against the wasm engine, memoized. Throws on engine
-// error so callers keep their existing try/catch fallback; only successful
-// evaluations are cached.
-function evalBooleanCached(
-  fliptClient: FliptClient,
-  flag: string,
-  entityId: string,
-  context: Record<string, string>
-): boolean {
-  if (FLIPT_EVAL_CACHE_BYPASS.has(flag)) {
-    return fliptClient.evaluateBoolean({ flagKey: flag, entityId, context }).enabled;
-  }
-  const now = Date.now();
-  const key = fliptCacheKey(flag, entityId, context);
-  const cached = boolEvalCache.get(key, now);
-  if (cached.hit) return cached.value as boolean;
-  const evaluation = fliptClient.evaluateBoolean({ flagKey: flag, entityId, context });
-  boolEvalCache.set(key, evaluation.enabled, now);
-  return evaluation.enabled;
-}
-
-// Evaluate a variant flag against the wasm engine, memoized. Caches the
-// post-processed result (variantKey, or null when no match).
-function evalVariantCached(
-  fliptClient: FliptClient,
-  flag: string,
-  entityId: string,
-  context: Record<string, string>
-): string | null {
-  if (FLIPT_EVAL_CACHE_BYPASS.has(flag)) {
-    const evaluation = fliptClient.evaluateVariant({ flagKey: flag, entityId, context });
-    return evaluation.match ? evaluation.variantKey : null;
-  }
-  const now = Date.now();
-  const key = fliptCacheKey(flag, entityId, context);
-  const cached = variantEvalCache.get(key, now);
-  if (cached.hit) return cached.value as string | null;
-  const evaluation = fliptClient.evaluateVariant({ flagKey: flag, entityId, context });
-  const result = evaluation.match ? evaluation.variantKey : null;
-  variantEvalCache.set(key, result, now);
-  return result;
-}
-
-// Dev-only local overrides. Set FLIPT_LOCAL_OVERRIDES in .env to short-circuit
-// flag evaluation without touching shared Flipt state (GitOps overwrites it).
-// Format: comma-separated `flagKey=variantKey` pairs. Use `on`/`off` for booleans.
-// Example: FLIPT_LOCAL_OVERRIDES=bitdex-image-search=primary,my-bool-flag=on
-function parseLocalOverrides(): Record<string, string> {
-  if (process.env.NODE_ENV === 'production') return {};
-  const raw = process.env.FLIPT_LOCAL_OVERRIDES;
-  if (!raw) return {};
-  const out: Record<string, string> = {};
-  for (const pair of raw.split(',')) {
-    const [k, v] = pair.split('=').map((s) => s.trim());
-    if (k && v) out[k] = v;
-  }
-  return out;
-}
-const localOverrides = parseLocalOverrides();
-
-class FliptSingleton {
-  private static instance: FliptClient | null = null;
-  private static initializing: Promise<FliptClient | null> | null = null;
-  private static lastFailureTime = 0;
-
-  private constructor() {
-    // Prevent direct construction
-  }
-
-  static getInstanceSync(): FliptClient | null {
-    return this.instance;
-  }
-
-  static async getInstance(): Promise<FliptClient | null> {
-    if (this.instance) {
-      return this.instance;
-    }
-
-    // Circuit breaker: skip re-init during cooldown after a failure
-    if (Date.now() - this.lastFailureTime < FLIPT_FAILURE_COOLDOWN_MS) {
-      return null;
-    }
-
-    if (this.initializing) {
-      // If initialization is already in progress, wait for it
-      return this.initializing;
-    }
-
-    this.initializing = (async () => {
-      try {
-        const internalAuthHeader = env.FLIPT_FETCHER_SECRET;
-
-        const initPromise = (async () => {
-          const fliptClient = await FliptClient.init({
-            environment: 'civitai-app',
-            url: env.FLIPT_URL,
-            authentication: {
-              clientToken: internalAuthHeader,
-            },
-            updateInterval: 60, // Fetch feature flag updates (default: 120 seconds)
-          });
-          await fliptClient.refresh();
-          return fliptClient;
-        })();
-
-        // Attach a no-op catch to prevent unhandled rejection if timeout wins
-        // but initPromise later rejects
-        initPromise.catch(() => null);
-
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Flipt init timeout')), FLIPT_INIT_TIMEOUT_MS)
-        );
-
-        const fliptClient = await Promise.race([initPromise, timeoutPromise]);
-        this.instance = fliptClient;
-        return this.instance;
-      } catch (e) {
-        const err = e as Error;
-
-        logToAxiom(
-          {
-            type: 'init-flipt-error',
-            error: err.message,
-            cause: err.cause,
-            stack: err.stack,
-          },
-          'temp-search'
-        ).catch();
-
-        this.instance = null;
-        this.lastFailureTime = Date.now();
-        return null;
-      } finally {
-        this.initializing = null;
-      }
-    })();
-
-    return this.initializing;
-  }
-}
-
-export async function isFlipt(
-  flag: string,
-  entityId = 'global',
-  context: Record<string, string> = {}
-) {
-  if (localOverrides[flag] !== undefined) return localOverrides[flag] === 'on';
-  const fliptClient = await FliptSingleton.getInstance();
-  if (!fliptClient) return false;
-
-  try {
-    return evalBooleanCached(fliptClient, flag, entityId, context);
-  } catch (e) {
-    console.error('Flipt evaluation error:', e);
-    return false;
-  }
-}
-
-export async function getFliptVariant(
-  flag: string,
-  entityId = 'global',
-  context: Record<string, string> = {}
-): Promise<string | null> {
-  if (localOverrides[flag] !== undefined) return localOverrides[flag];
-  const fliptClient = await FliptSingleton.getInstance();
-  if (!fliptClient) return null;
-
-  try {
-    return evalVariantCached(fliptClient, flag, entityId, context);
-  } catch (e) {
-    console.error('Flipt variant evaluation error:', e);
-    return null;
-  }
-}
-
-export async function getFliptBoolean(
-  flag: string,
-  entityId = 'global',
-  context: Record<string, string> = {}
-): Promise<boolean> {
-  const fliptClient = await FliptSingleton.getInstance();
-  if (!fliptClient) return false;
-
-  try {
-    return evalBooleanCached(fliptClient, flag, entityId, context);
-  } catch (e) {
-    return false;
-  }
-}
-
-/**
- * Synchronous Flipt evaluation. Returns `boolean` if Flipt is ready,
- * or `null` if the client hasn't initialized yet (caller should fall back).
- */
-export function isFliptSync(
-  flag: string,
-  entityId = 'global',
-  context: Record<string, string> = {}
-): boolean | null {
-  if (localOverrides[flag] !== undefined) return localOverrides[flag] === 'on';
-  const fliptClient = FliptSingleton.getInstanceSync();
-  if (!fliptClient) return null;
-
-  try {
-    return evalBooleanCached(fliptClient, flag, entityId, context);
-  } catch (e) {
-    // Swallow eval errors (incl. "flag not found"); caller falls back to null
-    return null;
-  }
-}
-
-export async function ensureFliptInitialized(): Promise<void> {
-  await FliptSingleton.getInstance();
-}
+// 🔴 THE ENTITY-ID TRAP. All four evaluators below take `(flag, entityId?,
+// context?)`, and the two arguments are NOT interchangeable. A Flipt segment
+// constraint reads one of two inputs depending on its TYPE:
+// `ENTITY_ID_COMPARISON_TYPE` matches the `entityId` argument, while
+// `STRING_COMPARISON_TYPE` matches a named property of the `context`. Of the 15
+// segments in flipt-state today, 12 are the latter — including every identity,
+// tier and cohort segment we have (`moderators`, `testers`, `early-adopters`,
+// `members`, `app-dev-testers`, `CreatorProgram`, …).
+//
+// So `isFlipt(FLAG, String(user.id))` cannot match any of those, for anybody.
+// It returns the flag's base `enabled` value instead, which is indistinguishable
+// from an honest "this user is not in the segment" — no error, no log line. Pass
+// `buildFliptContext(user)`, or at minimum the properties you actually know.
+// Enforced by `src/server/flipt/__tests__/flipt-eval-context.test.ts`.
+export const isFlipt = flipt.isEnabled;
+export const getFliptVariant = flipt.getVariant;
+export const getFliptBoolean = flipt.getBoolean;
+export const isFliptSync = flipt.isEnabledSync;
+export const ensureFliptInitialized = flipt.ensureInitialized;
+// Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
+// caches (no `this`), so unbinding here is safe — same as the accessors above.
+export const getFliptCacheStats = flipt.getCacheStats;
 
 // Build the inner `(entityId, metricType, day, total)` subquery the direct CH
 // read sites (search-index / comic populate / metric-helpers) sum over. `where`
@@ -411,5 +261,3 @@ export function buildEntityMetricPerDaySource(where: string): string {
       ${where}
     )`;
 }
-
-export default FliptSingleton;

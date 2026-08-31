@@ -125,8 +125,8 @@ migrations to hand-apply.**
   longer forwarded). Optional cleanup of the producer computation + the `ModelSlotContext` field.
 
 **Infra (need cluster write access — see the datapacket-talos handoff doc):**
-- HPA `FailedGetResourceMetric`: node pressure on `talos-uvh-ow7` (over the 110-pod cap) and
-  Tekton completed-pod bloat on `talos-x3r-mnv`; the `pipelinerun-pruner` was recently un-broken —
+- HPA `FailedGetResourceMetric`: node pressure on a search-pool node (over the 110-pod cap) and
+  Tekton completed-pod bloat on a build node; the `pipelinerun-pruner` was recently un-broken —
   confirm it's draining the backlog.
 - `workflow-completed.ts` still uses the non-atomic `incrBy`+`expire` dedup (the same wedge class
   fixed in `build-callback`) — align it to `setNxKeepTtlWithEx`.
@@ -162,7 +162,7 @@ migrations to hand-apply.**
 - **Verify subagent claims directly — several were wrong on first pass** (a flag-eval that
   "worked" only by luck; a redis return-value misread; an audit citing a GET-only route as a
   POST-CSRF hole; an audit citing the wrong file path for a real finding).
-- **Tests in a worktree:** `ln -s /home/zach/workspace/civit/civitai/node_modules ./node_modules`,
+- **Tests in a worktree:** `ln -s <local-path>/workspace/civit/civitai/node_modules ./node_modules`,
   then run the single target file. Full `tsc` in a worktree is noisy (stale Prisma client in
   unrelated files) — but you CAN validate a specific file with
   `npx tsc --noEmit -p tsconfig.json 2>&1 | grep <file>` (the stale-Prisma errors are in OTHER

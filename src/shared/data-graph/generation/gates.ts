@@ -16,9 +16,9 @@
  *     already-applicable rules. No user needed: it just folds each rule's
  *     presentation/audience into one effective `GateState` per target.
  *
- * Rules coexist with the legacy `generation:ecosystem-config` lists + the
- * self-hosted toggle — the graph nodes merge all sources into one state map via
- * `pickStrongerGate`. See `docs/features/generation-gating-rules-model.md`.
+ * Rules coexist with the self-hosted toggle — the graph nodes merge both
+ * sources into one state map via `pickStrongerGate`. See
+ * `docs/features/generation-gating-rules-model.md`.
  */
 
 import { z } from 'zod';
@@ -33,14 +33,17 @@ export const gateAvailableToSchema = z.enum(['moderators', 'testers', 'members',
 export type GateAvailableTo = z.infer<typeof gateAvailableToSchema>;
 
 // HOW a gated item is presented to a gated user. `disabled` is always SHOWN
-// (greyed, not selectable, with messaging); `hidden` is always removed.
-export const gatePresentationSchema = z.enum(['disabled', 'hidden']);
+// (greyed, not selectable, with messaging); `hidden` is always removed;
+// `experimental` does NOT gate at all — the item stays fully usable and only
+// picks up the "Experimental Build" alert (see `experimentalTargets`).
+export const gatePresentationSchema = z.enum(['disabled', 'hidden', 'experimental']);
 export type GatePresentation = z.infer<typeof gatePresentationSchema>;
 
 export const gateRuleSchema = z.object({
   id: z.string(),
   /** Mod-facing name, e.g. "Maintenance window", "Premium tier". */
   name: z.string().default(''),
+  /** Who keeps access. Not consulted when `presentation` is `experimental`. */
   availableTo: gateAvailableToSchema,
   presentation: gatePresentationSchema,
   /**
@@ -73,9 +76,12 @@ const isGatedFor: Record<GateAvailableTo, (u: GateUserCtx) => boolean> = {
  * SERVER: narrow the stored rules to those that gate this user. The `availableTo`
  * tier is the only per-user evaluation, so the granular logic stays on the
  * server and the client/graph receive a ready-to-apply list.
+ *
+ * `experimental` rules always survive: they grant no access, so there is nobody
+ * to exempt — the warning is for everyone who can see the item.
  */
 export function applicableRulesFor(rules: GateRule[], user: GateUserCtx): GateRule[] {
-  return rules.filter((r) => isGatedFor[r.availableTo](user));
+  return rules.filter((r) => r.presentation === 'experimental' || isGatedFor[r.availableTo](user));
 }
 
 /**
@@ -156,6 +162,11 @@ const ruleState = (rule: GateRule): GateState =>
 /**
  * GRAPH: fold already-applicable rules into one effective gate per target.
  * Assumes `rules` is the output of `applicableRulesFor` (no audience re-check).
+ *
+ * `experimental` rules are skipped here — they annotate a usable item rather
+ * than gate it, so letting them into the state map would grey out or hide the
+ * very thing they're meant to keep selectable. Read them with
+ * `experimentalTargets` instead.
  */
 export function rulesToStates(rules: GateRule[]): ResolvedGates {
   const ecosystems = new Map<string, GateResolution>();
@@ -163,6 +174,7 @@ export function rulesToStates(rules: GateRule[]): ResolvedGates {
   const modelVersionIds = new Map<number, GateResolution>();
 
   for (const rule of rules) {
+    if (rule.presentation === 'experimental') continue;
     const resolution: GateResolution = {
       state: ruleState(rule),
       message: rule.message ?? undefined,
@@ -176,4 +188,33 @@ export function rulesToStates(rules: GateRule[]): ResolvedGates {
   }
 
   return { ecosystems, workflows, modelVersionIds };
+}
+
+/** Target → the rule's optional extra copy for the experimental alert. */
+export type ExperimentalTargets = {
+  ecosystems: Map<string, string | undefined>;
+  workflows: Map<string, string | undefined>;
+  modelVersionIds: Map<number, string | undefined>;
+};
+
+/**
+ * The targets marked experimental, from already-applicable rules. Nothing is
+ * gated by these — the generator form just renders its "Experimental Build"
+ * alert when the current selection hits one, for every user who can see the
+ * item (`availableTo` is not consulted; see `applicableRulesFor`).
+ */
+export function experimentalTargets(rules: GateRule[]): ExperimentalTargets {
+  const targets: ExperimentalTargets = {
+    ecosystems: new Map(),
+    workflows: new Map(),
+    modelVersionIds: new Map(),
+  };
+  for (const rule of rules) {
+    if (rule.presentation !== 'experimental') continue;
+    const message = rule.message ?? undefined;
+    for (const e of rule.ecosystems) targets.ecosystems.set(e, message);
+    for (const w of rule.workflows) targets.workflows.set(w, message);
+    for (const id of rule.modelVersionIds) targets.modelVersionIds.set(id, message);
+  }
+  return targets;
 }

@@ -40,7 +40,7 @@ export const IconBadge = forwardRef<HTMLDivElement, IconBadgeProps>(
     if (!tooltip) return badge;
 
     return (
-      <Tooltip label={tooltip} position="top" color="dark" withArrow>
+      <Tooltip label={tooltip} position="top" withArrow>
         {badge}
       </Tooltip>
     );

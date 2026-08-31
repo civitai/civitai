@@ -5,7 +5,6 @@ import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
-import { env } from '~/env/server';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import type { BaseModelType } from '~/server/common/constants';
 import {
@@ -21,6 +20,7 @@ import {
   isBaseModelGenerationSupported,
 } from '~/shared/constants/basemodel.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -40,8 +40,14 @@ import {
 import { modelMetrics } from '~/server/metrics';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
+  diffEntityChanges,
+  resolveActorRole,
+  stableStringify,
+} from '~/server/utils/entity-change-helpers';
+import {
   dataForModelsCache,
   modelTagCache,
+  modelVersionPublicDonationGoalsCache,
   modelVotableTagsCache,
   userBasicCache,
   userModelCountCache,
@@ -53,8 +59,6 @@ import type {
   GetAllModelsOutput,
   GetModelVersionsSchema,
   GetMyTrainingModelsSchema,
-  GetTrainingModerationFeedSchema,
-  IngestModelInput,
   LimitOnly,
   MigrateResourceToCollectionInput,
   ModelGallerySettingsSchema,
@@ -72,9 +76,7 @@ import type {
   TransferModelOwnershipInput,
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
-import { ingestModelSchema } from '~/server/schema/model.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import {
   collectionsSearchIndex,
   imagesMetricsSearchIndex,
@@ -86,9 +88,11 @@ import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -103,6 +107,12 @@ import {
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import {
+  expandBlurbs,
+  getReferencedBlurbIds,
+  reconcileBlurbReferences,
+} from '~/server/services/blurb-materialize.service';
+import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
+import {
   bustMvCache,
   bustPublicModelResponseCache,
   createModelVersionPostFromTraining,
@@ -112,9 +122,11 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
+  bustUserSettings,
   deleteBasicDataForUser,
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
+  patchUserSettings,
 } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
@@ -131,7 +143,6 @@ import {
   getValidCreatorMembershipMap,
   getUserMetricPrivacyDefaultsMap,
 } from '~/server/services/creator-program.service';
-import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -139,6 +150,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
+import { stripMinorHashMeta, stripModerationOwnedMeta } from '~/server/utils/minor-flag-meta';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   buildGetAllModelImages,
@@ -155,7 +167,7 @@ import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import type { CommercialUse, ModelType } from '~/shared/utils/prisma/enums';
+import type { CommercialUse, DomainColor, ModelType } from '~/shared/utils/prisma/enums';
 import {
   AuctionType,
   Availability,
@@ -168,7 +180,11 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
 import { isPaidAccessActive } from '@civitai/buzz';
-import { getPaidAccess } from '~/server/services/paid-access.service';
+import {
+  bustPaidAccessCache,
+  getPaidAccess,
+  getPublicPaidAccessForModelVersions,
+} from '~/server/services/paid-access.service';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -182,8 +198,6 @@ import type {
 } from './../schema/model.schema';
 import { Flags } from '~/shared/utils/flags';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
-import { isDev } from '~/env/other';
-import { userUpdateCounter } from '~/server/prom/client';
 import { pgDbRead } from '~/server/db/pgDb';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
@@ -270,9 +284,7 @@ type ModelRaw = {
  * Run after changes to verify filters work correctly with baseModel filtering.
  */
 
-export async function getModelEarlyAccessDeadlines(
-  modelIds: number[]
-): Promise<Map<number, Date>> {
+export async function getModelEarlyAccessDeadlines(modelIds: number[]): Promise<Map<number, Date>> {
   if (!modelIds.length) return new Map();
   const rows = await dbRead.$queryRaw<{ modelId: number; deadline: Date }[]>`
     SELECT mv."modelId", MAX(pa."endsAt") AS deadline
@@ -297,10 +309,26 @@ export async function getActiveEarlyAccessModelIds(): Promise<number[]> {
   return rows.map((r) => Number(r.modelId));
 }
 
+// Permanent gates only. `timeframeDays IS NULL` is the discriminator, not `endsAt`:
+// a timed gate carries a NULL `endsAt` until it is materialized at publish, so
+// keying off `endsAt` would sweep in pending early access. The rule is owned by
+// `paid-access.service.ts` — change it there and here together.
+export async function getPermanentPaidAccessModelIds(): Promise<number[]> {
+  const rows = await dbRead.$queryRaw<{ modelId: number }[]>`
+    SELECT DISTINCT mv."modelId"
+    FROM "PaidAccess" pa
+    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+    WHERE pa."entityType" = 'ModelVersion' AND pa."timeframeDays" IS NULL
+      AND mv.status = 'Published'::"ModelStatus"
+  `;
+  return rows.map((r) => Number(r.modelId));
+}
+
 export const getModelsRaw = async ({
   input,
   include,
   user: sessionUser,
+  domain,
   ignoreBrowsingAddons,
   _forceBaseModelMetrics,
 }: {
@@ -308,6 +336,8 @@ export const getModelsRaw = async ({
     take?: number;
     skip?: number;
   };
+  // Request color, used to pick which "new & upcoming" board backs `newCreators`.
+  domain?: DomainColor;
   include?: Array<'details' | 'cosmetics'>;
   user?: { id: number; isModerator?: boolean; username?: string };
   /**
@@ -337,6 +367,7 @@ export const getModelsRaw = async ({
     cursor,
     query,
     followed,
+    newCreators,
     archived,
     tag,
     tagname,
@@ -355,6 +386,8 @@ export const getModelsRaw = async ({
     allowCommercialUse,
     ids,
     earlyAccess,
+    paidAccess,
+    onSale,
     supportsGeneration,
     fromPlatform,
     needsReview,
@@ -609,6 +642,18 @@ export const getModelsRaw = async ({
     isPrivate = true;
   }
 
+  // Creators on the "new & upcoming" board. Global per domain rather than per
+  // viewer, so unlike `followed` it doesn't mark the query private. An unpopulated
+  // board returns nothing rather than degrading to the unfiltered feed.
+  if (newCreators) {
+    const newCreatorIds = await getNewCreatorUserIds({ entity: 'models', domain });
+    AND.push(
+      newCreatorIds.length
+        ? Prisma.sql`mm."userId" IN (${Prisma.join(newCreatorIds, ',')})`
+        : Prisma.sql`1 = 0`
+    );
+  }
+
   // Base model filtering:
   // - Standard path: EXISTS subquery on ModelVersion
   // - Base model metrics, single base model: direct equality on mbm."baseModel" (preserves index scan)
@@ -714,6 +759,36 @@ export const getModelsRaw = async ({
         JOIN "ModelVersion" pamv ON pamv.id = pa."entityId"
         WHERE pa."entityType" = 'ModelVersion' AND pamv."modelId" = m.id
           AND pamv.status = 'Published'::"ModelStatus" AND pa."endsAt" > NOW()
+      )`
+    );
+  }
+  if (paidAccess) {
+    AND.push(
+      Prisma.sql`EXISTS (
+        SELECT 1 FROM "PaidAccess" pa
+        JOIN "ModelVersion" pamv ON pamv.id = pa."entityId"
+        WHERE pa."entityType" = 'ModelVersion' AND pamv."modelId" = m.id
+          AND pamv.status = 'Published'::"ModelStatus" AND pa."timeframeDays" IS NULL
+      )`
+    );
+  }
+  if (onSale) {
+    // A sale prices a PERMANENT gate only (timeframeDays IS NULL), matching the resolver — a version in a
+    // timed early-access window is never discounted, so listing it as on sale would be a lie the price
+    // page then contradicts. Ownership is re-checked here for the same reason the resolver does it: sales
+    // are authored in another application.
+    AND.push(
+      Prisma.sql`EXISTS (
+        SELECT 1 FROM "ModelVersionSaleItem" si
+        JOIN "ModelVersionSale" s ON s.id = si."saleId"
+        JOIN "ModelVersion" smv ON smv.id = si."modelVersionId"
+        JOIN "PaidAccess" spa ON spa."entityType" = 'ModelVersion' AND spa."entityId" = smv.id
+        WHERE smv."modelId" = m.id
+          AND smv.status = 'Published'::"ModelStatus"
+          AND spa."timeframeDays" IS NULL
+          AND s."userId" = m."userId"
+          AND s."startsAt" <= NOW() AND s."endsAt" > NOW()
+          AND (s."canceledAt" IS NULL OR s."canceledAt" > NOW())
       )`
     );
   }
@@ -996,19 +1071,25 @@ export const getModelsRaw = async ({
   const userIds = [...new Set(models.map((m) => m.userId))];
   const modelIds = models.map((m) => m.id);
 
-  const [userBasicData, profilePictures, userCosmetics, modelData, cosmetics, earlyAccessDeadlines] =
-    await withSpan('model:getAll:parallelFetch', () =>
-      Promise.all([
-        userBasicCache.fetch(userIds),
-        getProfilePicturesForUsers(userIds),
-        getCosmeticsForUsers(userIds),
-        dataForModelsCache.fetch(modelIds),
-        includeCosmetics
-          ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
-          : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
-        getModelEarlyAccessDeadlines(modelIds),
-      ])
-    );
+  const [
+    userBasicData,
+    profilePictures,
+    userCosmetics,
+    modelData,
+    cosmetics,
+    earlyAccessDeadlines,
+  ] = await withSpan('model:getAll:parallelFetch', () =>
+    Promise.all([
+      userBasicCache.fetch(userIds),
+      getProfilePicturesForUsers(userIds),
+      getCosmeticsForUsers(userIds),
+      dataForModelsCache.fetch(modelIds),
+      includeCosmetics
+        ? getCosmeticsForEntity({ ids: modelIds, entity: 'Model' })
+        : ({} as Record<string, WithClaimKey<ContentDecorationCosmetic>>),
+      getModelEarlyAccessDeadlines(modelIds),
+    ])
+  );
   for (const model of models) {
     model.earlyAccessDeadline = earlyAccessDeadlines.get(model.id) ?? null;
   }
@@ -1047,9 +1128,7 @@ export const getModelsRaw = async ({
           }
 
           if (hidePrivateModels) {
-            modelVersions = modelVersions.filter(
-              (mv) => mv.availability === 'Public' || mv.availability === 'EarlyAccess'
-            );
+            modelVersions = modelVersions.filter((mv) => mv.availability === 'Public');
           }
 
           // Distinct base models across the visible versions — surfaced to the card
@@ -1167,6 +1246,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     ids,
     needsReview,
     earlyAccess,
+    paidAccess,
     supportsGeneration,
     followed,
     collectionId,
@@ -1256,6 +1336,10 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
   if (earlyAccess) {
     AND.push({ id: { in: await getActiveEarlyAccessModelIds() } });
+  }
+
+  if (paidAccess) {
+    AND.push({ id: { in: await getPermanentPaidAccessModelIds() } });
   }
 
   if (supportsGeneration) {
@@ -1396,12 +1480,14 @@ export const getModelsWithImagesAndModelVersions = async ({
   // flag. When false, the per-request owner-settings + membership work below is
   // skipped and raw metrics are emitted (pre-#3266 visibility).
   metricPrivacyEnabled = true,
+  domain,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
   imagesPerModel?: number;
   biasImageSlice?: boolean;
   metricPrivacyEnabled?: boolean;
+  domain?: DomainColor;
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1422,6 +1508,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   const { items, isPrivate, nextCursor } = await getModelsRaw({
     input: { ...input, take: input.limit },
     user,
+    domain,
     include: ['cosmetics'],
   });
 
@@ -1616,6 +1703,14 @@ export const getModelVersionsMicro = async ({
   });
 };
 
+// Mutations hand their updated row straight back to the caller, so the moderation-only
+// minor-hash keys have to come off here. Stripping beats narrowing the Prisma `select`:
+// these rows feed many callers, and the keys are only ever read back through the
+// minor-hash service's own raw SQL.
+function withoutMinorHashMeta<T extends { meta: unknown }>(model: T): T {
+  return { ...model, meta: stripMinorHashMeta(model.meta as ModelMeta | null) } as T;
+}
+
 export const updateModelById = async ({
   id,
   data,
@@ -1655,7 +1750,7 @@ export const updateModelById = async ({
   // `model.mode` — without this the origin keeps serving a stale 200 for up to the TTL.
   await bustPublicModelResponseCache(id);
 
-  return model;
+  return withoutMinorHashMeta(model);
 };
 
 export const deleteModelById = async ({
@@ -2009,8 +2104,6 @@ export async function applyModelFlagSideEffects({
   before,
   after,
   tagsChanged = false,
-  nameChanged = false,
-  descriptionChanged = false,
 }: {
   before: {
     poi: boolean;
@@ -2031,13 +2124,10 @@ export async function applyModelFlagSideEffects({
     gallerySettings: Prisma.JsonValue;
   };
   tagsChanged?: boolean;
-  nameChanged?: boolean;
-  descriptionChanged?: boolean;
 }): Promise<void> {
   const { id } = after;
   const poiChanged = after.poi !== before.poi;
   const minorChanged = after.minor !== before.minor || after.sfwOnly !== before.sfwOnly;
-  const nsfwChanged = after.nsfw !== before.nsfw;
 
   // Update search index if listing changes
   if (tagsChanged || poiChanged || minorChanged) {
@@ -2051,18 +2141,6 @@ export async function applyModelFlagSideEffects({
   const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
 
   if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
-
-  // Ingest model if it's published and any of the following fields have changed:
-  if (
-    (after.status === 'Published' || after.status === 'Scheduled') &&
-    (poiChanged || minorChanged || nsfwChanged || nameChanged || descriptionChanged)
-  ) {
-    const parsedModel = ingestModelSchema.parse(after);
-    // Run it in the background to prevent blocking the request
-    ingestModel({ ...parsedModel }).catch((error) =>
-      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
-    );
-  }
 
   if (minorChanged || poiChanged) {
     const modelVersions = await dbWrite.modelVersion.findMany({
@@ -2104,11 +2182,62 @@ export async function applyModelFlagSideEffects({
 // fields the "Set as Minor" quick action locks against creator edits.
 export const MINOR_LOCKED_PROPERTIES = ['minor', 'nsfw', 'sfwOnly'];
 
+export type ModelMinorActivity =
+  | 'setMinor'
+  | 'unsetMinor'
+  | 'setMinorAutoHash'
+  | 'rollbackMinorAutoHash';
+
+export const MINOR_FLAG_SNAPSHOT_KEY = 'minorFlagSnapshot';
+
+// Flagging minor overwrites nsfw/sfwOnly/gallerySettings.level and propagates
+// `minor` to every image, keeping no record of what was there before — so without
+// this the change is unrecoverable, whether a job or a moderator made it.
+// `source` is what lets a bulk rollback undo only the automated flags and leave
+// deliberate moderator decisions alone.
+// Idempotent via the WHERE guard: a re-flag can never clobber the original
+// pre-state. Best-effort — losing the snapshot must block a later rollback, not
+// the flag itself, so failures are logged rather than thrown.
+async function captureMinorFlagSnapshot(modelId: number, source: 'auto' | 'manual') {
+  try {
+    await dbWrite.$executeRaw`
+      UPDATE "Model" m
+      SET meta = COALESCE(m.meta, '{}'::jsonb) || jsonb_build_object(
+        ${MINOR_FLAG_SNAPSHOT_KEY}, jsonb_build_object(
+          'at', now(),
+          'source', ${source},
+          'prevNsfw', m.nsfw,
+          'prevSfwOnly', m."sfwOnly",
+          'prevGalleryLevel', (m."gallerySettings"->>'level')::int,
+          'prevLockedProperties', to_jsonb(COALESCE(m."lockedProperties", ARRAY[]::text[])),
+          'prevMinorImageIds', COALESCE((
+            SELECT jsonb_agg(i.id)
+            FROM "ModelVersion" mv
+            JOIN "Post" p ON p."modelVersionId" = mv.id
+            JOIN "Image" i ON i."postId" = p.id
+            WHERE mv."modelId" = m.id AND i.minor
+          ), '[]'::jsonb)
+        )
+      )
+      WHERE m.id = ${modelId}
+        AND NOT (COALESCE(m.meta, '{}'::jsonb) ? ${MINOR_FLAG_SNAPSHOT_KEY})
+    `;
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'minor-flag-snapshot',
+      message: error instanceof Error ? error.message : String(error),
+      modelId,
+    }).catch(() => null);
+  }
+}
+
 export async function setModelMinor({
   id,
   minor,
   userId,
-}: SetModelMinorInput & { userId: number }) {
+  activity,
+}: SetModelMinorInput & { userId: number; activity?: ModelMinorActivity }) {
   const before = await dbRead.model.findUnique({
     where: { id },
     select: {
@@ -2121,6 +2250,11 @@ export async function setModelMinor({
     },
   });
   if (!before) throw throwNotFoundError(`No model with id ${id}`);
+
+  // Must run before the update below and before side effects propagate `minor`
+  // to images, or the snapshot records post-flag state.
+  if (minor)
+    await captureMinorFlagSnapshot(id, activity === 'setMinorAutoHash' ? 'auto' : 'manual');
 
   const prevLockedProperties = before.lockedProperties ?? [];
   const lockedProperties = minor
@@ -2166,7 +2300,7 @@ export async function setModelMinor({
   await trackModActivity(userId, {
     entityType: 'model',
     entityId: id,
-    activity: minor ? 'setMinor' : 'unsetMinor',
+    activity: activity ?? (minor ? 'setMinor' : 'unsetMinor'),
   }).catch((error) =>
     logToAxiom({
       type: 'error',
@@ -2180,12 +2314,17 @@ export async function setModelMinor({
   return result;
 }
 
+// Model columns the GenerationCoverage view reads. `poi` belongs to the same set but is left out
+// here because applyModelFlagSideEffects already busts the version caches when it moves.
+const coverageModelFields = ['allowCommercialUse', 'availability', 'type', 'uploadType'] as const;
+
 export const upsertModel = async (
   input: ModelUpsertInput & {
     userId: number;
     // meta?: Prisma.ModelCreateInput['meta']; // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
     isModerator?: boolean;
     gallerySettings?: Partial<ModelGallerySettingsSchema>;
+    tracker?: Tracker;
   }
 ) => {
   if (input.description) await throwOnBlockedLinkDomain(input.description);
@@ -2199,9 +2338,13 @@ export const upsertModel = async (
     isModerator,
     status,
     gallerySettings,
+    tracker,
     ...data
   } = input;
-  let { meta } = input;
+  // `modelUpsertSchema.meta` is a looseObject and the client's copy wins the merge
+  // below, so moderation-owned keys have to be dropped before anything reads them.
+  // Runs ahead of the profanity branch, which adds its own keys to this same object.
+  let meta = stripModerationOwnedMeta(input.meta, isModerator);
 
   const beforeUpdate =
     id && !templateId
@@ -2218,6 +2361,14 @@ export const upsertModel = async (
             lockedProperties: true,
             gallerySettings: true,
             meta: true,
+            availability: true,
+            mode: true,
+            allowNoCredit: true,
+            allowCommercialUse: true,
+            allowDerivatives: true,
+            allowDifferentLicense: true,
+            type: true,
+            uploadType: true,
           },
         })
       : null;
@@ -2225,6 +2376,34 @@ export const upsertModel = async (
   const storedLockedProperties = beforeUpdate?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
 
+  // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
+  // so what is stored is what the blurb actually says — and before the profanity filter below,
+  // which must evaluate the text that will actually be published. A moderator saving someone
+  // else's model resolves none of their blurbs, so they get the ids the model already
+  // references instead of stripping every span.
+  const ownerId = beforeUpdate?.userId ?? userId;
+  const restrictToBlurbIds =
+    beforeUpdate && ownerId !== userId
+      ? () => getReferencedBlurbIds({ entityType: 'Model', entityId: id as number })
+      : undefined;
+  // Whether the CALLER supplied the column, captured before the expansion overwrites it below.
+  // A write that omits `description` — the review handlers select without it — must not
+  // reconcile: Prisma leaves the column alone, so an empty expansion would delete every
+  // reference row while the blurb markup stays in the body, stranding it permanently.
+  const descriptionSupplied = data.description != null;
+  const expansion = await expandBlurbs({
+    userId: ownerId,
+    html: data.description ?? '',
+    restrictToBlurbIds,
+  });
+  if (descriptionSupplied) {
+    data.description = expansion.html;
+    // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
+    // since, so the string about to be written is one it never checked.
+    await throwOnBlockedLinkDomain(data.description);
+  }
+
+  let profanityAutoNsfw = false;
   if (!isModerator) {
     // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
@@ -2245,6 +2424,7 @@ export const upsertModel = async (
       if (!storedLockedProperties.includes('nsfw')) {
         data.nsfw = true;
         data.lockedProperties = uniq([...storedLockedProperties, 'nsfw']);
+        profanityAutoNsfw = true;
       }
     }
   }
@@ -2266,37 +2446,52 @@ export const upsertModel = async (
   }
 
   if (!id || templateId) {
-    const result = await dbWrite.model.create({
-      select: { id: true, nsfwLevel: true, meta: true, availability: true },
-      data: {
-        ...data,
-        status,
-        gallerySettings,
-        meta:
-          bountyId || meta
-            ? {
-                ...((meta ?? {}) as MixedObject),
-                bountyId,
-              }
-            : undefined,
-        userId,
-        tagsOnModels: tagsOnModels
-          ? {
-              create: tagsOnModels.map((tag) => {
-                const name = tag.name.toLowerCase().trim();
-                return {
-                  tag: {
-                    connectOrCreate: {
-                      where: { name },
-                      create: { name, target: [TagTarget.Model] },
-                    },
-                  },
-                };
-              }),
-            }
-          : undefined,
+    const result = await dbWrite.$transaction(
+      async (tx) => {
+        const created = await tx.model.create({
+          select: { id: true, nsfwLevel: true, meta: true, availability: true },
+          data: {
+            ...data,
+            status,
+            gallerySettings,
+            meta:
+              bountyId || meta
+                ? {
+                    ...((meta ?? {}) as MixedObject),
+                    bountyId,
+                  }
+                : undefined,
+            userId,
+            tagsOnModels: tagsOnModels
+              ? {
+                  create: tagsOnModels.map((tag) => {
+                    const name = tag.name.toLowerCase().trim();
+                    return {
+                      tag: {
+                        connectOrCreate: {
+                          where: { name },
+                          create: { name, target: [TagTarget.Model] },
+                        },
+                      },
+                    };
+                  }),
+                }
+              : undefined,
+          },
+        });
+
+        if (descriptionSupplied && expansion.evaluated)
+          await reconcileBlurbReferences({
+            entityType: 'Model',
+            entityId: created.id,
+            uses: expansion.uses,
+            tx,
+          });
+
+        return created;
       },
-    });
+      { maxWait: 10000, timeout: 30000 }
+    );
 
     const modelMeta = result.meta as ModelMeta | null;
     if (modelMeta?.showcaseCollectionId) {
@@ -2329,7 +2524,17 @@ export const upsertModel = async (
       // dashboard refresh right after create reads from primary.
       await preventReplicationLag('userTrainingModels', userId);
     }
-    return { ...result, meta: modelMeta };
+
+    // Fire-and-forget: the helper owns its own flag check and swallows its own errors, so a
+    // moderation outage can never fail a model save.
+    submitModelTextModeration({
+      id: result.id,
+      name: data.name,
+      description: data.description,
+      isModerator,
+    }).catch(() => null);
+
+    return { ...result, meta: stripMinorHashMeta(modelMeta) };
   } else {
     if (!beforeUpdate) return null;
 
@@ -2339,57 +2544,92 @@ export const upsertModel = async (
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
     const prevMeta = beforeUpdate.meta as ModelMeta | null;
 
-    const result = await dbWrite.model.update({
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        nsfwLevel: true,
-        poi: true,
-        minor: true,
-        sfwOnly: true,
-        nsfw: true,
-        gallerySettings: true,
-        status: true,
-        meta: true,
-        availability: true,
-      },
-      where: { id },
-      data: {
-        ...data,
-        meta: { ...prevMeta, ...meta },
-        gallerySettings: {
-          ...prevGallerySettings,
-          level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
-        },
-        tagsOnModels: tagsOnModels
-          ? {
-              deleteMany: {
-                tagId: {
-                  notIn: tagsOnModels.filter(isTag).map((x) => x.id),
-                },
-              },
-              connectOrCreate: tagsOnModels.filter(isTag).map((tag) => ({
-                where: { modelId_tagId: { tagId: tag.id, modelId: id as number } },
-                create: { tagId: tag.id },
-              })),
-              create: tagsOnModels.filter(isNotTag).map((tag) => {
-                const name = tag.name.toLowerCase().trim();
-                return {
-                  tag: {
-                    connectOrCreate: {
-                      where: { name },
-                      create: { name, target: [TagTarget.Model] },
+    const result = await dbWrite.$transaction(
+      async (tx) => {
+        const updated = await tx.model.update({
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            nsfwLevel: true,
+            poi: true,
+            minor: true,
+            sfwOnly: true,
+            nsfw: true,
+            gallerySettings: true,
+            status: true,
+            meta: true,
+            availability: true,
+          },
+          where: { id },
+          data: {
+            ...data,
+            meta: { ...prevMeta, ...meta },
+            gallerySettings: {
+              ...prevGallerySettings,
+              level:
+                input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
+            },
+            tagsOnModels: tagsOnModels
+              ? {
+                  deleteMany: {
+                    tagId: {
+                      notIn: tagsOnModels.filter(isTag).map((x) => x.id),
                     },
                   },
-                };
-              }),
-            }
-          : undefined,
+                  connectOrCreate: tagsOnModels.filter(isTag).map((tag) => ({
+                    where: { modelId_tagId: { tagId: tag.id, modelId: id as number } },
+                    create: { tagId: tag.id },
+                  })),
+                  create: tagsOnModels.filter(isNotTag).map((tag) => {
+                    const name = tag.name.toLowerCase().trim();
+                    return {
+                      tag: {
+                        connectOrCreate: {
+                          where: { name },
+                          create: { name, target: [TagTarget.Model] },
+                        },
+                      },
+                    };
+                  }),
+                }
+              : undefined,
+          },
+        });
+
+        if (descriptionSupplied && expansion.evaluated)
+          await reconcileBlurbReferences({
+            entityType: 'Model',
+            entityId: updated.id,
+            uses: expansion.uses,
+            tx,
+          });
+
+        return updated;
       },
-    });
+      { maxWait: 10000, timeout: 30000 }
+    );
     await preventReplicationLag('model', id);
     await userModelCountCache.refresh(userId);
+
+    if (tracker) {
+      const changeRows = diffEntityChanges({
+        entityType: 'Model',
+        entityId: id as number,
+        ownerId: beforeUpdate.userId,
+        before: beforeUpdate,
+        after: data as Record<string, unknown>,
+        actorRole: resolveActorRole({
+          actorUserId: userId,
+          ownerId: beforeUpdate.userId,
+          isModerator,
+        }),
+        systemFields: profanityAutoNsfw
+          ? { nsfw: 'profanity-filter', lockedProperties: 'profanity-filter' }
+          : undefined,
+      });
+      tracker.entityChanges(changeRows).catch(() => null);
+    }
 
     const modelMeta = result.meta as ModelMeta | null;
     const showcaseCollectionChanged =
@@ -2399,9 +2639,30 @@ export const upsertModel = async (
       before: beforeUpdate,
       after: result,
       tagsChanged: !!tagsOnModels,
-      nameChanged: input.name !== beforeUpdate.name,
-      descriptionChanged: input.description !== beforeUpdate.description,
     });
+
+    // GenerationCoverage is a view over these columns, but the orchestrator holds its own copy of
+    // each resource: without this, a creator who adds RentCivit is told the model is "not enabled
+    // for generation" until something else makes the orchestrator refetch. bustMvCache wraps
+    // bustOrchestratorModelCache plus the resource-data/data-for-model/search-index busts that read
+    // `covered` too. Never rejects — the write has already committed.
+    const coverageChanged = coverageModelFields.some(
+      (field) =>
+        data[field] !== undefined &&
+        stableStringify(data[field]) !== stableStringify(beforeUpdate[field])
+    );
+    if (coverageChanged) {
+      const versions = await dbWrite.modelVersion.findMany({
+        where: { modelId: result.id },
+        select: { id: true },
+      });
+      if (versions.length)
+        await bustMvCache(
+          versions.map((v) => v.id),
+          result.id,
+          userId
+        ).catch(() => undefined);
+    }
 
     if (showcaseCollectionChanged) {
       if (modelMeta?.showcaseCollectionId) {
@@ -2449,12 +2710,129 @@ export const upsertModel = async (
     // cached body) stops serving a stale 200 on an edge-miss for up to the cache
     // TTL. preventReplicationLag('model', id) above already guards the rebuild
     // read against the replication window. Fail-open (the helper swallows Redis
-    // errors); the only post-commit write left in this branch.
+    // errors).
     await bustPublicModelResponseCache(result.id);
 
-    return result;
+    // Skipped when neither field moved. contentHash dedup would drop the moderation submit
+    // anyway, but only after a round trip and an EntityModeration upsert on every unrelated
+    // model edit. `result` carries the post-update values, not `beforeUpdate`'s.
+    if (result.name !== beforeUpdate.name || result.description !== beforeUpdate.description) {
+      await applyModelContentChange({
+        id: result.id,
+        description: result.description ?? '',
+        context: { name: result.name, isModerator },
+      });
+    }
+
+    return withoutMinorHashMeta(result);
   }
 };
+
+/**
+ * The one path for "a model's description changed": the column write plus the follow-up that
+ * change implies. `upsertModel` calls it, and so does the blurb fan-out — which is what stops
+ * the two drifting.
+ *
+ * Deliberately narrow. `upsertModel` is form-shaped, so a caller holding only new HTML cannot
+ * use it without clearing tags, gallery settings and the whole licensing block. `updateModelById`
+ * is not the answer either: it takes an arbitrary Prisma update and runs neither the moderation
+ * submit nor the response-cache bust below.
+ */
+export async function applyModelContentChange({
+  id,
+  description,
+  context,
+  expectedDescription,
+}: {
+  id: number;
+  description: string;
+  /**
+   * Compare-and-set: the body this caller READ before splicing. The fan-out does load → splice →
+   * save with nothing held across it, so a creator saving in that window had their edit silently
+   * reverted by the replay — no error, and the save it clobbered had already returned success.
+   * Supplied, a mismatch writes nothing and returns false; the reference stays pending and the
+   * next pass re-reads. Omitted, the write is unconditional as before.
+   */
+  expectedDescription?: string;
+  /**
+   * A caller that has ALREADY written this body passes its post-write snapshot here. Delete it
+   * from such a call site and the write below replays the body over a save that committed in
+   * between.
+   */
+  context?: { name: string; isModerator?: boolean };
+}) {
+  // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
+  // catch it — same reason `applyArticleContentChange` re-checks.
+  await throwOnBlockedLinkDomain(description);
+
+  let resolved = context;
+  if (!resolved) {
+    const stored = await dbWrite.model.findUnique({
+      where: { id },
+      select: { name: true, nsfw: true, lockedProperties: true, meta: true },
+    });
+    if (!stored) throw throwNotFoundError(`No model with id ${id}`);
+    resolved = { name: stored.name };
+
+    // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
+    // re-materialization is not a creator edit: `updatedAt` orders the "recently updated"
+    // model lists.
+    const affected =
+      await dbWrite.$executeRaw`UPDATE "Model" SET description = ${description} WHERE id = ${id}${
+        expectedDescription === undefined
+          ? Prisma.empty
+          : Prisma.sql` AND description = ${expectedDescription}`
+      }`;
+    if (expectedDescription !== undefined && !affected) return false;
+    await preventReplicationLag('model', id);
+
+    // A caller passing `context` has already written the body AND already run this gate on it.
+    // This branch is the fan-out, which has neither — and the text it just wrote is text the
+    // upsert's gate never saw. Without this, editing a blurb is a way to put profanity into a
+    // published description while it keeps the SFW classification it earned with the old text.
+    const flagged = evaluateAutoNsfw({
+      name: stored.name,
+      description,
+      alreadyNsfw: stored.nsfw,
+      lockedProperties: stored.lockedProperties,
+    });
+    if (flagged) {
+      const meta = {
+        ...((stored.meta as MixedObject | null) ?? {}),
+        ...flagged.metaPatch,
+      } as Prisma.InputJsonObject;
+      // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-
+      // rolling the jsonb + text[] binds is where that trade stops being worth it. The
+      // `updatedAt` bump it carries is honest — the model's rating actually changed.
+      await dbWrite.model.update({
+        where: { id },
+        data: flagged.lock
+          ? { nsfw: true, lockedProperties: uniq([...stored.lockedProperties, 'nsfw']), meta }
+          : { meta },
+      });
+    }
+  }
+
+  // The description is carried in the cached public GET /api/v1/models/[id] body, so without
+  // this an edge-miss keeps serving the pre-rewrite text for up to the cache TTL. Fail-open
+  // (the helper swallows Redis errors).
+  //
+  // Only when nobody handed us a `context`: a caller that passes one has already written the
+  // body, and `upsertModel` busts unconditionally a few lines before it calls this — so doing it
+  // here too was a second identical bust on every content-changing model save.
+  if (!context) await bustPublicModelResponseCache(id);
+
+  // Fire-and-forget: the helper owns its own flag check and swallows its own errors, so a
+  // moderation outage can never fail a model save.
+  submitModelTextModeration({
+    id,
+    name: resolved.name,
+    description,
+    isModerator: resolved.isModerator,
+  }).catch(() => null);
+
+  return true;
+}
 
 export const publishModelById = async ({
   id,
@@ -2633,21 +3011,25 @@ export const publishModelById = async ({
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
   );
 
-  // Run it in the background to prevent blocking the request
-  if (!republishing) {
-    const parsedModel = ingestModelSchema.parse(model);
-    ingestModel({ ...parsedModel }).catch((error) =>
-      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
-    );
-  }
-
   return model;
 };
+
+import {
+  getModelEarlyAccessRefundRequirement,
+  refundModelEarlyAccessPurchases,
+} from '~/server/services/model-early-access-refund.service';
+
+// Re-exported for the callers that predate the extraction. The version-scoped entry point is
+// deliberately NOT re-exported here — reaching it through this module is what would put the
+// model-version → model import edge back.
+export { getModelEarlyAccessRefundRequirement } from '~/server/services/model-early-access-refund.service';
+export type { ModelEarlyAccessRefundRequirement } from '~/server/services/model-early-access-refund.service';
 
 export const unpublishModelById = async ({
   id,
   reason,
   customMessage,
+  refundEarlyAccess,
   meta,
   userId,
   isModerator,
@@ -2657,55 +3039,125 @@ export const unpublishModelById = async ({
   isModerator?: boolean;
 }) => {
   if (!isModerator) {
-    const versions = await dbRead.modelVersion.findMany({
-      where: { modelId: id },
-      select: { id: true, meta: true },
-    });
+    // The guard below reasons from "an owner-initiated unpublish carries no reason". `reason` is a
+    // plain optional input, so without this that is an assumption rather than a precondition: an
+    // owner supplying one takes the non-preserve branch and overwrites the moderator's verdict,
+    // explanation and attribution — no republish escape, but the record destroyed by the person it
+    // is against, and the take-down notification re-fired.
+    if (reason || customMessage)
+      throw throwAuthorizationError('Only a moderator can give a reason for unpublishing.');
 
-    if (
-      versions.some((v) => {
-        const meta = v.meta as ModelVersionMeta | null;
-        if (meta?.hadEarlyAccessPurchase) {
-          return true;
-        }
-      })
-    ) {
-      throw throwBadRequestError(
-        'Cannot unpublish a model with early access purchases. You may still unpublish individual versions.'
-      );
+    const requirement = await getModelEarlyAccessRefundRequirement({ id });
+    if (requirement.purchases.length > 0) {
+      if (!refundEarlyAccess) {
+        throw throwBadRequestError(
+          `Cannot unpublish a model with active early access purchases without refunding buyers. ${requirement.buyerCount} member(s) must be refunded a total of ${requirement.totalBuzz} Buzz.`
+        );
+      }
+      await refundModelEarlyAccessPurchases({ modelId: id, requirement });
     }
   }
 
   const model = await dbWrite.$transaction(
     async (tx) => {
+      // 🔴 Never write a moderator's verdict down. A reasonless unpublish — every owner-initiated
+      // one — would otherwise overwrite an existing UnpublishedViolation with plain Unpublished and
+      // restamp the record, and `model.controller.ts` blocks an owner republish only WHILE the
+      // status is UnpublishedViolation. That is an owner-reachable way to clear a moderation flag.
+      //
+      // Decided from the STATUS, not from `meta.unpublishedReason`: 2,327 of 43,492 violation rows
+      // in prod carry no reason in meta, and keying on meta fails open for exactly those. The
+      // moderator's explanation, timestamp and actor are all left untouched — refreshing
+      // `unpublishedAt` alone re-fires the take-down notification, and `customMessage` is the ONLY
+      // explanation rendered when the reason is 'other', which is the largest bucket.
+      const existing = await tx.model.findUniqueOrThrow({
+        where: { id },
+        select: { status: true },
+      });
+      // Any moderator-only status, not UnpublishedViolation alone: Deleted is the other one, and
+      // clearing it lets an owner republish a soft-deleted model.
+      const preserveModStatus =
+        !reason && constants.modPublishOnlyStatuses.includes(existing.status);
+
       const unpublishedAt = new Date().toISOString();
-      const updatedMeta = {
-        ...meta,
-        ...(reason
-          ? {
-              unpublishedReason: reason,
-              customMessage,
-            }
-          : {}),
-        unpublishedAt,
-        unpublishedBy: userId,
-      };
+      const updatedMeta = preserveModStatus
+        ? meta
+        : {
+            ...meta,
+            ...(reason
+              ? {
+                  unpublishedReason: reason,
+                  customMessage,
+                }
+              : {}),
+            unpublishedAt,
+            unpublishedBy: userId,
+          };
       const updatedModel = await tx.model.update({
         where: { id },
         data: {
-          status: reason ? ModelStatus.UnpublishedViolation : ModelStatus.Unpublished,
+          status: reason
+            ? ModelStatus.UnpublishedViolation
+            : preserveModStatus
+            ? existing.status
+            : ModelStatus.Unpublished,
           meta: updatedMeta,
-          modelVersions: {
-            updateMany: {
-              where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
-              data: { status: ModelStatus.Unpublished, meta: updatedMeta },
-            },
-          },
         },
         select: { userId: true, modelVersions: { select: { id: true } } },
       });
 
       const versionIds = updatedModel.modelVersions.map((x) => x.id);
+
+      // One statement for the version take-down, and it has to stay one.
+      //
+      // 🔴 MERGE the keys into each version's own meta rather than writing an object over the
+      // column. Overwriting replaced every version's meta wholesale and `hadEarlyAccessPurchase`
+      // went with it — that flag is the only pre-filter on the refund requirement and the guard on
+      // both delete paths, so losing it turns an unpublish into a way to shed the refund obligation
+      // and then delete the version past every guard. `updateMany` cannot write a different value
+      // per row, hence raw SQL.
+      //
+      // On a preserved take-down the status follows the model but the NARRATIVE does not: merging
+      // unpublishedAt into version meta re-fires the per-version notification —
+      // unpublish.notifications.ts selects on that meta with no status predicate — naming the owner
+      // as the actor of a moderator's decision.
+      //
+      // 🔴 And the keys must land on exactly the versions this call takes down. They are what
+      // unpublish.notifications.ts selects on — meta alone, no status predicate, keyed per version —
+      // so stamping a draft tells the creator a version they never published was unpublished.
+      // Status and meta move together under one snapshot, which makes "stamped iff transitioned"
+      // structural rather than two predicates someone has to keep in step.
+      await tx.$executeRaw`
+        UPDATE "ModelVersion"
+        SET "status" = ${
+          reason
+            ? ModelStatus.UnpublishedViolation
+            : preserveModStatus
+            ? existing.status
+            : ModelStatus.Unpublished
+        }::"ModelStatus",
+            "meta" = COALESCE("meta", '{}'::jsonb) || ${JSON.stringify(
+              preserveModStatus
+                ? {}
+                : {
+                    ...(reason ? { unpublishedReason: reason, customMessage } : {}),
+                    unpublishedAt,
+                    unpublishedBy: userId,
+                  }
+            )}::jsonb,
+            -- Prisma's @updatedAt does not apply to raw SQL, and there is no DB default or trigger.
+            -- Without this a taken-down version keeps a pre-take-down updatedAt, which is on the
+            -- public v1 payload via modelVersion.selector.
+            "updatedAt" = NOW()
+        WHERE "modelId" = ${id}
+          AND "status" IN (${ModelStatus.Published}::"ModelStatus", ${
+        ModelStatus.Scheduled
+      }::"ModelStatus")
+      `;
+
+      // Deliberately the WIDE id list, unlike the statement above: a post attached to a version that
+      // was already down can still be published, and `publishedAt IS NOT NULL` is what scopes this —
+      // not the id set. Narrowing it to the versions this call took down would leave those posts public.
       await tx.$executeRaw`
         UPDATE "Post"
         SET "metadata"    = "metadata" || jsonb_build_object(
@@ -3433,6 +3885,7 @@ export async function getModelsWithVersions({
   });
 
   const modelVersionIds = items.flatMap(({ modelVersions }) => modelVersions.map(({ id }) => id));
+  const paidAccessMap = await getPublicPaidAccessForModelVersions(modelVersionIds);
   // Let's swap to the new cache based method for now...
   const images = await getImagesForModelVersionCache(modelVersionIds);
   // const images = await getImagesForModelVersion({
@@ -3574,34 +4027,37 @@ export async function getModelsWithVersions({
               const vaeFile = vaeVersionId
                 ? vaeFiles.filter((x) => x.modelVersionId === vaeVersionId)
                 : [];
-              const files = groupedFiles[version.id]?.files ?? [];
-              files.push(...vaeFile);
+              // Build a NEW array rather than pushing onto the cached record's own. The cache
+              // layer shallow-clones records and documents nested fields as read-only, and its
+              // fail-open degraded path hands one shared `files` array to every concurrent
+              // reader of that version — a `push` here would leak this VAE into other in-flight
+              // requests (and, via the 180s origin response cache on
+              // `src/pages/api/v1/models/[id].ts`, into every later reader of that model id).
+              // The next statement rebuilds the list with `.map()` anyway, so nothing downstream
+              // wanted the mutation.
+              const files = [...(groupedFiles[version.id]?.files ?? []), ...vaeFile];
 
-              let earlyAccessDeadline = getEarlyAccessDeadline({
-                versionCreatedAt: version.createdAt,
-                publishedAt: version.publishedAt,
-                earlyAccessTimeframe: earlyAccessTimeFrame,
-              });
-              if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
-                earlyAccessDeadline = undefined;
+              // `earlyAccessTimeFrame` is dead — no write path has touched it since the PaidAccess
+              // cutover, so the deadline has to come from PaidAccess.
+              const paidAccess = paidAccessMap[version.id] ?? null;
+              const earlyAccessDeadline = paidAccess?.endsAt ?? undefined;
 
               return {
                 ...version,
-                files: files.map(({ metadata: metadataRaw, modelVersionId, ...file }) => {
-                  const metadata = metadataRaw as FileMetadata | undefined;
-
-                  return {
-                    ...file,
-                    metadata: {
-                      format: metadata?.format,
-                      size: metadata?.size,
-                      fp: metadata?.fp,
-                      quantType: metadata?.quantType,
-                      isRequired: metadata?.isRequired,
-                    },
-                  };
-                }),
+                // `modelVersionId` is deliberately PRESERVED on each file. The
+                // `files.push(...vaeFile)` above splices in files that live on
+                // the LINKED VAE version, so "which version owns this file" is
+                // not derivable from the enclosing `version.id` — and the v1
+                // response shapers need it to decide whether a per-file
+                // `downloadUrl` may be pinned with `fileId` (see
+                // createSerializedFileDownloadUrl). Dropping it here is what let
+                // a VAE file's id be paired with the host version, producing a
+                // 404 on a previously-working URL. Both public consumers
+                // (api/v1/models/[id], model-search.service) strip it from the
+                // wire body, so the public shape is unchanged.
+                files: files.map(toApiModelFile),
                 earlyAccessDeadline,
+                paidAccess,
                 stats,
                 // images: images
                 //   .filter((image) => image.modelVersionId === version.id)
@@ -3646,26 +4102,23 @@ export async function copyGallerySettingsToAllModelsByUser({
     const user = await tx.user.findUnique({ where: { id: userId }, select: { settings: true } });
     if (!user) throw throwNotFoundError(`No user with id ${userId}`);
 
-    const userSettings = user.settings as UserSettingsSchema;
-
-    await tx.user.update({
-      where: { id: userId },
-      data: {
-        settings: {
-          ...userSettings,
-          gallerySettings: { ...userSettings.gallerySettings, ...settings },
-        },
-      },
-    });
-
-    userUpdateCounter?.inc({ location: 'model.service:updateGallerySettings' });
+    // Merge in Postgres, over the stored column. Writing the whole blob back from a JS
+    // snapshot replaced every other settings key with its read-time value, discarding
+    // anything that landed in between.
+    await patchUserSettings(
+      userId,
+      { mergeInto: { gallerySettings: settings }, location: 'model.service:updateGallerySettings' },
+      tx
+    );
 
     // Flagged models keep the SFW level a moderator forced on them — otherwise one
     // "copy to all my models" re-opens every model the user has ever had flagged.
     await tx.$executeRaw`
       UPDATE "Model"
       SET "gallerySettings" = "gallerySettings" || jsonb_build_object(
-        'level', CASE WHEN minor OR "sfwOnly" THEN ${sfwBrowsingLevelsFlag} ELSE ${settings.level} END,
+        'level', CASE WHEN minor OR "sfwOnly" THEN ${sfwBrowsingLevelsFlag} ELSE ${
+      settings.level
+    } END,
         'users', ${JSON.stringify(settings.users || [])}::jsonb,
         'tags', ${JSON.stringify(settings.tags || [])}::jsonb
                                                    )
@@ -3674,8 +4127,11 @@ export async function copyGallerySettingsToAllModelsByUser({
     `;
   });
 
-  // Count-cache refresh hits Redis — run after commit, off the txn budget.
-  await userModelCountCache.refresh(userId);
+  // Count-cache refresh hits Redis — run after commit, off the txn budget. Same for the
+  // user-settings cache, which this path never busted at all: `getUserSettings` went on
+  // serving pre-copy gallery defaults for up to its 4h TTL, and the next whole-blob
+  // writer then persisted that stale snapshot.
+  await Promise.all([userModelCountCache.refresh(userId), bustUserSettings(userId)]);
 
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
   const modelIds = models.map((x) => x.id);
@@ -3848,79 +4304,6 @@ export async function migrateResourceToCollection({
   return { ok: true };
 }
 
-export async function ingestModelById({ id }: GetByIdInput) {
-  const model = await dbRead.model.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      name: true,
-      description: true,
-      poi: true,
-      nsfw: true,
-      minor: true,
-      sfwOnly: true,
-    },
-  });
-  if (!model) throw new TRPCError({ code: 'NOT_FOUND' });
-
-  const parsedModel = ingestModelSchema.parse(model);
-  return await ingestModel({ ...parsedModel });
-}
-
-export async function ingestModel(data: IngestModelInput) {
-  if (!env.CONTENT_SCAN_ENDPOINT || isDev) {
-    console.log('Skipping model ingestion');
-    await dbWrite.model.update({
-      where: { id: data.id },
-      data: { scannedAt: new Date() },
-    });
-    return true;
-  }
-
-  // get version data
-  const db = await getDbWithoutLag('model', data.id);
-  const versions = await db.modelVersion.findMany({
-    where: { modelId: data.id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
-    select: { description: true, trainedWords: true },
-  });
-
-  const versionDescriptions = versions.map((x) => x.description || null).filter(isDefined);
-  const triggerWords = versions.flatMap((x) => x.trainedWords);
-
-  const payload = {
-    callbackUrl:
-      env.CONTENT_SCAN_CALLBACK_URL ??
-      `${env.NEXTAUTH_URL}/api/webhooks/model-scan-result?token=${env.WEBHOOK_TOKEN}`,
-    request: {
-      llm_model: env.CONTENT_SCAN_MODEL ?? 'gpt-4o-mini',
-      content: {
-        id: data.id,
-        name: data.name,
-        content: [data.description, ...versionDescriptions].join('\n'),
-        POI: data.poi,
-        NSFW: data.nsfw,
-        minor: data.minor,
-        sfwOnly: data.sfwOnly,
-        triggerwords: triggerWords,
-      },
-    },
-  };
-
-  const response = await fetch(`${env.CONTENT_SCAN_ENDPOINT}/scan_model`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok)
-    throw new TRPCError({
-      code: 'BAD_REQUEST',
-      message: 'Failed to scan model. Service is unavailable.',
-    });
-
-  if (response.status === 202) return true;
-  else return false;
-}
-
 export type GetFeaturedModels = AsyncReturnType<typeof getFeaturedModels>;
 export async function getFeaturedModels() {
   try {
@@ -4047,6 +4430,7 @@ export async function getModelModerationDetail({ id }: { id: number }) {
           metrics: meta.profanityEvaluation?.metrics ?? null,
         }
       : null,
+    textModeration: meta.textModeration ?? null,
     unpublishedAt: meta.unpublishedAt ?? null,
     unpublishedBy: meta.unpublishedBy ?? null,
     unpublishedReason: meta.unpublishedReason ?? null,
@@ -4220,7 +4604,7 @@ export const privateModelFromTraining = async ({
       result.id
     );
 
-    return result;
+    return withoutMinorHashMeta(result);
   } catch (error) {
     await dbWrite.model.update({
       where: { id },
@@ -4426,32 +4810,6 @@ export const toggleCannotPromote = async ({
   };
 };
 
-export const toggleCannotPublish = async ({
-  id,
-  isModerator,
-}: GetByIdInput & {
-  isModerator: boolean;
-}) => {
-  if (!isModerator) throw throwAuthorizationError();
-  const model = await getModel({ id, select: { id: true, meta: true } });
-  if (!model) throw throwNotFoundError(`No model with id ${id}`);
-  const modelMeta = model.meta as ModelMeta | null;
-  const currentCannotPublish = modelMeta?.cannotPublish ?? false;
-  const cannotPublish = !currentCannotPublish;
-  const updated = await dbWrite.model.update({
-    where: { id },
-    data: {
-      meta: modelMeta ? { ...modelMeta, cannotPublish } : { cannotPublish },
-    },
-    select: { id: true, meta: true },
-  });
-  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
-  return {
-    id: updated.id,
-    meta: updated.meta as ModelMeta | null,
-  };
-};
-
 export const setModelOfficial = async ({
   id,
   isOfficial,
@@ -4530,126 +4888,6 @@ export async function getTopWeeklyEarners(fresh = false) {
   return results;
 }
 
-export const getTrainingModelsForModerators = async ({
-  limit = DEFAULT_PAGE_SIZE,
-  cursor,
-  username,
-  dateFrom,
-  dateTo,
-  cannotPublish,
-  workflowId,
-}: GetTrainingModerationFeedSchema) => {
-  const { take, skip } = getPagination(limit, cursor ? 0 : undefined);
-  const cursorWhere = cursor ? { id: { lt: cursor } } : {};
-
-  const where: Prisma.ModelWhereInput = {
-    ...cursorWhere,
-    uploadType: ModelUploadType.Trained,
-    deletedAt: null,
-    ...(username && {
-      user: {
-        username,
-      },
-    }),
-    ...(dateFrom && {
-      createdAt: {
-        gte: dateFrom,
-        ...(dateTo && { lte: dateTo }),
-      },
-    }),
-    ...(dateTo &&
-      !dateFrom && {
-        createdAt: {
-          lte: dateTo,
-        },
-      }),
-    ...(cannotPublish !== undefined && {
-      meta: cannotPublish
-        ? { path: ['cannotPublish'], equals: true }
-        : { not: { path: ['cannotPublish'], equals: true } },
-    }),
-    modelVersions: {
-      some: {
-        files: {
-          some: {
-            type: 'Training Data',
-            dataPurged: false,
-            ...(workflowId && {
-              metadata: {
-                path: ['trainingResults', 'workflowId'],
-                equals: workflowId,
-              },
-            }),
-          },
-        },
-      },
-    },
-  };
-
-  const items = await dbRead.model.findMany({
-    take,
-    skip,
-    where,
-    orderBy: { id: 'desc' },
-    select: {
-      id: true,
-      name: true,
-      type: true,
-      nsfw: true,
-      poi: true,
-      minor: true,
-      tosViolation: true,
-      status: true,
-      createdAt: true,
-      publishedAt: true,
-      meta: true,
-      user: {
-        select: simpleUserSelect,
-      },
-      modelVersions: {
-        where: {
-          files: {
-            some: {
-              type: 'Training Data',
-              dataPurged: false,
-            },
-          },
-        },
-        select: {
-          id: true,
-          name: true,
-          status: true,
-          baseModel: true,
-          trainingStatus: true,
-          createdAt: true,
-          files: {
-            where: {
-              type: 'Training Data',
-              dataPurged: false,
-            },
-            select: {
-              id: true,
-              name: true,
-              url: true,
-              sizeKB: true,
-              createdAt: true,
-              metadata: true,
-            },
-          },
-        },
-        orderBy: { createdAt: 'desc' },
-      },
-    },
-  });
-
-  const nextCursor = items.length > 0 ? items[items.length - 1].id : undefined;
-
-  return {
-    items,
-    nextCursor,
-  };
-};
-
 export async function transferModelOwnership({
   modelIds,
   targetUserId,
@@ -4697,6 +4935,51 @@ export async function transferModelOwnership({
       where: { id: { in: modelIds } },
       data: { userId: targetUserId },
     }),
+    // PaidAccess.ownerId is a denormalised copy of the model owner, and it is what decides who
+    // generates free from a gated version and whose scheduled sales may reprice it. Left behind, the
+    // previous owner keeps both over a model they no longer hold. Joined against ModelVersion rather
+    // than a pre-read id list so a version created between the read and this statement is still moved.
+    //
+    // ModelVersionSale.userId deliberately does NOT move: a sale is the previous owner's pricing
+    // decision. getSalesFor re-checks it against the owner resolved here, so their running sale stops
+    // applying to a transferred version — the version reprices to full at the transfer, and that is the
+    // intended outcome, not an oversight.
+    dbWrite.$executeRaw`
+      UPDATE "PaidAccess" pa
+      SET "ownerId" = ${targetUserId}, "updatedAt" = NOW()
+      FROM "ModelVersion" mv
+      WHERE pa."entityType" = 'ModelVersion'::"PaidAccessEntityType"
+        AND pa."entityId" = mv.id
+        AND mv."modelId" = ANY(${modelIds}::int[])
+        AND pa."ownerId" <> ${targetUserId}
+    `,
+    // DonationGoal.userId is the other owner copy the transfer used to miss, and this one routes
+    // money: a donation pays goal.userId, so a donation on a transferred model paid the previous
+    // owner. The target is dual-written (legacy modelVersionId + polymorphic entityType/entityId), so
+    // both spellings have to move — as two statements, not one OR, because an OR across them makes the
+    // planner drive from DonationGoal and seq-scan the whole table on every transfer regardless of how
+    // many models it names (measured on prod: 176ms/155k buffers as an OR, ~20ms/3k buffers split).
+    // The `userId <> target` guard also makes the two disjoint, so their counts sum without
+    // double-counting a dual-written row — which holds only because these run in ONE transaction, in
+    // THIS order, with that guard: leg 1 writes the target, so leg 2 no longer matches the row. Move
+    // either statement out of the array or reorder them and the sum silently double-counts.
+    dbWrite.$executeRaw`
+      UPDATE "DonationGoal" dg
+      SET "userId" = ${targetUserId}
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" = ANY(${modelIds}::int[])
+        AND dg."modelVersionId" = mv.id
+        AND dg."userId" <> ${targetUserId}
+    `,
+    dbWrite.$executeRaw`
+      UPDATE "DonationGoal" dg
+      SET "userId" = ${targetUserId}
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" = ANY(${modelIds}::int[])
+        AND dg."entityType" = 'ModelVersion'::"PaidAccessEntityType"
+        AND dg."entityId" = mv.id
+        AND dg."userId" <> ${targetUserId}
+    `,
     dbWrite.modelMetric.updateMany({
       where: { modelId: { in: modelIds } },
       data: { userId: targetUserId },
@@ -4711,6 +4994,18 @@ export async function transferModelOwnership({
       SET "userId" = ${targetUserId}
       WHERE id = ANY(${affectedImageIds}::int[])
     `,
+    // DELETED, not moved: ownerId records who spent an allowance, so moving it charges the recipient
+    // for a pricing they never made. Leaving it is worse — the key is the entity alone, so the row is
+    // both unreleasable (owner mismatch) and un-insertable, letting the recipient re-price that version
+    // forever off the books. Every other stranded slot goes inert at the month turn; a transferred
+    // entity outlives it.
+    dbWrite.$executeRaw`
+      DELETE FROM "PricingSlot" ps
+      USING "ModelVersion" mv
+      WHERE ps."entityType" = 'ModelVersion'::"PaidAccessEntityType"
+        AND ps."entityId" = mv.id
+        AND mv."modelId" = ANY(${modelIds}::int[])
+    `,
   ]);
 
   const tracker = new Tracker();
@@ -4718,15 +5013,59 @@ export async function transferModelOwnership({
     await tracker.modelEvent({ type: 'Transfer', modelId: m.id, nsfw: m.nsfw });
   }
 
+  const affectedVersionIds = (
+    await dbWrite.modelVersion.findMany({
+      where: { modelId: { in: modelIds } },
+      select: { id: true },
+    })
+  ).map((v) => v.id);
+
+  // Fail-open, individually. These run AFTER the commit, so a throw here reports failure for a
+  // transfer that already happened — and the retry is refused by the pre-flight guard above, leaving
+  // the operator with no in-product way to finish the invalidation. A logged stale cache expires on
+  // its own; nothing here can misroute money, because both payout paths read the primary fresh.
+  const invalidation = (name: string, work: Promise<unknown>) =>
+    work.catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-ownership-transfer-invalidation',
+        message: `${name} failed after a committed transfer`,
+        error: { name, modelIds, targetUserId, error: String(error) },
+      }).catch(() => null)
+    );
+
   await Promise.all([
-    modelsSearchIndex.queueUpdate(
-      modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    // Everything keyed off the owner. modelVersionAccessCache is the one that matters most here: it
+    // holds Model.userId for a DAY, and hasEntityAccess grants "owners always have access" from it, so
+    // without this the previous owner keeps reaching a gated version the UPDATE above just moved.
+    // Also queues the model search-index update these transferred models need.
+    invalidation('bustMvCache', bustMvCache(affectedVersionIds, modelIds)),
+    // Deliberately duplicated with the queueUpdate inside bustMvCache. That one sits behind four
+    // awaits that can throw, and it is the only leg here whose loss is permanent — every cache
+    // self-heals on a TTL, while the Meilisearch document keeps the previous owner until something
+    // else touches the model. A duplicate enqueue is free: processQueues dedupes with a Set.
+    invalidation(
+      'modelsSearchIndex.queueUpdate',
+      modelsSearchIndex.queueUpdate(
+        modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+      )
+    ),
+    // The gate row carries ownerId and the public donation goal carries userId, so both have to go.
+    // bustMvCache busts the gate row too as of 868kwp6ne — this stays as the deliberate duplicate that
+    // keeps the pair together, and a second bust of an already-busted key costs one SET.
+    invalidation('bustPaidAccessCache', bustPaidAccessCache('ModelVersion', affectedVersionIds)),
+    invalidation(
+      'bustPublicDonationGoals',
+      modelVersionPublicDonationGoalsCache.bust(affectedVersionIds)
     ),
     affectedImageIds.length
-      ? queueImageSearchIndexUpdate({
-          ids: affectedImageIds,
-          action: SearchIndexUpdateQueueAction.Update,
-        })
+      ? invalidation(
+          'queueImageSearchIndexUpdate',
+          queueImageSearchIndexUpdate({
+            ids: affectedImageIds,
+            action: SearchIndexUpdateQueueAction.Update,
+          })
+        )
       : Promise.resolve(),
   ]);
 
@@ -4740,9 +5079,11 @@ export async function transferModelOwnership({
       sourceUserIds,
       modUserId,
       modelsUpdated: result[0].count,
-      metricsUpdated: result[1].count,
-      postsUpdated: Number(result[2]),
-      imagesUpdated: Number(result[3]),
+      paidAccessUpdated: Number(result[1]),
+      donationGoalsUpdated: Number(result[2]) + Number(result[3]),
+      metricsUpdated: result[4].count,
+      postsUpdated: Number(result[5]),
+      imagesUpdated: Number(result[6]),
     },
   }).catch(() => null);
 
@@ -4750,8 +5091,10 @@ export async function transferModelOwnership({
 
   return {
     modelsUpdated: result[0].count,
-    metricsUpdated: result[1].count,
-    postsUpdated: Number(result[2]),
-    imagesUpdated: Number(result[3]),
+    paidAccessUpdated: Number(result[1]),
+    donationGoalsUpdated: Number(result[2]) + Number(result[3]),
+    metricsUpdated: result[4].count,
+    postsUpdated: Number(result[5]),
+    imagesUpdated: Number(result[6]),
   };
 }

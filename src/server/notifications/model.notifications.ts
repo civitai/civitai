@@ -1,6 +1,9 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
-import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import {
+  createNotificationProcessor,
+  notBlockedBetween,
+} from '~/server/notifications/base.notifications';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 
 const modelDownloadMilestones = [5, 10, 20, 50, 100, 500] as const;
@@ -154,6 +157,7 @@ export const modelNotifications = createNotificationProcessor({
           JOIN new_model_version nmv ON nmv."userId" = ue."targetUserId"
           WHERE ue.type = 'Follow'
             AND NOT EXISTS (SELECT 1 FROM "ModelEngagement" me WHERE me.type = 'Mute' AND me."userId" = ue."userId" AND me."modelId" = nmv."modelId")
+            AND ${notBlockedBetween('ue."userId"', 'nmv."userId"')}
 
           UNION
 
@@ -163,6 +167,7 @@ export const modelNotifications = createNotificationProcessor({
           FROM "ModelEngagement" me
           JOIN new_model_version nmv ON nmv."modelId" = me."modelId"
           WHERE type = 'Notify'
+            AND ${notBlockedBetween('me."userId"', 'nmv."userId"')}
         ) t
       )
       SELECT
@@ -209,6 +214,9 @@ export const modelNotifications = createNotificationProcessor({
           -- otherwise force a giant Model x UserEngagement scan.
           AND m."publishedAt" > NOW() - INTERVAL '30 minutes'
           AND m.status IN ('Published', 'Scheduled')
+          -- The follow almost always predates the block, so the Follow row outlives it and keeps
+          -- delivering the blocker's releases to someone who blocked them.
+          AND ${notBlockedBetween('ue."userId"', 'm."userId"')}
       )
       SELECT
         CONCAT('new-model-from-following:', details->>'modelId') "key",

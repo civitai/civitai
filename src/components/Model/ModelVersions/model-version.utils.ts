@@ -4,12 +4,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EntityAccessPermission, SignalMessages, SignalTopic } from '~/server/common/enums';
 import type { ModelVersionResourceCacheItem } from '~/server/redis/caches';
 import type { ModelVersionEarlyAccessPurchase } from '~/server/schema/model-version.schema';
-import { type ModelVersionTerms, isFreeGeneration } from '@civitai/buzz';
+import { type ModelVersionTerms, generationOpenToNonBuyers, isFreeGeneration } from '@civitai/buzz';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { handleTRPCError, trpc } from '~/utils/trpc';
-
-export const MIN_DONATION_GOAL = 1000;
-export const MAX_DONATION_GOAL = 1000000000;
 
 export const useQueryModelVersionsEngagement = (
   { modelId, versionId }: { modelId: number; versionId: number },
@@ -53,6 +50,7 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
       isSelectableInGenerator: true, // By default assume it is as it's our default behavior.
       canDownload: false,
       canGenerate: false,
+      generationRequiresPurchase: false,
       paidAccess: undefined,
       modelVersion: undefined,
       isEarlyAccess: false,
@@ -62,6 +60,9 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
   const [access] = entities ?? [];
   const paidAccess = modelVersion?.paidAccess;
   const paidAccessTerms = paidAccess?.terms as ModelVersionTerms | undefined;
+  const hasBoughtGeneration =
+    !!access?.hasAccess &&
+    ((access.permissions ?? 0) & EntityAccessPermission.EarlyAccessGeneration) !== 0;
   // Active gate ⇔ permanent (endsAt null) or the timed window is still open.
   const isEarlyAccess =
     !!paidAccess && (paidAccess.endsAt == null || paidAccess.endsAt > new Date());
@@ -83,10 +84,13 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
       : access?.hasAccess &&
         (access?.permissions & EntityAccessPermission.EarlyAccessDownload) !== 0,
     canGenerate:
-      !isEarlyAccess || (!!paidAccessTerms && isFreeGeneration(paidAccessTerms))
-        ? true
-        : access?.hasAccess &&
-          (access?.permissions & EntityAccessPermission.EarlyAccessGeneration) != 0,
+      !isEarlyAccess ||
+      hasBoughtGeneration ||
+      (!!paidAccessTerms && generationOpenToNonBuyers(paidAccessTerms)),
+    generationRequiresPurchase:
+      isEarlyAccess &&
+      !hasBoughtGeneration &&
+      !(!!paidAccessTerms && isFreeGeneration(paidAccessTerms)),
     paidAccess: !isEarlyAccess ? undefined : paidAccess,
     modelVersion,
     isEarlyAccess,

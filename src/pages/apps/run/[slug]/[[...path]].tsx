@@ -5,10 +5,12 @@ import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsSto
 import { Meta } from '~/components/Meta/Meta';
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
+import { Page } from '~/components/AppLayout/Page';
 
 /**
  * W10 — full-page App Block route: `/apps/run/<slug>` (+ optional sub-path).
@@ -89,23 +91,51 @@ export const getServerSideProps = createServerSideProps<PageProps>({
   },
 });
 
-export default function AppPage(props: PageProps) {
+function AppPage(props: PageProps) {
   const { appBlockId, blockId, appId, appName, iframeSrc, sandbox, trustTier, slug, scopes } =
     props;
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
   const theme: 'light' | 'dark' = colorScheme === 'dark' ? 'dark' : 'light';
 
   // Record this ACTUAL run in the client-only recents store (localStorage), so
-  // the shared app-chrome "Recently run" menu can offer a 1-click return. Keyed
-  // by appBlockId (the store's stable de-dup id); `blockId` backs the
-  // `/apps/run/<blockId>` link and `name` is the display label. No icon URL is
-  // plumbed to this SSR page (PageProps carries none), so `iconUrl` is omitted —
-  // the menu falls back to a generic app icon. Fires once per mount; the store
-  // dedups so revisiting just moves the entry to the front.
+  // both the shared app-chrome "Recently run" menu AND the `/apps` store's
+  // "Recently opened" rail can offer a 1-click return. Keyed by appBlockId (the
+  // store's stable de-dup id).
+  //
+  // Fields, and why each is written:
+  //  - `blockId` — backs `/apps/run/<blockId>` (the chrome menu's link).
+  //  - `slug`    — backs `/apps/store-preview/<slug>` (the store rail's fallback
+  //    link). For an on-site app the AppListing slug IS the AppBlock `block_id`
+  //    (server-side single source: `app-listing-mapper.ts` → `slug: ab.blockId`),
+  //    which is also why this page's own `slug` prop is `page.blockId`.
+  //  - `kind`/`hasPage` — reaching THIS page means the app declares a full-page
+  //    surface, so `hasPage` is true by construction; the rail uses it to decide
+  //    between re-opening the run route and the detail page.
+  // No icon URL is plumbed to this SSR page (PageProps carries none), so
+  // `iconUrl` is omitted — consumers fall back to the seeded monogram / a
+  // generic app icon. Fires once per mount; the store dedups, so revisiting just
+  // moves the entry to the front.
+  //
+  // 🔴 STAMPED WITH THE VIEWER'S ACCOUNT (#4048). localStorage is per browser
+  // PROFILE, so without an owner the next account to use this browser inherits
+  // these entries — which is how a rail of apps that 404 for the viewer got
+  // rendered. `ownerId` is `null` for a signed-out run, which is its own bucket.
+  const recentsOwnerId = currentUser?.id ?? null;
   useEffect(() => {
-    recordRecentlyOpenedApp({ id: appBlockId, blockId, name: appName });
-  }, [appBlockId, blockId, appName]);
+    recordRecentlyOpenedApp(
+      {
+        id: appBlockId,
+        blockId,
+        slug: blockId,
+        kind: 'onsite',
+        hasPage: true,
+        name: appName,
+      },
+      recentsOwnerId
+    );
+  }, [appBlockId, blockId, appName, recentsOwnerId]);
 
   // Synthetic page instance id — the mint resolves `page_<appBlockId>` directly
   // from the approved AppBlock (no install row).
@@ -156,8 +186,21 @@ export default function AppPage(props: PageProps) {
   // flow to the block via TOKEN_REFRESH (wired to PageBlockHost.onConsentGranted,
   // mirroring how IframeHost re-mints on REQUEST_CONSENT). The rotated token's
   // TOKEN_REFRESH push delivers the granted scopes and the block retries.
-  const { token, expiresAt, needsConsent, missingScopes, domain, maxBrowsingLevel, error, refresh } =
-    useBlockToken(install, context);
+  const {
+    token,
+    expiresAt,
+    needsConsent,
+    missingScopes,
+    domain,
+    maxBrowsingLevel,
+    error,
+    // `terminal` = the mint failed, nothing usable is left, AND the hook's
+    // bounded automatic re-mints are spent. A bare `error` is NOT enough to tear
+    // down a running page — a transient refresh blip sets it while recovery is
+    // still under way — so the mid-session escalation keys on this instead.
+    terminal,
+    refresh,
+  } = useBlockToken(install, context);
 
   const viewer = currentUser
     ? { id: currentUser.id, username: currentUser.username ?? null }
@@ -166,7 +209,37 @@ export default function AppPage(props: PageProps) {
   return (
     <>
       <Meta title={`${appName} — Civitai Apps`} deIndex />
-      <Box style={{ width: '100%' }}>
+      {/* 🔴 THE THIRD LEG OF THE LAYOUT CONTRACT — not incidental styling. Pinned
+          by `pageRunScrollContract.test.ts`, because reverting it passes every
+          other assertion in this PR while breaking the page.
+
+          `display/flexDirection/flex/minHeight` — the host is a FLEX ITEM of
+          `AppLayout`'s non-scrolling `<main>` (this page declares
+          `scrollable: false` below), so this wrapper has to GROW rather than sit
+          at its content height. A plain block would leave `PageBlockHost`'s
+          `flex: 1` resolving against an auto-height parent, leaving the host
+          sized only by `FILL_MIN_HEIGHT_PX` — measured 300px of host, 31px of
+          chrome, 269px of iframe, at every viewport width.
+          `minHeight: 0` defeats the flex `min-height: auto` floor so the chain
+          can shrink to the viewport instead of pushing past it.
+
+          `overflowY: auto` — the SCROLL CONTAINER OF LAST RESORT, and the reason
+          `FILL_MIN_HEIGHT_PX` is safe. Every ancestor above is `overflow-hidden`
+          under `scrollable: false`, so without this the host's floor would be
+          clipped rather than scrolled and a short viewport (phone landscape, or
+          200% zoom) would put content permanently out of reach. It costs nothing
+          at ordinary sizes: above the floor `flex: 1` fills the parent exactly,
+          so there is no overflow and no scrollbar. */}
+      <Box
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          width: '100%',
+        }}
+      >
         <PageBlockHost
           appBlockId={appBlockId}
           blockId={blockId}
@@ -174,6 +247,31 @@ export default function AppPage(props: PageProps) {
           blockInstanceId={blockInstanceId}
           appName={appName}
           iframeSrc={iframeSrc}
+          // The public full-page run surface.
+          surface="page-run"
+          // 🔴 THE DOUBLE-SCROLLBAR FIX, and it is only half of one — it is
+          // correct ONLY in combination with `scrollable: false` on the `Page`
+          // options below. `fit="fill"` makes the host claim no height of its
+          // own, which needs an ancestor chain that already bounds it; the
+          // default scrolling layout does not, so shipping either half alone
+          // regresses this page, in OPPOSITE directions. Both measured, not
+          // reasoned — this comment has now been wrong in BOTH directions, once
+          // by guessing and once by "correcting" a claim that was already right:
+          //
+          //   Drop `fill` → the host claims `100dvh - 60px` again. The
+          //   `overflow-hidden` chain sits ABOVE this wrapper, and this wrapper
+          //   is `overflowY: 'auto'`, so the excess is SCROLLED, not clipped:
+          //   a page scrollbar beside the block's own — the exact bug this PR
+          //   removes. (Measured 708px of host in a 600px wrapper,
+          //   `USER_SCROLLABLE=true`.)
+          //
+          //   Drop `scrollable: false` → the `ScrollArea` branch bounds nothing,
+          //   so `flex: 1` has nothing to resolve against and the host is sized
+          //   only by `FILL_MIN_HEIGHT_PX` — a fixed slab, whatever the viewport.
+          //
+          // Neither is clipping. Nothing in this layout clips, because this
+          // wrapper can always scroll.
+          fit="fill"
           sandbox={sandbox}
           trustTier={trustTier}
           slug={slug}
@@ -185,12 +283,89 @@ export default function AppPage(props: PageProps) {
           domain={domain}
           maxBrowsingLevel={maxBrowsingLevel}
           tokenError={error != null}
+          tokenTerminal={terminal}
           viewer={viewer}
           theme={theme}
           onConsentGranted={refresh}
           onRetryToken={refresh}
+          // The chrome's "Recently run" shortcuts point at this very route, so
+          // what decides whether they resolve is exactly this route's own
+          // `getServerSideProps` predicate — which requires BOTH flags (see the
+          // 404 above). `appBlocksPages` alone is NOT it: `appBlocks` is the
+          // block-runtime kill-switch and Flipt can disable as well as enable,
+          // so pages-on/blocks-off is reachable and would render guaranteed-404
+          // links. (Both are redundantly true here, since we already passed that
+          // gate; it is written out anyway so all four chrome mounters carry ONE
+          // greppable shape and a future surface can't justify a per-surface
+          // constant.)
+          canOpenPage={!!(features.appBlocks && features.appBlocksPages)}
         />
       </Box>
     </>
   );
 }
+
+/**
+ * 🔴 `scrollable: false` IS PART OF THE RENDER CONTRACT, not a cosmetic choice.
+ *
+ * The default (`scrollable: true`) wraps the page in `AppLayout`'s `ScrollArea`
+ * — a bounded, `overflow-y: auto` viewport. A full-page App Block already owns a
+ * scroll surface: the block's own document inside the iframe. Nesting one inside
+ * the other is what produces the double scrollbar, because the host's height and
+ * the scroll viewport's height are computed from different terms and cannot
+ * agree (see `PageBlockHost`'s `fit` prop for the arithmetic).
+ *
+ * `scrollable: false` selects `MainContent`'s `no-scroll` branch — `flex-1
+ * overflow-hidden` from the layout root down — so the outer surface has exactly
+ * one height, no scrollbar of its own, and the block scrolls internally. The
+ * footer is built for this mode (`AppFooter` carries `group-[.no-scroll]:`
+ * variants), so it and the adhesive ad rail are deliberately left at their
+ * defaults rather than nulled — this changes layout mechanics, not what the page
+ * contains.
+ *
+ * `subNav: null` IS A PRODUCT DECISION, not just layout — DECIDED: keep it.
+ * `SubNav2` renders `<HomeTabs />`, the row of top-level section pills, so this
+ * removes that second-level navigation row from the route for every viewer. Four
+ * reasons, written down so the call can be overturned on its merits rather than
+ * rediscovered as an open question:
+ *
+ *   1. TOP-LEVEL NAVIGATION IS NOT LOST. `header` stays at its default, and
+ *      `AppHeader` was confirmed present on the live preview — logo, search,
+ *      Create, Buzz balance, account menu. Only the SECOND-level tab row goes,
+ *      and its destinations stay reachable from the header.
+ *   2. There IS precedent, but it is SPLIT — do not read it as a repo rule.
+ *      Complete enumeration of `scrollable: false` in `src/pages` (6 routes
+ *      besides this one), not a sample:
+ *        pass `subNav: null` — `generate/index.tsx`, `research/rater.tsx`,
+ *          `images/[imageId].tsx`
+ *        keep the sub-nav — `comics/project/[id]/read.tsx`,
+ *          `comics/project/[id]/iterate.tsx`, `images/iterate.tsx`
+ *      3-for / 3-against. `images/iterate.tsx` is the sharpest counter-example:
+ *      it nulls MORE chrome than this route does (`header: null`,
+ *      `footer: null`) and still keeps the sub-nav. So this reason establishes
+ *      that dropping it is a normal, precedented choice here — not that it is
+ *      the convention. The weight sits on 1, 3 and 4.
+ *
+ *      🔴 An earlier version of this bullet said "the precedent is exact" and
+ *      named two files. That was a SAMPLE generalised into an enumeration: it
+ *      missed a third supporting case and all three counter-examples. Enumerate
+ *      before claiming a convention.
+ *   3. It is ~52px (h-8 pills + `py-1` + `mb-3`) of the vertical budget this
+ *      route is tightest on; a 375×667 phone leaves the page ~386px total.
+ *   4. Two chrome bars over a THIRD-PARTY app reads badly — the route already
+ *      renders `AppBlockChrome` (the "Apps / <name>" breadcrumb).
+ *
+ * The counter-argument is consistency with the rest of the site, and (2) shows
+ * this repo genuinely splits on it. The case for dropping it here rests on (1)
+ * — nothing is unreachable — and on (4): unlike every route in either list
+ * above, this one embeds a THIRD-PARTY app, so a second civitai nav strip sits
+ * over someone else's UI. The scrollbar fix does not depend on this, so
+ * restoring the tabs is a safe one-word reversal.
+ *
+ * Note `RewardsBonusBanner` still renders regardless (`AppLayout` shows it in
+ * the `{!subNav && …}` branch), so it is NOT removed by this.
+ */
+export default Page(AppPage, {
+  scrollable: false,
+  subNav: null,
+});

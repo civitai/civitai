@@ -40,11 +40,23 @@ export function formatPriority(priority) {
   return priorities[priority.priority] || priority.priority || 'None';
 }
 
+// Format time estimate from milliseconds to human-readable
+function formatTimeEstimate(ms) {
+  if (!ms) return null;
+  const totalMinutes = Math.round(ms / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 0 && minutes > 0) return `${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h`;
+  return `${minutes}m`;
+}
+
 // Format task for display
 export function formatTask(task) {
   const lines = [];
 
   lines.push(`Task: ${task.name}`);
+  lines.push(`ID: ${task.id}`);
   lines.push(`Status: ${task.status?.status || 'Unknown'}`);
   lines.push(`Priority: ${formatPriority(task.priority)}`);
 
@@ -53,9 +65,30 @@ export function formatTask(task) {
     lines.push(`Assignees: ${names}`);
   }
 
+  if (task.watchers?.length > 0) {
+    lines.push(`Watchers: ${task.watchers.length}`);
+  }
+
   lines.push(`Due: ${formatDate(task.due_date)}`);
+  if (task.start_date) {
+    lines.push(`Start: ${formatDate(task.start_date)}`);
+  }
+  if (task.time_estimate) {
+    const formatted = formatTimeEstimate(task.time_estimate);
+    if (formatted) lines.push(`Time Estimate: ${formatted}`);
+  }
   lines.push(`Created: ${formatDate(task.date_created)}`);
   lines.push(`URL: ${task.url}`);
+
+  if (task.list?.name) {
+    lines.push(`List: ${task.list.name}`);
+  }
+  if (task.folder && !task.folder.hidden) {
+    lines.push(`Folder: ${task.folder.name}`);
+  }
+  if (task.space?.id) {
+    lines.push(`Space: ${task.space.id}`);
+  }
 
   if (task.description) {
     lines.push('');
@@ -103,8 +136,8 @@ export function formatTaskList(tasks) {
   return lines.join('\n');
 }
 
-// Format comments for display
-export function formatComments(comments) {
+// Format comments for display (with optional thread expansion)
+export function formatComments(comments, threadMap = {}) {
   if (comments.length === 0) {
     return 'No comments on this task.';
   }
@@ -115,10 +148,56 @@ export function formatComments(comments) {
     const user = comment.user?.username || comment.user?.email || 'Unknown';
     // Prefer the comment array (rich formatting) over comment_text (plain text)
     const text = comment.comment ? extractCommentText(comment.comment) : comment.comment_text || '';
+    const replyCount = parseInt(comment.reply_count, 10) || 0;
 
-    lines.push(`[${date}] ${user}:`);
+    lines.push(`[${date}] ${user} (id: ${comment.id}):`);
+    lines.push(`  ${text.split('\n').join('\n  ')}`);
+    if (replyCount > 0 && !threadMap[comment.id]) {
+      lines.push(`  [${replyCount} ${replyCount === 1 ? 'reply' : 'replies'} — use "thread ${comment.id}" to view]`);
+    }
+
+    // Show expanded thread replies if available
+    const replies = threadMap[comment.id];
+    if (replies && replies.length > 0) {
+      for (const reply of replies) {
+        const rDate = formatDateTime(reply.date);
+        const rUser = reply.user?.username || reply.user?.email || 'Unknown';
+        const rText = reply.comment ? extractCommentText(reply.comment) : reply.comment_text || '';
+        lines.push(`    ↳ [${rDate}] ${rUser} (id: ${reply.id}):`);
+        lines.push(`      ${rText.split('\n').join('\n      ')}`);
+      }
+    }
+
+    lines.push('');
+  }
+
+  return lines.join('\n').trim();
+}
+
+// Format threaded replies for display (standalone thread view)
+export function formatThread(parentComment, replies) {
+  const lines = [];
+
+  if (parentComment) {
+    const date = formatDateTime(parentComment.date);
+    const user = parentComment.user?.username || parentComment.user?.email || 'Unknown';
+    const text = parentComment.comment ? extractCommentText(parentComment.comment) : parentComment.comment_text || '';
+    lines.push(`[${date}] ${user} (id: ${parentComment.id}):`);
     lines.push(`  ${text.split('\n').join('\n  ')}`);
     lines.push('');
+  }
+
+  if (replies.length === 0) {
+    lines.push('  No replies in this thread.');
+  } else {
+    for (const reply of replies) {
+      const date = formatDateTime(reply.date);
+      const user = reply.user?.username || reply.user?.email || 'Unknown';
+      const text = reply.comment ? extractCommentText(reply.comment) : reply.comment_text || '';
+      lines.push(`  ↳ [${date}] ${user} (id: ${reply.id}):`);
+      lines.push(`    ${text.split('\n').join('\n    ')}`);
+      lines.push('');
+    }
   }
 
   return lines.join('\n').trim();
@@ -224,5 +303,33 @@ export function formatPageList(pages, indent = 0) {
   if (indent === 0) {
     lines.push(`Total: ${pages.length} page(s)`);
   }
+  return lines.join('\n');
+}
+
+// Format list for display
+export function formatList(list) {
+  const lines = [];
+
+  lines.push(`List: ${list.name}`);
+  lines.push(`ID: ${list.id}`);
+  if (list.deleted) {
+    lines.push(`Status: DELETED`);
+  }
+  if (list.content) {
+    lines.push(`Description: ${list.content}`);
+  }
+  if (list.space) {
+    lines.push(`Space: ${list.space.name || list.space.id}`);
+  }
+  if (list.folder && !list.folder.hidden) {
+    lines.push(`Folder: ${list.folder.name || list.folder.id}`);
+  }
+  if (list.task_count !== undefined) {
+    lines.push(`Tasks: ${list.task_count}`);
+  }
+  if (list.statuses?.length > 0) {
+    lines.push(`Statuses: ${list.statuses.map(s => s.status).join(', ')}`);
+  }
+
   return lines.join('\n');
 }

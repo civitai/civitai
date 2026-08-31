@@ -1,0 +1,915 @@
+import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import type { DragEndEvent } from '@dnd-kit/core';
+import { arrayMove, rectSortingStrategy, SortableContext, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import {
+  ActionIcon,
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Divider,
+  Anchor,
+  Group,
+  Loader,
+  Modal,
+  Popover,
+  SegmentedControl,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconExternalLink,
+  IconInbox,
+  IconPin,
+  IconPinnedOff,
+  IconRotate,
+  IconShieldCheck,
+  IconTrash,
+  IconWand,
+  IconX,
+} from '@tabler/icons-react';
+import clsx from 'clsx';
+import { useEffect, useMemo, useState } from 'react';
+import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
+import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import type { RemixGalleryItem } from '~/components/RemixGallery/remix-gallery.utils';
+import {
+  dedupeGalleryItems,
+  remixGalleryModerating,
+} from '~/components/RemixGallery/remix-gallery.utils';
+import { QueueThumb } from '~/components/RemixGallery/SubmissionPair';
+import { VerifiedRemixBadge } from '~/components/RemixGallery/VerifiedRemixBadge';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useServerDomains } from '~/providers/AppProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { syncAccount } from '~/utils/sync-account';
+import { REMIX_GALLERY_MAX_PINNED, remixGalleryRemovableAt } from '~/shared/utils/remix-gallery';
+import { daysFromNow, formatDateMin } from '~/utils/date-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
+
+const A_DAY_MS = 24 * 60 * 60 * 1000;
+
+const countLabel = (n: number) => (n === 1 ? '1 submission is' : `${n} submissions are`);
+
+/**
+ * "2 hours ago" while it is still news, the stamp once it is history.
+ *
+ * A queue turns on how long something has been sitting in it, and
+ * `formatDateMin` renders anything from today as a bare "9:10pm" — which is the
+ * one case where the age is the thing you want and the label does not say it.
+ * Same split, and the same reasoning, as the sticker hover card's `placedLabel`.
+ */
+const sentLabel = (sentAt: Date | string) => {
+  const value = new Date(sentAt);
+  return Date.now() - value.getTime() < A_DAY_MS ? daysFromNow(value) : formatDateMin(value);
+};
+
+/**
+ * What an answer pays, rendered inside the button that gives that answer.
+ *
+ * The `+` is load-bearing: a bare Buzz amount on a button reads as its price,
+ * which is the opposite of what happens here. Yellow because placements are paid
+ * in purchasable Buzz — `PLACEMENT_SPEND_TYPES` excludes blue — so this is the
+ * colour the submitter actually spent.
+ */
+function EarningsChip({ amount }: { amount: number }) {
+  return (
+    <Group gap={1} wrap="nowrap" className="shrink-0">
+      <Text size="xs" fw={700} className="leading-none">
+        +
+      </Text>
+      {/* Only the bolt takes the currency colour — the amount stays in the
+          button's own text colour, so the pair reads as one label. */}
+      <CurrencyIcon currency={Currency.BUZZ} type="yellow" size={12} />
+      <Text size="xs" fw={700} className="leading-none">
+        {amount}
+      </Text>
+    </Group>
+  );
+}
+
+/**
+ * The owner's control over one gallery: review what is waiting, and pin or
+ * remove what is live.
+ *
+ * A modal rather than controls on the card itself — the card is a reading
+ * surface in a narrow sidebar, and approve/decline/drag do not fit beside a
+ * 4-across grid without clipping.
+ */
+export function RemixGalleryManageModal({ imageId }: { imageId: number }) {
+  const dialog = useDialogContext();
+  const utils = trpc.useUtils();
+  const currentUser = useCurrentUser();
+  const isModerator = currentUser?.isModerator ?? false;
+
+  // The card has already run this, so react-query serves it from cache.
+  const { data: visibility } = trpc.placement.getRemixGalleryVisibility.useQuery({ imageId });
+  // `undefined` while the query is in flight, which is NOT "not the owner" — see
+  // `remixGalleryModerating`.
+  const ownerKnown = visibility !== undefined;
+  const isOwner = !!currentUser && currentUser.id === visibility?.ownerId;
+
+  /**
+   * Opt-in, and only offered to a moderator on their own gallery.
+   *
+   * Off by default because moderators use the site as ordinary creators and
+   * should get the creator rules on their own work unless they say otherwise.
+   * Ownership used to decide this on its own, which left a moderator able to
+   * moderate every gallery except the one they owned.
+   */
+  const [asModerator, setAsModerator] = useState(false);
+
+  /**
+   * Moderating rather than curating, which is a different modal.
+   *
+   * Two of the three sections are not merely disallowed for them, they are
+   * unusable on someone else's gallery: `getPendingRemixGallerySubmissions`
+   * scopes to `ownerId = caller`, so the review queue comes back empty and
+   * would render "Nothing waiting." over a gallery that has two waiting; and
+   * `setRemixGalleryPins` scopes its lookup the same way, so every drag would
+   * throw "not in this gallery". Hiding them is honesty about reach, not a
+   * permission check — the server is the permission check.
+   *
+   * On your OWN gallery in this mode they are kept, because there they work —
+   * the `ownerId = caller` scoping those queries use is satisfied. Hiding them
+   * would take away working controls that nobody asked to lose, and leave the
+   * ordinary job of clearing your queue behind a round trip through the toggle.
+   */
+  const moderating = remixGalleryModerating({ isModerator, isOwner, ownerKnown, asModerator });
+
+  // Reach, not permission: the review queue, the pinned row and the pin control
+  // all scope to `ownerId = caller` server-side, so they are empty or refusing
+  // on someone else's gallery. On your own they work in either mode.
+  const hideOwnerSections = moderating && !isOwner;
+
+  // Scoped server-side. Filtering the account-wide list here meant its limit
+  // truncated before the filter ran, so a busy owner saw "nothing waiting" on
+  // an image that had submissions.
+  const {
+    data: pendingPages,
+    isLoading: pendingLoading,
+    isError: pendingFailed,
+    fetchNextPage: fetchMorePending,
+    hasNextPage: hasMorePending,
+    isFetchingNextPage: fetchingMorePending,
+  } = trpc.placement.getPendingRemixGallerySubmissions.useInfiniteQuery(
+    { hostImageId: imageId },
+    { getNextPageParam: (lastPage) => lastPage.nextCursor }
+  );
+  const pending = useMemo(
+    () => ({ items: pendingPages?.pages.flatMap((page) => page.items) ?? [] }),
+    [pendingPages]
+  );
+
+  // **Deliberately does not send the viewer's browsing level**, unlike the
+  // gallery card. This is the owner managing what sits on their own image, so a
+  // browsing preference must not decide which entries they are allowed to take
+  // down. Sending it hid mature entries from the owner entirely — and because
+  // the pinned set below is re-seeded from these rows and committed as a whole
+  // set on the next drag, a hidden pin was silently unpinned. A display filter
+  // turning into a write is the shape to watch for here.
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    trpc.placement.getRemixGallery.useInfiniteQuery(
+      { imageId },
+      { getNextPageParam: (lastPage) => lastPage.nextCursor }
+    );
+
+  const items: RemixGalleryItem[] = useMemo(
+    () => dedupeGalleryItems(data?.pages.flatMap((page) => page.items) ?? []),
+    [data]
+  );
+
+  // Local order for the pinned row, committed on drop. Seeded from the server
+  // and re-seeded whenever it changes, so a pin made elsewhere is not silently
+  // overwritten by a stale local list.
+  const [pinnedIds, setPinnedIds] = useState<number[]>([]);
+  useEffect(() => {
+    setPinnedIds(items.filter((item) => item.pinned).map((item) => item.placementId));
+  }, [items]);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+
+  const act = trpc.placement.actOnRemixGallerySubmission.useMutation({
+    onSuccess: () => utils.placement.invalidate(),
+    onError: (error) =>
+      showErrorNotification({ title: "Couldn't do that", error: new Error(error.message) }),
+  });
+
+  // Reports what actually settled rather than assuming the whole set did: rows
+  // race the expiry sweep, and a silent "done" over a partial run is the failure
+  // this counts to avoid.
+  const declineOutOfBand = trpc.placement.declineOutOfBandRemixGallerySubmissions.useMutation({
+    onSuccess: ({ considered, settled }) => {
+      utils.placement.invalidate();
+      showSuccessNotification({
+        title: settled === considered ? 'Declined' : 'Partly declined',
+        message:
+          settled === considered
+            ? `Declined ${settled} ${settled === 1 ? 'submission' : 'submissions'}.`
+            : `Declined ${settled} of ${considered}. The rest were resolved elsewhere — reopen to see what is left.`,
+      });
+    },
+    onError: (error) =>
+      showErrorNotification({ title: "Couldn't decline those", error: new Error(error.message) }),
+  });
+
+  const actingOn = (placementId: number, action: 'approve' | 'decline' | 'remove') =>
+    act.isPending && act.variables?.placementId === placementId && act.variables?.action === action;
+
+  const setPins = trpc.placement.setRemixGalleryPins.useMutation({
+    onSuccess: () => utils.placement.invalidate(),
+    onError: (error) => {
+      // Put the list back rather than leaving the UI showing an order the
+      // server rejected.
+      setPinnedIds(items.filter((item) => item.pinned).map((item) => item.placementId));
+      showErrorNotification({ title: "Couldn't save that order", error: new Error(error.message) });
+    },
+  });
+
+  const forThisImage = (pending?.items ?? []).filter((row) => row.targetId === imageId);
+
+  // Owner-only, and null for everyone else — `maxSubmissionLevel` beside it is
+  // the submitter's copy and is null for the owner, so the two are not
+  // interchangeable.
+  const serverDomains = useServerDomains();
+  const features = useFeatureFlags();
+  const acceptedMaxLevel = visibility?.acceptedMaxLevel ?? null;
+  // Above the band the owner set, which is a state the submit mutation refuses
+  // but the queue can still hold: a host re-rated downwards after submissions
+  // arrived leaves entries that were admissible when they were sent.
+  const aboveBand =
+    acceptedMaxLevel == null
+      ? []
+      : forThisImage.filter((row) => !!row.image && row.image.nsfwLevel > acceptedMaxLevel);
+
+  // Three different reasons an owner can't see what they're judging, and each
+  // has a different answer — conflating them would offer a control that cannot
+  // help. Keyed on the remix rather than the host: the remix is the thing being
+  // judged, and a row can be in-band for one and not the other.
+  const withheld = forThisImage.filter((row) => !!row.image && !row.image.viewable);
+  const outsideViewerBand = forThisImage.filter(
+    (row) => !!row.image && row.image.viewable && !row.image.withinViewerLevel
+  );
+  const ratingsOf = (rows: typeof forThisImage) =>
+    [...new Set(rows.map((row) => row.image!.nsfwLevel))]
+      .sort((a, b) => a - b)
+      .map((level) => getBrowsingLevelLabel(level))
+      .join(', ');
+  const byId = new Map(items.map((item) => [item.placementId, item]));
+  const pinnedItems = pinnedIds.map((id) => byId.get(id)).filter((x): x is RemixGalleryItem => !!x);
+  const unpinned = items.filter((item) => !pinnedIds.includes(item.placementId));
+  const atPinCap = pinnedIds.length >= REMIX_GALLERY_MAX_PINNED;
+
+  const commitPins = (ids: number[]) => {
+    setPinnedIds(ids);
+    setPins.mutate({ hostImageId: imageId, placementIds: ids });
+  };
+
+  const onDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    const oldIndex = pinnedIds.indexOf(Number(active.id));
+    const newIndex = pinnedIds.indexOf(Number(over.id));
+    if (oldIndex === -1 || newIndex === -1) return;
+    commitPins(arrayMove(pinnedIds, oldIndex, newIndex));
+  };
+
+  return (
+    <Modal
+      {...dialog}
+      title={moderating ? 'Moderate this remix gallery' : 'Manage your remix gallery'}
+      size="lg"
+    >
+      <Stack gap="md">
+        {isModerator && isOwner && (
+          // Only on your own gallery. Everywhere else the mode is not a choice:
+          // there is no creator role available to a moderator on someone
+          // else's gallery, and offering one would be a control that does
+          // nothing.
+          <SegmentedControl
+            fullWidth
+            size="xs"
+            value={asModerator ? 'moderate' : 'manage'}
+            onChange={(value) => setAsModerator(value === 'moderate')}
+            data={[
+              { value: 'manage', label: 'Manage as creator' },
+              { value: 'moderate', label: 'Moderate' },
+            ]}
+          />
+        )}
+
+        {moderating && (
+          // Not decoration. The same button in an owner's hands returns the
+          // submitter's Buzz and in a moderator's keeps it, and the row records
+          // which happened. Someone holding both roles should not have to
+          // remember which gallery they are looking at.
+          //
+          // "Takedown" is deliberately not used here. It is our word for DMCA
+          // and NCII, and two moderators independently read this copy as one of
+          // those.
+          <Alert color="red" icon={<IconShieldCheck size={18} />} p="xs">
+            <Text size="sm" fw={600}>
+              {isOwner
+                ? 'You are moderating your own gallery'
+                : `You are moderating ${visibility?.ownerUsername ?? 'another creator'}'s gallery`}
+            </Text>
+            <Text size="xs" mt={2}>
+              You can remove entries here at any time — as the creator you would have to wait a week
+              after approving one. The submitter is not refunded, and the removal is logged as a
+              moderator action.{' '}
+              {isOwner
+                ? 'Approving, declining and pinning are unchanged — they are yours either way.'
+                : 'Approving, declining and pinning stay with the creator.'}
+            </Text>
+          </Alert>
+        )}
+
+        {!hideOwnerSections && (
+          <div>
+            <SectionDivider
+              icon={IconInbox}
+              label="Waiting for review"
+              badge={
+                forThisImage.length ? (
+                  <Badge size="sm" variant="light" color="yellow">
+                    {hasMorePending ? `${forThisImage.length}+` : forThisImage.length}
+                  </Badge>
+                ) : null
+              }
+            />
+            {pendingLoading ? (
+              <Group justify="center" py="md">
+                <Loader size="sm" />
+              </Group>
+            ) : pendingFailed ? (
+              // No pages means `hasMorePending` is false too, so without this the
+              // branch below would say "nothing waiting" over a queue that failed
+              // to load.
+              <Text size="sm" c="red" mt="sm">
+                Couldn&rsquo;t load the review queue. Refresh to try again.
+              </Text>
+            ) : forThisImage.length || hasMorePending ? (
+              <Stack gap="xs" mt="sm">
+                {/* A page can come back empty with a cursor still set — every
+                    submission on it had its image deleted, unpublished or still
+                    ingesting. Saying "nothing waiting" here would hide the ones
+                    behind it, which is the bug the paging exists to end. */}
+                {!forThisImage.length && (
+                  <Text size="sm" c="dimmed">
+                    Nothing on this page can be shown. There are more waiting.
+                  </Text>
+                )}
+                {/* Named by rating rather than left to the thumbnails, which the
+                    owner's own browsing settings may blur. */}
+                {(aboveBand.length > 0 || withheld.length > 0 || outsideViewerBand.length > 0) && (
+                  // One block rather than a box per reason: they overlap in
+                  // practice — the same row is often both above the gallery's
+                  // rule and outside the owner's own settings — and three
+                  // stacked alerts over a two-row queue reads as an error state.
+                  <Alert color="yellow" icon={<IconAlertTriangle size={18} />} p="xs">
+                    <Stack gap={6}>
+                      {aboveBand.length > 0 && acceptedMaxLevel != null && (
+                        <Group gap="xs" wrap="nowrap" align="flex-start">
+                          <Text size="sm" className="min-w-0 flex-1">
+                            {countLabel(aboveBand.length)} rated above what this gallery accepts (
+                            {ratingsOf(aboveBand)}). You accept up to{' '}
+                            {getBrowsingLevelLabel(acceptedMaxLevel)} — review them one at a time,
+                            or decline them together.
+                          </Text>
+                          {/* The count is this page's; the mutation resolves the
+                              set itself and may find more behind the cursor, so
+                              the confirm hedges rather than promising a number
+                              the button cannot know. */}
+                          <Button
+                            size="compact-xs"
+                            variant="default"
+                            className="shrink-0"
+                            loading={declineOutOfBand.isPending}
+                            onClick={() =>
+                              openConfirmModal({
+                                title: 'Decline everything out of band?',
+                                children: (
+                                  <Text size="sm">
+                                    Every pending submission rated above{' '}
+                                    {getBrowsingLevelLabel(acceptedMaxLevel)} is declined. Paid ones
+                                    keep you the decline fee and return the rest to their submitter;
+                                    free ones move no Buzz either way. This can&apos;t be undone.
+                                  </Text>
+                                ),
+                                labels: { confirm: 'Decline them', cancel: 'Cancel' },
+                                confirmProps: { color: 'red' },
+                                onConfirm: () => declineOutOfBand.mutate({ hostImageId: imageId }),
+                              })
+                            }
+                          >
+                            Decline all
+                          </Button>
+                        </Group>
+                      )}
+
+                      {/* No widen affordance offered: the asset was never sent,
+                          so no setting on this domain can produce it. */}
+                      {withheld.length > 0 && (
+                        <Text size="sm">
+                          {countLabel(withheld.length)} rated above what this site shows (
+                          {ratingsOf(withheld)}). Decline here, or open this image on{' '}
+                          <Anchor
+                            href={syncAccount(`//${serverDomains.red}/images/${imageId}`)}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            civitai.red
+                          </Anchor>{' '}
+                          to see and approve them.
+                        </Text>
+                      )}
+
+                      {/* The one case a control can fix, so it gets the control.
+                          Gated on `canViewNsfw` because the header hides these
+                          same settings on green (AppHeader:109) — offering them
+                          here would be the only place on the site that does. */}
+                      {outsideViewerBand.length > 0 && features.canViewNsfw && (
+                        <Group gap="xs" wrap="nowrap" align="flex-start">
+                          <Text size="sm" className="min-w-0 flex-1">
+                            {countLabel(outsideViewerBand.length)} outside your content settings (
+                            {ratingsOf(outsideViewerBand)}), so{' '}
+                            {outsideViewerBand.length === 1 ? 'it is' : 'they are'} hidden until you
+                            include{' '}
+                            {outsideViewerBand.length === 1 ? 'that rating' : 'those ratings'}.
+                          </Text>
+                          <Popover width={320} position="bottom-end" withArrow>
+                            <Popover.Target>
+                              <Button size="compact-xs" variant="default" className="shrink-0">
+                                Content controls
+                              </Button>
+                            </Popover.Target>
+                            <Popover.Dropdown>
+                              <BrowsingModeMenu />
+                            </Popover.Dropdown>
+                          </Popover>
+                        </Group>
+                      )}
+                    </Stack>
+                  </Alert>
+                )}
+                {forThisImage.map((row) => (
+                  <Card key={row.id} withBorder p="xs" radius="md">
+                    <Group justify="space-between" wrap="nowrap" align="center">
+                      <Group gap="sm" wrap="nowrap" className="min-w-0">
+                        <QueueThumb
+                          image={row.image}
+                          label="Open this remix in a new tab"
+                          missing="This remix is no longer available"
+                        />
+                        {/* `align="flex-start"` because a Stack stretches its
+                            children: without it the badge and the username row
+                            each spanned the full card width, which also dragged
+                            the badge's hover card off to the far edge. */}
+                        <Stack gap={6} align="flex-start" className="min-w-0">
+                          {/* What arrived and when, above who sent it — the queue
+                              is read top-down and the age is what decides which
+                              row to answer first. */}
+                          <Group gap={6} wrap="nowrap" className="min-w-0">
+                            <IconWand size={14} className="shrink-0 text-yellow-6" />
+                            <Text size="xs" c="dimmed" className="truncate">
+                              Remix submitted {sentLabel(row.createdAt)}
+                            </Text>
+                            {/* The rating in words, because the thumbnail beside
+                                it may be blurred by the reviewer's own browsing
+                                settings and `explain={false}` leaves that tile
+                                with nothing to read. Approving is irreversible
+                                for a week, so what is being approved must be
+                                legible without revealing it. */}
+                            {!!row.image?.nsfwLevel && (
+                              <Badge
+                                size="xs"
+                                variant="light"
+                                color={
+                                  acceptedMaxLevel != null && row.image.nsfwLevel > acceptedMaxLevel
+                                    ? 'yellow'
+                                    : undefined
+                                }
+                                className="shrink-0"
+                              >
+                                {getBrowsingLevelLabel(row.image.nsfwLevel)}
+                              </Badge>
+                            )}
+                          </Group>
+                          {row.placer ? (
+                            <UserAvatar user={row.placer} withUsername size="sm" linkToProfile />
+                          ) : (
+                            <Text size="sm" fw={500}>
+                              Someone
+                            </Text>
+                          )}
+                          {/* Its own line, and shown only when we resolved it
+                              ourselves. There is deliberately no counterpart for
+                              its absence: an off-site remix can never earn this,
+                              and marking those would turn a missing signal into a
+                              verdict. */}
+                          {row.data.derivedFromHost && <VerifiedRemixBadge />}
+                          {/* What this row IS, since the buttons no longer carry
+                              a number for it. Without this the queue shows a
+                              free submission as a paid one with its earnings
+                              missing, which reads as a bug rather than as a
+                              different kind of offer — and the notification that
+                              brought the owner here already called it free. */}
+                          {row.free && (
+                            <Badge size="sm" variant="light" color="green" className="w-fit">
+                              Free submission
+                            </Badge>
+                          )}
+                        </Stack>
+                      </Group>
+                      {/* Stacked, and the same width, so the pair reads as one
+                        decision with two answers rather than a row of buttons.
+                        Keyed to the row and the action — bare `act.isPending`
+                        spun every button in the queue on any one click. */}
+                      {/* A PAID row's answers each carry what they pay, so the
+                          owner never has to know that declining still earns a
+                          fee — the numbers come from the server, computed with
+                          the settlement's own helpers against this row's amount.
+                          A free row carries neither, because nothing was paid in
+                          and there is no fee to earn: `earnings` is null there
+                          and the badge above says what the row is instead. */}
+                      <Stack gap={6} className="w-36 shrink-0">
+                        {/* Approving is the one answer that needs the picture.
+                            Declining does not — it is a refusal, and a rating is
+                            enough to refuse on — so only this half moves to the
+                            domain that can render the asset. The link goes to the
+                            HOST image, not the submitted one: red is where this
+                            same modal will both show the submission and act on
+                            it, and a link to the submission alone would show them
+                            the image with no way to answer for it. */}
+                        {row.image && !row.image.viewable ? (
+                          <Tooltip
+                            label="Not viewable on this domain — approve it on civitai.red"
+                            withArrow
+                          >
+                            <Button
+                              component="a"
+                              href={syncAccount(`//${serverDomains.red}/images/${imageId}`)}
+                              target="_blank"
+                              rel="noreferrer"
+                              size="compact-sm"
+                              fullWidth
+                              variant="light"
+                              classNames={{ label: 'w-full justify-between gap-2' }}
+                              leftSection={<IconExternalLink size={14} />}
+                            >
+                              Approve on .red
+                            </Button>
+                          </Tooltip>
+                        ) : (
+                          <Button
+                            size="compact-sm"
+                            fullWidth
+                            classNames={{ label: 'w-full justify-between gap-2' }}
+                            leftSection={<IconCheck size={14} />}
+                            // Nothing on a free row rather than a chip reading
+                            // "+0". `EarningsChip`'s `+` is what stops a bare
+                            // amount reading as a price; on a free submission it
+                            // makes the opposite false claim instead — that the
+                            // creator earns nothing for accepting. The badge
+                            // beside the submitter says what this row is.
+                            rightSection={
+                              row.earnings ? <EarningsChip amount={row.earnings.approve} /> : null
+                            }
+                            loading={actingOn(row.id, 'approve')}
+                            onClick={() => act.mutate({ placementId: row.id, action: 'approve' })}
+                          >
+                            Approve
+                          </Button>
+                        )}
+                        <Button
+                          size="compact-sm"
+                          fullWidth
+                          variant="default"
+                          classNames={{ label: 'w-full justify-between gap-2' }}
+                          leftSection={<IconX size={14} />}
+                          // Same reason, and sharper here: a decline fee is the
+                          // submitter's money moving to the owner, and a free
+                          // submission has none to move.
+                          rightSection={
+                            row.earnings ? <EarningsChip amount={row.earnings.decline} /> : null
+                          }
+                          loading={actingOn(row.id, 'decline')}
+                          onClick={() => act.mutate({ placementId: row.id, action: 'decline' })}
+                        >
+                          Decline
+                        </Button>
+                      </Stack>
+                    </Group>
+                  </Card>
+                ))}
+                {hasMorePending && (
+                  <Button
+                    variant="default"
+                    size="xs"
+                    loading={fetchingMorePending}
+                    onClick={() => fetchMorePending()}
+                  >
+                    Load more
+                  </Button>
+                )}
+              </Stack>
+            ) : (
+              <Text size="sm" c="dimmed" mt="sm">
+                Nothing waiting.
+              </Text>
+            )}
+          </div>
+        )}
+
+        {!hideOwnerSections && (
+          <div>
+            <SectionDivider
+              icon={IconPin}
+              label="Pinned"
+              badge={
+                <Badge size="sm" variant="light">
+                  {pinnedIds.length}/{REMIX_GALLERY_MAX_PINNED}
+                </Badge>
+              }
+            />
+            <Text size="xs" c="dimmed" mt="sm">
+              Pinned remixes always show first, in the order you set here. Everything else rotates.
+            </Text>
+
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+              <SortableContext items={pinnedIds} strategy={rectSortingStrategy}>
+                <div className="mt-2 grid grid-cols-4 gap-3">
+                  {pinnedItems.map((item) => (
+                    <SortablePin
+                      key={item.placementId}
+                      item={item}
+                      onUnpin={() => commitPins(pinnedIds.filter((id) => id !== item.placementId))}
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
+            {!pinnedItems.length && (
+              <Text size="sm" c="dimmed" mt="xs">
+                Nothing pinned.
+              </Text>
+            )}
+          </div>
+        )}
+
+        <div>
+          <SectionDivider icon={IconRotate} label="In the rotation" />
+          {atPinCap && (
+            <Alert color="gray" p="xs" mt="xs">
+              <Text size="xs">
+                You&apos;ve pinned the maximum of {REMIX_GALLERY_MAX_PINNED}. Unpin one to pin
+                something else.
+              </Text>
+            </Alert>
+          )}
+          {isLoading ? (
+            <Group justify="center" py="md">
+              <Loader size="sm" />
+            </Group>
+          ) : unpinned.length ? (
+            <div className="mt-2 grid grid-cols-4 gap-3">
+              {unpinned.map((item) => (
+                <div key={item.placementId} className="relative">
+                  {/* `explain={false}` for the same reason the submission
+                      thumbnail does it: the default stacks a centered "rated X"
+                      block with its own Show button on top of the corner
+                      toggle, and in a four-across grid it covers the tile and
+                      the pin and remove controls sitting on it. */}
+                  <AspectRatioImageCard aspectRatio="square" image={item.image} explain={false} />
+                  <Group gap={4} className="absolute right-1 top-1">
+                    {/* Pinning is the creator's curation, and `setRemixGalleryPins`
+                        scopes its lookup to the caller as owner — a moderator
+                        pressing this would get "not in this gallery" on every
+                        press. */}
+                    {!hideOwnerSections && (
+                      <Tooltip
+                        label={
+                          atPinCap
+                            ? `Unpin one first — the limit is ${REMIX_GALLERY_MAX_PINNED}`
+                            : 'Pin to the top'
+                        }
+                      >
+                        <ActionIcon
+                          size="sm"
+                          variant="filled"
+                          color="dark"
+                          disabled={atPinCap}
+                          onClick={() => commitPins([...pinnedIds, item.placementId])}
+                        >
+                          <IconPin size={14} />
+                        </ActionIcon>
+                      </Tooltip>
+                    )}
+                    <RemoveEntryButton
+                      item={item}
+                      moderating={moderating}
+                      pending={actingOn(item.placementId, 'remove')}
+                      onRemove={() => {
+                        // The server cannot read the mode off ownership — that
+                        // is the bug — so it is sent.
+                        const remove = () =>
+                          act.mutate({
+                            placementId: item.placementId,
+                            action: 'remove',
+                            asModerator: moderating,
+                          });
+                        // Confirmed for a moderator and not for an owner, because
+                        // the two are different acts: an owner removal returns the
+                        // submitter's Buzz, a moderator removal keeps it. Nothing
+                        // undoes that, and the row records who did it.
+                        if (!moderating) return remove();
+                        openConfirmModal({
+                          title: 'Remove this entry',
+                          children: (
+                            <Text size="sm">
+                              This removes the remix from{' '}
+                              {isOwner ? 'your' : `${visibility?.ownerUsername ?? 'the creator'}'s`}{' '}
+                              gallery for everyone. The submitter is not refunded, and the removal
+                              is logged as a moderator action under your name.
+                            </Text>
+                          ),
+                          labels: { confirm: 'Remove', cancel: 'Cancel' },
+                          confirmProps: { color: 'red' },
+                          onConfirm: remove,
+                        });
+                      }}
+                    />
+                  </Group>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <Text size="sm" c="dimmed" mt="xs">
+              Nothing live in this gallery yet.
+            </Text>
+          )}
+
+          {/* Without this an owner past the first page cannot remove or pin
+              anything below it — the entries are simply not in the list. */}
+          {hasNextPage && (
+            <Button
+              variant="subtle"
+              size="compact-sm"
+              mt="xs"
+              loading={isFetchingNextPage}
+              onClick={() => fetchNextPage()}
+            >
+              Show more
+            </Button>
+          )}
+        </div>
+      </Stack>
+    </Modal>
+  );
+}
+
+/**
+ * Remove, refused for a week after approval.
+ *
+ * Approval settles the money, so an owner who could approve and immediately
+ * remove would keep the Buzz and give the submitter nothing. The mutation is
+ * what enforces that; this only explains it, which is why it fails **open** —
+ * a missing `resolvedAt` shows an enabled button and lets the server rule,
+ * rather than locking someone out on absent data.
+ *
+ * Keyed on the MODE rather than on holding the moderator role, because that is
+ * what the mutation is keyed on. Reading the role alone left a moderator on
+ * their own gallery an enabled button and a server refusal — the wait still
+ * applied, and the only place it was stated was the error.
+ */
+function RemoveEntryButton({
+  item,
+  moderating,
+  pending,
+  onRemove,
+}: {
+  item: RemixGalleryItem;
+  moderating: boolean;
+  pending: boolean;
+  onRemove: () => void;
+}) {
+  const removableAt = item.resolvedAt ? remixGalleryRemovableAt(item.resolvedAt) : null;
+  const locked = !moderating && !!removableAt && removableAt > new Date();
+
+  return (
+    <Tooltip
+      withArrow
+      multiline
+      w={260}
+      label={
+        locked && removableAt
+          ? // Both halves are deliberate: "5 days" answers how long, the stamp
+            // answers when, and neither substitutes for the other on a wait
+            // measured in days. Framed as the submitter's protection because
+            // that is what it is — they paid to be here.
+            `Someone paid to be featured here, so entries stay up for a week after you approve them. You can remove this in ${daysFromNow(
+              removableAt,
+              { withoutSuffix: true }
+            )} — ${formatDateMin(removableAt)}.`
+          : 'Remove from your gallery'
+      }
+    >
+      <ActionIcon
+        size="sm"
+        variant="filled"
+        color="red"
+        loading={pending}
+        // `data-disabled` rather than `disabled`: a disabled button fires no
+        // pointer events, so Mantine's tooltip never opens — and the tooltip is
+        // the entire point of disabling it. This keeps the disabled styling and
+        // the explanation, with the click stopped below.
+        data-disabled={locked || undefined}
+        onClick={(event: React.MouseEvent) => {
+          if (locked) {
+            event.preventDefault();
+            return;
+          }
+          onRemove();
+        }}
+      >
+        <IconTrash size={14} />
+      </ActionIcon>
+    </Tooltip>
+  );
+}
+
+/**
+ * A section heading that is the rule itself rather than text sitting above one.
+ *
+ * The three sections are different kinds of thing — a queue, a fixed order, and
+ * everything else — and at a glance they previously read as one long list with
+ * bold words in it.
+ */
+function SectionDivider({
+  icon: Icon,
+  label,
+  badge,
+}: {
+  icon: typeof IconInbox;
+  label: string;
+  badge?: React.ReactNode;
+}) {
+  return (
+    <Divider
+      labelPosition="left"
+      label={
+        <Group gap={6} wrap="nowrap">
+          <Icon size={15} />
+          <Text fw={600} size="sm">
+            {label}
+          </Text>
+          {badge}
+        </Group>
+      }
+    />
+  );
+}
+
+function SortablePin({ item, onUnpin }: { item: RemixGalleryItem; onUnpin: () => void }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: item.placementId,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={clsx('relative', isDragging && 'z-10 opacity-80')}
+      {...attributes}
+      {...listeners}
+    >
+      {/* Same as the unpinned grid above — and here the centered overlay also
+          sits on top of a drag handle. */}
+      <AspectRatioImageCard aspectRatio="square" image={item.image} explain={false} />
+      <Tooltip label="Unpin">
+        <ActionIcon
+          size="sm"
+          variant="filled"
+          color="dark"
+          className="absolute right-1 top-1"
+          // The drag listeners sit on the wrapper, so a click here would also
+          // start a drag without this.
+          onPointerDown={(event: React.PointerEvent) => event.stopPropagation()}
+          onClick={onUnpin}
+        >
+          <IconPinnedOff size={14} />
+        </ActionIcon>
+      </Tooltip>
+    </div>
+  );
+}

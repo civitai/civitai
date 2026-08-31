@@ -21,11 +21,22 @@ const schema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((v) => (v === undefined ? undefined : v === 'true')),
+  removeComments: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === 'true')),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
-  const { userId, reasonCode, detailsExternal, detailsInternal, removeMedia, removeModels } =
-    schema.parse(req.query);
+  const {
+    userId,
+    reasonCode,
+    detailsExternal,
+    detailsInternal,
+    removeMedia,
+    removeModels,
+    removeComments,
+  } = schema.parse(req.query);
 
   res.status(200).json({
     userId,
@@ -39,6 +50,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       detailsInternal,
       removeMedia,
       removeModels,
+      removeComments,
       userId: -1, // using civitai user for banning using webhook
     });
 

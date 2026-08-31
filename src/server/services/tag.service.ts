@@ -8,9 +8,15 @@ import {
   type TagVotableEntityType,
   type VotableTagModel,
 } from '~/libs/tags';
+import {
+  listImageTagVotes,
+  listImageTagVotesMany,
+  listModelTagVotes,
+} from '@civitai/db-queries/tag';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { kyselyRead } from '~/server/db/kyselyDb';
 import {
   imageTagsCache,
   modelVotableTagsCache,
@@ -20,13 +26,16 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type {
   AdjustTagsSchema,
   DeleteTagsSchema,
-  GetTagsForReviewInput,
   GetTagsInput,
   GetVotableTagsSchema,
   GetVotableTagsSchema2,
-  ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
-import { getCategoryTags, getReplacedTagIds, getSystemTags } from '~/server/services/system-cache';
+import {
+  clearFeedTagBarTagsCache,
+  getCategoryTags,
+  getReplacedTagIds,
+  getSystemTags,
+} from '~/server/services/system-cache';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
   HiddenImages,
@@ -62,7 +71,9 @@ type TagWithModelCount = { id: number; name: string; unfeatured: boolean; count:
 // exotic-Unicode case pairs could land in separate keys that each independently resolve
 // to the same tag — correct output, marginally weaker dedup.)
 const getTagWithModelCountCacheKey = (name: string) =>
-  `${REDIS_KEYS.CACHES.TAG_WITH_MODEL_COUNT}:${name.toLowerCase()}` as `${typeof REDIS_KEYS.CACHES.TAG_WITH_MODEL_COUNT}:${string}`;
+  `${
+    REDIS_KEYS.CACHES.TAG_WITH_MODEL_COUNT
+  }:${name.toLowerCase()}` as `${typeof REDIS_KEYS.CACHES.TAG_WITH_MODEL_COUNT}:${string}`;
 
 const queryTagWithModelCount = ({ name }: { name: string }) =>
   // No longer include count since we just have too many now...
@@ -212,6 +223,24 @@ export async function getTagPageSeoData({ name }: { name: string }): Promise<Tag
     },
     { ttl: CacheTTL.day }
   );
+}
+
+// The edge-cache handle for `tag.getFeedTagBar`. Without it the chip list — including the
+// nsfwLevel the client gates chips on — is unpurgeable for an hour.
+export const FEED_TAG_BAR_EDGE_TAG = 'feed-tag-bar';
+
+/**
+ * Drops the chip list everywhere it is held: the per-pod memo, the redis blob, and the
+ * edge response. Called alongside `bustGetTagsCache` on every taxonomy change, because a
+ * `TagsOnTags` edge is what moves a chip's effective nsfwLevel.
+ */
+export async function bustFeedTagBarTagsCache() {
+  await clearFeedTagBarTagsCache();
+
+  // Deferred, not a top-level import: `~/server/cloudflare/client` pulls the `cloudflare`
+  // SDK at module load, and `tag.service` is imported widely. Only the bust path needs it.
+  const { purgeCache } = await import('~/server/cloudflare/client');
+  await purgeCache({ tags: [FEED_TAG_BAR_EDGE_TAG] });
 }
 
 export const getTag = ({ id }: { id: number }) => {
@@ -464,10 +493,7 @@ export const getVotableTags = async ({
       }))
     );
     if (userId) {
-      const userVotes = await dbRead.tagsOnModelsVote.findMany({
-        where: { modelId: id, userId },
-        select: { tagId: true, vote: true },
-      });
+      const userVotes = await listModelTagVotes(kyselyRead, { modelId: id, userId });
 
       for (const tag of results) {
         const userVote = userVotes.find((vote) => vote.tagId === tag.id);
@@ -505,10 +531,7 @@ export const getVotableTags = async ({
       );
     }
     if (userId) {
-      const userVotes = await dbRead.tagsOnImageVote.findMany({
-        where: { imageId: id, userId },
-        select: { tagId: true, vote: true },
-      });
+      const userVotes = await listImageTagVotes(kyselyRead, { imageId: id, userId });
 
       for (const tag of results) {
         const userVote = userVotes.find((vote) => vote.tagId === tag.id);
@@ -573,10 +596,7 @@ export async function getVotableImageTags({
     allImageTags.push(...filteredTags);
   }
 
-  const userVotes = await dbRead.tagsOnImageVote.findMany({
-    where: { imageId: { in: ids }, userId: user.id },
-    select: { tagId: true, vote: true },
-  });
+  const userVotes = await listImageTagVotesMany(kyselyRead, { imageIds: ids, userId: user.id });
 
   for (const tag of allImageTags) {
     const userVote = userVotes.find((vote) => vote.tagId === tag.id);
@@ -793,6 +813,7 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
     // Adding a TagsOnTags edge changes category membership + the nsfwLevel rollup
     // that the cached `getTags` listings compute — bust the listing cache.
     await bustGetTagsCache();
+    await bustFeedTagBarTagsCache();
   }
 };
 
@@ -882,37 +903,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
     // Removing a TagsOnTags edge changes category membership + the nsfwLevel rollup
     // that the cached `getTags` listings compute — bust the listing cache.
     await bustGetTagsCache();
-  }
-};
-
-export const moderateTags = async ({ entityIds, entityType, disable }: ModerateTagsSchema) => {
-  if (entityType === 'model') {
-    // We aren't doing user model tagging quite yet...
-    throw new Error('Not implemented');
-    // await dbWrite.$executeRawUnsafe(`
-    //   UPDATE "TagsOnModels"
-    //   SET "disabled" = ${disable}, "needsReview" = false
-    //   WHERE "needsReview" = true AND "modelId" IN (${entityIds.join(', ')})
-    // `);
-  } else if (entityType === 'image') {
-    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }[]>(`
-      SELECT "imageId", "tagId"
-      FROM "TagsOnImageDetails"
-      WHERE "needsReview" = true
-        AND "imageId" IN (${entityIds.join(', ')});
-    `);
-
-    await upsertTagsOnImageNew(
-      toUpdate.map(({ imageId, tagId }) => ({
-        imageId,
-        tagId,
-        automated: false,
-        disabled: disable,
-        needsReview: false,
-      }))
-    );
-
-    await imageTagsCache.bust(entityIds);
+    await bustFeedTagBarTagsCache();
   }
 };
 
@@ -980,6 +971,7 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
   // Deleting a Tag removes it from the cached `getTags` listings (and cascades its
   // TagsOnTags edges, changing category membership / nsfwLevel rollup) — bust.
   await bustGetTagsCache();
+  await bustFeedTagBarTagsCache();
 };
 
 // unused
@@ -1002,30 +994,3 @@ export const getTypeCategories = async ({
 
   return categories;
 };
-
-export async function getTagsForReview({ limit, page, reviewType }: GetTagsForReviewInput) {
-  const pagination = getPagination(limit, page);
-  const fromClause = Prisma.sql`
-    FROM "ImageTagForReview" it
-      JOIN "Tag" t ON it."tagId" = t.id
-      JOIN "Image" i ON it."imageId" = i.id
-    WHERE i."needsReview" = ${reviewType}
-  `;
-
-  const [tags, { count }] = await dbRead.$transaction([
-    dbRead.$queryRaw<{ id: number; name: string }[]>`
-      SELECT DISTINCT ON (t.name)
-        t.id, t.name
-      ${fromClause}
-      ORDER BY t.name
-      LIMIT ${pagination.take} OFFSET ${pagination.skip}
-    `,
-    dbRead.$queryRaw<{ count: number }>`
-      SELECT
-        COUNT(DISTINCT t.id) AS count
-      ${fromClause}
-    `,
-  ]);
-
-  return getPagingData({ items: tags, count }, pagination.take, page);
-}

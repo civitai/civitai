@@ -157,7 +157,7 @@ function generateSlimSchema() {
   // Add header comment
   const header = `// ⚠️  AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
 // This file is generated from schema.full.prisma by scripts/generate-slim-schema.js
-// Edit schema.full.prisma instead, then run: npm run db:generate
+// Edit schema.full.prisma instead, then run: pnpm run db:generate
 // Models/enums marked with // @no-type in schema.full.prisma are excluded
 // Generated on: ${new Date().toISOString()}
 

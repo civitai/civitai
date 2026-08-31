@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 /**
  * Handler-level coverage for POST /api/v1/developer/block-manifests.
@@ -11,27 +14,19 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *    pre-upsert check 403s on attempted change)
  */
 
-const { mockDbRead, mockDbWrite, mockValidator } = vi.hoisted(() => {
-  const dbRead = {
-    oauthClient: { findUnique: vi.fn() },
-    appBlock: { findUnique: vi.fn() },
-  };
-  const dbWrite = {
-    appBlock: { upsert: vi.fn() },
-  };
+const { mockValidator } = vi.hoisted(() => {
   // The handler now calls the async submission gate (validate + settings-pattern
   // ReDoS check). Point validateSubmission at the SAME fn as validate so existing
   // `mockValidator.validate.mockReturnValue(...)` overrides drive both.
   const validate = vi.fn(() => ({ valid: true }));
   const validator = { validate, validateSubmission: validate };
-  return { mockDbRead: dbRead, mockDbWrite: dbWrite, mockValidator: validator };
+  return { mockValidator: validator };
 });
 
 vi.mock('~/env/server', () => ({
   env: { JOB_TOKEN: 'job-secret', BLOCK_TOKEN_PRIVATE_KEY: 'x', BLOCK_TOKEN_PUBLIC_KEY: 'x' },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: vi.fn(async () => true),
 }));
@@ -126,6 +121,65 @@ describe('POST /api/v1/developer/block-manifests', () => {
     };
     expect(upsertArgs.create.trustTier).toBe('unverified');
     expect(upsertArgs.create.renderMode).toBe('iframe');
+  });
+
+  it('SPEND: a manifest-declared spendTier / cap override NEVER reaches the row (INSERT)', async () => {
+    // 🔴 A developer must not be able to raise their own abuse ceiling. The
+    // spend columns are mod-only (BlockRegistry.setAppSpendCapConfig); this
+    // endpoint's create payload is an explicit allowlist, so a hostile manifest
+    // key is simply not carried. Driving the REAL handler rather than asserting
+    // on the allowlist by inspection.
+    const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+    const res = makeRes();
+    await handler(
+      makeReq({
+        body: {
+          ...VALID_BODY,
+          manifest: {
+            ...VALID_BODY.manifest,
+            spendTier: 'platform',
+            spendCapBuzzPerDay: 1_000_000_000,
+            spendVelocityMaxGens: 100_000,
+          },
+        },
+      }),
+      res
+    );
+    expect(res._status).toBe(200);
+    const upsertArgs = mockDbWrite.appBlock.upsert.mock.calls.at(-1)?.[0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+    for (const key of ['spendTier', 'spendCapBuzzPerDay', 'spendVelocityMaxGens']) {
+      expect(upsertArgs.create).not.toHaveProperty(key);
+      expect(upsertArgs.update).not.toHaveProperty(key);
+    }
+  });
+
+  it('SPEND: a manifest-declared spendTier NEVER reaches the row (UPDATE branch)', async () => {
+    mockDbRead.appBlock.findUnique.mockResolvedValue({
+      id: 'ab_existing',
+      manifest: { something: 'old' },
+      status: 'approved',
+      trustTier: 'unverified',
+      renderMode: 'iframe',
+    });
+    const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+    const res = makeRes();
+    await handler(
+      makeReq({
+        body: {
+          ...VALID_BODY,
+          manifest: { ...VALID_BODY.manifest, spendTier: 'platform' },
+        },
+      }),
+      res
+    );
+    expect(res._status).toBe(200);
+    const upsertArgs = mockDbWrite.appBlock.upsert.mock.calls.at(-1)?.[0] as {
+      update: Record<string, unknown>;
+    };
+    expect(upsertArgs.update).not.toHaveProperty('spendTier');
   });
 
   it('M1: renderMode supplied in manifest is IGNORED on INSERT (forced iframe)', async () => {

@@ -1,14 +1,22 @@
 import { Prisma } from '@prisma/client';
 import type { CosmeticEntity } from '~/shared/utils/prisma/enums';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
+import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import dayjs from '~/shared/utils/dayjs';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { cosmeticEntityCaches, userCosmeticCache } from '~/server/redis/caches';
+import {
+  cosmeticCache,
+  cosmeticEntityCaches,
+  refreshOwnedStickerCache,
+  userCosmeticCache,
+  userOwnedStickerCache,
+} from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   EquipCosmeticInput,
+  GetStickerCosmeticsInput,
   GetPaginatedCosmeticsInput,
-  GrantCosmeticsToUsersInput,
 } from '~/server/schema/cosmetic.schema';
 import {
   articlesSearchIndex,
@@ -16,9 +24,16 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-token';
+import type { StickerCosmetic } from '~/server/selectors/cosmetic.selector';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import {
+  getCosmeticArtworkUrl,
+  queueCosmeticPerceptualHash,
+} from '~/server/services/cosmetic-phash.service';
 
 export async function getCosmeticDetail({ id }: GetByIdInput) {
   const cosmetic = await dbRead.cosmetic.findUnique({
@@ -26,6 +41,87 @@ export async function getCosmeticDetail({ id }: GetByIdInput) {
   });
 
   return cosmetic;
+}
+
+export async function getStickerCosmetics({ ids }: GetStickerCosmeticsInput) {
+  const cosmetics = await cosmeticCache.fetch(ids);
+
+  return Object.values(cosmetics)
+    .filter((cosmetic) => cosmetic.type === CosmeticType.Sticker)
+    .map(({ id, name, data }) => {
+      const { slug, url, animated } = (data ?? {}) as StickerCosmetic['data'];
+      return { id, name, slug, url, animated };
+    })
+    .filter((sticker) => !!sticker.slug && !!sticker.url);
+}
+
+/**
+ * Who made a sticker, and where to buy it.
+ *
+ * Separate from `getStickerCosmetics` because the shared `cosmeticCache` does not
+ * hold a creator — it selects id/name/type/data/source, and widening a cache
+ * every avatar and badge lookup goes through, to serve a hover, is the wrong
+ * trade. This is asked for one sticker at a time, when someone hovers it.
+ *
+ * Emits the href rather than the username, matching the placement card: a
+ * template literal accepts null silently, which is how `/user/null/shop` once
+ * shipped past a typecheck. No consumer can build the wrong link if none of them
+ * builds one.
+ */
+export async function getStickerAttribution({ ids }: GetStickerCosmeticsInput) {
+  const cosmetics = await dbRead.cosmetic.findMany({
+    where: {
+      id: { in: ids },
+      type: CosmeticType.Sticker,
+      // Not yet released, or no longer available, is not a thing to attribute.
+      // The procedure is public and takes an id array, so without this a staged
+      // sticker is readable before its launch.
+      OR: [{ availableStart: null }, { availableStart: { lte: new Date() } }],
+      AND: [{ OR: [{ availableEnd: null }, { availableEnd: { gte: new Date() } }] }],
+    },
+    select: {
+      id: true,
+      name: true,
+      createdById: true,
+      creator: {
+        select: { username: true, deletedAt: true, bannedAt: true, settings: true },
+      },
+    },
+  });
+
+  return cosmetics.map((cosmetic) => {
+    const creator = cosmetic.creator;
+    // Only link to a shop someone can actually buy from. A disabled shop is a
+    // 404 to visitors, and a comment can name any sticker — including a
+    // staff-authored cosmetic whose creator never opened one — so unlike the
+    // placement card, a link here is not implied by someone having bought it.
+    // Same predicate the shop listings filter on.
+    const settings = (creator?.settings ?? {}) as UserSettingsSchema;
+    const shopEnabled = settings.creatorShop?.enabled === true;
+    // A deleted or banned creator keeps the sticker drawable and its name worth
+    // showing; it just has nowhere to send anyone. `deletedAt` alone would be a
+    // narrower rule than the rest of the codebase applies to attributing someone.
+    const withheld = !!creator?.deletedAt || !!creator?.bannedAt;
+    const username = withheld ? null : creator?.username ?? null;
+    return {
+      id: cosmetic.id,
+      name: cosmetic.name,
+      // The viewer's side needs an id to check a block against, and every other
+      // creator card on the page keys its lookup on id rather than username —
+      // two keys for one creator otherwise misses both caches.
+      creatorId: withheld ? null : cosmetic.createdById,
+      creatorName: username,
+      shopHref: username && shopEnabled ? `/user/${username}/shop` : null,
+    };
+  });
+}
+
+export async function getOwnedStickerCosmetics(userId: number) {
+  const owned = await userOwnedStickerCache.fetch([userId]);
+  const ids = owned[userId]?.cosmeticIds ?? [];
+  if (!ids.length) return [];
+
+  return getStickerCosmetics({ ids });
 }
 
 export async function isCosmeticAvailable(id: number, userId?: number) {
@@ -96,6 +192,11 @@ export async function equipCosmeticToEntity({
   });
 
   if (!userCosmetic) throw new Error("You don't have that cosmetic");
+  // Same rule as equipCosmetic: stickers are owned, not equipped. This is the
+  // other door into that state — it would hand the decoration renderer a `data`
+  // shape with no cssFrame or offset, on an entity nobody chose it for.
+  if (userCosmetic.cosmetic.type === CosmeticType.Sticker)
+    throw new Error('Stickers cannot be equipped');
   if (
     userCosmetic.forId &&
     userCosmetic.forType &&
@@ -201,84 +302,62 @@ export const grantCosmetics = async ({
     WHERE c.id IN (${Prisma.join(cosmeticIds)})
     ON CONFLICT DO NOTHING;
   `;
+
+  await refreshOwnedStickerCache([userId]);
 };
 
-/**
- * Grant multiple cosmetics to multiple users (moderator tool). Grants the full
- * cross product (every cosmetic to every user). Validates that all cosmetic and
- * user IDs exist, reporting which are missing rather than silently skipping.
- *
- * The underlying insert is idempotent (ON CONFLICT DO NOTHING), so pairs the
- * user already owns are skipped by the database; we count the existing rows
- * beforehand to report newly granted vs already owned.
- */
-export async function grantCosmeticsToUsers({ userIds, cosmeticIds }: GrantCosmeticsToUsersInput) {
-  const uniqueUserIds = [...new Set(userIds)];
-  const uniqueCosmeticIds = [...new Set(cosmeticIds)];
-
-  const cosmetics = await dbRead.cosmetic.findMany({
-    where: { id: { in: uniqueCosmeticIds } },
-    select: { id: true },
-  });
-  const missingCosmeticIds = uniqueCosmeticIds.filter((id) => !cosmetics.some((c) => c.id === id));
-  if (missingCosmeticIds.length)
-    throw new Error(`These cosmetics don't exist: ${missingCosmeticIds.join(', ')}`);
-
-  const users = await dbRead.user.findMany({
-    where: { id: { in: uniqueUserIds } },
-    select: { id: true },
-  });
-  const missingUserIds = uniqueUserIds.filter((id) => !users.some((u) => u.id === id));
-  if (missingUserIds.length)
-    throw new Error(`These users don't exist: ${missingUserIds.join(', ')}`);
-
-  const alreadyOwned = await dbWrite.userCosmetic.count({
-    where: {
-      userId: { in: uniqueUserIds },
-      cosmeticId: { in: uniqueCosmeticIds },
-      claimKey: 'claimed',
-    },
-  });
-
-  for (const userId of uniqueUserIds) {
-    await grantCosmetics({ userId, cosmeticIds: uniqueCosmeticIds });
-  }
-
-  const totalPairs = uniqueUserIds.length * uniqueCosmeticIds.length;
-  return {
-    totalPairs,
-    alreadyOwned,
-    newlyGranted: totalPairs - alreadyOwned,
-  };
-}
+// NOTE(moderator-migration): grantCosmeticsToUsers (the moderator cross-product grant) now lives in the
+// spoke app (apps/moderator, Kysely). The shared grantCosmetics helper above stays (payments/referrals).
 
 /**
- * Revoke cosmetics from users (moderator tool) — the inverse of
- * grantCosmeticsToUsers. Deletes every UserCosmetic row for the cross product,
- * including equipped ones; equipped placements are captured first so entity
- * caches and search indexes can be refreshed after the rows are gone.
+ * Revoke cosmetics from users across the cross product. Deletes every UserCosmetic row for the pairs,
+ * including equipped ones — equipped placements are captured first so entity caches and search indexes
+ * can be refreshed once the rows are gone.
  */
 export async function revokeCosmeticsFromUsers({
   userIds,
   cosmeticIds,
-}: GrantCosmeticsToUsersInput) {
+  claimKeys,
+}: {
+  userIds: number[];
+  cosmeticIds: number[];
+  /**
+   * Restricts the revoke to holdings obtained through specific grants. A pack
+   * takedown needs this: the same cosmetic may also have been bought on its own,
+   * and that purchase is not what was taken down.
+   *
+   * An EMPTY array means "no grant matches", which revokes nothing. Treating it
+   * as absent would widen a scoped revoke into an unscoped one — for a pack that
+   * never sold, every holder of every member.
+   */
+  claimKeys?: string[];
+}) {
+  if (claimKeys && !claimKeys.length) return { revoked: 0 };
+
   const uniqueUserIds = [...new Set(userIds)];
   const uniqueCosmeticIds = [...new Set(cosmeticIds)];
+  const claimKeyFilter = claimKeys ? { claimKey: { in: [...new Set(claimKeys)] } } : {};
 
   const equipped = await dbWrite.userCosmetic.findMany({
     where: {
       userId: { in: uniqueUserIds },
       cosmeticId: { in: uniqueCosmeticIds },
+      ...claimKeyFilter,
       equippedToId: { not: null },
     },
     select: { equippedToId: true, equippedToType: true },
   });
 
   const { count } = await dbWrite.userCosmetic.deleteMany({
-    where: { userId: { in: uniqueUserIds }, cosmeticId: { in: uniqueCosmeticIds } },
+    where: {
+      userId: { in: uniqueUserIds },
+      cosmeticId: { in: uniqueCosmeticIds },
+      ...claimKeyFilter,
+    },
   });
 
   await userCosmeticCache.refresh(uniqueUserIds);
+  await refreshOwnedStickerCache(uniqueUserIds);
 
   const equippedByType = new Map<CosmeticEntity, number[]>();
   for (const { equippedToId, equippedToType } of equipped) {
@@ -365,6 +444,7 @@ export async function assignCosmeticByTarget({
       RETURNING "userId"
     `;
     granted = inserted.length;
+    await refreshOwnedStickerCache(inserted.map((r) => r.userId));
   }
 
   return { granted, userIds, dryRun: false };
@@ -381,11 +461,74 @@ export async function unassignCosmetic({
   const result = await dbWrite.userCosmetic.deleteMany({
     where: { cosmeticId, userId: { in: userIds } },
   });
+  await refreshOwnedStickerCache(userIds);
   return { count: result.count };
 }
 
+/**
+ * Sticker slugs are the send-time lookup key, so format and uniqueness are
+ * enforced here — every write path (tRPC upsert, Retool) routes through it.
+ */
+export async function validateStickerCosmetic({
+  id,
+  type,
+  data,
+}: {
+  id?: number;
+  type?: CosmeticType | null;
+  data?: unknown;
+}) {
+  if (type !== CosmeticType.Sticker) return;
+
+  const slug = (data as { slug?: unknown } | null | undefined)?.slug;
+  if (typeof slug !== 'string' || !isValidStickerSlug(slug)) {
+    throw throwBadRequestError(STICKER_SLUG_ERROR);
+  }
+
+  const conflict = await findStickerSlugConflict(dbWrite, slug, id);
+  if (conflict) {
+    throw throwBadRequestError(`The sticker slug ":${slug}:" is already in use`);
+  }
+}
+
+// Both the submit-time check above and the form's live check go through this, so
+// the two can't disagree about what "taken" means.
+function findStickerSlugConflict(client: typeof dbWrite, slug: string, excludeId?: number) {
+  return client.cosmetic.findFirst({
+    where: {
+      type: CosmeticType.Sticker,
+      data: { path: ['slug'], equals: slug },
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
+    select: { id: true },
+  });
+}
+
+/**
+ * Advisory only — tells a creator a slug is taken before they fill in the rest
+ * of the form. It cannot be authoritative: someone can claim the slug between
+ * this call and the submit. `validateStickerCosmetic` and the partial unique
+ * index are what actually decide, and must not be removed as redundant.
+ */
+export async function isStickerSlugAvailable({
+  slug,
+  excludeCosmeticId,
+}: {
+  slug: string;
+  excludeCosmeticId?: number;
+}) {
+  if (!isValidStickerSlug(slug)) return { available: false };
+  const conflict = await findStickerSlugConflict(dbRead, slug, excludeCosmeticId);
+  return { available: !conflict };
+}
+
 export async function createCosmetic(data: Prisma.CosmeticUncheckedCreateInput) {
+  await validateStickerCosmetic({ type: data.type, data: data.data });
   const cosmetic = await dbWrite.cosmetic.create({ data });
+
+  const url = getCosmeticArtworkUrl(cosmetic.data);
+  if (url) queueCosmeticPerceptualHash({ id: cosmetic.id, url });
+
   return cosmetic;
 }
 
@@ -396,7 +539,24 @@ export async function updateCosmetic({
   id: number;
   data: Prisma.CosmeticUncheckedUpdateInput;
 }) {
+  const existing = await dbWrite.cosmetic.findUnique({
+    where: { id },
+    select: { type: true, data: true },
+  });
+  await validateStickerCosmetic({
+    id,
+    type: (data.type as CosmeticType | undefined) ?? existing?.type,
+    data: data.data ?? existing?.data,
+  });
+
+  const previous = data.data !== undefined ? await getCosmeticDetail({ id }) : undefined;
   const cosmetic = await dbWrite.cosmetic.update({ where: { id }, data });
+
+  const url = getCosmeticArtworkUrl(cosmetic.data);
+  if (previous && url && url !== getCosmeticArtworkUrl(previous.data)) {
+    queueCosmeticPerceptualHash({ id: cosmetic.id, url });
+  }
+
   return cosmetic;
 }
 

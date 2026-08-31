@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { extractListingMeta } from '~/server/utils/og-metadata';
+import {
+  extractListingMeta,
+  HEADER_NAV_BLOCK_MAX,
+  META_HTML_PARSE_CAP,
+} from '~/server/utils/og-metadata';
 
 /**
  * PURE OG/HTML metadata extraction — og:title/description/image + favicon/
@@ -195,25 +199,95 @@ describe('extractListingMeta', () => {
   });
 
   describe('adversarial-input cost (event-loop-freeze / ReDoS guard)', () => {
-    // Regression for the O(n^2) container-regex freeze: many unclosed <header>
-    // open tags forced the lazy backreference match to rescan to EOF at every
-    // start position. A ~1.5MB body froze the event loop ~45s. The parse cap +
-    // bounded lazy quantifier make it linear-with-small-constant. Threshold is
-    // generous (CI variance) but still ~10x under the broken time.
-    it('parses a 1.5MB run of unclosed <header> tags in bounded time', () => {
-      const html = '<header>'.repeat(200_000); // ~1.6MB, no closer, no <link icon>
-      const t0 = Date.now();
-      const r = extractListingMeta(html, BASE);
-      const elapsed = Date.now() - t0;
-      expect(r.iconImageUrl).toBeUndefined(); // nothing extractable, but no hang
-      expect(elapsed).toBeLessThan(4000);
+    /**
+     * Regression for the O(n^2) container-regex freeze: many unclosed <header>
+     * open tags forced the lazy backreference match to rescan to EOF at every
+     * start position, and a ~1.5MB body froze the event loop ~45s.
+     *
+     * 🔴 THESE USED TO ASSERT `elapsed < 4000ms`, WHICH TESTED THE RUNNER, NOT THE
+     * CODE. A wall-clock bound is unfalsifiable on a fast box and fails on a
+     * contended one: locally the parse takes ~350-460ms, but on the shared
+     * PR-preview runner the same assertion failed on 100% of PRs while the
+     * identical suite passed in GitHub Actions. A permanently-red gate is worse
+     * than no gate, so the assertion is now ALGORITHMIC.
+     *
+     * What actually makes the parse linear-with-small-constant is TWO EXPLICIT
+     * BOUNDS in the implementation, and both are OBSERVABLE — so they are pinned
+     * by behaviour, at their exact boundary, with no timing at all:
+     *
+     *   1. `META_HTML_PARSE_CAP` — the document is truncated before parsing, so
+     *      total work cannot grow past a fixed prefix however large the body is.
+     *   2. `HEADER_NAV_BLOCK_MAX` — the container regex's lazy inner capture is
+     *      length-bounded, so an unmatched `<header>` costs a bounded rescan
+     *      instead of a scan to EOF at every start position.
+     *
+     * Delete either bound and the matching test below fails deterministically
+     * (mutation-verified — see the PR that introduced these). The last test keeps
+     * the real 1.5MB hostile inputs as a CORRECTNESS + no-hang check, with the
+     * hang expressed as a per-test timeout rather than an elapsed-ms assertion.
+     *
+     * 🔴 The two BOUND tests below build their inputs FROM these constants, so
+     * they pin that truncation happens — never WHERE it happens. Widening a cap
+     * therefore keeps them green while silently restoring the cost this bound
+     * exists to remove: raising META_HTML_PARSE_CAP to 2_000_000 (above the
+     * ~1.5MB fetch byte cap, so truncation is dead for every real input) passed
+     * 26/26 while making the parse 6.6x more expensive. The VALUES are part of
+     * the cost contract, so they are pinned literally here — deriving them from
+     * the import would reproduce the same tautology.
+     */
+
+    it('the cap VALUES are part of the cost contract, not free parameters', () => {
+      expect(META_HTML_PARSE_CAP).toBe(256_000);
+      expect(HEADER_NAV_BLOCK_MAX).toBe(8_000);
     });
 
-    it('parses a 1.5MB run of mismatched header/nav tags in bounded time', () => {
-      const html = '<header>x</nav>'.repeat(120_000); // backref never satisfied
-      const t0 = Date.now();
-      extractListingMeta(html, BASE);
-      expect(Date.now() - t0).toBeLessThan(4000);
+    it('BOUND 1 — truncates at META_HTML_PARSE_CAP: a tag past the cap is not parsed, the same tag ending exactly at it is', () => {
+      const tag = '<meta property="og:title" content="Beyond The Cap">';
+
+      // Ends exactly AT the cap → `html.length > cap` is false → nothing sliced.
+      const atCap = 'x'.repeat(META_HTML_PARSE_CAP - tag.length) + tag;
+      expect(atCap.length).toBe(META_HTML_PARSE_CAP);
+      expect(extractListingMeta(atCap, BASE).name).toBe('Beyond The Cap');
+
+      // Starts one byte PAST the cap → sliced away entirely before parsing. This
+      // is the assertion that goes red if the truncation is ever removed: without
+      // it the extractor reads the whole (unbounded) body and finds the title.
+      const pastCap = 'x'.repeat(META_HTML_PARSE_CAP) + tag;
+      expect(extractListingMeta(pastCap, BASE)).toEqual({});
     });
+
+    it('BOUND 2 — the header/nav container scan is length-bounded: a block longer than HEADER_NAV_BLOCK_MAX yields no icon, one exactly at it does', () => {
+      // No class/alt/id mentioning logo/header/brand, so this <img> is reachable
+      // ONLY through the <header> container scan — never the logo-attribute path.
+      const img = '<img src="/hero-pic.png">';
+      const header = (innerLen: number) =>
+        `<header>${'x'.repeat(innerLen - img.length)}${img}</header>`;
+
+      // Inner content exactly at the bound → still matched → icon suggested.
+      expect(extractListingMeta(header(HEADER_NAV_BLOCK_MAX), BASE).iconImageUrl).toBe(
+        'https://vendor.example.com/hero-pic.png'
+      );
+
+      // One byte over → the bounded lazy capture can no longer reach `</header>`,
+      // so the block is skipped rather than rescanned to EOF. Replacing the
+      // bounded quantifier with an unbounded `*?` makes this find the image, which
+      // is exactly the catastrophic-backtracking shape the bound exists to stop.
+      expect(extractListingMeta(header(HEADER_NAV_BLOCK_MAX + 1), BASE).iconImageUrl).toBe(
+        undefined
+      );
+    });
+
+    it('the real 1.5MB hostile bodies parse correctly and cannot hang', () => {
+      // Both shapes are the original freeze vectors: unclosed opens, and a
+      // backreference that is never satisfied. With the bounds in place this test
+      // runs in ~0.6s; with BOTH bounds removed it was measured at 84s (the first
+      // body alone is ~29s on an idle box). So the per-test timeout is a genuine
+      // hang detector with ~25x headroom, where the old `elapsed < 4000ms`
+      // assertion had ~9x and lost that bet on a contended runner. It is a
+      // BACKSTOP for a superlinear regression introduced somewhere OTHER than the
+      // two bounds above — the deterministic boundary tests are the real guard.
+      expect(extractListingMeta('<header>'.repeat(200_000), BASE)).toEqual({});
+      expect(extractListingMeta('<header>x</nav>'.repeat(120_000), BASE)).toEqual({});
+    }, 15_000);
   });
 });

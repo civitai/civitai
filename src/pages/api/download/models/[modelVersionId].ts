@@ -1,7 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import requestIp from 'request-ip';
 import * as z from 'zod';
-import { clickhouse, Tracker } from '~/server/clickhouse/client';
+import { Tracker } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -11,8 +10,15 @@ import { bustUserDownloadsCache } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
-import { isRequestFromBrowser } from '~/server/utils/request-helpers';
+import { getTrustedClientIp, parseIpBlocklist, parseUserBlocklist } from '~/server/utils/client-ip';
+import { fetchDownloadCount } from '~/server/utils/download-count';
+import {
+  isRequestFromBrowser,
+  repairSplitQueryString,
+  shouldResolveDirect,
+} from '~/server/utils/request-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { GENERIC_SERVER_ERROR_MESSAGE } from '~/server/utils/rest-error-envelope';
 
 const schema = z.object({
   modelVersionId: z.preprocess((val) => Number(val), z.number()),
@@ -27,21 +33,43 @@ const schema = z.object({
 const downloadLimiter = createLimiter({
   counterKey: REDIS_SYS_KEYS.DOWNLOAD.COUNT,
   limitKey: REDIS_SYS_KEYS.DOWNLOAD.LIMITS,
-  fetchCount: async (userKey) => {
-    const isIP = userKey.includes(':') || userKey.includes('.');
-    if (!clickhouse) return 0;
-
-    const data = await clickhouse.$query<{ count: number }>`
-      SELECT
-        COUNT(*) as count
-      FROM modelVersionEvents
-      WHERE type = 'Download' AND time > subtractHours(now(), 24)
-      ${isIP ? `AND ip = '${userKey}'` : `AND userId = ${userKey}`}
-    `;
-    const count = data[0]?.count ?? 0;
-    return count;
-  },
+  // Extracted to ~/server/utils/download-count so the key-shape validation that
+  // makes this query safe to build has a test of its own.
+  fetchCount: fetchDownloadCount,
 });
+
+/**
+ * A caller can drive this 400 at will, so it is sampled where the repair below
+ * is not. Neither payload carries a query VALUE — `token` on this route is the
+ * caller's API key, and Axiom applies no redaction of its own.
+ */
+const SCHEMA_REJECTION_SAMPLE_RATE = 0.01;
+
+function logSplitQueryRepair(req: NextApiRequest) {
+  logToAxiom({
+    name: 'download-model-endpoint',
+    type: 'info',
+    message: 'split-query-repaired',
+    keys: Object.keys(req.query),
+  }).catch(() => {
+    // swallow logging failure
+  });
+}
+
+function logSchemaRejection(error: z.ZodError, repaired: boolean) {
+  if (Math.random() >= SCHEMA_REJECTION_SAMPLE_RATE) return;
+  logToAxiom({
+    name: 'download-model-endpoint',
+    type: 'warning',
+    message: 'schema-rejected',
+    fields: error.issues.map((issue) => issue.path.join('.')),
+    // A rejection AFTER a repair is a different bug from one the repair never saw.
+    repaired,
+    sampleRate: SCHEMA_REJECTION_SAMPLE_RATE,
+  }).catch(() => {
+    // swallow logging failure
+  });
+}
 
 export default PublicEndpoint(
   async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
@@ -54,6 +82,14 @@ export default PublicEndpoint(
     // takedowns. Override with no-store so deletes take effect immediately.
     res.setHeader('Cache-Control', 'no-store, max-age=0');
 
+    // Must run before `getServerAuthSession` below, which reads `?token=` off
+    // `req.url` — a stray `?` swallows that param into the one before it, so an
+    // API-key caller would otherwise be treated as anonymous.
+    const repaired = repairSplitQueryString(req);
+    // Unsampled: this is what says whether any client still needs the shim, and
+    // a rate that can report zero is the point.
+    if (repaired) logSplitQueryRepair(req);
+
     const isBrowser = isRequestFromBrowser(req);
     function errorResponse(status: number, message: string) {
       res.status(status);
@@ -62,26 +98,59 @@ export default PublicEndpoint(
     }
 
     try {
-      // Get ip so that we can block exploits we catch
-      const ip = requestIp.getClientIp(req);
-      const ipBlacklist = (
-        ((await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value as string) ??
-        ''
-      ).split(',');
+      // Get ip so that we can block exploits we catch. Derived via getTrustedClientIp
+      // (edge-attested or transport peer only) — an enforcement control must not key
+      // on an address the caller supplies, and for anonymous callers this same value
+      // is the download-quota bucket below. Do not swap this for an inline resolver.
+      //
+      // Operator note before you add an entry to `ip-blacklist`: a request that
+      // did not transit the Cloudflare edge is attributed to the transport peer,
+      // so where that peer is a shared hop, listing its address blocks all such
+      // traffic to every download route at once. See `parseIpBlocklist`.
+      const ip = getTrustedClientIp(req);
+      const ipBlacklist = parseIpBlocklist(
+        (await dbRead.keyValue.findUnique({ where: { key: 'ip-blacklist' } }))?.value
+      );
       if (ip && ipBlacklist.includes(ip)) return errorResponse(403, 'Forbidden');
 
       // Check if user is blacklisted
       const session = await getServerAuthSession({ req, res });
       if (!!session?.user) {
-        const userBlacklist = (
-          ((await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))
-            ?.value as string) ?? ''
-        ).split(',');
+        const userBlacklist = parseUserBlocklist(
+          (await dbRead.keyValue.findUnique({ where: { key: 'user-blacklist' } }))?.value
+        );
         if (userBlacklist.includes(session.user.id.toString()))
           return errorResponse(403, 'Forbidden');
       }
 
       // Check if user has a concerning number of downloads
+      //
+      // 🔴 READ THIS BEFORE KEYING AN ANONYMOUS DOWNLOAD LIMIT ON THIS BUCKET.
+      //
+      // For an authenticated caller `userKey` is the user id and each account
+      // counts separately. For an ANONYMOUS caller it is `ip`, which comes from
+      // getTrustedClientIp: a request that did not transit the Cloudflare edge
+      // is attributed to the transport peer, so wherever that peer is a shared
+      // hop, every such caller lands on ONE counter.
+      //
+      // That collapse is fine for the blocklist above (a membership test
+      // against a curated list) and it is NOT fine for a counter with a
+      // threshold: a shared counter is driven by the aggregate volume of
+      // unrelated callers, so when it trips it 429s all of them together, none
+      // of whom did anything the limit was aimed at. The people it lands on are
+      // exactly the ones who reached us without edge transit.
+      //
+      // The COUPLING is the point. `hasExceededLimit` reads a bucket's
+      // threshold out of a redis hash, and the two cases are symmetric: a
+      // bucket whose threshold is unset is counted but not enforced, and a
+      // bucket whose threshold is set shares one counter across every
+      // non-edge-attested anonymous caller. Neither is a property of this
+      // file — the hash decides which one applies, so this code is correct
+      // under both and the design question is unaffected by which holds.
+      //
+      // Before setting a threshold for the anonymous bucket, give this surface
+      // a key that does not collapse, or scope the limit to edge-attested
+      // requests.
       const isAuthed = !!session?.user;
       const userKey = session?.user?.id?.toString() ?? ip;
       if (!userKey) return errorResponse(403, 'Forbidden');
@@ -95,18 +164,26 @@ export default PublicEndpoint(
 
       // Validate query params
       const queryResults = schema.safeParse(req.query);
-      if (!queryResults.success)
+      if (!queryResults.success) {
+        logSchemaRejection(queryResults.error, repaired);
         return res
           .status(400)
           .json({ error: z.prettifyError(queryResults.error) ?? 'Invalid modelVersionId' });
+      }
       const input = queryResults.data;
       const modelVersionId = input.modelVersionId;
       if (!modelVersionId) return errorResponse(400, 'Missing modelVersionId');
 
       // Get file
+      //
+      // `direct` is evaluated here, AFTER the blocklist, rate-limit and (inside
+      // getFileForModelVersion) auth/ownership/paid-access checks. It selects
+      // which host serves the bytes and nothing else — a caller that fails any
+      // gate above never reaches this line, so the allowlist cannot widen access.
       const fileResult = await getFileForModelVersion({
         ...input,
         user: session?.user,
+        direct: shouldResolveDirect(req),
       });
 
       if (fileResult.status === 'not-found') return errorResponse(404, 'File not found');
@@ -133,6 +210,15 @@ export default PublicEndpoint(
           });
         else return res.redirect(`/model-versions/${modelVersionId}`);
       }
+      // Answer in place rather than redirecting. `early-access` can bounce to the version page
+      // because that page renders a purchase CTA, but a plain missing grant has nothing actionable
+      // there — the redirect just lands the user back where they clicked, which is the exact
+      // "download button does nothing" symptom this status exists to eliminate.
+      if (fileResult.status === 'no-access')
+        return errorResponse(403, 'You do not have access to download this file');
+      // Only reachable without a session — `getFileForModelVersion` reports a signed-in user's
+      // missing grant as `no-access`, so sending someone to /login here can no longer loop them
+      // back to the page they started on.
       if (fileResult.status === 'unauthorized') {
         if (!isBrowser)
           return res.status(401).json({
@@ -179,16 +265,20 @@ export default PublicEndpoint(
 
         const now = new Date();
 
+        // An unpublished version is only reachable by its owner and by internal services — the scanner
+        // fetches the file minutes after upload, which was landing a Download event (userId -1,
+        // `civitai-spine` UA) and leaving every draft showing 1 download before it went live.
         const tracker = new Tracker(req, res);
-        await tracker.modelVersionEvent({
-          type: 'Download',
-          modelId: fileResult.modelId,
-          modelVersionId,
-          fileId: fileResult.fileId,
-          nsfw: fileResult.nsfw,
-          earlyAccess: fileResult.inEarlyAccess,
-          time: now,
-        });
+        if (fileResult.published)
+          await tracker.modelVersionEvent({
+            type: 'Download',
+            modelId: fileResult.modelId,
+            modelVersionId,
+            fileId: fileResult.fileId,
+            nsfw: fileResult.nsfw,
+            earlyAccess: fileResult.inEarlyAccess,
+            time: now,
+          });
 
         // Bust the downloads cache so the user sees their download immediately
         if (session?.user?.id) {
@@ -208,17 +298,37 @@ export default PublicEndpoint(
       res.redirect(fileResult.url);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
+      // `token` is the caller's API key, and Axiom applies no redaction of its own.
+      const { token, ...loggableQuery } = req.query;
       logToAxiom({
         name: 'download-model-endpoint',
         type: 'error',
         message: err.message,
         stack: err.stack,
-        query: req.query,
+        query: loggableQuery,
       }).catch(() => {
         // swallow logging failure
       });
       if (res.headersSent) return;
-      return errorResponse(500, err.message);
+      // 🔴 civitai#3845 TIER 1. This was `errorResponse(500, err.message)` on a
+      // `PublicEndpoint`, so an anonymous caller got the driver's own prose —
+      // ``Invalid `prisma.modelFile.findFirst()` invocation``, table and column
+      // names — through BOTH arms of `errorResponse`: `{ error: <text> }` as JSON
+      // and, for a browser UA, `res.send(<text>)` as bare text/plain. The ledger
+      // sweep only inspects `.json({…})` bodies, so the text/plain arm was never
+      // even visible to it.
+      //
+      // Not delegated to `handleEndpointError`: that would force JSON on the
+      // browser arm and drop the content negotiation this route exists to do. The
+      // genericization is the same one the helper applies, sharing its constant so
+      // the two cannot drift. Nothing is lost — `logToAxiom` directly above still
+      // records the un-redacted message and stack.
+      //
+      // Every OTHER exit from this handler already answers with a string literal,
+      // so after this line `errorResponse` can no longer be reached with
+      // caught-error text. `src/tests/api/tier1-public-route-disclosure.test.ts`
+      // pins that structurally, per call site.
+      return errorResponse(500, GENERIC_SERVER_ERROR_MESSAGE);
     }
   },
   ['GET']

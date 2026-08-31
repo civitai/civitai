@@ -2,6 +2,8 @@ import clsx from 'clsx';
 import React from 'react';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
+import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import styles from './AspectRatioCard.module.scss';
 
@@ -13,13 +15,25 @@ const aspectRatioMap = {
 } as const;
 
 export type AspectRatioCardProps = {
-  aspectRatio?: AspectRatio;
+  /**
+   * A named ratio, or a raw width/height number to follow the media's own shape.
+   *
+   * The number form exists so a card can stop cropping. Its caller is the
+   * remix-of card, which passes the source image's ratio UNCLAMPED and bounds
+   * the height with a square wrapper instead. Clamping the number was tried
+   * (`Math.max(ratio, 1)`) and is wrong: it re-squares every portrait source,
+   * which is most of them, silently and with nothing to show for it. Cap the
+   * box, never the ratio.
+   */
+  aspectRatio?: AspectRatio | number;
   cosmetic?: ContentDecorationCosmetic['data'];
   className?: string;
   header?: React.ReactNode;
   footer?: React.ReactNode;
   footerGradient?: boolean;
   render: (props: { inView: boolean }) => React.ReactNode;
+  /** Entities this card presents, reported once it has been half visible for a second. */
+  impressions?: ImpressionTarget[];
 };
 
 export function AspectRatioCard({
@@ -30,11 +44,16 @@ export function AspectRatioCard({
   footer,
   footerGradient,
   render,
+  impressions,
 }: AspectRatioCardProps) {
-  const wrapperStyle = { aspectRatio: aspectRatioMap[aspectRatio] };
+  const wrapperStyle = {
+    aspectRatio: typeof aspectRatio === 'number' ? aspectRatio : aspectRatioMap[aspectRatio],
+  };
+  const impressionRef = useTrackImpression<HTMLDivElement>(impressions);
 
   return (
     <ElementInView
+      ref={impressionRef}
       component={CosmeticCard}
       cosmetic={cosmetic}
       cosmeticStyle={cosmetic ? wrapperStyle : undefined}

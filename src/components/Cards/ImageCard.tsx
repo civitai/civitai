@@ -6,22 +6,39 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
-import { RemixButton } from '~/components/Cards/components/RemixButton';
+import { CardRemixButton } from '~/components/Image/Remix/CardRemixButton';
+import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-demo';
+import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
+import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
+import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { ThemeIcon } from '@mantine/core';
 
 export function ImageCard({ data }: Props) {
   const { getImages, ...context } = useImagesContext();
+  const features = useFeatureFlags();
+  // Called unconditionally: inside the `??` below it would sit after a
+  // short-circuit, which is a conditional hook call.
+  const remix = useRemixCardData(data.id);
 
   return (
     <AspectRatioImageCard
       image={data}
-      cosmetic={data.cosmetic?.data}
+      // The owner's own cosmetic wins; the remix frame is only a fallback.
+      cosmetic={data.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined)}
       routedDialog={{
         name: 'imageDetail',
         state: { imageId: data.id, images: getImages(), ...context },
       }}
+      overlay={({ safe }) =>
+        // Not mounted at all with the flag off. The overlay renders null there
+        // anyway, but a card is rendered by the hundred and this keeps the
+        // flag-off tree identical to what shipped before it.
+        safe && features.stickerPlacement && <CardStickerOverlay imageId={data.id} />
+      }
       header={
         <div className="flex w-full items-start justify-between">
           {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
@@ -29,12 +46,16 @@ export function ImageCard({ data }: Props) {
           )}
           <div className="ml-auto flex flex-col gap-2">
             <ImageContextMenu image={data} />
-            <RemixButton type={data.type} id={data.id} canGenerate={data.hasMeta} />
+            <CardRemixButton image={data} />
           </div>
         </div>
       }
-      footer={
+      footer={({ safe }) => (
         <div className="flex w-full flex-col gap-2">
+          {/* In the footer, not over the media: this card's footer is painted on
+              the image at the same bottom edge, so an anchored panel lands on the
+              reaction counts. */}
+          {safe && <RemixedCardFlyout imageId={data.id} />}
           <UserAvatarSimple {...data.user} />
           <div className="flex flex-wrap justify-between gap-1">
             <Reactions
@@ -53,7 +74,8 @@ export function ImageCard({ data }: Props) {
               targetUserId={data.user.id}
               disableBuzzTip={data.poi}
             />
-            {data.hasMeta && (
+            {features.stickerPlacement && <StickerPlacementCardBadge imageId={data.id} />}
+            {features.imageCardInfoButton && data.hasMeta && (
               <ImageMetaPopover2 imageId={data.id} type={data.type}>
                 <ThemeIcon className={cardClasses.infoChip} variant="light">
                   <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
@@ -62,7 +84,7 @@ export function ImageCard({ data }: Props) {
             )}
           </div>
         </div>
-      }
+      )}
     />
   );
 }

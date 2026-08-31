@@ -6,6 +6,7 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBadge';
+import type { JudgingCategory } from '~/server/games/daily-challenge/daily-challenge-scoring';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useServerDomains } from '~/providers/AppProvider';
@@ -68,6 +69,7 @@ export function WinnerPodiumCard({
   isMobile = false,
   compact = false,
   judgeInfo,
+  judgingCategories,
   buzzType,
 }: {
   winner: WinnerPodiumData;
@@ -76,6 +78,7 @@ export function WinnerPodiumCard({
   isMobile?: boolean;
   compact?: boolean;
   judgeInfo?: JudgeInfo;
+  judgingCategories?: JudgingCategory[] | null;
   // Required, not defaulted: a missing value would silently render yellow, which is the exact bug
   // this prop exists to fix.
   buzzType: 'green' | 'yellow';
@@ -181,6 +184,7 @@ export function WinnerPodiumCard({
                       score={winner.judgeScore}
                       imageId={winner.imageId!}
                       judgeInfo={judgeInfo}
+                      judgingCategories={judgingCategories}
                       size={compact ? 'xs' : 'sm'}
                     />
                   )}

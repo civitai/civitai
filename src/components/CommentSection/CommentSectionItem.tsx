@@ -7,7 +7,7 @@ import {
   IconFlag,
   IconTrash,
 } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -15,7 +15,10 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
+import { UserHoverCard } from '~/components/UserAvatar/UserHoverCard';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
+import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
+import { StickerPicker } from '~/components/Sticker/StickerPicker';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -34,6 +37,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
   directLink.searchParams.set('highlight', comment.id.toString());
 
   const [editComment, setEditComment] = useState<Props['comment'] | null>(null);
+  const editorRef = useRef<EditorCommandsRef | null>(null);
 
   const { data: reactions = [] } = trpc.comment.getReactions.useQuery(
     { commentId: comment.id },
@@ -44,6 +48,8 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
   const saveCommentMutation = trpc.comment.upsert.useMutation({
     async onSuccess() {
       await queryUtils.comment.getCommentsById.invalidate();
+      // Placements just spent uses, so the picker's counts are stale.
+      await queryUtils.cosmetic.getStickerBalances.invalidate();
       setEditComment(null);
     },
     onError(error) {
@@ -118,10 +124,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
           reaction,
           user: {
             id: currentUser.id,
-            deletedAt: null,
             username: currentUser.username ?? '',
-            image: currentUser.image ?? '',
-            profilePicture: null, // not really necessary for reactions
           },
         };
         const reacted = previousReactions.find(
@@ -157,9 +160,16 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
           <Stack gap={0}>
             <Group gap={8} align="center">
               {!comment.user.deletedAt ? (
-                <Text component={Link} href={`/user/${comment.user.username}`} size="sm" fw="bold">
-                  <Username {...comment.user} />
-                </Text>
+                <UserHoverCard user={comment.user}>
+                  <Text
+                    component={Link}
+                    href={`/user/${comment.user.username}`}
+                    size="sm"
+                    fw="bold"
+                  >
+                    <Username {...comment.user} />
+                  </Text>
+                </UserHoverCard>
               ) : (
                 <Username {...comment.user} />
               )}
@@ -178,12 +188,14 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                 className="text-sm"
                 withMentions
                 withProfanityFilter
+                allowStickers
               />
             ) : (
               <RichTextEditor
+                innerRef={editorRef}
                 value={editComment.content}
                 disabled={saveCommentMutation.isPending}
-                includeControls={['formatting', 'link', 'mentions']}
+                includeControls={['formatting', 'link', 'mentions', 'sticker']}
                 onChange={(value) =>
                   setEditComment((state) => (state ? { ...state, content: value } : state))
                 }
@@ -213,17 +225,27 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
               )}
             </Group>
           ) : (
-            <Group justify="flex-end">
-              <Button variant="default" size="xs" onClick={() => setEditComment(null)}>
-                Cancel
-              </Button>
-              <Button
-                onClick={() => saveCommentMutation.mutate({ ...comment, ...editComment, modelId })}
-                size="xs"
-                loading={editComment && saveCommentMutation.isPending}
-              >
-                Comment
-              </Button>
+            <Group justify="space-between">
+              <StickerPicker
+                position="top-start"
+                onSelect={(sticker) =>
+                  editorRef.current?.insertSticker({ id: sticker.id, slug: sticker.slug })
+                }
+              />
+              <Group gap="xs">
+                <Button variant="default" size="xs" onClick={() => setEditComment(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={() =>
+                    saveCommentMutation.mutate({ ...comment, ...editComment, modelId })
+                  }
+                  size="xs"
+                  loading={editComment && saveCommentMutation.isPending}
+                >
+                  Comment
+                </Button>
+              </Group>
             </Group>
           )}
         </Stack>

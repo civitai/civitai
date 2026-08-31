@@ -1,0 +1,271 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Concrete internal URL + token so the configured branch is reachable. Any field
+// we don't set falls back to the global env Proxy in src/__tests__/setup.ts.
+// vi.hoisted so the object exists before the hoisted vi.mock factory runs.
+const { envValues } = vi.hoisted(() => ({
+  envValues: {
+    STORAGE_RESOLVER_INTERNAL_URL: 'http://storage-resolver.internal',
+    STORAGE_RESOLVER_INTERNAL_TOKEN: 'test-token',
+  } as Record<string, unknown>,
+}));
+
+vi.mock('~/env/server', () => ({
+  env: new Proxy(envValues, {
+    get(target, prop: string) {
+      if (prop in target) return target[prop];
+      return undefined;
+    },
+  }),
+}));
+
+// 🔴 The logging mock is the CANONICAL one, and that is the whole point on this file.
+// The per-file `~/env/server` mock above forces `~/utils/storage-resolver` to be
+// re-instantiated for this file, which incidentally re-bound its `logToAxiom` import to a
+// per-file spy. That accident is what the deregisterBatch/deregister pair discovered: remove
+// the env mock and the module is cached from whichever file loaded it first, so the second
+// file asserts on a spy the cached module never calls. The canonical node is stable for the
+// life of the worker, so the binding is correct however the module happens to be cached.
+//
+// ⚠️ The `~/env/server` mock above STAYS. It is a pending specifier, not a canonical one, and
+// it is load-bearing: the tests MUTATE `envValues` per case, which is the class the codemod
+// refuses rather than verifies — lifting it would leave the local alive and disconnected, and
+// every later assignment would write to an object nothing reads.
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
+const logToAxiom = loggingMock.logToAxiom;
+
+import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
+
+const okResponse = (body: unknown) => ({
+  ok: true,
+  status: 200,
+  json: () => Promise.resolve(body),
+  text: () => Promise.resolve(JSON.stringify(body)),
+});
+
+describe('deregisterFileLocationsByFile', () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    logToAxiom.mockClear();
+    vi.stubGlobal('fetch', fetchMock);
+    // Restore the configured env for each test; individual tests may clear it.
+    envValues.STORAGE_RESOLVER_INTERNAL_URL = 'http://storage-resolver.internal';
+    envValues.STORAGE_RESOLVER_INTERNAL_TOKEN = 'test-token';
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('POSTs fileIds with the bearer token and returns the deleted count', async () => {
+    fetchMock.mockResolvedValue(okResponse({ success: true, deleted: 1 }));
+
+    const result = await deregisterFileLocationsByFile([123]);
+
+    expect(result).toEqual({ deleted: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://storage-resolver.internal/deregister');
+    expect((init as RequestInit).method).toBe('POST');
+    expect((init as any).headers.Authorization).toBe('Bearer test-token');
+    // Literal expected body — file-keyed, NOT derived from what the code builds.
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ fileIds: [123] });
+    // Unconditional abort so a hung resolver can't stall post-commit cleanup.
+    expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('never sends a version-keyed field alongside fileIds (the resolver 400s on both)', async () => {
+    fetchMock.mockResolvedValue(okResponse({ success: true, deleted: 1 }));
+
+    await deregisterFileLocationsByFile([123]);
+
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    // Exact-shape assertion: the payload is fileIds and nothing else.
+    expect(Object.keys(body)).toEqual(['fileIds']);
+    expect(body).not.toHaveProperty('fileId');
+    expect(body).not.toHaveProperty('modelVersionId');
+    expect(body).not.toHaveProperty('modelVersionIds');
+  });
+
+  it('is a no-op returning null (and warns) when storage-resolver is not configured', async () => {
+    envValues.STORAGE_RESOLVER_INTERNAL_URL = undefined;
+    envValues.STORAGE_RESOLVER_INTERNAL_TOKEN = undefined;
+
+    const result = await deregisterFileLocationsByFile([1, 2, 3]);
+
+    expect(result).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'deregister-file-locations-skipped', count: 3 })
+    );
+  });
+
+  it('de-dupes + drops non-positive ids and makes no call when nothing survives', async () => {
+    const result = await deregisterFileLocationsByFile([0, -1, -5]);
+
+    expect(result).toEqual({ deleted: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('de-dupes and drops non-positive ids before the request', async () => {
+    fetchMock.mockResolvedValue(okResponse({ success: true, deleted: 2 }));
+
+    const result = await deregisterFileLocationsByFile([1, 1, 2, 0, -3, 2]);
+
+    expect(result).toEqual({ deleted: 2 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      fileIds: [1, 2],
+    });
+  });
+
+  it('chunks at 500 ids/request and sums deleted across chunks', async () => {
+    // 1200 unique ids → 3 chunks (500 + 500 + 200).
+    const ids = Array.from({ length: 1200 }, (_, i) => i + 1);
+    fetchMock
+      .mockResolvedValueOnce(okResponse({ success: true, deleted: 500 }))
+      .mockResolvedValueOnce(okResponse({ success: true, deleted: 500 }))
+      .mockResolvedValueOnce(okResponse({ success: true, deleted: 200 }));
+
+    const result = await deregisterFileLocationsByFile(ids);
+
+    expect(result).toEqual({ deleted: 1200 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const chunkSizes = fetchMock.mock.calls.map(
+      ([, init]) => JSON.parse((init as RequestInit).body as string).fileIds.length
+    );
+    expect(chunkSizes).toEqual([500, 500, 200]);
+    // Every chunk stays file-keyed — the last one included.
+    const lastBody = JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string);
+    expect(lastBody.fileIds[0]).toBe(1001);
+    expect(lastBody.fileIds[199]).toBe(1200);
+  });
+
+  it('is best-effort per chunk: a non-OK chunk is logged + skipped, others proceed', async () => {
+    const ids = Array.from({ length: 1000 }, (_, i) => i + 1); // 2 chunks
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('boom'),
+        json: () => Promise.reject(new Error('not json')),
+      })
+      .mockResolvedValueOnce(okResponse({ success: true, deleted: 500 }));
+
+    const result = await deregisterFileLocationsByFile(ids);
+
+    // First chunk failed (counted 0), second succeeded — the loop never aborts.
+    expect(result).toEqual({ deleted: 500 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'deregister-file-locations-failed', status: 500 })
+    );
+  });
+
+  it('is best-effort per chunk: a thrown chunk is logged + skipped, others proceed', async () => {
+    const ids = Array.from({ length: 1000 }, (_, i) => i + 1); // 2 chunks
+    fetchMock
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockResolvedValueOnce(okResponse({ success: true, deleted: 500 }));
+
+    const result = await deregisterFileLocationsByFile(ids);
+
+    expect(result).toEqual({ deleted: 500 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'deregister-file-locations-error' })
+    );
+  });
+
+  it('returns { deleted: 0 } rather than throwing when the endpoint 404s (contract not yet deployed)', async () => {
+    // This WAS the reason the PR was sequencing-blocked; the endpoint is now
+    // merged and deployed, so the 404 arm is no longer the live risk. It is
+    // kept because the silence it demonstrates is permanent: against a resolver
+    // that does not understand `fileIds` — a rollback, a half-rolled fleet —
+    // every call fails SILENTLY and the caller cannot tell.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve('not found'),
+      json: () => Promise.reject(new Error('not json')),
+    });
+
+    await expect(deregisterFileLocationsByFile([123])).resolves.toEqual({ deleted: 0 });
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'deregister-file-locations-failed', status: 404 })
+    );
+  });
+
+  it('sets the per-chunk timeout to 30s, not merely "some AbortSignal"', async () => {
+    // 🔴 THE TIMEOUT VALUE, PINNED. `expect(signal).toBeInstanceOf(AbortSignal)`
+    // is satisfied by ANY timeout: an audit showed AbortSignal.timeout(30_000)
+    // could be changed to timeout(1) — aborting every call before the resolver
+    // can answer, making the feature inert — with the suite fully green. Assert
+    // the argument, not the type.
+    const spy = vi.spyOn(AbortSignal, 'timeout');
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ deleted: 1 }),
+    });
+
+    await deregisterFileLocationsByFile([123]);
+
+    expect(spy).toHaveBeenCalledWith(30_000);
+    // 🔴 IDENTITY, not just the call. Asserting `timeout(30_000)` was CALLED and
+    // (elsewhere) that fetch got `some AbortSignal` leaves the two facts
+    // unconnected: computing the timeout and then handing fetch a DIFFERENT
+    // signal survives both, and the request ends up with NO working timeout.
+    // Verified: that mutant passed 13/13 before this line existed.
+    expect((fetchMock.mock.calls[0][1] as RequestInit).signal).toBe(spy.mock.results[0].value);
+    spy.mockRestore();
+  });
+
+  it('tags its Axiom events with key=file so an inert deploy is distinguishable', async () => {
+    // The version-keyed batch path emits the IDENTICAL event names and payload
+    // shape, and success is never logged, so without a discriminator a wholly
+    // inert deploy of this feature looks exactly like a failing bulk deregister.
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: () => Promise.resolve('boom'),
+    });
+
+    await deregisterFileLocationsByFile([123]);
+
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'deregister-file-locations-failed', key: 'file' })
+    );
+  });
+
+  it('tags the not-configured SKIP with key=file too', async () => {
+    // The skip is the likeliest inert-deploy signal of the three — a pod
+    // missing the env emits it on every delete — so it needs the discriminator
+    // at least as much as the failure events. Asserted separately because a
+    // per-event mutation showed the failed-event assertion does not cover it.
+    envValues.STORAGE_RESOLVER_INTERNAL_URL = undefined;
+
+    await expect(deregisterFileLocationsByFile([123])).resolves.toBeNull();
+
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'deregister-file-locations-skipped', key: 'file' })
+    );
+  });
+
+  it('never throws when the request times out against a hung resolver', async () => {
+    fetchMock.mockRejectedValue(
+      new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+    );
+
+    await expect(deregisterFileLocationsByFile([1, 2, 3])).resolves.toEqual({ deleted: 0 });
+    expect(logToAxiom).toHaveBeenCalledWith(
+      // key=file asserted here too: all three of this function's Axiom events
+      // need the discriminator, and a per-event mutation showed each site has
+      // to be pinned individually — covering two of three left the third free.
+      expect.objectContaining({ name: 'deregister-file-locations-error', key: 'file' })
+    );
+  });
+});

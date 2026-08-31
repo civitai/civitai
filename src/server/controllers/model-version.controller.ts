@@ -1,7 +1,20 @@
 import { TRPCError } from '@trpc/server';
-import { getPaidAccess, toModelVersionPaidAccessDto } from '~/server/services/paid-access.service';
+
+import { licensingFeeBlockedFor, paidAccessBlockedFor } from '@civitai/buzz';
+import { recordPricingSlot, releasePricingSlot } from '~/server/services/pricing-slot.service';
+import {
+  assertMonetizationWrite,
+  getViewerMonetization,
+  toModelVersionPaidAccessDto,
+} from '~/server/services/paid-access.service';
+import { getCapTier } from '~/server/services/subscriptions.service';
 import { selectLiveLinkedComponents } from '~/server/utils/model-helpers';
+import { resolveGenerationOnlyGate } from '~/server/utils/model-version-usage-control';
+import { logToAxiom } from '~/server/logging/client';
+import { getFeatureFlagsLazy, userTiers } from '~/server/services/feature-flags.service';
+import type { SessionUser } from '~/types/session';
 import type { BaseModelType } from '~/server/common/constants';
+import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
@@ -9,7 +22,6 @@ import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { getOwnerDonationGoals } from '~/server/services/donation-goal.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import { pickBestTrainingFile, type TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
@@ -19,11 +31,14 @@ import type {
   ModelVersionsGeneratedImagesOnTimeframeSchema,
   ModelVersionUpsertInput,
   PublishVersionInput,
-  QueryModelVersionSchema,
   RecommendedSettingsSchema,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
-import type { DeclineReviewSchema, UnpublishModelSchema } from '~/server/schema/model.schema';
+import type {
+  DeclineReviewSchema,
+  ModelMeta,
+  UnpublishModelSchema,
+} from '~/server/schema/model.schema';
 import type { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getStaticContent } from '~/server/services/content.service';
@@ -41,13 +56,21 @@ import {
   modelVersionDonationGoal,
   modelVersionGeneratedImagesOnTimeframe,
   publishModelVersionById,
-  queryModelVersions,
   toggleNotifyModelVersion,
+  resolveUnpublishScope,
   unpublishModelVersionById,
   updateModelVersionById,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
-import { getModel, queueModelEarlyAccessReindex } from '~/server/services/model.service';
+import {
+  getModel,
+  queueModelEarlyAccessReindex,
+  unpublishModelById,
+} from '~/server/services/model.service';
+import {
+  getModelEarlyAccessRefundRequirement,
+  getModelVersionEarlyAccessRefundRequirement,
+} from '~/server/services/model-early-access-refund.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
   handleLogError,
@@ -136,6 +159,10 @@ const loadModelVersion = async ({
             status: true,
             publishedAt: true,
             nsfw: true,
+            // The version editor gates paid access on this. Omitted, `model.poi` reads undefined and the
+            // gate is neither hidden nor suppressed at submit — the editor renders as if the model were
+            // ordinary.
+            poi: true,
             uploadType: true,
             user: { select: { id: true } },
             availability: true,
@@ -278,7 +305,18 @@ const loadModelVersion = async ({
     // The donationGoal seeds ONLY the owner's edit form, so use the RAW owner read (unfiltered by the
     // public EA-window/opt-out) and never hand it to a non-owner — public display reads the goal from
     // modelVersion.donationGoal instead.
-    const paidAccess = (await getPaidAccess('ModelVersion', [id]))[id];
+    const { paidAccess, licensingFee, sale } = (
+      await getViewerMonetization({
+        versions: [
+          {
+            id,
+            ownerId: version.model.user.id,
+            licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+          },
+        ],
+        viewer: { id: ctx?.user?.id, isModerator: ctx?.user?.isModerator },
+      })
+    )[id];
     const isOwnerOrMod =
       !!ctx?.user && (ctx.user.id === version.model.user.id || !!ctx.user.isModerator);
     const eaDonationGoal =
@@ -288,10 +326,10 @@ const loadModelVersion = async ({
 
     return {
       ...version,
-      licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+      licensingFee,
       canGenerate,
       wildcardSetId,
-      paidAccess: toModelVersionPaidAccessDto(paidAccess),
+      paidAccess: toModelVersionPaidAccessDto(paidAccess, sale),
       donationGoal: eaDonationGoal ? { goalAmount: eaDonationGoal.goalAmount } : null,
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,
@@ -342,6 +380,9 @@ export const toggleNotifyEarlyAccessHandler = async ({
   }
 };
 
+const asUserTier = (tier: string | null): SessionUser['tier'] =>
+  (userTiers as readonly string[]).includes(tier ?? '') ? (tier as SessionUser['tier']) : undefined;
+
 export const upsertModelVersionHandler = async ({
   input: { bountyId, ...input },
   ctx,
@@ -360,10 +401,76 @@ export const upsertModelVersionHandler = async ({
         )}`
       );
     }
+    let capTierPromise: Promise<string | null> | undefined;
+    const actorTier = () => (capTierPromise ??= getCapTier(ctx.user.id));
 
-    if (!ctx.features.generationOnlyModels && input.usageControl !== ModelUsageControl.Download) {
-      // People without access to thje generationOnlyModels feature can only create download models
-      input.usageControl = ModelUsageControl.Download;
+    // Only MOVING a version off Download is a new grant, matching the Creator Studio rule. Coercing on
+    // every non-Download save would strip generation-only from the versions whose owners aren't entitled
+    // — silently, on an unrelated edit, since the form resubmits the stored control and an absent one
+    // also lands here.
+    //
+    // A templated write creates a NEW version even with an `id` present, so `id` alone is not "the row
+    // this lands on" — reading the stored control off it would let one generation-only version vouch for
+    // unlimited new ones. Same trap resolveRightsAffirmation documents in the service.
+    const updatesExistingVersion = !!input.id && !input.templateId;
+    // dbWrite, and a miss counts as a grant: this decides an entitlement, and the edit wizard saves again
+    // fast enough to beat replication — a replica miss must not read as "already generation-only". The
+    // monetization gate below reads the same row, so it is selected once here.
+    const storedVersion = updatesExistingVersion
+      ? await dbWrite.modelVersion.findUnique({
+          where: { id: input.id },
+          select: {
+            usageControl: true,
+            licensingFee: true,
+            licensingFeeSettlementCurrency: true,
+            baseModel: true,
+          },
+        })
+      : null;
+    const storedUsageControl = storedVersion?.usageControl;
+    const grantsGenerationOnly =
+      input.usageControl !== ModelUsageControl.Download &&
+      (!updatesExistingVersion || storedUsageControl !== ModelUsageControl.Generation);
+
+    if (grantsGenerationOnly) {
+      const requestedUsageControl = input.usageControl;
+      // `ctx.features` resolves off the SESSION tier, which lags a membership change, so a creator who
+      // just upgraded is denied something they now pay for. Re-evaluate the SAME flag with the fresh
+      // subscription tier rather than comparing the tier ourselves: env overrides (the deploy-free kill
+      // switch), region rules and domain gating all still apply, and the availability list stays the one
+      // source of truth for which tiers qualify.
+      const hasFeature =
+        !!ctx.features.generationOnlyModels ||
+        !!getFeatureFlagsLazy({
+          user: { ...ctx.user, tier: asUserTier(await actorTier()) },
+          req: ctx.req,
+        }).generationOnlyModels;
+      const gate = resolveGenerationOnlyGate({
+        requested: requestedUsageControl,
+        hasFeature,
+        isModerator: !!ctx.user.isModerator,
+        permissions: ctx.user.permissions,
+      });
+      input.usageControl = gate.usageControl;
+
+      // The gate coerces instead of rejecting, so a write that passes on the wrong branch produces no
+      // record anywhere. Emit the deciding branch, and on the membership branch the fresh subscription
+      // tier next to the session one — ctx.features resolves off the session tier, which lags a
+      // membership change (CU 868kmy9f3).
+      logToAxiom({
+        name: 'model-version-usage-control-gate',
+        type: 'info',
+        outcome: gate.outcome,
+        userId,
+        modelId: input.modelId,
+        modelVersionId: input.id ?? null,
+        requestedUsageControl: requestedUsageControl ?? null,
+        storedUsageControl: storedUsageControl ?? null,
+        appliedUsageControl: input.usageControl ?? null,
+        sessionTier: ctx.user.tier ?? null,
+        subscriptionTier:
+          gate.outcome === 'tier' || gate.outcome === 'denied' ? await actorTier() : null,
+      }).catch(() => null);
     }
 
     if (input.usageControl === ModelUsageControl.InternalGeneration && !ctx.user.isModerator) {
@@ -378,13 +485,44 @@ export const upsertModelVersionHandler = async ({
       input.trainingDetails = undefined;
     }
 
-    // A permanent (never-expiring) gate carries no timeframeDays, so it skips every timed-window cap
-    // below (max-days, max-concurrent EA models, and the CP tier check). Restrict it to moderators on
-    // this path — the Creator Studio sets permanent gates via the WEBHOOK_TOKEN-gated early-access
-    // endpoint, never through modelVersion.upsert.
-    if (input.paidAccess?.permanent && !ctx.user.isModerator) {
-      throw throwBadRequestError('Permanent access can only be set from the Creator Studio.');
-    }
+    const storedFee = storedVersion?.licensingFee != null ? Number(storedVersion.licensingFee) : 0;
+
+    // The rules are about the model's OWNER. A moderator may save anyone's version, and passing the
+    // actor would check the moderator's score and spend the moderator's allowance on someone else's
+    // model — the exemption moderators explicitly do not get, reached sideways.
+    const owner = await getModel({
+      id: input.modelId,
+      select: { userId: true, poi: true, availability: true },
+    });
+    const ownerId = owner?.userId ?? ctx.user.id;
+    const actingOnOwnModel = ownerId === ctx.user.id;
+
+    // A POI or private model has its price STRIPPED by applyModelMonetizationPolicy rather than being
+    // refused, so gating on the submitted value would spend a slot for a version that ends up unpriced.
+    const policyKeepsFee = !owner || !licensingFeeBlockedFor(owner);
+    const policyKeepsGate = !owner || !paidAccessBlockedFor(owner);
+
+    const { spendsSlot, releasesSlot } = await assertMonetizationWrite({
+      ownerId,
+      isModerator: ctx.user.isModerator,
+      // `updatesExistingVersion`, never `input.id`: a templated write creates a NEW version even with
+      // an id present, so reading the stored price off it would let one already-priced version vouch
+      // for unlimited new priced ones — the trap the usage-control gate above documents.
+      versionId: updatesExistingVersion ? input.id : undefined,
+      // `?? null` because that is literally what the write does: both upsert branches call
+      // writeModelVersionGateAndGoal unconditionally, which passes `paidAccess ?? null` on to
+      // writePaidAccessForModelVersion — and null DELETES the row. Passing undefined through would
+      // have the ledger read "gate unchanged" for a save that removes it, so the version ends up
+      // unpriced with its slot never returned.
+      paidAccess: policyKeepsGate ? input.paidAccess ?? null : null,
+      licensingFee: policyKeepsFee ? input.licensingFee : 0,
+      storedLicensingFee: storedFee,
+      tier: actingOnOwnModel ? actorTier : () => getCapTier(ownerId),
+      // Only the actor's session meta is to hand; the service reads the owner's score itself otherwise.
+      userMeta: actingOnOwnModel ? ctx.user.meta : undefined,
+      baseModel: input.baseModel,
+      storedBaseModel: storedVersion?.baseModel,
+    });
 
     await assertUserEarlyAccessLimits({
       userId: ctx.user.id,
@@ -395,27 +533,17 @@ export const upsertModelVersionHandler = async ({
       versionId: input.id,
     });
 
-    if (input?.usageControl !== ModelUsageControl.Download && !!input.paidAccess?.terms.download) {
-      throw throwBadRequestError(
-        'Cannot charge for download if downloads are disabled for this model version'
-      );
-    }
+    // The service migrates the price onto the surviving tier; nothing to reject here.
 
     if (input.licensingFee != null && input.licensingFee > 0) {
-      const existing = input.id
-        ? await dbRead.modelVersion.findUnique({
-            where: { id: input.id },
-            select: { licensingFee: true, licensingFeeSettlementCurrency: true },
-          })
-        : null;
-      const hadExistingFee = existing?.licensingFee != null && Number(existing.licensingFee) > 0;
+      const hadExistingFee = storedFee > 0;
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
         throw throwBadRequestError('License fees are not enabled for your account.');
       }
       if (
         input.licensingFeeSettlementCurrency === LicensingFeeSettlementCurrency.Cash &&
         !ctx.user.isModerator &&
-        existing?.licensingFeeSettlementCurrency !== LicensingFeeSettlementCurrency.Cash
+        storedVersion?.licensingFeeSettlementCurrency !== LicensingFeeSettlementCurrency.Cash
       ) {
         throw throwBadRequestError('Cash settlement is restricted; please contact support.');
       }
@@ -424,25 +552,119 @@ export const upsertModelVersionHandler = async ({
         input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
     }
 
-    // Licensing lineage: the chosen source must be a registered LicensingRoot for
-    // the same base model. Guards against pointing at an arbitrary version to
-    // dodge the base-model rule.
+    // Set when the block below repairs the payload, so the audit can attribute the change to the rule
+    // rather than to the creator. Without it the first rows this new trail ever produces are automated
+    // repairs wearing an owner's name — which is the opposite of why the field was added to the audit.
+    let licensingSourceCoercedReason: LicensingSourceRejection | undefined;
+    // Licensing lineage: the chosen source must be a registered LicensingRoot for the same base model
+    // AND the same model type. The model-type half is the one that was missing (CU 868kwf2fd,
+    // Freshdesk #69622): every LicensingRoot row is a Checkpoint, so a LoRA that inherits one charges
+    // the checkpoint's per-image fee to everyone who generates with it, settled to the CHECKPOINT
+    // owner, on a line labelled with the LoRA's own name. The reporter paid 10 Buzz/image instead of 5
+    // for a month, and no surface on the site could clear it. `getLicensingRoots` already scopes the
+    // picker by model type "so a LoRA isn't offered a checkpoint's fee" — this is the same rule, on the
+    // side of the wire the client cannot race.
+    //
+    // 🔴 Coerced to null, NOT rejected, and that is deliberate — do not "tighten" it into a throw.
+    // The version editor re-submits the stored value out of `defaultValues`, so throwing would make
+    // every already-stamped version unsaveable by its owner. 159 versions were in that state when this
+    // landed, and six of them ALSO carry a base model that no longer matches their source (four
+    // Checkpoints on Wan Video / Flux / SDXL / Other, two LoRAs on Illustrious, all pointing at Anima's
+    // root) — those six already hit the older base-model throw below and cannot be saved at all today.
+    // A throw would strand real creators on an error they cannot act on, which is a worse bug than the
+    // one being fixed. Coercing blocks the bad write AND repairs the stored value on the owner's next
+    // save.
+    // Nothing legitimate is lost: the picker only ever offers roots that pass this same scope, so a
+    // deliberate selection cannot reach the coercion. It is also not a way to dodge a fee — sending
+    // `null` outright has always been allowed, and 99.77% of Anima and Krea 2 LoRAs do exactly that
+    // (107 of 46,994 and 45 of 19,999 carry a source at all).
     if (input.licensingSourceVersionId != null) {
-      const source = await dbRead.licensingRoot.findUnique({
-        where: { modelVersionId: input.licensingSourceVersionId },
-        select: { baseModel: true },
-      });
-      if (!source)
-        throw throwBadRequestError('Invalid licensing source: not a licensing lineage root.');
-      if (source.baseModel !== input.baseModel)
-        throw throwBadRequestError('Licensing source must share the same base model.');
+      const [source, destinationModel] = await Promise.all([
+        // `dbWrite`, matching the destination read below rather than sitting one line above it under the
+        // opposite rule. A root registered moments ago that misses on the replica reads as
+        // `'not-a-root'`, which silently clears a legitimate source with no error to the creator.
+        dbWrite.licensingRoot.findUnique({
+          where: { modelVersionId: input.licensingSourceVersionId },
+          select: { baseModel: true, modelType: true },
+        }),
+        // 🔴 The model this save LANDS the version on, which is `input.modelId` — always, on a create
+        // and on an update alike. `modelId` is not destructured in `upsertModelVersion`, so it rides
+        // `...data` into `dbWrite.modelVersion.update`: the payload's modelId is not a claim about
+        // where the version lives that we would have to verify, it is the instruction for where it
+        // will live. Whatever it names is where the fee will apply, so it is the only model whose type
+        // matters.
+        //
+        // Two earlier rounds of this fix got that backwards — one read the STORED model (so a version
+        // could be re-parented onto a LoRA model in the same request and keep a checkpoint's fee), the
+        // next required BOTH to match (which silently cleared a valid root when someone moved a
+        // version out of a mis-typed model into a correctly typed one). If `modelId` is ever stripped
+        // from the update payload, the destination becomes the stored model and this line has to move
+        // with it — the test named for the move is what will tell you.
+        //
+        // Not `getModel`: that resolves its client through `getDbWithoutLag`, so a model created
+        // seconds ago — the ModelWizard's step-1-then-step-2 shape exactly — can come back as a
+        // replica miss. The coercion below turns a miss into `null`, and because it coerces rather
+        // than throws the creator is never told. `storedUsageControl` above uses `dbWrite` for the
+        // same reason: "a replica miss must not read as already-generation-only".
+        input.modelId
+          ? dbWrite.model.findUnique({ where: { id: input.modelId }, select: { type: true } })
+          : null,
+      ]);
+      // A destination that cannot be read coerces rather than passing. Note what this branch is and is
+      // not: `upsertModelVersion` opens with `findUniqueOrThrow` on `data.modelId` against the same
+      // `dbWrite` client, so a miss here is a throw a few statements later and NO save lands either
+      // way. It is not load-bearing for any persisted outcome. It is kept because writing it the
+      // permissive way (`destinationModel && ...`) makes "we could not check" indistinguishable from
+      // "we checked and it was fine" in the source, and the next person to move this block should not
+      // have to rediscover which of those it meant.
+      const rejectedReason: LicensingSourceRejection | null = !source
+        ? 'not-a-root'
+        : source.baseModel !== input.baseModel
+        ? 'base-model-mismatch'
+        : !destinationModel
+        ? 'model-not-found'
+        : destinationModel.type !== source.modelType
+        ? 'model-type-mismatch'
+        : null;
+      if (rejectedReason) {
+        // A coercion leaves no trace in the row it corrected, so emit the deciding branch. This is
+        // also the only signal that the client is still sending bad values.
+        logToAxiom({
+          name: 'model-version-licensing-source-rejected',
+          type: 'info',
+          reason: rejectedReason,
+          userId,
+          // `modelId` is where this save puts the version, and `modelType` is that model's type — the
+          // two have to name the same row or the log stops being evidence.
+          modelId: input.modelId,
+          modelVersionId: input.id ?? null,
+          requestedSourceVersionId: input.licensingSourceVersionId,
+          modelType: destinationModel?.type ?? null,
+          sourceModelType: source?.modelType ?? null,
+          baseModel: input.baseModel ?? null,
+          sourceBaseModel: source?.baseModel ?? null,
+        }).catch(() => null);
+        input.licensingSourceVersionId = null;
+        licensingSourceCoercedReason = rejectedReason;
+      }
     }
 
     const version = await upsertModelVersion({
       ...input,
       trainingDetails: input.trainingDetails,
+      tracker: ctx.track,
+      actorUserId: userId,
+      isModerator: ctx.user.isModerator,
+      licensingSourceCoercedReason,
     });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id as number}`);
+
+    // After the write, so a failed one never costs the creator a slot — and so a release is judged
+    // against the version's post-write state.
+    if (spendsSlot)
+      await recordPricingSlot({ entityType: 'ModelVersion', entityId: version.id, ownerId });
+    else if (releasesSlot)
+      await releasePricingSlot({ entityType: 'ModelVersion', entityId: version.id, ownerId });
 
     // Just update early access deadline if updating the model version
     if (input.id)
@@ -565,7 +787,7 @@ export const publishModelVersionHandler = async ({
         status: true,
         modelId: true,
         baseModel: true,
-        model: { select: { userId: true, nsfw: true } },
+        model: { select: { userId: true, nsfw: true, status: true } },
       },
     });
 
@@ -582,8 +804,13 @@ export const publishModelVersionHandler = async ({
 
     const versionMeta = version.meta as ModelVersionMeta | null;
 
-    // Prevent non-moderators from re-publishing versions unpublished for violations
-    if (!ctx.user.isModerator && constants.modPublishOnlyStatuses.includes(version.status)) {
+    // A version is publishable only if BOTH it and its parent model are. Checking the version
+    // alone leaves the model's status unenforced, and the two are set independently.
+    if (
+      !ctx.user.isModerator &&
+      (constants.modPublishOnlyStatuses.includes(version.status) ||
+        constants.modPublishOnlyStatuses.includes(version.model.status))
+    ) {
       throw throwAuthorizationError('You are not authorized to publish this model version');
     }
 
@@ -643,6 +870,85 @@ export const unpublishModelVersionHandler = async ({
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
     const meta = (version.meta as ModelVersionMeta | null) || {};
+
+    // The last live version takes the model with it, rather than leaving a model published with
+    // nothing under it. Delegating instead of unpublishing both in turn is what keeps it whole:
+    // unpublishModelById already unpublishes every published version and runs the model-scoped
+    // refund gate, so a refusal happens before anything moves.
+    //
+    // The resolver is the same one the dialog priced itself from and reads the primary, so the two
+    // agree for a fixed database state — NOT unconditionally: a sibling can go down between the
+    // dialog's read and this one, which is what `expected` below is for.
+    const scope = await resolveUnpublishScope(id);
+
+    // A consent check, NOT atomicity: the window between the dialog's read and this one is still
+    // unguarded. What it refuses is proceeding on a figure the creator never saw.
+    // Refuse rather than proceed when the world moved between pricing and confirming. Only the
+    // directions that cost the creator something are refused: a widening scope (one version becomes
+    // the whole model) or a larger debit than they saw. Narrowing is harmless — the copy was
+    // pessimistic, nothing extra is taken.
+    if (!ctx.user.isModerator && input.refundEarlyAccess && !input.expected) {
+      // Optional `expected` would make this advisory rather than a control: any caller omitting it —
+      // a tab holding the pre-deploy bundle, the moderator modal, a direct tRPC call — gets an
+      // unbounded yes with the scope free to widen. Stale clients are the normal state during a
+      // deploy, which is exactly when this ships.
+      throw throwBadRequestError(
+        'Please reopen the unpublish menu and confirm again — this request did not say what refund it was agreeing to.'
+      );
+    }
+
+    if (input.expected && !ctx.user.isModerator) {
+      const priced = input.expected;
+      if (priced.scope === 'version' && scope.kind === 'model') {
+        throw throwBadRequestError(
+          'Another version was taken down while this dialog was open, so unpublishing this one now takes the whole model with it. Please reopen the menu to see what that costs.'
+        );
+      }
+      const requirement =
+        scope.kind === 'model'
+          ? await getModelEarlyAccessRefundRequirement({ id: scope.modelId })
+          : await getModelVersionEarlyAccessRefundRequirement({ id });
+      if (requirement.totalBuzz > priced.totalBuzz) {
+        throw throwBadRequestError(
+          `The refund owed has changed since this dialog was opened — ${requirement.totalBuzz.toLocaleString()} Buzz rather than ${priced.totalBuzz.toLocaleString()}. Please reopen the menu to confirm the new amount.`
+        );
+      }
+    }
+
+    if (scope.kind === 'model') {
+      const model = await getModel({
+        id: scope.modelId,
+        select: { meta: true, nsfw: true },
+      });
+      if (!model) throw throwNotFoundError(`No model with id ${scope.modelId}`);
+
+      // A model already at UnpublishedViolation keeps that status and the moderator's record —
+      // unpublishModelById decides that from the status it reads, so both callers get it.
+      await unpublishModelById({
+        ...input,
+        id: scope.modelId,
+        meta: (model.meta as ModelMeta | null) ?? undefined,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+
+      ctx.track.modelVersionEvent({
+        type: 'Unpublish',
+        modelVersionId: id,
+        modelId: scope.modelId,
+        nsfw: model.nsfw,
+      });
+      // The identical effect arriving through unpublishModelHandler emits this, so without it a
+      // model unpublish reached from the version menu is missing from any count of model unpublishes.
+      ctx.track.modelEvent({
+        type: 'Unpublish',
+        modelId: scope.modelId,
+        nsfw: model.nsfw,
+      });
+      await dataForModelsCache.refresh(scope.modelId);
+      return getVersionById({ id, select: { id: true, status: true, modelId: true } });
+    }
+
     const updatedVersion = await unpublishModelVersionById({ ...input, meta, user: ctx.user });
 
     // Send event in background
@@ -854,11 +1160,12 @@ export const modelVersionEarlyAccessPurchaseHandler = async ({
   input: ModelVersionEarlyAccessPurchase;
   ctx: ProtectedContext;
 }) => {
+  const { payWithBlue, ...rest } = input;
   try {
     return earlyAccessPurchase({
-      ...input,
+      ...rest,
       userId: ctx.user.id,
-      buzzType: getAllowedAccountTypes(ctx.features)[0],
+      buzzType: payWithBlue ? 'blue' : getAllowedAccountTypes(ctx.features)[0],
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -889,74 +1196,6 @@ export const modelVersionDonationGoalHandler = async ({
   }
 };
 
-export async function queryModelVersionsForModeratorHandler({
-  input,
-  ctx,
-}: {
-  input: QueryModelVersionSchema;
-  ctx: Context;
-}) {
-  const { nextCursor, items } = await queryModelVersions({
-    user: ctx.user,
-    query: input,
-    select: {
-      id: true,
-      name: true,
-      meta: true,
-      trainingStatus: true,
-      createdAt: true,
-      model: {
-        select: {
-          id: true,
-          name: true,
-          userId: true,
-        },
-      },
-      files: {
-        select: { metadata: true },
-        where: { type: 'Training Data' },
-        take: 1,
-      },
-    },
-  });
-
-  const workflowIds: string[] = [];
-  const mappedItems = items.map(({ files, meta, ...version }) => {
-    const trainingFile = pickBestTrainingFile(files);
-    const trainingResults = (trainingFile?.metadata as FileMetadata)
-      ?.trainingResults as TrainingResultsV2;
-
-    if (trainingResults?.workflowId) workflowIds.push(trainingResults.workflowId);
-
-    return {
-      ...version,
-      meta: meta as ModelVersionMeta | null,
-      workflowId: trainingResults?.workflowId,
-    };
-  });
-
-  /*
-    querying the workflows here may seem pointless, but querying the workflow can cause the orchestrator to take action on a workflow with failed/expired jobs.
-
-    Perhaps we need to move this to a method that can be called from the client to refresh the list as needed
-  */
-  const workflows = await Promise.all(
-    workflowIds.map((workflowId) =>
-      getWorkflow({ token: env.ORCHESTRATOR_ACCESS_TOKEN, path: { workflowId } }).catch(() => null)
-    )
-  );
-
-  return {
-    nextCursor,
-    items: mappedItems
-      .map((item) => ({
-        ...item,
-        workflow: workflows.find((x) => x && x.id === item.workflowId),
-      }))
-      .filter((x) => x.workflow),
-  };
-}
-
 export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInput }) {
   const version = await getVersionById({
     ...input,
@@ -964,39 +1203,6 @@ export async function getModelVersionOwnerHandler({ input }: { input: GetByIdInp
   });
   if (!version) throw throwNotFoundError();
   return version.model.user;
-}
-
-export async function getModelVersionForTrainingReviewHandler({ input }: { input: GetByIdInput }) {
-  const version = await getVersionById({
-    ...input,
-    select: {
-      model: { select: { id: true, user: { select: userWithCosmeticsSelect } } },
-      files: {
-        select: { id: true, metadata: true },
-        where: { type: 'Training Data' },
-      },
-    },
-  });
-  if (!version) throw throwNotFoundError();
-
-  const trainingFile = pickBestTrainingFile(version.files);
-  // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.
-  const fresh = trainingFile
-    ? await dbWrite.modelFile.findUnique({
-        where: { id: trainingFile.id },
-        select: { metadata: true },
-      })
-    : null;
-  const metadata = (fresh?.metadata ?? trainingFile?.metadata) as FileMetadata | undefined;
-  const trainingResults = (metadata?.trainingResults ?? {}) as TrainingResultsV2;
-
-  return {
-    modelId: version.model.id,
-    user: version.model.user,
-    workflowId: trainingResults?.workflowId,
-    jobId: trainingResults?.jobId as string | null,
-    trainingResults,
-  };
 }
 
 export async function recheckModelVersionTrainingStatusHandler({
@@ -1057,8 +1263,11 @@ export async function publishPrivateModelVersionHandler({
     ...input,
     select: {
       id: true,
+      status: true,
       uploadType: true,
-      model: { select: { id: true, publishedAt: true, availability: true, userId: true } },
+      model: {
+        select: { id: true, publishedAt: true, availability: true, userId: true, status: true },
+      },
       files: {
         select: {
           id: true,
@@ -1082,6 +1291,16 @@ export async function publishPrivateModelVersionHandler({
 
   if (version.model.availability !== Availability.Private) {
     throw throwBadRequestError('Model is not private');
+  }
+
+  // The same status check the public publish path performs, on both the version and its model. A
+  // private model is a different audience, not a different set of publishing rules.
+  if (
+    !ctx.user.isModerator &&
+    (constants.modPublishOnlyStatuses.includes(version.status) ||
+      constants.modPublishOnlyStatuses.includes(version.model.status))
+  ) {
+    throw throwAuthorizationError('You are not authorized to publish this model version');
   }
 
   // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.

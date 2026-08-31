@@ -8,18 +8,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const { sysStore, sysTtls, mockSys, cacheStore, cacheTtls, mockCache } = vi.hoisted(() => {
-  const sysStore = new Map<string, number>();
+  // Holds numbers (counters via incrBy/decrBy) AND strings (idempotency records via
+  // set/get) — `get` coerces to string, `incrBy` coerces to number, mirroring redis.
+  const sysStore = new Map<string, string | number>();
   const sysTtls = new Map<string, number>();
   const cacheStore = new Map<string, number>();
   const cacheTtls = new Map<string, number>();
   const mockSys = {
     incrBy: vi.fn(async (k: string, n: number) => {
-      const v = (sysStore.get(k) ?? 0) + n;
+      const v = Number(sysStore.get(k) ?? 0) + n;
       sysStore.set(k, v);
       return v;
     }),
     decrBy: vi.fn(async (k: string, n: number) => {
-      const v = (sysStore.get(k) ?? 0) - n;
+      const v = Number(sysStore.get(k) ?? 0) - n;
       sysStore.set(k, v);
       return v;
     }),
@@ -28,6 +30,24 @@ const { sysStore, sysTtls, mockSys, cacheStore, cacheTtls, mockCache } = vi.hois
       return true;
     }),
     ttl: vi.fn(async (k: string) => sysTtls.get(k) ?? -1),
+    get: vi.fn(async (k: string) => {
+      const v = sysStore.get(k);
+      return v == null ? null : String(v);
+    }),
+    set: vi.fn(
+      async (k: string, val: string, opts?: { NX?: boolean; EX?: number }) => {
+        if (opts?.NX && sysStore.has(k)) return null; // NX: only set when absent
+        sysStore.set(k, val);
+        if (opts?.EX != null) sysTtls.set(k, opts.EX);
+        return 'OK';
+      }
+    ),
+    del: vi.fn(async (k: string) => {
+      const had = sysStore.has(k);
+      sysStore.delete(k);
+      sysTtls.delete(k);
+      return had ? 1 : 0;
+    }),
   };
   const mockCache = {
     incrBy: vi.fn(async (k: string, n: number) => {
@@ -47,14 +67,22 @@ const { sysStore, sysTtls, mockSys, cacheStore, cacheTtls, mockCache } = vi.hois
 vi.mock('~/server/redis/client', () => ({
   sysRedis: mockSys,
   redis: mockCache,
-  REDIS_SYS_KEYS: { BLOCKS: { TIP_CAP: 'system:blocks:tip-cap' } },
+  REDIS_SYS_KEYS: {
+    BLOCKS: { TIP_CAP: 'system:blocks:tip-cap', TIP_IDEM: 'system:blocks:tip-idem' },
+  },
   REDIS_KEYS: { BLOCKS: { TOKEN_RATE_LIMIT: 'rl' } },
 }));
 
 import {
+  BLOCK_TIP_CAP_PER_DAY,
   BLOCK_TIP_RATE_LIMIT_MAX,
   checkBlockTipRateLimit,
+  claimTipIdempotency,
+  computeTipFingerprint,
+  finalizeTipIdempotency,
+  readBlockTipAllowance,
   refundBlockTipSpend,
+  releaseTipIdempotency,
   reserveBlockTipSpend,
 } from '../block-tip-rate-limit';
 
@@ -147,5 +175,195 @@ describe('checkBlockTipRateLimit', () => {
     mockCache.incrBy.mockRejectedValueOnce(new Error('redis down'));
     const r = await checkBlockTipRateLimit('bki_3');
     expect(r).toMatchObject({ allowed: false });
+  });
+});
+
+describe('readBlockTipAllowance (item 4)', () => {
+  it('returns full cap + remaining when nothing has been tipped today', async () => {
+    const a = await readBlockTipAllowance(42);
+    expect(a).toEqual({ cap: BLOCK_TIP_CAP_PER_DAY, spent: 0, remaining: BLOCK_TIP_CAP_PER_DAY });
+  });
+
+  it('reflects a reservation: spent tracks the counter, remaining = cap - spent', async () => {
+    await reserveBlockTipSpend(42, 4_000);
+    const a = await readBlockTipAllowance(42);
+    expect(a.cap).toBe(BLOCK_TIP_CAP_PER_DAY);
+    expect(a.spent).toBe(4_000);
+    expect(a.remaining).toBe(BLOCK_TIP_CAP_PER_DAY - 4_000);
+  });
+
+  it('reads the CURRENT-day key (same key the reserve path mutates)', async () => {
+    await reserveBlockTipSpend(7, 100);
+    await readBlockTipAllowance(7);
+    expect(mockSys.get).toHaveBeenCalledWith(`system:blocks:tip-cap:7:${TODAY}`);
+  });
+
+  it('CLAMPS remaining at 0 when a straddling over-cap reservation pushed spent past the cap', async () => {
+    await reserveBlockTipSpend(42, BLOCK_TIP_CAP_PER_DAY + 500); // momentarily over-cap
+    const a = await readBlockTipAllowance(42);
+    expect(a.spent).toBe(BLOCK_TIP_CAP_PER_DAY + 500);
+    expect(a.remaining).toBe(0); // never negative (safe direction: under-reports)
+  });
+
+  it('FAILS-CLOSED (throws) on a redis error — the endpoint maps it to a 503', async () => {
+    mockSys.get.mockRejectedValueOnce(new Error('redis down'));
+    await expect(readBlockTipAllowance(42)).rejects.toThrow();
+  });
+});
+
+describe('tip idempotency (item 2, tip half)', () => {
+  // A stable fingerprint for the "same logical tip" across a retry, and a DIFFERENT
+  // one for a same-key-different-payload replay (audit 🟡-1 residual).
+  const FP = computeTipFingerprint({ toUserId: 5, amount: 25 });
+  const FP_OTHER = computeTipFingerprint({ toUserId: 9, amount: 25 });
+
+  it('first claim ACQUIRES the key with an in-progress record + short TTL', async () => {
+    const r = await claimTipIdempotency(42, 'apb_x', 'key-1', FP);
+    expect(r.state).toBe('acquired');
+    if (r.state !== 'acquired') throw new Error('unreachable');
+    // audit 🟡-2: the key carries the APP segment so two apps can't share a slot.
+    expect(r.key).toBe('system:blocks:tip-idem:42:apb_x:key-1');
+    // In-progress record set NX with a TTL (bounded so a lost finalize can't wedge
+    // forever), carrying the fingerprint but NO terminal status.
+    expect(mockSys.set).toHaveBeenCalledWith(
+      'system:blocks:tip-idem:42:apb_x:key-1',
+      JSON.stringify({ fp: FP }),
+      expect.objectContaining({ NX: true, EX: expect.any(Number) })
+    );
+  });
+
+  it('a concurrent claim while the first is IN PROGRESS returns in_progress (never a 2nd run)', async () => {
+    await claimTipIdempotency(42, 'apb_x', 'key-2', FP); // acquires, leaves the record
+    const second = await claimTipIdempotency(42, 'apb_x', 'key-2', FP);
+    expect(second.state).toBe('in_progress');
+  });
+
+  it('after finalize, a replay returns the cached TERMINAL result verbatim (no 2nd charge)', async () => {
+    const first = await claimTipIdempotency(42, 'apb_x', 'key-3', FP);
+    if (first.state !== 'acquired') throw new Error('expected acquired');
+    await finalizeTipIdempotency(
+      first.key,
+      200,
+      { ok: true, tip: { toUserId: 5, amount: 25, entityType: null, entityId: null } },
+      FP
+    );
+
+    const replay = await claimTipIdempotency(42, 'apb_x', 'key-3', FP);
+    expect(replay.state).toBe('replay');
+    if (replay.state !== 'replay') throw new Error('unreachable');
+    expect(replay.status).toBe(200);
+    expect(replay.body).toEqual({
+      ok: true,
+      tip: { toUserId: 5, amount: 25, entityType: null, entityId: null },
+    });
+  });
+
+  it('a terminal 4xx is cached + replayed too (deterministic replay of the first outcome)', async () => {
+    const first = await claimTipIdempotency(42, 'apb_x', 'key-4', FP);
+    if (first.state !== 'acquired') throw new Error('expected acquired');
+    await finalizeTipIdempotency(first.key, 400, { ok: false, error: 'insufficient funds' }, FP);
+
+    const replay = await claimTipIdempotency(42, 'apb_x', 'key-4', FP);
+    expect(replay).toMatchObject({ state: 'replay', status: 400 });
+  });
+
+  it('release DELETES the record so a genuine retry (after a transient 429/503) can re-run', async () => {
+    const first = await claimTipIdempotency(42, 'apb_x', 'key-5', FP);
+    if (first.state !== 'acquired') throw new Error('expected acquired');
+    await releaseTipIdempotency(first.key);
+    // The key is gone -> a retry ACQUIRES fresh (re-executes), not 409-in-progress.
+    const retry = await claimTipIdempotency(42, 'apb_x', 'key-5', FP);
+    expect(retry.state).toBe('acquired');
+  });
+
+  it('a MALFORMED stored value is treated as in_progress (never re-run — fail safe)', async () => {
+    // Simulate a corrupt record (not valid JSON).
+    await mockSys.set('system:blocks:tip-idem:42:apb_x:key-6', '{not-json');
+    const r = await claimTipIdempotency(42, 'apb_x', 'key-6', FP);
+    expect(r.state).toBe('in_progress');
+  });
+
+  it('claim FAILS-CLOSED (throws) on a redis error at claim time (money path → 503)', async () => {
+    mockSys.set.mockRejectedValueOnce(new Error('redis down'));
+    await expect(claimTipIdempotency(42, 'apb_x', 'key-7', FP)).rejects.toThrow();
+  });
+
+  it('finalize is best-effort — a redis error never throws (must not perturb a shipped response)', async () => {
+    mockSys.set.mockRejectedValueOnce(new Error('redis blip'));
+    await expect(
+      finalizeTipIdempotency('system:blocks:tip-idem:42:apb_x:k' as never, 200, { ok: true }, FP)
+    ).resolves.toBeUndefined();
+  });
+
+  it('two DIFFERENT keys claim independently (a distinct logical tip is not deduped)', async () => {
+    const a = await claimTipIdempotency(42, 'apb_x', 'key-8a', FP);
+    const b = await claimTipIdempotency(42, 'apb_x', 'key-8b', FP);
+    expect(a.state).toBe('acquired');
+    expect(b.state).toBe('acquired');
+  });
+
+  // ── audit 🟡-2: cross-app replay leak ────────────────────────────────────────
+  describe('per-APP scoping (audit 🟡-2)', () => {
+    it('the SAME key value in a DIFFERENT app claims independently — no cross-app replay', async () => {
+      const a = await claimTipIdempotency(42, 'apb_appA', 'tip1', FP);
+      expect(a.state).toBe('acquired');
+      if (a.state !== 'acquired') throw new Error('unreachable');
+      await finalizeTipIdempotency(
+        a.key,
+        200,
+        { ok: true, tip: { toUserId: 5, amount: 25 } },
+        FP
+      );
+
+      // App B hardcodes the SAME literal key. It must NOT receive app A's cached
+      // body (which would leak A's recipient + amount) and its own tip must run.
+      const b = await claimTipIdempotency(42, 'apb_appB', 'tip1', FP);
+      expect(b.state).toBe('acquired');
+      if (b.state !== 'acquired') throw new Error('unreachable');
+      expect(b.key).not.toBe(a.key);
+    });
+
+    it('keys are injective across (user, app, key)', async () => {
+      const claims = await Promise.all([
+        claimTipIdempotency(42, 'apb_x', 'k', FP),
+        claimTipIdempotency(42, 'apb_y', 'k', FP), // different app
+        claimTipIdempotency(99, 'apb_x', 'k', FP), // different user
+      ]);
+      const keys = claims.map((c) => (c.state === 'acquired' ? c.key : ''));
+      expect(new Set(keys).size).toBe(3);
+    });
+  });
+
+  // ── audit 🟡-1 residual: same key, different payload ──────────────────────────
+  describe('payload fingerprint (audit 🟡-1 residual)', () => {
+    it('MISMATCH: the same key with a DIFFERENT payload is rejected, not replayed', async () => {
+      const first = await claimTipIdempotency(42, 'apb_x', 'reused', FP);
+      if (first.state !== 'acquired') throw new Error('expected acquired');
+      await finalizeTipIdempotency(first.key, 200, { ok: true, tip: { toUserId: 5 } }, FP);
+
+      // Same key, DIFFERENT recipient. Replaying would tell the app a tip to user 9
+      // succeeded when the money actually went to user 5.
+      const reused = await claimTipIdempotency(42, 'apb_x', 'reused', FP_OTHER);
+      expect(reused.state).toBe('mismatch');
+    });
+
+    it('MISMATCH is detected while the first attempt is still IN PROGRESS too', async () => {
+      await claimTipIdempotency(42, 'apb_x', 'reused2', FP);
+      const reused = await claimTipIdempotency(42, 'apb_x', 'reused2', FP_OTHER);
+      expect(reused.state).toBe('mismatch');
+    });
+
+    it('the fingerprint distinguishes amount and entity, not just recipient', () => {
+      const base = computeTipFingerprint({ toUserId: 5, amount: 25 });
+      expect(computeTipFingerprint({ toUserId: 5, amount: 26 })).not.toBe(base);
+      expect(computeTipFingerprint({ toUserId: 5, amount: 25, entityType: 'Image' })).not.toBe(
+        base
+      );
+      expect(
+        computeTipFingerprint({ toUserId: 5, amount: 25, entityType: 'Image', entityId: 1 })
+      ).not.toBe(computeTipFingerprint({ toUserId: 5, amount: 25, entityType: 'Image', entityId: 2 }));
+      // Stable for the SAME payload (a retry must replay, not 422).
+      expect(computeTipFingerprint({ toUserId: 5, amount: 25 })).toBe(base);
+    });
   });
 });

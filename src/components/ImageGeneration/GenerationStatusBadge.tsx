@@ -30,7 +30,6 @@ export function GenerationStatusBadge({
     <Tooltip
       label={tooltipLabel}
       withArrow
-      color="dark"
       maw={300}
       multiline
       withinPortal

@@ -1,0 +1,44 @@
+-- Neither comment table has an index on "userId". Every query that asks "this account's comments"
+-- therefore sequentially scans the whole table, and the ban flow just gained one: `toggleBan`'s
+-- opt-in `removeComments` updates both tables by userId.
+--
+-- Measured on the prod replica, serial plan (an UPDATE gets no parallel workers), fully warm:
+--
+--   Seq Scan on "CommentV2"  (actual time=3.512..344.835 rows=728)
+--     Filter: ((NOT "tosViolation") AND ("userId" = 1))
+--     Rows Removed by Filter: 2264976
+--     Buffers: shared hit=71758        -- 561 MB
+--   Execution Time: 344.907 ms
+--
+-- "Comment" is the same shape at 45,398 buffers. So ~0.5 s of PRIMARY cpu and ~900 MB of buffer
+-- traffic per ban, and Bulk Ban accepts 1000 accounts in one submit — while `/api/mod/ban-user`
+-- answers 200 before it starts the work, so those scans detach and overlap rather than queueing
+-- behind each other.
+--
+-- Plain (userId), not partial on `"tosViolation" = false`: 2,265,632 of 2,265,700 rows qualify, so
+-- the partial index would be 0.003% smaller and would serve nothing else. Unqualified is what the
+-- other userId-scoped comment reads want.
+--
+-- CONCURRENTLY, so building it cannot lock out commenting. Three consequences for whoever applies
+-- this by hand:
+--
+--   1. Each statement must run on its own, NOT inside a transaction block.
+--
+--   2. Do not apply under a session with a lock_timeout set. CREATE INDEX CONCURRENTLY takes a brief
+--      lock at both ends of the build, and a timeout there fails DIRTY: it leaves an INVALID index
+--      behind. `SET lock_timeout = 0` for this session.
+--
+--   3. IF NOT EXISTS matches on the NAME, so it reports success over an invalid leftover and creates
+--      nothing. Check before retrying, and drop it first:
+--        SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "CommentV2_userId_idx" ON "CommentV2" ("userId");
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "Comment_userId_idx" ON "Comment" ("userId");
+
+-- Plain column indexes, so no ANALYZE is needed to make them usable (unlike the
+-- expression index in 20260824120000, which the planner ignored until "User" was
+-- analyzed). Statistics on "userId" already exist.
+--
+-- VERIFY against the primary, by the flag rather than the exit code:
+--   SELECT indexrelid::regclass, indisvalid FROM pg_index
+--   WHERE indexrelid IN ('"CommentV2_userId_idx"'::regclass, '"Comment_userId_idx"'::regclass);

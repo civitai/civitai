@@ -8,6 +8,7 @@ vi.mock('~/server/services/model-file.service', () => ({
 }));
 
 import { hasOfficialFileOfSizeHandler } from '~/server/controllers/model-file.controller';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 beforeEach(() => vi.clearAllMocks());
 

@@ -1,12 +1,29 @@
-import { SimpleGrid } from '@mantine/core';
-import { IconBolt, IconCircleCheck, IconClock, IconShoppingBag } from '@tabler/icons-react';
+import {
+  IconBolt,
+  IconBuildingStore,
+  IconCircleCheck,
+  IconClock,
+  IconShoppingBag,
+  IconUsers,
+} from '@tabler/icons-react';
 import { StatCard } from '~/components/CreatorShop/Manage/StatCard';
+import type { CreatorShopResaleStats } from '~/components/CreatorShop/creator-shop.util';
 import type { ManageStats as ManageStatsData } from '~/components/CreatorShop/Manage/manage.util';
 import { numberWithCommas } from '~/utils/number-helpers';
 
-export function ManageStats({ stats }: { stats: ManageStatsData }) {
+export function ManageStats({
+  stats,
+  resaleStats,
+}: {
+  stats: ManageStatsData;
+  resaleStats?: CreatorShopResaleStats;
+}) {
   return (
-    <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="md">
+    // Wrapping is driven by how much room a card needs, not by the viewport, so
+    // six sit on one row wherever six fit and only fold when they would squash.
+    // auto-FIT, not auto-fill: the count here is fixed at six, so empty tracks
+    // would be dead space rather than room for more cards.
+    <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(200px,1fr))]">
       <StatCard
         label="Published"
         value={stats.published}
@@ -32,6 +49,20 @@ export function ManageStats({ stats }: { stats: ManageStatsData }) {
         icon={<IconBolt size={20} />}
         sub={`You keep ~${numberWithCommas(stats.earnings)}`}
       />
-    </SimpleGrid>
+      <StatCard
+        label="Resellers"
+        value={resaleStats?.resellers ?? 0}
+        color="teal"
+        icon={<IconUsers size={20} />}
+        sub={`${numberWithCommas(resaleStats?.resoldItems ?? 0)} of your items`}
+      />
+      <StatCard
+        label="You resell"
+        value={resaleStats?.reselling ?? 0}
+        color="cyan"
+        icon={<IconBuildingStore size={20} />}
+        sub="from other creators"
+      />
+    </div>
   );
 }

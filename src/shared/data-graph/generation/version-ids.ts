@@ -8,6 +8,7 @@
  * the `graph -> common -> config -> graph` import cycle that otherwise leaves
  * these constants `undefined` at module-eval time depending on load order.
  */
+
 export const klingVersionIds = {
   v1_6: 2623815,
   v2: 2623817,
@@ -22,6 +23,16 @@ export const nanoBananaVersionIds = {
   v2lite: 3086021,
 } as const;
 
+export const ltxVersionIds = {
+  v23Dev: 2749908,
+  /** Sulphur 2 — routes through the LTXV23 ecosystem with a diffusionModel AIR override. */
+  sulphur2Dev: 2921800,
+} as const;
+
+export const qwenVersionIds = {
+  imageEdit2511: 2558804,
+} as const;
+
 export const viduVersionIds = {
   q1: 2623839,
   q3: 2741273,
@@ -30,4 +41,14 @@ export const viduVersionIds = {
 export const happyHorseVersionIds = {
   'v1.0': 2902378,
   'v1.1': 3063263,
+} as const;
+
+export const flux3VideoVersionIds = {
+  'v3.0': 3204701,
+} as const;
+
+export const grokVersionIds = {
+  'v1.0': 2738377,
+  'v1.5': 3197990,
+  'v2.0': 3225510,
 } as const;

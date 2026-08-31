@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import client from 'prom-client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // ---------------------------------------------------------------------------
 // WHY THIS TEST EXISTS
@@ -53,10 +54,6 @@ vi.mock('~/server/prom/client', () => {
     registerHistogram: () => ({ observe: vi.fn() }),
   };
 });
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
 
 // The arm function settles `armed` once per process; re-import a FRESH module per
 // tier via vi.resetModules so each env config arms from scratch.

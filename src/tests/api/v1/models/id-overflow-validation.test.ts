@@ -41,10 +41,6 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   // never touches this, but it must resolve at import time.
   fetchThroughCache: vi.fn(),
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { packed: { get: vi.fn(), set: vi.fn() }, del: vi.fn() },
-  REDIS_KEYS: { CACHES: { PUBLIC_MODEL_RESPONSE: 'packed:caches:public-model-response' } },
-}));
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   withBlockScope: (handler: any) => (req: any, res: any) => {
     req.blockClaims = undefined; // pure-public path
@@ -55,7 +51,7 @@ vi.mock('~/server/utils/region-blocking', () => ({
   getRegion: () => 'US',
   isRegionRestricted: () => false,
 }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (url: string) => url }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 vi.mock('~/server/services/file.service', () => ({ getDownloadFilename: () => 'file.safetensors' }));
 
 // --- shared / mini/[id] handler graph ---
@@ -70,7 +66,6 @@ vi.mock('~/server/utils/model-helpers', () => ({
   getPrimaryFile: (files: any[]) => files?.[0],
   getEpochJobAndFileName: () => ({}),
 }));
-vi.mock('~/server/db/client', () => ({ dbWrite: { $queryRaw: vi.fn(async () => []) } }));
 vi.mock('~/server/services/generation/generation.service', () => ({
   getShouldChargeForResources: vi.fn(async () => ({})),
   resolveCanGenerateForVersions: vi.fn(async () => []),
@@ -83,6 +78,8 @@ vi.mock('~/env/server', () => ({
 // The REAL exported schemas (only the service/db graph around them is mocked).
 import { schema as modelsSchema } from '~/pages/api/v1/models/[id]';
 import { schema as miniSchema } from '~/pages/api/v1/model-versions/mini/[id]';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // Out-of-range / invalid ids that a bare z.coerce.number() would WRONGLY accept.
 const OUT_OF_RANGE = ['853267723675816615', '999999999999', '308615308615', String(INT4_MAX + 1)];

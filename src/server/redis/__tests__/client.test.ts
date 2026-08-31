@@ -22,12 +22,18 @@ vi.mock('redis', () => {
     };
     return client;
   };
-  return {
+  // `default` mirrors the named exports: pre-bundling wraps this CJS dep for interop, so the
+  // consumer resolves through `default` and a factory without one yields undefined. It fails
+  // by collecting almost no tests rather than by going red, so the check is the collected
+  // count. `importOriginal` does NOT cover this — a spread copies named exports and does not
+  // synthesise a `default`.
+  const mocked = {
     createClient: vi.fn(noopClient),
     createCluster: vi.fn(noopClient),
     createSentinel: vi.fn(noopClient),
     RESP_TYPES: { BLOB_STRING: 'BLOB_STRING' },
   };
+  return { ...mocked, default: mocked };
 });
 
 // Block resource-data / Flipt imports from running real-network init.

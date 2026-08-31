@@ -38,6 +38,8 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+const draftSorts = [PostSort.Newest, PostSort.Oldest];
+
 function UserPostsPage() {
   const currentUser = useCurrentUser();
   const {
@@ -51,13 +53,19 @@ function UserPostsPage() {
     !!currentUser &&
     !!query.username &&
     postgresSlugify(currentUser.username) === postgresSlugify(query.username);
+  // A moderator sees anything the creator can see of their own. Matches the
+  // images and videos tabs; the server authorizes this independently in
+  // `post.service.ts` and does not trust the control being rendered.
+  const canViewDrafts = selfView || (currentUser?.isModerator ?? false);
 
   const [section, setSection] = useState<'published' | 'draft'>(
-    selfView ? querySection ?? 'published' : 'published'
+    canViewDrafts ? querySection ?? 'published' : 'published'
   );
   const viewingDraft = section === 'draft';
   const effectiveScheduled = viewingDraft ? query.scheduled ?? true : query.scheduled;
-  const sort = viewingDraft ? PostSort.Newest : querySort;
+  // Reaction/comment/collected counts are meaningless on unpublished drafts, and those
+  // sorts filter on `count > 0` server-side, so a draft feed under them comes back empty.
+  const sort = viewingDraft && !draftSorts.includes(querySort) ? PostSort.Newest : querySort;
 
   if (!query.username) return <NotFound />;
 
@@ -71,16 +79,22 @@ function UserPostsPage() {
         <MasonryContainer p={0}>
           <Stack gap="xs">
             <Group gap={8} justify="space-between">
-              {selfView && (
+              {canViewDrafts && (
                 <FeedContentToggle
                   size="xs"
                   value={section}
                   onChange={(section) => {
-                    setSection(section as 'published' | 'draft');
+                    const nextSection = section as 'published' | 'draft';
+                    setSection(nextSection);
                     replace({
-                      section: section as 'published' | 'draft',
+                      section: nextSection,
                       scheduled: undefined,
-                      sort: section === 'draft' ? PostSort.Newest : undefined,
+                      // Carry the sort across the toggle. Only a count sort has to be
+                      // dropped, and only into drafts, where it would filter to nothing.
+                      sort:
+                        nextSection === 'draft' && !draftSorts.includes(querySort)
+                          ? undefined
+                          : querySort,
                     });
                   }}
                 />
@@ -91,13 +105,13 @@ function UserPostsPage() {
                   value={sort}
                   onChange={(x) => replace({ sort: x as PostSort })}
                   options={
-                    viewingDraft ? [{ label: PostSort.Newest, value: PostSort.Newest }] : undefined
+                    viewingDraft ? draftSorts.map((value) => ({ label: value, value })) : undefined
                   }
                 />
                 <PostFiltersDropdown
                   query={{ ...query, period, followed, scheduled: effectiveScheduled }}
                   onChange={(filters) => replace(filters)}
-                  showScheduled={selfView}
+                  showScheduled={canViewDrafts}
                   size="compact-sm"
                 />
               </Group>

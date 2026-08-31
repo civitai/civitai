@@ -55,10 +55,7 @@ export default function CommentThreadModal({
           reaction,
           user: {
             id: currentUser.id,
-            deletedAt: null,
             username: currentUser.username ?? '',
-            image: currentUser.image ?? '',
-            profilePicture: null, // Not really necessary for reactions
           },
         };
         const reacted = previousReactions.find(
@@ -119,7 +116,7 @@ export default function CommentThreadModal({
             </AlertWithIcon>
           )}
           <Stack gap="xl">
-            <RenderHtml html={comment.content} withMentions withProfanityFilter />
+            <RenderHtml html={comment.content} withMentions withProfanityFilter allowStickers />
             <ReactionPicker
               reactions={reactions}
               onSelect={(reaction) => toggleReactionMutation.mutate({ id: commentId, reaction })}

@@ -4,7 +4,7 @@ import { isPaidAccessActive } from '@civitai/buzz';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getPaidAccess } from '~/server/services/paid-access.service';
-import { modelVersionAccessCache } from '~/server/redis/caches';
+import { lookupModelVersionAccess, modelVersionAccessCache } from '~/server/redis/caches';
 import type { SupportedAvailabilityResources } from '../schema/base.schema';
 
 type EntityAccessMeta = {
@@ -26,6 +26,8 @@ type UserEntityAccessStatus = EntityAccessRaw & {
 };
 
 const OPEN_ACCESS_AVAILABILITY = [Availability.Public, Availability.Unsearchable] as const;
+const isOpenAvailability = (availability: Availability) =>
+  OPEN_ACCESS_AVAILABILITY.some((a) => a === availability);
 
 export type EntityAccessDataType = {
   entityId: number;
@@ -52,20 +54,20 @@ export const hasEntityAccess = async ({
 
   let data: EntityAccessDataType[];
   if (entityType === 'ModelVersion') {
+    // ModelVersion is the only entity type whose availability comes from a cache rather than a live
+    // query, and that cache is only ever allowed to hold open-access rows (`dontCacheFn` refuses
+    // everything else). So a cached record can support a GRANT but never a DENIAL: an id it doesn't
+    // resolve — or resolves to something that would deny — is "unknown", and letting that reach the
+    // fail-closed default below reads as Private and blocks download and generation on a Public
+    // model. Re-read those from the DB, which is the authority.
     const cacheData = await modelVersionAccessCache.fetch(entityIds);
-    data = Object.values(cacheData);
+    data = Object.values(cacheData).filter((x) => isOpenAvailability(x.availability));
+    const resolved = new Set(data.map((x) => x.entityId));
+    const unresolved = entityIds.filter((id) => !resolved.has(id));
+    if (unresolved.length > 0)
+      data = data.concat(Object.values(await lookupModelVersionAccess(unresolved)));
   } else {
     const query: Prisma.Sql =
-      //     entityType === 'ModelVersion'
-      //       ? Prisma.sql`
-      //    SELECT
-      //      mv.id as "entityId",
-      //      mmv."userId" as "userId",
-      //      mv."availability" as "availability"
-      //    FROM "ModelVersion" mv
-      //    JOIN "Model" mmv ON mv."modelId" = mmv.id
-      //    WHERE mv.id IN (${Prisma.join(entityIds, ',')})
-      // ` :
       entityType === 'Article'
         ? Prisma.sql`
     SELECT
@@ -148,9 +150,8 @@ export const hasEntityAccess = async ({
   // Moderators bypass gating entirely → skip the PaidAccess fetch below.
   if (isModerator) return grantAll();
 
-  // Gated-ness for model versions comes from PaidAccess, not `availability`, so a version stays
-  // behind the permission check once the EarlyAccess enum value is retired (Phase 2). During Phase 1
-  // a PaidAccess row exists iff availability='EarlyAccess' & active, so this is behavior-preserving.
+  // Gated-ness for model versions comes from PaidAccess, not `availability`. No model version carries
+  // availability='EarlyAccess' any more, so the availability test below only ever excludes Private.
   const paidGatedIds = new Set<number>();
   if (entityType === 'ModelVersion') {
     const paid = await getPaidAccess('ModelVersion', entityIds);
@@ -163,7 +164,7 @@ export const hasEntityAccess = async ({
   const isOpenAccess = (entityId: number, availability: Availability) =>
     OPEN_ACCESS_AVAILABILITY.some((a) => a === availability) && !paidGatedIds.has(entityId);
 
-  // Private, EarlyAccess, and any PaidAccess-gated version require a permission check.
+  // Private and any PaidAccess-gated version require a permission check.
   const privateRecords = matched.filter((d) => !isOpenAccess(d.entityId, d.availability));
 
   // All entities are public. Access granted to everyone.

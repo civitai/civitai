@@ -80,6 +80,11 @@ BEGIN
         created_at timestamptz DEFAULT now() NOT NULL
       )$ddl$, s);
 
+    -- Backfill the F1 dedup-lookup index (non-unique: auto/mod report rows share
+    -- the table). Idempotent; matches storage-provision.service.ts.
+    EXECUTE format(
+      'CREATE INDEX IF NOT EXISTS shared_kv_reports_reporter_key_idx ON %s.shared_kv_reports (reporter_user_id, key)', s);
+
     -- Reuse the existing per-schema kv_quota_trigger() on shared_kv so shared
     -- bytes/rows fold into the same app quota row (created with the schema).
     EXECUTE format('DROP TRIGGER IF EXISTS shared_kv_quota_trg ON %s.shared_kv', s);

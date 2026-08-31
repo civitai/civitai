@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 // Covers two invariants that are easy to silently revert:
 //   1. `rescanChallenge` never resets ingestion/scannedAt — that reset is what stranded challenges
@@ -6,28 +10,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //   2. `getWinnerCooldownStatus` reports no cooldown for user-created challenges, matching
 //      pickWinners (daily-challenge-processing.ts), which skips the cooldown for source=User.
 const {
-  mockDbRead,
-  mockDbWrite,
   mockSubmitTextModeration,
   mockEnqueueImageIngestion,
   mockGetChallengeConfig,
   mockResolveEventContext,
 } = vi.hoisted(() => ({
-  mockDbRead: {
-    $queryRaw: vi.fn(),
-    challenge: { findUnique: vi.fn() },
-    image: { findUnique: vi.fn() },
-  },
-  mockDbWrite: {
-    challenge: { findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
-  },
   mockSubmitTextModeration: vi.fn(),
   mockEnqueueImageIngestion: vi.fn(),
   mockGetChallengeConfig: vi.fn(),
   mockResolveEventContext: vi.fn(),
 }));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
@@ -86,8 +78,6 @@ vi.mock('~/server/services/challenge-judge.service', () => ({
 vi.mock('~/server/services/text-moderation.service', () => ({
   submitTextModeration: mockSubmitTextModeration,
 }));
-
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(() => Promise.resolve()) }));
 
 vi.mock('~/utils/errorHandling', () => ({ withRetries: vi.fn((fn: () => unknown) => fn()) }));
 
@@ -203,5 +193,18 @@ describe('getWinnerCooldownStatus', () => {
 
     expect(result.onCooldown).toBe(true);
     expect(result.lastWinChallengeId).toBe(9);
+  });
+
+  // #3774: a Community (source=User) win was reported as a Daily cooldown. The exclusion lives in
+  // SQL, so the query text is the only observable here — the mocked client never evaluates it.
+  it('excludes wins earned in user challenges from the lookback', async () => {
+    mockDbRead.$queryRaw
+      .mockResolvedValueOnce([{ eventId: null, source: 'System' }])
+      .mockResolvedValueOnce([]);
+
+    await getWinnerCooldownStatus(42, 111);
+
+    const winLookupSql = (mockDbRead.$queryRaw.mock.calls[1][0] as unknown as string[]).join('');
+    expect(winLookupSql).toMatch(/ch\."source"\s*<>\s*'User'/);
   });
 });

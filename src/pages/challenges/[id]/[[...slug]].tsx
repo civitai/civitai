@@ -1,3 +1,4 @@
+import { challengeEndedMessage } from '~/components/Challenge/challenge-messages';
 import {
   Accordion,
   ActionIcon,
@@ -270,9 +271,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   const endAndPickWinnersMutation = trpc.challenge.endAndPickWinners.useMutation({
     onSuccess: (data) => {
       queryUtils.challenge.getById.invalidate({ id });
-      showSuccessNotification({
-        message: `Challenge ended. ${data.winnersCount} winner(s) selected.`,
-      });
+      showSuccessNotification({ message: challengeEndedMessage(data) });
     },
     onError: handleMutationError,
   });
@@ -685,8 +684,12 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
               </IconBadge>
             ) : null}
 
-            {/* Countdown (active only) */}
-            {isActive && (
+            {/* Countdown (active, and only while there is time left to count). A moderator can end
+                a challenge early, which puts endsAt in the past while the status is still Active
+                until the completion job takes it — and `fromNow(withoutSuffix)` renders a past
+                date as a bare magnitude, so the badge would read "2 minutes" as though that much
+                time remained. */}
+            {isActive && new Date(challenge.endsAt).getTime() > Date.now() && (
               <IconBadge size="lg" radius="sm" icon={<IconClockHour4 size={18} />} color="gray">
                 <DaysFromNow date={challenge.endsAt} withoutSuffix />
               </IconBadge>
@@ -1618,6 +1621,7 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                   isFirst={index === 1}
                   className={index === 1 ? 'z-10' : ''}
                   judgeInfo={judgeInfo}
+                  judgingCategories={challenge.judgingCategories}
                   buzzType={challenge.buzzType}
                 />
               ))}
@@ -1636,6 +1640,7 @@ function ChallengeWinners({ challenge }: { challenge: ChallengeDetail }) {
                     isFirst={winner.place === 1}
                     isMobile
                     judgeInfo={judgeInfo}
+                    judgingCategories={challenge.judgingCategories}
                     buzzType={challenge.buzzType}
                   />
                 ))}
@@ -1936,6 +1941,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
                 }}
                 disableStoreFilters
                 judgeInfo={judgeInfo}
+                judgingCategories={challenge.judgingCategories}
               />
             )}
           </Stack>

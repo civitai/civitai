@@ -12,6 +12,18 @@ fi
 
 echo "Running typecheck for all files"
 
+# The exit code has to be read and re-raised. `sh` without `set -e` runs the next
+# line regardless, so an unconditional "Typecheck successful" echo became the
+# hook's own exit status — a failing typecheck printed success and the push went
+# through. Verified: `sh -c 'false; echo ok'` exits 0.
 npm run typecheck
+rc=$?
+
+if [ "$rc" -ne 0 ]; then
+  echo "Typecheck FAILED (exit $rc) — push blocked."
+  echo "If the output above has no type errors in it, the typechecker CRASHED;"
+  echo "scripts/typecheck.mjs says which. A crash is not a passing typecheck."
+  exit "$rc"
+fi
 
 echo "Typecheck successful"

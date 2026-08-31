@@ -1,133 +1,128 @@
 # Notifications System
 
-This document explains how the notification system works in Civitai. The notification service itself runs in a separate repository, but this codebase handles the client-side implementation, notification processing, and user interaction.
+How notifications are produced, fanned out, read and displayed.
 
-## Key Files
+## Where things live
 
-| File | Purpose |
-|------|---------|
-| `src/server/notifications/` | Notification processors by feature |
-| `src/server/notifications/base.notifications.ts` | `createNotificationProcessor()` factory |
-| `src/server/notifications/utils.notifications.ts` | Processor registry |
-| `src/server/services/notification.service.ts` | `createNotification()` service |
-| `src/server/jobs/send-notifications.ts` | Background processing job |
-| `src/components/Notifications/` | Client-side notification components |
+The notification domain was moved out of the monolith (and out of the old external
+`notification-server` repo) into an in-repo app plus a shared package. Three places now split the
+work, and "which of the three owns this?" is the first question to answer for any change:
 
-## Architecture Overview
+| Location | Owns |
+|---|---|
+| `apps/notifications/` | The notification database (sole owner), the settings opt-out filter on the single-row create path (the bulk path does not filter — see User settings), the fan-out poll worker, the read/count/mark queries, the per-user unread cache, and signal emission |
+| `packages/civitai-notifications/` | The zod contracts, `NotificationCategory` and the signal constants, and the HTTP client — the single source of truth shared by every producer |
+| `src/server/notifications/` | Only the per-feature **processors** (`prepareQuery`/`prepareMessage`), the `detail-fetchers/` main-DB enrichment, and the configured client instance in `client.ts` |
 
-The notification system consists of several key components:
+The external `notification-server` repo is retired.
 
-- **Notification Processors**: Define different types of notifications and their behavior
-- **Notification Service**: Handles creation, retrieval, and management of notifications
-- **Client Components**: UI components for displaying and interacting with notifications
-- **Real-time Updates**: WebSocket-based real-time notification delivery via Signals
-- **Caching Layer**: Redis-based caching for notification counts and data
+## Database
 
-## Database Schema
+**The monolith cannot reach the notification database.** Only `UserNotificationSettings` is in the
+main Prisma schema. `Notification`, `UserNotification` and `PendingNotification` live in a
+physically separate database reached exclusively by `apps/notifications`, over its own pool
+(`NOTIFICATION_DB_URL`). Those env vars are optional in the monolith precisely because it no longer
+connects.
 
-### Core Tables
-- `Notification`: Stores notification content and metadata
-- `UserNotification`: Links notifications to users with read/unread status
-- `PendingNotification`: Queue for notifications to be processed
-- `UserNotificationSettings`: User preferences for notification types
+If you need notification rows, add an endpoint to `apps/notifications` — do not add a Prisma model.
 
-### Key Fields
-- `type`: Notification type (e.g., 'model-download-milestone', 'comment-created')
-- `category`: Notification category for grouping (Comment, Update, Milestone, etc.)
-- `details`: JSON object containing notification-specific data
-- `key`: Unique identifier for deduplication
+### Key fields
 
-## Notification Categories
+- `type` — notification type (e.g. `model-download-milestone`)
+- `category` — grouping, see below
+- `details` — JSON payload
+- `key` — dedupe identifier
+- `dedupeKey` / `debounceSeconds` — first-class since the extraction; a cross-schema refine forbids
+  combining them
 
-Located in `src/server/common/enums.ts`:
+## Categories
 
-```typescript
-enum NotificationCategory {
-  Comment = 'Comment',
-  Update = 'Update', 
-  Milestone = 'Milestone',
-  Bounty = 'Bounty',
-  Buzz = 'Buzz',
-  Creator = 'Creator',
-  System = 'System',
-  Other = 'Other',
-}
+Defined once in `packages/civitai-notifications/src/constants.ts` and re-exported from
+`src/server/common/enums.ts`. It is a `const` tuple plus a derived union, **not** a TypeScript
+`enum`, so import it rather than restating the members — the list has grown before and will again.
+
+## Processors
+
+Processors live in `src/server/notifications/*.notifications.ts`, are built with
+`createNotificationProcessor()` from `base.notifications.ts`, and are collected in the
+`utils.notifications.ts` registry. Each defines query preparation, message formatting, and its
+category/settings.
+
+The registry is large and covers far more than the obvious feature areas — read it rather than
+assuming a notification type doesn't exist yet.
+
+Processors marked **"Moveable"** are ones that could become on-demand creation instead of job-based.
+Only genuinely time-based notifications — milestones, hourly/daily aggregations — need to stay in
+the `send-notifications` job.
+
+## Creating a notification
+
+`createNotification()` in `src/server/services/notification.service.ts` is still the entry point,
+but its contract changed with the extraction: it is now an **HTTP call to `apps/notifications` that
+never throws on transport failure**. Client errors are swallowed and logged centrally.
+
+That means a caller cannot treat a successful return as proof the notification was stored, and
+must not put it inside a transaction expecting rollback semantics. The same applies to
+`markNotificationsRead`.
+
+## Client
+
+| Component | Responsibility |
+|---|---|
+| `NotificationBell.tsx` | Unread indicator; opens the drawer; hides on notification pages |
+| `NotificationsDrawer.tsx` | Mantine `Drawer` shell only — delegates to `NotificationsComposed` |
+| `NotificationsComposed.tsx` | The real behavior: infinite scroll, category filtering, mark-as-read |
+| `NotificationList.tsx` | Presentational render only; takes an `onItemClick` prop |
+
+Changes to list behavior almost always belong in `NotificationsComposed.tsx`, not in the drawer or
+the list.
+
+Realtime delivery is via Signals — the fan-out worker POSTs per affected user, and
+`notifications.utils.ts` subscribes.
+
+## User settings
+
+`src/components/Account/NotificationsCard.tsx`. Settings are stored in `UserNotificationSettings`
+(the one table still in the main schema); a row means opted **out**, except for `optIn` types — see
+`NotificationProcessor.optIn` in `base.notifications.ts`.
+
+**Only the single-row producer path filters on them.** `createNotification`
+(`apps/notifications/src/lib/server/create.ts`) drops opted-out recipients before queueing.
+`createNotificationsBulk` (`operations.ts`) — the path every `send-notifications` processor takes —
+receives pre-resolved recipients and applies **no** filter. So a job-based processor must write its
+own clause:
+
+```sql
+WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = <recipient> AND type = '<type>')
 ```
 
-## Notification Types & Processors
+Omit it and the toggle renders, saves, and does nothing.
+`src/server/notifications/__tests__/notification-settings-polarity.test.ts` is the guard, and it runs
+in `pnpm run test:lint-rules`. Its `KNOWN_INERT` list is empty and pinned, so a new inert type fails
+there rather than shipping unmuteable.
 
-Notification processors are defined in `src/server/notifications/` and handle:
-- Query preparation for finding relevant events
-- Message formatting for display
-- Category assignment and settings
+## Caching
 
-### Key Processor Files
-- `model.notifications.ts` - Model-related notifications (downloads, likes, milestones)
-- `comment.notifications.ts` - Comment notifications
-- `reaction.notifications.ts` - Like/reaction notifications  
-- `follow.notifications.ts` - User follow notifications
-- `bounty.notifications.ts` - Bounty-related notifications
-- `buzz.notifications.ts` - Buzz transaction notifications
-- And many more...
+Unread counts are cached per user in Redis, keyed by category, by
+`apps/notifications/src/lib/server/cache.ts`. The monolith's old `notification-cache.ts` was deleted
+in the extraction.
 
-Important note: I've marked where these can moved as "Moveable" creation as opposed to job-based. The only notifications that should really be handled in jobs are ones that are time-based, such as milestones or hourly/daily aggregations. The rest should eventually be moved to on-demand creation.
+## API
 
-Notifications can be manually created via `createNotification()` in `notification.service.ts`:
+tRPC routes in `src/server/routers/notification.router.ts` — three procedures, all scope-gated:
 
-## Client-Side Implementation
+- `getAllByUser` — paginated notifications
+- `markRead` — mark as read
+- `updateUserSettings` — notification preferences
 
-### Key Components
-
-#### NotificationBell (`src/components/Notifications/NotificationBell.tsx`)
-- Shows notification count indicator
-- Opens notification drawer on click
-- Hides on notification pages
-
-#### NotificationDrawer (`src/components/Notifications/NotificationsDrawer.tsx`)
-- Displays notification list in a drawer
-- Handles infinite scrolling
-- Category filtering
-
-#### NotificationList (`src/components/Notifications/NotificationList.tsx`)
-- Renders individual notifications
-- Mark as read functionality
-- Pagination support
-
-## User Settings
-
-Users can control notification preferences in `src/components/Account/NotificationsCard.tsx`:
-
-- Toggle specific notification types on/off
-- Settings stored in `UserNotificationSettings` table
-- Respected during notification creation
-
-## Caching Strategy
-
-Notification counts are cached in Redis via `notification-cache.ts`:
-
-- User-level caching of unread counts by category
-- Cache invalidation on read/creation
-- Optimistic updates for UI responsiveness
-
-## API Endpoints
-
-### tRPC Routes (`src/server/routers/notification.router.ts`)
-- `getAllByUser` - Get paginated user notifications
-- `markRead` - Mark notifications as read
-- `getCount` - Get notification counts (cached)
-
-### Best Practices
-
-- **Deduplication**: Use unique keys to prevent duplicate notifications
-- **User Preferences**: Respect user notification settings
-- **Performance**: Optimize queries for large datasets
-- **Real-time**: Emit signals for immediate UI updates
-- **Categories**: Group related notifications logically
+**Counts do not come from this router.** The unread count is `trpc.user.checkNotifications`.
 
 ## Debugging
 
-### Common Issues
-- **Missing Notifications**: Check user settings and deduplication logic
-- **Duplicate Notifications**: Verify unique key generation
-- **Performance**: Monitor notification job execution times
-- **Cache Issues**: Clear Redis cache if counts seem incorrect
+- **Missing notifications** — check the user's settings opt-out and the dedupe key. Remember create
+  is best-effort, so a silent failure is logged, not thrown.
+- **Duplicates** — verify `key` generation, and whether `dedupeKey`/`debounceSeconds` are being
+  combined.
+- **Counts wrong** — the cache is in `apps/notifications`, not this codebase.
+- **Nothing fanning out** — the worker is env-gated and defaults off; confirm it's enabled in the
+  environment you're looking at before assuming a code bug.

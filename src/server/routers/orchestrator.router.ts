@@ -10,6 +10,7 @@ import {
   updateWorkflow,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import { generationSurfaceForRequest } from '~/server/services/orchestrator/generation-surface';
 import { getWorkflow as clientGetWorkflow } from '@civitai/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
@@ -67,7 +68,7 @@ import {
   submitPresetImageGen,
   whatIfPresetImageGen,
 } from '~/server/services/orchestrator/preset-image-gen.service';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import type { SessionUser } from '~/types/session';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
@@ -342,13 +343,26 @@ export const orchestratorRouter = router({
         remixOfId,
         buzzType,
         externalId,
+        acknowledgedSoftBlock,
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
-      const { externalCtx, status } = await buildGenerationContext(userTier, ctx.features, {
-        id: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      });
+      const { externalCtx, status } = await buildGenerationContext(
+        userTier,
+        ctx.features,
+        { id: ctx.user.id, isModerator: ctx.user.isModerator },
+        // #3665: `onsite` for a cookie session, `api` for a bearer token. This
+        // procedure serves BOTH — `AIServicesWrite` is a user-grantable scope, so
+        // a CLI or any external integration reaches this exact code path.
+        //
+        // It was a hardcoded `'onsite'`, which meant every API substitution was
+        // recorded as the DELIBERATE, correct graceful degradation #3520 defends
+        // (a stale localStorage id after an ecosystem switch, picker visibly
+        // snapping back) — and therefore excluded from the incidence number that
+        // gates the phase-3 policy decision. An API caller has neither property:
+        // the id is deliberate and there is no picker to snap.
+        generationSurfaceForRequest(ctx)
+      );
 
       // Workflow-level feature-flag gate. `filterWorkflowsByFeatureFlags` only
       // hides the option in the picker UI — a crafted submission payload would
@@ -400,6 +414,9 @@ export const orchestratorRouter = router({
         sourceMetadataMap,
         remixOfId,
         externalId,
+        // `.input(z.any())` — an explicit identity check, so a truthy non-boolean
+        // from a hand-rolled client can't stand in for the acknowledgement.
+        acknowledgedSoftBlock: acknowledgedSoftBlock === true,
       });
 
       // Bust the short-TTL queryGeneratedImages cache so a concurrent tab or an
@@ -419,10 +436,17 @@ export const orchestratorRouter = router({
     .input(z.any())
     .query(async ({ ctx, input }) => {
       const userTier = ctx.user.tier ?? 'free';
-      const { externalCtx, status } = await buildGenerationContext(userTier, ctx.features, {
-        id: ctx.user.id,
-        isModerator: ctx.user.isModerator,
-      });
+      const { externalCtx, status } = await buildGenerationContext(
+        userTier,
+        ctx.features,
+        { id: ctx.user.id, isModerator: ctx.user.isModerator },
+        // #3665: `onsite` for a cookie session, `api` for a bearer token — see
+        // the sibling call in `generateFromGraph`. This one matters MORE, not
+        // less: `whatIfFromGraph` is the read-only, zero-spend estimate an
+        // external caller makes BEFORE committing buzz, so it is where a
+        // substitution is both most detectable and most worth counting.
+        generationSurfaceForRequest(ctx)
+      );
 
       // Mirror of the gate in `generateFromGraph`. Reject what-if costing for
       // flag-gated workflows the user can't reach so we don't leak pricing
@@ -530,6 +554,7 @@ export const orchestratorRouter = router({
       const args = {
         ...input,
         token: ctx.token,
+        userId: ctx.user.id,
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       };
       return await createTrainingWhatIfWorkflow(args);

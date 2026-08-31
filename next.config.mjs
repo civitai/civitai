@@ -10,11 +10,55 @@ const isProd = process.env.NODE_ENV === 'production';
 const isDev = process.env.NODE_ENV === 'development';
 const analyze = process.env.ANALYZE === 'true';
 const includeCircularDependencyPlugin = process.env.CIRCULAR_DEPENDENCY_PLUGIN === 'true';
-const shouldOptimizeImports = (isDev && analyze) || isProd;
 
 const withBundleAnalyzer = bundlAnalyzer({
   enabled: analyze,
 });
+
+/**
+ * Runtime files of every installed `@swc/helpers`, force-included into the standalone output.
+ *
+ * WHY. `output: 'standalone'` ships the subset @vercel/nft traced, not `node_modules`. nft
+ * resolves a bare specifier under the `require`/`default` conditions; Node (>= 22.10)
+ * additionally honours `module-sync` for a CJS `require`. When a package's `exports` map points
+ * those two at different files, the build traces one and the running process asks for the other.
+ *
+ * Next's own `dist/shared/lib/constants.js` does
+ * `require('@swc/helpers/_/_interop_require_default')`, reached from the generated `server.js`
+ * via `next` -> `config.js` -> `constants.js` — i.e. before any application code. On
+ * @swc/helpers 0.5.15 (next 16.3.0) that subpath exported only `{ import, default }` and both
+ * resolvers landed on `cjs/_interop_require_default.cjs`. 0.5.17+ added `module-sync` ->
+ * `esm/_interop_require_default.js`, and next 16.3.1 bumped its dependency to 0.5.23 — so the
+ * image shipped `cjs/` only and every pod crash-looped on
+ * `MODULE_NOT_FOUND .../@swc/helpers/esm/_interop_require_default.js` (civitai#4075) with the
+ * build, the unit suite, typecheck, ESLint and the compiled-branch gate all green.
+ *
+ * BOTH condition branches of EVERY copy, not the one file missing today: which helper Next
+ * requires, and which branch each resolver picks, are upstream details that move. ~950 KB per
+ * copy (426 files across the two copies installed today). Version- and hash-agnostic globs —
+ * `@swc+helpers@*` covers whatever the next bump resolves to, and the flat form covers a hoisted
+ * (non-pnpm) layout. A non-matching glob is a silent no-op, which is exactly why this is NOT the
+ * guard: the guard is
+ * `scripts/ci/assert-standalone-boot-graph.mjs`, run against the runtime filesystem in the
+ * Dockerfile's runner stage, which fails the build if this ever stops landing the files.
+ *
+ * ATTACHED TO EXISTING ROUTE KEYS ON PURPOSE. This is a process-wide boot dependency, not a
+ * route's, and `copyTracedFiles` unions every entry's traced set into the single
+ * `.next/standalone` node_modules — so any one entry carrying it is enough. A `'**'` key does
+ * match every route (keys are picomatch'd with `contains: true`), but it would make all 572
+ * entries read/parse/rewrite their `.nft.json` concurrently — 826 MB of JSON in one
+ * `Promise.all` — on a build already tuned against OOM. These keys are API routes: always
+ * present, never statically prerendered (an entry in `staticPages` has its includes skipped),
+ * and already include-keyed, so they cost no additional entry. Three of them for redundancy: if
+ * one route is ever renamed or removed the files still ship, and if all three go the boot gate
+ * turns the build red rather than letting a broken image out.
+ */
+const swcHelpersRuntimeFiles = [
+  './node_modules/@swc/helpers/esm/**/*',
+  './node_modules/@swc/helpers/cjs/**/*',
+  './node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/esm/**/*',
+  './node_modules/.pnpm/@swc+helpers@*/node_modules/@swc/helpers/cjs/**/*',
+];
 
 /**
  * Don't be scared of the generics here.
@@ -36,8 +80,7 @@ export default defineNextConfig(
       // by exposing it to the client bundle as NEXT_PUBLIC_AUTH_HUB_URL — so there's no separate var to set. An
       // explicit NEXT_PUBLIC_AUTH_HUB_URL still wins if provided. (AUTH_JWT_ISSUER is public: the JWT `iss` /
       // JWKS origin.)
-      NEXT_PUBLIC_AUTH_HUB_URL:
-        process.env.NEXT_PUBLIC_AUTH_HUB_URL ?? process.env.AUTH_JWT_ISSUER,
+      NEXT_PUBLIC_AUTH_HUB_URL: process.env.NEXT_PUBLIC_AUTH_HUB_URL ?? process.env.AUTH_JWT_ISSUER,
     },
     // webpack: (config, options) => {
     //   if (isDev && !options.isServer) {
@@ -73,6 +116,10 @@ export default defineNextConfig(
     // emits those warnings — an empty config just acknowledges we're on Turbopack
     // and silences Next's "webpack config with no turbopack config" build error.
     turbopack: {},
+    // Per-branch build dir. Turbopack's dev filesystem cache (~8GB) is invalidated
+    // wholesale by an in-place branch switch, so the dev daemon points each branch at
+    // its own dir and keeps them warm instead of purging. Unset -> stock `.next`.
+    distDir: process.env.NEXT_DIST_DIR || '.next',
     allowedDevOrigins: ['civitai-dev.green', 'civitai-dev.blue', 'civitai-dev.red'],
     // Retained for the `next build --webpack` fallback path; ignored under Turbopack.
     webpack: (config) => {
@@ -141,21 +188,45 @@ export default defineNextConfig(
       'superjson',
       '@civitai/db-schema',
       '@civitai/db',
+      '@civitai/db-queries',
       '@civitai/shared',
       '@civitai/buzz',
       '@civitai/redis',
       '@civitai/clickhouse',
       '@civitai/axiom',
+      '@civitai/flipt',
       '@civitai/telemetry',
       '@civitai/auth',
       '@civitai/notifications',
+      '@civitai/moderation',
     ],
     // Renamed from experimental.serverComponentsExternalPackages → top-level serverExternalPackages in Next 15
     serverExternalPackages: [
-      'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
-      '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
-      '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
-      '@pyroscope/nodejs', '@datadog/pprof',
+      'redis',
+      '@redis/client',
+      '@redis/bloom',
+      '@redis/json',
+      '@redis/search',
+      '@redis/time-series',
+      '@opentelemetry/sdk-node',
+      '@opentelemetry/instrumentation',
+      '@opentelemetry/instrumentation-http',
+      '@opentelemetry/instrumentation-redis',
+      '@prisma/instrumentation',
+      // Bundling this gives the app layer its own copy of the Prisma runtime while
+      // `dbRead`/`dbWrite` (reached through the transpiled `@civitai/db-schema`) hold a
+      // second one. `$queryRaw` identifies its template argument with `instanceof Sql`,
+      // so a `Prisma.join()` built by the other copy fails that check and is bound as a
+      // plain value -> `operator does not exist: integer = jsonb`.
+      '@prisma/client',
+      // NOTE: the logs-pipeline packages (@opentelemetry/api, /api-logs, /sdk-logs,
+      // /exporter-logs-otlp-proto) are deliberately NOT externalized here. Adding them
+      // fails the image build, so it needs to be its own change with a full build as its
+      // gate. The logs bridge does not depend on it: it binds to the Logs API lazily, so
+      // a second bundled module copy is survivable, and `no_provider` on its skip counter
+      // is the runtime signal if one ever appears.
+      '@pyroscope/nodejs',
+      '@datadog/pprof',
     ],
     // Several entry points read markdown from src/static-content at runtime via fs
     // (dynamic string paths that @vercel/nft can't trace). With output:'standalone'
@@ -167,8 +238,8 @@ export default defineNextConfig(
       '/safety': ['./src/static-content/**/*'],
       '/region-blocked': ['./src/static-content/**/*'],
       '/content/[[...slug]]': ['./src/static-content/**/*'],
-      '/api/trpc/[trpc]': ['./src/static-content/**/*'],
-      '/api/v1/content/[[...slug]]': ['./src/static-content/**/*'],
+      '/api/trpc/[trpc]': ['./src/static-content/**/*', ...swcHelpersRuntimeFiles],
+      '/api/v1/content/[[...slug]]': ['./src/static-content/**/*', ...swcHelpersRuntimeFiles],
       // /api/og uses next/og's `ImageResponse`, which on the nodejs runtime
       // lazily require()s `next/dist/compiled/@vercel/og/index.node.js` (plus its
       // resvg/yoga WASM + fonts). @vercel/nft cannot follow that dynamic require,
@@ -184,6 +255,7 @@ export default defineNextConfig(
       '/api/og': [
         './node_modules/next/dist/compiled/@vercel/og/**/*',
         './node_modules/.pnpm/next@*/node_modules/next/dist/compiled/@vercel/og/**/*',
+        ...swcHelpersRuntimeFiles,
       ],
     },
     experimental: {
@@ -192,6 +264,62 @@ export default defineNextConfig(
       serverSourceMaps: true,
       // instrumentationHook removed in Next 15 — instrumentation.ts is enabled by default now
       largePageDataBytes: 512 * 100000,
+      // Nested async chunking for the SERVER build. Next's own defaults table
+      // (node_modules/next/dist/docs/01-app/03-api-reference/08-turbopack.md) has
+      // `turbopackClientSideNestedAsyncChunking` defaulting to TRUE in build mode but
+      // `turbopackServerSideNestedAsyncChunking` defaulting to FALSE in *both* dev and
+      // build — so the server build never got the async-chunk dedup the client build has,
+      // and every async chunk group re-emits its whole module graph.
+      //
+      // Trade: ~72% fewer emitted server chunks and roughly half the server chunk bytes,
+      // in exchange for ~+8% CI build time and ~+33% peak builder RSS. Measurements live
+      // in the PR rather than here, so they don't rot when Next's chunker changes.
+      //
+      // Off because the builder's memory ceiling is now enforced and that ~+33% peak RSS is
+      // what puts the release build over it. Re-enable only with a measured peak-RSS margin.
+      //
+      // SECOND REASON THIS FLAG MATTERS, and the reason to revisit it: the emitted server
+      // chunk COUNT is what drives the intermittent `Two or more assets with different
+      // content were emitted to the same output path` build failure. Turbopack names a
+      // server chunk `<namespace>_<7-char-hash>._.js`, and that hash's first character is
+      // bounded in practice to {0,1,2} — so the usable space is ~2 x 38^6, not 38^7, and
+      // the failure is an ordinary birthday collision between two UNRELATED chunks. It is
+      // deterministic for a given module graph (so a rebuild of the same commit fails
+      // again), and it moves to a different pair whenever the graph changes at all — which
+      // is why bisecting finds a commit but never a responsible file.
+      //
+      // Turning this flag ON is the only lever here that attacks the mechanism, because
+      // P(collision) grows with the SQUARE of the chunk count. Measured on one tree:
+      // 24,552 server chunks with the flag off vs 7,122 with it on (-71%).
+      // 🔴 DO NOT FLIP IT ANYWAY — measured on 16.3.1, it does not fit the builder's
+      // memory ceiling. Two blockers were on record here. The first cleared: the flag is
+      // BROKEN on Next 16.3.0 (19 `__turbopack_context__.a is not a function` PostCSS
+      // errors) and compiles from 16.3.1 onward, which the repo is now on. The second
+      // closed the option: a same-commit A/B on 16.3.1 measured +43.0% peak `next-build`
+      // RSS / +30.3% build-container peak — LARGER than the ~+33% quoted above, not
+      // smaller. Projected onto the worst observed production build that lands at
+      // 37-39 GiB against the enforced 40 GiB limit, which is the exact band where the
+      // release build OOMKilled three times when this flag was last on (#3807).
+      // Dropping source maps to pay for it is also closed: it works, but server `.js.map`
+      // has three consumers including the hard `scripts/assert-compiled-branches.mjs`
+      // gate, and `turbopackSourceMaps` cannot be split client/server.
+      // Full evidence: claudedocs/turbopack-chunk-hash-collision-2026-08-18.md
+      // (§Option 1 is closed). The live fix is upstream, not this flag.
+      turbopackServerSideNestedAsyncChunking: false,
+      // Not the same as omitting it: Next 16.3.0 defaults this to true, and turbopack-build
+      // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
+      // memory and not just what lands on disk.
+      turbopackFileSystemCacheForBuild: false,
+      // NB: `lodash-es`, `@tabler/icons-react` and `@headlessui/react` are already in Next's
+      // built-in default list (config.js merges ours into it) — kept here only as intent.
+      //
+      // 🔴 Do NOT add a package that creates React context — `@mantine/core`, `@mantine/modals`,
+      // `@mantine/notifications`. This rewrites barrel imports into deep per-component imports,
+      // which can put the provider and its consumers on DIFFERENT module instances: the provider
+      // is in the tree, but consumers read a context object created by another copy. Adding
+      // `@mantine/core` here 500'd every Mantine-heavy route in preview with "MantineProvider was
+      // not found in component tree" (PR #3802). Nothing local catches it — typecheck, lint and
+      // both vitest projects stayed green; only a real build renders the provider.
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',
@@ -232,8 +360,9 @@ export default defineNextConfig(
         headers: [
           {
             key: 'Content-Security-Policy',
-            value: "frame-src 'self' https://www.kinguin.net https://sandbox.kinguin.net https://gateway.kinguin.net https://*.kinguin.net;"
-          }
+            value:
+              "frame-src 'self' https://www.kinguin.net https://sandbox.kinguin.net https://gateway.kinguin.net https://*.kinguin.net;",
+          },
           // NOTE: Intentionally NO X-Frame-Options header as per Kinguin's documentation
           // NOTE: Only setting frame-src, letting other resources use browser defaults
         ],
@@ -255,6 +384,21 @@ export default defineNextConfig(
       // here would be pruned to nothing at build time anyway since
       // SERVER_DOMAIN_* env vars aren't exposed as Docker build ARGs.
       return [
+        {
+          // `/apps/my-submissions` merged into `/apps/mine` — one author table over every
+          // app you own or hold a seat on, with each app's submission history nested in
+          // its row. The page component is DELETED, not emptied: a stub whose only job is
+          // to redirect is dead code that reads as a live route.
+          //
+          // 🔴 `statusCode: 301`, not `permanent: true`. Next maps `permanent` to **308**,
+          // which preserves the request METHOD — correct in general, but this is a GET-only
+          // author page whose inbound links are bookmarks, notification URLs and search
+          // results, and 301 is the status those consumers cache and rewrite on. The two
+          // options are mutually exclusive in Next's schema, so this is `statusCode` alone.
+          source: '/apps/my-submissions',
+          destination: '/apps/mine',
+          statusCode: 301,
+        },
         {
           source: '/api/download/training-data/:modelVersionId',
           destination: '/api/download/models/:modelVersionId?type=Training%20Data',

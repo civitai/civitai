@@ -14,16 +14,10 @@ import {
   addImageTechniques,
   addImageTools,
   get404Images,
-  getDownleveledImages,
   getImageDetail,
   getImageGenerationData,
-  getImageRatingRequests,
   getImagesByUserIdForModeration,
-  getIngestionErrorImages,
-  resolveIngestionError,
   getImagesForModelVersionCache,
-  getImagesPendingIngestion,
-  getModeratorPOITags,
   getMyImages,
   ingestArticleCoverImages,
   ingestImageById,
@@ -34,7 +28,6 @@ import {
   toggleImageFlag,
   updateImageTechniques,
   updateImageTools,
-  getImageModerationCounts,
   refreshImageResources,
 } from '~/server/services/image.service';
 import {
@@ -55,22 +48,16 @@ import {
   getImageResourcesHandler,
   getImagesAsPostsInfiniteHandler,
   getInfiniteImagesHandler,
-  getModeratorReviewQueueHandler,
 } from './../controllers/image.controller';
 import { cacheIt, edgeCacheIt } from './../middleware.trpc';
 import {
   addOrRemoveImageTechniquesSchema,
   addOrRemoveImageToolsSchema,
-  downleveledReviewInput,
   getEntitiesCoverImage,
   getImageSchema,
   getInfiniteImagesSchema,
   getMyImagesInput,
   imageModerationSchema,
-  imageRatingReviewInput,
-  imageReviewQueueInputSchema,
-  ingestionErrorReviewInput,
-  resolveIngestionErrorInput,
   removeImageResourceSchema,
   reportCsamImagesSchema,
   setTosViolationSchema,
@@ -156,11 +143,6 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getEntitiesCoverImage)
     .query(getEntitiesCoverImageHandler),
-  getModeratorReviewQueue: moderatorProcedure
-    .input(imageReviewQueueInputSchema)
-    .query(getModeratorReviewQueueHandler),
-  getModeratorReviewQueueCounts: moderatorProcedure.query(getImageModerationCounts),
-  getModeratorPOITags: moderatorProcedure.query(() => getModeratorPOITags()),
   get404Images: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(edgeCacheIt({ ttl: CacheTTL.month }))
@@ -173,18 +155,6 @@ export const imageRouter = router({
     .meta({ requiredScope: TokenScope.Full })
     .input(updateImageNsfwLevelSchema)
     .mutation(handleUpdateImageNsfwLevel),
-  getImageRatingRequests: moderatorProcedure
-    .input(imageRatingReviewInput)
-    .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),
-  getIngestionErrorImages: moderatorProcedure
-    .input(ingestionErrorReviewInput)
-    .query(({ input }) => getIngestionErrorImages(input)),
-  resolveIngestionError: moderatorProcedure
-    .input(resolveIngestionErrorInput)
-    .mutation(({ input, ctx }) => resolveIngestionError({ ...input, userId: ctx.user.id })),
-  getDownleveledImages: moderatorProcedure
-    .input(downleveledReviewInput)
-    .query(({ input, ctx }) => getDownleveledImages({ ...input, user: ctx.user })),
   getGenerationData: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
@@ -239,7 +209,6 @@ export const imageRouter = router({
     .input(z.object({ userId: z.number() }))
     .query(({ input, ctx }) => getImagesByUserIdForModeration(input.userId)),
 
-  getAllImagesPendingIngestion: moderatorProcedure.query(getImagesPendingIngestion),
   // #endregion
 
   // #region [thumbnail]
@@ -263,5 +232,6 @@ export const imageRouter = router({
   refreshImageResources: protectedProcedure
     .meta({ requiredScope: TokenScope.MediaWrite })
     .input(getByIdSchema)
+    .use(isOwnerOrModerator)
     .mutation(({ input }) => refreshImageResources(input.id)),
 });

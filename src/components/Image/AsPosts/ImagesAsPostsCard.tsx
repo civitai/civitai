@@ -24,6 +24,7 @@ import {
 } from '@tabler/icons-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -42,14 +43,14 @@ import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrap
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
-import { generationGraphPanel } from '~/store/generation-graph.store';
-import { useTrackEvent } from '~/components/TrackView/track.utils';
+import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
 import { isDefined } from '~/utils/type-guards';
 import { SimpleImageCarousel } from '~/components/SimpleImageCarousel/SimpleImageCarousel';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { mergePostImages, shouldFetchPostTail } from '~/components/Image/AsPosts/lazyPostImages';
-import { POST_IMAGE_LIMIT } from '~/server/common/constants';
-import { trpc } from '~/utils/trpc';
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
+import { shouldFetchPostTail } from '~/components/Image/AsPosts/lazyPostImages';
+import type { PostTailDescriptor } from '~/components/Image/AsPosts/usePostImagesWithTail';
+import { usePostImagesWithTail } from '~/components/Image/AsPosts/usePostImagesWithTail';
 import classes from './ImagesAsPostsCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -132,7 +133,7 @@ function PinnedIndicator({
   return (
     <HoverCard width={300} withArrow withinPortal>
       <HoverCard.Target>
-        <ThemeIcon {...themeIconProps} className="absolute -right-2.5 -top-2.5 z-10">
+        <ThemeIcon {...themeIconProps} className="absolute -right-1.5 -top-1.5 z-10">
           <IconPinFilled {...iconProps} />
         </ThemeIcon>
       </HoverCard.Target>
@@ -174,8 +175,7 @@ function ImagesAsPostsCardHeader({
   // The "OP" badge marks the post author as the entity's creator. Both
   // Model and Model3D galleries surface this — the source union narrows
   // to the right userId.
-  const creatorUserId =
-    source.kind === 'model' ? source.model.user.id : source.creatorUserId;
+  const creatorUserId = source.kind === 'model' ? source.model.user.id : source.creatorUserId;
   const isOP = data.user.id === creatorUserId;
 
   return (
@@ -267,27 +267,11 @@ function ImagesAsPostsCardHeader({
 
 function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
   const features = useFeatureFlags();
-  const { trackAction } = useTrackEvent();
   const postId = data.postId ?? undefined;
   const image = data.images[0];
-  // Not wrapping in useCallback: the returned inner closure captures
-  // `selectedImage` and is recreated per call regardless, so the outer
-  // `useCallback` would provide no stability benefit.
-  const handleRemixClick = (selectedImage: typeof image) => (e: React.MouseEvent) => {
+  const handleRemixClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    trackAction({
-      type: 'Image_Remix_Click',
-      details: {
-        imageId: selectedImage.id,
-        imageType: selectedImage.type,
-        source: 'remix:model-gallery',
-      },
-    }).catch(() => undefined);
-    generationGraphPanel.open({
-      type: selectedImage.type,
-      id: selectedImage.id,
-    });
   };
 
   return data.images.length === 1 ? (
@@ -299,20 +283,23 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
               <ImagesAsPostsContextMenu image={image} />
-              {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
-                <HoverActionButton
-                  label="Remix"
-                  size={30}
-                  color="white"
-                  variant="filled"
-                  data-activity="remix:model-gallery"
-                  onClick={handleRemixClick(image)}
-                >
-                  <IconBrush stroke={2.5} size={16} />
-                </HoverActionButton>
+              {features.imageGeneration && isRemixMenuVisible(image) && (
+                <RemixMenu image={image} source="remix:model-gallery">
+                  <HoverActionButton
+                    label="Remix"
+                    size={30}
+                    color="white"
+                    variant="filled"
+                    data-activity="remix:model-gallery"
+                    onClick={handleRemixClick}
+                  >
+                    <IconBrush stroke={2.5} size={16} />
+                  </HoverActionButton>
+                </RemixMenu>
               )}
             </div>
           )}
+          {safe && <RemixedCardFlyout imageId={image.id} />}
           <RoutedDialogLink
             name="imageDetail"
             state={{ imageId: image.id, images: [image] }}
@@ -356,7 +343,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
             targetUserId={image.user.id}
             disableBuzzTip={image.poi}
           />
-          {image.hasMeta && (
+          {features.imageCardInfoButton && image.hasMeta && (
             <div className="absolute bottom-1 right-0.5 z-10">
               <ImageMetaPopover2 imageId={image.id} type={image.type}>
                 <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
@@ -383,35 +370,30 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
 
 const carouselIndicatorProps = {
   className: 'flex w-full gap-px',
-  indicatorClassName:
-    'h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100',
+  indicatorClassName: 'h-2 flex-1 bg-white opacity-60 shadow-sm data-[active]:opacity-100',
 } as const;
 
 /**
  * One carousel slide's content (blur guard, remix, image, reactions, meta). Shared
  * by the static and lazy carousels so an appended (lazily-fetched) image renders
  * byte-identically to a seeded one. `dialogImages` seeds the detail modal with the
- * carousel's currently-loaded set.
+ * carousel's currently-loaded set; `postTail` lets it load the rest itself.
  */
 function PostCarouselSlide({
   image,
   postId,
   dialogImages,
+  postTail,
 }: {
   image: ImagesAsPostModel['images'][number];
   postId: number;
   dialogImages: ImagesAsPostModel['images'];
+  postTail?: PostTailDescriptor;
 }) {
   const features = useFeatureFlags();
-  const { trackAction } = useTrackEvent();
   const handleRemixClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    trackAction({
-      type: 'Image_Remix_Click',
-      details: { imageId: image.id, imageType: image.type, source: 'remix:model-gallery' },
-    }).catch(() => undefined);
-    generationGraphPanel.open({ type: image.type, id: image.id });
   };
 
   return (
@@ -423,24 +405,27 @@ function PostCarouselSlide({
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
               <ImagesAsPostsContextMenu image={image} />
-              {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
-                <HoverActionButton
-                  label="Remix"
-                  size={30}
-                  color="white"
-                  variant="filled"
-                  data-activity="remix:model-gallery"
-                  onClick={handleRemixClick}
-                >
-                  <IconBrush stroke={2.5} size={16} />
-                </HoverActionButton>
+              {features.imageGeneration && isRemixMenuVisible(image) && (
+                <RemixMenu image={image} source="remix:model-gallery">
+                  <HoverActionButton
+                    label="Remix"
+                    size={30}
+                    color="white"
+                    variant="filled"
+                    data-activity="remix:model-gallery"
+                    onClick={handleRemixClick}
+                  >
+                    <IconBrush stroke={2.5} size={16} />
+                  </HoverActionButton>
+                </RemixMenu>
               )}
             </div>
           )}
+          {safe && <RemixedCardFlyout imageId={image.id} />}
           <RoutedDialogLink
             name="imageDetail"
             state={{ imageId: image.id }}
-            getState={() => ({ imageId: image.id, images: dialogImages })}
+            getState={() => ({ imageId: image.id, images: dialogImages, postTail })}
             className={classes.link}
           >
             <>
@@ -481,7 +466,7 @@ function PostCarouselSlide({
             targetUserId={image.user.id}
             disableBuzzTip={image.poi}
           />
-          {image.hasMeta && (
+          {features.imageCardInfoButton && image.hasMeta && (
             <div className="absolute bottom-1 right-0.5 z-10">
               <ImageMetaPopover2 imageId={image.id} type={image.type}>
                 <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
@@ -496,21 +481,65 @@ function PostCarouselSlide({
   );
 }
 
-/** Today's carousel: every image is already in hand. Exported for component tests. */
-export function StaticPostImagesCarousel({
-  images,
-  postId,
+/**
+ * Off by default: the feed mounts hundreds of these, so an embla engine per card
+ * is opt-in (`swipeGalleryCards`). SimpleImageCarousel is the cheap fallback.
+ */
+function PostImagesCarousel({
+  slides,
+  onIndexChange,
 }: {
-  images: ImagesAsPostModel['images'];
-  postId: number;
+  slides: React.ReactNode[];
+  onIndexChange?: (index: number) => void;
 }) {
+  const { swipeGalleryCards } = useImagesAsPostsInfiniteContext();
+
+  if (swipeGalleryCards) {
+    return (
+      <Embla
+        loop
+        watchDrag={watchTouchDrag}
+        onSlideChange={onIndexChange}
+        className="flex h-full flex-col"
+      >
+        <Embla.Viewport className="relative flex-1 touch-pan-y">
+          <Embla.Container className="flex h-full">
+            {slides.map((slide, index) => (
+              <Embla.Slide key={index} index={index} className="relative flex-[0_0_100%]">
+                {slide}
+              </Embla.Slide>
+            ))}
+          </Embla.Container>
+          <Embla.Controls />
+        </Embla.Viewport>
+        {/* Not `Embla.Indicators`: it maps embla's snap list, which is empty until
+            the engine initialises, so a feed of cards would paint a frame with no
+            indicators and then pop them in. */}
+        <div className={carouselIndicatorProps.className}>
+          {slides.map((_, index) => (
+            <Embla.Indicator
+              key={index}
+              index={index}
+              className={carouselIndicatorProps.indicatorClassName}
+            />
+          ))}
+        </div>
+      </Embla>
+    );
+  }
+
   return (
-    <SimpleImageCarousel loop total={images.length} className="flex h-full flex-col">
+    <SimpleImageCarousel
+      loop
+      total={slides.length}
+      onIndexChange={onIndexChange}
+      className="flex h-full flex-col"
+    >
       <SimpleImageCarousel.Viewport className="relative flex-1">
         <SimpleImageCarousel.Container className="h-full">
-          {images.map((image, index) => (
+          {slides.map((slide, index) => (
             <SimpleImageCarousel.Slide key={index} index={index} className="relative">
-              <PostCarouselSlide image={image} postId={postId} dialogImages={images} />
+              {slide}
             </SimpleImageCarousel.Slide>
           ))}
         </SimpleImageCarousel.Container>
@@ -521,13 +550,33 @@ export function StaticPostImagesCarousel({
   );
 }
 
+/** Today's carousel: every image is already in hand. Exported for component tests. */
+export function StaticPostImagesCarousel({
+  images,
+  postId,
+}: {
+  images: ImagesAsPostModel['images'];
+  postId: number;
+}) {
+  return (
+    <PostImagesCarousel
+      slides={images.map((image) => (
+        <PostCarouselSlide key={image.id} image={image} postId={postId} dialogImages={images} />
+      ))}
+    />
+  );
+}
+
 /**
  * Lazy carousel: seeded with the first slice + the true `imageCount`. Shows "1 of
  * N" immediately (indicators from `imageCount`); fetches the post's remaining
  * images via `trpc.image.getInfinite({ postId })` when the active slide approaches
  * the loaded edge, re-applies the feed's hidden preferences to the fetched tail
- * (content safety), and appends. The detail modal is seeded with whatever is
- * loaded at click time.
+ * (content safety), and appends.
+ *
+ * The detail modal is seeded with what is loaded at click time PLUS the descriptor
+ * it needs to load the rest itself — a click on the cover happens long before the
+ * approach threshold, so the seed alone is usually just the first slice.
  *
  * Exported for component tests.
  */
@@ -549,55 +598,33 @@ export function LazyPostImagesCarousel({
     (index: number) => {
       setFetchTail(
         (prev) =>
-          prev ||
-          shouldFetchPostTail({ currentIndex: index, loadedCount: seed.length, total })
+          prev || shouldFetchPostTail({ currentIndex: index, loadedCount: seed.length, total })
       );
     },
     [seed.length, total]
   );
 
-  // The tail = the WHOLE post (≤ POST_IMAGE_LIMIT), same version/browsing-level
-  // filters the gallery used, so the returned set matches `imageCount`. postId
-  // forces the DB path server-side (covered index, ~2ms).
-  const { data: tailData, isError: tailError } = trpc.image.getInfinite.useQuery(
-    {
-      ...filters,
-      postId,
-      browsingLevel,
-      limit: POST_IMAGE_LIMIT,
-      include: ['cosmetics', 'tagIds'],
-    },
-    {
-      // `postId != null` is the explicit invariant: a null postId must never broaden
-      // `getInfinite` to the model's general feed (it would append unrelated images).
-      enabled: fetchTail && postId != null,
-      trpc: { context: { skipBatch: true } },
-      staleTime: 5 * 60 * 1000,
-    }
-  );
-
-  // Content safety: re-apply the feed's hidden preferences to the fetched tail so
-  // it never surfaces images the feed slice would have dropped (owner/user-hidden,
-  // system-hidden tags, poi/minor). Browsing level is already applied server-side.
-  const { items: filteredTail } = useApplyHiddenPreferences({
-    type: 'images',
-    data: tailData?.items,
-    hiddenImages: hiddenImageIds,
-    hiddenUsers,
-    hiddenTags,
+  const {
+    images: loaded,
+    fetched,
+    isError: tailError,
+  } = usePostImagesWithTail({
+    seed,
+    postId,
+    filters,
     browsingLevel,
+    hiddenImageIds,
+    hiddenTags,
+    hiddenUsers,
+    enabled: fetchTail,
   });
 
-  const fetched = !!tailData;
-  const loaded = useMemo(
+  const postTail = useMemo<PostTailDescriptor | undefined>(
     () =>
-      fetched
-        ? (mergePostImages(
-            seed as { id: number }[],
-            (filteredTail ?? []) as { id: number }[]
-          ) as ImagesAsPostModel['images'])
-        : seed,
-    [fetched, seed, filteredTail]
+      postId != null
+        ? { postId, imageCount: total, filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers }
+        : undefined,
+    [postId, total, filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers]
   );
 
   // Before the tail resolves, advertise the true count so indicators read "1 of N".
@@ -612,29 +639,23 @@ export function LazyPostImagesCarousel({
   const effectiveTotal = fetched || tailError ? loaded.length : total;
 
   return (
-    <SimpleImageCarousel
-      loop
-      total={effectiveTotal}
+    <PostImagesCarousel
       onIndexChange={handleIndexChange}
-      className="flex h-full flex-col"
-    >
-      <SimpleImageCarousel.Viewport className="relative flex-1">
-        <SimpleImageCarousel.Container className="h-full">
-          {Array.from({ length: effectiveTotal }).map((_, index) => (
-            <SimpleImageCarousel.Slide key={index} index={index} className="relative">
-              {loaded[index] ? (
-                <PostCarouselSlide image={loaded[index]} postId={postId} dialogImages={loaded} />
-              ) : (
-                <Center className="size-full">
-                  <Loader />
-                </Center>
-              )}
-            </SimpleImageCarousel.Slide>
-          ))}
-        </SimpleImageCarousel.Container>
-        <SimpleImageCarousel.Controls />
-      </SimpleImageCarousel.Viewport>
-      <SimpleImageCarousel.Indicators {...carouselIndicatorProps} />
-    </SimpleImageCarousel>
+      slides={Array.from({ length: effectiveTotal }, (_, index) =>
+        loaded[index] ? (
+          <PostCarouselSlide
+            key={loaded[index].id}
+            image={loaded[index]}
+            postId={postId}
+            dialogImages={loaded}
+            postTail={postTail}
+          />
+        ) : (
+          <Center key={index} className="size-full">
+            <Loader />
+          </Center>
+        )
+      )}
+    />
   );
 }

@@ -33,7 +33,13 @@ vi.mock('~/server/services/blocks/app-review-report.service', () => ({
   getAgentReport: mockGetAgentReport,
 }));
 // The OpenRouter client civitai now calls directly for the grounded reply.
-vi.mock('~/server/services/ai/openrouter', () => ({
+// Keep the real `AI_MODELS` export (drift-proof: agent-review.service reads
+// `AI_MODELS.CLAUDE_HAIKU` at module load for AGENT_REVIEW_CHAT_MODEL). Only the
+// live `openrouter` client is stubbed. `importOriginal` doesn't construct a real
+// client here — `~/env/server` is mocked with no OPENROUTER_API_KEY, so the
+// module-load `createOpenRouterClient()` guard is skipped.
+vi.mock('~/server/services/ai/openrouter', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('~/server/services/ai/openrouter')>()),
   openrouter: { getTextCompletion: mockGetTextCompletion },
 }));
 

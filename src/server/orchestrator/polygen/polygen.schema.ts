@@ -13,13 +13,14 @@
  *
  * The Meshy "shared" fields (targetPolycount, topology, symmetryMode,
  * shouldRemesh, enablePbr, texturePrompt, enableRigging, enableAnimation,
- * seed) appear on both processes and match `MeshyFalPolyGenInput` 1:1.
+ * seed) appear on both processes and match `MeshyV6FalPolyGenInput` 1:1.
+ *
+ * Meshy v7 is a VERSION inside this same ecosystem, with its own schema
+ * (`polygen-v7.schema.ts`) — it drops text-to-3D and seed, and adds a
+ * multi-view operation. `polygen-graph.handler.ts` picks between the two.
  */
 
-import type {
-  MeshyImageTo3dFalPolyGenInput,
-  MeshyTextTo3dFalPolyGenInput,
-} from '@civitai/client';
+import type { MeshyImageTo3dFalPolyGenInput, MeshyTextTo3dFalPolyGenInput } from '@civitai/client';
 import * as z from 'zod';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 
@@ -151,6 +152,7 @@ export function toMeshyPolyGenInput(
       ...shared,
       engine: 'fal' as const,
       model: 'meshy' as const,
+      version: 'v6' as const,
       operation: 'textTo3D' as const,
       prompt: data.prompt,
       mode: data.mode,
@@ -162,6 +164,7 @@ export function toMeshyPolyGenInput(
     ...shared,
     engine: 'fal' as const,
     model: 'meshy' as const,
+    version: 'v6' as const,
     operation: 'imageTo3D' as const,
     imageUrl: data.sourceImage.url,
     shouldTexture: data.shouldTexture,

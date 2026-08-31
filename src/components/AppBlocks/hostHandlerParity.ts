@@ -67,7 +67,16 @@ export type HostReq = 'required' | string; // string = N/A reason
 export interface MessageSpec {
   /** REQUEST-style (sendTypedRequest, awaits a *_RESULT/ack). Unhandled ⇒ hang. */
   request: boolean;
-  /** Reply type the SDK awaits (REQUEST-style only); '' for fire-and-forget. */
+  /**
+   * Reply type the SDK awaits (REQUEST-style only); '' for fire-and-forget.
+   *
+   * 🔴 DOCUMENTATION ONLY — NOTHING ENFORCES THIS STRING. The parity test greps
+   * each host for a REGISTERED handler (`onMessage('<TYPE>'`), then interpolates
+   * this value into the test's NAME. It never checks that the host actually
+   * sends it, so a wrong value here is invisible: it produces a green test with a
+   * misleading title. Treat it as a comment, and put behavioural claims about the
+   * reply in the per-message browser tests.
+   */
   reply: string;
   IframeHost: HostReq;
   PageBlockHost: HostReq;
@@ -83,6 +92,22 @@ export const INLINE_STUB =
 export const INVENTORY = {
   // ── Lifecycle / fire-and-forget (no reply ⇒ unhandled never HANGS, but a
   //    page that ignores them just no-ops; documented per host) ───────────────
+  //
+  // The block's readiness ANNOUNCE — posted by the SDK transport the moment its
+  // message listener is attached, so the host can push BLOCK_INIT in response
+  // instead of waiting out a retry tick. Fire-and-forget and, uniquely in this
+  // table, an ACCELERATOR rather than a bridge: an unhandled BLOCK_HELLO costs
+  // only latency, because every host keeps its own immediate-post + bounded
+  // retry + readiness-timeout schedule. Marked `required` on the two live hosts
+  // anyway — the whole point of the parity gate is that a message the SDK sends
+  // has a named answer on every host that could receive it.
+  BLOCK_HELLO: {
+    request: false,
+    reply: '',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
   BLOCK_READY: {
     request: false,
     reply: '',
@@ -140,6 +165,15 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Still `request: false` — the SDK's `useRequestConsent()` posts it with
+  // `sendMessage` and AWAITS nothing, so an unhandled one can never hang a block.
+  // But PageBlockHost does emit ONE uncorrelated host→block PUSH off this
+  // message: when the requested scopes are proven un-grantable (clamped/withheld
+  // at mint, so no consent round-trip can ever resolve them) it sends
+  // `CONSENT_UNAVAILABLE { reason, scopes }` so the block can stop telling the
+  // user to retry. It is a push, not a reply — there is no `requestId` to
+  // correlate — hence `reply` stays `''`. The behavioural pin is
+  // PageBlockHost.browser.test.tsx.
   REQUEST_CONSENT: {
     request: false,
     reply: '',
@@ -149,9 +183,18 @@ export const INVENTORY = {
   },
 
   // ── REQUEST-style (await a reply ⇒ unhandled HANGS the block) ───────────────
+  // 🔴 CONDITIONAL REPLY — the one entry in this table where `reply` is not a
+  // single type. A REQUEST_TOKEN carrying a STRING `requestId` (`''` included) is
+  // answered with `TOKEN_REFRESH_RESPONSE` echoing that id; one with no usable
+  // `requestId` gets a `TOKEN_REFRESH` PUSH instead, because the SDK correlates
+  // strictly by `requestId` and an uncorrelated response can never resolve
+  // anyone's `refresh()`. `reply` is documentation only (see MessageSpec), so
+  // this comment — not that string — is what carries the contract. The
+  // behavioural pins are IframeHostInitContractV2 / PageBlockHostInitContractV2
+  // `.browser.test.tsx`.
   REQUEST_TOKEN: {
     request: true,
-    reply: 'TOKEN_REFRESH_RESPONSE',
+    reply: 'TOKEN_REFRESH_RESPONSE (or a TOKEN_REFRESH push when no requestId was sent)',
     IframeHost: 'required',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
@@ -429,8 +472,11 @@ export const INVENTORY = {
   // REQUEST-style hang class + same host placement as SHARED_APPEND — the shared
   // datastore is a per-APP surface a model-slot block can also edit, so BOTH real
   // hosts wire it. Reply is the SHARED_WITHDRAW-style `{ ok, error? }` (NOT
-  // SHARED_APPEND's `{ key }`): the SDK's isValidSharedUpdateResult REQUIRES a
-  // boolean `ok`, so the error reply MUST carry `ok: false` or it's dropped.
+  // SHARED_APPEND's `{ key }`). The SDK's isValidSharedUpdateResult accepts an
+  // error reply whether or not it carries `ok` — every `{ ok, error }` validator
+  // early-accepts on a PRESENT `error`, so an error reply is never dropped. The
+  // hosts still send `ok: false` because it is the clearer signal, NOT because
+  // omitting it would hang.
   SHARED_UPDATE: {
     request: true,
     reply: 'SHARED_UPDATE_RESULT',
@@ -456,6 +502,49 @@ export const INVENTORY = {
     request: true,
     reply: 'SHARED_WITHDRAW_RESULT',
     IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Single-row fetch-by-key (Batch-D item 6) — the deep-link companion to
+  // SHARED_LIST's paged read. Same REQUEST-style hang class + same both-host
+  // placement as its SHARED_* siblings (the shared datastore is a per-APP surface
+  // a model-slot block can also read). Ahead of the published SDK dist union
+  // (forward-looking coverage, like the SHARED_* siblings were) — the one-
+  // directional compile-time gate allows the extra key.
+  SHARED_GET: {
+    request: true,
+    reply: 'SHARED_GET_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // User report of a posted shared row (Batch-D item 5) — the server procedure
+  // `apps.shared.report` already exists; this is the postMessage seam. Same both-
+  // host placement as SHARED_WITHDRAW (its reply is the SHARED_WITHDRAW-style
+  // `{ ok, error? }`: the validator accepts an error reply with or without `ok`,
+  // and the hosts send `ok: false` because it is the clearer signal, not because
+  // omitting it would hang). Ahead of the published SDK dist union — forward-
+  // looking coverage.
+  SHARED_REPORT: {
+    request: true,
+    reply: 'SHARED_REPORT_RESULT',
+    IframeHost: 'required',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Host download bridge (Batch-D item 1) — the host fetches an image in its
+  // UNSANDBOXED top frame + triggers the browser download (a sandboxed block has
+  // no `allow-downloads`). Two variants: an origin-allowlisted OWN-output `url`,
+  // or a cross-user `imageId` routed through the gated per-viewer read. PAGE-ONLY
+  // affordance today (the paid-output apps — gen-matrix / custom-generators /
+  // model-benchmarking — are all page apps), so N/A for the model host, mirroring
+  // the GET_IMAGES_BY_IDS / PUBLISH_GENERATION_OUTPUTS page-only exemption.
+  // Ahead of the published SDK dist union — forward-looking coverage.
+  SAVE_IMAGE: {
+    request: true,
+    reply: 'SAVE_IMAGE_RESULT',
+    IframeHost:
+      'download bridge is a page-only affordance today; the paid-output apps are page apps, the model slot has no such surface',
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },

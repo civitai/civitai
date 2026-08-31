@@ -45,9 +45,11 @@ const modelFilterSchema = z.object({
   baseModels: z.enum(baseModels).array().optional(),
   status: z.enum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
+  paidAccess: z.boolean().optional(),
   supportsGeneration: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   followed: z.boolean().optional(),
+  newCreators: z.boolean().optional(),
   archived: z.boolean().optional(),
   hidden: z.boolean().optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
@@ -82,12 +84,14 @@ const imageFilterSchema = z.object({
   scheduled: z.boolean().optional(),
   hidden: z.boolean().optional(),
   followed: z.boolean().optional(),
+  newCreators: z.boolean().optional(),
   tools: z.number().array().optional(),
   techniques: z.number().array().optional(),
   baseModels: z.enum(baseModels).array().optional(),
   remixesOnly: z.boolean().optional(),
   nonRemixesOnly: z.boolean().optional(),
   requiringMeta: z.boolean().optional(),
+  hideChallenges: z.boolean().optional(),
   poiOnly: z.boolean().optional(),
   minorOnly: z.boolean().optional(),
   disablePoi: z.boolean().optional(),
@@ -99,7 +103,9 @@ const imageFilterSchema = z.object({
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;
 const modelImageFilterSchema = imageFilterSchema.extend({
-  sort: z.enum(ImageSort).default(ImageSort.Newest), // Default sort for model images should be newest
+  // Most Reactions, not Newest: a model gallery opening on Newest fronts images
+  // that may not be rated yet, which is the sort SFW viewers are not offered.
+  sort: z.enum(ImageSort).default(ImageSort.MostReactions),
   period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime), //Default period for model details should be all time
   types: z.array(z.enum(MediaType)).default([]),
 });

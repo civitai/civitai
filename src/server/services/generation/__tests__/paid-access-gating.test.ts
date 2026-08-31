@@ -1,12 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelVersionTerms } from '@civitai/buzz';
 
-const { mockGetPaidAccess, mockHasEntityAccess } = vi.hoisted(() => ({
+const { mockGetPaidAccess, mockHasEntityAccess, mockGetViewerMonetization } = vi.hoisted(() => ({
   mockGetPaidAccess: vi.fn(),
   mockHasEntityAccess: vi.fn(),
+  mockGetViewerMonetization: vi.fn(),
 }));
 
-vi.mock('~/server/services/paid-access.service', () => ({ getPaidAccess: mockGetPaidAccess }));
+vi.mock('~/server/services/paid-access.service', () => ({
+  getViewerMonetization: mockGetViewerMonetization,
+  bustModelSaleCache: vi.fn(),
+}));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: mockHasEntityAccess }));
 
 import { applyPaidAccessGating } from '~/server/services/generation/paid-access-gating';
@@ -15,7 +19,10 @@ const OWNER = 99;
 const FUTURE = new Date('2099-01-01T00:00:00.000Z');
 
 const BUNDLED: ModelVersionTerms = { download: { price: 500 } }; // no generation key = must buy
-const TRIAL: ModelVersionTerms = { download: { price: 500 }, generation: { price: 200, trialLimit: 5 } };
+const TRIAL: ModelVersionTerms = {
+  download: { price: 500 },
+  generation: { price: 200, trialLimit: 5 },
+};
 const FREE: ModelVersionTerms = { generation: { free: true } };
 
 // A generation resource as it arrives from resource-data: gated versions are availability='Public',
@@ -43,6 +50,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetPaidAccess.mockResolvedValue({});
   mockHasEntityAccess.mockResolvedValue([]);
+  mockGetViewerMonetization.mockImplementation(
+    async ({ versions }: { versions: { id: number }[] }) => {
+      const rows = await mockGetPaidAccess(versions.map((v) => v.id));
+      return Object.fromEntries(
+        versions.map((v) => [v.id, { paidAccess: rows[v.id], sale: null, licensingFee: null }])
+      );
+    }
+  );
 });
 
 describe('applyPaidAccessGating — the sole paid generation gate', () => {
@@ -153,10 +168,47 @@ describe('applyPaidAccessGating — the sole paid generation gate', () => {
       4: gate({ entityId: 4, terms: BUNDLED }),
     });
 
-    await applyPaidAccessGating([bundledCovered, freeNonOwner, ownedBundled, notCovered], { id: 1 });
+    await applyPaidAccessGating([bundledCovered, freeNonOwner, ownedBundled, notCovered], {
+      id: 1,
+    });
 
     // Only id 1 qualifies for the purchase check.
     expect(mockHasEntityAccess).toHaveBeenCalledTimes(1);
     expect(mockHasEntityAccess).toHaveBeenCalledWith(expect.objectContaining({ entityIds: [1] }));
+  });
+});
+
+describe('applyPaidAccessGating — the gate rows it asks for', () => {
+  it('asks for the versions it is gating', async () => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
+
+    await applyPaidAccessGating([resource()], { id: OWNER, isModerator: false });
+
+    expect(mockGetViewerMonetization).toHaveBeenCalledWith({
+      versions: [{ id: 1 }],
+      viewer: { id: OWNER, isModerator: false },
+    });
+  });
+
+  it('puts the stored terms on the wire', async () => {
+    mockGetPaidAccess.mockResolvedValueOnce({
+      1: gate({ terms: { download: { price: 500 } } }),
+    });
+
+    const r = resource();
+    await applyPaidAccessGating([r], { id: 2 });
+
+    expect(r.paidAccess?.terms).toEqual({ download: { price: 500 } });
+  });
+
+  it('dedupes repeated resources into one version entry', async () => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
+
+    await applyPaidAccessGating([resource(), resource()], { id: 2 });
+
+    expect(mockGetViewerMonetization).toHaveBeenCalledWith({
+      versions: [{ id: 1 }],
+      viewer: { id: 2 },
+    });
   });
 });

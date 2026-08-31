@@ -5,6 +5,7 @@ vi.mock('~/server/services/model-version.service', () => ({ addLinkedComponent: 
 
 import { processDedupePairs } from '~/server/jobs/dedupe-official-uploads';
 import { constants } from '~/server/common/constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const OFFICIAL = constants.system.officialUserId;
 

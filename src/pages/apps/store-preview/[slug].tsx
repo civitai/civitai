@@ -3,11 +3,13 @@ import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppListingDetailBody } from '~/components/Apps/AppListingDetailBody';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -41,9 +43,9 @@ export default function AppStoreListingDetailPage() {
   // today) with a slug. Returns ONLY the ListingDetail allowlist; a missing /
   // non-approved slug 404s server-side. retry:false so it settles into NotFound.
   // W13 (PR-W1a/D8): store-visibility gate = dedicated `appListings` OR-falling-
-  // back to `appBlocks`. Zero behavior change today (the `app-listings` flag
-  // doesn't exist yet, so this resolves to today's mods+app-dev-testers cohort).
-  const canSeeStore = features.appListings || features.appBlocks;
+  // back to `appBlocks`. The SHARED predicate, identical to the SSR
+  // `resolveAppsPageAccess` gate above.
+  const canSeeStore = hasAppsStoreAccess(features);
   const { data, isLoading, error } = trpc.appListings.getAppDetail.useQuery(
     { slug },
     { enabled: !!canSeeStore && !!slug, retry: false }
@@ -61,7 +63,7 @@ export default function AppStoreListingDetailPage() {
         description={detail?.tagline ?? 'Unified app store preview'}
         deIndex
       />
-      <AppsPageLayout size="lg">
+      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/store-preview/[slug]']}>
         {isLoading ? (
           <Center py="xl">
             <Loader />

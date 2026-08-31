@@ -141,7 +141,8 @@ Everything NextAuth does today must work under `USE_HUB_SESSION=true` **before**
   notification. Called by BOTH the `[...nextauth]` signIn event (legacy) and `/api/auth/post-login` (hub path,
   which runs on the main app where the `.civitai.com` ref cookies + services live). New-vs-returning is derived
   from `user.createdAt`.
-- [x] `generationServiceCookie` cleared on login (post-login + legacy event via `runLoginSideEffects`) and logout.
+- [x] `generationServiceCookie` cleared on logout. The login-time clear went away with the cookie itself —
+  nothing writes that cookie any more, and its only reader was the deleted `cookie-encryption` helper.
 - [x] **Validated** — email-login round-trip (smoke above). Two deploy-time checks remain (can't be done on
   localhost, both code-complete): OAuth providers (vs email), and cross-domain logout cookie clearing on
   `.civitai.com` (cookies are host-only in dev).

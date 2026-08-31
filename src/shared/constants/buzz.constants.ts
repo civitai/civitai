@@ -14,6 +14,7 @@ import type {
   BuzzCashType,
   LegacyBuzzType,
 } from '@civitai/buzz';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 
 // The account-type model + friendly↔API name map now live in @civitai/buzz (browser-safe,
 // shared with the SvelteKit spokes). Re-exported here so existing imports keep working.
@@ -123,10 +124,33 @@ export const buzzBankTypes = buzzSpendTypes.filter((type) => {
   const config = buzzTypeConfig[type];
   return config.type === 'spend' && config.bankable;
 }) as BuzzSpendType[];
+/** Quoted list for `IN (...)` in the ClickHouse buzzTransactions queries. */
+export const buzzBankTypesSql = buzzBankTypes.map((type) => `'${type}'`).join(', ');
 export const buzzPurchaseTypes = buzzSpendTypes.filter((type) => {
   const config = buzzTypeConfig[type];
   return config.type === 'spend' && config.purchasable;
 });
+
+/** The currencies a real-money purchase can be credited in. Notably excludes `blue`, which is free. */
+export type PurchasableBuzzType = Extract<BuzzSpendType, 'green' | 'yellow'>;
+
+/**
+ * Which currency a real-money Buzz purchase made on `domain` is credited in. The browser applies the
+ * same rule when it builds the payment-intent metadata; the server re-derives it so a modified client
+ * can't pick a colour it didn't pay for.
+ */
+export function deriveDomainBuzzType(domain: ColorDomain): PurchasableBuzzType {
+  return domain === 'green' ? 'green' : 'yellow';
+}
+
+/**
+ * Narrow a buzz type read back off a payment provider's metadata bag. Provider metadata is
+ * stringly-typed on the wire, and intents created before the server started stamping `buzzType` may
+ * still carry whatever the client asked for — including `blue`, the free currency.
+ */
+export function coercePurchasedBuzzType(value: unknown): PurchasableBuzzType {
+  return value === 'green' ? 'green' : 'yellow';
+}
 
 export class BuzzTypes {
   static getConfig(type: BuzzSpendType) {

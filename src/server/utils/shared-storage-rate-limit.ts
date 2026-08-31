@@ -39,6 +39,15 @@ export const SHARED_APPEND_RATE_LIMIT_WINDOW_SECONDS = 24 * 60 * 60;
 export const SHARED_VOTE_RATE_LIMIT_MAX = 30;
 export const SHARED_VOTE_RATE_LIMIT_WINDOW_SECONDS = 60;
 
+// REPORT: R reports/day/app/user. A report is a rare, moderator-facing action
+// that files a row AND fires a mod-channel webhook — so unlike votes it is the
+// abuse SURFACE (report-table growth + Discord flooding), not just noise. The
+// per-(reporter, key) dedup collapses re-reports of the SAME row; this daily
+// bucket bounds a flood of DISTINCT-key reports (the residual webhook-spam
+// vector) from a single user. Matches the append daily-window shape.
+export const SHARED_REPORT_RATE_LIMIT_MAX = 20;
+export const SHARED_REPORT_RATE_LIMIT_WINDOW_SECONDS = 24 * 60 * 60;
+
 export type SharedStorageRateLimitResult =
   | { allowed: true }
   | { allowed: false; retryAfterSeconds: number };
@@ -95,5 +104,19 @@ export async function checkSharedVoteRateLimit(
     key,
     SHARED_VOTE_RATE_LIMIT_MAX,
     SHARED_VOTE_RATE_LIMIT_WINDOW_SECONDS
+  );
+}
+
+/** One `report` against the (user, app) daily bucket (own sub-namespace). */
+export async function checkSharedReportRateLimit(
+  userId: number,
+  appBlockId: string
+): Promise<SharedStorageRateLimitResult> {
+  const key =
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:shared-report:${appBlockId}:${userId}` as const;
+  return checkFixedWindow(
+    key,
+    SHARED_REPORT_RATE_LIMIT_MAX,
+    SHARED_REPORT_RATE_LIMIT_WINDOW_SECONDS
   );
 }

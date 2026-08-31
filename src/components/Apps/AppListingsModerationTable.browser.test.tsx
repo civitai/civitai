@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * W13 post-approval mgmt (P2) — the unified moderator listings management table.
@@ -46,7 +47,14 @@ const ROWS = [
   // A→Z sort is observable as a flip.
   offsite({ id: 'apl_b', slug: 'bravo-live', name: 'Bravo', status: 'approved' }),
   offsite({ id: 'apl_a', slug: 'alpha-live', name: 'Alpha', status: 'approved' }),
-  offsite({ id: 'apl_o', slug: 'onsite-live', name: 'Onsite', kind: 'onsite', appBlockId: 'ab_1', status: 'approved' }),
+  offsite({
+    id: 'apl_o',
+    slug: 'onsite-live',
+    name: 'Onsite',
+    kind: 'onsite',
+    appBlockId: 'ab_1',
+    status: 'approved',
+  }),
   offsite({ id: 'apl_r', slug: 'gone-ext', name: 'Gone', status: 'removed' }),
   // D: an on-site + pending listing — it belongs to the on-site review FIFO queue, so
   // the mgmt table must HIDE it (it would otherwise be a dead-end `—`-action row).
@@ -145,7 +153,14 @@ vi.mock('~/utils/notifications', () => ({
   showErrorNotification: (...a: unknown[]) => showError(...a),
 }));
 
-vi.mock('~/utils/trpc', () => {
+// 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
+// no-wholesale-module-mock, which this file was violating). A hand-written factory
+// breaks this whole FILE's ESM link the day `~/utils/trpc` gains an export something in
+// the module graph imports — and that failure reports as "0 tests collected", i.e. a
+// silent green, not a failure. Converted while adding the owner-message proc below,
+// because that addition is exactly the kind of edit that would have tripped it.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof TrpcModule>();
   // A mutation mock: records (name, vars), then drives onSuccess/onError so the
   // component's success + error paths both run.
   const mutation =
@@ -168,6 +183,7 @@ vi.mock('~/utils/trpc', () => {
     },
   };
   return {
+    ...actual,
     trpc: {
       useUtils: () => utils,
       appListings: {
@@ -177,7 +193,9 @@ vi.mock('~/utils/trpc', () => {
             if (mocks.queryError) {
               const error = mocks.queryErrorCode
                 ? Object.assign(new Error('forbidden'), { data: { code: mocks.queryErrorCode } })
-                : Object.assign(new Error('transient boom'), { data: { code: 'INTERNAL_SERVER_ERROR' } });
+                : Object.assign(new Error('transient boom'), {
+                    data: { code: 'INTERNAL_SERVER_ERROR' },
+                  });
               return {
                 data: undefined,
                 isLoading: false,
@@ -201,13 +219,25 @@ vi.mock('~/utils/trpc', () => {
               const data = input?.cursor
                 ? { items: STRANDED_PAGE2, nextCursor: null }
                 : { items: STRANDED_PAGE1, nextCursor: 'cur-2' };
-              return { data, isLoading: false, isFetching: false, error: null, refetch: mocks.refetch };
+              return {
+                data,
+                isLoading: false,
+                isFetching: false,
+                error: null,
+                refetch: mocks.refetch,
+              };
             }
             if (mocks.paged) {
               const data = input?.cursor
                 ? { items: PAGE2, nextCursor: null }
                 : { items: PAGE1, nextCursor: 'cur-2' };
-              return { data, isLoading: false, isFetching: false, error: null, refetch: mocks.refetch };
+              return {
+                data,
+                isLoading: false,
+                isFetching: false,
+                error: null,
+                refetch: mocks.refetch,
+              };
             }
             return {
               data: { items: ROWS, nextCursor: null },
@@ -242,6 +272,25 @@ vi.mock('~/utils/trpc', () => {
         purgeListing: { useMutation: mutation('purge') },
         approveExternalRequest: { useMutation: mutation('approve') },
         rejectExternalRequest: { useMutation: mutation('reject') },
+        // The owner-message proc RESOLVES WITH A VALUE (`{ recipientCount }`) that the
+        // composer's success handler reads, so it cannot use the shared `mutation`
+        // factory above — that one calls `onSuccess()` with no argument, which would
+        // throw inside the component and report as a render failure rather than as the
+        // mock gap it is.
+        messageAppOwner: {
+          useMutation: (opts?: {
+            onSuccess?: (r: { recipientCount: number }) => void | Promise<void>;
+            onError?: (e: { message: string }) => void;
+          }) => ({
+            mutate: (vars: unknown) => {
+              mocks.mutate('messageAppOwner', vars);
+              if (mocks.errorMode) opts?.onError?.({ message: 'boom' });
+              else void opts?.onSuccess?.({ recipientCount: 1 });
+            },
+            mutateAsync: vi.fn(),
+            isPending: false,
+          }),
+        },
       },
     },
   };
@@ -276,10 +325,41 @@ describe('AppListingsModerationTable — sections + kind-aware visibility', () =
     await expect.element(page.getByText('gone-ext')).toBeInTheDocument();
   });
 
+  /**
+   * 🔴 CALL-SITE ASSERTION for the Category column, which shipped the raw stored
+   * value while the store card one component over was already mapping it.
+   *
+   * ⚠️ FIXTURE LIMIT, stated rather than hidden: every marketplace label is a plain
+   * capitalisation of its key, so `utility` → `Utility` differs only in CASE and
+   * that is the maximum discrimination this taxonomy allows — unlike the rating
+   * ladder, where `pg13` → `PG-13` separates the map from every transformation.
+   * Case is still enough to kill the mutant that matters here (the call site
+   * reverting to `{row.category}`), which is what this assertion is for.
+   */
+  test('🔴 the Category column renders the display LABEL, never the stored value', async () => {
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    // 🔴 Await the render BEFORE reading `.elements()`, which is a synchronous
+    // snapshot: without this the read runs against an empty DOM and every
+    // assertion below passes or fails for reasons that have nothing to do with
+    // the label. (Caught by the positive control on the first run — it reported
+    // 0 badges.)
+    const badges = page.getByTestId('apps-listing-mod-category');
+    await expect.element(badges.first()).toBeInTheDocument();
+    // Positive control: the column really does render, so the "no raw value"
+    // assertion below is a discrimination and not a query wired to nothing.
+    const texts = badges.elements().map((el) => el.textContent);
+    expect(texts.length).toBeGreaterThan(0);
+    // Every fixture row stores `utility`; every badge must read `Utility`.
+    expect(new Set(texts)).toEqual(new Set(['Utility']));
+    expect(texts).not.toContain('utility');
+  });
+
   test('off-site-only actions are hidden on an on-site row (kind-aware)', async () => {
     renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     // Off-site approved → BOTH reset-to-pending + hide.
-    await expect.element(page.getByTestId('apps-mod-reset-to-pending-alpha-live')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-mod-reset-to-pending-alpha-live'))
+      .toBeInTheDocument();
     await expect.element(page.getByTestId('apps-mod-hide-alpha-live')).toBeInTheDocument();
     // On-site approved → reset-to-pending (now dual-kind, #3165) + hide, but NEVER the
     // off-site-only claim/purge (those don't apply to an on-site row).
@@ -344,15 +424,17 @@ describe('AppListingsModerationTable — sort + server-side filter', () => {
     renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
     await expect.element(page.getByTestId('apps-mod-listing-row-alpha-live')).toBeInTheDocument();
     // Default = the server keyset order (Bravo precedes Alpha) — NOT a client A→Z.
-    const before =
-      page.getByTestId('apps-mod-listing-row-alpha-live').element()
-        .compareDocumentPosition(page.getByTestId('apps-mod-listing-row-bravo-live').element());
+    const before = page
+      .getByTestId('apps-mod-listing-row-alpha-live')
+      .element()
+      .compareDocumentPosition(page.getByTestId('apps-mod-listing-row-bravo-live').element());
     expect(before & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy(); // bravo precedes alpha
 
     await page.getByRole('button', { name: 'Sort by App' }).first().click();
-    const after =
-      page.getByTestId('apps-mod-listing-row-alpha-live').element()
-        .compareDocumentPosition(page.getByTestId('apps-mod-listing-row-bravo-live').element());
+    const after = page
+      .getByTestId('apps-mod-listing-row-alpha-live')
+      .element()
+      .compareDocumentPosition(page.getByTestId('apps-mod-listing-row-bravo-live').element());
     // A→Z: Alpha now precedes Bravo.
     expect(after & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -480,7 +562,10 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
     await page.getByTestId('apps-mod-purge-confirm').fill('gone-ext');
     await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeEnabled();
     await page.getByTestId('apps-mod-action-confirm').click();
-    expect(mocks.mutate).toHaveBeenCalledWith('purge', { appListingId: 'apl_r', reason: 'malware' });
+    expect(mocks.mutate).toHaveBeenCalledWith('purge', {
+      appListingId: 'apl_r',
+      reason: 'malware',
+    });
   });
 
   test('a reason under the 3-char floor keeps the confirm disabled + shows the live counter', async () => {
@@ -504,15 +589,20 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
     ['relist', 'gone-ext'],
     ['claim', 'gone-ext'],
     ['purge', 'gone-ext'],
-  ])('the %s action shows the counter and disables the confirm under the floor', async (action, slug) => {
-    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
-    await page.getByTestId(`apps-mod-${action}-${slug}`).click();
-    await expect.element(page.getByText('0/3 characters minimum')).toBeInTheDocument();
-    await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
-    await page.getByTestId('apps-mod-action-reason').fill('xy');
-    await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
-    expect(mocks.mutate).not.toHaveBeenCalled();
-  });
+  ])(
+    'the %s action shows the counter and disables the confirm under the floor',
+    async (action, slug) => {
+      renderWithProviders(
+        <AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />
+      );
+      await page.getByTestId(`apps-mod-${action}-${slug}`).click();
+      await expect.element(page.getByText('0/3 characters minimum')).toBeInTheDocument();
+      await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
+      await page.getByTestId('apps-mod-action-reason').fill('xy');
+      await expect.element(page.getByTestId('apps-mod-action-confirm')).toBeDisabled();
+      expect(mocks.mutate).not.toHaveBeenCalled();
+    }
+  );
 
   test('a mutation error surfaces via showErrorNotification', async () => {
     mocks.errorMode = true;
@@ -520,9 +610,62 @@ describe('AppListingsModerationTable — inline actions fire the right mutation'
     await page.getByTestId('apps-mod-hide-alpha-live').click();
     await page.getByTestId('apps-mod-action-reason').fill('spammy content');
     await page.getByTestId('apps-mod-action-confirm').click();
-    expect(showError).toHaveBeenCalledWith(
-      expect.objectContaining({ title: 'Hide failed' })
-    );
+    expect(showError).toHaveBeenCalledWith(expect.objectContaining({ title: 'Hide failed' }));
+  });
+});
+
+/**
+ * The owner-message action. `appListings.messageAppOwner` shipped with no UI caller at
+ * all; this table is the surface that gives it one, and the properties worth pinning
+ * are that the button is on EVERY row (the proc has no status branch), that it opens
+ * the message composer rather than the reason-gated lifecycle modal, and that it fires
+ * with the row's LISTING ID.
+ */
+describe('AppListingsModerationTable — Message owner', () => {
+  test('every row offers the action, including a rejected/draft row that has no lifecycle action', async () => {
+    mocks.draftPending = true;
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    // A draft-with-a-pending-request (bucketed Pending) offers it…
+    await expect
+      .element(page.getByTestId('apps-mod-message-owner-draft-pending-ext'))
+      .toBeInTheDocument();
+    // …and so does the true ORPHAN draft, whose action cell was previously a dead `—`.
+    await page.getByTestId('apps-mod-listings-section-draft-toggle').click();
+    await expect
+      .element(page.getByTestId('apps-mod-message-owner-draft-orphan-ext'))
+      .toBeInTheDocument();
+  });
+
+  test('it is offered on an ON-SITE row too (the proc is dual-kind)', async () => {
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await expect
+      .element(page.getByTestId('apps-mod-message-owner-onsite-live'))
+      .toBeInTheDocument();
+  });
+
+  test('it opens the MESSAGE composer, not the reason-gated lifecycle modal', async () => {
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await page.getByTestId('apps-mod-message-owner-alpha-live').click();
+    await expect.element(page.getByTestId('apps-mod-message-subject')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-mod-message-body')).toBeInTheDocument();
+    // 🔴 The negative half: the shared reason field must NOT be on screen. Without it
+    // this test passes even if BOTH modals opened.
+    expect(page.getByTestId('apps-mod-action-reason').elements()).toHaveLength(0);
+  });
+
+  test('sending forwards the row LISTING ID (never the slug) with the composed text', async () => {
+    renderWithProviders(<AppListingsModerationTable openOffsiteReview={mocks.openOffsiteReview} />);
+    await page.getByTestId('apps-mod-message-owner-alpha-live').click();
+    await page.getByTestId('apps-mod-message-subject').fill('Your listing overstates a feature');
+    await page
+      .getByTestId('apps-mod-message-body')
+      .fill('The listing says it asks before spending; it never has. Please correct it.');
+    await page.getByTestId('apps-mod-message-send').click();
+    expect(mocks.mutate).toHaveBeenCalledWith('messageAppOwner', {
+      appListingId: 'apl_a',
+      subject: 'Your listing overstates a feature',
+      body: 'The listing says it asks before spending; it never has. Please correct it.',
+    });
   });
 });
 
@@ -573,7 +716,9 @@ describe('AppListingsModerationTable — pagination, status filter + honest trun
 
     // Clicking it fetches page 2 → the previously-unreachable off-site row appears.
     await page.getByTestId('apps-mod-load-more').click();
-    await expect.element(page.getByTestId('apps-mod-listing-row-reachable-ext')).toBeInTheDocument();
+    await expect
+      .element(page.getByTestId('apps-mod-listing-row-reachable-ext'))
+      .toBeInTheDocument();
     expect(page.getByTestId('apps-mod-load-more').elements()).toHaveLength(0);
   });
 

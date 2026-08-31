@@ -1,8 +1,6 @@
-import type { MantineColor } from '@mantine/core';
 import * as z from 'zod';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { ExternalModerationType } from '~/server/common/enums';
-import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
@@ -21,9 +19,41 @@ export const reportOwnershipDetailsSchema = baseDetailSchema.extend({
   establishInterest: z.boolean().optional(),
 });
 
-export const reportTosViolationDetailsSchema = baseDetailSchema.extend({
-  violation: z.string(),
-});
+/**
+ * The violations the TOS report form offers, in display order.
+ *
+ * Here rather than in the form because the rule below keys on one of these strings: with the list in
+ * the component, "require a comment on real-person reports" would be a literal duplicated across a
+ * component and a schema, and renaming the option in one place would silently switch the rule off.
+ */
+export const TOS_VIOLATIONS = [
+  'Depiction of real-person likeness',
+  'Graphic violence',
+  'False impersonation',
+  'Deceptive content',
+  'Sale of illegal substances',
+  'Child abuse and exploitation',
+  'Photorealistic depiction of a minor',
+  'Prohibited concepts',
+] as const;
+
+export const REAL_PERSON_VIOLATION = TOS_VIOLATIONS[0];
+
+export const reportTosViolationDetailsSchema = baseDetailSchema
+  .extend({
+    violation: z.string(),
+  })
+  // A real-person report with no comment names nobody, and a moderator cannot act on "this is someone
+  // real" — they need who. Enforced here, not only in the form, because the form is not the only way
+  // this shape arrives.
+  .superRefine((details, ctx) => {
+    if (details.violation === REAL_PERSON_VIOLATION && !details.comment?.trim())
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['comment'],
+        message: 'Tell us who this depicts — a name, a profile, or how you recognise them.',
+      });
+  });
 
 export const reportClaimDetailsSchema = baseDetailSchema.extend({
   email: z.string().email(),
@@ -35,8 +65,45 @@ export const reportAdminAttentionDetailsSchema = baseDetailSchema.extend({
 
 export const reportSpamDetailsSchema = baseDetailSchema;
 
+/**
+ * A sticker someone paid to place on this image.
+ *
+ * `placementId` is required, not optional. An image can carry several
+ * placements, and a report that does not say which one leaves a moderator
+ * guessing — or removing the wrong person's sticker, which costs them money.
+ */
+export const reportStickerPlacementDetailsSchema = baseDetailSchema.extend({
+  // Coerced, because a radio group hands back a string and there is nothing on
+  // the form path that converts it. `z.number()` typechecks clean here — `Radio`
+  // takes `string | number` — and then rejects at submit, so the report can be
+  // filled in and never sent.
+  // The message matters: with no placements on the image the field renders with
+  // no options, and `z.coerce.number()` on an absent value is `Number(undefined)`
+  // — NaN — so the default text reads "expected number, received NaN" at the one
+  // moment a reporter needs to be told what to do.
+  placementId: z.coerce
+    .number({ error: 'Choose which sticker you are reporting.' })
+    .int()
+    .positive(),
+  /**
+   * Which half of the placement is being reported.
+   *
+   * A sticker and the note attached to it are separately objectionable — the
+   * artwork can be fine and the note abusive, which is the griefing case Ellie
+   * raised — and a moderator needs to know which one they are being sent to
+   * look at, because the remedies differ: the owner can hide a note without the
+   * sticker coming off.
+   *
+   * Carried in the details rather than as its own `ReportReason` so this needs
+   * no enum migration, and so both reports still land on the image with the
+   * same placement id a moderator acts on.
+   */
+  target: z.enum(['sticker', 'comment']).default('sticker'),
+});
+
 export const reportAutomatedDetailsSchema = baseDetailSchema.extend({
-  externalId: z.string(),
+  /** The scanner's own job id. Absent when the flag came from a list we hold ourselves. */
+  externalId: z.string().optional(),
   externalType: z.enum(ExternalModerationType),
   entityId: z.number(),
   tags: z.array(z.string()),
@@ -98,6 +165,11 @@ export const reportAutomatedSchema = baseSchema.extend({
   details: reportAutomatedDetailsSchema,
 });
 
+export const reportStickerPlacementSchema = baseSchema.extend({
+  reason: z.literal(ReportReason.StickerPlacement),
+  details: reportStickerPlacementDetailsSchema,
+});
+
 // #endregion
 
 export type CreateReportInput = z.infer<typeof createReportInputSchema>;
@@ -110,57 +182,13 @@ export const createReportInputSchema = z.discriminatedUnion('reason', [
   reportCsamSchema,
   reportAutomatedSchema,
   reportSpamSchema,
+  reportStickerPlacementSchema,
 ]);
-
-export type SetReportStatusInput = z.infer<typeof setReportStatusSchema>;
-export const setReportStatusSchema = z.object({
-  id: z.number(),
-  status: z.enum(ReportStatus),
-});
-
-export type BulkUpdateReportStatusInput = z.infer<typeof bulkUpdateReportStatusSchema>;
-export const bulkUpdateReportStatusSchema = z.object({
-  ids: z.number().array(),
-  status: z.enum(ReportStatus),
-});
-
-export type GetReportsInput = z.infer<typeof getReportsSchema>;
-export const getReportsSchema = getAllQuerySchema.extend({
-  type: z.enum(ReportEntity),
-  filters: z
-    .object({
-      id: z.string(),
-      value: z.unknown(),
-    })
-    .array()
-    .optional(),
-  sort: z
-    .object({
-      id: z.string(),
-      desc: z.boolean(),
-    })
-    .array()
-    .optional(),
-});
 
 export type GetReportCountInput = z.infer<typeof getReportCount>;
 export const getReportCount = z.object({
   type: z.enum(ReportEntity),
   statuses: z.enum(ReportStatus).array(),
-});
-
-export const reportStatusColorScheme: Record<ReportStatus, MantineColor> = {
-  [ReportStatus.Unactioned]: 'green',
-  [ReportStatus.Actioned]: 'red',
-  [ReportStatus.Processing]: 'orange',
-  [ReportStatus.Pending]: 'yellow',
-};
-
-export type UpdateReportSchema = z.infer<typeof updateReportSchema>;
-export const updateReportSchema = z.object({
-  id: z.number(),
-  status: z.enum(ReportStatus),
-  internalNotes: z.string().nullish(),
 });
 
 export type CreateEntityAppealInput = z.output<typeof createEntityAppealSchema>;

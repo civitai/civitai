@@ -33,9 +33,10 @@
 //
 //   LABELS (EVENTLOOP_LONGTASK_LABELS=true, requires armed): per-procedure
 //     attribution via AsyncLocalStorage + async_hooks. Handlers set a short label
-//     (tRPC procedure path / API route) via runWithLongTaskLabel, which opens an
-//     ALS scope. An async_hooks hook then attributes blocks from WITHIN the
-//     blocking resource's own execution (the `blocked-at` technique):
+//     (tRPC procedure path / API route / cron job name) via runWithLongTaskLabel,
+//     which opens an ALS scope. The distinct label values that reach Prometheus are
+//     capped — see createLabelAdmitter. An async_hooks hook then attributes blocks
+//     from WITHIN the blocking resource's own execution (the `blocked-at` technique):
 //       - init(asyncId): runs synchronously in the CREATING (request) context, so
 //         AsyncLocalStorage.getStore() yields the request's label there. We capture
 //         label_by_asyncId[asyncId] = currentLabel() at resource-creation time.
@@ -141,6 +142,11 @@ function resolveStackSample(): number {
  * block — so a descheduled pod doesn't emit a fake multi-second "block". The
  * authoritative lag signal remains the monitorEventLoopDelay histogram. Tunable
  * via EVENTLOOP_LONGTASK_SUSPEND_MS; <=0 disables the cap.
+ *
+ * COUPLED TO THE HISTOGRAM BUCKETS: the cap is the largest value the duration
+ * histogram can ever observe, so raising it past
+ * LONGTASK_MAX_SUPPORTED_SUSPEND_CAP_MS without adding buckets pushes the newly
+ * admitted band into `+Inf`, where histogram_quantile() cannot resolve it.
  */
 function resolveSuspendCapMs(): number {
   const parsed = Number.parseInt(process.env.EVENTLOOP_LONGTASK_SUSPEND_MS ?? '', 10);
@@ -161,6 +167,40 @@ function resolveStackMapCap(): number {
 function resolveLabelMapCap(): number {
   const parsed = Number.parseInt(process.env.EVENTLOOP_LONGTASK_LABEL_MAP_CAP ?? '', 10);
   return Number.isFinite(parsed) && parsed >= 100 ? parsed : 50_000;
+}
+
+/**
+ * Hard ceiling on the number of DISTINCT `label` values the labeled series may ever
+ * emit from one process, inclusive of the LONGTASK_LABEL_OVERFLOW bucket. Not
+ * env-tunable: an operator raising the soft cap past this would be trading a
+ * diagnostic for a TSDB incident, so the ceiling is a code constant.
+ *
+ * Series budget per process: the counter emits <= cap series; the histogram emits
+ * cap * (LONGTASK_DURATION_BUCKETS.length + 3) (the `le` bounds plus +Inf/_sum/_count).
+ */
+export const LONGTASK_LABEL_CARDINALITY_MAX = 256;
+
+/** Default soft cap (see EVENTLOOP_LONGTASK_LABEL_CARDINALITY_CAP). */
+export const LONGTASK_LABEL_CARDINALITY_DEFAULT = 64;
+
+/** The single bucket every label beyond the cap (or of an unknown shape) collapses into. */
+export const LONGTASK_LABEL_OVERFLOW = 'other';
+
+/**
+ * The only label shapes admitted as their own series. A label not carrying one of
+ * these prefixes is collapsed WITHOUT consuming a slot, so a caller that ever passes
+ * an interpolated value cannot evict the real routes from the admitted set.
+ */
+export const LONGTASK_LABEL_PREFIXES = ['trpc:', 'rest:', 'job:'] as const;
+
+const LONGTASK_LABEL_MAX_LENGTH = 96;
+/** tRPC procedure paths, REST route paths and job names, plus the prefix separator. */
+const LONGTASK_LABEL_CHARSET = /^[A-Za-z0-9._\-/:]+$/;
+
+function resolveLabelCardinalityCap(): number {
+  const parsed = Number.parseInt(process.env.EVENTLOOP_LONGTASK_LABEL_CARDINALITY_CAP ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return LONGTASK_LABEL_CARDINALITY_DEFAULT;
+  return Math.min(parsed, LONGTASK_LABEL_CARDINALITY_MAX);
 }
 
 function resolvePodName(): string {
@@ -437,11 +477,56 @@ function installStackHook(sampleEvery: number, mapCap: number): void {
 // Prometheus metrics (registered via the existing prom/client helpers)
 // ---------------------------------------------------------------------------
 
+/**
+ * Highest EVENTLOOP_LONGTASK_SUSPEND_MS value the duration buckets below are sized
+ * for, in milliseconds.
+ *
+ * The cap and the top bucket are COUPLED and must move together:
+ *   - A gap whose excess is >= the suspension cap is classified as `suspension`
+ *     (see classifyDrift) and never reaches the histogram at all. So a bucket
+ *     ABOVE the cap can never be observed — it would be a permanently-empty series.
+ *   - Conversely, everything between the top finite bucket and the cap collapses
+ *     into `+Inf`. histogram_quantile() then reports exactly the top bound and
+ *     cannot tell an 11s block from a 29s one.
+ *
+ * Therefore: top finite bucket == the highest cap we intend to run.
+ * If the deployed cap is ever raised past this, raise this constant AND add the
+ * matching buckets in the same change. Both directions are guarded by the
+ * "duration buckets cover the suspension cap" suite in
+ * src/server/__tests__/eventloop-longtask-metrics.test.ts.
+ *
+ * Applies to BOTH histograms: installLabelHook receives the same resolved
+ * suspendCapMs as the drift timer (see armEventLoopLongTaskDetector).
+ */
+export const LONGTASK_MAX_SUPPORTED_SUSPEND_CAP_MS = 30_000;
+
+/**
+ * Shared duration buckets (seconds) for BOTH long-task histograms.
+ *
+ * The low end (50ms..2s) is where routine pins live. The 5/10/20/30 tail exists
+ * because the deployed suspension cap was raised from the 5s default to 30s,
+ * which admits a real multi-second freeze class that used to be discarded as
+ * "suspension" before it ever reached a histogram. With the old ceiling of 10 the
+ * entire 10-30s band landed in `+Inf` and had no duration resolution.
+ *
+ * COST: each bucket is one extra time series per label combination per process.
+ * The drift histogram's `label` is the constant 'unlabeled' (see recordDrift), so
+ * this is +1 series per added bucket per process on that family.
+ *
+ * NOT RETROACTIVE: changing this does not rewrite existing series. Pods started
+ * before the change keep emitting the old `le` set, so histogram_quantile() over a
+ * window spanning the rollout mixes two bucket layouts and is not meaningful until
+ * every process has restarted. `_sum` and `_count` are unaffected either way.
+ */
+export const LONGTASK_DURATION_BUCKETS: readonly number[] = [
+  0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30,
+];
+
 // Long-task duration histogram, labeled by attributed operation. Cardinality is
 // bounded: in base-armed mode every block is 'unlabeled' (one series); with the
 // labels tier on, `label` is the same fixed tRPC-procedure / route enum that
-// trpc_procedure_duration already uses. Buckets target the 50ms..several-seconds
-// range that matters for pins.
+// trpc_procedure_duration already uses. Buckets target the 50ms..suspension-cap
+// range that matters for pins — see LONGTASK_DURATION_BUCKETS.
 const longTaskHistogram = registerInstrumentationMetric(
   PROM_PREFIX + 'eventloop_longtask_duration_seconds',
   () =>
@@ -449,7 +534,7 @@ const longTaskHistogram = registerInstrumentationMetric(
       name: PROM_PREFIX + 'eventloop_longtask_duration_seconds',
       help: 'Synchronous event-loop blocks over threshold, by attributed operation label. NOTE: drift-timer based — counts include GC pauses and (below the suspension cap) brief CPU-steal, not only JS blocks. The authoritative lag signal is civitai_app_eventloop_delay_ms.',
       labelNames: ['label'] as const,
-      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
+      buckets: [...LONGTASK_DURATION_BUCKETS],
       // Register into the shared cross-graph registry instead of the default
       // (per-graph) globalRegistry, so the request-graph /metrics scrape sees the
       // observes made from the instrumentation-graph detector loop.
@@ -506,7 +591,7 @@ const labeledHistogram = registerInstrumentationMetric(
       name: PROM_PREFIX + 'eventloop_longtask_labeled_duration_seconds',
       help: 'Per-resource (async_hooks-attributed) synchronous event-loop blocks over threshold, by tRPC-procedure/route label. SEPARATE attribution view — only present when EVENTLOOP_LONGTASK_LABELS is armed. Does NOT sum to eventloop_longtask_duration_seconds (the loop-level drift total); it is "which routes contributed long single-callback blocks", not total blocked time.',
       labelNames: ['label'] as const,
-      buckets: [0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
+      buckets: [...LONGTASK_DURATION_BUCKETS],
       registers: [instrumentationRegistry],
     })
 );
@@ -534,6 +619,79 @@ const labeledEvictedCounter = registerInstrumentationMetric(
       help: 'Active (started-but-not-finished) asyncId->label entries evicted from the bounded label map, whose labeled block is consequently lost from the labeled series (still counted as unlabeled by the drift path).',
       registers: [instrumentationRegistry],
     })
+);
+
+// Count of labeled blocks whose label was collapsed into LONGTASK_LABEL_OVERFLOW,
+// either because it did not carry a known prefix or because the admitted set was
+// already at its cap. Non-zero means the labeled view is under-resolved (a real route
+// is hiding inside `other`) — the Axiom log line still carries the raw label.
+const labelCappedCounter = registerInstrumentationMetric(
+  PROM_PREFIX + 'eventloop_longtask_label_capped_total',
+  () =>
+    new client.Counter({
+      name: PROM_PREFIX + 'eventloop_longtask_label_capped_total',
+      help: 'Labeled blocks whose label was collapsed into the "other" bucket by the cardinality cap (unknown label shape, or the per-process distinct-label cap was reached).',
+      registers: [instrumentationRegistry],
+    })
+);
+
+// ---------------------------------------------------------------------------
+// Label cardinality enforcement
+// ---------------------------------------------------------------------------
+
+/**
+ * Bounds the number of DISTINCT `label` values that ever reach the labeled metrics.
+ *
+ * The asyncId->label map cap (resolveLabelMapCap) bounds MEMORY; it does not bound
+ * Prometheus cardinality, which is what an unbounded label value blows up. This is
+ * the separate, structural bound on the series count.
+ */
+export type LabelAdmitter = {
+  /** Returns the label to emit: `raw` if admitted, else LONGTASK_LABEL_OVERFLOW. */
+  admit: (raw: string) => string;
+  /** Distinct labels currently admitted, including the overflow bucket. */
+  size: () => number;
+};
+
+/**
+ * @param cap        distinct labels to admit, INCLUSIVE of the overflow bucket.
+ *                   Clamped to [1, LONGTASK_LABEL_CARDINALITY_MAX].
+ * @param onOverflow called on every collapsed label (wired to labelCappedCounter).
+ */
+export function createLabelAdmitter(cap: number, onOverflow?: () => void): LabelAdmitter {
+  const effectiveCap = Math.max(1, Math.min(cap, LONGTASK_LABEL_CARDINALITY_MAX));
+  // Seeded with the overflow bucket so `admitted.size` IS the number of series the
+  // metrics can emit — the cap needs no off-by-one reasoning at the call site.
+  const admitted = new Set<string>([LONGTASK_LABEL_OVERFLOW]);
+
+  function hasKnownPrefix(raw: string): boolean {
+    return LONGTASK_LABEL_PREFIXES.some((p) => raw.length > p.length && raw.startsWith(p));
+  }
+
+  return {
+    admit(raw) {
+      if (admitted.has(raw)) return raw;
+      if (
+        raw.length > LONGTASK_LABEL_MAX_LENGTH ||
+        !hasKnownPrefix(raw) ||
+        !LONGTASK_LABEL_CHARSET.test(raw)
+      ) {
+        onOverflow?.();
+        return LONGTASK_LABEL_OVERFLOW;
+      }
+      if (admitted.size >= effectiveCap) {
+        onOverflow?.();
+        return LONGTASK_LABEL_OVERFLOW;
+      }
+      admitted.add(raw);
+      return raw;
+    },
+    size: () => admitted.size,
+  };
+}
+
+let labelAdmitter = createLabelAdmitter(resolveLabelCardinalityCap(), () =>
+  labelCappedCounter.inc()
 );
 
 // monitorEventLoopDelay() histogram, surfaced as collect()-based gauges (matching
@@ -732,17 +890,24 @@ export function recordDrift(
  * Keeping the labeled series separate makes the drift totals accurate and alertable
  * regardless of tier, and the labeled series an independent attribution view.
  *
- * Cardinality: `label` is the bounded tRPC-procedure/route set the callers pass to
- * runWithLongTaskLabel — never an unbounded value. 'unlabeled' is excluded here (the
- * hook only tracks request-scoped resources) so it stays the drift timer's series.
+ * Cardinality is ENFORCED here, not assumed of the callers: every label passes through
+ * the admitter, so the labeled series can never exceed LONGTASK_LABEL_CARDINALITY_MAX
+ * distinct values per process however a call site is written. 'unlabeled' never reaches
+ * this path (the hook only tracks request-scoped resources) so it stays the drift
+ * timer's series.
+ *
+ * The structured log gets the RAW label while the metric gets the admitted one: a log
+ * line has no cardinality cost, so a route hiding inside the `other` bucket is still
+ * nameable from Axiom.
  */
 export function recordLabeledBlock(
   blockedMs: number,
   label: string,
   opts: { logMinMs: number; threshold: number; logPerMin: number }
 ): void {
-  labeledCounter.inc({ label });
-  labeledHistogram.observe({ label }, blockedMs / 1000);
+  const seriesLabel = labelAdmitter.admit(label);
+  labeledCounter.inc({ label: seriesLabel });
+  labeledHistogram.observe({ label: seriesLabel }, blockedMs / 1000);
   if (blockedMs >= opts.logMinMs) {
     tryLog(blockedMs, label, opts.threshold, opts.logPerMin);
   }
@@ -827,7 +992,11 @@ export function registerEventLoopLongTaskDetector(): void {
     console.log(
       `[eventloop-longtask] armed: threshold=${threshold}ms tick=${tickMs}ms ` +
         `logPerMin=${logPerMin} logMinMs=${logMinMs} suspendCap=${suspendCapMs}ms ` +
-        `labels=${labelsEnabled ? `on(cap=${labelMapCap})` : 'off'} ` +
+        `labels=${
+          labelsEnabled
+            ? `on(mapCap=${labelMapCap},labelCardinalityCap=${resolveLabelCardinalityCap()})`
+            : 'off'
+        } ` +
         `stacks=${stacksEnabled ? `on(sample=1/${stackSample},cap=${stackMapCap})` : 'off'}`
     );
   } catch (err) {
@@ -851,6 +1020,19 @@ export function __setLongTaskLabelsArmedForTests(value: boolean): () => void {
   longTaskLabelsArmed = value;
   return () => {
     longTaskLabelsArmed = prev;
+  };
+}
+
+/**
+ * Test-only: swap the module-level admitter for one with a smaller cap, so a test can
+ * drive recordLabeledBlock past the cap without emitting 64 real series. Returns a
+ * restore fn.
+ */
+export function __setLongTaskLabelAdmitterForTests(cap: number): () => void {
+  const prev = labelAdmitter;
+  labelAdmitter = createLabelAdmitter(cap, () => labelCappedCounter.inc());
+  return () => {
+    labelAdmitter = prev;
   };
 }
 

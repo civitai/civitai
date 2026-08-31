@@ -1,19 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-
-// Verifies `resolveChallengeReviewInputs` — the category+nsfw resolution extracted out of
-// reviewEntriesForChallenge (~/server/jobs/daily-challenge-processing.ts) so the mod re-review
-// endpoint (~/pages/api/mod/daily-challenge/re-review.ts) can mirror it exactly. Any challenge
-// with a valid judgingCategories value is judged by it regardless of source; a malformed/null
-// value falls back to `categories: undefined` (fixed theme/wittiness/humor/aesthetic rubric).
-
-// challenge-helpers.ts also imports dbRead/dbWrite/redis for its other (DB-backed) exports —
-// stub those so importing the module for this pure-function test doesn't construct real
-// Prisma/Redis clients.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('~/server/redis/client', () => ({ redis: {}, REDIS_KEYS: {} }));
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const { resolveChallengeReviewInputs } = await import('./challenge-helpers');
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');
+const { DEFAULT_CATEGORY_ROWS } = await import('~/shared/constants/challenge.constants');
 
 // Stored shape: label/criteria were derived server-side at write time and persisted.
 const VALID_CATEGORIES = [
@@ -67,6 +58,16 @@ describe('resolveChallengeReviewInputs — categories resolution', () => {
       allowedNsfwLevel: 1,
     });
     expect(categories).toBeUndefined();
+  });
+
+  // The seeded default rubric is not special-cased — it resolves like any other stored rubric.
+  it('the seeded default rubric is used like any other', async () => {
+    const { categories } = await resolveChallengeReviewInputs({
+      source: ChallengeSource.System,
+      judgingCategories: DEFAULT_CATEGORY_ROWS,
+      allowedNsfwLevel: 1,
+    });
+    expect(categories?.map((c) => c.key)).toEqual(['theme', 'wittiness', 'humor', 'aesthetic']);
   });
 
   it('maps key/label/criteria to the key/name/criteria shape generateReview expects', async () => {

@@ -2,10 +2,11 @@ import type { SyntheticEvent } from 'react';
 import { forwardRef, useCallback, useImperativeHandle, useRef } from 'react';
 import styles from './EdgeImage.module.scss';
 import clsx from 'clsx';
+import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 
-export type EdgeImageProps = React.HTMLAttributes<HTMLImageElement> & {
+export type EdgeImageProps = React.ImgHTMLAttributes<HTMLImageElement> & {
   src: string;
   fadeIn?: boolean;
   options: Omit<EdgeUrlProps, 'src'>;
@@ -14,7 +15,10 @@ export type EdgeImageProps = React.HTMLAttributes<HTMLImageElement> & {
 };
 
 export const EdgeImage = forwardRef<HTMLImageElement, EdgeImageProps>(
-  ({ className, fadeIn, src, options, style, onLoad, onError, imageId, ...props }, forwardedRef) => {
+  (
+    { className, fadeIn, src, options, style, onLoad, onError, imageId, ...props },
+    forwardedRef
+  ) => {
     // const ref = useRef<HTMLImageElement>(null);
     // TODO - determine how we can animate cosmetics
     const { anim, ...rest } = options ?? {};
@@ -45,11 +49,7 @@ export const EdgeImage = forwardRef<HTMLImageElement, EdgeImageProps>(
         src={url}
         style={{ maxWidth: options?.width ? options.width : undefined, ...style }}
         onDragStart={(e) => {
-          e.dataTransfer.setData('text/uri-list', url);
-          if (imageId) {
-            e.dataTransfer.setData('application/x-civitai-media-id', String(imageId));
-            e.dataTransfer.setData('application/x-civitai-media-type', 'image');
-          }
+          setMediaDragData(e.dataTransfer, { url, mediaId: imageId || undefined, type: 'image' });
         }}
         {...props}
       />

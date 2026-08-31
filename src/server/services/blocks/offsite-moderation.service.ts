@@ -19,8 +19,26 @@ import {
   type ResolveReportInput,
   type UnpublishOwnListingInput,
 } from '~/server/schema/blocks/offsite-moderation.schema';
+import { safeCollaboratorQuery } from '~/server/services/blocks/app-access.service';
+import { recordOwnershipEvent } from '~/server/services/blocks/app-collaborator.service';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
-import { assertListingAssetsScanCleanInTx } from '~/server/services/blocks/app-listing-assets.service';
+import {
+  assertListingAssetsScanCleanInTx,
+  assertListingMeetsFloor,
+  resolveListingRatingFloorInTx,
+} from '~/server/services/blocks/app-listing-assets.service';
+import { assertOffsiteListingActionableInTx } from '~/server/services/blocks/app-listing-actionable.service';
+import {
+  isOwnerUnpublishAction,
+  readLastStatusChangingModerationEvent,
+} from '~/server/services/blocks/app-listing-owner-unpublish';
+import {
+  REPUBLISH_REVIEW_DETAIL,
+  type RepublishReviewReason,
+  buildApprovedAssetSnapshot,
+  readRecordedAssetBaseline,
+  resolveRepublishReviewReason,
+} from '~/server/services/blocks/app-listing-approved-assets';
 import {
   newAppListingModerationEventId,
   newAppListingPublishRequestId,
@@ -279,9 +297,17 @@ function requireModReason(raw: string): string {
 
 /**
  * Load + classify an off-site listing for a mod action. A missing listing AND an
- * on-site (kind!=='offsite') listing BOTH raise the SAME generic NOT_FOUND — the
- * kind guard (delist/relist/purge are offsite-only, §8 of the scope doc) must not
- * let a mod caller probe a listing's kind or existence through this surface.
+ * on-site (kind!=='offsite') listing BOTH raise the SAME generic NOT_FOUND — the kind
+ * guard must not let a mod caller probe a listing's kind or existence through this
+ * surface.
+ *
+ * 🔴 CALLERS, CORRECTED — this used to say the guard covered "delist/relist/purge", and
+ * delist/relist have not gone through here for some time: they are DUAL-KIND and use
+ * {@link classifyListingForAction} instead (see its header). Grepping the real callers
+ * gives `claimListing`, `purgeListing` and the off-site `resetListingToPending`, all
+ * three genuinely off-site only. Naming a caller that does not call it is how the
+ * "everything here is offsite-only" reading survived — and clients now depend on
+ * delist/relist being dual-kind, so the sentence was actively misleading.
  */
 async function classifyOffsiteListing(
   appListingId: string
@@ -291,17 +317,170 @@ async function classifyOffsiteListing(
     select: { id: true, kind: true, status: true, slug: true },
   });
   if (!listing || listing.kind !== 'offsite') {
-    throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+    throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
   }
   return { id: listing.id, status: listing.status, slug: listing.slug };
 }
 
 /**
- * Load + classify a listing for the DUAL-KIND delist/relist actions (which apply to
- * BOTH kinds, unlike claim/purge which stay offsite-only via `classifyOffsiteListing`).
+ * The Prisma predicate for "a listing a mod may PURGE".
+ *
+ * Two disjoint shapes:
+ *   - any OFF-SITE listing (unchanged — purge has always been the off-site final expunge);
+ *   - an ON-SITE **orphan pre-approval draft**: `status:'draft'` + `appBlockId: null`
+ *     (never approved, so no backing `AppBlock`) + `revisionOfId: null`.
+ *
+ * 🔴 `revisionOfId: null` IS LOAD-BEARING — it is the whole difference between this and
+ * `deleteOnsiteDraftListingForSlug`'s clause, which looks identical and is NOT safe to
+ * reuse here. A SHADOW media revision (`beginListingRevision`) is created with the
+ * PARENT's `kind`, `status:'draft'` and `appBlockId: null` — so it matches every other
+ * term. That clause gets away with it only because it resolves BY SLUG and a shadow's
+ * slug is a synthetic `rev-<ulid>`; a purge resolves BY ID, so without this term a mod
+ * could hard-delete an in-flight media revision of a LIVE, approved on-site app.
+ *
+ * 🔴 And the on-site arm must NEVER widen past `draft`: an `approved`/`removed` on-site
+ * listing has a backing `AppBlock` whose runtime serving gate reads `app_blocks.status`,
+ * so deleting the listing row would hide the store card while leaving the hosted app
+ * serving. `delistListing` is the correct action for those, and it is deliberately
+ * status-guarded to `{approved, removed}` — the two sets do not overlap.
+ *
+ * 🔴 "NOT UNDER REVIEW" IS **NOT** IN THIS PREDICATE, AND CANNOT BE. It is enforced
+ * separately by {@link assertNoLivePendingSubmission}. An earlier revision of this code put
+ * `publishRequests: { none: { status: 'pending' } }` right here, which reads correctly and is
+ * INERT: `AppListing.publishRequests` is the `AppListingPublishRequest` relation, whose
+ * `appListingId` is documented in the schema as "On-site: NULL until approve". The live
+ * submission behind an on-site pre-approval draft is an **`AppBlockPublishRequest`**, joined to
+ * the listing by the shared `@unique` SLUG and by nothing else — there is no FK for a Prisma
+ * relation filter to traverse. So on the one shape this arm accepts, that relation is provably
+ * always empty, `none` is trivially true, and the guard permitted exactly what it claimed to
+ * forbid. Do not "restore" it here.
+ */
+const PURGEABLE_LISTING_WHERE = {
+  OR: [
+    { kind: 'offsite' },
+    { kind: 'onsite', status: 'draft', appBlockId: null, revisionOfId: null },
+  ],
+} satisfies Prisma.AppListingWhereInput;
+
+/** Does an already-loaded row satisfy {@link PURGEABLE_LISTING_WHERE}? Kept beside it so the
+ * in-memory guard and the SQL guard can only drift together. The "not under review" half is
+ * NOT here — see {@link assertNoLivePendingSubmission}. */
+function isPurgeableListing(row: {
+  kind: string;
+  status: string;
+  appBlockId: string | null;
+  revisionOfId: string | null;
+}): boolean {
+  if (row.kind === 'offsite') return true;
+  return (
+    row.kind === 'onsite' &&
+    row.status === 'draft' &&
+    row.appBlockId === null &&
+    row.revisionOfId === null
+  );
+}
+
+/**
+ * 🔴 THE ORPHAN HALF OF "ORPHAN DRAFT", and the reason it is a separate READ rather than a
+ * term of {@link PURGEABLE_LISTING_WHERE}.
+ *
+ * A first-version on-site draft whose `AppBlockPublishRequest` is still `pending` is a
+ * submission UNDER REVIEW, not an abandoned one. Purging it hard-deletes the listing out from
+ * under a live request and RELEASES THE SLUG, while the request still names it; approving that
+ * request afterwards falls back to the legacy approve-time create path and re-mints the listing
+ * on a slug another developer may have taken in between. The correct order is
+ * reject-or-withdraw first, THEN purge.
+ *
+ * It cannot live in the `where`: the join is `AppBlockPublishRequest.slug === AppListing.slug`
+ * with no foreign key, and Prisma relation filters can only traverse declared relations. So
+ * this is an explicit query, and the consequence is that the `deleteMany` guard CANNOT carry
+ * this term — the delete is protected by this check running earlier in the SAME transaction,
+ * not by the delete's own predicate. That is a genuinely weaker guarantee than the other terms
+ * have, and it is stated here rather than papered over.
+ *
+ * 🔴 RESIDUAL RACE, KNOWN AND NOT CLOSED. This is a plain read under READ COMMITTED with no row
+ * lock, so a `submitVersion` that commits between this check and the `deleteMany` yields exactly
+ * the state the check exists to prevent: a pending request whose listing is gone and whose slug
+ * is released. Window is milliseconds.
+ *
+ * 🔴 And the obvious fix does NOT work as a one-sided change. A slug-scoped
+ * `pg_advisory_xact_lock` taken here excludes nothing unless `submitVersion` takes the SAME
+ * lock — a lock is mutual exclusion only between parties that both acquire it, and that path
+ * currently takes none. Closing this properly means touching the submit path too, which is why
+ * it is disclosed rather than half-fixed: a lock added on this side alone would read like a fix
+ * and change nothing, which is the failure mode this whole guard already had once.
+ *
+ * Off-site is exempt by construction: an off-site draft's request DOES carry `appListingId`,
+ * its purge arm is reachable only at `status:'removed'`, and the pre-existing behaviour there
+ * is deliberately unchanged.
+ */
+async function assertNoLivePendingSubmission(
+  client: Pick<typeof dbWrite, 'appBlockPublishRequest'>,
+  listing: { kind: string; slug: string }
+): Promise<void> {
+  if (listing.kind !== 'onsite') return;
+  const live = await client.appBlockPublishRequest.findFirst({
+    where: { slug: listing.slug, status: 'pending' },
+    select: { id: true },
+  });
+  if (live) {
+    // 🔴 ACTIONABLE, not the generic NOT_FOUND the other refusals use — and the difference is
+    // deliberate. The generic message exists so a caller cannot PROBE a listing's kind or
+    // status; that rationale does not apply here, because this surface is
+    // `moderatorProcedure` + an `isModerator` recheck and the mod table now ships this very
+    // fact to that very audience as `ModerationListingRow.hasPendingBlockRequest`. Hiding it
+    // in the error would conceal nothing and would leave the moderator staring at "not found"
+    // for a listing visibly on their screen — reachable from ordinary replica lag between the
+    // table read and the click. Mirrors `resetOnsiteListingToPending`'s wording for the same
+    // condition.
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'A review is already pending for this app — reject or withdraw it before purging.'
+    );
+  }
+}
+
+/** The `select` both purge reads use — every field {@link isPurgeableListing} inspects, so
+ * neither call site can hand it an `undefined` the guard would then judge. */
+const PURGE_CLASSIFY_SELECT = {
+  kind: true,
+  status: true,
+  slug: true,
+  userId: true,
+  appBlockId: true,
+  revisionOfId: true,
+  name: true,
+} satisfies Prisma.AppListingSelect;
+
+/**
+ * Load + classify a listing for PURGE. A missing listing, and any listing outside
+ * {@link PURGEABLE_LISTING_WHERE}, BOTH raise the SAME generic NOT_FOUND — same
+ * info-leak parity as `classifyOffsiteListing`, so a mod caller cannot probe a
+ * listing's kind, status or existence through this surface.
+ */
+async function classifyPurgeableListing(
+  appListingId: string
+): Promise<{ kind: string; status: string; slug: string }> {
+  const listing = await dbRead.appListing.findUnique({
+    where: { id: appListingId },
+    select: PURGE_CLASSIFY_SELECT,
+  });
+  if (!listing || !isPurgeableListing(listing)) {
+    throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
+  }
+  // Fail-fast on the replica. The authoritative repeat runs inside the tx on the PRIMARY.
+  await assertNoLivePendingSubmission(dbRead, listing);
+  return { kind: listing.kind, status: listing.status, slug: listing.slug };
+}
+
+/**
+ * Load + classify a listing for the DUAL-KIND delist/relist actions (which apply to BOTH
+ * kinds at any status, unlike `claim` — still offsite-only via `classifyOffsiteListing` —
+ * and `purge`, which takes any off-site listing but only ONE on-site shape, the orphan
+ * pre-approval draft, via `classifyPurgeableListing`).
  * Returns the fields those actions need: kind (to branch the on-site dual-table flip),
  * status/slug, the backing `appBlockId` (on-site: flip the block's status too), and
- * the owner `userId` (the off-site hide notification target). A missing listing →
+ * the owner `userId` (the hide-notification target, for either kind). A missing listing →
  * generic NOT_FOUND (no kind guard here — both kinds are valid targets).
  */
 async function classifyListingForAction(appListingId: string): Promise<{
@@ -374,16 +553,20 @@ export type DelistListingResult = { appListingId: string; status: 'removed' };
  * post-approval mgmt). The store read path is approved-only, so a `removed` listing
  * drops out of `listAvailableListings` + `getListingDetail` automatically.
  *
- *   - OFF-SITE: flip only `app_listings.status` approved → removed, then notify the
- *     owner their app was hidden (post-commit, carrying the mod reason).
+ *   - OFF-SITE: flip only `app_listings.status` approved → removed.
  *   - ON-SITE: flip BOTH `app_listings.status` (approved → removed) AND the backing
  *     `app_blocks.status` (approved → suspended) in the SAME tx — a hosted block's
  *     runtime serving gate reads `app_blocks.status`, so hiding it from the store
- *     WITHOUT suspending the block would leave `<slug>.civit.ai` still serving. No
- *     owner notification on the on-site path (out of Phase-1 scope). The listing
- *     flip is the authoritative guard; the block flip is status-guarded to avoid
- *     clobbering a drifted state but is non-fatal on a 0-count (the store status is
- *     the source of truth for visibility).
+ *     WITHOUT suspending the block would leave the hosted app still serving. The
+ *     listing flip is the authoritative guard; the block flip is status-guarded to
+ *     avoid clobbering a drifted state but is non-fatal on a 0-count (the store
+ *     status is the source of truth for visibility).
+ *
+ * BOTH kinds then notify the owner their app was hidden (post-commit, carrying the
+ * mod reason). The on-site owner is notified for the SAME reason the off-site one is,
+ * and more urgently: an on-site delist also suspends the backing block, so the hosted
+ * app goes dark. The owner's submissions/history view already renders the mod reason
+ * for both kinds — the notification is what tells them to go look.
  *
  * STATUS: a delist is allowed on an `approved` OR an already-`removed` listing. The
  * `removed → removed` case is the 🔴 "convert an owner-hide into an ENFORCED takedown"
@@ -411,7 +594,11 @@ export async function delistListing(opts: {
     // idempotent removed→removed write keeps status `removed` but still counts (1 row),
     // so the event below is ALWAYS written on a matched row.
     const flipped = await tx.appListing.updateMany({
-      where: { id: input.appListingId, kind: listing.kind, status: { in: ['approved', 'removed'] } },
+      where: {
+        id: input.appListingId,
+        kind: listing.kind,
+        status: { in: ['approved', 'removed'] },
+      },
       data: { status: 'removed' },
     });
     if (flipped.count === 0) {
@@ -460,18 +647,19 @@ export async function delistListing(opts: {
     }
   });
 
-  // OFF-SITE only: post-commit, best-effort — notify the owner their app was hidden,
-  // carrying the mod reason. (On-site owners aren't notified in Phase 1.)
-  if (!isOnsite) {
-    await notifyAppListingOwner({
-      type: 'app-listing-hidden',
-      userId: listing.userId,
-      // Keyed by the audit event id so each distinct hide (delist→relist→delist)
-      // notifies once, without a fresh nonce.
-      key: `app-listing-hidden:${eventId}`,
-      details: { slug: listing.slug, name: listing.name, listingId: input.appListingId, reason },
-    });
-  }
+  // BOTH KINDS: post-commit, best-effort — notify the owner their app was hidden,
+  // carrying the mod reason. An on-site delist is the MORE adverse of the two (it also
+  // suspends the backing block, so the hosted app stops serving), so withholding the
+  // notification there left the owner with no signal at all that their app went dark.
+  // The reason is mandatory on delist and is what makes the message actionable.
+  await notifyAppListingOwner({
+    type: 'app-listing-hidden',
+    userId: listing.userId,
+    // Keyed by the audit event id so each distinct hide (delist→relist→delist)
+    // notifies once, without a fresh nonce.
+    key: `app-listing-hidden:${eventId}`,
+    details: { slug: listing.slug, name: listing.name, listingId: input.appListingId, reason },
+  });
 
   return { appListingId: input.appListingId, status: 'removed' };
 }
@@ -507,6 +695,13 @@ export async function relistListing(opts: {
     // (the removed listing was directly asset-editable). No-op for a normally-scanned
     // listing. Runs BEFORE the flip so a scan-dirty listing is never made live.
     await assertListingAssetsScanCleanInTx(tx, input.appListingId);
+    // 🔴 GO-LIVE ACTIONABILITY gate — a relist (removed → approved) puts the listing
+    // back on the store, so it is a go-live like any other and gets the same check:
+    // an off-site listing may not become visible while its primary CTA would render
+    // with nothing to click. Read on the PRIMARY (`tx`) so the verdict is
+    // row-consistent with the flip; a removed listing stays owner-editable, so its
+    // URL/OAuth-client can have changed since the takedown. On-site relists no-op.
+    await assertOffsiteListingActionableInTx(tx, input.appListingId);
     const flipped = await tx.appListing.updateMany({
       where: { id: input.appListingId, kind: listing.kind, status: 'removed' },
       data: { status: 'approved' },
@@ -559,8 +754,7 @@ export async function relistListing(opts: {
           {
             type: 'warning',
             name: 'app-listing-relist-block-drift',
-            message:
-              'onsite relist: backing app_block was not suspended; the block may not serve',
+            message: 'onsite relist: backing app_block was not suspended; the block may not serve',
             details: { appListingId: input.appListingId, appBlockId: listing.appBlockId },
           },
           'app-blocks'
@@ -606,6 +800,28 @@ export type ClaimListingResult = { appListingId: string; userId: number };
  * is preserved for audit fidelity (who actually submitted it). This fn NEVER touches
  * the publish request. The audit event's before/after userId captures the transfer.
  *
+ * 🔴 IT DOES, HOWEVER, CLEAR THE COLLABORATOR SEATS — and that is NEW, because until
+ * seats were re-keyed to `app_listings` an off-site listing could not hold one, so
+ * "reassign `userId`" WAS the complete remediation. It no longer is. This is the
+ * IMPERSONATION remedy (report → delist → claim → ban): the row being claimed was set up
+ * by someone pretending to be the rightful owner, and everything that impersonator
+ * attached to it is part of what is being taken away. Left behind, their seats would
+ * survive the claim as live editor capability on the REAL owner's listing —
+ * `listingContent`, `submitForReview` and `analytics` — their PENDING invites would stay
+ * acceptable, their accepted-and-displayed seats would keep appearing in the PUBLIC
+ * BYLINE under the new owner's name, and a pending ownership TRANSFER they had already
+ * offered would stay acceptable, handing the listing straight back out. So, in the SAME
+ * transaction as the reassign: every seat is deleted (any status), every pending
+ * transfer is cancelled, and each is recorded as an `AppOwnershipEvent` so the removal
+ * is auditable rather than silent. The new owner re-invites whoever they actually want.
+ *
+ * 🔴 That cleanup is CONDITIONAL on the collaborator tables existing, checked ONCE
+ * before the transaction opens. They are manual-apply (DB rule #8), and a statement
+ * against a missing relation ABORTS the surrounding Postgres transaction — a `catch`
+ * cannot undo that (every later statement fails 25P02), so `safeCollaboratorQuery`'s
+ * degrade-to-fallback CANNOT be used inside a tx. Probing outside it keeps the claim
+ * working unchanged in the pre-migration window, where no seat can exist anyway.
+ *
  * Optionally links + resolves the triggering `reportId` in the SAME tx (mirrors
  * delist EXACTLY, listing-scoped): in the impersonation workflow (report → delist →
  * claim → ban) the claim is the substantive resolution, so it ties to and closes the
@@ -618,10 +834,20 @@ export async function claimListing(opts: {
 }): Promise<ClaimListingResult> {
   const { input, reviewerUserId } = opts;
   const reason = requireModReason(input.reason);
+  const now = new Date();
   // Fail-fast + info-leak parity (replica): a missing OR on-site listing throws the
   // same generic NOT_FOUND before any tx is opened. The authoritative snapshot is
   // re-read on the primary inside the tx below.
   await classifyOffsiteListing(input.appListingId);
+
+  // 🔴 OUTSIDE THE TX ON PURPOSE — see the header. A query against a missing relation
+  // aborts the whole Postgres transaction, so the missing-table degrade has to happen
+  // before one is opened. `false` ⇒ the manual-apply migration has not landed ⇒ no seat
+  // can exist ⇒ the claim behaves exactly as it did before this feature.
+  const seatsTableLive = await safeCollaboratorQuery(async () => {
+    await dbRead.appCollaborator.count({ where: { appListingId: input.appListingId } });
+    return true;
+  }, false);
 
   await dbWrite.$transaction(async (tx) => {
     // Authoritative pre-state snapshot from the PRIMARY (not the replica classify),
@@ -634,7 +860,7 @@ export async function claimListing(opts: {
       select: { userId: true, status: true, slug: true, kind: true },
     });
     if (!current || current.kind !== 'offsite') {
-      throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+      throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
     }
     // Status guard: claim is allowed only on an approved OR removed listing (a
     // mod-verified owner may reclaim a live OR a delisted listing). draft/pending/
@@ -685,6 +911,49 @@ export async function claimListing(opts: {
         after: { userId: input.targetUserId },
       },
     });
+
+    // 🔴 SEAT REMEDIATION — in the SAME tx as the reassign, so a rolled-back claim
+    // leaves the seats untouched exactly as it leaves zero moderation events. See the
+    // header for why "reassign userId" stopped being the whole remedy.
+    if (seatsTableLive) {
+      // Read the ids BEFORE deleting: `deleteMany` returns a count, and a count cannot
+      // name who lost what. An impersonation remedy that cannot say whose access it
+      // revoked is not an audit trail.
+      const seats = (await tx.appCollaborator.findMany({
+        where: { appListingId: input.appListingId },
+        select: { userId: true, status: true },
+      })) as Array<{ userId: number; status: string }>;
+      if (seats.length > 0) {
+        await tx.appCollaborator.deleteMany({ where: { appListingId: input.appListingId } });
+        for (const seat of seats) {
+          await recordOwnershipEvent(tx, {
+            appListingId: input.appListingId,
+            slug: current.slug,
+            action: 'remove',
+            actorUserId: reviewerUserId,
+            targetUserId: seat.userId,
+            metadata: { via: 'claim', previousStatus: seat.status },
+          });
+        }
+      }
+      // A pending transfer the previous (impersonating) owner had already offered would
+      // otherwise stay acceptable and hand the listing straight back out. Guarded on
+      // `status:'pending'` so a terminal row is never re-written.
+      const cancelled = await tx.appOwnershipTransfer.updateMany({
+        where: { appListingId: input.appListingId, status: 'pending' },
+        data: { status: 'cancelled', respondedAt: now },
+      });
+      if (cancelled.count > 0) {
+        await recordOwnershipEvent(tx, {
+          appListingId: input.appListingId,
+          slug: current.slug,
+          action: 'transfer_cancelled',
+          actorUserId: reviewerUserId,
+          metadata: { via: 'claim', cancelled: cancelled.count },
+        });
+      }
+    }
+
     if (input.reportId) {
       // Resolve the triggering report in the same tx — mirrors delist EXACTLY. In the
       // impersonation flow (report → delist → claim → ban) the claim is the substantive
@@ -708,8 +977,20 @@ export async function claimListing(opts: {
 export type PurgeListingResult = { appListingId: string; purged: true };
 
 /**
- * MOD hard-delete (purge) an off-site listing — the genuine final expunge that
- * also makes the delist round-trip self-cleaning.
+ * MOD hard-delete (purge) a listing — the genuine final expunge that also makes the
+ * delist round-trip self-cleaning. Targets are {@link PURGEABLE_LISTING_WHERE}: any
+ * OFF-SITE listing, or an ON-SITE orphan pre-approval draft.
+ *
+ * 🔴 THE ON-SITE ARM IS THE DELIBERATE REPLACEMENT FOR A SILENT SIDE-EFFECT, NOT NEW
+ * DESTRUCTIVE POWER. `rejectRequest` used to run `deleteOnsiteDraftListingForSlug` on
+ * every reject, so rejecting a first-time developer over a fixable problem destroyed the
+ * store listing they had built and released their slug — invisibly, with no reason
+ * recorded and no way for a reviewer to decline it. That call is gone (clawgate #302).
+ * The same delete now happens only when a mod ASKS for it, through this path: explicit
+ * target, required reason, and an `action:'purge'` audit event. Same bytes removed, but
+ * chosen and attributable. Removing this arm without restoring some other on-site
+ * removal path would leave an orphan draft holding its slug with NO recourse —
+ * `delistListing` is status-guarded to `{approved, removed}` and cannot touch a draft.
  *
  * 🔴 ORDER MATTERS: the audit event is written FIRST (capturing the slug snapshot +
  * the pre-delete status), THEN the `AppListing` row is deleted. The event's
@@ -737,23 +1018,46 @@ export async function purgeListing(opts: {
 }): Promise<PurgeListingResult> {
   const { input, reviewerUserId } = opts;
   const reason = requireModReason(input.reason);
-  // Fail-fast + info-leak parity (replica): a missing OR on-site listing throws the
-  // same generic NOT_FOUND before any tx is opened. The authoritative snapshot is
-  // re-read on the primary inside the tx below.
-  await classifyOffsiteListing(input.appListingId);
+  // Fail-fast + info-leak parity (replica): a missing listing, and any listing outside
+  // PURGEABLE_LISTING_WHERE, both throw the same generic NOT_FOUND before any tx is
+  // opened. The authoritative snapshot is re-read on the primary inside the tx below.
+  await classifyPurgeableListing(input.appListingId);
 
-  await dbWrite.$transaction(async (tx) => {
+  // RETURNED by the tx (rather than captured in a `let`) when the purged row was an ON-SITE
+  // orphan draft; drives the post-commit owner notification below. Null for the off-site arm
+  // — see the 🔴 note there. Returning it also means a tx that THROWS yields no value at all,
+  // so a rolled-back purge can never reach the notification.
+  const purgedOnsiteDraft = await dbWrite.$transaction(async (tx) => {
     // Authoritative pre-delete snapshot from the PRIMARY (not the replica classify),
-    // so `before.status` + `slug` reflect the true current row and the kind guard is
-    // re-checked on the primary. A row that vanished (or turned non-offsite) between
-    // classify and here → generic NOT_FOUND, tx rolls back with no event written.
+    // so `before.status` + `slug` reflect the true current row and the purgeability
+    // guard is re-checked on the primary. A row that vanished (or moved out of the
+    // purgeable set) between classify and here → generic NOT_FOUND, tx rolls back with
+    // no event written.
+    //
+    // 🔴 RE-CHECKING ON THE PRIMARY IS NOT REDUNDANT FOR THE ON-SITE ARM — it is the
+    // race that matters. `approveRequest` turns exactly this row from an orphan draft
+    // into an APPROVED listing with a backing AppBlock, so a purge that classified
+    // against a lagging replica could otherwise delete a live app's store card. The
+    // predicate is re-evaluated here and AGAIN in the `deleteMany` below.
     const current = await tx.appListing.findUnique({
       where: { id: input.appListingId },
-      select: { status: true, slug: true, kind: true },
+      select: PURGE_CLASSIFY_SELECT,
     });
-    if (!current || current.kind !== 'offsite') {
-      throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+    if (!current || !isPurgeableListing(current)) {
+      throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
     }
+    // 🔴 AUTHORITATIVE, on the PRIMARY, inside the tx — and this is the ONLY place the
+    // "not under review" rule is actually enforced against the delete, because it cannot be
+    // expressed in the `deleteMany` predicate below (no FK to traverse; see the fn's note).
+    // A throw here rolls the tx back before the audit event is written.
+    await assertNoLivePendingSubmission(tx, current);
+    // Read INSIDE the tx, from the row we are about to delete, for the post-commit
+    // notification below — after the delete there is nothing left to read it from. Held in a
+    // local and returned at the end of the callback, AFTER the delete has been confirmed.
+    const onsiteDraftOwner =
+      current.kind === 'onsite'
+        ? { userId: current.userId, slug: current.slug, name: current.name }
+        : null;
     // Event FIRST (so the slug/state snapshot is captured before the row is gone).
     await tx.appListingModerationEvent.create({
       data: {
@@ -767,18 +1071,63 @@ export async function purgeListing(opts: {
       },
     });
     // THEN the hard delete (nulls the event's appListingId via SetNull; cascades
-    // screenshots + reports). The inline `kind: 'offsite'` guard mirrors delist/relist
-    // for defense-in-depth on a DESTRUCTIVE op — a 0-count delete (raced, or a
-    // non-offsite row slipping past classify) throws → the tx (incl. the event) rolls
-    // back.
+    // screenshots + reports). The inline purgeability guard mirrors delist/relist for
+    // defense-in-depth on a DESTRUCTIVE op — a 0-count delete (raced, or a row slipping
+    // past both classify AND the primary re-read) throws → the tx (incl. the event)
+    // rolls back. This is the SQL twin of `isPurgeableListing` above; they are kept
+    // next to each other so they can only drift together.
     const deleted = await tx.appListing.deleteMany({
-      where: { id: input.appListingId, kind: 'offsite' },
+      where: { id: input.appListingId, ...PURGEABLE_LISTING_WHERE },
     });
     if (deleted.count === 0) {
       // Raced (concurrently purged between the snapshot and here) → roll the event back.
-      throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+      throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
     }
+    return onsiteDraftOwner;
   });
+
+  // POST-COMMIT, best-effort — tell the owner their pre-approval draft was removed.
+  //
+  // 🔴 ON-SITE ARM ONLY, and the asymmetry is deliberate rather than an oversight. An
+  // off-site purge is only ever offered on an already-`removed` listing, i.e. AFTER a
+  // `delistListing` that notified the owner itself — so notifying again would double up on
+  // an event they have already been told about. The on-site orphan-draft arm has no such
+  // predecessor: it is reachable directly from a `draft` row, so without this the
+  // developer's listing, its media and their slug would vanish with nothing sent at all.
+  // (They were told their SUBMISSION was rejected — `app-block-rejected` — which is a
+  // different event about a different object, and says nothing about the listing going away.)
+  //
+  // Best-effort and post-commit, mirroring every other notify in this file: the purge has
+  // already committed, so a notification failure must never affect the outcome.
+  if (purgedOnsiteDraft) {
+    try {
+      await notifyAppListingOwner({
+        type: 'app-listing-purged',
+        userId: purgedOnsiteDraft.userId,
+        // Keyed by LISTING id, not slug: the slug is released by this very delete and can
+        // legitimately belong to someone else later, so a slug key could dedup a different
+        // developer's notification away.
+        key: `app-listing-purged:${input.appListingId}`,
+        details: {
+          slug: purgedOnsiteDraft.slug,
+          name: purgedOnsiteDraft.name,
+          reason,
+          // 🔴 CARRIED FOR THE SAME REASON THE KEY IS ID-SCOPED, and it matters more here
+          // than at the sibling call sites: this delete RELEASES the slug, so `slug` above
+          // can legitimately belong to a DIFFERENT developer later. `details` is written
+          // once and never repaired, so a payload whose only identifier is a recycled slug
+          // would resolve to a stranger's listing the moment anything reads it.
+          listingId: input.appListingId,
+        },
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[purgeListing] owner notification failed (id=${input.appListingId}); purge STANDS: ` +
+          `${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
 
   return { appListingId: input.appListingId, purged: true };
 }
@@ -932,16 +1281,25 @@ export async function listModerationEvents(opts: ListModerationEventsInput) {
 // ---------------------------------------------------------------------------
 // W13 post-approval listing management (Phase 1).
 //   resetListingToPending  — MOD bounce an approved off-site listing back to review.
-//   unpublishOwnListing    — OWNER self-hide an approved off-site listing.
-//   republishOwnListing    — OWNER restore an OWNER-unpublished off-site listing
-//                            (forbidden if the last event was a mod takedown).
+//   unpublishOwnListing    — OWNER self-hide an approved listing (DUAL-KIND).
+//   republishOwnListing    — OWNER restore an OWNER-unpublished listing (DUAL-KIND;
+//                            forbidden if the last event was a mod takedown).
 //   listMyListingModerationEvents — OWNER-scoped per-listing audit history.
 //
-// resetListingToPending is offsite-only + `moderatorProcedure`; the three owner
-// procs are offsite-only + `appDeveloperProcedure`, and every owner proc is bound to
-// the caller (`AppListing.userId === callerUserId`, else NOT_OWNED → FORBIDDEN). All
-// write exactly one `AppListingModerationEvent` in the same tx as their mutation
-// (a guarded 0-count rolls the whole tx — incl. the event — back).
+// resetListingToPending is offsite-only + `moderatorProcedure`; the three owner procs
+// are `appDeveloperProcedure` and every owner proc is bound to the caller
+// (`AppListing.userId === callerUserId`, else NOT_OWNED → FORBIDDEN). All write exactly
+// one `AppListingModerationEvent` in the same tx as their mutation (a guarded 0-count
+// rolls the whole tx — incl. the event — back).
+//
+// 🔴 THE OWNER PROCS ARE **NOT** OFFSITE-ONLY, though this block said so. Their own
+// function headers already describe the on-site behaviour correctly —
+// `unpublishOwnListing` is marked "DUAL-KIND (W13 P4)" and flips the backing AppBlock
+// approved → suspended, i.e. a FULL takedown — so it was only this SUMMARY that was
+// stale, which is the shape that survives review: the detail is right and the heading
+// everyone reads first is wrong. `resetListingToPending` genuinely IS offsite-only (its
+// in-tx re-read raises NOT_FOUND on `kind !== 'offsite'`; the on-site path is the
+// separate `resetOnsiteListingToPending`).
 // ---------------------------------------------------------------------------
 
 export type ResetListingToPendingResult = {
@@ -986,7 +1344,7 @@ export async function resetListingToPending(opts: {
       select: { userId: true, status: true, kind: true, slug: true, name: true },
     });
     if (!current || current.kind !== 'offsite') {
-      throw new OffsiteModerationError('NOT_FOUND', 'Off-site listing not found.');
+      throw new OffsiteModerationError('NOT_FOUND', 'Standalone listing not found.');
     }
     ownerUserId = current.userId;
     slug = current.slug;
@@ -1125,6 +1483,9 @@ export async function resetOnsiteListingToPending(opts: {
       fileSummary: true,
       manifestDiffSummary: true,
       forgejoCommitSha: true,
+      // #4059 — selected so the clone below can CARRY them. See the create.
+      sourceCommit: true,
+      sourceDirty: true,
     },
   });
   if (!lastApproved) {
@@ -1194,6 +1555,29 @@ export async function resetOnsiteListingToPending(opts: {
           fileSummary: lastApproved.fileSummary as Prisma.InputJsonValue,
           manifestDiffSummary: lastApproved.manifestDiffSummary as Prisma.InputJsonValue,
           forgejoCommitSha: lastApproved.forgejoCommitSha,
+          // #4059 — carry the client's provenance CLAIM forward, verbatim.
+          //
+          // The justification is narrow and it is the only one: this clone
+          // re-submits BYTE-IDENTICAL bundle bytes (same `bundleKey`, same
+          // `bundleSha256` as the approved row above). A claim about which tree
+          // those exact bytes came from is still the SAME claim about the SAME
+          // bytes — copying it invents nothing. Dropping it would permanently
+          // lose the answer to "which tree did these bytes come from?" for any
+          // app that goes through a suspend → reset-to-pending cycle, which is
+          // the archaeology #4059 exists to make unnecessary.
+          //
+          // Copied RAW, including NULL: a NULL on the source row means UNKNOWN
+          // and must stay UNKNOWN here. No `??` fallback of any kind — least of
+          // all to `forgejoCommitSha`, which is a SERVER-side sha in the
+          // platform's own repo and would fabricate an author's-tree claim
+          // nobody made. `false` likewise stays `false` (asserted CLEAN), never
+          // folded into UNKNOWN.
+          //
+          // 🔴 NOT the `recordPendingFromPush` case, which correctly writes
+          // NEITHER: that path has no client and no author work tree, so there
+          // is no claim in existence to carry.
+          sourceCommit: lastApproved.sourceCommit,
+          sourceDirty: lastApproved.sourceDirty,
           status: 'pending',
         },
       });
@@ -1252,10 +1636,30 @@ async function loadOwnedListingInTx(
   slug: string;
   name: string | null;
   appBlockId: string | null;
+  contentRating: string | null;
+  iconId: number | null;
+  coverId: number | null;
 }> {
   const listing = await tx.appListing.findUnique({
     where: { id: appListingId },
-    select: { userId: true, status: true, kind: true, slug: true, name: true, appBlockId: true },
+    select: {
+      userId: true,
+      status: true,
+      kind: true,
+      slug: true,
+      name: true,
+      appBlockId: true,
+      // The DECLARED rating, the input to `republishOwnListing`'s go-live rating floor.
+      // `unpublishOwnListing` ignores it — a self-hide never touches the rating.
+      contentRating: true,
+      // The two scalar halves of the reviewable ASSET SURFACE (the third — screenshots —
+      // is a child table). Selected HERE, on the row both owner procs already load on the
+      // primary inside their transaction, so `buildApprovedAssetSnapshot` neither re-reads
+      // them nor opens a second window in which they could move relative to the
+      // screenshots it does read. See `app-listing-approved-assets`.
+      iconId: true,
+      coverId: true,
+    },
   });
   if (!listing) {
     throw new OffsiteModerationError('NOT_FOUND', 'Listing not found.');
@@ -1270,6 +1674,9 @@ async function loadOwnedListingInTx(
     slug: listing.slug,
     name: listing.name,
     appBlockId: listing.appBlockId,
+    contentRating: listing.contentRating,
+    iconId: listing.iconId,
+    coverId: listing.coverId,
   };
 }
 
@@ -1321,6 +1728,22 @@ export async function unpublishOwnListing(opts: {
       from: 'approved',
       to: 'suspended',
     });
+    // 🔴 RECORD THE APPROVED ASSET SURFACE. This is the ONLY place the store learns what
+    // imagery a moderator last signed off on — nothing else in the schema captures it (no
+    // approve path writes a moderation event at all, and every existing `before`/`after`
+    // payload is `{status}`/`{userId}`). `republishOwnListing` compares against it to
+    // decide whether a republish may go live immediately or has to re-enter review.
+    //
+    // WHY IT IS SOUND HERE AND NOWHERE CHEAPER: the flip above ran on a listing that was
+    // `approved`, and an approved non-shadow listing is NOT owner-asset-editable
+    // (`assertOwnerAssetEditable`), so the assets read here ARE the last-approved ones. It
+    // is read on the PRIMARY inside the SAME tx as the flip, so a concurrent asset write
+    // cannot slip between the snapshot and the removal.
+    //
+    // It goes in `before` because that is the state this event moved AWAY from — the
+    // approved one. `after` describes the `removed` state, whose assets are about to
+    // become freely editable and therefore mean nothing to a later reviewer.
+    const approvedAssets = await buildApprovedAssetSnapshot(tx, input.appListingId, listing);
     await tx.appListingModerationEvent.create({
       data: {
         id: newAppListingModerationEventId(),
@@ -1329,7 +1752,7 @@ export async function unpublishOwnListing(opts: {
         action: 'owner-unpublish',
         actorUserId: userId,
         reason,
-        before: { status: 'approved' },
+        before: { status: 'approved', assets: approvedAssets },
         after: { status: 'removed' },
       },
     });
@@ -1338,24 +1761,97 @@ export async function unpublishOwnListing(opts: {
   return { appListingId: input.appListingId, status: 'removed' };
 }
 
-export type RepublishOwnListingResult = { appListingId: string; status: 'approved' };
+/**
+ * Where an owner republish LANDED.
+ *
+ * 🔴 `'pending'` IS A REAL, EXPECTED OUTCOME, NOT AN ERROR — the listing did not go live
+ * and every surface that reports the result must branch on this field rather than
+ * assuming success means "live". Telling an owner "it is live again" when it is sitting
+ * in a review queue is a lie the type system now refuses to let you tell silently.
+ */
+export type RepublishOwnListingResult = {
+  appListingId: string;
+  status: 'approved' | 'pending';
+  /** Set only on the `'pending'` arm — why the republish had to be reviewed. */
+  reviewReason?: RepublishReviewReason;
+};
 
 /**
- * OWNER restore their OWN owner-unpublished listing (removed → approved) — DUAL-KIND
- * (W13 P4).
+ * OWNER restore their OWN owner-unpublished listing — DUAL-KIND (W13 P4).
  *
- * 🔴 SAFETY GUARD (load-bearing): republish is allowed ONLY when the MOST-RECENT
- * `AppListingModerationEvent` for the listing is an `owner-unpublish`. If the last
- * event is a moderator `delist`/`purge` (a takedown-for-cause), republish is
+ * 🔴 ASSET-CHANGE REVIEW GATE (removed → approved, OR removed → pending). An owner may
+ * unpublish their own listing, swap the icon/cover/screenshots — a `removed` listing is
+ * DIRECTLY asset-editable, `assertOwnerAssetEditable` refuses only an `approved`
+ * non-shadow row — and republish. Before this gate that put brand-new imagery on a public
+ * store card with NO content review: the two go-live gates below read scan STATUS and the
+ * destination href, and #4418's floor reads MATURITY. None of them is a review.
+ *
+ * So: if ANY listing asset differs from what was recorded at the last approval, the
+ * republish routes the listing to `pending` (re-review) instead of `approved` and mints a
+ * fresh pending non-shadow `AppListingPublishRequest` — FOR BOTH KINDS. That queue is the
+ * one whose moderator modal actually renders this listing's icon, cover and screenshots;
+ * see {@link routeRepublishToReviewInTx} for why the on-site arm does NOT re-queue on the
+ * block-request surface (a clone of the approved block request is byte-identical to what
+ * the moderator already approved and shows none of the imagery under review).
+ *
+ * If NOTHING changed, republish is immediate exactly as it was — no extra queue entry, no
+ * moderator involvement, no behaviour change at all.
+ *
+ * 🔴 THE SIGNAL IS RECORDED, NOT INFERRED. Nothing in the schema previously captured the
+ * approved asset set (no approve path writes a moderation event; every existing
+ * `before`/`after` payload is `{status}`/`{userId}`; `updatedAt` is bumped by the republish
+ * flip itself and a DELETED screenshot leaves no timestamp at all).
+ * {@link unpublishOwnListing} now records it into the `owner-unpublish` event's
+ * `before.assets`.
+ *
+ * 🔴 A LISTING UNPUBLISHED BEFORE THAT SHIPPED HAS NO BASELINE, AND THAT ARM IS
+ * DELIBERATELY FAIL-OPEN — it republishes immediately, exactly as it did before this PR.
+ * Routing it to review would not make anyone look at a change (there is no recorded
+ * "before" to compare against, so there is nothing to describe); it would only take the
+ * entire already-removed population offline behind a moderator on ship day. A baseline
+ * that EXISTS and does not parse is the opposite case — unbounded, and evidence something
+ * is wrong right now — and it fails CLOSED. See `app-listing-approved-assets`.
+ *
+ * 🔴 THIS ADDS A SECOND WRITER OF `app_listings.status = 'pending'` ON A FORMERLY-LIVE
+ * LISTING. `closeTerminalListing` (`offsite-listing.service`) and
+ * `closeOnsiteResetListingOnWithdraw` (`publish-request.service`) both reason that such a
+ * listing is ALWAYS mod-mandated and unconditionally write a `delist` on withdraw/reject.
+ * That is now narrower than the truth, and the consequence is deliberate but not free:
+ * an owner who routes themselves into review and then WITHDRAWS the request lands on
+ * `removed` + `delist`, so `republishOwnListing` forbids them and a moderator must
+ * `relistListing`. Fail-CLOSED, and no content reaches the store unreviewed — but it is a
+ * self-inflicted lockout that did not exist before, so the withdraw affordance now SAYS SO
+ * before and after the click (`ListingHistoryPanel`). Left as-is rather than loosened:
+ * that predicate was made unconditional to close a real exploit (an intervening
+ * `report-resolve` shifted the newest event and let an owner self-restore mod-mandated
+ * content), and re-opening it is a product decision, not an implementation detail. Both
+ * comments are corrected in place; see the PR body.
+ *
+ * 🔴 SAFETY GUARD (load-bearing, unchanged): republish is allowed ONLY when the
+ * MOST-RECENT status-changing `AppListingModerationEvent` is an `owner-unpublish`. If the
+ * last event is a moderator `delist`/`purge` (a takedown-for-cause), republish is
  * FORBIDDEN — an owner must NOT be able to self-restore a listing a moderator
  * removed. No events at all → also FORBIDDEN (can't prove owner-initiated removal).
  * The latest-event read + the flip are in ONE tx on the PRIMARY so a concurrent mod
  * takedown can't slip between the check and the restore.
  *
- * ON-SITE: the backing `AppBlock` is also restored suspended → approved in the SAME
- * tx (via {@link flipBackingBlockStatus}), so the app serves again. OFF-SITE: only the
- * listing flips. Pure visibility toggle — no re-derive, no publish request. `reason`
- * optional.
+ * ON-SITE: on the IMMEDIATE arm the backing `AppBlock` is also restored suspended →
+ * approved in the SAME tx (via {@link flipBackingBlockStatus}), so the app serves again.
+ * On the REVIEW arm it is deliberately LEFT SUSPENDED — the app must not serve while its
+ * store card is unreviewed, the same posture {@link resetOnsiteListingToPending} takes —
+ * and `approveExternalRequest` un-suspends it on approve, gated on exactly the `pending`
+ * on-site listing this route writes. OFF-SITE: only the listing flips. `reason` optional.
+ *
+ * 🔴 MATURITY IS RE-DERIVED AT GO-LIVE, UNIFORMLY FOR BOTH KINDS (this used to be a
+ * pure visibility toggle with NO re-derive, which was the hole). A `removed` listing is
+ * directly asset-editable and the attach path never rejects a `Scanned` MATURE image, so
+ * `unpublish → attach mature media → republish` re-published mature store art under an
+ * unchanged declared rating. The stored rating is therefore FLOORED at the media-derived
+ * one ({@link resolveListingRatingFloorInTx}, RAISE-ONLY — tame media never lowers a
+ * deliberately higher rating).
+ *
+ * Fail-closed: the derive runs INSIDE the tx and is not caught, so a throw leaves the
+ * listing `removed`.
  */
 export async function republishOwnListing(opts: {
   input: RepublishOwnListingInput;
@@ -1366,6 +1862,8 @@ export async function republishOwnListing(opts: {
   // Set when the on-site block-restore flip matched 0 rows (drift — mirrors relist).
   let onsiteBlockRestoreDrift = false;
   let onsiteBlockId: string | null = null;
+  // Set by the REVIEW arm; `null` means the republish went live immediately.
+  let reviewReason: RepublishReviewReason | null = null;
 
   await dbWrite.$transaction(async (tx) => {
     const listing = await loadOwnedListingInTx(tx, input.appListingId, userId);
@@ -1379,12 +1877,12 @@ export async function republishOwnListing(opts: {
     // the PRIMARY inside the tx (a concurrent mod delist/purge would otherwise race
     // between a replica read and the flip). A mod delist/purge (or NO event) → the
     // owner may not self-restore.
-    const lastEvent = await tx.appListingModerationEvent.findFirst({
-      where: { appListingId: input.appListingId },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      select: { action: true },
-    });
-    if (!lastEvent || lastEvent.action !== 'owner-unpublish') {
+    //
+    // ONE read, not two: the same row also carries the asset snapshot the review gate
+    // below compares against, and the verb and the payload MUST come from the same event
+    // (see `readLastStatusChangingModerationEvent`).
+    const lastEvent = await readLastStatusChangingModerationEvent(tx, input.appListingId);
+    if (!isOwnerUnpublishAction(lastEvent?.action)) {
       throw new OffsiteModerationError(
         'FORBIDDEN',
         'This listing was removed by a moderator and cannot be restored by its owner.'
@@ -1397,10 +1895,99 @@ export async function republishOwnListing(opts: {
     // owner could attach a Pending/later-Blocked image then self-restore. No-op for a
     // normally-scanned listing; runs BEFORE the flip.
     await assertListingAssetsScanCleanInTx(tx, input.appListingId);
+    // 🔴 GO-LIVE ACTIONABILITY gate — republish (removed → approved) is an OWNER-driven
+    // go-live, and a removed listing is directly owner-editable, so this is the path
+    // where an owner can clear the external URL (or link an OAuth client) and then
+    // self-restore a listing the store cannot send anyone to. Read on the PRIMARY
+    // (`tx`), row-consistent with the flip. On-site republishes no-op.
+    await assertOffsiteListingActionableInTx(tx, input.appListingId);
     const isOnsite = listing.kind === 'onsite';
+
+    // 🔴 GO-LIVE RATING FLOOR — UNIFORM, BOTH KINDS.
+    //
+    // Republish is an OWNER-DRIVEN go-live with NO human in the loop, and a `removed`
+    // listing is DIRECTLY asset-editable (`assertOwnerAssetEditable` refuses only an
+    // `approved` non-shadow row). The attach path rejects only `Blocked`/`NotFound`
+    // images — never a `Scanned` MATURE one — and neither gate above inspects maturity:
+    // `assertListingAssetsScanCleanInTx` reads scan STATUS, `assertOffsiteListingActionableInTx`
+    // reads the href. So `unpublish → attach mature media → republish` put mature store
+    // art back on a `g`-rated card, which passes `listingMatureFilter(redCapable=false)`
+    // (`content_rating NOT IN ('r','x')`) and shows it to SFW-ONLY users.
+    //
+    // 🔴 WHY ON-SITE IS FLOORED TOO (this is EXISTING precedent, not a new policy). The
+    // on-site DRAFT go-live already does exactly this: `approveRequest` reads the
+    // AppBlock's manifest-declared `contentRating`, passes it through THIS SAME helper
+    // and writes the floored result to the listing — for the same stated reason
+    // (`publish-request.service.ts`, "🔴 RATING FLOOR (go-live)"). Two properties make
+    // it safe on both kinds:
+    //   - it writes `AppListing.contentRating` (the STORE CARD). The runtime .red/.com
+    //     serving gate reads `AppBlock.contentRating` / `AppBlock.manifest.contentRating`
+    //     — SEPARATE columns — so a raise here cannot change what the block is allowed to
+    //     render. Enumerated over `src/`: no runtime gate reads the listing column, and
+    //     nothing ever copies listing → block (the mirror runs block → listing only).
+    //     The raise's real effect is STORE VISIBILITY, and only ever NARROWING it:
+    //     `listingMatureFilter` hides the card and `getListingDetail` 404s it for
+    //     SFW-only viewers. That is the point of the fix.
+    //   - the raise PERSISTS: `buildListingScalarSync` deliberately EXCLUDES
+    //     `contentRating` from the manifest re-sync ("mod override, floored at the
+    //     derived rating" — `app-listing-mapper.ts`, restated at the approve call site in
+    //     `publish-request.service.ts`), so a later version approve does not undo it.
+    // 🔴 Three comments elsewhere still assert an UNQUALIFIED "on-site listings MIRROR
+    // AppBlock.content_rating" (the `AppListing.contentRating` schema comment, the
+    // mapper's create path, the backfill service) and the on-site media-revision copy
+    // step declines to floor. Those describe the block → listing MIRROR and that one copy
+    // step; they are narrower than the code, which already floors on-site at draft
+    // go-live and on mod live-edit. Not rewritten here — see the PR body's open item.
+    //
+    // Derived BEFORE the flip and NOT wrapped in try/catch: a throw here aborts the tx,
+    // so a listing whose rating cannot be derived does NOT go live (fail-closed).
+    //
+    // RAISE-ONLY is the helper's contract — it returns `declaredRating` unchanged unless
+    // the derived ceiling is strictly higher — so writing the result UNCONDITIONALLY is
+    // safe: tame media can never lower a deliberately higher declaration, and an
+    // unchanged rating writes its own value back. Same shape as `approveRequest`'s.
+    const flooredRating = await resolveListingRatingFloorInTx(
+      tx,
+      input.appListingId,
+      listing.contentRating
+    );
+
+    // 🔴 THE ASSET-CHANGE REVIEW GATE. Compare the listing's CURRENT reviewable asset
+    // surface against the one recorded when the owner unpublished it (= the one a
+    // moderator last approved — see the function doc). Read on the PRIMARY, inside this
+    // tx, so it is row-consistent with the flip it decides.
+    //
+    // 🔴 A MISSING BASELINE AND AN UNREADABLE ONE GO OPPOSITE WAYS, which is the whole
+    // reason this is not a bare `!==` and not a bare null-check either.
+    // `readRecordedAssetBaseline` distinguishes "this event carries no `assets` key"
+    // (every listing unpublished before this feature shipped — a bounded, shrinking set
+    // with no change to review, so republish stays immediate exactly as it always was)
+    // from "it carries one and it does not parse" (unbounded, something is wrong now →
+    // review). See `app-listing-approved-assets`.
+    //
+    // 🔴 IT RUNS AFTER THE RATING FLOOR ON PURPOSE. The floor is applied on BOTH arms —
+    // #4418's guarantee must not depend on which arm a republish takes.
+    const liveAssets = await buildApprovedAssetSnapshot(tx, input.appListingId, listing);
+    reviewReason = resolveRepublishReviewReason(
+      readRecordedAssetBaseline(lastEvent?.before),
+      liveAssets
+    );
+
+    if (reviewReason) {
+      await routeRepublishToReviewInTx(tx, {
+        appListingId: input.appListingId,
+        listing,
+        userId,
+        reason,
+        reviewReason,
+        flooredRating,
+      });
+      return;
+    }
+
     const flipped = await tx.appListing.updateMany({
       where: { id: input.appListingId, kind: listing.kind, status: 'removed' },
-      data: { status: 'approved' },
+      data: { status: 'approved', contentRating: flooredRating },
     });
     if (flipped.count === 0) {
       throw new OffsiteModerationError(
@@ -1424,6 +2011,7 @@ export async function republishOwnListing(opts: {
       });
       if (!flippedBlock) onsiteBlockRestoreDrift = true;
     }
+
     await tx.appListingModerationEvent.create({
       data: {
         id: newAppListingModerationEventId(),
@@ -1459,7 +2047,156 @@ export async function republishOwnListing(opts: {
       .catch(() => undefined);
   }
 
-  return { appListingId: input.appListingId, status: 'approved' };
+  // 🔴 The narrowing is on the LOCAL, not on a re-read: `reviewReason` is assigned inside
+  // the transaction callback and TypeScript cannot see through the closure, so it is
+  // widened back to the union here explicitly rather than trusted.
+  const landedReviewReason: RepublishReviewReason | null = reviewReason;
+  return landedReviewReason
+    ? { appListingId: input.appListingId, status: 'pending', reviewReason: landedReviewReason }
+    : { appListingId: input.appListingId, status: 'approved' };
+}
+
+/**
+ * REVIEW ARM of {@link republishOwnListing}: instead of going live, put the listing into
+ * `pending` and re-queue it on the surface that can actually SHOW the imagery under review.
+ *
+ * 🔴 BOTH KINDS RE-QUEUE ONTO `AppListingPublishRequest`. THE ON-SITE ARM USED TO CLONE THE
+ * APPROVED `AppBlockPublishRequest` INSTEAD, AND THAT WAS THE BUG. What changed is the
+ * listing's IMAGERY, and the block-request queue cannot express that: a clone carries the
+ * same bundle key, the same sha256, the same manifest and the same version as the row the
+ * moderator already approved, and the modal that renders it (`OnsiteReviewModal`) draws its
+ * screenshots by re-extracting them from the bundle ZIP and never reads `AppListing.iconId`
+ * / `coverId` / `AppListingScreenshot` at all. So the moderator was handed a byte-identical
+ * re-submission of something they had already said yes to, with nothing on screen about the
+ * pictures that caused the re-queue — a review that structurally could not review the thing
+ * under review.
+ *
+ * The listing-request queue is where listing imagery is reviewed already: the mod modal
+ * (`OffsiteReviewQueue`) keys `appListings.getAssets` and `getListingPreviewForReview` off
+ * `request.appListingId`, so it renders this listing's real icon, cover and screenshots and
+ * a store-layout preview. Both reads are kind-agnostic, and `listPendingOffsiteRequests`
+ * already selects `kind: { in: ['onsite','offsite'] }` with no `revisionOfId` constraint.
+ *
+ * 🔴 THIS IS THE FIRST NON-SHADOW `kind: 'onsite'` LISTING REQUEST IN THE SYSTEM. Every
+ * other onsite listing request is a media REVISION (`revisionOfId != null`) and returns
+ * early from `approveExternalRequest` into `applyApprovedRevision`. A non-shadow one takes
+ * the main approve path, which had no onsite behaviour because nothing could reach it —
+ * see the two onsite branches added there (raise-only rating, and un-suspending the
+ * backing block).
+ *
+ * WHAT EACH KIND GETS:
+ *
+ *   BOTH — flip `removed → pending` and mint a FRESH `pending` non-shadow
+ *   `AppListingPublishRequest` owned by the listing owner. Off-site this is byte-identical
+ *   to {@link resetListingToPending}'s writes.
+ *
+ *   ON-SITE additionally — the backing block is LEFT SUSPENDED (`unpublishOwnListing`
+ *   suspended it and nothing here restores it): an app whose store card is awaiting review
+ *   does not serve, which is the same posture {@link resetOnsiteListingToPending} takes.
+ *   `approveExternalRequest` un-suspends it on approve. Withdraw/reject leave listing
+ *   `removed` + block `suspended`, which is exactly the state the owner was in before they
+ *   pressed Republish — the two halves never diverge.
+ *
+ * 🔴 THE ICON+COVER FLOOR IS PRE-CHECKED HERE, BEFORE ANYTHING IS WRITTEN, and it is not
+ * decoration. `approveExternalRequest` asserts the floor and does NOT exempt on-site, while
+ * the on-site FIRST-publish path (`approveRequest`) never asserts it — so an approved
+ * on-site listing is genuinely allowed to have no icon or no cover. Routing such a listing
+ * to review without this check strands it: it sits `pending`, its app is suspended, and the
+ * moderator's approve fails on the floor every time, with no owner-reachable way out.
+ * Failing HERE turns that into an ordinary, actionable "add an icon and a cover" error and
+ * leaves the listing `removed` where the owner can still edit it.
+ *
+ * 🔴 `contentRating` IS WRITTEN ON THIS ARM TOO. It carries #4418's raise-only floor,
+ * already derived by the caller; see the call site for why deferring it to the approve is
+ * not equivalent.
+ *
+ * The audit event is an `owner-republish` whose `after.status` is `pending`, so the
+ * history reads "the owner asked for this back, and it went to review" rather than
+ * implying it went live. `detail` names WHY.
+ *
+ * A guarded 0-count on the flip throws, rolling back the whole tx — including the
+ * re-queued request — so a raced listing can never leave a stray queue entry behind.
+ */
+async function routeRepublishToReviewInTx(
+  tx: Prisma.TransactionClient,
+  args: {
+    appListingId: string;
+    listing: {
+      kind: string;
+      slug: string;
+      userId: number;
+      iconId: number | null;
+      coverId: number | null;
+    };
+    userId: number;
+    reason: string | null;
+    reviewReason: RepublishReviewReason;
+    flooredRating: string | null;
+  }
+): Promise<void> {
+  const { appListingId, listing, reviewReason, flooredRating } = args;
+
+  // Publish-floor pre-check — see the 🔴 note above. `screenshotCount` is not part of the
+  // floor (screenshots are optional), so a constant satisfies the parameter shape; the
+  // floor reads only `iconId`/`coverId`.
+  assertListingMeetsFloor({
+    iconId: listing.iconId,
+    coverId: listing.coverId,
+    screenshotCount: 0,
+  });
+
+  // A pending listing request already pointing at THIS row would make the queue show two
+  // reviews of one listing, and the approve path would supersede whichever it did not
+  // action. Refuse with a friendly error rather than create the second one. (Scoped to
+  // `appListingId`, NOT slug: a shadow revision denormalizes the parent slug but targets a
+  // different row and is a legitimate concurrent review.)
+  const openRequest = await tx.appListingPublishRequest.findFirst({
+    where: { appListingId, status: 'pending' },
+    select: { id: true },
+  });
+  if (openRequest) {
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'A review is already pending for this listing.'
+    );
+  }
+
+  const flipped = await tx.appListing.updateMany({
+    where: { id: appListingId, kind: listing.kind, status: 'removed' },
+    data: { status: 'pending', contentRating: flooredRating },
+  });
+  if (flipped.count === 0) {
+    throw new OffsiteModerationError(
+      'NOT_TRANSITIONABLE',
+      'This listing can no longer be republished.'
+    );
+  }
+
+  await tx.appListingPublishRequest.create({
+    data: {
+      id: newAppListingPublishRequestId(),
+      appListingId,
+      kind: listing.kind,
+      slug: listing.slug,
+      // The LISTING OWNER, so my-submissions and the mod queue attribute it to them.
+      submittedByUserId: listing.userId,
+      status: 'pending',
+    },
+  });
+
+  await tx.appListingModerationEvent.create({
+    data: {
+      id: newAppListingModerationEventId(),
+      appListingId,
+      slug: listing.slug,
+      action: 'owner-republish',
+      actorUserId: args.userId,
+      reason: args.reason,
+      detail: REPUBLISH_REVIEW_DETAIL[reviewReason],
+      before: { status: 'removed' },
+      after: { status: 'pending' },
+    },
+  });
 }
 
 /**

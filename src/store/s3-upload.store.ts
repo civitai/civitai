@@ -4,6 +4,15 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import type { UploadType } from '~/server/common/enums';
+import { withRetries } from '~/utils/errorHandling';
+import type { UploadPartError } from '~/utils/upload-retry';
+import {
+  getPartRetryDelay,
+  isExpiredPartError,
+  isTerminalCompleteStatus,
+  MAX_PART_ATTEMPTS,
+  shouldRetryPartError,
+} from '~/utils/upload-retry';
 
 import { useCatchNavigationStore } from './catch-navigation.store';
 
@@ -43,6 +52,7 @@ type ApiUploadResponse =
       key: string;
       uploadId?: string;
       backend?: string;
+      chunkSize?: number;
     }
   | { error: string };
 
@@ -80,6 +90,7 @@ export const useS3UploadStore = create<StoreProps>()(
     const endpoint = '/api/upload';
     const completeEndpoint = '/api/upload/complete';
     const abortEndpoint = '/api/upload/abort';
+    const signPartEndpoint = '/api/upload/sign-part';
 
     function preparePayload(
       uuid: string,
@@ -195,6 +206,9 @@ export const useS3UploadStore = create<StoreProps>()(
           throw data.error;
         } else {
           const { bucket, key, uploadId, urls, backend } = data;
+          // The server sizes chunks against the file so the part count stays bounded;
+          // slicing by anything else would send parts that don't match what it signed.
+          const chunkSize = data.chunkSize ?? FILE_CHUNK_SIZE;
           const uuid = uuidv4();
 
           // let currentXhr: XMLHttpRequest;
@@ -288,28 +302,100 @@ export const useS3UploadStore = create<StoreProps>()(
               }),
             });
 
+          // Best-effort teardown of the server-side multipart session. EVERY failure
+          // path that gives up after the session was created has to run this, or the
+          // upload stays open indefinitely and the parts already transferred keep
+          // accruing storage with nothing left to finalize them.
+          //
+          // The rejection is deliberately swallowed rather than surfaced: this is
+          // cleanup, not part of the caller's outcome. Both callers' contract is to
+          // return undefined with a terminal row already written, so raising here
+          // would replace the real cause (the part error, or the failed completion)
+          // with an incidental teardown error at every call site. The abort endpoint
+          // also treats an already-gone upload as success, so a throw on this path is
+          // genuinely exceptional — it gets logged, not raised.
+          const abortUploadQuietly = async () => {
+            try {
+              await abortUpload();
+            } catch (err) {
+              console.error('Failed to abort upload');
+              console.error(err);
+            }
+          };
+
+          // Write a terminal row state without letting a failure here pre-empt the
+          // teardown above. updateFile() throws 'index out of bounds' when the row has
+          // already been dropped from the store (clear(), or a navigation that reset
+          // the list) — and that is precisely a case where the session still needs
+          // aborting, so the two must not share a try block.
+          const setTerminalStatus = (status: UploadStatus) => {
+            try {
+              updateFile(pendingItem.uuid, {
+                status,
+                progress: 0,
+                speed: 0,
+                timeRemaining: 0,
+                uploaded: 0,
+              });
+            } catch (err) {
+              console.error('Failed to write terminal upload status');
+              console.error(err);
+            }
+          };
+
           const completeUpload = () =>
-            fetch(completeEndpoint, {
-              method: 'POST',
-              headers,
-              body: JSON.stringify({
-                bucket,
-                key,
-                type,
-                uploadId,
-                parts,
-                backend,
-              }),
-            });
+            withRetries(
+              async (remainingAttempts) => {
+                const res = await fetch(completeEndpoint, {
+                  method: 'POST',
+                  headers,
+                  body: JSON.stringify({
+                    bucket,
+                    key,
+                    type,
+                    uploadId,
+                    parts,
+                    backend,
+                  }),
+                });
+
+                // Terminal statuses must not be re-POSTed — see isTerminalCompleteStatus.
+                if (!res.ok && !isTerminalCompleteStatus(res.status) && remainingAttempts > 0)
+                  throw new Error(`Failed to complete upload (${res.status})`);
+
+                return res;
+              },
+              3,
+              1000
+            );
+
+          // Swap an expired part URL for a fresh one. A file big enough to take longer
+          // than the presign lifetime would otherwise die at the point where its
+          // remaining parts all start coming back 403.
+          const resignPart = async (partNumber: number) => {
+            if (!uploadId) return null;
+            try {
+              const res = await fetch(signPartEndpoint, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ bucket, key, uploadId, partNumber, backend }),
+              });
+              if (!res.ok) return null;
+              const signed = (await res.json()) as { url?: string };
+              return signed.url ?? null;
+            } catch {
+              return null;
+            }
+          };
 
           // Prepare part upload
           const partsCount = urls.length;
           const parts: { ETag: string; PartNumber: number }[] = [];
           const uploadPart = (url: string, i: number) =>
-            new Promise<UploadStatus>((resolve, reject) => {
+            new Promise<void>((resolve, reject) => {
               let eTag: string;
-              const start = (i - 1) * FILE_CHUNK_SIZE;
-              const end = i * FILE_CHUNK_SIZE;
+              const start = (i - 1) * chunkSize;
+              const end = i * chunkSize;
               const part = i === partsCount ? file.slice(start) : file.slice(start, end);
               const xhr = new XMLHttpRequest();
               activeXhrs.add(xhr);
@@ -320,24 +406,32 @@ export const useS3UploadStore = create<StoreProps>()(
               xhr.upload.addEventListener('loadend', ({ loaded }) => {
                 partProgress.set(i, loaded);
               });
-              xhr.addEventListener('loadend', () => {
-                activeXhrs.delete(xhr);
-                const success = xhr.readyState === 4 && xhr.status === 200;
-                if (success) {
-                  parts.push({ ETag: eTag, PartNumber: i });
-                  resolve('success');
-                }
-              });
               xhr.addEventListener('load', () => {
                 eTag = xhr.getResponseHeader('ETag') ?? '';
               });
+              xhr.addEventListener('loadend', () => {
+                activeXhrs.delete(xhr);
+                if (xhr.readyState !== 4) return;
+                if (xhr.status === 200) {
+                  parts.push({ ETag: eTag, PartNumber: i });
+                  resolve();
+                } else {
+                  // An HTTP failure fires neither 'error' nor 'abort'. Without this the
+                  // promise never settles, the worker parks forever, and the upload sits
+                  // at ~100% with no error and no file record.
+                  reject({
+                    status: xhr.status,
+                    retryAfter: xhr.getResponseHeader('Retry-After'),
+                  } as UploadPartError);
+                }
+              });
               xhr.addEventListener('error', () => {
                 activeXhrs.delete(xhr);
-                reject('error');
+                reject({ status: null, networkError: true } as UploadPartError);
               });
               xhr.addEventListener('abort', () => {
                 activeXhrs.delete(xhr);
-                reject('aborted');
+                reject({ status: null, aborted: true } as UploadPartError);
               });
               xhr.open('PUT', url);
               xhr.setRequestHeader('Content-Type', 'application/octet-stream');
@@ -374,29 +468,42 @@ export const useS3UploadStore = create<StoreProps>()(
 
           // Worker pool over remaining parts
           const queue = [...(urls as { url: string; partNumber: number }[])];
-          let failureStatus: UploadStatus | null = null;
+          const fatalErrorRef: { value: UploadPartError | null } = { value: null };
 
           const runWorker = async () => {
-            while (queue.length > 0 && !failureStatus) {
+            while (queue.length > 0 && !fatalErrorRef.value) {
               if (cancelController.signal.aborted) return;
               const item = queue.shift();
               if (!item) return;
-              let status: UploadStatus = 'pending';
-              let retryCount = 0;
-              while (retryCount < 3) {
-                if (cancelController.signal.aborted) return;
-                try {
-                  status = await uploadPart(item.url, item.partNumber);
-                } catch (e) {
-                  status = e === 'aborted' ? 'aborted' : 'error';
+
+              let url = item.url;
+              let partError: UploadPartError | null = null;
+              for (let attempt = 0; attempt < MAX_PART_ATTEMPTS; attempt++) {
+                if (cancelController.signal.aborted) {
+                  partError = { status: null, aborted: true };
+                  break;
                 }
-                if (status !== 'error') break;
-                retryCount++;
-                await cancellableSleep(5000 * retryCount);
+                try {
+                  await uploadPart(url, item.partNumber);
+                  partError = null;
+                  break;
+                } catch (e) {
+                  partError = e as UploadPartError;
+                }
+                if (attempt === MAX_PART_ATTEMPTS - 1) break;
+                if (isExpiredPartError(partError)) {
+                  const fresh = await resignPart(item.partNumber);
+                  if (!fresh) break;
+                  url = fresh;
+                  continue;
+                }
+                if (!shouldRetryPartError(partError)) break;
+                await cancellableSleep(getPartRetryDelay(partError, attempt));
               }
-              if (status !== 'success') {
+
+              if (partError) {
                 // First failure wins so a real error doesn't get masked by a later abort
-                if (!failureStatus) failureStatus = status;
+                if (!fatalErrorRef.value) fatalErrorRef.value = partError;
                 cancelController.abort();
                 for (const x of activeXhrs) x.abort();
                 return;
@@ -407,25 +514,19 @@ export const useS3UploadStore = create<StoreProps>()(
           await Promise.all(
             Array.from({ length: Math.min(CONCURRENT_PARTS, urls.length) }, () => runWorker())
           );
+          const failureStatus: UploadStatus | null = fatalErrorRef.value
+            ? fatalErrorRef.value.aborted
+              ? 'aborted'
+              : 'error'
+            : null;
 
           // No more progress events past this point; drop any queued frame so it can't
           // clobber the terminal status written below.
           cancelProgress();
 
           if (failureStatus) {
-            try {
-              updateFile(pendingItem.uuid, {
-                status: failureStatus,
-                progress: 0,
-                speed: 0,
-                timeRemaining: 0,
-                uploaded: 0,
-              });
-              await abortUpload();
-            } catch (err) {
-              console.error('Failed to abort upload');
-              console.error(err);
-            }
+            setTerminalStatus(failureStatus);
+            await abortUploadQuietly();
             return;
           }
 
@@ -436,17 +537,25 @@ export const useS3UploadStore = create<StoreProps>()(
           const completeResult = await completeUpload().catch((err) => {
             console.error('Failed to complete upload');
             console.error(err);
-            updateFile(pendingItem.uuid, {
-              status: 'error',
-              progress: 0,
-              speed: 0,
-              timeRemaining: 0,
-              uploaded: 0,
-            });
-
-            return { ok: false };
+            return null;
           });
-          if (!completeResult.ok) return;
+          // Every bailout here has to leave a terminal 'error' behind: the bytes are in
+          // the bucket but no file record exists, and a row left mid-progress reads to
+          // the user as a finished upload that silently never got added.
+          //
+          // It also has to tear the multipart session down. A failed completion leaves
+          // the session open with every transferred part still stored and billable, and
+          // nothing else ever closes it — the part-failure branch above has always
+          // aborted, but this sibling path returned without doing so, so each failed
+          // completion leaked one upload permanently. Both terminal outcomes need it:
+          // 422 (invalid/incomplete parts) leaves a live session holding every part,
+          // and 409 (already finalized or aborted) is harmless because the abort
+          // endpoint treats an upload that is already gone as success.
+          if (!completeResult?.ok) {
+            setTerminalStatus('error');
+            await abortUploadQuietly();
+            return;
+          }
 
           // The final part's bytes land on 'loadend', which doesn't schedule a
           // progress frame — without this the row would settle on the last

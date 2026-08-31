@@ -1,6 +1,6 @@
 {
   "name": "@civitai/auth-app",
-  "version": "0.1.27",
+  "version": "0.1.32",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "prepare": "svelte-kit sync",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "typecheck": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
     "smoke:identity": "node scripts/identity-smoke.mjs"
   },
@@ -38,6 +38,6 @@
     "svelte-check": "^4.0.0",
     "typescript": "^5.9.2",
     "vite": "^7.0.4",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.11"
   }
 }

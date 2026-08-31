@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
-// Mock the redis + db layers so we can assert how often the underlying redis
-// GET actually fires for the memoized global blobs. Defined via vi.hoisted so
-// the references are available inside the hoisted vi.mock factory below.
+// The redis + db layers come from the canonical shared mocks, so we can assert
+// how often the underlying redis GET actually fires for the memoized global
+// blobs.
 //
 // NOTE: the wired getters use MODULE-SCOPE memos that capture `Date.now` at load
 // time, so a test can't drive their real (30s/5s) TTL expiry with fake timers.
@@ -11,39 +13,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // COLLAPSE within the TTL, per-key isolation, and FAIL-OPEN (a rejected read is
 // never cached, so the next call retries). Each test re-imports the module after
 // vi.resetModules() so it starts from a FRESH (empty) memo slate.
-const { packedGet, packedSet, redisGet, redisSet, queryRaw, tagFindMany } = vi.hoisted(() => ({
-  packedGet: vi.fn(),
-  packedSet: vi.fn(),
-  redisGet: vi.fn(),
-  redisSet: vi.fn(),
-  queryRaw: vi.fn(),
-  tagFindMany: vi.fn(),
-}));
+// Only the READ commands need a local: they are what the collapse assertions
+// count. The write-backs (`redis.packed.set` / `redis.set`) are answered by the
+// canonical defaults, which is all the hand-rolled `vi.fn()`s ever did for them.
+const packedGet = redisMock.redis.packed.get;
+const redisGet = redisMock.redis.get;
+const tagFindMany = dbMock.dbWrite.tag.findMany;
+const queryRaw = dbMock.dbWrite.$queryRaw;
 
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: { get: packedGet, set: packedSet },
-    get: redisGet,
-    set: redisSet,
-  },
-  sysRedis: { get: vi.fn(), set: vi.fn() },
-  withSysReadDeadline: (p: Promise<unknown>) => p,
-  REDIS_KEYS: {
-    SYSTEM: {
-      MODERATED_TAGS: 'system:moderated-tags',
-      TAG_RULES: 'system:tag-rules',
-      SYSTEM_TAGS: 'system:system-tags',
-      CATEGORIES: 'system:categories',
-    },
-    LIVE_NOW: 'live-now',
-  },
-  REDIS_SYS_KEYS: { SYSTEM: {}, CLIENT: 'client' },
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { tag: { findMany: vi.fn() }, tagsOnTags: { findMany: vi.fn() } },
-  dbWrite: { tag: { findMany: tagFindMany }, $queryRaw: queryRaw },
-}));
+// The hand-rolled REDIS_KEYS table that used to sit here is gone with the
+// direct mock: the canonical registration keeps the REAL key constants. Two of
+// the four values it declared had drifted from them (`MODERATED_TAGS` and
+// `SYSTEM_TAGS`), and nothing here asserts a key — every getter passes it
+// straight to a mocked client — so the real constants are used now.
 
 vi.mock('~/server/redis/fail-open-log', () => ({
   logSysRedisFailOpen: vi.fn(),

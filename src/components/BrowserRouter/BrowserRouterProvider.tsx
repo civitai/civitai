@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import { useDidUpdate } from '@mantine/hooks';
 import {
   resolveLocationChangeState,
+  resolveRouteChangeState,
   type BrowserRouterState,
   type HistoryState,
 } from '~/components/BrowserRouter/browserRouterState';
@@ -53,7 +54,12 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
       const event = e as CustomEvent;
       if (event.detail) {
         const eventState = event.detail[0];
-        stateRef.current = resolveLocationChangeState(eventState, history.state, window.location);
+        stateRef.current = resolveLocationChangeState(
+          eventState,
+          history.state,
+          window.location,
+          Router.pathname
+        );
         if (!usingNextRouter) useBrowserRouterState.setState(stateRef.current);
       }
     };
@@ -68,16 +74,45 @@ export function BrowserRouterProvider({ children }: { children: React.ReactNode 
 
   useEffect(() => {
     const handleRouteChangeComplete = () => {
-      if (stateRef.current && stateRef.current?.asPath === history.state?.as)
-        useBrowserRouterState.setState(stateRef.current);
+      // The payload has to come from the popstate snapshot: Next's `changeState`
+      // replaces `history.state` wholesale, with no `state` key, before it emits
+      // this event — so by now the entry's own payload exists nowhere else.
+      if (
+        stateRef.current &&
+        stateRef.current.asPath === history.state?.as &&
+        Router.asPath === history.state?.as
+      )
+        useBrowserRouterState.setState(
+          resolveRouteChangeState(Router, stateRef.current.state ?? {})
+        );
 
       setUsingNextRouter(false);
     };
 
+    // A hash-only navigation ends at `hashChangeComplete` and never reaches
+    // `routeChangeComplete`, so without this the flag stays raised and every
+    // later `locationchange` is dropped — routed dialogs stop opening.
+    //
+    // This list is NOT every way a navigation can end, and the two it leaves out
+    // are deliberate. `routeChangeError` also fires for the navigation being
+    // CANCELLED by the next one (router.js:872), so lowering there would release
+    // the flag while Next is mid-render of the newer route. And a route change
+    // this app aborts by throwing from `routeChangeStart` (RoutedDialogProvider)
+    // exits before any terminal event at all. Both leave the flag raised, which
+    // is the old behaviour, not a new fault.
+    //
+    // The listener also fires for hash navigations other than the pop that raised
+    // the flag — an in-page anchor clicked while a pop is still in flight lowers
+    // it early. Narrow, and still better than staying wedged, but it is the same
+    // ownership-by-boolean weakness rather than an exception to it.
+    const releaseNextRouter = () => setUsingNextRouter(false);
+
     router.events.on('routeChangeComplete', handleRouteChangeComplete);
+    router.events.on('hashChangeComplete', releaseNextRouter);
 
     return () => {
       router.events.off('routeChangeComplete', handleRouteChangeComplete);
+      router.events.off('hashChangeComplete', releaseNextRouter);
     };
   }, []); //eslint-disable-line
 

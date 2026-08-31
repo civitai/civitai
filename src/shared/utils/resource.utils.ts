@@ -49,6 +49,18 @@ const SINGLETON_SLOT_BY_MODEL_TYPE: Partial<Record<string, Exclude<ResourceNodeK
     VAE: 'vae',
   };
 
+/**
+ * True when `modelType` belongs in one of the graph's SINGLETON resource nodes
+ * (`model` / `upscaler` / `vae`) rather than the `resources` catchall.
+ *
+ * Reads the same table `splitResourcesByType` routes on, so a caller that needs
+ * to know "may this type be an additional network?" cannot drift from the
+ * routing rule. Additive — no existing consumer's behaviour changes.
+ */
+export function isSingletonSlotResource(modelType: string): boolean {
+  return SINGLETON_SLOT_BY_MODEL_TYPE[modelType] !== undefined;
+}
+
 // =============================================================================
 // Split: flat resources[] → { model, resources, vae }
 // =============================================================================

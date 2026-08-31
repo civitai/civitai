@@ -48,9 +48,42 @@ export const cosmeticShopNotifications = createNotificationProcessor({
       url: details.username ? `/user/${details.username as string}/shop/manage` : '/',
     }),
   },
+  // Event-driven (created in endResaleListings) — the original creator withdrew
+  // an item you were reselling, so your listing of it is gone.
+  'creator-shop-resale-ended': {
+    displayName: 'Creator Shop: An item you resell was withdrawn',
+    category: NotificationCategory.System,
+    prepareMessage: ({ details }) => ({
+      message: `"${
+        details.title as string
+      }" is no longer for sale, so it's been removed from your shop. You can list it again if its creator brings it back.`,
+      url: details.username ? `/user/${details.username as string}/shop/manage` : '/shop',
+    }),
+  },
+  // Event-driven (created in takedownCosmeticShopItem).
+  'creator-shop-item-taken-down': {
+    displayName: 'Creator Shop: Cosmetic removed',
+    category: NotificationCategory.System,
+    prepareMessage: ({ details }) => ({
+      message: `Your cosmetic "${
+        details.title as string
+      }" was removed from the shop and all sales were refunded: ${details.reason as string}`,
+      url: '/content/tos',
+    }),
+  },
+  'cosmetic-shop-item-taken-down': {
+    displayName: 'Shop: A cosmetic you bought was removed',
+    category: NotificationCategory.System,
+    prepareMessage: ({ details }) => ({
+      message: `"${
+        details.title as string
+      }" had to be removed from the shop. It's been taken off your account and your Buzz was refunded.`,
+      url: `/user/transactions`,
+    }),
+  },
   // Moveable (if created through API)
   'cosmetic-shop-item-added-to-section': {
-    defaultDisabled: true,
+    optIn: true,
     displayName: 'Shop: New Products Available',
     category: NotificationCategory.System,
     prepareMessage: () => ({
@@ -124,6 +157,8 @@ export const cosmeticShopNotifications = createNotificationProcessor({
         'cosmetic-shop-item-sold' "type",
         details
       FROM sold_items
+      -- One line: the polarity guard matches this clause as a literal.
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = sold_items."ownerId" AND type = 'cosmetic-shop-item-sold')
     `,
   },
 });

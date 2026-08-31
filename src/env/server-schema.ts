@@ -1,6 +1,7 @@
 // @ts-check
 import * as z from 'zod';
 import { zc } from '~/utils/schema-helpers';
+import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 import {
   commaDelimitedStringArray,
   commaDelimitedStringObject,
@@ -48,7 +49,7 @@ export const serverSchema = z
     // switches the system client to `createSentinel(...)` against this Sentinel
     // pool. See claudedocs/sysredis-ha-migration-runbook.md (datapacket-talos)
     // for the rollout sequence.
-    REDIS_SYS_SENTINELS: z.string().optional(), // comma-separated host:port list, e.g. "civitai-app-sysredis-sentinel.civitai-app-sysredis.svc.cluster.local:26379"
+    REDIS_SYS_SENTINELS: z.string().optional(), // comma-separated host:port list, e.g. "<sentinel-service>.<namespace>.svc.cluster.local:26379"
     // Master group name. No default — the cluster uses "sysmaster", and the
     // historical Sentinel default ("mymaster") would silently fail every lookup.
     // The superRefine below makes this required whenever REDIS_SYS_SENTINELS is set.
@@ -310,6 +311,11 @@ export const serverSchema = z
     // of silently disabling the guard (withTimeoutFallback passes through unbounded
     // when ms<=0 → the exact ~30s hang this exists to prevent, with no signal).
     CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS: z.coerce.number().int().positive().default(3000),
+    // Per-read deadline for `/api/user/settings`, which `_app` self-fetches on every SSR
+    // render. Must stay well under `APP_SETTINGS_FETCH_TIMEOUT_MS` (8s): a response the
+    // caller has stopped waiting for is the same outage. .int().positive() for the same
+    // reason as above — withTimeoutFallback passes through unbounded when ms<=0.
+    SETTINGS_READ_DEADLINE_MS: z.coerce.number().int().positive().default(2000),
     NODE_ENV: z.enum(['development', 'test', 'production']),
     NEXTAUTH_SECRET: z.string(),
     NEXTAUTH_URL: z.preprocess(
@@ -362,6 +368,24 @@ export const serverSchema = z
     JOB_TOKEN: z.string(),
     WEBHOOK_URL: z.url().optional(),
     WEBHOOK_TOKEN: z.string(),
+    // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
+    // here via the moderator catchall page during the transition.
+    MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
+    // Server-to-server base for the moderator app, for callers that never hand the URL to a browser.
+    // SEPARATE from MODERATOR_APP_URL on purpose: that one also feeds the /moderator/* redirect's
+    // Location header, so it must stay publicly resolvable. Optional — unset, moderator-app.service.ts
+    // falls back to MODERATOR_APP_URL and nothing changes.
+    // '' is accepted as well as absent, and that is not sloppiness. This whole change is built so
+    // the app and the config that supplies this key can deploy in either order; a bare key added to
+    // a ConfigMap arrives as an EMPTY STRING, and a plain `z.url().optional()` rejects '' — which
+    // fails the WHOLE schema parse and the process refuses to boot. Turning a typo into an outage
+    // is the opposite of what the fallback is for. '' is falsy, so it takes the fallback branch.
+    MODERATOR_APP_INTERNAL_URL: z.union([z.url(), z.literal('')]).optional(),
+    // The narrow, inbound-only credential the moderator app accepts, and the one this app should
+    // present when calling it. OPTIONAL on purpose — see moderator-app.service.ts for why the
+    // fallback to WEBHOOK_TOKEN has to stay. (Named for the value, not for the direction of any one
+    // caller: it is one secret, and the sibling jobs that call in already use this name.)
+    MOD_INBOUND_TOKEN: z.string().optional(),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),
@@ -400,7 +424,33 @@ export const serverSchema = z
     DELIVERY_WORKER_TOKEN: z.string().optional(),
     STORAGE_RESOLVER_ENDPOINT: z.string().optional(), // URL for storage-resolver microservice
     STORAGE_RESOLVER_AUTH: z.string().optional(), // Basic auth credentials (username:password)
+    // User-agent substrings whose model downloads resolve to an origin-direct URL
+    // instead of the CDN-fronted one. Empty (the default) disables the behaviour
+    // entirely, so this ships inert and is turned on by config.
+    //
+    // A direct URL is more expensive to serve than a CDN-fronted one, so this is
+    // an opt-in allowlist rather than a boolean: it names exactly which internal
+    // clients are worth it. See `shouldResolveDirect`.
+    STORAGE_RESOLVER_DIRECT_USER_AGENTS: commaDelimitedStringArray().default([]),
     TRPC_ORIGINS: commaDelimitedStringArray().default([]),
+    // Server-side cap on how many procedure calls ONE batched tRPC request may carry
+    // (`maxBatchSize` on the adapter). Defaults to the compiled-in constant that the browser
+    // batch link also mirrors, so an unset env is byte-identical to hardcoding it; the env var
+    // exists so the cap can be corrected with a config change instead of an image build plus a
+    // canary rollout. 🔴 FAIL SOFT, NOT LOUD — `.catch(...)` rather than `.default(...)`.
+    // `serverSchema` is parsed once by `src/env/server.ts`, which THROWS on any invalid field,
+    // so a `.default()` here meant a bad value ('' / '0' / '-5' / 'abc' / '12.5' / ' ') crashed
+    // the ENTIRE app boot. That is the wrong failure mode for a knob whose whole purpose is
+    // mid-incident correction: a typo on the Deployment would take the fleet down during the
+    // very incident the lever exists to fix. `.catch()` degrades any parse/validation failure
+    // to the compiled-in constant — i.e. to "the cap we shipped" — instead. The `.min(1)` floor
+    // is what makes 0 / negatives fall back rather than pass: 0 would reject every batch.
+    // Mirrors SEARCH_INDEX_MODEL_METRIC_FLUSH_INTERVAL_MS / EXTERNAL_MODERATION_TIMEOUT_MS.
+    // Pinned behaviourally by `src/env/__tests__/server-schema-trpc-max-batch-size.test.ts`.
+    // 🔴 RAISING is a safe rollback; LOWERING below the compiled-in constant is a tightening
+    // that 400s batches already-loaded browsers can still build — see `getTrpcMaxBatchSize` in
+    // `src/server/trpc/batch-cap.ts`.
+    TRPC_MAX_BATCH_SIZE: z.coerce.number().int().min(1).catch(TRPC_MAX_BATCH_SIZE),
     ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
     ORCHESTRATOR_MODE: z.string().default('dev'),
     ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
@@ -524,6 +574,11 @@ export const serverSchema = z
     SIGNALS_CIRCUIT_COOLDOWN_SECONDS: z.coerce.number().int().min(1).optional().default(30),
     CACHE_DNS: zc.booleanString,
     MINOR_FALLBACK_SYSTEM: zc.booleanString,
+    // Permutes the alphabet that encodes a hub's public id. SERVER ONLY — as a
+    // NEXT_PUBLIC_ var it would ship in the JS bundle and the encoding would be
+    // decorative. Empty means the alphabet as written, which is what dev runs with;
+    // changing it in an environment changes every hub URL there.
+    HUB_ID_SALT: z.string().default(''),
     CSAM_UPLOAD_KEY: z.string().default(''),
     CSAM_UPLOAD_SECRET: z.string().default(''),
     CSAM_BUCKET_NAME: z.string().default(''),
@@ -601,6 +656,15 @@ export const serverSchema = z
     FRESHDESK_TOKEN: z.string().optional(),
     FRESHDESK_AGENT_ID: z.coerce.number().optional(),
     UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
+    // Enforce the post-completion object-existence check in /api/upload/complete.
+    // 🔴 Defaults to FALSE = observe-only: the probe still runs and its verdict is
+    // logged, but a missing object does NOT fail the request. That ordering is
+    // deliberate — a 422 here increments no Prometheus counter (the http-error
+    // instrument returns early below 500), so the false-reject rate has to be
+    // measured from the completion log before rejection is switched on. Deliberately
+    // an env var rather than a Flipt flag: this endpoint family removed Flipt
+    // precisely because init failure caused a silent fallback.
+    UPLOAD_COMPLETE_VERIFY_ENFORCE: zc.booleanString.optional().default(false),
     POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.url()).optional()),
     CHOPPED_TOKEN: z.string().optional(),
     TIER_METADATA_KEY: z.string().default('tier'),
@@ -613,9 +677,6 @@ export const serverSchema = z
     CLOUDFLARE_TURNSTILE_SECRET: z.string().optional(),
     CF_INVISIBLE_TURNSTILE_SECRET: z.string().optional(),
     CF_MANAGED_TURNSTILE_SECRET: z.string().optional(),
-    CONTENT_SCAN_ENDPOINT: isProd ? z.string() : z.string().optional(),
-    CONTENT_SCAN_CALLBACK_URL: z.string().optional(),
-    CONTENT_SCAN_MODEL: z.string().optional(),
     // TIPALTI. It uses a lot of little env vars, so we group them here.
     // iFrame Related:
     TIPALTI_PAYER_NAME: z.string().optional(),
@@ -690,6 +751,11 @@ export const serverSchema = z
     // verifies orders/* HMAC. Admin auth: the custom app uses the client_credentials
     // grant (CLIENT_ID + CLIENT_SECRET → short-lived token); set SHOPIFY_ADMIN_TOKEN
     // instead only if using a static store custom-app token.
+    // ClickUp -> Known Issues board sync. Signing secret ClickUp returns when the
+    // webhook is created; unset disables the receiver (503) rather than trusting
+    // unsigned deliveries.
+    CLICKUP_WEBHOOK_SECRET: z.string().optional(),
+
     SHOPIFY_SHOP_DOMAIN: z.string().optional(),
     SHOPIFY_WEBHOOK_SECRET: z.string().optional(),
     SHOPIFY_CLIENT_ID: z.string().optional(),
@@ -726,6 +792,12 @@ export const serverSchema = z
     // image-cacher's Redis L2 cache + Cloudflare cache after we delete an
     // image from B2. Optional — if unset, invalidation is skipped.
     IMAGE_CACHER_URL: z.url().optional(),
+
+    // Shared secret for image-cacher's /admin/* endpoints. The service only requires it once its
+    // destructive cache-object mode is enabled, and rejects the call outright without it — so this
+    // must be configured BEFORE that mode is turned on, or invalidation stops working entirely.
+    // Optional here so unset behaves exactly as today.
+    IMAGE_CACHER_ADMIN_SECRET: z.string().optional(),
 
     // BitDex
     BITDEX_URL: z.string().optional().default(''),
@@ -765,7 +837,7 @@ export const serverSchema = z
     // APPS_TEKTON_TRIGGER_URL   HTTP endpoint that creates PipelineRuns on
     //                           dc-02-a (the app-blocks-trigger receiver,
     //                           reached via the VPN proxy on dp-1). Example:
-    //                           http://wireguard-proxy-service.civitai-submodel-proxy.svc.cluster.local:8088/trigger-build
+    //                           http://<proxy-service>.<namespace>.svc.cluster.local:8088/trigger-build
     // APPS_TEKTON_TRIGGER_SECRET   HMAC shared secret between civitai-web and
     //                           the app-blocks-trigger receiver. 32-byte hex.
     // APPS_KUBE_NAMESPACE       civitai-apps (where apply Jobs are created
@@ -811,7 +883,7 @@ export const serverSchema = z
     // (no new secret). OPTIONAL — when unset, triggerReviewBuild derives it from
     // APPS_TEKTON_TRIGGER_URL by swapping the trailing `/trigger-build` segment
     // for `/trigger-review-build`, so a typical deploy needs no extra env. Example:
-    // http://wireguard-proxy-service.civitai-submodel-proxy.svc.cluster.local:8088/trigger-review-build
+    // http://<proxy-service>.<namespace>.svc.cluster.local:8088/trigger-review-build
     APPS_TEKTON_REVIEW_TRIGGER_URL: z.string().url().optional(),
     APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
     APPS_DOMAIN: z.string().default('civit.ai'),
@@ -852,19 +924,19 @@ export const serverSchema = z
     // the callback falls back to NEXTAUTH_URL (the public origin) so the feature
     // keeps working before infra sets the in-cluster value ahead of un-dark.
     AGENT_REVIEW_CALLBACK_BASE_URL: z.string().optional(),
-    // Base URL of the verify-runner screenshot service (warm Playwright Chromium)
+    // Base URL of the screenshot-runner service (warm Playwright Chromium)
     // used to autogenerate a marketplace screenshot for an approved App Block that
-    // shipped no publisher screenshots. In-cluster service (devpod-devops ns), e.g.
-    // http://verify-runner.devpod-devops.svc.cluster.local:8080. OPTIONAL — when
+    // shipped no publisher screenshots. In-cluster service, e.g.
+    // http://<service>.<namespace>.svc.cluster.local:8080. OPTIONAL — when
     // unset, autogeneration is silently skipped (best-effort; never blocks deploy).
     BLOCK_SCREENSHOT_RUNNER_URL: z.string().url().optional(),
 
     // App Blocks W1 (publish-request flow). S3-compatible storage for
-    // dev-uploaded ZIP bundles. Production points at ssd-minio-backups
-    // MinIO with credentials scoped to the app-block-bundles bucket only.
+    // dev-uploaded ZIP bundles. Production points at an in-cluster MinIO
+    // tenant with credentials scoped to the app-block-bundles bucket only.
     // All optional so envs without the publish-request feature still boot.
     //
-    // BUNDLE_S3_ENDPOINT             e.g. http://minio.minio-ssd-backups.svc.cluster.local
+    // BUNDLE_S3_ENDPOINT             e.g. http://<minio-service>.<namespace>.svc.cluster.local
     // BUNDLE_S3_BUCKET               e.g. app-block-bundles
     // BUNDLE_S3_ACCESS_KEY_ID        scoped service-account key
     // BUNDLE_S3_SECRET_ACCESS_KEY    matching secret

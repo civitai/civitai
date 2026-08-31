@@ -1,6 +1,7 @@
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import type { ProtectedContext } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { reviewConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
 import type {
   CreateCsamReportSchema,
@@ -20,9 +21,15 @@ export async function createCsamReportHandler({
   input: CreateCsamReportSchema;
   ctx: ProtectedContext;
 }) {
-  const { userId, imageIds = [], details, type } = input;
-  const reportedById = ctx.user.id;
-  await createCsamReport({ ...input, reportedById });
+  return fileCsamReport({ ...input, reportedById: ctx.user.id });
+}
+
+/** The report plus everything it triggers. Split from the tRPC handler so `/api/mod/csam/*` can reach
+ *  it with the acting moderator's id rather than a fabricated tRPC context. */
+export async function fileCsamReport(input: CreateCsamReportSchema & { reportedById: number }) {
+  const { userId, imageIds = [], details, type, reportedById } = input;
+  let denyFailed = false;
+  await createCsamReport(input);
 
   // Resolve reports concerning csam images
   if (type === 'Image' && !!imageIds.length) {
@@ -49,7 +56,26 @@ export async function createCsamReportHandler({
   } else if (type === 'TrainingData') {
     const modelVersionId = details?.modelVersionIds?.[0];
     if (modelVersionId) {
-      await handleDenyTrainingData({ input: { id: modelVersionId } });
+      // Isolated on purpose. The report row is already committed and the hourly job will forward it to
+      // NCMEC, so letting this throw would abandon the fan-out BEFORE the soft-delete below — leaving a
+      // reported account fully active with its content live, while the caller sees only a deny error.
+      // The deny is the least certain step (the gate can be already resolved, expired, or the
+      // orchestrator briefly down) and the one that is safe to retry, so it must not gate the rest.
+      try {
+        await handleDenyTrainingData({ input: { id: modelVersionId } });
+      } catch (e) {
+        denyFailed = true;
+        logToAxiom({
+          name: 'csam-report',
+          type: 'error',
+          important: true,
+          message: 'training deny failed; report filed and account still removed',
+          modelVersionId,
+          userId,
+          reportedById,
+          error: (e as Error)?.message,
+        }).catch(() => undefined);
+      }
     }
   } else if (type === 'GeneratedImage') {
     await reviewConsumerStrikes({ consumerId: `civitai-${userId}`, moderatorId: reportedById });
@@ -58,6 +84,9 @@ export async function createCsamReportHandler({
   if (userId !== -1) {
     await softDeleteUser({ id: userId, userId: reportedById });
   }
+
+  // Reported and removed either way; the caller decides how loudly to say the run is still open.
+  return { denyFailed };
 }
 
 export async function createExternalCsamReportHandler({

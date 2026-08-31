@@ -6,6 +6,7 @@ import {
   Code,
   Group,
   Loader,
+  Modal,
   Select,
   Stack,
   Text,
@@ -24,22 +25,27 @@ import {
   IconWorld,
 } from '@tabler/icons-react';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
   OFFSITE_CATEGORY_OPTIONS,
   OFFSITE_CONTENT_RATING_OPTIONS,
   OFFSITE_SUBMIT_LIMITS,
+  SOURCE_REPO_HOSTS_LABEL,
   deriveListingFromUrl,
   deriveScopesFromClient,
   emptyOffsiteSubmitForm,
   isClientStepComplete,
   isCreateDetailsStepComplete,
   isCreateUrlStepComplete,
+  isOffsiteSubmitFormDirty,
   toSubmitExternalInput,
   validateExternalCreateForm,
   type OffsiteSubmitFormErrors,
   type OffsiteSubmitFormValues,
 } from '~/components/Apps/offsiteSubmitFormConfig';
+import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
+import { useEligibleOauthClients } from '~/components/Apps/useEligibleOauthClients';
 import { DerivedScopesDisclosure } from '~/components/Apps/DerivedScopesDisclosure';
 import { ListingAssetStep } from '~/components/Apps/ListingAssetStep';
 import { describeMissingChannels } from '~/components/Apps/listingAutofillStatus';
@@ -49,7 +55,7 @@ import { FadeIn } from '~/components/Apps/wizardMotion';
 import type { ListingEditContext } from '~/components/Apps/offsiteEditConfig';
 import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
-import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -97,6 +103,23 @@ type ModClientOption = {
 
 type Submitted = { listingId: string; publishRequestId: string; slug: string };
 
+/**
+ * Plain-language answer to "what is an OAuth app and why does listing need one?".
+ *
+ * Pinned as a constant so the test asserts the WHOLE normalised sentence rather than
+ * a keyword — a guard on words is walkable by rewording, and this string's job is to
+ * carry an explanation, not a vocabulary.
+ */
+export const OAUTH_REQUIREMENT_EXPLAINER =
+  'An OAuth app is the registration that lets people sign in to your app with their Civitai account, and that decides what your app may read or do on their behalf. Every standalone listing links to one, so visitors can see up front what they would be granting.';
+
+/** Where Cancel / "View my submissions" go. One constant, two call sites. */
+const MY_APPS_HREF = '/apps/mine';
+
+/** The exact sentence shown when the author owns no eligible OAuth client. */
+export const NO_ELIGIBLE_CLIENTS_TEXT =
+  'You have no eligible OAuth apps. Register one in your account settings first, then come back to list it.';
+
 /** Wizard step indices — App URL → App & scopes → Details → Assets. */
 const STEP_URL = 0;
 const STEP_APP = 1;
@@ -137,18 +160,11 @@ function ExternalCreateForm() {
   const currentUser = useCurrentUser();
   const isModerator = !!currentUser?.isModerator;
 
-  const clientsQuery = trpc.oauthClient.getAll.useQuery(undefined, {
-    retry: false,
-    refetchOnWindowFocus: false,
-  });
-
-  // The caller's OWN OAuth clients, EXCLUDING App-Block clients (managed by the App
-  // Blocks flow — never a hand-authored target). `getAll` is already scoped to the
-  // caller (`userId`), so this is the ownership filter + the app-block exclude.
-  const clients = useMemo(
-    () => (clientsQuery.data ?? []).filter((c) => !isAppBlockOauthClientId(c.id)),
-    [clientsQuery.data]
-  );
+  // 🔴 ONE eligibility predicate, shared with the mode selector — the two surfaces
+  // that tell an author about this prerequisite must not be able to disagree. The
+  // filter (own clients, App-Block clients excluded) lives in the hook, not here.
+  const eligibleClients = useEligibleOauthClients();
+  const clients = eligibleClients.clients;
 
   // MODERATOR picker: a debounced async global search over ALL non-App-Block clients.
   // An empty search returns the mod's own clients (server default), so mods get the
@@ -240,9 +256,7 @@ function ExternalCreateForm() {
     // resolve from their own client list, unchanged.
     let nextAllowed = 0;
     if (isModerator) {
-      const nextClient = clientId
-        ? modOptionClients.find((c) => c.id === clientId) ?? null
-        : null;
+      const nextClient = clientId ? modOptionClients.find((c) => c.id === clientId) ?? null : null;
       setSelectedClientData(nextClient);
       nextAllowed = nextClient?.allowedScopes ?? 0;
     } else {
@@ -332,7 +346,11 @@ function ExternalCreateForm() {
     if (Object.keys(nextErrors).length > 0) {
       // Steer the author back to the step carrying the first error.
       if (nextErrors.externalUrl) setActive(STEP_URL);
-      else if (nextErrors.connectClientId || nextErrors.requestedScopes || nextErrors.scopeJustifications) {
+      else if (
+        nextErrors.connectClientId ||
+        nextErrors.requestedScopes ||
+        nextErrors.scopeJustifications
+      ) {
         setShowScopeErrors(true);
         setActive(STEP_APP);
       }
@@ -354,6 +372,34 @@ function ExternalCreateForm() {
     }
   }
 
+  /**
+   * 🔴 CANCEL DISCARDS EVERYTHING, SILENTLY — so confirm, but ONLY when there is
+   * something to lose.
+   *
+   * `Cancel` used to be a plain `<Button component={Link} href="/apps/mine">`: one
+   * click and every field entered (URL, name, description, the scope justifications)
+   * was gone with no warning and no undo. It is now a real button that asks first.
+   *
+   * It deliberately does NOT ask on a pristine form. A confirmation that fires on an
+   * untouched wizard is a nag, and a nag is dismissed reflexively — which would make
+   * the dialog worthless on the one occasion it matters. {@link isOffsiteSubmitFormDirty}
+   * owns that predicate.
+   */
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const router = useRouter();
+
+  function leaveToMyApps() {
+    void router.push(MY_APPS_HREF);
+  }
+
+  function handleCancel() {
+    if (isOffsiteSubmitFormDirty(values)) {
+      setConfirmDiscard(true);
+      return;
+    }
+    leaveToMyApps();
+  }
+
   const busy = submitMutation.isPending;
   const clientOptions = clients.map((c) => ({ value: c.id, label: c.name }));
   const modClientOptions = modOptionClients.map((c) => ({
@@ -363,7 +409,8 @@ function ExternalCreateForm() {
 
   // Create-client deeplink for EVERYONE (mods + regular devs) — opens the OAuth-apps
   // card on /user/account in a NEW TAB so the in-progress wizard isn't lost. Rendered
-  // persistently below the picker AND reused as the Select's `nothingFoundMessage`.
+  // ONCE, persistently below the picker. Deliberately NOT reused as the mod Select's
+  // `nothingFoundMessage` — see `noClientsFoundMessage` for why.
   const createClientLink = (
     <Anchor
       href="/user/account"
@@ -378,19 +425,65 @@ function ExternalCreateForm() {
     </Anchor>
   );
 
+  // Empty-state copy for the mod global-search Select. Mantine renders
+  // `nothingFoundMessage` via `Combobox.Empty` INSIDE `Combobox.Options`, which carries
+  // `role="listbox"` — and because setting `nothingFoundMessage` flips `hiddenWhenEmpty`
+  // to false while `Combobox` defaults to `keepMounted: true`, that node stays in the DOM
+  // (merely `display:none`) whenever the option list is empty, open or not. So this must
+  // stay NON-INTERACTIVE prose: an <a> here would be a `link` inside a `listbox` (not a
+  // permitted child role, and it breaks combobox arrow/Enter semantics while the dropdown
+  // is open), and it would duplicate `createClientLink` — two identical controls with the
+  // same accessible name reachable at once on exactly the no-results path this message
+  // exists for. The actionable affordance is the persistent link rendered below.
+  const noClientsFoundMessage = (
+    <Text size="xs" c="dimmed" data-testid="apps-offsite-client-search-empty">
+      No matching apps. Use the “Create an OAuth client” link below the picker to register one.
+    </Text>
+  );
+
   return (
     <Stack gap="md" data-testid="apps-offsite-submit-form">
+      {/* An INLINE Mantine Modal rather than `@mantine/modals`' openConfirmModal:
+          this component is rendered in isolation by the browser suite, which has no
+          ModalsProvider, and a confirmation nobody can test is a confirmation nobody
+          can trust. */}
+      <Modal
+        opened={confirmDiscard}
+        onClose={() => setConfirmDiscard(false)}
+        title="Discard this submission?"
+        data-testid="apps-offsite-discard-modal"
+      >
+        <Stack gap="md">
+          <Text size="sm">
+            You’ve entered details for this listing and nothing has been saved yet. Leaving now
+            discards them.
+          </Text>
+          <Group justify="flex-end">
+            <Button
+              variant="default"
+              onClick={() => setConfirmDiscard(false)}
+              data-testid="apps-offsite-discard-cancel"
+            >
+              Keep editing
+            </Button>
+            <Button color="red" onClick={leaveToMyApps} data-testid="apps-offsite-discard-confirm">
+              Discard and leave
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
       <Alert
         color="blue"
         variant="light"
         icon={<IconPlugConnected size={16} />}
-        title="List an external app"
+        title={`List a ${STANDALONE_KIND_LABEL} app`}
       >
         <Text size="sm">
-          List an app hosted off-site by linking your registered OAuth app so users can grant it
-          access. Start with your app’s URL — we’ll pull in a name, description and images you can
-          tweak. A moderator reviews it before it appears. This does not change what your app can
-          do: your OAuth client’s allowed scopes stay the limit.
+          List a {STANDALONE_KIND_LABEL} app hosted elsewhere by linking your registered OAuth app
+          so users can grant it access. Start with your app’s URL — we’ll pull in a name,
+          description and images you can tweak. A moderator reviews it before it appears. This does
+          not change what your app can do: your OAuth client’s allowed scopes stay the limit.
         </Text>
       </Alert>
 
@@ -467,8 +560,8 @@ function ExternalCreateForm() {
                 <Text size="xs" c="dimmed" data-testid="apps-offsite-submit-autofill-partial">
                   Pulled what your link exposed — {describeMissingChannels(autofill.result.missing)}{' '}
                   {(autofill.result.missing?.length ?? 0) > 1 ? 'were' : 'was'} not found; add{' '}
-                  {(autofill.result.missing?.length ?? 0) > 1 ? 'those' : 'that'} manually. Check the
-                  Details and Assets steps for what we found.
+                  {(autofill.result.missing?.length ?? 0) > 1 ? 'those' : 'that'} manually. Check
+                  the Details and Assets steps for what we found.
                 </Text>
               )}
               {!autofill.loading && autofill.result?.status === 'applied' && (
@@ -479,8 +572,8 @@ function ExternalCreateForm() {
                   data-testid="apps-offsite-submit-autofill-applied"
                 >
                   <Text size="sm">
-                    Pulled the latest details from your link — check the Details step for the
-                    name and description, and the Assets step for the suggested icon/cover.
+                    Pulled the latest details from your link — check the Details step for the name
+                    and description, and the Assets step for the suggested icon/cover.
                   </Text>
                 </Alert>
               )}
@@ -488,9 +581,9 @@ function ExternalCreateForm() {
               <Group justify="space-between">
                 <Button
                   variant="default"
-                  component={Link}
-                  href="/apps/my-submissions"
+                  onClick={handleCancel}
                   disabled={busy}
+                  data-testid="apps-offsite-wizard-cancel"
                 >
                   Cancel
                 </Button>
@@ -514,6 +607,14 @@ function ExternalCreateForm() {
         >
           <FadeIn>
             <Stack gap="md" mt="md">
+              {/* 🔴 "Your OAuth app" assumes prior knowledge. A developer listing a
+                  standalone app may never have registered an OAuth client and has no
+                  reason to know why listing needs one. Explain the RELATIONSHIP in
+                  plain language, before the picker, rather than after a failure. */}
+              <Text size="sm" c="dimmed" data-testid="apps-offsite-oauth-explainer">
+                {OAUTH_REQUIREMENT_EXPLAINER}
+              </Text>
+
               {isModerator ? (
                 // MOD: async global search over ALL non-App-Block clients. Empty search
                 // returns the mod's own clients (server default). Server does the
@@ -533,11 +634,11 @@ function ExternalCreateForm() {
                   error={errors.connectClientId}
                   disabled={busy}
                   required
-                  nothingFoundMessage={createClientLink}
+                  nothingFoundMessage={noClientsFoundMessage}
                   rightSection={modSearchQuery.isFetching ? <Loader size={14} /> : undefined}
                   data-testid="apps-offsite-client-search"
                 />
-              ) : clientsQuery.isLoading ? (
+              ) : eligibleClients.status === 'unknown' ? (
                 <Group gap={8} data-testid="apps-offsite-clients-loading">
                   <Loader size={16} />
                   <Text size="sm" c="dimmed">
@@ -545,11 +646,12 @@ function ExternalCreateForm() {
                   </Text>
                 </Group>
               ) : clients.length === 0 ? (
+                // 🔴 DEFENCE IN DEPTH, deliberately still reachable. The mode
+                // selector now surfaces this prerequisite BEFORE any work, but a
+                // client can be deleted mid-flow (or the selector's read can be
+                // stale), so this must not become unreachable-by-construction.
                 <Alert color="gray" variant="light" data-testid="apps-offsite-no-clients">
-                  <Text size="sm">
-                    You have no eligible OAuth apps. Register one in your account settings first,
-                    then come back to list it.
-                  </Text>
+                  <Text size="sm">{NO_ELIGIBLE_CLIENTS_TEXT}</Text>
                 </Alert>
               ) : (
                 <Select
@@ -604,7 +706,9 @@ function ExternalCreateForm() {
           label="Details"
           description="Name & metadata"
           allowStepClick={
-            !submitted && isCreateUrlStepComplete(values) && isClientStepComplete(values, allowedScopes)
+            !submitted &&
+            isCreateUrlStepComplete(values) &&
+            isClientStepComplete(values, allowedScopes)
           }
           data-testid="apps-offsite-wizard-step-details"
         >
@@ -635,7 +739,7 @@ function ExternalCreateForm() {
               )}
               <TextInput
                 label="Name"
-                placeholder="My External App"
+                placeholder="My App"
                 value={values.name}
                 onChange={(e) => setField('name', e.currentTarget.value)}
                 onKeyDown={handleDetailsKeyDown}
@@ -684,6 +788,21 @@ function ExternalCreateForm() {
                 maxLength={OFFSITE_SUBMIT_LIMITS.descriptionMax}
                 disabled={busy}
                 data-testid="apps-offsite-submit-description"
+              />
+
+              {/* Optional public source-repository link. Host list comes from the
+                  SERVER allowlist (SOURCE_REPO_HOSTS_LABEL), never a second copy. */}
+              <TextInput
+                label="Source repository"
+                description={`Public link to your app's source code, shown on its store page (optional). ${SOURCE_REPO_HOSTS_LABEL} only, linking to the repository itself.`}
+                placeholder="https://github.com/your-org/your-app"
+                value={values.sourceRepoUrl}
+                onChange={(e) => setField('sourceRepoUrl', e.currentTarget.value)}
+                onKeyDown={handleDetailsKeyDown}
+                error={errors.sourceRepoUrl}
+                maxLength={OFFSITE_SUBMIT_LIMITS.sourceRepoUrlMax}
+                disabled={busy}
+                data-testid="apps-offsite-submit-source-repo"
               />
 
               <Group grow align="flex-start">
@@ -770,10 +889,10 @@ function ExternalCreateForm() {
                     title="Draft created"
                   >
                     <Text size="sm">
-                      <Code>{submitted.slug}</Code> is a pending off-site submission. Attach an icon
-                      and a cover below to be approved — screenshots are recommended but optional and
-                      can be added later. Content rating:{' '}
-                      <Badge size="xs">{values.contentRating}</Badge>
+                      <Code>{submitted.slug}</Code> is a pending {STANDALONE_KIND_LABEL} submission.
+                      Attach an icon and a cover below to be approved — screenshots are recommended
+                      but optional and can be added later. Content rating:{' '}
+                      <Badge size="xs">{offsiteContentRatingLabel(values.contentRating)}</Badge>
                     </Text>
                   </Alert>
                 }
@@ -781,7 +900,7 @@ function ExternalCreateForm() {
                   <Group justify="flex-end">
                     <Button
                       component={Link}
-                      href="/apps/my-submissions"
+                      href="/apps/mine"
                       rightSection={<IconExternalLink size={16} />}
                     >
                       View my submissions

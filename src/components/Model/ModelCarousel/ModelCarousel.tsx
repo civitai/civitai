@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { Card, Center, Indicator, Loader, Stack } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -22,8 +23,8 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { ImageSort } from '~/server/common/enums';
-import { generationGraphPanel } from '~/store/generation-graph.store';
-import { useTrackEvent } from '~/components/TrackView/track.utils';
+import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { tourClickThroughZIndex } from '~/shared/constants/app-layout.constants';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -54,7 +55,11 @@ export function ModelCarousel(props: Props) {
 function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
-  const { trackAction } = useTrackEvent();
+  // Both model-page tours spend two steps here — one on the button, one on the
+  // options it opens — so the open and the choice each move on by one.
+  const advanceTour = useCallback(() => {
+    if (running) helpers?.next();
+  }, [running, helpers]);
   const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
@@ -118,8 +123,19 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                               className="absolute right-2 top-2 z-10"
                             >
                               <ImageContextMenu image={image} />
-                              {features.imageGeneration &&
-                                (image.hasPositivePrompt ?? image.hasMeta) && (
+                              {features.imageGeneration && isRemixMenuVisible(image) && (
+                                <RemixMenu
+                                  image={image}
+                                  source="remix:model-carousel"
+                                  sourceModelVersionId={modelVersionId}
+                                  onAction={advanceTour}
+                                  onOpen={advanceTour}
+                                  tourTarget="model:remix-menu"
+                                  // Both model-page tours spend a step on this
+                                  // button and the next on the options it
+                                  // opens, over the layers Joyride draws.
+                                  zIndex={running ? tourClickThroughZIndex : undefined}
+                                >
                                   <HoverActionButton
                                     label="Remix"
                                     size={30}
@@ -130,28 +146,12 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                                     onClick={(e) => {
                                       e.preventDefault();
                                       e.stopPropagation();
-
-                                      trackAction({
-                                        type: 'Image_Remix_Click',
-                                        details: {
-                                          imageId: image.id,
-                                          imageType: image.type,
-                                          sourceModelVersionId: modelVersionId,
-                                          source: 'remix:model-carousel',
-                                        },
-                                      }).catch(() => undefined);
-
-                                      generationGraphPanel.open({
-                                        type: image.type,
-                                        id: image.id,
-                                      });
-
-                                      if (running) helpers?.next();
                                     }}
                                   >
                                     <IconBrush stroke={2.5} size={16} />
                                   </HoverActionButton>
-                                )}
+                                </RemixMenu>
+                              )}
                             </Stack>
                             <RoutedDialogLink
                               name="imageDetail"

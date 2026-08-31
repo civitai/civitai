@@ -1,9 +1,9 @@
-import { Kysely, PostgresDialect } from 'kysely';
+import { Kysely, PostgresDialect, type KyselyPlugin } from 'kysely';
 import { Pool, types, type PoolConfig } from 'pg';
 
 // Re-export `sql` so apps build raw fragments without a direct kysely dependency — the db layer owns it.
 export { sql } from 'kysely';
-export type { RawBuilder } from 'kysely';
+export type { Generated, RawBuilder } from 'kysely';
 
 // Kysely client builder. Standalone — imports only kysely + pg (NOT the Prisma client /
 // db-helpers / env), so a Vite/SSR app can import `@civitai/db/kysely` without pulling Prisma.
@@ -27,7 +27,43 @@ function registerNumericTypeParsers() {
   if (numericParsersRegistered) return;
   types.setTypeParser(types.builtins.NUMERIC, (val) => parseFloat(val));
   types.setTypeParser(types.builtins.INT8, (val) => parseFloat(val));
+  // TIMESTAMP (oid 1114) is `timestamp without time zone`, which pg's default parser reads as LOCAL
+  // time. db-helpers.ts registers a UTC parser for the same oid, so the main app and any Kysely app
+  // read the SAME COLUMN hours apart — which is how a scheduled sale twice appeared to start in the
+  // future to one app and in the past to the other. These columns are written as UTC instants; read
+  // them that way everywhere.
+  // Byte-identical to db-helpers.ts's parser on purpose: two near-copies of a date transform is how
+  // the two apps disagreed in the first place.
+  types.setTypeParser(types.builtins.TIMESTAMP, (val) => new Date(val.replace(' ', 'T') + 'Z'));
   numericParsersRegistered = true;
+}
+
+// pg has no built-in parser for arrays of a user-defined enum: enum types get DYNAMIC oids, so a
+// `"SomeEnum"[]` column comes back as the raw Postgres literal string `{a,b}` instead of `string[]`. (Scalar
+// enum columns are fine — plain text.) Prisma parses these itself; the Kysely-over-pg path does not, so
+// without this an enum-array select silently yields a string where the typed result promises an array — a bug
+// EXPLAIN tests can't catch. Discover every enum's array oid from the catalog and register the built-in
+// text-array parser for it (enum values are plain text, so text-array parsing is exactly right).
+//
+// Like registerNumericTypeParsers this mutates pg's PROCESS-GLOBAL registry, so it runs once and benefits
+// every node-postgres pool; Prisma (separate engine) is unaffected. It needs one catalog round-trip, so it is
+// async and MUST be awaited at startup before the first enum-array select. The oids are read from `pool`'s
+// database — in a multi-DB process the same oid can name a different type elsewhere, so register from the
+// primary (schema) pool and only run enum-array selects against DBs that share that schema (the app's
+// primary + its replicas do).
+const TEXT_ARRAY_OID = 1009; // pg's fixed oid for `text[]` (_text); stable across versions
+let enumArrayParsersRegistered = false;
+export async function registerEnumArrayTypeParsers(pool: Pool): Promise<void> {
+  if (enumArrayParsersRegistered) return;
+  const { rows } = await pool.query<{ typarray: number }>(
+    `SELECT typarray FROM pg_type WHERE typtype = 'e' AND typarray <> 0`
+  );
+  // getTypeParser's typed param is pg's builtin-oid union; TEXT_ARRAY_OID is a real oid the runtime accepts.
+  const textArrayParser = types.getTypeParser(
+    TEXT_ARRAY_OID as Parameters<typeof types.getTypeParser>[0]
+  );
+  for (const { typarray } of rows) types.setTypeParser(typarray, textArrayParser);
+  enumArrayParsersRegistered = true;
 }
 
 // Force `sslmode=no-verify` on a connection string: keep SSL on, skip chain verification. node-postgres
@@ -41,7 +77,11 @@ function forceSslNoVerify(connectionString?: string): string | undefined {
   return url.toString();
 }
 
-export type KyselyReadWrite<DB> = { dbRead: Kysely<DB>; dbWrite: Kysely<DB> };
+/**
+ * `pool` is the PRIMARY pg pool backing `dbWrite`. Handed back because Kysely does not expose its
+ * dialect's pool, and an app that builds its own re-derives the SSL and sizing config this factory owns.
+ */
+export type KyselyReadWrite<DB> = { dbRead: Kysely<DB>; dbWrite: Kysely<DB>; pool: Pool };
 
 export interface CreateKyselyClientsOptions extends PoolConfig {
   /** Pre-built write pool (primary). Overrides connectionString. */
@@ -58,32 +98,76 @@ export interface CreateKyselyClientsOptions extends PoolConfig {
    * pre-built pools are passed through untouched (configure SSL where you build them).
    */
   sslNoVerify?: boolean;
+  /** Kysely plugins installed on every client this builds (e.g. the @updatedAt auto-stamp plugin). */
+  plugins?: KyselyPlugin[];
 }
 
 export function createKyselyClients<DB>(
   options: CreateKyselyClientsOptions & { singleClient: true }
-): { db: Kysely<DB> };
+): { db: Kysely<DB>; pool: Pool };
 export function createKyselyClients<DB>(options?: CreateKyselyClientsOptions): KyselyReadWrite<DB>;
 export function createKyselyClients<DB>(
   options: CreateKyselyClientsOptions = {}
-): { db: Kysely<DB> } | KyselyReadWrite<DB> {
+): { db: Kysely<DB>; pool: Pool } | KyselyReadWrite<DB> {
   registerNumericTypeParsers();
 
-  const { pool, readPool, replicaConnectionString, singleClient, sslNoVerify, ...poolConfig } =
-    options;
+  const {
+    pool,
+    readPool,
+    replicaConnectionString,
+    singleClient,
+    sslNoVerify,
+    plugins,
+    ...poolConfig
+  } = options;
   if (sslNoVerify && poolConfig.connectionString) {
     poolConfig.connectionString = forceSslNoVerify(poolConfig.connectionString);
   }
-  const replicaString = sslNoVerify ? forceSslNoVerify(replicaConnectionString) : replicaConnectionString;
+  const replicaString = sslNoVerify
+    ? forceSslNoVerify(replicaConnectionString)
+    : replicaConnectionString;
 
-  const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }) });
+  // Pool sizing defaults for the connection-string path. Callers that pass only a connection string
+  // otherwise inherit pg's own defaults, and one of those is actively harmful: pg leaves
+  // `connectionTimeoutMillis` unset and treats that as "wait forever", so once the pool is exhausted
+  // every further caller queues indefinitely and never errors — a pool problem surfaces as an
+  // unbounded hang rather than a failure. A finite timeout makes it fail fast at the call site.
+  //
+  // These pools carry NO acquire-latency metric and NO retry: the error reaches the caller as-is,
+  // and a caller that wants either has to add it (see the transient-error retry in
+  // apps/notifications). `max`/`idleTimeoutMillis` match the sibling `createPool` factory;
+  // `connectionTimeoutMillis` is deliberately STRICTER than createPool (which defaults it to 0) and
+  // matches the value the monolith already runs in production.
+  //
+  // Caller-supplied values win — `poolConfig` is spread last.
+  // ORDER-DEPENDENT: this snapshots `poolConfig.connectionString`, so the `sslNoVerify` rewrite
+  // above must stay ABOVE it — otherwise the primary pool silently connects without
+  // `sslmode=no-verify`. Pinned by the sslNoVerify case in kysely.pool-defaults.test.ts.
+  const config: PoolConfig = {
+    max: 20,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+    ...poolConfig,
+  };
 
-  const primary = make(pool ?? new Pool(poolConfig));
-  if (singleClient) return { db: primary };
+  const make = (p: Pool) => new Kysely<DB>({ dialect: new PostgresDialect({ pool: p }), plugins });
+
+  // node-postgres emits 'error' on the POOL when an IDLE client dies — a managed database dropping idle
+  // connections, a network blip, a laptop sleeping. `error` is a special event in Node: with no listener
+  // it is rethrown, so an idle-connection drop takes down the process or fails the next request rather
+  // than being retired quietly. The pool already discards the bad client; this only stops the throw.
+  const guard = (p: Pool) => {
+    p.on('error', (err) => console.error('[db] idle client error (pool will recycle it)', err));
+    return p;
+  };
+
+  const primaryPool = pool ?? guard(new Pool(config));
+  const primary = make(primaryPool);
+  if (singleClient) return { db: primary, pool: primaryPool };
 
   const dbRead =
     readPool || replicaString
-      ? make(readPool ?? new Pool({ ...poolConfig, connectionString: replicaString }))
+      ? make(readPool ?? guard(new Pool({ ...config, connectionString: replicaString })))
       : primary;
-  return { dbRead, dbWrite: primary };
+  return { dbRead, dbWrite: primary, pool: primaryPool };
 }

@@ -65,4 +65,8 @@ export type ProfileBackgroundCosmetic = BadgeCosmetic & {
   data: { textColor?: string; backgroundColor?: string; offset?: string; type?: MediaType };
 };
 
+export type StickerCosmetic = Omit<SimpleCosmetic, 'data'> & {
+  data: { slug: string; url: string; animated?: boolean; uses?: number; pricePerUse?: number };
+};
+
 export type WithClaimKey<T> = T & { claimKey: string };

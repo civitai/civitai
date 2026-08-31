@@ -1,0 +1,22 @@
+{
+  "name": "@civitai/flipt",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./context": "./src/context.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@flipt-io/flipt-client-js": "^0.2.0",
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.11"
+  }
+}

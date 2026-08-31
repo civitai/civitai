@@ -1,6 +1,7 @@
 import {
   Accordion,
   Badge,
+  Button,
   Code,
   Group,
   Loader,
@@ -9,8 +10,10 @@ import {
   useComputedColorScheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { IconShieldCheck, IconShieldHalfFilled } from '@tabler/icons-react';
+import { IconHistory, IconShieldCheck, IconShieldHalfFilled } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import ModelChangeHistoryModal from '~/components/Model/ModelVersions/ModelChangeHistoryModal';
 import { getModelVersionFlagLabels } from '~/shared/constants/model-version-flags.constants';
 import { formatDate } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
@@ -52,6 +55,7 @@ export function ModelModerationCard({
   const locked = data?.lockedProperties ?? [];
   const hasFooter = !!(
     data?.profanity ||
+    data?.textModeration ||
     data?.unpublishedAt ||
     data?.takenDownAt ||
     data?.deletedAt
@@ -81,6 +85,7 @@ export function ModelModerationCard({
     flags.length +
     locked.length +
     (data?.profanity ? 1 : 0) +
+    (data?.textModeration ? 1 : 0) +
     (data?.unpublishedAt ? 1 : 0) +
     (data?.takenDownAt ? 1 : 0) +
     (data?.deletedAt ? 1 : 0);
@@ -174,6 +179,38 @@ export function ModelModerationCard({
                       </Text>
                     </Stack>
                   )}
+                  {data.textModeration && (
+                    <Stack gap={4}>
+                      <Text size="xs" fw={600} c="orange">
+                        Text scan {formatDate(data.textModeration.scannedAt)}
+                      </Text>
+                      <Group gap={4}>
+                        {data.textModeration.labels.map((l) => (
+                          <Badge key={l.label} size="sm" radius="xl" color="orange" variant="light">
+                            {l.label} {l.score.toFixed(2)}
+                          </Badge>
+                        ))}
+                      </Group>
+                      {/* How close a call it was. The labels v1 acts on are LLM-scored, so
+                          the score against its own threshold is the only detail available —
+                          these policies return no matched terms. */}
+                      <Text size="xs" c="dimmed">
+                        {data.textModeration.labels
+                          .map((l) => `${l.label} ${l.score.toFixed(2)} / ${l.threshold.toFixed(2)}`)
+                          .join(' · ')}
+                      </Text>
+                      {data.textModeration.matchedTerms.length > 0 && (
+                        <Group gap={4}>
+                          {data.textModeration.matchedTerms.map((m, i) => (
+                            <Code key={i}>{m}</Code>
+                          ))}
+                        </Group>
+                      )}
+                      <Text size="xs" c="dimmed">
+                        Recorded even when a lock kept the flag from being applied.
+                      </Text>
+                    </Stack>
+                  )}
                   {data.unpublishedAt && (
                     <Text size="xs">
                       Unpublished {formatDate(data.unpublishedAt)}
@@ -194,6 +231,19 @@ export function ModelModerationCard({
               )}
             </>
           )}
+          <Group justify="flex-end" px="sm" py={6}>
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              color="gray"
+              leftSection={<IconHistory size={14} />}
+              onClick={() =>
+                dialogStore.trigger({ component: ModelChangeHistoryModal, props: { modelId } })
+              }
+            >
+              Change history
+            </Button>
+          </Group>
         </Accordion.Panel>
       </Accordion.Item>
     </Accordion>

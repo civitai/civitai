@@ -7,10 +7,12 @@ import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { hSetWithTTL, sAddWithExpireGe } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import type { Context } from '~/server/createContext';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { resolveClientIp } from '~/server/utils/client-ip';
+import { getRequestBoardDomainColor, getRequestDomainColor } from '~/server/utils/server-domain';
 import type { SessionUser } from '~/types/session';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { hashifyObject, slugit } from '~/utils/string-helpers';
@@ -55,12 +57,17 @@ type CacheItProps<TInput extends object> = {
   key?: string;
   ttl?: number;
   excludeKeys?: (keyof TInput)[];
+  // Response dimensions that live on ctx rather than on the input — the `Vary`
+  // header's job. A procedure whose output varies on something the input never
+  // carries has to declare it here or the key cannot tell two callers apart.
+  varyBy?: (ctx: Context) => Record<string, unknown>;
   tags?: (input: TInput) => string[];
 };
 export function cacheIt<TInput extends object>({
   key,
   ttl,
   excludeKeys,
+  varyBy,
   tags,
 }: CacheItProps<TInput> = {}) {
   ttl ??= 60 * 3;
@@ -71,10 +78,14 @@ export function cacheIt<TInput extends object>({
     if (_input) {
       for (const [key, value] of Object.entries(_input)) {
         if (excludeKeys?.includes(key as keyof TInput)) continue;
-        if (Array.isArray(value)) cacheKeyObj[key] = [...new Set(value.sort())];
-
-        if (value) cacheKeyObj[key] = value;
+        if (Array.isArray(value)) cacheKeyObj[key] = [...new Set(value)].sort();
+        else if (value) cacheKeyObj[key] = value;
       }
+    }
+    for (const [varyKey, varyValue] of Object.entries(varyBy?.(ctx) ?? {})) {
+      if (_input && Object.prototype.hasOwnProperty.call(_input, varyKey))
+        throw new Error(`cacheIt: varyBy key "${varyKey}" collides with an input key on ${path}`);
+      cacheKeyObj[varyKey] = varyValue;
     }
     const hash = withSpan('trpc:middleware:cacheIt:hash', () => hashifyObject(cacheKeyObj));
     const cacheKey = `${REDIS_KEYS.TRPC.BASE}:${key ?? path.replace('.', ':')}:${hash}` as const;
@@ -176,7 +187,22 @@ export function rateLimit<TInput = any>(
     // quota; otherwise key on the tRPC path.
     const keyName = options?.sharedKey ?? path.replace('.', ':');
     const cacheKey = `${REDIS_KEYS.TRPC.LIMIT.BASE}:${keyName}` as const;
-    const hashKey = ctx.user?.id?.toString() ?? ctx.ip;
+    // Anonymous callers bucket by client IP, authenticated ones by user id. The
+    // IP comes from the SHARED predicate in `~/server/utils/client-ip` rather
+    // than the general-purpose `ctx.ip`, so this limiter and the public REST
+    // limiter derive the bucket the same way — see that module's doc for which
+    // predicate suits which surface.
+    //
+    // NAMESPACE THE FIELD. User ids and addresses are two different namespaces
+    // and both are written into one hash, where equal strings are one bucket.
+    // The prefix makes the two key spaces disjoint by construction rather than
+    // by whichever values happen not to overlap. Same shape as the public REST
+    // limiter (`~/server/utils/public-api-rate-limit`), deliberately.
+    // `!= null` and not a truthiness test: it must match the nullish semantics of
+    // the `??` this replaced, or a user id of 0 would silently route to the IP
+    // branch. Pinned by the id-0 case in
+    // `src/server/__tests__/middleware.trpc.rate-limit-key.test.ts`.
+    const hashKey = ctx.user?.id != null ? `user:${ctx.user.id}` : `ip:${resolveClientIp(ctx.req)}`;
     const attempts = (await redis.packed.hGet<number[]>(cacheKey, hashKey)) ?? [];
 
     // Check if user can proceed and find the failing limit
@@ -269,6 +295,24 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
     if (expireAt) reqTTL = Math.floor((expireAt().getTime() - Date.now()) / 1000);
 
     const result = await next();
+    // Re-read `skip` now that the resolver has run. The read above happens before
+    // `next()`, so a resolver that only knows its response is uncacheable once it has
+    // produced it (e.g. `home-block.getHomeBlock` on an Announcement block) sets a flag
+    // nothing looks at again. `canCache` is already read on the line below, after the
+    // resolver, and this puts `skip` on the same footing.
+    //
+    // PRECEDENCE, deliberate and now pinned by test: `skip` BEATS `expireAt`. Sitting
+    // after the `expireAt` assignment above, this line overrides a scheduled expiry
+    // rather than being overridden by it. That is the intended ordering — `expireAt`
+    // says "this content goes stale at time T", which is a statement about content that
+    // IS cacheable, whereas `skip` says "this particular response must not be cached at
+    // all". A response the resolver has declared uncacheable does not become cacheable
+    // because someone also scheduled when it should expire; the stronger claim wins.
+    // (Before this line existed the ordering was the other way round and nothing said
+    // so, so it was accidental rather than chosen.) Reintroducing an `expireAt` guard
+    // here — `if (ctx.cache?.skip && !expireAt)` — is caught by
+    // `middleware.trpc.edge-cache-precedence.test.ts`.
+    if (ctx.cache?.skip) reqTTL = 0;
     if (result.ok && ctx.cache?.canCache) {
       ctx.cache.browserTTL = isProd ? Math.min(60, reqTTL) : 0;
       ctx.cache.edgeTTL = reqTTL;
@@ -328,6 +372,22 @@ export const applyRequestDomainColor = middleware(async (options) => {
   // so there's an object to stamp the domain onto when the caller sends no input.
   const input = options.input as { domain?: string } | undefined;
   if (input) input.domain = getRequestDomainColor(ctx.req);
+
+  return next();
+});
+
+/**
+ * Same contract as `applyRequestDomainColor`, but resolves `red` for red-capable
+ * hosts — see `getRequestBoardDomainColor`. Use this for anything that has SFW and
+ * mature variants of the same content; the plain color walk never yields `red`.
+ *
+ * Must be `.use()`d BEFORE `cacheIt`, which keys on a hash of the input: a domain
+ * stamped afterwards would leave one cache entry shared across every color.
+ */
+export const applyRequestBoardDomainColor = middleware(async (options) => {
+  const { next, ctx } = options;
+  const input = options.input as { domain?: string } | undefined;
+  if (input) input.domain = getRequestBoardDomainColor(ctx.req);
 
   return next();
 });

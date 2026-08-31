@@ -1,5 +1,5 @@
 import { isDev } from '~/env/other';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import * as z from 'zod';
 import { env } from '~/env/server';
@@ -233,20 +233,39 @@ export default WebhookEndpoint(async (req, res) => {
 
 type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 
+// `BigInt('  ')` is 0n, which a blank hash must not become: it is a legitimate hash value.
+function parsePerceptualHash(hash: string) {
+  const invalid = new Error('invalid hash from ImageHash scan');
+  if (!hash.trim()) return undefined;
+
+  let parsed: bigint;
+  try {
+    parsed = BigInt(hash);
+  } catch {
+    throw invalid;
+  }
+  if (BigInt.asIntN(64, parsed) !== parsed) throw invalid;
+
+  return parsed;
+}
+
 // @see https://stackoverflow.com/questions/14925151/hamming-distance-optimization-for-mysql-or-postgresql
 // 1-10:  The images are visually almost identical
 // 11-20: The images are visually similar
 // 21-30: The images are visually somewhat similar
-async function isBlocked(hash: string) {
+//
+// `$query` interpolates into the SQL text rather than binding parameters, so this must
+// only ever be handed a bigint — never the raw string off the webhook body.
+async function isBlocked(hash: bigint) {
   if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;
 
-  const [{ count }] = await clickhouse.$query<{ count: number }>`
+  const rows = await clickhouse.$query<{ count: number }>`
     SELECT cast(count() as int) as count
     FROM blocked_images
     WHERE bitCount(bitXor(hash, ${hash})) < 5 AND disabled = false
   `;
 
-  return count > 0;
+  return (rows?.[0]?.count ?? 0) > 0;
 }
 
 async function handleSuccess(args: BodyProps, req: NextApiRequest) {
@@ -349,11 +368,27 @@ async function updateImage(
     }
 
     if (data.ingestion && data.ingestion !== 'Blocked') {
-      await signalClient.send({
-        target: SignalMessages.ImageIngestionStatus,
-        data: { imageId: image.id, ingestion: data.ingestion, blockedFor: data.blockedFor },
-        userId: image.userId,
-      });
+      // The ingestion is already committed — a signals brownout must not 400 the webhook.
+      await signalClient
+        .send({
+          target: SignalMessages.ImageIngestionStatus,
+          data: { imageId: image.id, ingestion: data.ingestion, blockedFor: data.blockedFor },
+          userId: image.userId,
+        })
+        .catch((error) =>
+          logToAxiom(
+            {
+              name: 'image-scan-result',
+              type: 'warning',
+              message: `signal send failed: ${
+                error instanceof Error ? error.message : 'Unknown error'
+              }`,
+              imageId: image.id,
+              source: 'webhook-legacy',
+            },
+            'webhooks'
+          ).catch(() => null)
+        );
     }
   } catch (e) {
     if (isDev) console.log({ error: e });
@@ -597,8 +632,15 @@ async function getTagsFromIncomingTags({
   const imageMeta = image.meta as Prisma.JsonObject | undefined;
   const prompt = imageMeta?.prompt as string | undefined;
   if (prompt) {
-    // Detect real person in prompt
-    const realPersonName = includesPoi(prompt);
+    // Detect real person in prompt. Same moderator-managed benign phrases the audit
+    // path strips (`auditImageScanResults`) — without this a whitelisted proper noun
+    // is still written as a confidence-100 tag, which reaches the search index.
+    const realPersonName = includesPoi(
+      // Normalized first, as both audit paths do. Stripping the raw text while the audit that
+      // runs next reads the normalized copy means two different alphabets decide what counts
+      // as whitelisted for the same prompt.
+      await stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase)
+    );
     if (realPersonName) {
       const tagName =
         typeof realPersonName === 'object' ? realPersonName.matchedText : realPersonName;
@@ -820,17 +862,19 @@ async function updateImageScanJobs({
   whereIngestionIn?: ImageIngestionStatus[];
 }) {
   // Build scanJobs update SQL by composing jsonb operations
-  const scanJobsOps: { path: string; value: string }[] = [];
+  const scanJobsOps: { path: Prisma.Sql; value: Prisma.Sql }[] = [];
   if (source) {
     scanJobsOps.push({
-      path: `'{scans}'`,
-      value: `COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb`,
+      path: Prisma.sql`'{scans}'`,
+      value: Prisma.sql`COALESCE("scanJobs"->'scans', '{}') || jsonb_build_object(${source}::text, ${String(
+        Date.now()
+      )}::bigint)`,
     });
   }
   if (incrementRetryCount) {
     scanJobsOps.push({
-      path: `'{retryCount}'`,
-      value: `to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)`,
+      path: Prisma.sql`'{retryCount}'`,
+      value: Prisma.sql`to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)`,
     });
   }
   if (!scanJobsOps.length) {
@@ -838,34 +882,39 @@ async function updateImageScanJobs({
   }
   // Nest jsonb_set calls: jsonb_set(jsonb_set(base, path1, val1), path2, val2)
   const scanJobsSql = scanJobsOps.reduce(
-    (acc, op) => `jsonb_set(${acc}, ${op.path}, ${op.value})`,
-    `COALESCE("scanJobs", '{}')`
+    (acc, op) => Prisma.sql`jsonb_set(${acc}, ${op.path}, ${op.value})`,
+    Prisma.sql`COALESCE("scanJobs", '{}')`
   );
 
-  // Build WHERE clause dynamically
-  const whereConditions = [`id = ${id}`];
-  if (whereIngestionIn?.length) {
-    whereConditions.push(`ingestion IN (${whereIngestionIn.map((s) => `'${s}'`).join(', ')})`);
-  }
-  const whereClause = whereConditions.join(' AND ');
+  const setClauses: Prisma.Sql[] = [];
+  if (pHash !== undefined) setClauses.push(Prisma.sql`"pHash" = ${pHash}`);
+  if (ingestion) setClauses.push(Prisma.sql`"ingestion" = ${ingestion}::"ImageIngestionStatus"`);
+  if (nsfwLevel) setClauses.push(Prisma.sql`"nsfwLevel" = ${nsfwLevel}`);
+  if (blockedFor) setClauses.push(Prisma.sql`"blockedFor" = ${blockedFor}`);
+  if (aiRating) setClauses.push(Prisma.sql`"aiNsfwLevel" = ${aiRating}`);
+  if (aiModel) setClauses.push(Prisma.sql`"aiModel" = ${aiModel}`);
+  setClauses.push(Prisma.sql`"scanJobs" = ${scanJobsSql}`);
 
-  const result = await dbWrite.$queryRawUnsafe<
+  const whereConditions = [Prisma.sql`id = ${id}`];
+  if (whereIngestionIn?.length) {
+    whereConditions.push(
+      Prisma.sql`ingestion IN (${Prisma.join(
+        whereIngestionIn.map((s) => Prisma.sql`${s}::"ImageIngestionStatus"`)
+      )})`
+    );
+  }
+
+  const result = await dbWrite.$queryRaw<
     {
       scanJobs: { scans?: Record<string, TagSource> };
       type: MediaType;
     }[]
-  >(`
+  >`
       UPDATE "Image" SET
-      ${pHash ? `"pHash" = ${pHash},` : ''}
-      ${ingestion ? `"ingestion" = '${ingestion}',` : ''}
-      ${nsfwLevel ? `"nsfwLevel" = ${nsfwLevel},` : ''}
-      ${blockedFor ? `"blockedFor" = '${blockedFor}',` : ''}
-      ${aiRating ? `"aiNsfwLevel" = ${aiRating},` : ''}
-      ${aiModel ? `"aiModel" = '${aiModel}',` : ''}
-      "scanJobs" = ${scanJobsSql}
-      WHERE ${whereClause}
+      ${Prisma.join(setClauses, ', ')}
+      WHERE ${Prisma.join(whereConditions, ' AND ')}
       RETURNING "scanJobs", type;
-    `);
+    `;
 
   return result[0]?.type === 'video'
     ? getHasRequiredVideoScans(result[0]?.scanJobs?.scans)
@@ -895,8 +944,39 @@ async function processScanResult({
   switch (source) {
     case TagSource.ImageHash: {
       if (!hash) throw new Error('missing hash from ImageHash scan');
-      const blocked = await isBlocked(hash);
-      const pHash = BigInt(hash);
+      const pHash = parsePerceptualHash(hash);
+      if (pHash === undefined) {
+        logToAxiom(
+          {
+            name: 'image-phash-match',
+            type: 'warning',
+            message: 'blank hash from ImageHash scan',
+            imageId: id,
+            source: 'webhook-legacy',
+          },
+          'webhooks'
+        ).catch(() => null);
+      }
+      // Skipped at zero because an all-zero hash is degenerate, not because it cannot match: it
+      // matches every blocked entry with under 5 set bits, and those matches say nothing about
+      // the image. Anything acting on this result rather than logging it needs that decided
+      // properly — a flat image currently bypasses the check. Stored either way.
+      const blocked = !pHash
+        ? false
+        : await isBlocked(pHash).catch((error) => {
+            logToAxiom(
+              {
+                name: 'image-phash-match',
+                type: 'warning',
+                message: 'pHash blocklist check failed',
+                imageId: id,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                source: 'webhook-legacy',
+              },
+              'webhooks'
+            ).catch(() => null);
+            return false;
+          });
       if (blocked) {
         logToAxiom(
           {
@@ -904,12 +984,14 @@ async function processScanResult({
             type: 'info',
             message: 'Image pHash matched a blocked image',
             imageId: id,
-            pHash: hash,
+            pHash: pHash?.toString(),
             source: 'webhook-legacy',
           },
           'webhooks'
         ).catch(() => null);
 
+        // Before uncommenting: `isBlocked` swallows a ClickHouse failure as "not blocked", and
+        // does not retry. Both are only safe while nothing acts on the result.
         // return await updateImageScanJobs({
         //   id,
         //   source,

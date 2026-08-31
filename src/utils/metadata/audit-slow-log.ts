@@ -170,7 +170,9 @@ function emitSlowLog(input: SlowLogInput): void {
         if (negativePrompt) payload.rawNegativePrompt = truncateMiddle(negativePrompt, rawMax);
       }
 
-      // Dynamic server-only import (code-split, never in the client bundle).
+      // Deferred so the module is never EVALUATED on the client — the callers above
+      // guard on `typeof window !== 'undefined'`. It is still compiled into the client
+      // chunk graph: a dynamic import splits the chunk, it does not remove the edge.
       const { logToAxiom } = await import('~/server/logging/client');
       await logToAxiom(payload);
     } catch {

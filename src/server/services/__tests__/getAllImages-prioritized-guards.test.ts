@@ -12,7 +12,7 @@ import { TRPCError } from '@trpc/server';
 // prioritizedUserIds, ~27 500s/12h).
 //
 // The mock block mirrors the established image.service unit-test recipe
-// (image-metrics-timeout.test.ts): stub env + infra clients + the private
+// (image-metrics-timeout.test.ts): stub env + infra clients + the
 // event-engine-common submodule so importing image.service boots no real infra.
 // On top of that we stub `enforceBlockedBrowsingTags` (so the guard is reachable)
 // and force `isFlipt` true so the model-version-cache branch (which holds both
@@ -23,8 +23,8 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
   return { ...actual, registerCounter: () => ({ inc: vi.fn() }) };
 });
 
-// event-engine-common is a private git submodule not checked out in this
-// worktree — stub the value imports image.service pulls from it.
+// event-engine-common is a git submodule, not checked out by default — stub the
+// value imports image.service pulls from it.
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
   MetricService: class {
     fetch = vi.fn();
@@ -52,20 +52,7 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-// Stub the infra clients so no real DB/Redis connection is opened on import.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: {},
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-  };
-});
-
 // The guard sits after enforceBlockedBrowsingTags — stub it to a non-empty result
 // so getAllImages proceeds into the prioritizeUser branch.
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
@@ -81,6 +68,8 @@ vi.mock('../../flipt/client', async (importOriginal) => {
 });
 
 import { getAllImages } from '../image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const baseInput = {
   browsingLevel: 1,

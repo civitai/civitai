@@ -13,14 +13,13 @@ import { TRPCError } from '@trpc/server';
 //   - a CH QUERY/SCHEMA error (UNKNOWN_TABLE) → still rethrows (→ 500, visible).
 //   - a non-CH error → still rethrows unchanged.
 //
-// Same minimal-seam mocking as image-metrics-timeout.test.ts: stub the private
+// Same minimal-seam mocking as image-metrics-timeout.test.ts: stub the
 // event-engine-common submodule + the infra clients + env so importing image.service
 // doesn't boot real infra.
 
-const { populatedQueryMock, chFailSoftIncMock, logToAxiomMock } = vi.hoisted(() => ({
+const { populatedQueryMock, chFailSoftIncMock } = vi.hoisted(() => ({
   populatedQueryMock: vi.fn(),
   chFailSoftIncMock: vi.fn(),
-  logToAxiomMock: vi.fn(async () => {}),
 }));
 
 vi.mock('~/server/prom/client', async (importOriginal) => {
@@ -31,12 +30,7 @@ vi.mock('~/server/prom/client', async (importOriginal) => {
   };
 });
 
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: logToAxiomMock,
-  safeError: (e: unknown) => e,
-}));
-
-// event-engine-common is a private submodule not checked out here. ImagesFeed is the
+// event-engine-common is a submodule, not checked out by default. ImagesFeed is the
 // seam under test: its instance `.populatedQuery` is our spy.
 vi.mock('../../../../event-engine-common/feeds', () => ({
   ImagesFeed: class {
@@ -68,29 +62,7 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    // getImagesFromFeedSearch → enforceBlockedBrowsingTags → getBlockedBrowsingTags
-    // reads the blocked-browsing-tags cache via TOP-LEVEL `redis.get` (system-cache.ts),
-    // not `redis.packed.get`. Stub top-level get/set too. `get` MUST resolve a cached
-    // JSON array (not null) so the getter returns from cache and does NOT fall through
-    // to the unmocked `dbRead.tag.findMany` (dbRead is mocked as {} below) — which would
-    // throw before the code reaches the ClickHouse fail-soft path these tests assert.
-    redis: {
-      get: vi.fn().mockResolvedValue('[]'),
-      set: vi.fn().mockResolvedValue(undefined),
-      packed: { get: vi.fn(), set: vi.fn() },
-    },
-    sysRedis: {},
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-  };
-});
-
 // NB: do NOT mock '~/server/flipt/client'. A catch-all Proxy mock (returning a fn for any
 // unknown export) wedges image.service's module-load import (silent hang, no test output).
 // The real flipt module loads fine here — the env mock hands FLIPT a connection string so
@@ -98,6 +70,10 @@ vi.mock('~/server/redis/client', () => {
 // (mirrors the proven image-metrics-timeout.test.ts, which also leaves flipt real).
 
 import { getImagesFromFeedSearch } from '../image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.get.mockResolvedValue('[]');
+redisMock.redis.set.mockResolvedValue(undefined);
 
 const baseInput = {
   limit: 10,
@@ -122,7 +98,9 @@ describe('getImagesFromFeedSearch ClickHouse transport fail-soft', () => {
 
   it('re-maps a Code 279 ALL_CONNECTION_TRIES_FAILED to a retryable 503', async () => {
     const err = Object.assign(
-      new Error('Code: 279. DB::NetException: All connection tries failed. (ALL_CONNECTION_TRIES_FAILED)'),
+      new Error(
+        'Code: 279. DB::NetException: All connection tries failed. (ALL_CONNECTION_TRIES_FAILED)'
+      ),
       { code: '279' }
     );
     populatedQueryMock.mockRejectedValue(err);
@@ -147,7 +125,7 @@ describe('getImagesFromFeedSearch ClickHouse transport fail-soft', () => {
   });
 
   it('rethrows a non-CH error unchanged', async () => {
-    populatedQueryMock.mockRejectedValue(new TypeError("Cannot read properties of undefined"));
+    populatedQueryMock.mockRejectedValue(new TypeError('Cannot read properties of undefined'));
     await expect(getImagesFromFeedSearch(baseInput)).rejects.toThrow(/Cannot read properties/);
     expect(chFailSoftIncMock).not.toHaveBeenCalled();
   });

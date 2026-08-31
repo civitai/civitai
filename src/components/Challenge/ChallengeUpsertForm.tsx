@@ -217,10 +217,14 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
   const queryUtils = trpc.useUtils();
   const isEditing = !!challenge;
   const isActive = challenge?.status === ChallengeStatus.Active;
-  const isTerminal =
-    challenge?.status === ChallengeStatus.Completing ||
-    challenge?.status === ChallengeStatus.Completed ||
-    challenge?.status === ChallengeStatus.Cancelled;
+  // upsertUserChallenge accepts a write only while the challenge is Scheduled, so for the user
+  // variant anything further along is view-only — the page stays reachable, the fields don't
+  // offer an edit that would fail on save.
+  const isReadOnly = isUser
+    ? isEditing && challenge?.status !== ChallengeStatus.Scheduled
+    : challenge?.status === ChallengeStatus.Completing ||
+      challenge?.status === ChallengeStatus.Completed ||
+      challenge?.status === ChallengeStatus.Cancelled;
 
   const [domainBuzzType] = useAvailableBuzz();
   // buzzType is immutable, and a creator can edit cross-domain, so the current domain wouldn't
@@ -630,13 +634,13 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
           </Title>
         </Group>
 
-        {isTerminal && (
+        {isReadOnly && (
           <Alert color="red" title="Challenge is read-only">
             This challenge is {challenge?.status?.toLowerCase()} and cannot be edited.
           </Alert>
         )}
 
-        {isActive && (
+        {isActive && !isReadOnly && (
           <Alert color="yellow" title="Limited editing">
             Some fields are locked because this challenge is active. Fields that affect fairness for
             existing entries cannot be changed.
@@ -655,7 +659,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   label="Title"
                   placeholder="Enter challenge title"
                   withAsterisk
-                  disabled={isTerminal}
+                  disabled={isReadOnly}
                 />
 
                 <InputText
@@ -663,7 +667,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   label="Theme"
                   placeholder="1-2 word theme (e.g., 'Neon Dreams')"
                   withAsterisk
-                  disabled={isTerminal}
+                  disabled={isReadOnly}
                 />
 
                 <InputTextArea
@@ -674,7 +678,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   autosize
                   minRows={2}
                   maxRows={4}
-                  disabled={isTerminal}
+                  disabled={isReadOnly}
                 />
 
                 {!isUser && (
@@ -682,7 +686,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     name="invitation"
                     label="Invitation"
                     placeholder="Short tagline to invite participants"
-                    disabled={isTerminal}
+                    disabled={isReadOnly}
                   />
                 )}
               </Stack>
@@ -696,7 +700,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   style={{ maxWidth: '100%' }}
                   withAsterisk
                   withNsfwLevel={false}
-                  disabled={isTerminal}
+                  disabled={isReadOnly}
                 />
               </div>
             </div>
@@ -709,7 +713,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               editorSize="lg"
               withAsterisk={isUser}
               stickyToolbar
-              disabled={isTerminal}
+              disabled={isReadOnly}
             />
           </Stack>
         </Paper>
@@ -720,7 +724,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
             name="modelVersionIds"
             label="Eligible Models"
             description="Specify which models are allowed for this challenge. Entries must use at least one of the selected models (OR condition, not all). Leave empty to allow any model."
-            disabled={isActive || isTerminal}
+            disabled={isActive || isReadOnly}
           />
         </Paper>
 
@@ -763,7 +767,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   placeholder="When challenge appears in feed"
                   valueFormat="lll"
                   withAsterisk
-                  disabled={isTerminal}
+                  disabled={isReadOnly}
                   timeInputProps={{ step: 3600 }}
                 />
               )}
@@ -774,7 +778,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 placeholder="When submissions open"
                 valueFormat="lll"
                 withAsterisk
-                disabled={isActive || isTerminal}
+                disabled={isActive || isReadOnly}
                 timeInputProps={{ step: 3600 }}
               />
 
@@ -784,7 +788,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 placeholder="When submissions close"
                 valueFormat="lll"
                 withAsterisk
-                disabled={isTerminal}
+                disabled={isReadOnly}
                 timeInputProps={{ step: 3600 }}
               />
             </SimpleGrid>
@@ -815,7 +819,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 <Stack gap={4}>
                   <InputSegmentedControl
                     name="buzzType"
-                    disabled={isActive || isTerminal}
+                    disabled={isActive || isReadOnly}
                     onChange={(value) => {
                       if (value === 'green')
                         form.setValue('allowedNsfwLevel', sfwBrowsingLevelsFlag);
@@ -865,7 +869,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     clampBehavior="blur"
                     description={`Min ${CHALLENGE_MIN_ENTRY_FEE} Buzz. ${perEntryToPool} Buzz of each entry goes to the prize pool.`}
                     withAsterisk
-                    disabled={isTerminal}
+                    disabled={isReadOnly}
                   />
                   <InputNumber
                     name="initialPrizeBuzz"
@@ -878,7 +882,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     allowNegative={false}
                     clampBehavior="blur"
                     description="Buzz you seed the pool with (charged to you on creation)."
-                    disabled={isTerminal}
+                    disabled={isReadOnly}
                   />
                 </SimpleGrid>
                 <Divider label="Prize split (must total 100%)" />
@@ -891,7 +895,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     allowNegative={false}
                     clampBehavior="blur"
                     withAsterisk
-                    disabled={isTerminal}
+                    disabled={isReadOnly}
                   />
                   <InputNumber
                     name="dist2"
@@ -901,7 +905,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     allowNegative={false}
                     clampBehavior="blur"
                     withAsterisk
-                    disabled={isTerminal}
+                    disabled={isReadOnly}
                   />
                   <InputNumber
                     name="dist3"
@@ -911,7 +915,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     allowNegative={false}
                     clampBehavior="blur"
                     withAsterisk
-                    disabled={isTerminal}
+                    disabled={isReadOnly}
                   />
                 </SimpleGrid>
                 <Text size="sm" c={totalPct === 100 ? 'teal' : 'red'}>
@@ -940,7 +944,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 { label: 'Fixed Prizes', value: PrizeMode.Fixed },
                 { label: 'Dynamic Pool', value: PrizeMode.Dynamic },
               ]}
-              disabled={isActive || isTerminal}
+              disabled={isActive || isReadOnly}
             />
 
             <div className={prizeMode === PrizeMode.Fixed ? '' : 'hidden'}>
@@ -952,7 +956,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   currency={Currency.BUZZ}
                   min={0}
                   step={100}
-                  disabled={isTerminal}
+                  disabled={isReadOnly}
                 />
                 <InputNumber
                   name="prize2Buzz"
@@ -961,7 +965,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   currency={Currency.BUZZ}
                   min={0}
                   step={100}
-                  disabled={isTerminal}
+                  disabled={isReadOnly}
                 />
                 <InputNumber
                   name="prize3Buzz"
@@ -970,7 +974,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   currency={Currency.BUZZ}
                   min={0}
                   step={100}
-                  disabled={isTerminal}
+                  disabled={isReadOnly}
                 />
               </SimpleGrid>
             </div>
@@ -985,7 +989,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   currency={Currency.BUZZ}
                   min={0}
                   step={100}
-                  disabled={isActive || isTerminal}
+                  disabled={isActive || isReadOnly}
                 />
 
                 {/* Growth Rule */}
@@ -997,7 +1001,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     currency={Currency.BUZZ}
                     min={0}
                     step={1}
-                    disabled={isActive || isTerminal}
+                    disabled={isActive || isReadOnly}
                   />
                   <InputSelect
                     name="poolTrigger"
@@ -1006,7 +1010,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                       { value: PoolTrigger.Entry, label: 'Per Entry' },
                       { value: PoolTrigger.User, label: 'Per Unique User' },
                     ]}
-                    disabled={isActive || isTerminal}
+                    disabled={isActive || isReadOnly}
                   />
                 </SimpleGrid>
 
@@ -1019,7 +1023,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   currency={Currency.BUZZ}
                   min={0}
                   step={100}
-                  disabled={isActive || isTerminal}
+                  disabled={isActive || isReadOnly}
                 />
 
                 {/* Distribution */}
@@ -1031,7 +1035,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     max={100}
                     allowNegative={false}
                     clampBehavior="blur"
-                    disabled={isActive || isTerminal}
+                    disabled={isActive || isReadOnly}
                   />
                   <InputNumber
                     name="dist2"
@@ -1040,7 +1044,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     max={100}
                     allowNegative={false}
                     clampBehavior="blur"
-                    disabled={isActive || isTerminal}
+                    disabled={isActive || isReadOnly}
                   />
                   <InputNumber
                     name="dist3"
@@ -1049,7 +1053,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     max={100}
                     allowNegative={false}
                     clampBehavior="blur"
-                    disabled={isActive || isTerminal}
+                    disabled={isActive || isReadOnly}
                   />
                 </SimpleGrid>
                 <Group gap="md" wrap="wrap">
@@ -1082,7 +1086,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               currency={Currency.BUZZ}
               min={0}
               step={10}
-              disabled={isTerminal}
+              disabled={isReadOnly}
             />
               </>
             )}
@@ -1097,7 +1101,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
             {/* Content Rating Selection — creator picks the browsing level; defaults to SFW */}
             <InputContentRatingSelect
               name="allowedNsfwLevel"
-              disabled={isActive || isTerminal}
+              disabled={isActive || isReadOnly}
               sfwOnly={selectedBuzzType === 'green'}
             />
             <Divider />
@@ -1110,7 +1114,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 description="Maximum submissions per participant"
                 min={1}
                 max={100}
-                disabled={isActive || isTerminal}
+                disabled={isActive || isReadOnly}
               />
 
               {!isUser && (
@@ -1120,7 +1124,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   description="Min entries to qualify for participation prize"
                   min={1}
                   max={100}
-                  disabled={isActive || isTerminal}
+                  disabled={isActive || isReadOnly}
                 />
               )}
 
@@ -1131,7 +1135,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   description="Once reached, no new participants can join."
                   min={1}
                   max={100_000}
-                  disabled={isActive || isTerminal}
+                  disabled={isActive || isReadOnly}
                 />
               )}
             </SimpleGrid>
@@ -1155,7 +1159,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                     { value: ChallengeReviewCostType.PerEntry, label: 'Per Entry' },
                     { value: ChallengeReviewCostType.Flat, label: 'Flat Rate (all entries)' },
                   ]}
-                  disabled={isTerminal}
+                  disabled={isReadOnly}
                 />
               </>
             )}
@@ -1168,7 +1172,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 currency={Currency.BUZZ}
                 min={0}
                 step={1}
-                disabled={isTerminal}
+                disabled={isReadOnly}
               />
             )}
             {!isUser && reviewCostType === ChallengeReviewCostType.Flat && (
@@ -1180,7 +1184,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 currency={Currency.BUZZ}
                 min={0}
                 step={1}
-                disabled={isTerminal}
+                disabled={isReadOnly}
               />
             )}
           </Stack>
@@ -1213,7 +1217,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
               }}
               allowDeselect={false}
               withAsterisk={isUser}
-              disabled={isActive || isTerminal}
+              disabled={isActive || isReadOnly}
             />
             {!isUser && (
               <InputTextArea
@@ -1224,7 +1228,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                 autosize
                 minRows={3}
                 maxRows={8}
-                disabled={isActive || isTerminal}
+                disabled={isActive || isReadOnly}
               />
             )}
             {!isUser && (
@@ -1237,17 +1241,17 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   onChange={(event) =>
                     handleCustomizeCategoriesChange(event.currentTarget.checked)
                   }
-                  disabled={isActive || isTerminal}
+                  disabled={isActive || isReadOnly}
                 />
                 {customizeCategories ? (
-                  <CategoryWeights disabled={isActive || isTerminal} />
+                  <CategoryWeights disabled={isActive || isReadOnly} />
                 ) : (
                   <Text size="sm" c="dimmed">
                     This challenge is judged against the default rubric until categories are
                     customized.
                   </Text>
                 )}
-                {(isActive || isTerminal) && (
+                {(isActive || isReadOnly) && (
                   <Text size="xs" c="dimmed">
                     Judging categories can no longer be changed once the challenge has started.
                   </Text>
@@ -1262,7 +1266,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   exactly how they&apos;ll be judged. The defaults below are a sensible starting point
                   — adjust or replace them however you like (weights must total 100%).
                 </Text>
-                <CategoryWeights disabled={isActive || isTerminal} />
+                <CategoryWeights disabled={isActive || isReadOnly} />
               </>
             )}
           </Stack>
@@ -1283,7 +1287,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   label: `${e.title} (${e._count.challenges} challenges)`,
                 }))}
                 clearable
-                disabled={isTerminal}
+                disabled={isReadOnly}
               />
             </Stack>
           </Paper>
@@ -1303,7 +1307,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
                   { value: ChallengeSource.Mod, label: 'Moderator' },
                   { value: ChallengeSource.User, label: 'User' },
                 ]}
-                disabled={isActive || isTerminal}
+                disabled={isActive || isReadOnly}
               />
             </Stack>
           </Paper>
@@ -1322,7 +1326,7 @@ export function ChallengeUpsertForm({ challenge, variant = 'moderator' }: Props)
           <Button
             type="submit"
             loading={form.formState.isSubmitting || upsertMutation.isPending || upsertUserMutation.isPending}
-            disabled={isTerminal}
+            disabled={isReadOnly}
             fullWidth
             className="sm:w-auto"
           >

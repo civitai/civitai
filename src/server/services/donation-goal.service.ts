@@ -187,37 +187,40 @@ const donationGoalByEntity = async ({
 // Creates a donation goal for an entity. This is purely a DonationGoal concern — it knows nothing
 // about PaidAccess/early-access; the gate is created separately by its own writer. Create-once:
 // later edits don't retroactively replace an existing goal (an entity has at most one).
-export async function ensureDonationGoal(
-  {
-    entityType,
-    entityId,
-    amount,
-    userId,
-    title = 'Donation Goal',
-  }: {
-    entityType: PaidAccessEntityType;
-    entityId: number;
-    amount: number;
-    userId: number;
-    title?: string;
-  }) {
-  const existing = await dbWrite.donationGoal.findFirst({
-    where: { entityType, entityId },
-    select: { id: true },
-  });
-  if (existing) return;
-  await dbWrite.donationGoal.create({
-    data: {
-      goalAmount: amount,
-      title,
-      active: true,
-      entityType,
-      entityId,
-      // Dual-written until phase 2 drops the FK column (ModelVersion is its only target).
-      modelVersionId: entityType === 'ModelVersion' ? entityId : null,
-      userId,
-    },
-  });
+export async function ensureDonationGoal({
+  entityType,
+  entityId,
+  amount,
+  userId,
+  title = 'Donation Goal',
+}: {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  amount: number;
+  userId: number;
+  title?: string;
+}) {
+  // Create-once is enforced by the partial unique index on (entityType, entityId), not by a prior
+  // read: a read-then-create left a window where concurrent early-access writes all saw no goal and
+  // each inserted one, splitting the entity's donations across rows that donationGoalByEntity then
+  // summed one of at random.
+  const inserted = await dbWrite.$executeRaw`
+    INSERT INTO "DonationGoal" ("goalAmount", "title", "active", "entityType", "entityId", "modelVersionId", "userId")
+    VALUES (
+      ${amount},
+      ${title},
+      true,
+      ${entityType}::"PaidAccessEntityType",
+      ${entityId},
+      -- Dual-written until phase 2 drops the FK column (ModelVersion is its only target).
+      ${entityType === 'ModelVersion' ? entityId : null},
+      ${userId}
+    )
+    ON CONFLICT ("entityType", "entityId")
+      WHERE "entityType" IS NOT NULL AND "entityId" IS NOT NULL
+    DO NOTHING
+  `;
+  if (inserted === 0) return;
   // Bust like every PaidAccess writer — the cache seeds a `goal: null` entry for an existing version,
   // so without this the public/owner reads serve "no goal" until the TTL backstop lapses.
   await bustPublicDonationGoalsCache(entityType, entityId);
@@ -258,6 +261,10 @@ export const donateToGoal = async ({
       amount,
       fromAccountId: userId,
       fromAccountTypes: [buzzType],
+      // The creator receives what the donor gave. Naming no destination let the
+      // buzz service apply its yellow default, so a green donation reached the
+      // creator as yellow — 137 legs / 85,210 Buzz since green launched.
+      toAccountType: buzzType,
       toAccountId: goal.userId,
       externalTransactionIdPrefix,
       description: `Donation to ${goal.title}`,

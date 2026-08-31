@@ -126,7 +126,7 @@ export default function TagPage({
               <ModelFiltersDropdown size="compact-sm" />
             </Group>
             <ModelsInfinite
-              filters={{ ...queryFilters, followed: false, hidden: false }}
+              filters={{ ...queryFilters, followed: false, newCreators: false, hidden: false }}
               showEof
               showAds
             />

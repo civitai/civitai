@@ -4,19 +4,13 @@ vi.mock('~/env/client', () => ({
   env: { NEXT_PUBLIC_IMAGE_LOCATION: 'https://image.test' },
 }));
 
-// The unit under test is pure, but importing the job module pulls in the db client.
-// Stub it so the suite never instantiates a real Prisma client.
-vi.mock('~/server/db/client', () => ({
-  dbRead: { image: { findMany: vi.fn(async () => []) } },
-  dbWrite: { image: { findMany: vi.fn(async () => []) } },
-}));
-
 import type { AnnouncementMediaFinding } from '~/server/jobs/announcement-media-check';
 import {
   classifyAnnouncementMedia,
   evaluateAnnouncementMedia,
   summarizeAnnouncementMediaFindings,
 } from '~/server/jobs/announcement-media-check';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const KEY_A = 'aaaaaaaa-0000-0000-0000-000000000001';
 const KEY_B = 'bbbbbbbb-0000-0000-0000-000000000002';

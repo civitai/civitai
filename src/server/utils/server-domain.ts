@@ -1,4 +1,3 @@
-import { env } from '~/env/server';
 import {
   colorDomainNames,
   type ColorDomain,
@@ -29,10 +28,24 @@ function buildConfig(primary: string | undefined, aliases: string[]): DomainConf
   return { primary: primary.toLowerCase(), aliases };
 }
 
+// Read from `process.env` rather than `~/env/server`: these are the only vars this
+// module needs, they are declared `z.string().optional()` with no default or
+// transform (server-schema.ts:738-743), so the value is identical — and importing
+// the validated `env` object would drag the whole server env schema into every
+// graph that touches domain resolution, including `_app`'s client graph.
 export const serverDomainMap: ServerDomains = {
-  green: buildConfig(env.SERVER_DOMAIN_GREEN, parseAliases(env.SERVER_DOMAIN_GREEN_ALIASES)),
-  blue: buildConfig(env.SERVER_DOMAIN_BLUE, parseAliases(env.SERVER_DOMAIN_BLUE_ALIASES)),
-  red: buildConfig(env.SERVER_DOMAIN_RED, parseAliases(env.SERVER_DOMAIN_RED_ALIASES)),
+  green: buildConfig(
+    process.env.SERVER_DOMAIN_GREEN,
+    parseAliases(process.env.SERVER_DOMAIN_GREEN_ALIASES)
+  ),
+  blue: buildConfig(
+    process.env.SERVER_DOMAIN_BLUE,
+    parseAliases(process.env.SERVER_DOMAIN_BLUE_ALIASES)
+  ),
+  red: buildConfig(
+    process.env.SERVER_DOMAIN_RED,
+    parseAliases(process.env.SERVER_DOMAIN_RED_ALIASES)
+  ),
 };
 
 /** Canonical-only projection. Used by client and outbound URL helpers. */
@@ -165,6 +178,49 @@ export async function getAvailableOAuthProviders(): Promise<OAuthProviderId[]> {
     // hub unreachable — keep rendering with the last-good (or empty) list rather than throwing in SSR.
     return providersCache?.ids ?? [];
   }
+}
+
+/**
+ * Domain color for content that is SPLIT into SFW and mature variants (today:
+ * leaderboards).
+ *
+ * Why not plain `getRequestDomainColor`: `civitai.red` is configured as BOTH the
+ * blue and the red domain, and that function is a first-match walk over
+ * [green, blue, red] — so it returns `blue` for `.red` and NEVER returns `red` in
+ * production. Scoping a board to `['red']` on the back of it would hide that board
+ * on every host, not move it to `.red`. `isHostForColor(host, 'red')` is the
+ * membership test that correctly identifies a red-capable host regardless of walk
+ * order; the App-Blocks NSFW gate uses the same escape hatch.
+ *
+ * Returns a SINGLE color rather than every color the host matches, so a red-capable
+ * host resolves to `red` alone — otherwise `.red` would match blue too and render
+ * both the SFW and the mature variant of the same board side by side.
+ *
+ * Fail-closed: an unknown/missing host returns undefined, and callers treat that as
+ * "only boards marked `all`".
+ */
+export function getRequestBoardDomainColor(req: {
+  headers: { host?: string };
+}): ColorDomain | undefined {
+  const host = req?.headers?.host?.toLowerCase();
+  if (host && isHostForColor(host, 'red')) return 'red';
+
+  // Second pass, for a host that is an ALIAS of a color whose own primary is
+  // red-capable. Prod ships exactly that: `civitaired.com` is a blue alias, blue's
+  // primary is `civitai.red`, and red has no aliases — so the direct test above
+  // misses it and the walk would hand it the SFW board set while `civitai.red`
+  // itself got the mature one. Two front doors to the same site must agree.
+  //
+  // NB this encodes "blue's primary is the red host", which is true of the current
+  // deployment but not of the config the docs describe: multi-host-domain-aliases.md
+  // presents `civitai.blue` as a possible SFW front door for blue. Add one and it
+  // would resolve red here (fail-OPEN) — the durable fix is to stop overloading
+  // civitai.red as blue's primary, not more special-casing.
+  const walked = getRequestDomainColor(req);
+  const primary = walked ? serverDomainMap[walked]?.primary : undefined;
+  if (primary && isHostForColor(primary, 'red')) return 'red';
+
+  return walked;
 }
 
 export function getRequestDomainColor(req: { headers: { host?: string } }) {

@@ -22,7 +22,9 @@ import {
   resetClusterDeadlineHits,
 } from './cluster-deadline-hits';
 import { compressPacked, decompressPacked } from './packed-compression';
+import { applyCacheKeyPrefix } from './cache-key-prefix';
 
+export { CACHE_KEY_NAMESPACE, CACHE_KEY_PREFIX, prefixCacheKey } from './cache-key-prefix';
 export type { RedisConfig } from './env';
 export type RedisLogFn = (message: string, ...args: unknown[]) => void;
 /** Resolves whether enhanced cluster failover is enabled — injected app policy (Flipt). */
@@ -119,12 +121,15 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
     // tagged; reads decode both compressed and legacy-uncompressed values transparently).
     // Only safe for callers that store wrapper objects, never bare scalars — see the
     // SENTINEL SAFETY note in the packed implementation.
+    // Returns the server's reply, not void: `SET … XX` answers null when the key was
+    // absent, and a caller that means to CORRECT an existing entry — never create one —
+    // cannot tell that from a successful write otherwise.
     set<T>(
       key: K,
       value: T,
       setOptions?: SetOptions,
       packedOptions?: { compress?: boolean }
-    ): Promise<void>;
+    ): Promise<unknown>;
     // mSet still disabled - sets are more complex with different argument formats
     // mSet(records: Record<K, unknown>, setOptions?: SetOptions): Promise<void>;
     setNX<T>(key: K, value: T): Promise<void>;
@@ -1338,17 +1343,20 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
       );
     },
 
+    // Returns the server's reply rather than void: `SET ... XX` answers null when the
+    // key was absent, and a caller that only wants to CORRECT an existing entry —
+    // never create one — cannot tell that from a successful write otherwise.
     async set<T>(
       key: K,
       value: T,
       options?: SetOptions,
       packedOptions?: { compress?: boolean }
-    ): Promise<void> {
+    ): Promise<unknown> {
       const packed = pack(value);
       // Opt-in brotli (sentinel-tagged), async so the codec runs on the libuv threadpool
       // and never blocks the event loop. The symmetric read is get(key, { compress: true }).
       const payload = packedOptions?.compress ? await compressPacked(packed) : packed;
-      await client.set(key, payload, options);
+      return client.set(key, payload, options);
     },
 
     async setNX<T>(key: K, value: T): Promise<void> {
@@ -1602,6 +1610,11 @@ export function createRedisClients(options: CreateRedisClientsOptions = {}): Red
 
 // Source of Truth data
 export const REDIS_SYS_KEYS = {
+  APP: {
+    // Per-app page-access overrides (`app:page-access:${app}`) — a JSON path→role map mirroring the
+    // AppPageAccess table, read on every gated request so the gate doesn't hit Postgres per hit.
+    PAGE_ACCESS: 'app:page-access',
+  },
   DEVICE: {
     // Per-browser account-switch set — hash `device:accounts:${deviceId}` of userId → lastSwitchedAt.
     ACCOUNTS: 'device:accounts',
@@ -1609,6 +1622,10 @@ export const REDIS_SYS_KEYS = {
   SWAP: {
     // Single-use marker for redeemed cross-domain swap tokens — `swap:used:${jti}` (TTL = swap max age).
     USED: 'swap:used',
+  },
+  FEEDBACK: {
+    // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
+    RATE_LIMIT: 'system:feedback:rate-limit',
   },
   BLOCKS: {
     // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every
@@ -1623,6 +1640,40 @@ export const REDIS_SYS_KEYS = {
     // appBlockId) so N installed blocks share ONE daily tip ceiling. INCRBY'd by
     // each tip amount pre-transaction (reserve-and-refund), TTL set on first write.
     TIP_CAP: 'system:blocks:tip-cap',
+    /**
+     * Idempotency record for the block TIP endpoint (`POST /api/v1/blocks/tip`),
+     * keyed `system:blocks:tip-idem:${userId}:${clientIdempotencyKey}`. A tip
+     * moves REAL Buzz to a third party and is IRREVERSIBLE, so a timeout /
+     * lost-response retry that re-POSTs the same logical tip must NOT move money
+     * twice. The endpoint claims this key with `SET NX` before it reserves/charges;
+     * a replay that finds it set either (a) replays the cached TERMINAL result
+     * (200/4xx/5xx) verbatim — no second reserve, no second charge — or (b) gets a
+     * 409 while the first attempt is still in flight. DISTINCT from TIP_CAP (the
+     * daily-aggregate cap): this dedupes a SINGLE logical tip across retries;
+     * TIP_CAP bounds the day's total. Short TTL (covers realistic retry windows);
+     * a genuinely-new tip uses a fresh client key. On `sysRedis`, like the sibling
+     * BLOCKS caps/limiters; fail-CLOSED on a redis error at claim time (money path).
+     */
+    TIP_IDEM: 'system:blocks:tip-idem',
+    /**
+     * Idempotency record for the block GENERATION submit (`blocks.submitWorkflow`
+     * — both the txt2img and customComfy branches), keyed
+     * `system:blocks:gen-idem:${userId}:${appBlockId}:${clientIdempotencyKey}`. A
+     * generation submit RESERVES the viewer's daily/per-app Buzz cap and SUBMITS to
+     * the orchestrator (a real charge), so two CONCURRENT same-key submits (a
+     * double-click / SDK auto-retry racing before the orchestrator's own
+     * `(userId, externalId)` dedupe engages) could otherwise BOTH reserve and BOTH
+     * charge. The handler `SET NX`-claims this key BEFORE the cap reservation; a
+     * concurrent submit that finds it in-progress gets a 409 (no 2nd reservation,
+     * no 2nd orchestrator submit), and a lost-response retry AFTER success replays
+     * the cached snapshot (no re-submit). DISTINCT from BUZZ_CAP (the daily-spend
+     * counter) and from TIP_IDEM (the tip endpoint's dedupe): this dedupes ONE
+     * logical generation across retries. Per-(user, app, key) so a key can never
+     * collide across apps or users. Short TTL (covers realistic retry windows); a
+     * genuinely-new generation uses a fresh client key. On `sysRedis`, like the
+     * sibling BLOCKS caps; fail-CLOSED on a redis error at claim time (money path).
+     */
+    GEN_IDEM: 'system:blocks:gen-idem',
     /**
      * Per-APP cumulative spend-BOUNTY accrual cap counter (audit 🟡-2 / the
      * App-Blocks Sybil-economics review). DISTINCT from BUZZ_CAP: that one
@@ -1783,6 +1834,22 @@ export const REDIS_SYS_KEYS = {
       deploy.
      */
     IMAGE_SCANNER_NEW: 'system:image-scanner-new',
+    /*
+      Per-run image cap for the remove-deleted-user-images job. Set to '0' to
+      pause the drain without a deploy. Missing key means the job's compiled
+      default applies.
+     */
+    DELETED_USER_IMAGE_PURGE_LIMIT: 'system:deleted-user-image-purge-limit',
+    /*
+      Set of userIds whose grace-blocked images are waiting on the
+      restore-user-images job. `restoreUser` adds an id once its restore
+      transaction commits; the job drops it once the reversal runs out of rows
+      to claim. Only a worklist — `Image.metadata` holds the durable
+      breadcrumbs, so a lost set means the images stay hidden until
+      unblockAccountDeletionImages is called for that account again, not that
+      the reversal is unrecoverable.
+     */
+    PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -1825,8 +1892,24 @@ export const REDIS_SYS_KEYS = {
   SESSION: {
     ALL: 'session:all',
     TOKEN_STATE: 'session:token-state',
+    LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
   },
   JOB: 'job',
+  SEARCH_INDEX_CLEANUP: {
+    // Per-index keyset scan cursor for the nightly search-index cleanup, so a pass
+    // that could not walk a whole index in one run RESUMES next run instead of
+    // restarting from the bottom and re-walking the same prefix forever.
+    // Hash: field = cleanup index key ('models', 'users', …), value = JSON
+    // { lastId, startedAt, covered }. No TTL — staleness is bounded in code by
+    // `startedAt`, and an expiry would silently look identical to a completed pass.
+    // See src/server/meilisearch/cleanup-cursor.ts.
+    CURSORS: 'search-index-cleanup:cursors',
+  },
+  METRIC_RECONCILIATION: {
+    // Last completed nightly reaction-exactness result, so the hourly job can
+    // re-publish its gauges after a pod roll. See metric-reconciliation-audit.ts.
+    NIGHTLY_EXACTNESS: 'metric-reconciliation:nightly-exactness',
+  },
   BUZZ_WITHDRAWAL_REQUEST: {
     STATUS: 'buzz-withdrawal-request:status',
   },
@@ -1977,8 +2060,14 @@ export const REDIS_SYS_KEYS = {
   },
 } as const;
 
-// Cached data
-export const REDIS_KEYS = {
+// Cached data.
+//
+// The literal table. Every cache key in the app is built from one of these leaves, so applying
+// the environment prefix here (see `REDIS_KEYS` below) is the single place that scopes the whole
+// cache keyspace. Declared separately from the export so the `as const` literal types survive —
+// `RedisKeyStringsCache` / `RedisKeyTemplateCache` are derived from these literals and are
+// unchanged by the prefixing.
+const REDIS_KEYS_UNPREFIXED = {
   BLOCKS: {
     REGISTRY: 'packed:caches:block-registry',
     TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',
@@ -2021,6 +2110,7 @@ export const REDIS_KEYS = {
     TAGS_NEEDING_REVIEW: 'system:tags-needing-review',
     TAGS_BLOCKED: 'system:tags-blocked',
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
+    FEED_TAG_BAR_TAGS: 'system:feed-tag-bar-tags',
     BLOCKLIST: 'system:blocklist',
     PROMPT_ALLOWLIST: 'packed:system:prompt-allowlist',
     NOTIFICATION_COUNTS: 'system:notification-counts',
@@ -2033,7 +2123,9 @@ export const REDIS_KEYS = {
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
     PAID_ACCESS: 'packed:caches:paid-access',
+    PAID_ACCESS_CAP_TIER: 'packed:caches:paid-access-cap-tier',
     USER_COSMETICS: 'packed:caches:user-cosmetics',
+    USER_OWNED_STICKER: 'packed:caches:user-owned-sticker',
     COSMETICS_OLD: 'packed:caches:cosmetics',
     COSMETICS: 'packed:caches:cosmetics2',
     PROFILE_PICTURES: 'packed:caches:profile-pictures',
@@ -2054,6 +2146,7 @@ export const REDIS_KEYS = {
     FEATURED_MODELS: 'packed:featured-models-2',
     OFFICIAL_MODELS: 'packed:caches:official-models',
     HOME_BLOCKS_PERMANENT: 'packed:caches:home-blocks-permanent',
+    HOME_BLOCKS_SYSTEM: 'packed:caches:home-blocks-system',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
     ANNOUNCEMENTS: 'packed:caches:announcement',
@@ -2062,6 +2155,7 @@ export const REDIS_KEYS = {
     ARTICLE_STATS: 'packed:caches:article-stats',
     POST_STATS: 'packed:caches:post-stats',
     USER_FOLLOWS: 'packed:caches:user-follows',
+    NEW_CREATORS: 'packed:caches:new-creators',
     MODEL_TAGS: 'packed:caches:model-tags',
     MODEL_VOTABLE_TAGS: 'packed:caches:model-votable-tags',
     MODEL_VERSION_PUBLIC_DONATION_GOALS: 'packed:caches:model-version-public-donation-goals',
@@ -2111,14 +2205,20 @@ export const REDIS_KEYS = {
     // only (bid submission re-validates the true minimum server-side). See
     // `getAllAuctions` in auction.service.
     ACTIVE_AUCTIONS: 'packed:caches:active-auctions',
-    // url -> {id, url, hideMeta} lookup backing the internal image-delivery endpoint
-    // (`/api/internal/image-delivery/[id]`, ~9.2 req/s at peak). The near-immutable
+    // url -> {id, url, hideMeta, type, mimeType} lookup backing the internal image-delivery
+    // endpoint (`/api/internal/image-delivery/[id]`, ~9.2 req/s at peak). The near-immutable
     // `Image WHERE url = $1` single-row read is the highest-volume DB query in the
     // profile. Keyed by the EXACT url (case/whitespace-sensitive — the WHERE key is not
     // normalized), positive results only (an unknown url stays uncached so a newly
     // registered image resolves immediately), busted when `hideMeta` flips in
     // updatePostImage. See `getCachedImageDeliveryMetadata` in image-delivery.service.
-    IMAGE_DELIVERY_METADATA: 'packed:caches:image-delivery-metadata',
+    // `:v2` — the cached value gained `type`/`mimeType`. Entries packed by the previous
+    // release hold only `{id, url, hideMeta}`, and a hit on one would serve a response with
+    // the media-type fields MISSING (indistinguishable, to a caller, from "this image has
+    // no mimeType") for up to the TTL after a release. A new key prefix makes the widened
+    // shape correct from the first request instead; the cold window costs at most one
+    // single-row indexed lookup per url per TTL.
+    IMAGE_DELIVERY_METADATA: 'packed:caches:image-delivery-metadata:v2',
     // Per-user `id -> isValidCreatorMember(boolean)` for the read-time metric-privacy /
     // donation-goal hide gate (#3266). Near-static per user; both TRUE and FALSE are
     // cached (the resolver is a total function over the id). Busted on any subscription
@@ -2133,6 +2233,11 @@ export const REDIS_KEYS = {
     // `setUserSetting`; `CacheTTL.md` backstops any other writer. See
     // `getUserMetricPrivacyDefaultsMap` in creator-membership.service.
     USER_METRIC_PRIVACY_DEFAULTS: 'packed:caches:user-metric-privacy-defaults',
+    CONTEST_COMMUNITY_SCORE: 'packed:caches:contest-community-score',
+    // Async contest-scoring runs: per-run state, the per-collection pointer to the
+    // most recent run, and the scored result each run produces. Every key carries a
+    // TTL, so the whole namespace self-cleans and no table backs it.
+    CONTEST_SCORE_RUN: 'packed:caches:contest-score-run',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
@@ -2185,9 +2290,13 @@ export const REDIS_KEYS = {
   },
   CACHE_LOCKS: 'cache-lock',
   BUZZ: {
-    POTENTIAL_POOL: 'buzz:potential-pool',
-    POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value',
-    EARNED: 'buzz:earned',
+    // v2: these three feed one forecast (earned / poolSize x poolValue) and each expires on its own
+    // day-long TTL, `earned` per user. Widening them to count green without moving the keys would
+    // serve a green `earned` over a yellow-only pool for up to a day — every mixture wrong, none of
+    // them an error. Bump all three together whenever any of their predicates changes.
+    POTENTIAL_POOL: 'buzz:potential-pool:v2',
+    POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value:v2',
+    EARNED: 'buzz:earned:v2',
   },
   CREATOR_PROGRAM: {
     CAPS: 'packed:caches:creator-program:caps',
@@ -2209,7 +2318,27 @@ export const REDIS_KEYS = {
     RESCAN: 'article:rescan',
     RATING_REVIEW_RATE_LIMIT: 'article:nsfw-review-rate',
   },
+  REPORT: {
+    /*
+      Use: Report ids whose status was changed in the last few minutes, so a cached queue snapshot
+      (or a lagging replica) cannot put an already-resolved report back in front of a moderator.
+      Structure: hash, field = reportId, value = '1', whole-key TTL.
+      Read by: the moderator app's dashboard, which filters its most-reported list through it.
+     */
+    RESOLVED_RECENT: 'report:resolved-recent',
+  },
 } as const;
+
+/**
+ * The cache key table, environment-scoped.
+ *
+ * Identical to `REDIS_KEYS_UNPREFIXED` in production (same object, byte-identical keys); on a
+ * deployment that sets `CACHE_KEY_NAMESPACE` every leaf carries the `<namespace>:` prefix, so a
+ * non-production deployment cannot read or overwrite a production cache entry. See
+ * ./cache-key-prefix for the full rationale — in particular why the namespace is explicit rather
+ * than derived from `IS_PREVIEW`.
+ */
+export const REDIS_KEYS = applyCacheKeyPrefix(REDIS_KEYS_UNPREFIXED);
 
 // These are used as subkeys after a dynamic key, such as `user:13:stuff`
 // we should probably be flipping all redis keys to have any dynamic keys come at the end

@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
 import { createEcosystemStepInput } from '../ecosystems';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 describe('createEcosystemStepInput - Enhanced Compatibility', () => {
   const mockAirs = {

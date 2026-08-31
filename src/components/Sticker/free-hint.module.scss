@@ -1,0 +1,42 @@
+/**
+ * The daily-free hint's wiggle.
+ *
+ * It fires once on appearance rather than looping: the hint is an offer, not an
+ * alarm, and something that never stops moving beside a creator's image is a
+ * nag. Two beats is enough to catch an eye that was already on the picture.
+ *
+ * Transform-only, so it composites on its own layer and never reflows the row it
+ * points at.
+ */
+.wiggle {
+  animation: hint-wiggle 700ms ease-in-out 1;
+  transform-origin: center bottom;
+}
+
+@keyframes hint-wiggle {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  15% {
+    transform: rotate(-3.5deg);
+  }
+  35% {
+    transform: rotate(3deg);
+  }
+  55% {
+    transform: rotate(-2deg);
+  }
+  75% {
+    transform: rotate(1deg);
+  }
+}
+
+/* Movement is the whole point of this class, so there is nothing to soften — it
+   simply does not run for somebody who asked for less of it. The hint still
+   appears, in the same place, saying the same thing. */
+@media (prefers-reduced-motion: reduce) {
+  .wiggle {
+    animation: none;
+  }
+}

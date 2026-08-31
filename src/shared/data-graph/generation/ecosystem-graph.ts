@@ -18,6 +18,7 @@ import {
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
   SDCPP_SUPPORTED_ECOSYSTEMS,
   SDCPP_EXCLUDED_MODEL_IDS,
+  VID_QUANTITY_ECOSYSTEMS,
   fluxUltraAirId,
 } from '~/shared/constants/generation.constants';
 import {
@@ -57,6 +58,7 @@ import { ponyV7Graph } from './pony-v7-graph';
 import { viduGraph } from './vidu-graph';
 import { openaiGraph } from './openai-graph';
 import { klingGraph } from './kling-graph';
+import { minimaxGraph } from './minimax-graph';
 import { wanGraph } from './wan-graph';
 import { wanImageGraph } from './wan-image-graph';
 import { hunyuanGraph } from './hunyuan-graph';
@@ -73,6 +75,7 @@ import { maiGraph } from './mai-graph';
 import { reveGraph } from './reve-graph';
 import { mageFlowGraph } from './mage-flow-graph';
 import { seedanceGraph } from './seedance-graph';
+import { flux3VideoGraph } from './flux3-video-graph';
 import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
 import { polyGenGraph } from './polygen-graph';
@@ -231,7 +234,7 @@ export const ecosystemGraph = new DataGraph<
         ctx.output === 'audio'
           ? 'Ace'
           : ctx.output === 'video'
-          ? 'Kling'
+          ? 'Seedance'
           : ctx.output === 'model3d'
           ? 'PolyGen'
           : 'ZImageTurbo';
@@ -361,7 +364,7 @@ export const ecosystemGraph = new DataGraph<
       graph: fluxGraph,
     },
     // Image ecosystems - individual families
-    { values: ['Qwen', 'Qwen2'] as const, graph: qwenGraph },
+    { values: ['Qwen', 'Qwen2', 'Qwen3'] as const, graph: qwenGraph },
     { values: ['NanoBanana'] as const, graph: nanoBananaGraph },
     { values: ['Seedream'] as const, graph: seedreamGraph },
     { values: ['Imagen4'] as const, graph: imagen4Graph },
@@ -404,6 +407,7 @@ export const ecosystemGraph = new DataGraph<
         'WanVideo-25-T2V',
         'WanVideo-25-I2V',
         'WanVideo27',
+        'WanVideo30',
       ] as const,
       graph: wanGraph,
     },
@@ -412,14 +416,16 @@ export const ecosystemGraph = new DataGraph<
     // Video ecosystems - individual families
     { values: ['Vidu'] as const, graph: viduGraph },
     { values: ['Kling'] as const, graph: klingGraph },
+    { values: ['MiniMaxH3'] as const, graph: minimaxGraph },
     { values: ['HyV1'] as const, graph: hunyuanGraph },
-    { values: ['LTXV2', 'LTXV23'] as const, graph: ltxGraph },
+    { values: ['LTXV2', 'LTXV23', 'LTXV25'] as const, graph: ltxGraph },
     { values: ['Mochi'] as const, graph: mochiGraph },
     { values: ['Sora2'] as const, graph: soraGraph },
     { values: ['Veo3'] as const, graph: veo3Graph },
     { values: ['Grok'] as const, graph: grokGraph },
     { values: ['Seedance'] as const, graph: seedanceGraph },
     { values: ['HappyHorse'] as const, graph: happyHorseGraph },
+    { values: ['Flux3Video'] as const, graph: flux3VideoGraph },
     // Audio ecosystems
     { values: ['Ace'] as const, graph: aceAudioGraph },
     // 3D Model ecosystems — PolyGen (Meshy via Fal). Field rendering for the
@@ -445,8 +451,8 @@ export const ecosystemGraph = new DataGraph<
     ['workflow', 'ecosystem', 'model']
   )
   // Quantity node - shown for image output, plus the small set of video
-  // ecosystems that batch multiple outputs in a single job (currently LTXV23,
-  // which generates extra videos via Seed + slotIndex).
+  // ecosystems that batch multiple outputs in a single job (see
+  // VID_QUANTITY_ECOSYSTEMS — they generate extra videos via Seed + slotIndex).
   //
   // Step: draft=4, BOGO-enabled w/ enhancedCompatibility off=2, else=1.
   // The step=2 path is gated by the `enhancedCompatibilitySdcpp` feature flag and
@@ -462,11 +468,12 @@ export const ecosystemGraph = new DataGraph<
         supportsSdcpp(ctx.ecosystem, modelId) &&
         ctx.enhancedCompatibility !== true;
       const step = isDraft ? 4 : bogoActive ? 2 : 1;
-      const supportsVideoQuantity = ctx.output === 'video' && ctx.ecosystem === 'LTXV23';
-      // LTXV23 uses tier-gated vidQuantity (free=1, bronze=2, silver=3, gold=4)
+      const batchesVideos = VID_QUANTITY_ECOSYSTEMS.has(ctx.ecosystem);
+      const supportsVideoQuantity = ctx.output === 'video' && batchesVideos;
+      // These use tier-gated vidQuantity (free=1, bronze=2, silver=3, gold=4)
       // so the upsell popover can fire when non-gold users try to bump past
       // their cap. Other ecosystems keep the standard maxQuantity.
-      const max = ctx.ecosystem === 'LTXV23' ? ext.limits.vidQuantity : ext.limits.maxQuantity;
+      const max = batchesVideos ? ext.limits.vidQuantity : ext.limits.maxQuantity;
       return {
         ...quantityNode({ step, max }),
         when: ctx.output === 'image' || supportsVideoQuantity,

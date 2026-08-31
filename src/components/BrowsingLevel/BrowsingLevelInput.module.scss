@@ -38,3 +38,23 @@
 .iconWrapper {
   // Reference for the iconWrapper
 }
+
+// The 300px hub sidebar. The default label reserves 20px each side plus room for a
+// check mark, which is most of the width of a chip reading "R" — five of them do not
+// fit, and wrapping leaves XXX alone on a line looking singled out.
+.compact {
+  padding-left: 5px;
+  padding-right: 5px;
+  font-size: var(--mantine-font-size-xs);
+
+  @media (min-width: theme('screens.xs')) {
+    padding-left: 7px;
+    padding-right: 7px;
+  }
+
+  // The filled background already says checked; the tick is what does not fit.
+  .iconWrapper,
+  &[data-checked] .iconWrapper {
+    display: none;
+  }
+}

@@ -3,9 +3,9 @@ import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { env } from '~/env/server';
-import { publicApiContext2 } from '~/server/createContext';
+import { publicApiContext2 } from '~/server/public-api-context';
 import { getAllUsersInput } from '~/server/schema/user.schema';
-import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
 
@@ -29,56 +29,39 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       items: users ?? [],
     });
   } catch (error) {
-    if (isClientAbortError(error)) {
-      // Client disconnected mid-request — not a server fault. 499, not 500.
-      if (!res.headersSent) res.status(499).end();
-      return;
-    }
-    // Transient user-search backend failure → retryable 503 (mirrors
-    // /api/v1/images + #2759/#2765). The ?query= path runs getUsersWithSearch
-    // (Meilisearch), which now wraps a transient upstream error as TRPCError
-    // SERVICE_UNAVAILABLE (status 503). We match BOTH that wrapped 503 AND a raw
-    // SDK Meili error that escaped the service wrap (isTransientMeiliError) as
-    // defense-in-depth. no-store so an edge layer can't cache the error; a
-    // Retry-After so clients/CF retry the (typically seconds-long) flap. This
-    // MUST run before the generic TRPCError branch below, whose
-    // JSON.parse(error.message) would otherwise throw on the plain-text
-    // SERVICE_UNAVAILABLE message and bubble a raw 500 — the exact leak this
-    // fixes (transient search error was surfacing as an unhandled 500). A
-    // non-transient error (real app bug / auth / NOT_FOUND) is NOT matched and
-    // still surfaces as its real status.
-    const trpcStatus = error instanceof TRPCError ? getHTTPStatusCodeFromError(error) : undefined;
-    if (isTransientMeiliError(error) || trpcStatus === 503) {
-      if (!res.headersSent) {
-        res.setHeader('Cache-Control', 'no-store');
-        res.setHeader('Retry-After', '2');
-        res
-          .status(503)
-          .json({ error: 'User search is temporarily overloaded — please retry.' });
+    // ORDER MATTERS, and both arms end in `handleEndpointError` — there is no
+    // hand-rolled envelope left in this file (civitai#3845 population B).
+    //  1. A client abort is decided FIRST: an aborted Meili call can otherwise
+    //     look transient and be answered 503 instead of 499. `isClientAbortError`
+    //     is the same predicate the helper uses, so this only fixes the ORDER —
+    //     the helper still writes the 499.
+    //  2. The transient-search 503 is decided BEFORE delegating, because the
+    //     helper cannot know this route wants a Retry-After + no-store.
+    // Everything else delegates, which is what genericizes a 5xx body: the old
+    // `else` branch here put `err.message` on the wire verbatim, and the
+    // TRPCError branch put the raw driver text in `{ error, code }`.
+    if (!isClientAbortError(error)) {
+      // Transient user-search backend failure → retryable 503 (mirrors
+      // /api/v1/images + #2759/#2765). The ?query= path runs getUsersWithSearch
+      // (Meilisearch), which now wraps a transient upstream error as TRPCError
+      // SERVICE_UNAVAILABLE (status 503). We match BOTH that wrapped 503 AND a raw
+      // SDK Meili error that escaped the service wrap (isTransientMeiliError) as
+      // defense-in-depth. no-store so an edge layer can't cache the error; a
+      // Retry-After so clients/CF retry the (typically seconds-long) flap. A
+      // non-transient error (real app bug / auth / NOT_FOUND) is NOT matched and
+      // still surfaces as its real status.
+      const trpcStatus =
+        error instanceof TRPCError ? getHTTPStatusCodeFromError(error) : undefined;
+      if (isTransientMeiliError(error) || trpcStatus === 503) {
+        if (!res.headersSent) {
+          res.setHeader('Cache-Control', 'no-store');
+          res.setHeader('Retry-After', '2');
+          res.status(503).json({ error: 'User search is temporarily overloaded — please retry.' });
+        }
+        return;
       }
-      return;
     }
-    if (error instanceof TRPCError) {
-      const status = getHTTPStatusCodeFromError(error);
-      // Some tRPC errors carry a JSON-stringified message (e.g. zod/validation
-      // issues serialized as a JSON array) — preserve that shape. But a
-      // throwDbError-wrapped INTERNAL_SERVER_ERROR carries a PLAIN-STRING message
-      // (`message: e.message` — Prisma errors / generic app bugs), so a blind
-      // JSON.parse would THROW and escape this catch → a raw unhandled 500 (the
-      // exact failure mode this PR fixes, previously still live for the
-      // non-transient subset). Fall back to the /api/v1/images error shape
-      // ({ error, code }) on a non-JSON message so NO input path can produce a
-      // raw unhandled 500.
-      let body: unknown;
-      try {
-        body = JSON.parse(error.message);
-      } catch {
-        body = { error: error.message, code: error.code };
-      }
-      res.status(status).json(body);
-    } else {
-      const err = error as Error;
-      res.status(500).json({ message: 'An unexpected error occurred', error: err.message });
-    }
+    handleEndpointError(res, error);
+    return;
   }
 });

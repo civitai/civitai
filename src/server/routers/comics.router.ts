@@ -4,12 +4,16 @@ import { comicProjectMetaSchema, parseComicProjectMeta } from '~/server/schema/c
 import {
   router,
   protectedProcedure,
+  guardedProcedure,
   publicProcedure,
   moderatorProcedure,
   middleware,
   isFlagProtected,
 } from '~/server/trpc';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
 import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import { regionProxyMiddleware } from '~/server/orchestrator/region-proxy.middleware';
 import {
@@ -49,6 +53,8 @@ import {
 } from '~/server/services/orchestrator/preset-image-gen.service';
 import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+import { rateLimit } from '~/server/middleware.trpc';
+import { commentRateLimits } from '~/server/schema/comment.schema';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import { orchestratorChatCompletionCost } from '~/server/services/comics/orchestrator-chat';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
@@ -66,7 +72,7 @@ import {
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { planChapterPanels } from '~/server/services/comics/story-plan';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import {
@@ -93,7 +99,7 @@ import {
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
-import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+import { domainSpendType, getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
@@ -145,6 +151,10 @@ const comicFlag = isFlagProtected('comicCreator');
 // `blurredPreviewUrl` on a blocked panel), which RU ISPs DPI-block. Rewrite them
 // to the Cloudflare-fronted proxy for RU requests. See ClickUp 868kdkv93.
 const comicProtectedProcedure = protectedProcedure.use(comicFlag).use(regionProxyMiddleware);
+// For writes that are ordinary user content rather than comic authoring: `guardedProcedure` adds the
+// onboarding and MUTE checks every other comment surface has. Without it a muted account could comment
+// on a chapter — the box is hidden client-side, which is presentation, not a gate.
+const comicGuardedProcedure = guardedProcedure.use(comicFlag).use(regionProxyMiddleware);
 const comicPublicProcedure = publicProcedure.use(comicFlag).use(regionProxyMiddleware);
 const comicModeratorProcedure = moderatorProcedure.use(comicFlag);
 
@@ -4938,6 +4948,7 @@ export const comicsRouter = router({
       let buzzTransactionId: string | undefined;
       try {
         const externalTransactionIdPrefix = `comic-ea-${chapter.id}-${ctx.user.id}`;
+        const spendType = domainSpendType(ctx.features);
         const data = await createMultiAccountBuzzTransaction({
           fromAccountId: ctx.user.id,
           toAccountId: chapter.project.userId,
@@ -4946,7 +4957,8 @@ export const comicsRouter = router({
           description: `Early access: ${chapter.project.name} - ${chapter.name}`,
           details: { comicChapterId: chapter.id, earlyAccessPurchase: true },
           externalTransactionIdPrefix,
-          fromAccountTypes: getAllowedAccountTypes(ctx.features),
+          fromAccountTypes: [spendType],
+          toAccountType: spendType,
         });
 
         if (data?.transactionCount === 0) {
@@ -5207,129 +5219,6 @@ export const comicsRouter = router({
     }),
 
   // ──── Moderation tools ────
-  //
-  // Surface comic panels whose Image is flagged for review or already
-  // marked as a TOS violation. Lets the mod team find and action comic-
-  // specific content without having to wade through the global image
-  // review queue. Approve / block actions flow through the existing
-  // `image.moderate` mutation, so any decision made here also clears
-  // the parent comic project from the moderation gates that hide it
-  // from public surfaces.
-  getModReviewQueue: comicModeratorProcedure
-    .meta({ requiredScope: TokenScope.MediaRead })
-    .input(
-      z.object({
-        limit: z.number().int().min(1).max(50).default(20),
-        cursor: z.number().int().optional(),
-        // Filter by a specific `needsReview` reason (`minor`, `poi`,
-        // `newUser`, `bestiality`, `appeal`, …). Omit to see every
-        // panel awaiting any kind of review.
-        needsReview: z.string().optional(),
-        // When true, also include panels whose Image was already marked
-        // `tosViolation` even though `needsReview` may be null. Useful
-        // for double-checking moderator actions or finding leftovers
-        // after a TOS sweep.
-        includeTosViolations: z.boolean().default(true),
-      })
-    )
-    .query(async ({ input }) => {
-      const { limit, cursor, needsReview, includeTosViolations } = input;
-
-      // Build top-level OR conditions. Each branch is `{ image: { ... } }`
-      // so Prisma generates JOIN + WHERE on the related Image row rather
-      // than a nested OR inside a relation filter (which has been finicky
-      // in this codebase before).
-      //
-      // The "any reason" path mirrors the workspace banner — a panel is
-      // surfaced if ANY of the following is true:
-      //  - `needsReview` is set (automated or manual review request),
-      //  - `tosViolation` is true (already flagged),
-      //  - `ingestion` is anything other than `Scanned` (Blocked,
-      //    PendingManualAssignment, Error, Rescan, NotFound). These are
-      //    the same states `getProjectShell` uses to drive the
-      //    `reviewPending` chapter pill, so a panel a creator sees as
-      //    "hidden from readers — review pending" will reliably appear
-      //    here for the mod team.
-      const orConditions: any[] = [];
-      if (needsReview) {
-        // Specific reason selected — only that one. Don't union in other
-        // states or the dropdown becomes meaningless.
-        orConditions.push({ image: { needsReview } });
-      } else {
-        orConditions.push({ image: { needsReview: { not: null } } });
-        orConditions.push({
-          image: { ingestion: { not: ImageIngestionStatus.Scanned } },
-        });
-      }
-      if (includeTosViolations) {
-        orConditions.push({ image: { tosViolation: true } });
-      }
-
-      const panels = await dbRead.comicPanel.findMany({
-        where: {
-          imageId: { not: null },
-          OR: orConditions,
-        },
-        take: limit + 1,
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-        orderBy: { id: 'desc' },
-        select: {
-          id: true,
-          position: true,
-          chapterPosition: true,
-          projectId: true,
-          prompt: true,
-          imageUrl: true,
-          createdAt: true,
-          image: {
-            select: {
-              id: true,
-              url: true,
-              nsfwLevel: true,
-              needsReview: true,
-              tosViolation: true,
-              ingestion: true,
-              blockedFor: true,
-              width: true,
-              height: true,
-              hash: true,
-              type: true,
-            },
-          },
-          chapter: {
-            select: {
-              name: true,
-              status: true,
-              position: true,
-              project: {
-                select: {
-                  id: true,
-                  name: true,
-                  status: true,
-                  tosViolation: true,
-                  user: {
-                    select: {
-                      id: true,
-                      username: true,
-                      image: true,
-                      deletedAt: true,
-                      bannedAt: true,
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      });
-
-      let nextCursor: number | undefined;
-      if (panels.length > limit) {
-        nextCursor = panels.pop()!.id;
-      }
-
-      return { items: panels, nextCursor };
-    }),
 
   moderatorUnpublishChapter: comicModeratorProcedure
     .meta({ requiredScope: TokenScope.Full })
@@ -5393,7 +5282,11 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const engagement = await dbRead.comicProjectEngagement.findUnique({
+      // dbWrite, not dbRead: the write below is scoped by the type this read saw, so a
+      // replica lagging behind a just-committed change makes the scoped update miss and
+      // report not-engaged for a pair that carries exactly what was asked for. Every
+      // sibling toggle in this family reads the primary for the same reason.
+      const engagement = await dbWrite.comicProjectEngagement.findUnique({
         where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
       });
 
@@ -5403,11 +5296,17 @@ export const comicsRouter = router({
         // what lets `comicProjectMetrics` detect un-follows incrementally. The row
         // is bounded — one per (userId, projectId) — so it doesn't accumulate.
         const nextType = engagement.type === input.type ? ComicEngagementType.None : input.type;
-        await dbWrite.comicProjectEngagement.update({
-          where: { userId_projectId: { userId: ctx.user.id, projectId: input.projectId } },
+        // Scoped by the type this call READ, never by the PK alone (868kurkc7). One
+        // row per (user, project) carrying one type, so an unqualified update lands
+        // on whatever a sibling writer established in between — and the read above is
+        // off the REPLICA, so that window is replication lag rather than microseconds.
+        const { count } = await dbWrite.comicProjectEngagement.updateMany({
+          where: { userId: ctx.user.id, projectId: input.projectId, type: engagement.type },
           data: { type: nextType },
         });
-        return nextType !== ComicEngagementType.None;
+        // Zero rows means the pair is no longer what this call read, so it does not
+        // carry `nextType` either, and the client re-reads engagement state anyway.
+        return count > 0 && nextType !== ComicEngagementType.None;
       }
 
       await dbWrite.comicProjectEngagement.create({
@@ -6381,7 +6280,7 @@ export const comicsRouter = router({
           commentCount: true,
           comments: {
             orderBy: { createdAt: 'asc' },
-            where: ctx.user?.isModerator ? {} : { hidden: false },
+            where: ctx.user?.isModerator ? {} : { hidden: false, tosViolation: false },
             select: commentV2Select,
           },
         },
@@ -6390,16 +6289,30 @@ export const comicsRouter = router({
       return thread;
     }),
 
-  createChapterComment: comicProtectedProcedure
+  createChapterComment: comicGuardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
+    .use(rateLimit(commentRateLimits))
     .input(
       z.object({
         projectId: z.number().int(),
         chapterPosition: z.number().int().min(0),
-        content: z.string().min(1).max(10000),
+        // Sanitised like every other comment write. Without this the row reached both the
+        // blocklist guard and the database as raw HTML, so an entity-escaped host
+        // (`blocked&#46;example`) carried no literal dot for the link matcher to see and then
+        // decoded back to a live URL in `RenderHtml` at read time — a bypass the other two
+        // paths do not have, because their zod schema decodes entities before the guard runs.
+        //
+        // No `allowStickers`: this path does not charge for sticker uses the way `upsertComment`
+        // does, so permitting the markup here would make paid stickers free.
+        content: getSanitizedStringSchema({ allowedTags: COMMENT_ALLOWED_TAGS })
+          .refine((v) => v.length > 0, 'Cannot be empty')
+          .refine((v) => v.length <= 10000, 'Comment content too long'),
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Before the thread upsert: a rejected comment must not leave a Thread row behind.
+      await throwOnBlockedCommentContent(input.content, { isModerator: ctx.user.isModerator });
+
       // Find or create thread for this chapter (upsert avoids race condition)
       const thread = await dbWrite.thread.upsert({
         where: {
@@ -6454,6 +6367,9 @@ export const comicsRouter = router({
           type: 'new-comic-comment',
           key: `new-comic-comment:${input.projectId}:${input.chapterPosition}:${comment.id}`,
           category: NotificationCategory.Comment,
+          // Same CommentV2 row is also swept by new-mention / new-thread-response; this shares their
+          // dedupe key so the project owner gets one notification, not two.
+          dedupeKey: `comment:v2:${comment.id}`,
           userId: project.userId,
           details: {
             comicProjectId: String(input.projectId),

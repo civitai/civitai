@@ -70,11 +70,10 @@ All mutations go through the creator-studio **monetization module** (`src/lib/se
 
 ## Gating
 
-Gating is **feature-specific**: **setting a fee** keys on member `tier`; **sell-indefinitely** keys on **Creator
-Program membership** (per Justin). Everything else (access config, publish) is open to any authenticated owner. Enforced
-in UI (disabled + tooltip) and re-checked in the module. The exact *fee* bar (tier vs full CP) is still
-[pending](../creator-studio-plan.md#9-decisions--open-questions) — Justin's CP answer for indefinite-sale hints the two
-gates may genuinely differ.
+Gating (decided 2026-07-09): **all** member-only actions — setting a fee **and** sell-indefinitely — key on
+**Creator Program membership** (a single bar, resolved from the `onboarding` CP flag), not subscription tier.
+Everything else (access config, publish) is open to any authenticated owner. Enforced in UI (disabled + tooltip)
+and re-checked server-side. See [pre-implementation-decisions.md B1](pre-implementation-decisions.md).
 
 ## Shared / cross-refs
 
@@ -96,15 +95,13 @@ gates may genuinely differ.
 
 ## Open questions
 
-- **Fee gate — tier vs full CP membership** (still pending — [plan §9](../creator-studio-plan.md#9-decisions--open-questions)).
-  Justin scoped **indefinite-sale to CP members**, so the gates may genuinely differ (fee = `tier`, indefinite = CP).
 - **Access-config depth** — "all monetization in the studio" ⇒ expose the **full** `earlyAccessConfig` (download vs
   generation price, trial limits, donation goals) here; confirm the field-by-field v1 scope vs. what trails.
-- **Indefinite-sale needs main-app work** — "available for sale indefinitely" (beyond early access, CP-gated) needs a
-  main-app representation + backend ([plan §7.1](../creator-studio-plan.md#71-schema--data-main-app-db)) before the
-  studio control is real. Scope/own with backend.
-- **Publish / schedule from the studio** — confirmed wanted but **2nd priority to fees**; v1 or fast-follow?
 - **Pagination** — offset vs cursor (undecided).
+
+**Resolved (2026-07-09):** fee/sell-indefinitely gate = **CP membership** (single bar); **indefinite-sale =
+early access with no time limit** (reuse EA / extend `earlyAccessConfig` — A4/B2); fee pause resolved at the
+**user level**, not a per-version flag (A3). See [pre-implementation-decisions.md](pre-implementation-decisions.md).
 
 **Resolved (Justin):** table **grouped by model, versions nested** · **drafts shown** · **settlement currency is not a
 creator choice** (Civitai-only, special cases) · optimistic updates OK.

@@ -58,9 +58,9 @@ export function ReferralCallout({ variant = 'full', className }: ReferralCallout
         border: '1px solid light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4))',
       }}
     >
-      <Group justify="space-between" wrap="nowrap" align="center" gap="md">
-        <Stack gap={4} className="min-w-0 flex-1">
-          <Group gap="xs">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <Stack gap={4} className="min-w-0 sm:flex-1">
+          <Group gap="xs" wrap="nowrap">
             <ThemeIcon variant="light" color="violet" size="lg" radius="md">
               <IconGift size={18} />
             </ThemeIcon>
@@ -79,10 +79,11 @@ export function ReferralCallout({ variant = 'full', className }: ReferralCallout
           variant="gradient"
           gradient={{ from: 'blue', to: 'violet', deg: 45 }}
           leftSection={<IconGift size={16} />}
+          className="w-full shrink-0 sm:w-auto"
         >
           Open Referrals
         </Button>
-      </Group>
+      </div>
     </Paper>
   );
 }

@@ -1,6 +1,13 @@
+import { createHash } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import sharp from 'sharp';
 
+import {
+  LISTING_ASSET_MAX_DIMENSION_PX,
+  MAX_LISTING_ASSET_SIZE_BYTES,
+  validateListingImage,
+} from '~/server/schema/blocks/app-listing.schema';
 import {
   MAX_PENDING_OFFSITE_SUBMISSIONS,
   OffsiteRequestError,
@@ -14,6 +21,7 @@ import type {
   PersistListingAssetImageInput,
   SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
+import type * as S3Utils from '~/utils/s3-utils';
 
 /**
  * App Store Listings (W13 P3a) — off-site submission SERVICE tests (design B1).
@@ -114,6 +122,11 @@ const { mockRead, mockWrite, ids } = vi.hoisted(() => {
 
 const { mockNotify } = vi.hoisted(() => ({ mockNotify: vi.fn(async () => undefined) }));
 
+// `persistListingAssetImage` measures the uploaded bytes by reading the object
+// back out of the image store. Only the backend accessor is replaced — the probe
+// itself, and the sharp decode inside it, run for real against real bytes.
+const { mockS3Send } = vi.hoisted(() => ({ mockS3Send: vi.fn() }));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
 vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));
 vi.mock('~/server/utils/app-block-ids', () => ({
@@ -123,7 +136,65 @@ vi.mock('~/server/utils/app-block-ids', () => ({
 }));
 // approve/reject emit an owner notification post-commit; assert it without pulling
 // the notifications client graph.
-vi.mock('~/server/services/blocks/app-listing-notify', () => ({ notifyAppListingOwner: mockNotify }));
+vi.mock('~/server/services/blocks/app-listing-notify', () => ({
+  notifyAppListingOwner: mockNotify,
+}));
+vi.mock('~/utils/s3-utils', async (importOriginal) => ({
+  ...(await importOriginal<typeof S3Utils>()),
+  getImageUploadBackend: async () => ({
+    s3: { send: mockS3Send },
+    bucket: 'test-image-bucket',
+    backend: 'backblaze' as const,
+  }),
+}));
+
+const fixtureCache = new Map<string, Buffer>();
+async function cachedFixture(key: string, make: () => Promise<Buffer>) {
+  const hit = fixtureCache.get(key);
+  if (hit) return hit;
+  const made = await make();
+  fixtureCache.set(key, made);
+  return made;
+}
+
+/** Real, decodable image bytes — the whole point is that nothing here is declared. */
+function flatPng(width: number, height: number) {
+  return cachedFixture(`png:${width}x${height}`, () =>
+    sharp({ create: { width, height, channels: 3, background: { r: 8, g: 8, b: 8 } } })
+      .png()
+      .toBuffer()
+  );
+}
+function flatGif(width: number, height: number) {
+  return cachedFixture(`gif:${width}x${height}`, () =>
+    sharp({ create: { width, height, channels: 3, background: { r: 8, g: 8, b: 8 } } })
+      .gif()
+      .toBuffer()
+  );
+}
+
+/** The entity tag a real store derives for these bytes — quoted, as on the wire. */
+function etagOf(bytes: Buffer) {
+  return `"${createHash('md5').update(bytes).digest('hex')}"`;
+}
+
+/**
+ * Put `bytes` at the key the probe will read, answering its ranged GET.
+ *
+ * 🔴 The response carries an `ETag`, because the real one does. A fake that omits
+ * it does not merely under-test the tag — it makes every assertion about the
+ * persisted metadata hold for the WRONG reason (the absent-tag branch), so the
+ * recorded-tag path would look covered while never running. `etag: null` is
+ * available for the case that genuinely needs a backend that reports none.
+ */
+function storeObject(bytes: Buffer, opts: { totalSize?: number; etag?: string | null } = {}) {
+  const totalSize = opts.totalSize ?? bytes.byteLength;
+  mockS3Send.mockResolvedValue({
+    Body: { transformToByteArray: async () => new Uint8Array(bytes) },
+    ContentRange: `bytes 0-${bytes.byteLength - 1}/${totalSize}`,
+    ETag: opts.etag === undefined ? etagOf(bytes) : opts.etag,
+  });
+}
 
 const CALLER = 42;
 const OTHER = 99;
@@ -184,6 +255,7 @@ beforeEach(() => {
     .mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) => cb(mockWrite));
   mockCreateImage.mockReset().mockResolvedValue({ id: 12345 });
   mockNotify.mockReset().mockResolvedValue(undefined);
+  mockS3Send.mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -199,7 +271,10 @@ describe('submitExternalListing', () => {
     expect(res.publishRequestId).toMatch(/^alpr_test_/);
 
     // Rows are created on the PRIMARY (inside the tx).
-    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as Record<string, unknown>;
+    const listingData = mockWrite.appListing.create.mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
     expect(listingData).toMatchObject({
       kind: 'offsite',
       status: 'draft',
@@ -216,8 +291,10 @@ describe('submitExternalListing', () => {
       userId: CALLER,
     });
 
-    const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0]
-      .data as Record<string, unknown>;
+    const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0].data as Record<
+      string,
+      unknown
+    >;
     expect(reqData).toMatchObject({
       kind: 'offsite',
       status: 'pending',
@@ -242,9 +319,9 @@ describe('submitExternalListing', () => {
 
   it('REQUIRES an OAuth client: a missing client → NOT_FOUND, no write', async () => {
     mockRead.oauthClient.findUnique.mockResolvedValue(null);
-    await expect(submitExternalListing({ input: validInput, userId: CALLER })).rejects.toMatchObject(
-      { code: 'NOT_FOUND' }
-    );
+    await expect(
+      submitExternalListing({ input: validInput, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
@@ -255,26 +332,33 @@ describe('submitExternalListing', () => {
     mockRead.oauthClient.findUnique.mockResolvedValue(ownedClient({ userId: OTHER }));
     await submitExternalListing({ input: validInput, userId: OTHER });
     const listingData = mockWrite.appListing.create.mock.calls[0][0].data as { userId: number };
-    const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0]
-      .data as { submittedByUserId: number };
+    const reqData = mockWrite.appListingPublishRequest.create.mock.calls[0][0].data as {
+      submittedByUserId: number;
+    };
     expect(listingData.userId).toBe(OTHER);
     expect(reqData.submittedByUserId).toBe(OTHER);
   });
 
   it('slug already taken (existing AppListing pre-check on the replica) → friendly BAD_REQUEST, no write', async () => {
     mockRead.appListing.findUnique.mockResolvedValue({ id: 'apl_existing' });
-    await expect(submitExternalListing({ input: validInput, userId: CALLER })).rejects.toMatchObject(
-      { code: 'BAD_REQUEST', message: expect.stringContaining('already taken') }
-    );
+    await expect(
+      submitExternalListing({ input: validInput, userId: CALLER })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('already taken'),
+    });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
   it('slug taken via the P2002 create RACE → same friendly error', async () => {
     // Pre-checks pass (null), but the unique constraint fires inside the tx.
     mockWrite.$transaction.mockRejectedValue({ code: 'P2002' });
-    await expect(submitExternalListing({ input: validInput, userId: CALLER })).rejects.toMatchObject(
-      { code: 'BAD_REQUEST', message: expect.stringContaining('already taken') }
-    );
+    await expect(
+      submitExternalListing({ input: validInput, userId: CALLER })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('already taken'),
+    });
   });
 
   it('a non-P2002 tx error is NOT masked as a slug collision', async () => {
@@ -286,9 +370,12 @@ describe('submitExternalListing', () => {
 
   it('cross-kind: a slug equal to an existing AppBlock.block_id (replica pre-check) is rejected', async () => {
     mockRead.appBlock.findFirst.mockResolvedValue({ id: 'block_x' });
-    await expect(submitExternalListing({ input: validInput, userId: CALLER })).rejects.toMatchObject(
-      { code: 'BAD_REQUEST', message: expect.stringContaining('already taken') }
-    );
+    await expect(
+      submitExternalListing({ input: validInput, userId: CALLER })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('already taken'),
+    });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
@@ -298,9 +385,12 @@ describe('submitExternalListing', () => {
     // AppListing is never created.
     mockRead.appBlock.findFirst.mockResolvedValue(null);
     mockWrite.appBlock.findFirst.mockResolvedValue({ id: 'block_lagged' });
-    await expect(submitExternalListing({ input: validInput, userId: CALLER })).rejects.toMatchObject(
-      { code: 'BAD_REQUEST', message: expect.stringContaining('already taken') }
-    );
+    await expect(
+      submitExternalListing({ input: validInput, userId: CALLER })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('already taken'),
+    });
     // The tx opened (primary re-check runs inside it) but no rows were created.
     expect(mockWrite.$transaction).toHaveBeenCalledTimes(1);
     expect(mockWrite.appListing.create).not.toHaveBeenCalled();
@@ -309,9 +399,12 @@ describe('submitExternalListing', () => {
 
   it('per-user pending cap: AT the cap → TOO_MANY_REQUESTS, no write', async () => {
     mockRead.appListingPublishRequest.count.mockResolvedValue(MAX_PENDING_OFFSITE_SUBMISSIONS);
-    await expect(submitExternalListing({ input: validInput, userId: CALLER })).rejects.toMatchObject(
-      { code: 'TOO_MANY_REQUESTS', message: expect.stringContaining('pending') }
-    );
+    await expect(
+      submitExternalListing({ input: validInput, userId: CALLER })
+    ).rejects.toMatchObject({
+      code: 'TOO_MANY_REQUESTS',
+      message: expect.stringContaining('pending'),
+    });
     // The count is scoped to the caller's pending offsite requests (on the replica).
     expect(mockRead.appListingPublishRequest.count).toHaveBeenCalledWith({
       where: { submittedByUserId: CALLER, kind: 'offsite', status: 'pending' },
@@ -430,6 +523,35 @@ describe('withdrawExternalRequest', () => {
     });
   });
 
+  it('🔴 REPORTS WHICH CLOSE HAPPENED, so the UI can stop calling both "Submission withdrawn."', async () => {
+    // The two outcomes are not equally reversible. `'deleted'` throws away a draft;
+    // `'removed'` leaves a formerly-live listing delisted behind a `delist` event, which
+    // `republishOwnListing`'s guard reads as a moderator takedown — the owner cannot put
+    // it back and a moderator must relist. Announcing both with one sentence left an owner
+    // looking at a "removed by a moderator" state they had caused themselves, with nothing
+    // having warned them. Asserted as a PAIR so a mutant returning one constant fails.
+    async function withdrawWithListingStatus(status: string) {
+      vi.clearAllMocks();
+      mockWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) =>
+        cb(mockWrite)
+      );
+      mockWrite.appListingPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+      mockWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
+      mockWrite.appListing.deleteMany.mockResolvedValue({ count: 1 });
+      mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
+        id: 'alpr_1',
+        status: 'pending',
+        submittedByUserId: CALLER,
+        appListingId: 'apl_1',
+      });
+      mockWrite.appListing.findUnique.mockResolvedValue({ status, slug: 'cool-app' });
+      return withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER });
+    }
+
+    expect(await withdrawWithListingStatus('pending')).toEqual({ outcome: 'removed' });
+    expect(await withdrawWithListingStatus('draft')).toEqual({ outcome: 'deleted' });
+  });
+
   it('🔴 Fix #1 regression: an intervening report-resolve event does NOT downgrade the close to owner-unpublish (still DELIST)', async () => {
     // The exploit closed: mod resets (report-driven) → mod resolves the triggering
     // report → the listing's NEWEST moderation event is now `report-resolve`, NOT
@@ -498,9 +620,11 @@ describe('withdrawExternalRequest', () => {
       submittedByUserId: CALLER,
       appListingId: 'apl_1',
     });
+    // 🔴 `'none'` rather than the outcome of whoever DID close it: this call did
+    // nothing, and the UI must not narrate someone else's close as its own.
     await expect(
       withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ outcome: 'none' });
     expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
     expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
   });
@@ -517,9 +641,11 @@ describe('withdrawExternalRequest', () => {
     mockWrite.appListingPublishRequest.updateMany.mockResolvedValue({ count: 0 });
     mockWrite.appListingPublishRequest.findUnique.mockResolvedValue({ status: 'withdrawn' });
 
+    // Lost the race → `'none'`: the concurrent withdraw owns both the close and the
+    // description of it.
     await expect(
       withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ outcome: 'none' });
     // We did not perform the withdraw → we do NOT re-delete the draft.
     expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
   });
@@ -570,9 +696,11 @@ function stageApproveScenario(listing: {
   iconId?: number | null;
   coverId?: number | null;
   screenshotCount?: number;
-  externalUrl?: string;
+  externalUrl?: string | null;
   status?: string;
   submittedByUserId?: number;
+  /** Off-site sub-kind discriminator — non-null routes the CTA to the connect arm. */
+  connectClientId?: string | null;
 }) {
   mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
     id: 'alpr_1',
@@ -585,7 +713,8 @@ function stageApproveScenario(listing: {
   const listingRow = {
     id: 'apl_1',
     status: listing.status ?? 'draft',
-    externalUrl: listing.externalUrl ?? 'https://cool.example.com/app',
+    externalUrl:
+      listing.externalUrl === undefined ? 'https://cool.example.com/app' : listing.externalUrl,
     iconId: listing.iconId === undefined ? 1 : listing.iconId,
     coverId: listing.coverId === undefined ? 2 : listing.coverId,
     // Owner fields the approve path reads for the post-commit owner notification.
@@ -593,6 +722,12 @@ function stageApproveScenario(listing: {
     name: 'Cool App',
     slug: 'cool-app',
     revisionOfId: null,
+    // 🔴 `kind` is REQUIRED in this fixture, not decoration. The go-live actionability
+    // gate is off-site-only, so a row without a `kind` makes that gate a silent no-op
+    // and every approve test would pass with the guard deleted. Off-site is what this
+    // suite exercises.
+    kind: 'offsite',
+    connectClientId: listing.connectClientId ?? null,
   };
   const count = listing.screenshotCount === undefined ? 1 : listing.screenshotCount;
   const screenshotRows = Array.from({ length: count }, (_, i) => ({ imageId: 1000 + i }));
@@ -610,6 +745,81 @@ function stageApproveScenario(listing: {
   mockRead.image.findMany.mockImplementation(scanned as never);
   mockWrite.image.findMany.mockImplementation(scanned as never);
 }
+
+describe('approveExternalRequest — go-live ACTIONABILITY gate', () => {
+  /**
+   * 🔴 The gate that was MISSING when three connect listings were approved onto a
+   * dead CTA (07-24 → 07-28). An off-site listing may not be flipped live while the
+   * store would render it a primary button with nothing to click.
+   */
+  it('REFUSES approve when the off-site listing has NO destination — no flip at all', async () => {
+    stageApproveScenario({ externalUrl: null });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('needs a working link before it can go live'),
+    });
+    // Fails CLOSED: neither the request nor the listing is flipped.
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('the pre-tx fail-fast rejects BEFORE any transaction is opened', async () => {
+    // 🔴 The observable that distinguishes the (4c) REPLICA fail-fast from the (5)
+    // in-tx authoritative re-assert: with only the in-tx gate the transaction still
+    // opens and rolls back, so `rejects` alone cannot tell the two apart and the
+    // pre-tx guard would be untested. `$transaction` never being called is the only
+    // signal that proves this specific guard ran.
+    stageApproveScenario({ externalUrl: null });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('REFUSES approve when the destination is not https (http:// is not a destination)', async () => {
+    stageApproveScenario({ externalUrl: 'http://insecure.example.com/app' });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('🔴 REFUSES a CONNECT listing whose CTA would be the dead stub', async () => {
+    // A linked OAuth client with no reachable address — non-actionable under both
+    // the current view-model and #3585's, so this pin is stable across that merge.
+    stageApproveScenario({ externalUrl: null, connectClientId: 'client-123' });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('the gate is AUTHORITATIVE on the primary: replica has a URL, primary does not → BLOCKED', async () => {
+    // TOCTOU — `externalUrl` is owner-editable in place while the request sits
+    // pending, so the replica fail-fast can pass on a stale row. The in-tx re-read
+    // must catch it and roll the whole tx back before anything is approved.
+    stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
+    mockWrite.appListing.findUnique.mockResolvedValue({
+      id: 'apl_1',
+      status: 'draft',
+      externalUrl: null, // primary: the owner cleared it after the replica read
+      connectClientId: null,
+      iconId: 1,
+      coverId: 2,
+      kind: 'offsite',
+      slug: 'cool-app',
+    });
+    await expect(
+      approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('needs a working link before it can go live'),
+    });
+    expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+  });
+});
 
 describe('approveExternalRequest', () => {
   it('happy path: pending + assets-complete → listing draft→approved + request approved w/ reviewedBy*/approvalNotes', async () => {
@@ -713,6 +923,15 @@ describe('approveExternalRequest', () => {
         connectRequestedScopes: true,
         connectScopeJustifications: true,
         connectClient: { select: { allowedScopes: true } },
+        // `kind` + `slug` feed the AUTHORITATIVE go-live actionability gate, which is
+        // off-site-only and names the listing in its moderator-facing error.
+        kind: true,
+        slug: true,
+        // The two ON-SITE approve inputs, read on the PRIMARY with everything else so
+        // they are row-consistent with the flip: the app's DECLARED rating (the
+        // raise-only floor) and the backing block to un-suspend.
+        contentRating: true,
+        appBlockId: true,
       },
     });
     // The screenshot imageIds (for the floor count + the scan gate) are read from
@@ -737,7 +956,10 @@ describe('approveExternalRequest', () => {
     });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('missing: cover') });
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('missing: cover'),
+    });
     // We DID open the tx (the authoritative gate runs inside it) but bailed BEFORE
     // any flip — neither the request nor the listing status changed.
     expect(mockWrite.$transaction).toHaveBeenCalledTimes(1);
@@ -840,7 +1062,10 @@ describe('approveExternalRequest', () => {
     stageApproveScenario({ iconId: null, coverId: 2, screenshotCount: 1 });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('missing: icon') });
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('missing: icon'),
+    });
     // Missing on the replica too → fail-fast before the tx even opens.
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
@@ -850,7 +1075,10 @@ describe('approveExternalRequest', () => {
     stageApproveScenario({ iconId: 1, coverId: null, screenshotCount: 1 });
     await expect(
       approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD })
-    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('missing: cover') });
+    ).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: expect.stringContaining('missing: cover'),
+    });
     expect(mockWrite.$transaction).not.toHaveBeenCalled();
   });
 
@@ -1032,7 +1260,11 @@ describe('rejectExternalRequest', () => {
 
   it('reason shorter than the shared min (3) → BAD_REQUEST, no DB read/write', async () => {
     await expect(
-      rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: 'no' })
+      rejectExternalRequest({
+        publishRequestId: 'alpr_1',
+        reviewerUserId: MOD,
+        rejectionReason: 'no',
+      })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('at least') });
     expect(mockRead.appListingPublishRequest.findUnique).not.toHaveBeenCalled();
     expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
@@ -1047,7 +1279,11 @@ describe('rejectExternalRequest', () => {
     });
     // The in-tx close reads the listing status → a first-time DRAFT is deleted (regression).
     mockWrite.appListing.findUnique.mockResolvedValue({ status: 'draft', slug: 'cool-app' });
-    await rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: REASON });
+    await rejectExternalRequest({
+      publishRequestId: 'alpr_1',
+      reviewerUserId: MOD,
+      rejectionReason: REASON,
+    });
 
     // The flip + close run inside ONE transaction on the primary (tx client).
     expect(mockWrite.$transaction).toHaveBeenCalledTimes(1);
@@ -1079,7 +1315,11 @@ describe('rejectExternalRequest', () => {
     });
     // The in-tx close reads status → `pending` = a reset-to-pending, formerly-live listing.
     mockWrite.appListing.findUnique.mockResolvedValue({ status: 'pending', slug: 'cool-app' });
-    await rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: REASON });
+    await rejectExternalRequest({
+      publishRequestId: 'alpr_1',
+      reviewerUserId: MOD,
+      rejectionReason: REASON,
+    });
 
     // NOT hard-deleted — transitioned to `removed` (recoverable via mod relist).
     expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
@@ -1113,7 +1353,11 @@ describe('rejectExternalRequest', () => {
       slug: 'cool-app',
       revisionOfId: null,
     });
-    await rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: REASON });
+    await rejectExternalRequest({
+      publishRequestId: 'alpr_1',
+      reviewerUserId: MOD,
+      rejectionReason: REASON,
+    });
     expect(mockNotify).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'app-listing-rejected',
@@ -1137,7 +1381,11 @@ describe('rejectExternalRequest', () => {
       slug: 'cool-app',
       revisionOfId: 'apl_parent',
     });
-    await rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: REASON });
+    await rejectExternalRequest({
+      publishRequestId: 'alpr_1',
+      reviewerUserId: MOD,
+      rejectionReason: REASON,
+    });
     expect(mockNotify).not.toHaveBeenCalled();
   });
 
@@ -1149,7 +1397,11 @@ describe('rejectExternalRequest', () => {
       appListingId: 'apl_1',
     });
     await expect(
-      rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: REASON })
+      rejectExternalRequest({
+        publishRequestId: 'alpr_1',
+        reviewerUserId: MOD,
+        rejectionReason: REASON,
+      })
     ).rejects.toMatchObject({ code: 'NOT_PENDING' });
     expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
     expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
@@ -1158,7 +1410,11 @@ describe('rejectExternalRequest', () => {
   it('NOT_FOUND when the request does not exist', async () => {
     mockRead.appListingPublishRequest.findUnique.mockResolvedValue(null);
     await expect(
-      rejectExternalRequest({ publishRequestId: 'nope', reviewerUserId: MOD, rejectionReason: REASON })
+      rejectExternalRequest({
+        publishRequestId: 'nope',
+        reviewerUserId: MOD,
+        rejectionReason: REASON,
+      })
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
@@ -1171,7 +1427,11 @@ describe('rejectExternalRequest', () => {
     });
     mockWrite.appListingPublishRequest.updateMany.mockResolvedValue({ count: 0 });
     await expect(
-      rejectExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD, rejectionReason: REASON })
+      rejectExternalRequest({
+        publishRequestId: 'alpr_1',
+        reviewerUserId: MOD,
+        rejectionReason: REASON,
+      })
     ).rejects.toMatchObject({ code: 'NOT_PENDING' });
     // Lost the flip → the tx rolls back and we never delete the draft.
     expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
@@ -1200,6 +1460,8 @@ describe('persistListingAssetImage (scan invariant)', () => {
     sizeBytes: 4096,
   };
 
+  beforeEach(async () => storeObject(await flatPng(512, 512)));
+
   it('creates the image OWNED BY THE CALLER and WITHOUT skipIngestion (Pending → ingestImage)', async () => {
     const res = await persistListingAssetImage({ input: persistInput, userId: CALLER });
     expect(res).toEqual({ imageId: 12345 });
@@ -1213,7 +1475,14 @@ describe('persistListingAssetImage (scan invariant)', () => {
     expect('skipIngestion' in arg && arg.skipIngestion === true).toBe(false);
     // Sanity: the persisted row carries the byte size the P1 validator reads.
     expect(arg).toMatchObject({ url: persistInput.url, type: 'image', userId: CALLER });
-    expect(arg.metadata).toEqual({ size: 4096 });
+    // Sanity: the persisted row carries the byte size the P1 validator reads, PLUS
+    // the store's tag for the object those measurements came from — the evidence the
+    // attach gate re-checks so a row cannot outlive the bytes it describes.
+    const bytes = await flatPng(512, 512);
+    expect(arg.metadata).toEqual({
+      size: bytes.byteLength,
+      storedEtag: etagOf(bytes).replaceAll('"', ''),
+    });
   });
 
   it('binds the owner to the caller even for a different user id', async () => {
@@ -1221,5 +1490,276 @@ describe('persistListingAssetImage (scan invariant)', () => {
     const arg = mockCreateImage.mock.calls[0][0] as Record<string, unknown>;
     expect(arg.userId).toBe(OTHER);
     expect(arg.skipIngestion).toBeFalsy();
+  });
+
+  /**
+   * A backend that reports no tag records NOTHING rather than a null entry, so the
+   * attach gate reads one representation of "no evidence". The persist itself is
+   * unaffected — an unverifiable row is still a perfectly good row.
+   */
+  it('records no tag at all when the store returns none', async () => {
+    storeObject(await flatPng(512, 512), { etag: null });
+
+    await expect(
+      persistListingAssetImage({ input: persistInput, userId: CALLER })
+    ).resolves.toEqual({ imageId: 12345 });
+
+    const arg = mockCreateImage.mock.calls[0][0] as Record<string, unknown>;
+    expect(arg.metadata).toEqual({ size: (await flatPng(512, 512)).byteLength });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// persistListingAssetImage — DECLARED-vs-ACTUAL geometry
+// ---------------------------------------------------------------------------
+
+/**
+ * The attach procs' per-kind rules (`validateListingImage`) read `Image.width` /
+ * `height` / `mimeType` / `metadata.size`. If those columns carry what the
+ * uploader SAID about the file, every one of those rules is self-reported: a
+ * client can declare a shape that clears the bounds for bytes that do not. These
+ * pin that the columns describe the stored bytes instead — including the
+ * end-to-end consequence, that the gate now rejects the mismatched upload.
+ */
+describe('persistListingAssetImage (measures the uploaded bytes)', () => {
+  const KEY = '22222222-2222-4222-8222-222222222222';
+
+  /** A cover that clears every bound: aspect 1.78, 800px wide. */
+  const HONEST_COVER = { url: KEY, width: 800, height: 450, mimeType: 'image/png' as const };
+
+  function persistedRow() {
+    const arg = mockCreateImage.mock.calls[0][0] as {
+      width?: number;
+      height?: number;
+      mimeType?: string;
+      type: string;
+      metadata?: { size?: number };
+    };
+    return {
+      type: arg.type,
+      width: arg.width,
+      height: arg.height,
+      mimeType: arg.mimeType,
+      sizeBytes: arg.metadata?.size ?? null,
+    };
+  }
+
+  it('persists the ACTUAL dimensions, so the cover gate rejects a mismatched upload', async () => {
+    // 200×200 bytes behind a 800×450 declaration: square, and 600px short of the
+    // 640px cover floor, but the declared pair satisfies both.
+    storeObject(await flatPng(200, 200));
+
+    await persistListingAssetImage({ input: HONEST_COVER, userId: CALLER });
+
+    expect(persistedRow()).toMatchObject({ width: 200, height: 200 });
+    expect(validateListingImage(persistedRow(), 'cover')).toMatchObject({ ok: false });
+  });
+
+  it('NEGATIVE CONTROL: an honest upload still persists and still passes the gate', async () => {
+    storeObject(await flatPng(800, 450));
+
+    await persistListingAssetImage({ input: HONEST_COVER, userId: CALLER });
+
+    expect(persistedRow()).toMatchObject({ width: 800, height: 450, mimeType: 'image/png' });
+    expect(validateListingImage(persistedRow(), 'cover')).toEqual({ ok: true });
+  });
+
+  it('persists the ACTUAL byte size, not the declared one', async () => {
+    const bytes = await flatPng(800, 450);
+    storeObject(bytes);
+
+    await persistListingAssetImage({ input: { ...HONEST_COVER, sizeBytes: 1 }, userId: CALLER });
+
+    expect(persistedRow().sizeBytes).toBe(bytes.byteLength);
+  });
+
+  it('derives the MIME from the bytes, not the declared content type', async () => {
+    storeObject(await flatPng(800, 450));
+
+    await persistListingAssetImage({
+      input: { ...HONEST_COVER, mimeType: 'image/webp' },
+      userId: CALLER,
+    });
+
+    expect(persistedRow().mimeType).toBe('image/png');
+  });
+
+  it('rejects a format outside the allowlist however it is declared', async () => {
+    storeObject(await flatGif(800, 450));
+
+    await expect(
+      persistListingAssetImage({ input: HONEST_COVER, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: expect.stringContaining('"gif"') });
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('reports a quarter-turned JPEG the way a renderer shows it', async () => {
+    // Stored 450×800 with EXIF orientation 6 — every viewer draws it 800×450, and
+    // that is the shape the cover rules are about.
+    storeObject(
+      await sharp({
+        create: { width: 450, height: 800, channels: 3, background: { r: 8, g: 8, b: 8 } },
+      })
+        .withMetadata({ orientation: 6 })
+        .jpeg()
+        .toBuffer()
+    );
+
+    await persistListingAssetImage({ input: HONEST_COVER, userId: CALLER });
+
+    expect(persistedRow()).toMatchObject({ width: 800, height: 450, mimeType: 'image/jpeg' });
+    expect(validateListingImage(persistedRow(), 'cover')).toEqual({ ok: true });
+  });
+
+  it('reports a quarter-turned WEBP the way a renderer shows it', async () => {
+    // 🔴 The container the whole client-side skip exists for, EXECUTED rather than
+    // restated. The JPEG case above and this one differ in exactly one variable —
+    // `.jpeg()` vs `.webp()` — so this pins that the server transposes for WebP too.
+    //
+    // That is the half of the disagreement this side owns: Chromium does NOT apply
+    // EXIF orientation to WebP (asserted against the browser in
+    // `src/components/Apps/ListingAssetStep.browser.test.tsx`), while the server
+    // does — which is precisely why the axis-naming bounds cannot be prechecked for
+    // this container. If sharp ever stopped honouring orientation on WebP, the two
+    // sides would agree again and the skip would become unnecessary; this test is
+    // what would notice.
+    storeObject(
+      await sharp({
+        create: { width: 450, height: 800, channels: 3, background: { r: 8, g: 8, b: 8 } },
+      })
+        .withMetadata({ orientation: 6 })
+        .webp()
+        .toBuffer()
+    );
+
+    await persistListingAssetImage({ input: HONEST_COVER, userId: CALLER });
+
+    expect(persistedRow()).toMatchObject({ width: 800, height: 450, mimeType: 'image/webp' });
+    expect(validateListingImage(persistedRow(), 'cover')).toEqual({ ok: true });
+  });
+
+  it('leaves an upright JPEG alone — the transpose is conditional, not per-format', async () => {
+    storeObject(
+      await sharp({
+        create: { width: 800, height: 450, channels: 3, background: { r: 8, g: 8, b: 8 } },
+      })
+        .withMetadata({ orientation: 1 })
+        .jpeg()
+        .toBuffer()
+    );
+
+    await persistListingAssetImage({ input: HONEST_COVER, userId: CALLER });
+
+    expect(persistedRow()).toMatchObject({ width: 800, height: 450 });
+  });
+
+  it('rejects an upload whose bytes are not there', async () => {
+    mockS3Send.mockRejectedValue(
+      Object.assign(new Error('NoSuchKey'), {
+        name: 'NoSuchKey',
+        $metadata: { httpStatusCode: 404 },
+      })
+    );
+
+    await expect(
+      persistListingAssetImage({ input: HONEST_COVER, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('rejects an object above the loosest per-kind byte cap without downloading it', async () => {
+    const oversize = MAX_LISTING_ASSET_SIZE_BYTES + 1;
+    // A ranged read: the store reports the true total, we only hold the prefix.
+    storeObject(await flatPng(800, 450), { totalSize: oversize });
+
+    await expect(
+      persistListingAssetImage({ input: HONEST_COVER, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    const command = mockS3Send.mock.calls[0][0] as { input: { Range?: string } };
+    expect(command.input.Range).toBe(`bytes=0-${MAX_LISTING_ASSET_SIZE_BYTES}`);
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('rejects bytes that are not a decodable image', async () => {
+    storeObject(Buffer.from('<!doctype html><html>not an image</html>'));
+
+    await expect(
+      persistListingAssetImage({ input: HONEST_COVER, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('a store outage is an INTERNAL error, not the uploader being blamed', async () => {
+    mockS3Send.mockRejectedValue(
+      Object.assign(new Error('boom'), { $metadata: { httpStatusCode: 503 } })
+    );
+
+    await expect(
+      persistListingAssetImage({ input: HONEST_COVER, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// persistListingAssetImage — the per-side DIMENSION CEILING
+// ---------------------------------------------------------------------------
+
+/**
+ * The presigned full-resolution upload path (`/api/v1/image-upload` PUT →
+ * `persistAssetImage`) — the one the CLI's `set-cover` / `add-screenshot` and the
+ * web uploader use — enforced NO maximum on either side, while the other two
+ * ingest paths did. A 9000×4000 cover was accepted in production and stored at
+ * full dimensions.
+ *
+ * These vary DIMENSIONS ONLY. Both fixtures are flat PNGs of a few tens of KB —
+ * orders of magnitude under the 4 MiB byte cap — so the byte rule cannot be what
+ * separates the accepted case from the rejected one, and the accepted case proves
+ * the guard is a CEILING rather than a blanket reject.
+ */
+describe('persistListingAssetImage (per-side dimension ceiling)', () => {
+  const KEY = '33333333-3333-4333-8333-333333333333';
+  const COVER = { url: KEY, width: 800, height: 450, mimeType: 'image/png' as const };
+
+  it('rejects the 9000×4000 upload before it reaches the scan pipeline', async () => {
+    storeObject(await flatPng(9000, 4000));
+
+    await expect(persistListingAssetImage({ input: COVER, userId: CALLER })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: `That image is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got 9000px).`,
+    });
+    // No `Image` row, so nothing is scanned, stored or attachable.
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('rejects an upload one pixel over the ceiling on its TALLER side', async () => {
+    storeObject(await flatPng(4000, LISTING_ASSET_MAX_DIMENSION_PX + 1));
+
+    await expect(persistListingAssetImage({ input: COVER, userId: CALLER })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: `That image is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got ${
+        LISTING_ASSET_MAX_DIMENSION_PX + 1
+      }px).`,
+    });
+    expect(mockCreateImage).not.toHaveBeenCalled();
+  });
+
+  it('NEGATIVE CONTROL: an upload AT the ceiling still persists at full size', async () => {
+    const bytes = await flatPng(LISTING_ASSET_MAX_DIMENSION_PX, 4096);
+    storeObject(bytes);
+
+    await expect(persistListingAssetImage({ input: COVER, userId: CALLER })).resolves.toEqual({
+      imageId: 12345,
+    });
+
+    const arg = mockCreateImage.mock.calls[0][0] as {
+      width?: number;
+      height?: number;
+      metadata?: { size?: number };
+    };
+    expect(arg).toMatchObject({ width: LISTING_ASSET_MAX_DIMENSION_PX, height: 4096 });
+    // The rejected fixtures above are the same KIND of object as this accepted
+    // one — a flat PNG well inside the byte cap. Only the dimensions differ.
+    expect(arg.metadata?.size).toBeLessThan(MAX_LISTING_ASSET_SIZE_BYTES);
   });
 });

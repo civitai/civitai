@@ -2,53 +2,36 @@ import { Card, Divider, Stack, Title, Group, Text, Checkbox } from '@mantine/cor
 import { IconBellOff } from '@tabler/icons-react';
 import React from 'react';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
-import { useNotificationSettings } from '~/components/Notifications/useNotificationSettings';
+import {
+  useNotificationSettings,
+  useToggleNotificationSetting,
+} from '~/components/Notifications/useNotificationSettings';
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
 import {
   notificationCategoryTypes,
   notificationTypes,
+  optInNotificationTypes,
 } from '~/server/notifications/utils.notifications';
-import { showSuccessNotification } from '~/utils/notifications';
-
-import { trpc } from '~/utils/trpc';
 
 export default function NotificationsCard() {
-  const queryUtils = trpc.useUtils();
-
   const { hasNotifications, hasCategory, notificationSettings, isLoading } =
     useNotificationSettings();
 
-  const updateNotificationSettingMutation = trpc.notification.updateUserSettings.useMutation({
-    async onMutate({ toggle, type }) {
-      await queryUtils.user.getNotificationSettings.cancel();
+  const updateNotificationSettingMutation = useToggleNotificationSetting();
 
-      const prevUserSettings = queryUtils.user.getNotificationSettings.getData() ?? [];
-      const currentlyDisabled = prevUserSettings.map((x) => x.type);
-      const latestSetting =
-        prevUserSettings.length > 0 ? prevUserSettings[prevUserSettings.length - 1] : { id: 0 };
-      const newSettings = type
-        .filter((t) => !currentlyDisabled.includes(t))
-        .map((t) => ({ ...latestSetting, type: t, disabledAt: new Date() }));
-
-      queryUtils.user.getNotificationSettings.setData(undefined, (old = []) =>
-        toggle ? old?.filter((setting) => !type.includes(setting.type)) : [...old, ...newSettings]
-      );
-
-      return { prevUserSettings };
-    },
-    onSuccess() {
-      showSuccessNotification({ message: 'User profile updated' });
-    },
-    onError(_error, _variables, context) {
-      queryUtils.user.getNotificationSettings.setData(undefined, context?.prevUserSettings);
-    },
-  });
+  // Asymmetric on purpose. Turning everything OFF must also unsubscribe opt-in types, or a user who
+  // silences the site keeps receiving promos with no way back — the aggregates then hide the tree
+  // that holds the only in-settings control. Turning everything ON must NOT subscribe them: nobody
+  // reads "enable notifications" as "sign me up for shop promos". Opt-in stays a deliberate act.
   const toggleAll = (toggle: boolean) => {
-    updateNotificationSettingMutation.mutate({ toggle, type: notificationTypes });
+    const type = toggle ? notificationTypes : [...notificationTypes, ...optInNotificationTypes];
+    updateNotificationSettingMutation.mutate({ toggle, type });
   };
   const toggleCategory = (category: string, toggle: boolean) => {
-    const categoryTypes = notificationCategoryTypes[category]?.map((x) => x.type);
-    if (!categoryTypes) return;
+    const categoryTypes = notificationCategoryTypes[category]
+      ?.filter((x) => toggle === false || !x.optIn)
+      .map((x) => x.type);
+    if (!categoryTypes?.length) return;
 
     updateNotificationSettingMutation.mutate({
       toggle,
@@ -100,22 +83,13 @@ export default function NotificationsCard() {
                   {hasCategory[category] && (
                     <Card.Section inheritPadding py="md">
                       <Stack>
-                        {settings.map(({ type, displayName, defaultDisabled }) => (
+                        {settings.map(({ type, displayName }) => (
                           <Checkbox
                             key={type}
                             label={displayName}
-                            checked={
-                              defaultDisabled
-                                ? !notificationSettings[type]
-                                : notificationSettings[type]
-                            }
+                            checked={notificationSettings[type]}
                             disabled={isLoading}
-                            onChange={(e) => {
-                              toggleType(
-                                type,
-                                defaultDisabled ? !e.target.checked : e.target.checked
-                              );
-                            }}
+                            onChange={(e) => toggleType(type, e.target.checked)}
                           />
                         ))}
                       </Stack>

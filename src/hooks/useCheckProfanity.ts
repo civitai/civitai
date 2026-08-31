@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
-import { createProfanityFilter, type ProfanityFilterOptions } from '~/libs/profanity-simple';
+import { getProfanityFilter, type ProfanityFilterOptions } from '~/libs/profanity-simple';
+import { useBenignPhrases } from '~/hooks/useBenignPhrases';
 
 export interface UseCheckProfanityOptions extends Partial<ProfanityFilterOptions> {
   /** Whether to enable profanity checking. When false, returns clean results */
@@ -47,14 +48,15 @@ export function useCheckProfanity(
 ): ProfanityAnalysis {
   const { enabled = true } = options;
 
-  // Create profanity filter with provided options
-  const profanityFilter = useMemo(() => {
-    return createProfanityFilter();
-  }, []);
+  const { profanityWords } = useBenignPhrases();
 
   // Analyze the text
   const analysis = useMemo((): ProfanityAnalysis => {
-    // Return clean results if disabled or if global blur is off
+    // Return clean results if disabled or if global blur is off. The filter is built INSIDE
+    // this branch rather than in its own memo: constructing one allocates the whole obscenity
+    // dataset (measured ~6-9ms, several times that on mobile), and `AutocompleteSearch` mounts
+    // in the header of every page, so building eagerly charged that to every page load
+    // including the ones where nobody types.
     if (!enabled || !text.trim()) {
       return {
         hasProfanity: false,
@@ -67,7 +69,7 @@ export function useCheckProfanity(
     }
 
     try {
-      // Get detailed analysis from the profanity filter
+      const profanityFilter = getProfanityFilter(profanityWords);
       const detailedAnalysis = profanityFilter.analyze(text);
       const cleanedText = profanityFilter.clean(text);
 
@@ -91,7 +93,7 @@ export function useCheckProfanity(
         originalText: text,
       };
     }
-  }, [text, enabled, profanityFilter]);
+  }, [text, enabled, profanityWords]);
 
   return analysis;
 }

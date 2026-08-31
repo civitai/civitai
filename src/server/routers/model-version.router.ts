@@ -1,9 +1,14 @@
+import { finiteOrNull, monthlyPricingAllowance, pricingEligibility } from '@civitai/buzz';
+import {
+  countPricingSlotsThisMonth,
+  getCreatorScore,
+} from '~/server/services/pricing-slot.service';
+import { getCapTier } from '~/server/services/subscriptions.service';
 import {
   declineReviewHandler,
   deleteModelVersionHandler,
   earlyAccessModelVersionsOnTimeframeHandler,
   getModelVersionForEditHandler,
-  getModelVersionForTrainingReviewHandler,
   getModelVersionHandler,
   getModelVersionOwnerHandler,
   getModelVersionRunStrategiesHandler,
@@ -20,6 +25,7 @@ import {
   upsertModelVersionHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import { getUnpublishImpact } from '~/server/routers/model-version.unpublish-impact';
 import {
   mergeVersionsSchema,
   deleteExplorationPromptSchema,
@@ -72,29 +78,64 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
-const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
-  if (!ctx.user) throw throwAuthorizationError();
-  if (ctx.user.isModerator) return next({ ctx: { user: ctx.user } });
+// Per-procedure because `modelId` does not mean the same thing in every input here. On `upsert` it
+// names the model the write LANDS on, and on the exploration-prompt inputs it restates the host's own
+// model — both must be owned. On `addLinkedComponent` it names the LINKED resource's model, which the
+// caller is expected NOT to own.
+const ownershipGuard = ({ authorizeInputModelId }: { authorizeInputModelId: boolean }) =>
+  middleware(async ({ ctx, input, next }) => {
+    if (!ctx.user) throw throwAuthorizationError();
+    if (ctx.user.isModerator) return next({ ctx: { user: ctx.user } });
 
-  const { id: userId } = ctx.user;
-  const { id } = input as { id: number };
+    const { id: userId } = ctx.user;
+    const { id, modelId: inputModelId } = input as { id?: number; modelId?: number };
 
-  if (id) {
-    const modelId = (await getVersionById({ id, select: { modelId: true } }))?.modelId ?? 0;
-    const ownerId = (await getModel({ id: modelId, select: { userId: true } }))?.userId ?? -1;
+    // Under `authorizeInputModelId`, EVERY model the input names has to be owned, not just one of
+    // them. `id` names the version's current model; `modelId` names the one the write will actually
+    // land on — upsertModelVersion reads
+    // `data.modelId` on both its create and update branches, so a request carrying both moves the
+    // version between them. Authorizing either alone leaves the other unchecked.
+    const modelIds = new Set<number>();
+    if (id) {
+      const fromVersion = (await getVersionById({ id, select: { modelId: true } }))?.modelId;
+      if (fromVersion) modelIds.add(fromVersion);
+    }
+    if (authorizeInputModelId && inputModelId) modelIds.add(inputModelId);
 
-    if (userId !== ownerId) throw throwAuthorizationError();
-  }
+    // No resolvable model means nothing to authorize against, which is a refusal rather than a pass.
+    if (modelIds.size === 0) throw throwAuthorizationError();
 
-  return next({
-    ctx: {
-      ...ctx,
-      user: ctx.user,
-    },
+    for (const modelId of modelIds) {
+      const ownerId = (await getModel({ id: modelId, select: { userId: true } }))?.userId ?? -1;
+      if (userId !== ownerId) throw throwAuthorizationError();
+    }
+
+    return next({
+      ctx: {
+        ...ctx,
+        user: ctx.user,
+      },
+    });
   });
-});
+
+const isOwnerOrModerator = ownershipGuard({ authorizeInputModelId: true });
+
+/** For inputs whose `modelId` names a resource the caller links to rather than one they own. */
+const isVersionOwnerOrModerator = ownershipGuard({ authorizeInputModelId: false });
 
 export const modelVersionRouter = router({
+  getPricingAllowance: protectedProcedure.query(async ({ ctx }) => {
+    const [tier, used, score] = await Promise.all([
+      getCapTier(ctx.user.id),
+      countPricingSlotsThisMonth(ctx.user.id),
+      getCreatorScore(ctx.user.id),
+    ]);
+    return {
+      used,
+      limit: finiteOrNull(monthlyPricingAllowance(tier)),
+      eligibility: pricingEligibility(score),
+    };
+  }),
   getById: publicProcedure
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getModelVersionSchema)
@@ -152,7 +193,7 @@ export const modelVersionRouter = router({
   addLinkedComponent: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(addLinkedComponentSchema)
-    .use(isOwnerOrModerator)
+    .use(isVersionOwnerOrModerator)
     .mutation(async ({ input, ctx }) =>
       addLinkedComponent({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
@@ -183,6 +224,17 @@ export const modelVersionRouter = router({
     .input(unpublishModelSchema)
     .use(isOwnerOrModerator)
     .mutation(unpublishModelVersionHandler),
+  // Priced at the scope the unpublish will ACTUALLY run at. Taking down the last published version
+  // takes the model with it, and the model-scoped requirement covers every version — including
+  // siblings already down that still hold refundable grants, which a moderator take-down leaves in
+  // place. A dialog priced per-version there would show a creator one figure and debit another, and
+  // when the version figure is zero and the model figure is not, the mutation refuses with no way
+  // to consent. `scope` is what the dialog words itself from; it is not decoration.
+  getUnpublishImpact: protectedProcedure
+    .meta({ requiredScope: TokenScope.ModelsRead })
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .query(({ input }) => getUnpublishImpact(input.id)),
   upsertExplorationPrompt: protectedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(upsertExplorationPromptSchema)
@@ -223,9 +275,6 @@ export const modelVersionRouter = router({
     .meta({ requiredScope: TokenScope.ModelsRead })
     .input(getByIdSchema)
     .query(modelVersionDonationGoalHandler),
-  getTrainingDetails: moderatorProcedure
-    .input(getByIdSchema)
-    .query(getModelVersionForTrainingReviewHandler),
   publishPrivateModelVersion: guardedProcedure
     .meta({ requiredScope: TokenScope.ModelsWrite })
     .input(getByIdSchema)

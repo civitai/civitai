@@ -2,6 +2,7 @@ import { Alert, Button, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { ExternalSubmitForm } from '~/components/Apps/ExternalSubmitForm';
 import type { ListingEditContext } from '~/components/Apps/offsiteEditConfig';
 import { Meta } from '~/components/Meta/Meta';
@@ -43,6 +44,38 @@ export function AppsSubmitEditView({
 }: {
   listingId: string;
   /** Overridable loader ceiling (ms) — production uses the default; tests pass a tiny value. */
+  loaderCeilingMs?: number;
+}) {
+  return (
+    <>
+      <Meta title="Edit an app — Civitai" deIndex />
+      <AppsPageLayout
+        measure={APPS_PAGE_MEASURES['/apps/submit']}
+        title="Edit your app"
+        subtitle="Update your external-link app's link, details, or assets."
+      >
+        <AppsListingDetailsEditor listingId={listingId} loaderCeilingMs={loaderCeilingMs} />
+      </AppsPageLayout>
+    </>
+  );
+}
+
+/**
+ * The CHROMELESS body of the edit view — the same query, loader ceiling, wizard and
+ * recoverable-alert behaviour, without `Meta` / `AppsPageLayout`.
+ *
+ * 🔴 EXTRACTED, NOT RE-IMPLEMENTED. The canonical authoring page
+ * (`/apps/listing/<appListingId>/edit`) hosts this as its "Details" tab, and it already
+ * owns its own page chrome — nesting a second `AppsPageLayout` inside a tab panel would
+ * render a duplicate title band. Copying the loader-ceiling logic into the tab instead
+ * would fork the "never trap the user on an infinite spinner" fix that this component
+ * exists to hold; there is one copy, and both hosts use it.
+ */
+export function AppsListingDetailsEditor({
+  listingId,
+  loaderCeilingMs = EDIT_LOADER_CEILING_MS,
+}: {
+  listingId: string;
   loaderCeilingMs?: number;
 }) {
   const editQuery = trpc.appListings.getMyListingForEdit.useQuery(
@@ -87,49 +120,42 @@ export function AppsSubmitEditView({
 
   return (
     <>
-      <Meta title="Edit an app — Civitai" deIndex />
-      <AppsPageLayout
-        size="sm"
-        title="Edit your app"
-        subtitle="Update your external-link app's link, details, or assets."
-      >
-        {showLoader ? (
-          <Group gap={8} data-testid="apps-offsite-edit-loading">
-            <Loader size={16} />
-            <Text size="sm" c="dimmed">
-              Loading your listing…
+      {showLoader ? (
+        <Group gap={8} data-testid="apps-offsite-edit-loading">
+          <Loader size={16} />
+          <Text size="sm" c="dimmed">
+            Loading your listing…
+          </Text>
+        </Group>
+      ) : editQuery.data ? (
+        <ExternalSubmitForm edit={editQuery.data as ListingEditContext} />
+      ) : (
+        <Alert
+          color="red"
+          variant="light"
+          icon={<IconAlertTriangle size={16} />}
+          title="Can't edit this listing"
+          data-testid="apps-offsite-edit-not-found"
+        >
+          <Stack gap="xs" align="flex-start">
+            <Text size="sm">
+              {editQuery.error?.message ??
+                "This listing doesn't exist or you don't have permission to edit it."}
             </Text>
-          </Group>
-        ) : editQuery.data ? (
-          <ExternalSubmitForm edit={editQuery.data as ListingEditContext} />
-        ) : (
-          <Alert
-            color="red"
-            variant="light"
-            icon={<IconAlertTriangle size={16} />}
-            title="Can't edit this listing"
-            data-testid="apps-offsite-edit-not-found"
-          >
-            <Stack gap="xs" align="flex-start">
-              <Text size="sm">
-                {editQuery.error?.message ??
-                  "This listing doesn't exist or you don't have permission to edit it."}
-              </Text>
-              <Button
-                size="xs"
-                variant="light"
-                color="red"
-                data-testid="apps-offsite-edit-retry"
-                loading={retryPending}
-                disabled={retryPending}
-                onClick={handleRetry}
-              >
-                {retryPending ? 'Retrying…' : 'Try again'}
-              </Button>
-            </Stack>
-          </Alert>
-        )}
-      </AppsPageLayout>
+            <Button
+              size="xs"
+              variant="light"
+              color="red"
+              data-testid="apps-offsite-edit-retry"
+              loading={retryPending}
+              disabled={retryPending}
+              onClick={handleRetry}
+            >
+              {retryPending ? 'Retrying…' : 'Try again'}
+            </Button>
+          </Stack>
+        </Alert>
+      )}
     </>
   );
 }

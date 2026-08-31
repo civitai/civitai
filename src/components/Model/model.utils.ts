@@ -46,6 +46,7 @@ const modelQueryParamSchema = z
     hidden: booleanString(),
     archived: booleanString(),
     followed: booleanString(),
+    newCreators: booleanString(),
     view: z.enum(['categories', 'feed']),
     section: z.enum(['published', 'private', 'draft', 'training']),
     collectionId: z.coerce.number(),
@@ -57,6 +58,7 @@ const modelQueryParamSchema = z
     ),
     collectionTagId: z.coerce.number().optional(),
     earlyAccess: booleanString().optional(),
+    paidAccess: booleanString().optional(),
     types: z
       .preprocess((val) => (Array.isArray(val) ? val : [val]), z.enum(ModelType).array())
       .optional(),

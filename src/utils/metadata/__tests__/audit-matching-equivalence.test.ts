@@ -34,6 +34,11 @@ import youngWords from '~/utils/metadata/lists/words-young.json';
  */
 
 // --- Reference (pre-optimization) per-word matching, copied verbatim ---
+// 🔴 Do not optimise anything in this section, and specifically: refIncludesPoi runs
+// refInPromptEdit (a String.match plus slicing) before regex.test, so a non-matching word pays
+// both. Reordering halves the two poi tests. It is still wrong — the value of an oracle is that
+// it is a COPY, and an optimised copy is a second implementation you believe is equivalent, which
+// is the one thing a differential test exists to not have to trust. Slow is the price.
 function refPrepareWordRegex(word: string, pluralize = false, leet = true) {
   let regexStr = word;
   regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]+`);
@@ -184,8 +189,7 @@ const oldPerAgeRegexes = __buildOldAgeRegexesForTest();
 
 // Copied verbatim from audit.ts (module-private there). These two are NOT what the
 // refactor changed; replicating them keeps the comparison about the boundary only.
-const refFalsePositiveTagPattern =
-  /\bscore_\d(?:_up|_down)?\b|\bsource_\w+\b|\brating_\w+\b/gi;
+const refFalsePositiveTagPattern = /\bscore_\d(?:_up|_down)?\b|\bsource_\w+\b|\brating_\w+\b/gi;
 const refQuickScreenPattern =
   /(?:age[ds]?|year|old|birthday|anos|\b(?:1[0-7]|[1-9])\b|teen|eleven|twelve|one|two|three|four|five|six|seven|eight|nine|ten)/i;
 
@@ -537,17 +541,13 @@ describe('audit matching equivalence (gate vs brute-force)', () => {
   // Brute-force POI equivalence over the full corpus is CPU-bound (the POI
   // reference set is large); it correctly asserts but can exceed the 10s global
   // testTimeout on a loaded CI runner. Give it room — logic is unchanged.
-  it(
-    'includesPoi returns the same matched name as the reference',
-    () => {
-      for (const p of corpus) {
-        expect(includesPoi(p), `includesPoi mismatch for: ${JSON.stringify(p)}`).toEqual(
-          refIncludesPoi(p)
-        );
-      }
-    },
-    60000
-  );
+  it('includesPoi returns the same matched name as the reference', () => {
+    for (const p of corpus) {
+      expect(includesPoi(p), `includesPoi mismatch for: ${JSON.stringify(p)}`).toEqual(
+        refIncludesPoi(p)
+      );
+    }
+  }, 60000);
 
   // AGE PATH old-vs-new boundary guard (closes the #2722 audit gap). Asserts the
   // live includesMinorAge (zero-width boundaries) agrees with the old consuming-
@@ -657,16 +657,12 @@ describe('audit matching equivalence (gate vs brute-force)', () => {
 
   // Same CPU-bound POI brute-force shape as above — generous per-test timeout
   // so a loaded runner does not flake it. Assertions are unchanged.
-  it(
-    'highlight: poi gated highlight equals the un-gated reference',
-    () => {
-      const poiRefRegexList = poiRefRegexes.map((x) => x.regex);
-      for (const p of [...corpus, ...youngCorpus]) {
-        const gated = poiCheckable.highlight(p, highlightFn);
-        const reference = refHighlight(p, poiRefRegexList, poiPreprocess, highlightFn);
-        expect(gated, `poi highlight mismatch for: ${JSON.stringify(p)}`).toBe(reference);
-      }
-    },
-    60000
-  );
+  it('highlight: poi gated highlight equals the un-gated reference', () => {
+    const poiRefRegexList = poiRefRegexes.map((x) => x.regex);
+    for (const p of [...corpus, ...youngCorpus]) {
+      const gated = poiCheckable.highlight(p, highlightFn);
+      const reference = refHighlight(p, poiRefRegexList, poiPreprocess, highlightFn);
+      expect(gated, `poi highlight mismatch for: ${JSON.stringify(p)}`).toBe(reference);
+    }
+  }, 60000);
 });

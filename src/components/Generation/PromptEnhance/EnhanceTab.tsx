@@ -14,7 +14,8 @@ import {
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconCheck, IconSparkles } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import clsx from 'clsx';
+import { useEffect, useMemo, useState } from 'react';
 import * as z from 'zod';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -24,15 +25,17 @@ import {
   GenerationFooter,
   useHasGenerationSlots,
 } from '~/components/generation_v2/GenerationLayout';
-import { getRootEcosystem } from '~/shared/constants/basemodel.constants';
+import { getGenerationEcosystemsForMediaType } from '~/shared/constants/basemodel.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import type { SnippetReferenceValue } from '~/shared/data-graph/schemas/snippet-schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { submitPromptEnhancement, useGetPromptEnhancementHistory } from './promptEnhanceHooks';
+import type { PromptEnhanceImage } from './promptEnhanceStore';
 
 const ENHANCE_COST = 1;
 const TEMPERATURE_STORAGE_KEY = 'prompt-enhance-temperature';
 const SEGMENT_PROMPT_STORAGE_KEY = 'prompt-enhance-segment-prompt';
+const SINGLE_TAKE_STORAGE_KEY = 'prompt-enhance-single-take';
 const DEFAULT_TEMPERATURE = 0.7;
 
 const enhanceFormSchema = z.object({
@@ -54,6 +57,12 @@ type EnhanceTabProps = {
    * `preserveSnippets` overrides and emit a preservation directive.
    */
   snippetTargets?: Record<string, SnippetReferenceValue[]>;
+  /**
+   * Images already attached to the generation form. Offered as opt-out visual
+   * context for the rewrite — checked ones go to the enhancement step's
+   * `images` input, where a vision-capable model reads them.
+   */
+  images?: PromptEnhanceImage[];
   onApply: (enhancedPrompt: string, enhancedNegativePrompt?: string) => void;
   onBack?: () => void;
 };
@@ -75,6 +84,7 @@ export function EnhanceTab({
   ecosystem,
   triggerWords,
   snippetTargets,
+  images,
   onApply,
   onBack,
 }: EnhanceTabProps) {
@@ -88,11 +98,28 @@ export function EnhanceTab({
   const [preserveTriggerWords, setPreserveTriggerWords] = useState<string[]>(() =>
     getUsedTriggerWords(triggerWords, prompt, negativePrompt)
   );
+  // Indexes rather than urls: the same image can be attached to more than one
+  // slot, and those entries have to check independently.
+  const [selectedImageIndexes, setSelectedImageIndexes] = useState<number[]>(() =>
+    (images ?? []).map((_, i) => i)
+  );
   const [segmentPrompt, setSegmentPrompt] = useLocalStorage({
     key: SEGMENT_PROMPT_STORAGE_KEY,
     defaultValue: false,
     getInitialValueInEffect: false,
   });
+  const [singleTake, setSingleTake] = useLocalStorage({
+    key: SINGLE_TAKE_STORAGE_KEY,
+    defaultValue: true,
+    getInitialValueInEffect: false,
+  });
+  const isVideoEcosystem = useMemo(
+    () =>
+      getGenerationEcosystemsForMediaType('video').some(
+        (key) => key.toLowerCase() === ecosystem.toLowerCase()
+      ),
+    [ecosystem]
+  );
   const [storedTemperature, setStoredTemperature] = useLocalStorage({
     key: TEMPERATURE_STORAGE_KEY,
     defaultValue: DEFAULT_TEMPERATURE,
@@ -135,14 +162,18 @@ export function EnhanceTab({
     }
   }, [pendingWorkflowId, result, isTerminalFailure]);
 
+  const toggleImage = (index: number) =>
+    setSelectedImageIndexes((prev) =>
+      prev.includes(index) ? prev.filter((i) => i !== index) : [...prev, index]
+    );
+
   const buildMutationInput = () => {
     const values = form.getValues();
-    let orchestratorEcosystem = ecosystem;
-    try {
-      orchestratorEcosystem = getRootEcosystem(ecosystem).key.toLowerCase();
-    } catch {}
+    const selectedImages = (images ?? [])
+      .filter((_, i) => selectedImageIndexes.includes(i))
+      .map((image) => image.url);
     return {
-      ecosystem: orchestratorEcosystem,
+      ecosystem,
       prompt: values.prompt,
       negativePrompt: values.negativePrompt || null,
       instruction: values.instruction || null,
@@ -154,6 +185,11 @@ export function EnhanceTab({
       // snippets node (non-snippet-enabled ecosystems).
       snippetTargets: snippetTargets ?? null,
       segmentPrompt,
+      // Shot structure only means something for video; sending it for image
+      // ecosystems would put a stray directive in front of the analyzer, and
+      // every unused line costs instruction budget.
+      singleTake: isVideoEcosystem ? singleTake : null,
+      images: selectedImages.length ? selectedImages : null,
     };
   };
 
@@ -364,6 +400,46 @@ export function EnhanceTab({
                 maxRows={4}
                 placeholder="Optional instructions..."
               />
+              {!!images?.length && (
+                <div>
+                  <Text size="sm" fw={500}>
+                    Reference Images
+                  </Text>
+                  <Text size="xs" c="dimmed" mb={6}>
+                    Checked images are sent along as visual context for the rewrite. Uncheck any you
+                    want the enhancer to ignore.
+                  </Text>
+                  <div className="flex flex-wrap gap-2">
+                    {images.map((image, index) => {
+                      const checked = selectedImageIndexes.includes(index);
+                      return (
+                        <div
+                          key={`${image.url}-${index}`}
+                          className={clsx(
+                            'relative size-20 cursor-pointer overflow-hidden rounded border-2',
+                            checked ? 'border-blue-5' : 'border-transparent opacity-40'
+                          )}
+                          onClick={() => toggleImage(index)}
+                        >
+                          <img
+                            src={image.url}
+                            alt={`Reference image ${index + 1}`}
+                            className="size-full object-cover"
+                          />
+                          <Checkbox
+                            checked={checked}
+                            onChange={() => toggleImage(index)}
+                            onClick={(e) => e.stopPropagation()}
+                            size="xs"
+                            className="absolute left-1 top-1"
+                            aria-label={`Use reference image ${index + 1}`}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               <TagsInput
                 label="Preserve Trigger Words"
                 description="These words will be preserved during enhancement"
@@ -372,11 +448,19 @@ export function EnhanceTab({
                 onChange={setPreserveTriggerWords}
               />
               <Checkbox
-                label="Break prompt into segments"
-                description="Split the enhanced prompt into logical segments separated by newlines"
+                label="Reorganize into thematic segments"
+                description="Regroup the prompt by subject, setting, style, and lighting. Enhanced prompts are already multi-line, and your own formatting is kept, so leave this off unless you want it restructured."
                 checked={segmentPrompt}
                 onChange={(e) => setSegmentPrompt(e.currentTarget.checked)}
               />
+              {isVideoEcosystem && (
+                <Checkbox
+                  label="Single continuous take"
+                  description="Keep the action in one unbroken shot instead of cutting between shots"
+                  checked={singleTake}
+                  onChange={(e) => setSingleTake(e.currentTarget.checked)}
+                />
+              )}
               <div className="px-2">
                 <Text size="sm" fw={500} mb={4}>
                   Creativity ({currentTemperature?.toFixed(1)})

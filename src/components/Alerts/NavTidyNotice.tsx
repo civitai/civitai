@@ -2,17 +2,15 @@ import { Button, CloseButton, Popover, Text } from '@mantine/core';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
+import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags, useFeatureFlagsReady } from '~/providers/FeatureFlagsProvider';
-import { trpc } from '~/utils/trpc';
-
-const ALERT_ID = 'nav-tidy-notice';
 
 /**
  * Floating popover that appears right under the sub nav, where the Posts /
  * Events tabs used to live, letting users know they were tidied away and can
- * be turned back on from their account settings. Mirrors the dismiss pattern
- * used by {@link ./YellowBuzzMigrationNotice}.
+ * be turned back on from their account settings.
  */
 export function NavTidyNotice() {
   const currentUser = useCurrentUser();
@@ -20,44 +18,16 @@ export function NavTidyNotice() {
 
   const enabled = !!currentUser;
   const ready = useFeatureFlagsReady();
-  // SSR-seeded `user.getSettings` + the dismiss mutation's optimistic cache
-  // update keep `dismissedAlerts` authoritative without a per-mount refetch.
-  // Gate visibility on `ready` (per-user flag overlay) instead.
-  const { data: settings } = trpc.user.getSettings.useQuery(undefined, {
-    enabled,
-  });
-  const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
-
-  const utils = trpc.useUtils();
-  const dismissMutation = trpc.user.dismissAlert.useMutation({
-    onMutate: async () => {
-      await utils.user.getSettings.cancel();
-      const prev = utils.user.getSettings.getData();
-      utils.user.getSettings.setData(undefined, (old) => ({
-        ...old,
-        dismissedAlerts: [...(old?.dismissedAlerts ?? []), ALERT_ID],
-      }));
-      return { prev };
-    },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) utils.user.getSettings.setData(undefined, ctx.prev);
-    },
-    // Reconcile with server truth after the optimistic update: the optimistic
-    // setData spreads `...old`, so if the cached base was incomplete (e.g. a
-    // failed SSR settings snapshot) it could persist a truncated settings
-    // object. Refetch once on dismiss to restore the full object + confirm the
-    // stored dismissedAlerts. One request per dismiss (rare) — not per mount.
-    onSettled: () => {
-      utils.user.getSettings.invalidate();
-    },
-  });
+  const { isDismissed, hasSettings, dismiss } = useFeatureNotice(FEATURE_NOTICES.navTidy);
 
   // Only nudge users who actually have one of the tidied items hidden.
   const hasHiddenNavItem = !features.postsNavItem || !features.eventsNavItem;
-  // `!!settings` guards the rare failed-SSR-snapshot path (undefined initialData):
-  // don't render against undefined `dismissedAlerts` until the self-healing mount
-  // fetch lands. Defined immediately on the normal SSR-seeded path → no delay.
-  const show = enabled && ready && !!settings && !isDismissed && hasHiddenNavItem;
+  // Two separate gates. `ready` waits for the per-user feature-flag overlay, so
+  // `hasHiddenNavItem` is read from real flags rather than defaults.
+  // `hasSettings` waits for a resolved settings object, so a rare failed SSR
+  // snapshot cannot flash this at someone who already dismissed it; on the
+  // normal SSR-seeded path it is true on the first render, so there is no delay.
+  const show = enabled && ready && hasSettings && !isDismissed && hasHiddenNavItem;
 
   // Open only AFTER the above-the-fold layout has settled. The popover is anchored
   // to a subnav target; opening it during the initial layout-settle window made its
@@ -74,7 +44,7 @@ export function NavTidyNotice() {
     return () => window.clearTimeout(id);
   }, [show]);
 
-  const handleDismiss = () => dismissMutation.mutate({ alertId: ALERT_ID });
+  const handleDismiss = () => dismiss();
 
   if (!show) return null;
 

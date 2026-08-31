@@ -1,3 +1,4 @@
+import { Kafka } from 'kafkajs';
 import { DebeziumManager } from './debezium-manager';
 import { logger } from '../utils/logger';
 
@@ -49,7 +50,6 @@ export class HealthCheckService {
 
   private async checkKafka(): Promise<boolean> {
     try {
-      const { Kafka } = require('kafkajs');
       const kafkaBrokers = process.env.KAFKA_BROKERS || 'localhost:9092';
       const kafka = new Kafka({
         clientId: 'health-check',

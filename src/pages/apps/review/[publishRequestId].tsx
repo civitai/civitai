@@ -108,7 +108,6 @@ export default function ReviewDetailPage({ publishRequestId }: ReviewDetailPageP
     <>
       <Meta title="App submission review — Civitai" deIndex />
       <AppsPageLayout
-        size="xl"
         title={selection ? <OnsiteReviewModalTitle selection={selection} /> : 'Submission review'}
         actions={
           <Button

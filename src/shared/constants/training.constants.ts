@@ -1,6 +1,12 @@
 import type { MantineColor } from '@mantine/core';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 
+// nb: these should be proper AIRs now
+export const blockedCustomModels = [
+  'civitai:53761@285757',
+  'urn:air:sd1:checkpoint:civitai:53761@285757',
+];
+
 export const trainingStatusFields: {
   [key in TrainingStatus]: { color: MantineColor; description: string };
 } = {

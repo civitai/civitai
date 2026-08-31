@@ -2,8 +2,10 @@ import {
   Alert,
   Anchor,
   Button,
+  Checkbox,
   Divider,
   Group,
+  Loader,
   Modal,
   NumberInput,
   Paper,
@@ -14,8 +16,9 @@ import {
   Textarea,
   TextInput,
 } from '@mantine/core';
-import { IconAlertTriangle, IconBolt, IconInfoCircle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBolt, IconCheck, IconInfoCircle } from '@tabler/icons-react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CosmeticPreview } from '~/components/CosmeticShop/CosmeticPreview';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -28,14 +31,20 @@ import { CosmeticStandardsModal } from '~/components/CreatorShop/CosmeticStandar
 import { cosmeticTypeOptions } from '~/components/CreatorShop/Submit/submit.constants';
 import { useSubmitCreatorShopForm } from '~/components/CreatorShop/Submit/useSubmitCreatorShopForm';
 import {
-  COSMETIC_PRICE_FLOOR,
   CREATOR_SHOP_CREATOR_SHARE,
-  CREATOR_SHOP_SUBMISSION_FEE,
   DECORATION_OFFSET_LIMIT,
+  RIGHTS_AFFIRMATION_STATEMENT,
   computeCreatorShopSplit,
+  isCreatorCosmeticType,
 } from '~/server/schema/creator-shop.schema';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import { CREATOR_GRANT_USES_MULTIPLIER, stickerSurfaceLabels } from '~/shared/utils/sticker-token';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+
+const stickerSurfaces = stickerSurfaceLabels();
+const joinLabels = (labels: string[]) =>
+  labels.length > 1 ? `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}` : labels[0];
 
 export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem }) {
   const dialog = useDialogContext();
@@ -45,6 +54,21 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
   const {
     isEdit,
     type,
+    isSticker,
+    slug,
+    setSlug,
+    slugError,
+    slugLocked,
+    slugStatus,
+    priceFloor,
+    uses,
+    setUses,
+    usesError,
+    pricePerUse,
+    setPricePerUse,
+    pricePerUseError,
+    perUseFloor,
+    economicsEditable,
     name,
     description,
     price,
@@ -53,8 +77,14 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     animated,
     sellableByOthers,
     sellerShare,
+    canEditOwnerFields,
+    resaleChanged,
+    itemSellerShare,
+    acceptsBlueBuzz,
     offsets,
     offsetsChanged,
+    rightsAffirmed,
+    requiresAffirmation,
     imageId,
     localUrl,
     checks,
@@ -63,6 +93,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     maxSize,
     uploading,
     artOk,
+    submissionFee,
     canAffordFee,
     canSubmit,
     yellowBalance,
@@ -86,10 +117,19 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
   const isDirty = isEdit
     ? name !== (item?.title ?? '') ||
       description !== (item?.description ?? '') ||
-      price !== (item?.unitAmount ?? COSMETIC_PRICE_FLOOR) ||
+      price !== (item?.unitAmount ?? priceFloor) ||
       offsetsChanged ||
+      form.economicsChanged ||
+      form.acceptsBlueBuzzChanged ||
+      resaleChanged ||
       !!localUrl
-    : !!imageId || !!name.trim() || !!description.trim() || sellableByOthers || offsetsChanged;
+    : !!imageId ||
+      !!name.trim() ||
+      !!description.trim() ||
+      sellableByOthers ||
+      acceptsBlueBuzz ||
+      offsetsChanged ||
+      form.economicsChanged;
 
   const handleCancel = () => {
     if (!isDirty) return dialog.onClose();
@@ -107,6 +147,12 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
     });
   };
 
+  const features = useFeatureFlags();
+  // Mirrors the server gate: no point offering a type the submit will reject.
+  const typeOptions = features.stickers
+    ? cosmeticTypeOptions
+    : cosmeticTypeOptions.filter((o) => o.value !== CosmeticType.Sticker);
+
   return (
     <Modal {...dialog} size="lg" title={isEdit ? 'Edit item' : 'Submit an item'}>
       <Stack>
@@ -120,7 +166,10 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               </Stack>
             )}
             <Alert color="blue" icon={<IconInfoCircle size={18} />}>
-              <Text size="xs">This item is live — you can only change its price and quantity.</Text>
+              <Text size="xs">
+                This item is live — its artwork and details are fixed, but you can still change how
+                it sells: price, quantity, and payment and resale terms.
+              </Text>
             </Alert>
           </>
         ) : (
@@ -144,14 +193,41 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             </Alert>
             <Select
               label="Cosmetic type"
-              data={cosmeticTypeOptions}
+              data={typeOptions}
               value={type}
-              onChange={(v) => v && form.setType(v as CosmeticType)}
+              onChange={(v) => {
+                const next = v as CosmeticType | null;
+                if (next && isCreatorCosmeticType(next)) form.setType(next);
+              }}
               allowDeselect={false}
               withAsterisk
               disabled={isEdit}
               description={isEdit ? 'Type cannot be changed after submission' : undefined}
             />
+
+            {isSticker && (
+              <TextInput
+                label="Slug"
+                placeholder="party_cat"
+                value={slug}
+                onChange={(e) => setSlug(e.currentTarget.value.toLowerCase())}
+                error={slugError ?? (slugStatus === 'taken' ? 'That slug is taken' : undefined)}
+                disabled={slugLocked}
+                rightSection={
+                  slugStatus === 'checking' ? (
+                    <Loader size="xs" />
+                  ) : slugStatus === 'available' ? (
+                    <IconCheck size={16} className="text-green-6" />
+                  ) : null
+                }
+                description={
+                  slugLocked
+                    ? 'Locked once published — owners already type this to use your sticker'
+                    : 'What people type between colons to use your sticker, e.g. :party_cat:'
+                }
+                withAsterisk
+              />
+            )}
 
             {!artLocked && !localUrl && !imageId && <CosmeticStudioCallout />}
 
@@ -235,17 +311,95 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
           </>
         )}
 
+        {/* Beside price and quantity, not inside the content block a published
+            item hides: these are prices, the server permits changing them after
+            publish, and a sticker that predates per-use pricing can only be
+            repaired if its creator can still see the field. Hidden entirely
+            from a cross-lister, who may not change another creator's
+            economics — the server refuses it, so requiring it would strand
+            them on a disabled button. */}
+        {economicsEditable && (
+          <>
+            <NumberInput
+              label={
+                <Group gap={4} wrap="nowrap">
+                  <span>Uses per purchase</span>
+                  <InfoPopover size="xs" withArrow iconProps={{ size: 14 }}>
+                    <Text size="xs">
+                      A use is spent when a buyer places your sticker in{' '}
+                      {joinLabels(stickerSurfaces.charged)}. Using it in{' '}
+                      {joinLabels(stickerSurfaces.free)} is free and unlimited. Once a buyer runs
+                      out they can top up at the price you set below.
+                    </Text>
+                  </InfoPopover>
+                </Group>
+              }
+              description={
+                uses
+                  ? `How many times a buyer can place this sticker. You'll receive ${numberWithCommas(
+                      uses * CREATOR_GRANT_USES_MULTIPLIER
+                    )} uses of your own once it's approved.`
+                  : `How many times a buyer can place this sticker. You'll receive ${CREATOR_GRANT_USES_MULTIPLIER}x that many of your own once it's approved.`
+              }
+              placeholder="e.g. 100"
+              // Empty rather than defaulted: a prefilled number is
+              // indistinguishable from a chosen one, and this field decides
+              // what every buyer gets.
+              value={uses ?? ''}
+              onChange={(v) => setUses(typeof v === 'number' ? v : undefined)}
+              min={1}
+              step={10}
+              error={usesError}
+              withAsterisk
+            />
+
+            <NumberInput
+              label={
+                <Group gap={4} wrap="nowrap">
+                  <span>Price per extra use</span>
+                  <InfoPopover size="xs" withArrow iconProps={{ size: 14 }}>
+                    <Text size="xs">
+                      What one more use costs a buyer who has run out. They&apos;re offered it where
+                      they run out rather than being sent back to the shop, and you keep the same
+                      share as a sale.
+                    </Text>
+                  </InfoPopover>
+                </Group>
+              }
+              description={`At least ${perUseFloor} Buzz. This price belongs to the sticker, so it's the same wherever it was bought.`}
+              placeholder={`e.g. ${perUseFloor}`}
+              value={pricePerUse ?? ''}
+              onChange={(v) => setPricePerUse(typeof v === 'number' ? v : undefined)}
+              min={perUseFloor}
+              step={5}
+              error={pricePerUseError}
+              withAsterisk
+            />
+          </>
+        )}
+
         <Group grow align="flex-end">
           <NumberInput
             label="Sell price"
             withAsterisk
-            min={COSMETIC_PRICE_FLOOR}
+            min={priceFloor}
             value={price}
-            onChange={(v) => form.setPrice(typeof v === 'number' ? v : COSMETIC_PRICE_FLOOR)}
+            onChange={(v) => form.setPrice(typeof v === 'number' ? v : priceFloor)}
             leftSection={<IconBolt size={16} />}
           />
           <NumberInput
-            label="Quantity (optional)"
+            label={
+              <Group gap={4} wrap="nowrap">
+                <span>Quantity (optional)</span>
+                <InfoPopover size="xs" withArrow iconProps={{ size: 14 }}>
+                  <Text size="xs">
+                    The most that will ever be sold. Once it sells out the item is gone for good,
+                    which makes it more exclusive for the people who bought one. Leave it empty to
+                    keep selling without a limit.
+                  </Text>
+                </InfoPopover>
+              </Group>
+            }
             min={1}
             value={quantity}
             onChange={(v) => form.setQuantity(typeof v === 'number' ? v : undefined)}
@@ -254,15 +408,20 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
         </Group>
         <Group justify="space-between">
           <Text size="xs" c="dimmed">
-            Minimum {COSMETIC_PRICE_FLOOR} Buzz · You keep{' '}
-            {Math.round(CREATOR_SHOP_CREATOR_SHARE * 100)}%
+            Minimum {priceFloor} Buzz · You keep {Math.round(CREATOR_SHOP_CREATOR_SHARE * 100)}%
           </Text>
           <Text size="xs" fw={600} c="green">
             You earn ≈ {numberWithCommas(earn)} Buzz per sale
           </Text>
         </Group>
 
-        {!isEdit && (
+        <Switch
+          checked={acceptsBlueBuzz}
+          onChange={(e) => form.setAcceptsBlueBuzz(e.currentTarget.checked)}
+          label="Accept Blue Buzz"
+          description="Buyers can pay with Blue Buzz — fully, or combined with their regular Buzz. You're paid blue for the blue-paid portion."
+        />
+        {canEditOwnerFields && (
           <Stack gap={6}>
             <Switch
               checked={sellableByOthers}
@@ -270,6 +429,17 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
               label="Let other creators sell this"
               description="Other creators can list this cosmetic in their own shops."
             />
+            {isEdit && (item?.resellerCount ?? 0) > 0 && (
+              <Alert color="blue" icon={<IconInfoCircle size={18} />}>
+                <Text size="xs">
+                  {item?.resellerCount === 1
+                    ? '1 creator already resells this'
+                    : `${item?.resellerCount} creators already resell this`}
+                  . They keep the {itemSellerShare}% they listed under — changes here only apply to
+                  creators who list it from now on.
+                </Text>
+              </Alert>
+            )}
             {sellableByOthers && (
               <>
                 <NumberInput
@@ -281,7 +451,7 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
                   onChange={(v) =>
                     form.setSellerShare(typeof v === 'number' ? Math.min(70, Math.max(0, v)) : 0)
                   }
-                  description="The % of each resale the seller keeps (they set their own price)."
+                  description="The % of each resale the seller earns. Resales use your price and inventory."
                 />
                 <Paper withBorder radius="md" p="sm">
                   <Text size="xs" c="dimmed" mb={4}>
@@ -322,7 +492,19 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             blueBalance={blueBalance}
             feeAccountBalance={feeAccountBalance}
             canAffordFee={canAffordFee}
+            submissionFee={submissionFee}
           />
+        )}
+
+        {requiresAffirmation && (
+          <Paper withBorder radius="md" p="sm">
+            <Checkbox
+              checked={rightsAffirmed}
+              onChange={(e) => form.setRightsAffirmed(e.currentTarget.checked)}
+              label={RIGHTS_AFFIRMATION_STATEMENT}
+              description="We keep a record of this confirmation with your submission."
+            />
+          </Paper>
         )}
 
         {notice && (
@@ -341,7 +523,8 @@ export function CreatorShopSubmitModal({ item }: { item?: CreatorShopManageItem 
             </Button>
           ) : (
             <BuzzTransactionButton
-              buzzAmount={CREATOR_SHOP_SUBMISSION_FEE}
+              buzzAmount={submissionFee ?? 0}
+              priceReplacement={submissionFee === undefined ? '…' : undefined}
               accountTypes={[buzzType]}
               colorType={buzzType}
               label="Submit for review"

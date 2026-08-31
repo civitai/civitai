@@ -1,0 +1,4 @@
+key	sat_live	sat_cand	moved	samples	verdict
+ltxv23	1	2	lighting-43 temporal-33 style-22 camera-11 composition-11 text+13 subject+33 audio+78	false	REGRESSED
+ltxv2	1	1	temporal-48 style+20	false	no change
+ltxv				false	FAILED: candidate: every request failed — no data. Check the endpoint and re-run; this i

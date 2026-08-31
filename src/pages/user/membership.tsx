@@ -17,6 +17,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import {
+  IconGift,
   IconInfoCircle,
   IconInfoTriangleFilled,
   IconRotateClockwise,
@@ -24,6 +25,7 @@ import {
 } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
+import { useEffect, useRef } from 'react';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BuzzEnvironmentAlert } from '~/components/Buzz/BuzzEnvironmentAlert';
@@ -39,6 +41,7 @@ import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { BuzzMembershipCallout } from '~/components/Subscriptions/BuzzMembershipCallout';
 import { PrepaidTokenOverview } from '~/components/Subscriptions/PrepaidTokenOverview';
 import { ReferralCallout } from '~/components/Referrals/ReferralCallout';
 import { PurchasedCodesCard } from '~/components/Account/PurchasedCodesCard';
@@ -56,11 +59,19 @@ import type {
 import { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscription-tokens';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { dbRead } from '~/server/db/client';
+import {
+  BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
+  getBuzzMembershipPrice,
+  getSubscriptionDisplayBuzzType,
+} from '~/shared/utils/buzz-membership';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { syncAccount } from '~/utils/sync-account';
+import { trpc } from '~/utils/trpc';
 import { booleanString } from '~/utils/zod-helpers';
 import styles from './membership.module.scss';
 
@@ -77,13 +88,22 @@ export const getServerSideProps = createServerSideProps({
 
     // Allow users with subscriptionId OR users in memberInBadState to access the page
     // Users in bad state need to be able to manage/cancel their subscription
-    if (!session.user.subscriptionId && !session.user.memberInBadState && !session.user.tier)
-      return {
-        redirect: {
-          destination: '/pricing',
-          permanent: false,
-        },
-      };
+    if (!session.user.subscriptionId && !session.user.memberInBadState && !session.user.tier) {
+      // A Buzz-purchased membership sets none of those session fields, so this gate used to
+      // bounce those users to /pricing with no way to see what they'd bought.
+      const buzzMembership = await dbRead.customerSubscription.findFirst({
+        where: { userId: session.user.id, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE },
+        select: { id: true },
+      });
+
+      if (!buzzMembership)
+        return {
+          redirect: {
+            destination: '/pricing',
+            permanent: false,
+          },
+        };
+    }
   },
 });
 
@@ -91,6 +111,7 @@ const querySchema = z.object({
   tier: userTierSchema.optional(),
   updated: booleanString().optional(),
   downgraded: booleanString().optional(),
+  flow: z.enum(['keep-membership']).optional(),
 });
 
 export default function UserMembership() {
@@ -99,6 +120,7 @@ export default function UserMembership() {
     useActiveSubscription({
       checkWhenInBadState: true,
       buzzType: activeBuzzType,
+      includeBuzzPurchase: true,
     });
 
   // Check for subscriptions in other buzz types
@@ -131,6 +153,38 @@ export default function UserMembership() {
   const downgradedTier = query.success ? isDrowngrade && query.data?.tier : null;
   const isUpdate = query.success ? query.data?.updated : false;
   const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
+
+  const queryUtils = trpc.useUtils();
+  const keepMembershipMutation = trpc.membershipGift.keepMembership.useMutation({
+    onSuccess: async (result) => {
+      if (result.kept) {
+        showSuccessNotification({
+          title: 'Membership kept',
+          message: 'Your membership will continue after your free months end.',
+        });
+        await queryUtils.subscriptions.getUserSubscription.invalidate();
+        await currentUser?.refresh();
+      } else if (result.portalUrl) {
+        // No payment method on file — send them to the Stripe portal to add one
+        window.location.assign(result.portalUrl);
+      }
+    },
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Unable to keep membership',
+        error: new Error(error.message),
+      }),
+  });
+
+  const keepFlowTriggered = useRef(false);
+  const keepFlowRequested = query.success && query.data.flow === 'keep-membership';
+  useEffect(() => {
+    if (!keepFlowRequested || !features.giftMemberships || keepFlowTriggered.current) return;
+    keepFlowTriggered.current = true;
+    keepMembershipMutation.mutate();
+    router.replace('/user/membership', undefined, { shallow: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keepFlowRequested, features.giftMemberships]);
 
   const handleRedirectToOtherEnvironment = () => {
     const targetDomain = otherBuzzType === 'green' ? serverDomains.green : serverDomains.red;
@@ -247,6 +301,16 @@ export default function UserMembership() {
   const isFree = meta?.tier === 'free';
   const { image, benefits } = getPlanDetails(subscription.product, features);
   const isCivitaiProvider = subscriptionPaymentProvider === PaymentProvider.Civitai;
+  const isGiftedSub = !!(
+    subscription.metadata as (SubscriptionMetadata & { membershipGiftId?: string }) | null
+  )?.membershipGiftId;
+  const showKeepMembership = features.giftMemberships && isStripe && !!subscription.cancelAt;
+  const isBuzzMembership = !!(subscription.product.metadata as SubscriptionProductMetadata)
+    ?.buzzPurchase;
+  // Buzz memberships are also on the Civitai provider but are NOT prepaid/tokenized: they
+  // carry no tokens and no redeemable code, so the prepaid UI below must skip them.
+  const isPrepaidMembership = isCivitaiProvider && !isBuzzMembership;
+  const displayBuzzType = getSubscriptionDisplayBuzzType(subscription.buzzType, activeBuzzType);
 
   return (
     <>
@@ -256,6 +320,12 @@ export default function UserMembership() {
           <Grid.Col span={12}>
             <Stack gap="xl">
               <Title>My Membership Plan</Title>
+              {isBuzzMembership && (
+                <BuzzMembershipCallout
+                  tier={subscription.product.metadata.tier}
+                  expiresAt={subscription.currentPeriodEnd}
+                />
+              )}
               <ReferralCallout variant="compact" />
               {otherSubscription && subscription && (
                 <BuzzEnvironmentAlert
@@ -375,13 +445,27 @@ export default function UserMembership() {
                         )}
                         {price && (
                           <Text>
+                            {/* Never show a dollar figure for a Buzz membership: the Price row
+                                carries the cash amount purely so the Buzz cost can be derived
+                                from it, and no money changed hands. */}
                             <Text component="span" className={styles.price}>
-                              {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
+                              {isBuzzMembership
+                                ? numberWithCommas(
+                                    getBuzzMembershipPrice({
+                                      unitAmount: price.unitAmount,
+                                      buzzPrice: (
+                                        subscription.product.metadata as SubscriptionProductMetadata
+                                      )?.buzzPrice,
+                                    })
+                                  )
+                                : getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                             </Text>{' '}
                             <Text component="span" c="dimmed" size="sm">
-                              {price.currency.toUpperCase() +
-                                '/' +
-                                shortenPlanInterval(price.interval)}
+                              {isBuzzMembership
+                                ? `Buzz/${shortenPlanInterval(price.interval)}`
+                                : price.currency.toUpperCase() +
+                                  '/' +
+                                  shortenPlanInterval(price.interval)}
                             </Text>
                           </Text>
                         )}
@@ -459,14 +543,37 @@ export default function UserMembership() {
                         )}
                     </Stack>
                   </Group>
-                  {subscription.cancelAt && (
+                  {subscription.cancelAt && isGiftedSub && (
+                    <Alert color="teal" icon={<IconGift size={18} />}>
+                      This membership was gifted to you — it&rsquo;s free until{' '}
+                      {new Date(subscription.cancelAt).toLocaleDateString()}. Keep it to continue
+                      your benefits after that.
+                    </Alert>
+                  )}
+                  {subscription.cancelAt && !isGiftedSub && (
                     <Text c="red">
                       Your membership will be canceled on{' '}
                       {new Date(subscription.cancelAt).toLocaleDateString()}. You will lose your
                       benefits on that date.
                     </Text>
                   )}
-                  {isCivitaiProvider && (
+                  {showKeepMembership && (
+                    <Group gap="xs">
+                      <Button
+                        size="xs"
+                        radius="xl"
+                        leftSection={<IconGift size={14} />}
+                        loading={keepMembershipMutation.isPending}
+                        onClick={() => keepMembershipMutation.mutate()}
+                      >
+                        Keep my membership
+                      </Button>
+                      <Text size="xs" c="dimmed">
+                        Billing resumes after your free months end — you keep your benefits.
+                      </Text>
+                    </Group>
+                  )}
+                  {isPrepaidMembership && (
                     <Text c="yellow">
                       You are on a prepaid membership. Tokens unlock monthly — claim them to receive
                       your Buzz.
@@ -475,9 +582,9 @@ export default function UserMembership() {
                 </Stack>
               </Paper>
 
-              {isCivitaiProvider && <PrepaidTimelineProgress subscription={subscription} />}
+              {isPrepaidMembership && <PrepaidTimelineProgress subscription={subscription} />}
 
-              {isCivitaiProvider &&
+              {isPrepaidMembership &&
                 (() => {
                   const prepaidTokens = getPrepaidTokens({
                     metadata: subscription.metadata as SubscriptionMetadata,
@@ -495,7 +602,7 @@ export default function UserMembership() {
                   );
                 })()}
 
-              {isCivitaiProvider && <PurchasedCodesCard defaultFilter="Membership" />}
+              {isPrepaidMembership && <PurchasedCodesCard defaultFilter="Membership" />}
 
               {benefits && (
                 <div
@@ -504,17 +611,25 @@ export default function UserMembership() {
                     '--buzz-color': buzzColorRgb,
                   }}
                 >
+                  {/* No colour word for a Buzz membership: it grants no coloured Buzz, so
+                      "Your Green membership benefits" claims something that isn't true. */}
                   <Title order={3}>
-                    Your{' '}
-                    <Text component="span" className="text-xl font-bold text-buzz">
-                      {activeBuzzType === 'green' ? 'Green' : 'Yellow'}
-                    </Text>{' '}
-                    membership benefits
+                    {isBuzzMembership ? (
+                      <>Your membership benefits</>
+                    ) : (
+                      <>
+                        Your{' '}
+                        <Text component="span" className="text-xl font-bold text-buzz">
+                          {activeBuzzType === 'green' ? 'Green' : 'Yellow'}
+                        </Text>{' '}
+                        membership benefits
+                      </>
+                    )}
                   </Title>
                   <Paper withBorder className={styles.card}>
                     <PlanBenefitList
                       benefits={benefits}
-                      buzzType={subscription.buzzType}
+                      buzzType={displayBuzzType}
                       tier={subscription.product.metadata.tier}
                     />
                   </Paper>

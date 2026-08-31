@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { parseOpts } from './parse-opts.mjs';
 
 /**
  * Metabase Skill — create questions, dashboards, and manage public sharing
@@ -179,14 +180,56 @@ async function createQuestion(opts) {
   }
 
   const card = await api('POST', '/card', body);
+
+  // Read the card back rather than trusting the create. The API reports success for a card carrying no
+  // query at all, and such a card renders blank — indistinguishable from a permissions problem, which is
+  // how it was read the first time. The server rewrites the legacy `dataset_query.native.query` we post
+  // into a `stages[0].native` string, so both shapes are accepted here.
+  const stored = await readCard(card.id);
+  if (stored === null) {
+    console.error(`Card ${card.id} was created but could not be read back, so it is unverified.`);
+    console.error(`  Check it: ${METABASE_URL}/question/${card.id}`);
+    process.exit(1);
+  }
+  const storedQuery = storedNativeQuery(stored);
+  if (storedQuery !== query) {
+    console.error(`Card ${card.id} was created but does not carry the SQL that was sent.`);
+    console.error(`  stored: ${storedQuery === undefined ? '(no query at all)' : JSON.stringify(storedQuery)}`);
+    console.error(`  sent:   ${JSON.stringify(query)}`);
+    console.error(`  URL: ${METABASE_URL}/question/${card.id}`);
+    process.exit(1);
+  }
+
   console.log(`Question created successfully!`);
   console.log(`  ID: ${card.id}`);
   console.log(`  Name: ${card.name}`);
   console.log(`  URL: ${METABASE_URL}/question/${card.id}`);
+  console.log(`  Verified: the stored query matches what was sent`);
   if (Object.keys(templateTags).length > 0) {
     console.log(`  Variables: ${Object.keys(templateTags).join(', ')}`);
   }
   return card;
+}
+
+// Read a card without `api()`'s exit-on-failure: a GET that fails must not be reported as a create that
+// failed, since the card exists either way and the difference decides what the operator does next.
+async function readCard(id) {
+  try {
+    const res = await fetch(`${METABASE_URL}/api/card/${id}`, {
+      headers: { 'x-api-key': METABASE_API_KEY },
+    });
+    return res.ok ? await res.json() : null;
+  } catch {
+    return null;
+  }
+}
+
+// The SQL a saved card actually carries, in either shape the API returns. Anything that is not a string —
+// the boolean a degraded flag value used to produce, most of all — comes back undefined.
+function storedNativeQuery(card) {
+  const stage = card?.dataset_query?.native ?? card?.dataset_query?.stages?.[0];
+  const sql = typeof stage === 'string' ? stage : (stage?.query ?? stage?.native);
+  return typeof sql === 'string' ? sql : undefined;
 }
 
 async function createDashboard(opts) {
@@ -591,26 +634,13 @@ Common Options:
   process.exit(1);
 }
 
-// Parse remaining args into key-value opts
-function parseOpts(args) {
-  const opts = {};
-  for (let i = 1; i < args.length; i++) {
-    const arg = args[i];
-    if (arg.startsWith('--')) {
-      const key = arg.slice(2);
-      const next = args[i + 1];
-      if (next && !next.startsWith('--')) {
-        opts[key] = next;
-        i++;
-      } else {
-        opts[key] = true;
-      }
-    }
-  }
-  return opts;
+let opts;
+try {
+  opts = parseOpts(args);
+} catch (err) {
+  console.error(`Error: ${err.message}`);
+  process.exit(1);
 }
-
-const opts = parseOpts(args);
 
 const commands = {
   'run-query': runQuery,

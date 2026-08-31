@@ -1,11 +1,13 @@
 import { CollectionReadConfiguration, Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import {
+  challengeClaimStillHeld,
   claimChallengeForCompletion,
+  completeChallengeIfClaimHeld,
   computeDynamicPool,
   distributePrizes,
   createChallengeRecord,
@@ -16,7 +18,6 @@ import {
   incrementOperationSpent,
   resolveEventContext,
   setChallengeActive,
-  updateChallengeStatus,
   type ChallengeDetails,
   type EventContext,
   type RecentEntry,
@@ -27,6 +28,25 @@ import {
   promoteChallengeEntries,
 } from '~/server/games/daily-challenge/challenge-rewards';
 import { filterRecentWinners } from '~/server/games/daily-challenge/winner-cooldown';
+import {
+  buildJudgingEngineContext,
+  resolveJudgingEngine,
+} from '~/server/games/daily-challenge/challenge-engine-registry';
+import {
+  bestPerUserInRankOrder,
+  recapField,
+  type JudgedEntryRef,
+} from '~/server/games/daily-challenge/challenge-judging-engine';
+import {
+  MAX_PLACEMENTS_PER_TICK,
+  REVIEW_JOB_LOCK_SECONDS,
+  REVIEW_TICK_BUDGET_MS,
+} from '~/server/games/daily-challenge/challenge-ladder';
+import {
+  dedupeWinnersForPayout,
+  reconcileWinnerToPersisted,
+  resolveWinnerPicks,
+} from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   ChallengeReviewCostType,
   ChallengeSource,
@@ -39,8 +59,6 @@ import type {
   DailyChallengeDetails,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
-  calculateWeightedScore,
-  SCORE_WEIGHTS,
   challengeToLegacyFormat,
   deriveChallengeNsfwLevel,
   endChallenge,
@@ -50,7 +68,11 @@ import {
   getUpcomingSystemChallenge,
   type JudgingConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
-import { calculateWeightedCategoryScore } from '~/server/games/daily-challenge/daily-challenge-scoring';
+import {
+  calculateWeightedCategoryScore,
+  FIXED_JUDGING_CATEGORIES,
+  normalizeJudgeScore,
+} from '~/server/games/daily-challenge/daily-challenge-scoring';
 import {
   getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
@@ -59,10 +81,17 @@ import {
   estimateBuzzCost,
   generateArticle,
   generateCollectionDetails,
+  generateResourceConcept,
   generateReview,
   generateWinners,
 } from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  recordChallengeCompleted,
+  recordChallengePrizePaidBuzz,
+  recordChallengeWinnerDuplicatePick,
+  recordChallengeWinnerUnmatchedPick,
+} from '~/server/prom/challenge.metrics';
 import {
   challengeJudgingCategoriesSchema,
   parseChallengeMetadata,
@@ -131,6 +160,12 @@ type ChallengeCreationContext = {
   };
 };
 
+/**
+ * Showcase images handed to the resource-concept step. Four is enough to show what a resource
+ * renders across its versions without turning a per-challenge call into a per-challenge album.
+ */
+const RESOURCE_CONCEPT_IMAGE_COUNT = 4;
+
 type PreSelectedChallenge = {
   targetDate: Date;
   challengeDate: Date;
@@ -138,6 +173,8 @@ type PreSelectedChallenge = {
   resourceUserId: number;
   modelVersionIds: number[];
   image: { id: number; url: string };
+  /** Cover first, then further showcase images. Only the concept step reads past the first. */
+  showcaseImages: { id: number; url: string }[];
 };
 
 // Pre-compute shared context (runs 3 DB queries with Promise.all instead of 5 sequential)
@@ -250,7 +287,8 @@ async function selectResourceForDate(
       SELECT
         m.id as "modelId",
         u."username" as creator,
-        m.name as title
+        m.name as title,
+        m.description
       FROM "Model" m
       JOIN "User" u ON u.id = m."userId"
       WHERE m.id = ${randomResourceId.id}
@@ -259,25 +297,29 @@ async function selectResourceForDate(
   }
   if (!randomUser || !resource) throw new Error('Failed to pick resource');
 
-  // Get model versions and cover image in parallel
-  const [modelVersionRows, image] = await Promise.all([
-    dbRead.$queryRaw<{ id: number }[]>`
-      SELECT mv.id
+  const [modelVersionRows, showcaseImages] = await Promise.all([
+    dbRead.$queryRaw<{ id: number; trainedWords: string[] }[]>`
+      SELECT mv.id, mv."trainedWords"
       FROM "ModelVersion" mv
       WHERE mv."modelId" = ${resource.modelId}
       AND mv.status = 'Published'
       ORDER BY mv.index ASC
     `,
-    getCoverOfModel(resource.modelId),
+    getShowcaseImagesOfModel(resource.modelId, RESOURCE_CONCEPT_IMAGE_COUNT),
   ]);
 
   return {
     targetDate,
     challengeDate,
-    resource,
+    resource: {
+      ...resource,
+      trainedWords: [...new Set(modelVersionRows.flatMap((v) => v.trainedWords ?? []))],
+    },
     resourceUserId: randomUser.userId,
     modelVersionIds: modelVersionRows.map((v) => v.id),
-    image,
+    // Same row getCoverOfModel returned: reordering the query below changes every challenge cover.
+    image: showcaseImages[0],
+    showcaseImages,
   };
 }
 
@@ -287,9 +329,19 @@ async function createChallengeFromSelection(
   selection: PreSelectedChallenge,
   ctx: ChallengeCreationContext
 ): Promise<number> {
-  const { resource, image, challengeDate, modelVersionIds, resourceUserId } = selection;
+  const { resource, image, showcaseImages, challengeDate, modelVersionIds, resourceUserId } =
+    selection;
   const { judgingConfig, config, prizeConfig } = ctx;
   const endsAt = dayjs(challengeDate).add(1, 'day').toDate();
+
+  // Sequenced before the article on purpose: the article's theme and themeElements ARE the judge's
+  // scoring anchor, and this is the only step that knows what the resource depicts.
+  const resourceConcept = await generateResourceConcept({
+    resource,
+    images: showcaseImages,
+    config: judgingConfig,
+  });
+  log('Resource concept:', resourceConcept ?? '(none derived)');
 
   // Run both AI calls in parallel - they share inputs but outputs are independent
   log('Generating AI content in parallel for', dayjs(challengeDate).format('YYYY-MM-DD'));
@@ -297,6 +349,7 @@ async function createChallengeFromSelection(
     generateCollectionDetails({ resource, image, config: judgingConfig }),
     generateArticle({
       resource,
+      resourceConcept,
       image,
       challengeDate: endsAt,
       allowedNsfwLevel: sfwBrowsingLevelsFlag,
@@ -328,6 +381,7 @@ async function createChallengeFromSelection(
         challengeDate,
         maxItemsPerUser: config.entryPrizeRequirement * 2,
         endsAt,
+        autoTagId: config.challengeTagId,
         disableTagRequired: true,
         disableFollowOnSubmission: true,
       },
@@ -368,6 +422,7 @@ async function createChallengeFromSelection(
       resourceUserId,
       resourceModelId: resource.modelId,
       themeElements: challengeContent.themeElements,
+      resourceConcept,
     },
   });
 
@@ -476,7 +531,11 @@ const dailyChallengeSetupJob = createJob('daily-challenge-setup', '0 22 * * *', 
 const processDailyChallengeEntriesJob = createJob(
   'daily-challenge-process-entries',
   '*/10 * * * *',
-  reviewEntries
+  reviewEntries,
+  // Overrides createJob's 300s default, which this job had only inherited. Arrival placement is
+  // serial, so a tick's work is bounded but not small; 300s could not hold a burst this job had
+  // already been measured handling. Stays under the 600s cron so a tick cannot overlap itself.
+  { lockExpiration: REVIEW_JOB_LOCK_SECONDS }
 );
 
 export const dailyChallengeJobs = [dailyChallengeSetupJob, processDailyChallengeEntriesJob];
@@ -577,7 +636,8 @@ export async function reviewEntries() {
       logToAxiom({
         type: 'warning',
         name: 'daily-challenge-process-entries',
-        message: 'Active challenge count hit the batch ceiling; excess challenges roll to the next tick',
+        message:
+          'Active challenge count hit the batch ceiling; excess challenges roll to the next tick',
         count: activeChallenges.length,
       });
     }
@@ -620,6 +680,9 @@ export async function reviewEntries() {
  */
 async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails) {
   log('Processing entries for challenge:', currentChallenge.challengeId);
+  // Start of the tick's budget. Measured across the WHOLE function, not just the placement drain:
+  // the job lock does not care which phase spent the time.
+  const tickStartedAt = Date.now();
   const config = await getChallengeConfig();
 
   // Update pending entries
@@ -645,13 +708,14 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
           source: ChallengeSource;
           judgingCategories: unknown;
           entryFee: number;
+          judgingEngine: string | null;
         }
       | undefined
     ]
   >`
     SELECT "allowedNsfwLevel", "judgeId", "judgingPrompt",
            "prizeMode", "prizePool", "basePrizePool", "buzzPerAction", "poolTrigger", "maxPrizePool", "prizeDistribution",
-           "metadata", "source", "judgingCategories", "entryFee"
+           "metadata", "source", "judgingCategories", "entryFee", "judgingEngine"
     FROM "Challenge"
     WHERE id = ${currentChallenge.challengeId}
     LIMIT 1
@@ -659,14 +723,23 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
   const allowedNsfwLevel = challengeRecord?.allowedNsfwLevel ?? 1;
   const challengeMetadata = parseChallengeMetadata(challengeRecord?.metadata);
   const themeElements = challengeMetadata.themeElements;
-  // Any challenge that stores judgingCategories is judged by them; those without fall back to the
-  // default theme/wittiness/humor/aesthetic rubric (generateReview resolves DEFAULT_CATEGORY_ROWS
-  // from the DB). Parse defensively — a malformed value falls back to the fixed schema instead of
-  // failing the review.
+  const resourceConcept = challengeMetadata.resourceConcept;
+  // Parse defensively — a malformed value falls back to the fixed schema instead of failing the
+  // review.
   const userJudgingCategories = challengeJudgingCategoriesSchema.safeParse(
     challengeRecord?.judgingCategories
   );
   const userCategories = userJudgingCategories.success ? userJudgingCategories.data : undefined;
+
+  const judgingEngine = await resolveJudgingEngine(challengeRecord?.judgingEngine);
+  const engineContext = buildJudgingEngineContext({
+    challengeId: currentChallenge.challengeId,
+    collectionId: currentChallenge.collectionId,
+    theme: currentChallenge.theme,
+    themeElements,
+    resourceConcept,
+    categories: userCategories,
+  });
 
   // Get judging config from ChallengeJudge (or cached default judge if not assigned)
   const judgeId = challengeRecord?.judgeId ?? config.defaultJudgeId;
@@ -877,7 +950,8 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       ci."imageId",
       i."userId",
       u."username",
-      i."url"
+      i."url",
+      i."nsfwLevel"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -924,7 +998,8 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       ci."imageId",
       i."userId",
       u."username",
-      i."url"
+      i."url",
+      i."nsfwLevel"
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     JOIN "User" u ON u.id = i."userId"
@@ -939,8 +1014,12 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     toReview.push(entry);
   }
 
+  // Entries that cleared the theme gate, waiting to be placed into the ladder. Collected during
+  // the concurrent absolute pass and placed SERIALLY afterwards — see the note at the drain below.
+  const awaitingPlacement: { order: number; entry: JudgedEntryRef }[] = [];
+
   // Rate entries
-  const tasks = toReview.map((entry) => async () => {
+  const tasks = toReview.map((entry, submissionOrder) => async () => {
     try {
       log('Reviewing entry:', entry);
 
@@ -963,6 +1042,7 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       const review = await generateReview({
         theme: currentChallenge.theme,
         themeElements,
+        resourceConcept,
         creator: entry.username,
         imageUrl: getEdgeUrl(entry.url, { width: 1200, name: 'image' }),
         config: judgingConfig,
@@ -980,9 +1060,14 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
         await incrementOperationSpent(currentChallenge.challengeId, reviewBuzzCost);
       }
 
+      const normalizedScore = normalizeJudgeScore(review.score);
+
       // Add tag and score note to collection item (include judgeId for tracking)
       const note = JSON.stringify({
-        score: review.score,
+        // Never persist a non-object score. `review.score` is whatever the model returned (the
+        // response is cast, not parsed), and a safety-rejected entry comes back as null; stored
+        // raw it reaches every ranking path and takes the whole challenge's winner-pick down.
+        score: normalizedScore,
         summary: review.summary,
         judgeId: judgingConfig.judgeId,
         ...(review.aestheticFlaws?.length && { aestheticFlaws: review.aestheticFlaws }),
@@ -1017,6 +1102,28 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
       } catch (error) {
         log('Failed to send reaction', entry.imageId, review.reaction);
       }
+
+      // Hand the entry to the challenge's judging engine. Disqualified entries are never placed:
+      // the theme gate is an absolute judgement about one image and a comparison cannot express
+      // it, so an entry the gate drops must not become a rung others are measured against.
+      // A failure here costs this entry's placement and nothing else — the engine places
+      // whatever it is missing when it ranks the field at close.
+      const gatedScore = calculateWeightedCategoryScore(
+        normalizedScore,
+        userCategories?.length ? userCategories : FIXED_JUDGING_CATEGORIES
+      );
+      if (gatedScore !== null) {
+        awaitingPlacement.push({
+          order: submissionOrder,
+          entry: {
+            imageId: entry.imageId,
+            userId: entry.userId,
+            username: entry.username,
+            url: entry.url,
+            nsfwLevel: entry.nsfwLevel,
+          },
+        });
+      }
     } catch (error) {
       const err = error as Error;
       logToAxiom({ type: 'daily-challenge-review-error', message: err.message });
@@ -1024,6 +1131,88 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     }
   });
   await limitConcurrency(tasks, 5);
+
+  // 🔴 Ladder placement is SERIAL, even though the absolute pass above is not.
+  //
+  // `recordEntry` is read-modify-write — getStandings, findSlot, insertStanding — with nothing
+  // serialising it. Run inside the concurrent tasks, up to 5 entries binary-search the SAME
+  // standings snapshot, so every one of them measures itself against whatever was there before the
+  // tick and none of them ever meets another. Measured on a live 6-entry challenge: every single
+  // arrival bout was against the first entry placed, 0/1/1/1/1/1 comparisons where serial placement
+  // costs ~11 across different incumbents. Six entries hanging off one pivot is not a measurement.
+  //
+  // It is invisible from the outside — the standings look complete and `comparisons` faithfully
+  // records the small number — and at small field sizes the close-time rerun repairs it, which is
+  // why the live test passed. On a 284-entry field it will not: the rerun is bounded at
+  // RERUN_TOP_K and the rest keep whatever the burst gave them.
+  //
+  // The absolute pass stays concurrent: it is independent per entry and it is where the latency is.
+  // Placement is ordered by submission so a run is reproducible rather than depending on which LLM
+  // call happened to return first. Same per-entry error boundary as before — a throw costs this
+  // entry's rung and nothing else, and `rankField` places whatever was missed.
+  //
+  // 🔴 Serialising it is what makes the drain BOUNDED WORK, so the tick has to bound it.
+  // Placement cost grows with the ladder — ceil(log2(n+1)) serial bouts — so a burst against a
+  // mature ladder is the expensive case, not a big burst against an empty one. The job lock is
+  // `REVIEW_JOB_LOCK_SECONDS` (540s) against a 600s cron, and `REVIEW_TICK_BUDGET_MS` is per
+  // CHALLENGE, measured from that challenge's own start — so the lock covers one challenge's
+  // budget, not the job's. `reviewEntries` fans out at `CHALLENGE_JOB_CONCURRENCY`, so a batch
+  // larger than that runs in waves and only the first wave is inside the lock; a later wave still
+  // going at 600s gets a concurrent sibling — the shared-snapshot race again, from the other
+  // direction.
+  //
+  // The budget is checked BETWEEN placements, never inside one: a placement is atomic, so the
+  // overshoot is one placement rather than unbounded. At least one always runs, so a challenge
+  // whose absolute pass already ate the budget still makes progress instead of starving.
+  //
+  // Deferred entries are NOT lost and NOT retried next tick — the absolute pass has already tagged
+  // them judged, so the recent-entries query will not offer them again. They are placed by
+  // `rankField` at close, on exactly the path that already covers a placement that threw. That is
+  // correct but not free: enough deferrals and the engine's `arrivalUsable` guard flips and the
+  // close-time rerun runs unbounded. The log below is how that becomes visible before it bites.
+  awaitingPlacement.sort((a, b) => a.order - b.order);
+  const placementDeadline = tickStartedAt + REVIEW_TICK_BUDGET_MS;
+  let placed = 0;
+  for (const { entry } of awaitingPlacement) {
+    if (placed > 0 && (Date.now() >= placementDeadline || placed >= MAX_PLACEMENTS_PER_TICK)) break;
+    try {
+      await judgingEngine.recordEntry(engineContext, entry);
+      placed++;
+      log('Engine recorded entry', judgingEngine.key, entry.imageId);
+    } catch (error) {
+      placed++;
+      const err = error as Error;
+      logToAxiom({
+        type: 'error',
+        name: 'challenge-engine-record-entry',
+        message: err.message,
+        challengeId: currentChallenge.challengeId,
+        imageId: entry.imageId,
+        engine: judgingEngine.key,
+      });
+    }
+  }
+
+  const deferred = awaitingPlacement.length - placed;
+  if (deferred > 0) {
+    logToAxiom({
+      type: 'warning',
+      name: 'challenge-arrival-placement-deferred',
+      message:
+        'Arrival placement hit the per-tick bound; the rest are placed by the close-time rerun',
+      challengeId: currentChallenge.challengeId,
+      engine: judgingEngine.key,
+      placed,
+      deferred,
+      elapsedMs: Date.now() - tickStartedAt,
+      // Which bound stopped it. `count` on a shallow ladder, `budget` on a deep one — they call for
+      // different responses, and the difference is invisible from the totals alone.
+      bound: placed >= MAX_PLACEMENTS_PER_TICK ? 'count' : 'budget',
+      budgetMs: REVIEW_TICK_BUDGET_MS,
+      lockSeconds: REVIEW_JOB_LOCK_SECONDS,
+    }).catch(() => undefined);
+    log('Deferred arrival placements', { placed, deferred });
+  }
 
   // Reward entry prizes
   // ----------------------------------------------
@@ -1155,6 +1344,49 @@ async function reviewEntriesForChallenge(currentChallenge: DailyChallengeDetails
     }
   }
 
+  // Let the engine do this tick's share of the ranking
+  // ----------------------------------------------
+  // Engines that rank incrementally do their work here rather than at close. The deadline is the
+  // tick budget the arrival loop above already respects, so a slow provider costs this tick's
+  // progress and nothing else — the next tick catches up, because the engine paces against the
+  // challenge clock rather than against how much it managed last time.
+  if (judgingEngine.advance) {
+    try {
+      const advanceStartedAt = Date.now();
+      const calls = await judgingEngine.advance(
+        engineContext,
+        tickStartedAt + REVIEW_TICK_BUDGET_MS
+      );
+      if (calls > 0) log('Engine advanced', judgingEngine.key, calls, 'calls');
+      // Emitted on EVERY tick, including zero-call ones. A tick that did no work is the signal that
+      // pacing is not keeping up with arrivals, and that is invisible if only non-zero ticks report.
+      // ~144 ticks per challenge per day — nothing to query against, and exactly the series worth
+      // having while this is being rolled out.
+      logToAxiom({
+        type: 'info',
+        name: 'challenge-engine-advance',
+        challengeId: currentChallenge.challengeId,
+        engine: judgingEngine.key,
+        calls,
+        elapsedMs: Date.now() - advanceStartedAt,
+        // Wall-clock left when it stopped. Near zero means the DEADLINE bound this tick; a large
+        // remainder means the clock pacing did. They call for different responses, and the totals
+        // alone cannot tell them apart.
+        remainingBudgetMs: tickStartedAt + REVIEW_TICK_BUDGET_MS - Date.now(),
+      });
+    } catch (error) {
+      // A failed advance costs this tick's comparisons. It must not take the review tick with it:
+      // the absolute pass, the entry notes and the reviewedAt stamp below are all still correct.
+      logToAxiom({
+        type: 'error',
+        name: 'challenge-engine-advance',
+        message: (error as Error).message,
+        challengeId: currentChallenge.challengeId,
+        engine: judgingEngine.key,
+      });
+    }
+  }
+
   // Update last review time in Challenge metadata
   // ----------------------------------------------
   if (currentChallenge.challengeId) {
@@ -1195,6 +1427,21 @@ async function logChallengeSpendMetric(challenge: ChallengeDetails) {
 }
 
 /**
+ * A run that has lost its completion claim stops here rather than judging, paying and writing an
+ * outcome alongside the run that took over. Best-effort telemetry; never throws.
+ */
+function logClaimLost(challengeId: number | null, stage: string) {
+  log('Completion claim lost, abandoning run:', { challengeId, stage });
+  logToAxiom({
+    type: 'warning',
+    name: 'challenge-completion-claim-lost',
+    message: 'Completion claim was revoked and re-taken while this run was still executing',
+    challengeId,
+    stage,
+  }).catch(() => undefined);
+}
+
+/**
  * Pick winners for a single challenge.
  *
  * Operation order (race-condition safe):
@@ -1213,9 +1460,11 @@ export async function pickWinnersForChallenge(
 ) {
   log('Picking winners for challenge:', currentChallenge.challengeId);
 
-  // 1. Atomic claim — prevent duplicate processing
-  const claimed = await claimChallengeForCompletion(currentChallenge.challengeId);
-  if (!claimed) {
+  // 1. Atomic claim — prevent duplicate processing. `claimedAt` is the stamp written to
+  // metadata.completingClaimedAt; a later read showing a different stamp means this run's claim was
+  // revoked (resetStuckCompletingChallenges) and re-taken, and this run must stop.
+  const claimedAt = await claimChallengeForCompletion(currentChallenge.challengeId);
+  if (!claimedAt) {
     log('Challenge already claimed for completion, skipping:', currentChallenge.challengeId);
     return;
   }
@@ -1260,11 +1509,13 @@ export async function pickWinnersForChallenge(
               eventId: number | null;
               source: ChallengeSource;
               judgingCategories: unknown;
+              judgingEngine: string | null;
+              metadata: Record<string, unknown> | null;
             }
           | undefined
         ]
       >`
-        SELECT "judgeId", "judgingPrompt", "eventId", "source", "judgingCategories" FROM "Challenge"
+        SELECT "judgeId", "judgingPrompt", "eventId", "source", "judgingCategories", "judgingEngine", "metadata" FROM "Challenge"
         WHERE id = ${currentChallenge.challengeId}
         LIMIT 1
       `;
@@ -1323,12 +1574,16 @@ export async function pickWinnersForChallenge(
       }
 
       // 3. Get judged entries + LLM judgment
+      const judgingEngine = await resolveJudgingEngine(challengeJudgeRow?.judgingEngine);
       const judgedEntries = await getJudgedEntries(
         currentChallenge.collectionId,
         config,
         eventContext,
         challengeJudgeRow?.source ?? ChallengeSource.System,
-        userCategories
+        userCategories,
+        judgingEngine.ranksFullField
+          ? { limit: Infinity, perUserBest: !judgingEngine.dedupesAfterRanking }
+          : undefined
       );
       if (!judgedEntries.length) {
         log('No judged entries for challenge:', currentChallenge.challengeId);
@@ -1339,10 +1594,29 @@ export async function pickWinnersForChallenge(
           await refundUserChallengeFunds(currentChallenge.challengeId);
           log('Refunded user challenge funds (no winners)');
         }
-        await updateChallengeStatus(currentChallenge.challengeId, ChallengeStatus.Completed);
+        const completed = await completeChallengeIfClaimHeld({
+          challengeId: currentChallenge.challengeId,
+          claimedAt,
+        });
+        if (!completed) {
+          logClaimLost(currentChallenge.challengeId, 'zero-entries-completion');
+          return;
+        }
         log('Challenge marked as completed (no entries)');
+        // Emit AFTER the Completed write: the write is what makes this run the one that completed
+        // the challenge, so a run whose write was rejected must not count a completion.
+        recordChallengeCompleted({ source: challengeJudgeRow?.source });
         const freshChallenge = await getChallengeById(currentChallenge.challengeId);
         if (freshChallenge) await logChallengeSpendMetric(freshChallenge);
+        return;
+      }
+
+      // Everything from here on spends (judging calls) and writes an outcome (winner rows, payouts,
+      // status). Judging a production-sized field can outlast the 10-minute claim revocation, so
+      // re-check ownership at the last point where stopping costs nothing — a run that has already
+      // been replaced would otherwise pick a second, different podium.
+      if (!(await challengeClaimStillHeld(currentChallenge.challengeId, claimedAt))) {
+        logClaimLost(currentChallenge.challengeId, 'pre-judging');
         return;
       }
 
@@ -1351,10 +1625,35 @@ export async function pickWinnersForChallenge(
       // generateWinners and award place 1 deterministically instead. judgedEntries.length is
       // already guaranteed >= 1 here (see the empty-entries return above), so "< 2 distinct"
       // can only mean exactly one distinct entrant.
-      const distinctEntrantIds = new Set(judgedEntries.map((entry) => entry.userId));
+      // The engine orders the eligible field. Legacy returns it untouched — and was handed the
+      // same top-N cut it always was — so a challenge on the legacy engine reaches the winner pick
+      // with exactly the list it always did.
+      const engineContext = buildJudgingEngineContext({
+        challengeId: currentChallenge.challengeId,
+        collectionId: currentChallenge.collectionId,
+        theme: currentChallenge.theme,
+        themeElements: parseChallengeMetadata(challengeJudgeRow?.metadata).themeElements,
+        resourceConcept: parseChallengeMetadata(challengeJudgeRow?.metadata).resourceConcept,
+        categories: userCategories,
+      });
+      const ranked = await judgingEngine.rankField(engineContext, judgedEntries);
+      // One entry per user, chosen by the RANKING rather than by the absolute score that the
+      // ranking exists to replace. Applied after rankField so the engine's coverage assertion still
+      // compares against the field it was given. A no-op for legacy, which was handed one entry per
+      // user in the first place.
+      const rankedField = judgingEngine.dedupesAfterRanking
+        ? bestPerUserInRankOrder(ranked)
+        : ranked;
+      // Cut to finalReviewAmount AFTER ranking, not before: the engine ranks the whole field, and
+      // only then is it meaningful to say which entries are the top N. Legacy was already handed
+      // the cut, so this slice is a no-op for it. The full ranking still goes to `selectWinners`,
+      // which draws its own shortlist and would otherwise be capped below its own podium size.
+      const rankedEntries = rankedField.slice(0, config.finalReviewAmount);
+
+      const distinctEntrantIds = new Set(rankedEntries.map((entry) => entry.userId));
 
       if (distinctEntrantIds.size < 2) {
-        const [soleEntry] = judgedEntries;
+        const [soleEntry] = rankedEntries;
         log('Fewer than 2 distinct entrants — awarding place 1 deterministically (no LLM):', {
           challengeId: currentChallenge.challengeId,
           userId: soleEntry.userId,
@@ -1374,7 +1673,7 @@ export async function pickWinnersForChallenge(
         process = 'Deterministic award: fewer than 2 distinct entrants';
         outcome = 'Sole entrant awarded place 1 without LLM judging';
 
-        await createChallengeWinner({
+        const solePersisted = await createChallengeWinner({
           challengeId: currentChallenge.challengeId,
           userId: soleEntry.userId,
           imageId: soleEntry.imageId,
@@ -1383,16 +1682,54 @@ export async function pickWinnersForChallenge(
           pointsAwarded: currentChallenge.prizes[0]?.points ?? 0,
           reason: soleWinnerReason,
         });
+        // Pay the placement that is PERSISTED, not the one just picked — see the reconcile note on
+        // the LLM path below.
+        winningEntries = winningEntries.map((entry) =>
+          reconcileWinnerToPersisted(entry, solePersisted)
+        );
         log('ChallengeWinner record created (deterministic sole-entrant award)');
       } else {
+        // An engine that ranks the field also picks the places from it; `generateWinners` is still
+        // called for the recap it writes, and its own picks are discarded in that case.
+        const engineWinners = await judgingEngine.selectWinners(
+          engineContext,
+          rankedField,
+          currentChallenge.prizes.length
+        );
+
         log('Sending entries for final judgment');
+        // The recap must cover the podium shortlist, not just the top N: an entry ranked
+        // 11-15 winning the round-robin is the stated reason the podium exists, and a recap
+        // that never saw it would describe a challenge somebody else won.
+        const recapEntries = recapField(rankedField, config.finalReviewAmount, judgingEngine);
+        // The podium draws from that same shortlist, so this union is empty today. It is here so
+        // that an engine returning a winner from outside it produces a recap that still has that
+        // entry's summary to write from, instead of prose about a creator it knows nothing about.
+        const recapPool = [
+          ...recapEntries,
+          ...rankedField.filter(
+            (entry) =>
+              engineWinners?.some((winner) => winner.userId === entry.userId) &&
+              !recapEntries.includes(entry)
+          ),
+        ];
         const generated = await generateWinners({
           theme: currentChallenge.theme,
-          entries: judgedEntries.map((entry) => ({
+          entries: recapPool.map((entry) => ({
             creator: entry.username,
             creatorId: entry.userId,
             summary: entry.summary,
             score: entry.score,
+          })),
+          // Hand the engine's places to the recap writer so the prose and the podium describe the
+          // same people. Without this the model picked its own three from the shortlist and the
+          // published recap congratulated entrants who had not placed.
+          decidedWinners: engineWinners?.map((winner, i) => ({
+            creatorId: winner.userId,
+            creator:
+              rankedField.find((entry) => entry.userId === winner.userId)?.username ?? 'unknown',
+            place: i + 1,
+            reason: winner.reason,
           })),
           config: judgingConfig,
         });
@@ -1404,28 +1741,93 @@ export async function pickWinnersForChallenge(
           await incrementOperationSpent(currentChallenge.challengeId, winnersBuzzCost);
         }
 
-        // Map winners to entries by numeric creatorId only. `winner.creator` is the LLM's echo of
-        // the (user-controlled, spoofable) display name — matching on it let a second entrant who
-        // set their name equal to another entrant's name hijack `find`'s first-match semantics and
-        // steal that entrant's payout. judgedEntries is already deduped to one entry per userId
-        // (see getJudgedEntries), so creatorId alone fully disambiguates.
-        winningEntries = generated.winners
-          .map((winner, i) => {
-            const entry = judgedEntries.find((e) => e.userId === winner.creatorId);
-            if (!entry) return null;
-            return {
-              userId: entry.userId,
-              imageId: entry.imageId,
-              position: i + 1,
-              prize: currentChallenge.prizes[i]?.buzz ?? 0,
-              reason: winner.reason,
-            };
-          })
-          .filter(isDefined);
+        if (engineWinners) {
+          // The engine picked from the ranked field, so every place already resolves to a real
+          // entrant — there is nothing to look up and nothing that can go unresolved.
+          winningEntries = engineWinners.map((winner, i) => ({
+            userId: winner.userId,
+            imageId: winner.imageId,
+            position: i + 1,
+            prize: currentChallenge.prizes[i]?.buzz ?? 0,
+            reason: winner.reason,
+          }));
+        } else {
+          // Resolve the LLM's picks to entries by numeric creatorId only, numbering the survivors
+          // 1..n — see `resolveWinnerPicks`. Prize is keyed to the RESOLVED position, not to the
+          // pick's index in the judge's array: they diverge as soon as one pick resolves to
+          // nothing, and place is what the winner row and the payout's transaction id both embed.
+          // `rankedEntries` is the set handed to the model on this path: the legacy engine's
+          // shortlistSize is 0, so recapField collapses to exactly these entries.
+          const { winners: resolvedWinners, unmatched: unmatchedPicks } = resolveWinnerPicks(
+            generated.winners,
+            rankedEntries
+          );
+          winningEntries = resolvedWinners.map((winner) => ({
+            ...winner,
+            prize: currentChallenge.prizes[winner.position - 1]?.buzz ?? 0,
+          }));
 
-        // 4. Create ChallengeWinner records (idempotent via P2002 handling)
+          if (unmatchedPicks.length) {
+            await logToAxiom({
+              type: 'warning',
+              name: 'challenge-winner-unmatched-pick',
+              message: `Winner pick named a creatorId matching no judged entry; that placement was not awarded: challenge=${currentChallenge.challengeId}`,
+              challengeId: currentChallenge.challengeId,
+              unmatchedIndexes: unmatchedPicks.map((pick) => pick.index),
+              unmatchedCreatorIds: unmatchedPicks.map((pick) => String(pick.creatorId)),
+              // Resolved, NOT awarded: the duplicate-creator dedupe below can still drop one of
+              // these, so reading this as "placements paid" would overstate on a pick that both
+              // named an unknown id and repeated a creator.
+              resolvedPlaces: winningEntries.length,
+              pickedPlaces: generated.winners.length,
+            }).catch(() => undefined);
+            recordChallengeWinnerUnmatchedPick({
+              source: challengeJudgeRow?.source ?? ChallengeSource.System,
+              count: unmatchedPicks.length,
+            });
+          }
+        }
+
+        // Nothing above stops the LLM naming the same creator in two slots — "exactly 3 different
+        // winners" is prompt text, and `find()` happily matches the same entry twice — which would
+        // put one creator on two places. That creator has at most one `ChallengeWinner` row to be
+        // paid for, so the extra placement is a duplicate, not a second prize. Dropped HERE, before
+        // the create loop, rather than at the payout: it keeps the duplicate from conflicting
+        // against the row its own twin just inserted, which would otherwise fire the
+        // place-divergence warning and counter for an anomaly that is not a re-pick at all.
+        const { winners: dedupedWinners, dropped: droppedWinners } =
+          dedupeWinnersForPayout(winningEntries);
+        if (droppedWinners.length) {
+          winningEntries = dedupedWinners;
+          await logToAxiom({
+            type: 'warning',
+            name: 'challenge-winner-duplicate-pick',
+            message: `Winner pick named the same creator in more than one place; the extra placements were dropped before payout: challenge=${currentChallenge.challengeId}`,
+            challengeId: currentChallenge.challengeId,
+            droppedUserIds: droppedWinners.map((entry) => entry.userId),
+            droppedPlaces: droppedWinners.map((entry) => entry.position),
+          }).catch(() => undefined);
+          recordChallengeWinnerDuplicatePick({
+            // Defaulted the same way the judging call at ~:1365 defaults it: the judge row is typed
+            // `| undefined`, and letting it fall through to `unknown` would put a caller-side emit
+            // in a bucket that is meant to mean something else.
+            source: challengeJudgeRow?.source ?? ChallengeSource.System,
+            count: droppedWinners.length,
+            origin: 'caller',
+          });
+        }
+
+        // 4. Create ChallengeWinner records, then pay the placement that is PERSISTED rather than
+        // the one just picked. A user already recorded as a winner of this challenge cannot get a
+        // second row — (challengeId, userId) is unique, so the insert conflicts and the stored row
+        // keeps its original place. Paying the freshly-picked place would key the payout to a
+        // different externalTransactionId than the one already settled at the stored place and mint
+        // a second prize (this is the observed duplicate-payout mechanism, and re-picks tend to be
+        // permutations of the same users because the winner cooldown only excludes Completed
+        // challenges, leaving this challenge's own in-flight winners eligible).
+        const reconciledEntries: typeof winningEntries = [];
         for (const entry of winningEntries) {
-          await createChallengeWinner({
+          const persisted = await createChallengeWinner({
             challengeId: currentChallenge.challengeId,
             userId: entry.userId,
             imageId: entry.imageId!, // always non-null on fresh winner path
@@ -1434,7 +1836,9 @@ export async function pickWinnersForChallenge(
             pointsAwarded: currentChallenge.prizes[entry.position - 1]?.points ?? 0,
             reason: entry.reason ?? undefined,
           });
+          reconciledEntries.push(reconcileWinnerToPersisted(entry, persisted));
         }
+        winningEntries = reconciledEntries;
         log('ChallengeWinner records created');
       }
     }
@@ -1443,16 +1847,17 @@ export async function pickWinnersForChallenge(
     // to the recorded ChallengeWinner.buzzAwarded) — indexing prizes[] by array position would
     // overpay when an unmatched LLM winner was filtered out above (place-2 entry at index 0
     // would get place-1 buzz), and on the retry path the array order isn't tied to place at all.
-    await withRetries(() =>
-      createBuzzTransactionMany(
-        buildWinnerPayoutTransactions({
-          challengeId: currentChallenge.challengeId,
-          title: currentChallenge.title,
-          buzzType: winnerBuzzType,
-          winners: winningEntries,
-        })
-      )
-    );
+    // Built OUTSIDE the retry closure. The output is deterministic so a rebuild would not move
+    // money, but the builder increments the duplicate-pick counter on its drop branch, and
+    // `withRetries` re-invokes up to 4 times — which would record 4x the placements actually
+    // dropped on exactly the flaky-payout run where the number matters most.
+    const winnerPayoutTransactions = buildWinnerPayoutTransactions({
+      challengeId: currentChallenge.challengeId,
+      title: currentChallenge.title,
+      buzzType: winnerBuzzType,
+      winners: winningEntries,
+    });
+    await withRetries(() => createBuzzTransactionMany(winnerPayoutTransactions));
     log('Prizes sent');
 
     // 6. Distribute entry participation prizes
@@ -1472,7 +1877,10 @@ export async function pickWinnersForChallenge(
     const challengeRecord = await getChallengeById(currentChallenge.challengeId);
 
     // Partial-winner residual: unfilled prize buzz stays in account 0 by design (spec decision).
-    if (challengeRecord?.source === ChallengeSource.User) {
+    // Emitted for EVERY source. Restricting this to user challenges is how challenge 390 completed a
+    // place short in silence — the daily challenges are the ones whose prize pool is ours, so they
+    // are the last thing that should be exempt from noticing that a prize reached nobody.
+    if (challengeRecord) {
       const totalPrizeBuzz = challengeRecord.prizes.reduce((sum, p) => sum + (p.buzz ?? 0), 0);
       const distributedPrizeBuzz = winningEntries.reduce((sum, e) => sum + e.prize, 0);
       const residualBuzz = totalPrizeBuzz - distributedPrizeBuzz;
@@ -1480,8 +1888,9 @@ export async function pickWinnersForChallenge(
         await logToAxiom({
           type: 'info',
           name: 'challenge-partial-winner-residual',
-          message: 'User challenge completed with fewer winners than prize places; buzz not paid out',
+          message: 'Challenge completed with fewer winners than prize places; buzz not paid out',
           challengeId: currentChallenge.challengeId,
+          source: challengeRecord.source,
           residualBuzz,
           winnersCount: winningEntries.length,
           prizePlaces: challengeRecord.prizes.length,
@@ -1490,30 +1899,54 @@ export async function pickWinnersForChallenge(
     }
 
     const existingMetadata = parseChallengeMetadata(challengeRecord?.metadata);
-    await dbWrite.challenge.update({
-      where: { id: currentChallenge.challengeId },
-      data: {
-        metadata: {
-          ...existingMetadata,
-          completionSummary: {
-            judgingProcess: process,
-            outcome: outcome,
-            completedAt: new Date().toISOString(),
-          },
-          reconciliation: {
-            ...(existingMetadata.reconciliation ?? {}),
-            paidUserIds: Array.from(
-              new Set([
-                ...(existingMetadata.reconciliation?.paidUserIds ?? []),
-                ...paidParticipants,
-              ])
-            ),
-          },
+    const completed = await completeChallengeIfClaimHeld({
+      challengeId: currentChallenge.challengeId,
+      claimedAt,
+      metadata: {
+        ...existingMetadata,
+        completionSummary: {
+          judgingProcess: process,
+          outcome: outcome,
+          completedAt: new Date().toISOString(),
         },
-        status: ChallengeStatus.Completed,
-      },
+        reconciliation: {
+          ...(existingMetadata.reconciliation ?? {}),
+          paidUserIds: Array.from(
+            new Set([...(existingMetadata.reconciliation?.paidUserIds ?? []), ...paidParticipants])
+          ),
+        },
+      } as unknown as Prisma.InputJsonValue,
     });
+    if (!completed) {
+      // Winners and payouts this run already wrote stay behind — partial state left by an aborted
+      // run is #3842, not this guard's job. What stops here is everything that would announce or
+      // count an outcome this run no longer owns.
+      logClaimLost(currentChallenge.challengeId, 'winners-completion');
+      return;
+    }
     log('Challenge status updated to Completed');
+
+    // Telemetry: emitted AFTER the Completed write, deliberately NOT next to the payout above.
+    // The payout is retry-safe by deterministic externalTransactionId, so a run that pays prizes
+    // and then crashes before this write is reset Completing -> Active and re-enters via the
+    // `existingWinners` branch, which re-issues the same (already-settled) payout. An emit at the
+    // payout site would count that Buzz twice.
+    //
+    // Amount mirrors endChallengeAndPickWinners: the sum of the prizes SUBMITTED for the winners
+    // paid on this completion (equal to each ChallengeWinner.buzzAwarded), not the configured prize
+    // table — a partial-winner completion pays less and must report less. Note this is prize Buzz
+    // ATTEMPTED, not confirmed-settled: `createBuzzTransactionMany` silently drops any non-success,
+    // non-conflict result (e.g. insufficientFunds) from both of its result arrays, so a leg that did
+    // not move money is invisible here and is still counted. `winnerBuzzType` is the currency
+    // buildWinnerPayoutTransactions actually paid in, and `challengeRecord` is already in scope —
+    // neither needs a new query.
+    recordChallengeCompleted({ source: challengeRecord?.source });
+    recordChallengePrizePaidBuzz({
+      source: challengeRecord?.source,
+      buzzType: winnerBuzzType,
+      amount: winningEntries.reduce((sum, e) => sum + (e.prize ?? 0), 0),
+    });
+
     if (challengeRecord) await logChallengeSpendMetric(challengeRecord);
 
     // 8. Send notifications to winners (non-critical, last)
@@ -1671,8 +2104,14 @@ async function duplicateImage(imageId: number, userId: number) {
   return newImage[0].id;
 }
 
-export async function getCoverOfModel(modelId: number) {
-  const [image] = await dbRead.$queryRaw<{ id: number; url: string }[]>`
+/**
+ * The model's SFW showcase images, best-first by the same ordering the cover has always used.
+ *
+ * One image was never enough to tell the concept step what a resource depicts: TagineXL's first
+ * showcase image is a closed tagine with no food in frame, which reads as generic cookware.
+ */
+export async function getShowcaseImagesOfModel(modelId: number, limit = 1) {
+  const images = await dbRead.$queryRaw<{ id: number; url: string }[]>`
     SELECT
       i.id, i."url"
     FROM "Image" i
@@ -1683,10 +2122,17 @@ export async function getCoverOfModel(modelId: number) {
     AND p."userId" = m."userId"
     AND i."nsfwLevel" = 1
     ORDER BY mv.index, p.id, i.index
-    LIMIT 1;
+    LIMIT ${limit};
   `;
-  if (!image) throw new Error('Failed to get cover image');
-  image.url = getEdgeUrl(image.url, { width: 1200, name: 'cover' });
+  if (!images.length) throw new Error(`No SFW showcase image found for model ${modelId}`);
+  return images.map((image) => ({
+    ...image,
+    url: getEdgeUrl(image.url, { width: 1200, name: 'cover' }),
+  }));
+}
+
+export async function getCoverOfModel(modelId: number) {
+  const [image] = await getShowcaseImagesOfModel(modelId, 1);
   return image;
 }
 
@@ -1695,67 +2141,44 @@ export async function getJudgedEntries(
   config: ChallengeConfig,
   eventContext?: EventContext,
   source: ChallengeSource = ChallengeSource.System,
-  categories?: ChallengeJudgingCategory[]
+  categories?: ChallengeJudgingCategory[],
+  // Defaults to the historical cut at config.finalReviewAmount. An engine that ranks by
+  // comparison passes Infinity so the absolute score (and its random tiebreak) does not decide
+  // which entries are eligible to be ranked.
+  //
+  // `perUserBest: false` additionally keeps EVERY entry rather than one per user, for an engine
+  // that picks each user's representative from its own ranking instead. Both default to the
+  // historical behaviour; legacy passes neither.
+  options?: { limit?: number; perUserBest?: boolean }
 ) {
-  // Challenges scored against creator-defined category labels (any challenge that stored
-  // judgingCategories — see the callers) can't use the fixed
-  // theme/aesthetic/humor/wittiness SQL ordering below — rank those in JS instead (see the
-  // branch after the winner-cooldown filter). The caller already resolved whether categories
-  // apply (including the fixed-schema fallback for malformed values), so route on their
-  // presence alone rather than re-checking source here.
-  const useWeightedCategories = !!categories?.length;
+  // A challenge with no usable stored rubric (only a malformed value now that every challenge is
+  // seeded) is ranked by the same fixed split the judge scored it against.
+  const rubric = categories?.length ? categories : FIXED_JUDGING_CATEGORIES;
 
-  // Get each user's BEST entry only (by AI score), so users with many entries
-  // don't have an advantage over users with fewer entries
-  const userBestEntries = useWeightedCategories
-    ? await dbRead.$queryRaw<JudgedEntry[]>`
-        SELECT
-          ci."imageId",
-          i."userId",
-          u."username",
-          ci.note
-        FROM "CollectionItem" ci
-        JOIN "Image" i ON i.id = ci."imageId"
-        JOIN "User" u ON u.id = i."userId"
-        WHERE ci."collectionId" = ${collectionId}
-        AND ci."tagId" = ${config.judgedTagId}
-        AND ci.note IS NOT NULL
-        AND ci.status = 'ACCEPTED'
-      `
-    : await dbRead.$queryRaw<JudgedEntry[]>`
-        WITH ranked AS (
-          SELECT
-            ci."imageId",
-            i."userId",
-            u."username",
-            ci.note,
-            ROW_NUMBER() OVER (
-              PARTITION BY i."userId"
-              ORDER BY (
-                (ci.note::json->'score'->>'theme')::float * ${SCORE_WEIGHTS.theme} +
-                (ci.note::json->'score'->>'aesthetic')::float * ${SCORE_WEIGHTS.aesthetic} +
-                (ci.note::json->'score'->>'humor')::float * ${SCORE_WEIGHTS.humor} +
-                (ci.note::json->'score'->>'wittiness')::float * ${SCORE_WEIGHTS.wittiness}
-              ) DESC
-            ) as rn
-          FROM "CollectionItem" ci
-          JOIN "Image" i ON i.id = ci."imageId"
-          JOIN "User" u ON u.id = i."userId"
-          WHERE ci."collectionId" = ${collectionId}
-          AND ci."tagId" = ${config.judgedTagId}
-          AND ci.note IS NOT NULL
-          AND ci.status = 'ACCEPTED'
-        )
-        SELECT "imageId", "userId", username, note
-        FROM ranked
-        WHERE rn = 1
-      `;
+  // Every judged entry — the per-user best is picked below, after the theme gate has had a chance
+  // to drop disqualified entries, so a user whose top entry is gated falls through to their next.
+  const userBestEntries = await dbRead.$queryRaw<JudgedEntry[]>`
+    SELECT
+      ci."imageId",
+      i."userId",
+      u."username",
+      ci.note
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    JOIN "User" u ON u.id = i."userId"
+    WHERE ci."collectionId" = ${collectionId}
+    AND ci."tagId" = ${config.judgedTagId}
+    AND ci.note IS NOT NULL
+    AND ci.status = 'ACCEPTED'
+  `;
   log('Users with judged entries:', userBestEntries?.length);
   if (!userBestEntries.length) {
     return [];
   }
 
-  // Exclude users who won a challenge within the cooldown period, scoped by event
+  // Exclude users who won a challenge within the cooldown period, scoped by event. Wins in a user
+  // challenge are excluded from the lookback for the same reason user challenges skip the cooldown
+  // below: the two prize pools are independent in both directions.
   let recentWinnerIds = new Set<number>();
   if (source === ChallengeSource.User) {
     // Paid user challenges never apply the winner cooldown — a recent daily-challenge win
@@ -1782,6 +2205,7 @@ export async function getJudgedEntries(
       JOIN "Challenge" c ON c.id = cw."challengeId"
       WHERE cw."createdAt" > now() - ${cooldownInterval}::interval
         AND c.status = 'Completed'
+        AND c."source" <> 'User'
         ${eventCondition}
     `;
     recentWinnerIds = new Set(recentWinners.map((w) => w.userId));
@@ -1793,6 +2217,7 @@ export async function getJudgedEntries(
       JOIN "Challenge" c ON c.id = cw."challengeId"
       WHERE cw."createdAt" > now() - ${config.winnerCooldown}::interval
         AND c.status = 'Completed'
+        AND c."source" <> 'User'
     `;
     recentWinnerIds = new Set(recentWinners.map((w) => w.userId));
   }
@@ -1813,18 +2238,16 @@ export async function getJudgedEntries(
     cooldown: cooldownSource,
   });
 
-  if (useWeightedCategories) {
-    // categories is non-empty here (useWeightedCategories guard above)
-    const cats = categories!;
-    const ranked = eligibleEntries
-      .map(({ note, ...entry }) => {
-        const { score, summary } = JSON.parse(note);
-        const weightedRating = calculateWeightedCategoryScore(score, cats);
-        return { ...entry, summary, score, weightedRating };
-      })
-      .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
+  const ranked = eligibleEntries
+    .map(({ note, ...entry }) => {
+      const { score, summary } = JSON.parse(note);
+      const weightedRating = calculateWeightedCategoryScore(score, rubric);
+      return { ...entry, summary, score, weightedRating };
+    })
+    .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
 
-    // Best entry per user (entries aren't deduped in SQL for this path)
+  let candidates = ranked;
+  if (options?.perUserBest !== false) {
     const bestPerUser = new Map<number, (typeof ranked)[number]>();
     for (const entry of ranked) {
       const current = bestPerUser.get(entry.userId);
@@ -1832,24 +2255,14 @@ export async function getJudgedEntries(
         bestPerUser.set(entry.userId, entry);
       }
     }
-
-    return [...bestPerUser.values()]
-      .sort((a, b) => b.weightedRating - a.weightedRating)
-      .slice(0, config.finalReviewAmount);
+    candidates = [...bestPerUser.values()];
   }
 
-  // Rank entries by weighted AI judge score with theme gate rules
-  const judgedEntries = eligibleEntries
-    .map(({ note, ...entry }) => {
-      const { score, summary } = JSON.parse(note);
-      const weightedRating = calculateWeightedScore(score);
-      return { ...entry, summary, score, weightedRating };
-    })
-    .filter((e): e is typeof e & { weightedRating: number } => e.weightedRating !== null);
-  judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5);
-
-  // Take top entries for final judgment (already one per user from the query)
-  return judgedEntries.slice(0, config.finalReviewAmount);
+  // Ties are shuffled rather than resolved by query order — entries scored 0-10 on a handful of
+  // categories tie often, and the tied set is what gets cut at finalReviewAmount.
+  return candidates
+    .sort((a, b) => b.weightedRating - a.weightedRating || Math.random() - 0.5)
+    .slice(0, options?.limit ?? config.finalReviewAmount);
 }
 
 // Types

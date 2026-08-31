@@ -1,12 +1,13 @@
 // import { generateJSON } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { renderToReactElement } from '@tiptap/static-renderer';
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import { TextStyleKit } from '@tiptap/extension-text-style';
 import ImageExtension from '@tiptap/extension-image';
 import { ConsentBlockedEmbed } from '~/components/Consent/ConsentBlockedEmbed';
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { EdgeMediaComponent } from '~/components/TipTap/EdgeMediaNode';
 import classes from './RichTextEditorComponent.module.scss';
 import { CustomHeading } from '~/shared/tiptap/custom-heading.node';
@@ -17,6 +18,9 @@ import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { TimestampNode } from '~/shared/tiptap/timestamp.node';
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
+import { MentionHoverCard } from '~/components/UserAvatar/MentionHoverCard';
+import { BlurbNode } from '~/shared/tiptap/blurb.node';
+import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
 
 const extensions = [
   StarterKit.configure({ heading: false }),
@@ -29,35 +33,72 @@ const extensions = [
   MentionNode,
   StrawPollNode,
   TimestampNode,
+  BlurbNode,
 ];
 
-export function RenderRichText({ content }: { content: Record<string, any> }) {
+export function RenderRichText({
+  content,
+  fallbackHtml,
+}: {
+  content: Record<string, any>;
+  fallbackHtml?: string;
+}) {
   const { allowed } = useThirdPartyConsent();
+  const contentRef = useRef<HTMLDivElement>(null);
   const memoized = useMemo(() => {
-    return renderToReactElement({
-      content,
-      extensions,
-      options: {
-        nodeMapping: {
-          media: ({ node }) => <EdgeMediaComponent {...(node.attrs as any)} />,
-          timestamp: ({ node }) => (
-            <LocalTimestamp value={node.attrs.value} style={node.attrs.style} />
-          ),
-          // For unconsented CA visitors, replace third-party embed nodes with a
-          // placeholder so the iframe is never inserted in the DOM.
-          ...(!allowed && {
-            youtube: () => <ConsentBlockedEmbed kind="youtube" />,
-            instagram: () => <ConsentBlockedEmbed kind="instagram" />,
-            strawPoll: () => <ConsentBlockedEmbed kind="strawpoll" />,
-          }),
+    try {
+      const el = renderToReactElement({
+        content,
+        extensions,
+        options: {
+          nodeMapping: {
+            media: ({ node }) => <EdgeMediaComponent {...(node.attrs as any)} />,
+            timestamp: ({ node }) => (
+              <LocalTimestamp value={node.attrs.value} style={node.attrs.style} />
+            ),
+            // The static renderer's default output puts `node.attrs.text` in as an escaped text
+            // child, but it's markup (bold/italic/link/code) meant to render as such. The string
+            // comes out of the stored article body, which the fan-out writes via raw SQL rather
+            // than zod, so this pass — not an assumed upstream one — is what makes injecting it as
+            // markup safe. The save gate and the splice apply the same allowlist; this is the
+            // third and last place it has to hold.
+            blurb: ({ node }) => (
+              <div
+                data-type="blurb"
+                data-id={node.attrs.id}
+                dangerouslySetInnerHTML={{
+                  __html: sanitizeBlurbInterior(node.attrs.text ?? ''),
+                }}
+              />
+            ),
+            // For unconsented CA visitors, replace third-party embed nodes with a
+            // placeholder so the iframe is never inserted in the DOM.
+            ...(!allowed && {
+              youtube: () => <ConsentBlockedEmbed kind="youtube" />,
+              instagram: () => <ConsentBlockedEmbed kind="instagram" />,
+              strawPoll: () => <ConsentBlockedEmbed kind="strawpoll" />,
+            }),
+          },
         },
-      },
-    });
+      });
+      // The flag is load-bearing: a legitimate doc can render to `null`, so the element
+      // alone can't distinguish "rendered empty" from "threw".
+      return { ok: true as const, el };
+    } catch {
+      // A node or mark type outside `extensions` throws while the doc is built, before
+      // `nodeMapping` is ever consulted — so an extra mapping entry cannot absorb it, and
+      // with no ErrorBoundary in the tree it blanks the whole page. `extensions` is kept in
+      // sync with `tiptapExtensions` by hand, so treat drift as reachable.
+      return { ok: false as const };
+    }
   }, [content, allowed]);
+
+  if (!memoized.ok) return fallbackHtml ? <RenderHtml html={fallbackHtml} /> : null;
 
   return (
     <TypographyStylesWrapper className={classes.htmlRenderer}>
-      <div>{memoized}</div>
+      <div ref={contentRef}>{memoized.el}</div>
+      <MentionHoverCard containerRef={contentRef} />
     </TypographyStylesWrapper>
   );
 }

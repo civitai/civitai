@@ -30,7 +30,7 @@ import {
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
-import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+import { booleanString, commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 
 const licensingSchema = z.object({
@@ -100,16 +100,28 @@ export const getAllModelsSchema = z.object({
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))
     .optional(),
-  favorites: z.coerce.boolean().optional().default(false),
-  hidden: z.coerce.boolean().optional().default(false),
-  needsReview: z.coerce.boolean().optional(),
-  earlyAccess: z.coerce.boolean().optional(),
+  // The query-string booleans — `favorites` through `archived` below — are booleanString(),
+  // never z.coerce.boolean(): /api/v1/models parses this schema against raw req.query, where
+  // coerce runs JS Boolean() and makes `=false` true. This does NOT describe the whole object:
+  // `pending`, `disablePoi`, `disableMinor`, `isFeatured`, `poiOnly`, `minorOnly` and the
+  // spread-in `allow*` fields are plain z.boolean() on purpose — they reject a string outright,
+  // so the endpoint 400s rather than returning the wrong set.
+  favorites: booleanString().optional().default(false),
+  hidden: booleanString().optional().default(false),
+  needsReview: booleanString().optional(),
+  earlyAccess: booleanString().optional(),
+  paidAccess: booleanString().optional(),
+  /** Models with a live scheduled sale on a permanent paid-access version. */
+  onSale: booleanString().optional(),
   ids: commaDelimitedNumberArray().optional(),
   modelVersionIds: commaDelimitedNumberArray().optional(),
-  supportsGeneration: z.coerce.boolean().optional(),
-  fromPlatform: z.coerce.boolean().optional(),
-  followed: z.coerce.boolean().optional(),
-  archived: z.coerce.boolean().optional(),
+  supportsGeneration: booleanString().optional(),
+  fromPlatform: booleanString().optional(),
+  followed: booleanString().optional(),
+  // Restrict to creators currently on the "new & upcoming" board. Server resolves
+  // the board from this flag plus the request domain; the client sends no user list.
+  newCreators: booleanString().optional(),
+  archived: booleanString().optional(),
   collectionId: z.number().optional(),
   collectionItemStatus: z.array(z.enum(CollectionItemStatus)).optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
@@ -126,6 +138,15 @@ export const getAllModelsSchema = z.object({
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
 export type GetAllModelsOutput = z.infer<typeof getAllModelsSchema>;
+
+/** Query contract for /api/v1/models, which parses it off `req.query` where every value is a string. */
+export const modelsEndpointSchema = getAllModelsSchema.extend({
+  limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).default(100),
+  nsfw: booleanString().optional(),
+  primaryFileOnly: booleanString().optional(),
+  favorites: booleanString().optional().default(false),
+  hidden: booleanString().optional().default(false),
+});
 
 export type ModelInput = z.infer<typeof modelSchema>;
 export const modelSchema = licensingSchema.extend({
@@ -154,6 +175,13 @@ export const mergePermissionInput = licensingSchema.extend({
 
 export const deleteModelSchema = getByIdSchema.extend({ permanently: z.boolean().optional() });
 export type DeleteModelSchema = z.infer<typeof deleteModelSchema>;
+
+export const templateOmittableFields = ['description', 'tags'] as const;
+export type TemplateOmittableField = (typeof templateOmittableFields)[number];
+export const getModelTemplateFieldsSchema = getByIdSchema.extend({
+  omit: z.array(z.enum(templateOmittableFields)).optional(),
+});
+export type GetModelTemplateFieldsInput = z.infer<typeof getModelTemplateFieldsSchema>;
 
 export const getDownloadSchema = z.object({
   modelId: z.coerce.number(),
@@ -188,7 +216,7 @@ export const modelUpsertSchema = z.object({
   ...licensingSchema.shape,
   id: z.coerce.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
-  description: getSanitizedStringSchema().nullish(),
+  description: getSanitizedStringSchema({ allowBlurbs: true }).nullish(),
   type: z.enum(ModelType),
   uploadType: z.enum(ModelUploadType),
   status: z.enum(ModelStatus),
@@ -245,6 +273,19 @@ export const unpublishModelSchema = z.object({
   id: z.number(),
   reason: z.custom<UnpublishReason>((x) => UnpublishReasons.includes(x as string)).optional(),
   customMessage: z.string().optional(),
+  // Owner's explicit consent to refund all active early access purchases (debited from their
+  // account) as part of unpublishing. Ignored for moderator unpublishes.
+  refundEarlyAccess: z.boolean().optional(),
+  // What the confirm dialog priced, echoed back so the server can refuse when the world moved
+  // underneath it. `refundEarlyAccess: true` is a yes with no ceiling on its own: a sibling going
+  // down between the dialog's read and the mutation widens an unpublish from one version to a whole
+  // model and can debit the owner more Buzz than the figure they agreed to.
+  expected: z
+    .object({
+      scope: z.enum(['model', 'version']),
+      totalBuzz: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 
 export type ToggleModelLockInput = z.infer<typeof toggleModelLockSchema>;
@@ -255,6 +296,19 @@ export const toggleModelLockSchema = z.object({
 
 export type SetModelMinorInput = z.infer<typeof setModelMinorSchema>;
 export const setModelMinorSchema = z.object({ id: z.number(), minor: z.boolean() });
+
+export type MinorFlagSnapshot = {
+  at: string;
+  source: 'auto' | 'manual';
+  confirmedFrom?: 'auto' | 'manual';
+  confirmedAt?: string;
+  confirmedBy?: number;
+  prevNsfw?: boolean;
+  prevSfwOnly?: boolean;
+  prevGalleryLevel?: number | null;
+  prevLockedProperties?: string[];
+  prevMinorImageIds?: number[];
+};
 
 export type ModelMeta = Partial<{
   unpublishedReason: UnpublishReason;
@@ -275,6 +329,28 @@ export type ModelMeta = Partial<{
   commentsLocked: boolean;
   profanityMatches: string[];
   profanityEvaluation: Pick<ProfanityEvaluation, 'reason' | 'metrics'>;
+  /**
+   * XGuard text-moderation forensics. Surfaced to moderators through
+   * `getModelModerationDetail`; stripped from every client-facing path by
+   * `stripMinorHashMeta`. Sibling of `profanity`, not a replacement — a moderator
+   * looking at an older model needs to know which detector produced the finding.
+   *
+   * Scores rather than matched terms, because that is what these policies return:
+   * the labels v1 acts on are LLM-scored (they come back with `topToken` /
+   * `policyHash` and no `matchedTerms` key at all), so a term list would be
+   * permanently empty. `matchedTerms` is kept for the keyword-backed policies that
+   * do populate it, and is empty for the rest.
+   */
+  textModeration: {
+    /** The labels that triggered, with the score and threshold behind each. */
+    labels: { label: string; score: number; threshold: number }[];
+    matchedTerms: string[];
+    scannedAt: string;
+  };
+  minorFlagSnapshot: MinorFlagSnapshot;
+  minorHashDismissed: { at: string; by: number };
+  minorHashCleared: { at: string };
+  minorHashAccepted: { at: string };
   // Creator Controls: hide public metrics (only while the owner has a valid
   // Creator Program membership — see server/utils/model-metric-privacy.ts).
   hideBuzz: boolean;
@@ -429,17 +505,6 @@ export const migrateResourceToCollectionSchema = z.object({
   collectionName: z.string().optional(),
 });
 
-export type IngestModelInput = z.input<typeof ingestModelSchema>;
-export const ingestModelSchema = z.object({
-  id: z.number(),
-  name: z.string(),
-  description: z.coerce.string(),
-  poi: z.coerce.boolean(),
-  nsfw: z.coerce.boolean(),
-  minor: z.coerce.boolean(),
-  sfwOnly: z.coerce.boolean(),
-});
-
 export type LimitOnly = z.input<typeof limitOnly>;
 export const limitOnly = z.object({
   take: z.number().optional(),
@@ -455,15 +520,6 @@ export type PublishPrivateModelInput = z.infer<typeof publishPrivateModelSchema>
 export const publishPrivateModelSchema = z.object({
   modelId: z.number(),
   publishVersions: z.boolean(),
-});
-
-export type GetTrainingModerationFeedSchema = z.infer<typeof getTrainingModerationFeedSchema>;
-export const getTrainingModerationFeedSchema = infiniteQuerySchema.extend({
-  username: z.string().optional(),
-  dateFrom: z.date().optional(),
-  dateTo: z.date().optional(),
-  cannotPublish: z.boolean().optional(),
-  workflowId: z.string().optional(),
 });
 
 // Training models list schema with filtering and sorting

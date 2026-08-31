@@ -13,7 +13,7 @@ import * as z from 'zod';
  * of truth — the CHECK constraint in the migration `.sql` is the DB-layer mirror).
  *
  * The reason / status tuples MUST match the CHECK constraints applied in
- * `prisma/migrations/20260706120050_w13_p3b_app_listing_reports/migration.sql`:
+ * `packages/civitai-db-schema/prisma/migrations/20260706120050_w13_p3b_app_listing_reports/migration.sql`:
  *   reason IN (impersonation, phishing-malware, broken, inappropriate, spam, other)
  *   status IN (pending, resolved, dismissed)
  * A drift here would let the proc write a value the DB rejects (23514). A unit
@@ -77,9 +77,10 @@ export type ListListingReportsInput = z.infer<typeof listListingReportsSchema>;
  * `20260706120100_w13_p3b_app_listing_moderation_events`; the last three
  * (`reset-to-pending`/`owner-unpublish`/`owner-republish`) are added by the W13
  * post-approval-mgmt widen `20260713120000_w13_post_approval_mod_actions` (a strict
- * superset — additive DROP+ADD CHECK). A drift here would let a proc write an
- * `action` the DB rejects (23514). The action-agreement unit test pins this tuple
- * against the LATEST action-CHECK migration's IN-list.
+ * superset — additive DROP+ADD CHECK), and `message-owner` by
+ * `20260824120000_app_listing_mod_action_message_owner`. A drift here would let a proc
+ * write an `action` the DB rejects (23514). The action-agreement unit test pins this
+ * tuple against the LATEST action-CHECK migration's IN-list.
  *
  * NOTE the hyphen form (`report-resolve`/`report-dismiss`/`reset-to-pending`/
  * `owner-unpublish`/`owner-republish`) — it matches the shipped/widened migration
@@ -96,6 +97,12 @@ export const APP_LISTING_MODERATION_ACTIONS = [
   'reset-to-pending',
   'owner-unpublish',
   'owner-republish',
+  // Moderator → app-developer messaging. The ONE action here that changes NO state:
+  // it records that a moderator sent the app's owner a free-text message, with the
+  // subject in `reason` and the body in `detail`. It is in this taxonomy rather than a
+  // table of its own because it is a moderator action against a listing, attributable
+  // to an actor and reviewable in the same history — which is all a message needs.
+  'message-owner',
 ] as const;
 export type AppListingModerationAction = (typeof APP_LISTING_MODERATION_ACTIONS)[number];
 

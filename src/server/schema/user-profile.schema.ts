@@ -27,6 +27,7 @@ export const ProfileSectionTypeDef = {
   ImagesOverview: 'imagesOverview',
   RecentReviews: 'recentReviews',
   Shop: 'shop',
+  OnSale: 'onSale',
 } as const;
 
 export type ProfileSectionType = (typeof ProfileSectionTypeDef)[keyof typeof ProfileSectionTypeDef];
@@ -71,6 +72,11 @@ export const userProfileUpdateSchema = z.object({
   // profileImage: z.string().nullish(),
   // profilePicture: profilePictureSchema.nullish(),
   coverImage: imageSchema.nullish(),
+  // SFW (civitai.com) overrides. `null` clears the override and re-inherits the
+  // field above; an empty string is a deliberate blank on the green domain.
+  sfwMessage: z.string().nullish(),
+  sfwBio: z.string().nullish(),
+  sfwCoverImage: imageSchema.nullish(),
   socialLinks: z
     .array(
       z.object({

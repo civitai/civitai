@@ -7,22 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * 60s TTL, keyed by the goal's modelVersionId (and only when the goal is tied to a version).
  */
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findUnique: vi.fn(),
-    findUniqueOrThrow: vi.fn(),
-    findFirst: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-  });
-  return {
-    mockDbRead: { modelVersion: mk() },
-    mockDbWrite: { donationGoal: mk(), $queryRaw: vi.fn(), $executeRaw: vi.fn() },
-  };
-});
 const {
   mockDonationGoalsBust,
-  mockLogToAxiom,
   mockBustMvCache,
   mockDataForModelsRefresh,
   mockUpdateEaDeadline,
@@ -31,7 +17,6 @@ const {
   mockEndPaidAccessNow,
 } = vi.hoisted(() => ({
   mockDonationGoalsBust: vi.fn(),
-  mockLogToAxiom: vi.fn(),
   mockBustMvCache: vi.fn(),
   mockDataForModelsRefresh: vi.fn(),
   mockUpdateEaDeadline: vi.fn(),
@@ -40,7 +25,6 @@ const {
   mockEndPaidAccessNow: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: mockDataForModelsRefresh },
   modelVersionPublicDonationGoalsCache: { bust: mockDonationGoalsBust },
@@ -53,14 +37,20 @@ vi.mock('~/server/services/model-version.service', () => ({ bustMvCache: mockBus
 vi.mock('~/server/services/model.service', () => ({
   queueModelEarlyAccessReindex: mockUpdateEaDeadline,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
+
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: mockGetPaidAccess,
   bustPaidAccessCache: mockBustPaidAccess,
   endPaidAccessNow: mockEndPaidAccessNow,
+  bustModelSaleCache: vi.fn(),
 }));
 
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 const goal = (over: Record<string, unknown> = {}) => ({
   id: 10,

@@ -1,0 +1,74 @@
+/* The ordered reveal: stickers arriving oldest-first rather than all at once.
+   Deliberately NOT in sticker-treatments.module.scss. That file holds treatment
+   animations and is grepped wholesale by sticker-treatments.test.ts for the
+   pending look — fading is exactly what the guard is watching for, and putting
+   this there would mean either a failing test or a weakened one. */
+
+@keyframes placementAppear {
+  from {
+    opacity: 0;
+    /* Animated alongside the fade, and load-bearing rather than decorative.
+       Opacity does not affect hit-testing, so a sticker waiting its turn was an
+       invisible target you could still hover — and for a pending placement,
+       whose approve/decline is in the same held state, an invisible button you
+       could still click. Visibility animates discretely: it holds `hidden`
+       through the delay and flips at the animation's first frame, which is the
+       one moment the sticker becomes visible. */
+    visibility: hidden;
+  }
+  to {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
+/* Opacity only: this element carries the placement's own transform, so anything
+   animating transform here moves the sticker off its spot. Keeping it off the
+   treatment also keeps the reveal independent of which treatment is in play —
+   four of the five draw no animation at all, and the ordered reveal is not a
+   treatment option. */
+.appear {
+  animation: placementAppear 220ms ease-out var(--sticker-delay, 0ms) both;
+}
+
+/* The state before the reveal is allowed to start.
+   A surface that staggers wears this from its FIRST paint, because the reveal
+   arms on intersection and that cannot happen before a frame has been painted:
+   without it the stickers draw at full opacity, then the animation's backwards
+   fill blanks them, and the reveal reads as a blink. Only ever paired with a
+   later `.appear` — nothing else removes it. */
+.hold {
+  opacity: 0;
+  /* Not opacity alone: an unarmed sticker must not be clickable either. */
+  visibility: hidden;
+}
+
+@keyframes placementStepProgress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Runs for exactly as long as the wait for the next sticker.
+   A replay of a history with long gaps in it is mostly waiting, and waiting is
+   indistinguishable from nothing happening — which is what it looked like. The
+   bar is the only thing that says the pause is deliberate. Driven by an inline
+   `animation-duration` per step, and keyed on the step so it restarts. */
+.stepProgress {
+  animation: placementStepProgress linear both;
+  transform-origin: left;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The stagger IS the motion here — a sticker held back for two seconds is
+     movement on the page whether or not anything eases. `!important` because
+     the delay arrives as an inline custom property, which this would otherwise
+     lose to. */
+  .appear {
+    animation: placementAppear 1ms both;
+    animation-delay: 0ms !important;
+  }
+}

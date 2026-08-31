@@ -36,6 +36,7 @@ import {
 import { getWorkflowsForEcosystem } from '~/shared/data-graph/generation/config/workflows';
 import type { GateItemState } from '~/shared/data-graph/generation/gates';
 import { useEcosystemGroupPreferencesStore } from '~/store/ecosystem-group-preferences.store';
+import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
 
 // Badge + default tooltip per shown-but-disabled state. A rule's `message`
 // (when present) overrides only the tooltip copy, layered on the same badge.
@@ -346,10 +347,11 @@ function BaseModelListContent({
           !isDisabled && !item.compatible && 'opacity-60'
         )}
       >
-        <div className="flex-1">
+        <div className="flex flex-1 items-center gap-1.5">
           <Text size="sm" fw={isSelected ? 600 : 400}>
             {item.name}
           </Text>
+          <ExperimentalFlask target={{ kind: 'ecosystem', key: disabledCheckKey }} size={16} />
         </div>
         {badge ? (
           <Badge size="xs" color={badge.color} variant="light">

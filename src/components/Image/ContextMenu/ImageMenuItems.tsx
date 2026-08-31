@@ -33,6 +33,11 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { useToggleImageFlag } from '~/components/Image/hooks/useToggleImageFlag';
 import { useImageContextMenuContext } from '~/components/Image/ContextMenu/ImageContextMenuProvider';
 import { useImageContext } from '~/components/Image/ImageProvider';
+import {
+  moderatorBulkImageManagerPath,
+  moderatorImageLookupPath,
+} from '~/shared/constants/moderator-app';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 export type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
@@ -179,6 +184,16 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
       {isModerator && (
         <>
           <Menu.Label>Moderator</Menu.Label>
+          <ModeratorLookupMenuItem path={moderatorImageLookupPath(imageId)}>
+            Lookup Image
+          </ModeratorLookupMenuItem>
+          {/* The post, not just this image: a report about one image is usually about the drop it
+              came in, and Bulk Image Manager is the only view of a post as a whole. */}
+          {postId && (
+            <ModeratorLookupMenuItem path={moderatorBulkImageManagerPath('post', postId)}>
+              Lookup Post
+            </ModeratorLookupMenuItem>
+          )}
           <Menu.Item
             leftSection={<IconBan size={14} stroke={1.5} />}
             onClick={() => reportTos({ imageId })}

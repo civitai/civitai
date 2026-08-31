@@ -37,7 +37,6 @@ import {
   ImagesAsPostsInfiniteProvider,
   type ImagesAsPostsSource,
 } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -46,6 +45,7 @@ import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumn
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -95,6 +95,7 @@ export function ImagesAsPostsInfinite({
   const limit = isMobile ? LIMIT / 2 : LIMIT;
 
   const [showHidden, setShowHidden] = useState(false);
+  const { swipeGalleryCards } = useCurrentUserSettings();
 
   const imageFilters = useImageFilters('modelImages');
   const filters = useMemo(() => {
@@ -233,6 +234,7 @@ export function ImagesAsPostsInfinite({
       hiddenImageIds: !showHidden ? hiddenImageIds : undefined,
       hiddenTags: !showHidden ? hiddenTags : undefined,
       hiddenUsers: !showHidden ? hiddenUsers : undefined,
+      swipeGalleryCards,
     }),
     [
       filters,
@@ -244,6 +246,7 @@ export function ImagesAsPostsInfinite({
       hiddenImageIds,
       hiddenTags,
       hiddenUsers,
+      swipeGalleryCards,
     ]
   );
 
@@ -258,9 +261,7 @@ export function ImagesAsPostsInfinite({
         <MasonryContainer>
           <Stack gap="md">
             <Group gap="xs">
-              <Title order={2} data-tour="model:gallery">
-                Gallery
-              </Title>
+              <Title order={2}>Gallery</Title>
               {!isMuted && (
                 <Group>
                   <LoginRedirect reason="post-images">
@@ -294,9 +295,7 @@ export function ImagesAsPostsInfinite({
                   (source.kind === 'model' || source.kind === 'model3d') && (
                     <>
                       {!!hiddenImageIds.length && (
-                        <ButtonTooltip
-                          label={`${showHidden ? 'Hide' : 'Show'} hidden images`}
-                        >
+                        <ButtonTooltip label={`${showHidden ? 'Hide' : 'Show'} hidden images`}>
                           <LegacyActionIcon
                             variant="light"
                             radius="xl"
@@ -356,7 +355,6 @@ export function ImagesAsPostsInfinite({
                 .
               </Text>
             ) : null}
-            <ImageCategories />
             {enabled && isLoading ? (
               <Paper style={{ minHeight: 200, position: 'relative' }}>
                 <LoadingOverlay visible zIndex={10} />

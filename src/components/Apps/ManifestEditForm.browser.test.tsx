@@ -77,9 +77,7 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
     await expect
       .element(page.getByRole('textbox', { name: 'models:read:self' }))
       .toBeInTheDocument();
-    await expect
-      .element(page.getByRole('textbox', { name: 'user:read:self' }))
-      .toBeInTheDocument();
+    await expect.element(page.getByRole('textbox', { name: 'user:read:self' })).toBeInTheDocument();
     // The seeded justification is pre-filled.
     await expect
       .element(page.getByRole('textbox', { name: 'models:read:self' }))
@@ -121,12 +119,8 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
       />
     );
     // The declared scopes render as CHECKBOXES (selector), seeded checked.
-    await expect
-      .element(page.getByRole('checkbox', { name: 'models:read:self' }))
-      .toBeChecked();
-    await expect
-      .element(page.getByRole('checkbox', { name: 'user:read:self' }))
-      .toBeChecked();
+    await expect.element(page.getByRole('checkbox', { name: 'models:read:self' })).toBeChecked();
+    await expect.element(page.getByRole('checkbox', { name: 'user:read:self' })).toBeChecked();
   });
 
   test('the deferred "Target slots" editor is GONE from the form', async () => {
@@ -179,9 +173,9 @@ describe('ManifestEditForm — per-scope justification authoring', () => {
       .toHaveValue('Does a thing.');
     // New version defaults to a patch bump of the current version.
     await expect.element(page.getByRole('textbox', { name: 'New version' })).toHaveValue('1.0.1');
-    await expect.element(page.getByRole('textbox', { name: 'Block ID (immutable)' })).toHaveValue(
-      'my-block'
-    );
+    await expect
+      .element(page.getByRole('textbox', { name: 'Block ID (immutable)' }))
+      .toHaveValue('my-block');
   });
 
   test('clearing all justification inputs submits an explicit empty object (not undefined) so stored rationale is overwritten', async () => {
@@ -227,11 +221,41 @@ describe('ManifestEditForm — tagline + category (manifest-governed store field
         manifest={{ ...BASE_MANIFEST, tagline: 'Does the thing', category: 'utility' }}
       />
     );
-    await expect.element(page.getByRole('textbox', { name: 'Tagline' })).toHaveValue(
-      'Does the thing'
-    );
+    await expect
+      .element(page.getByRole('textbox', { name: 'Tagline' }))
+      .toHaveValue('Does the thing');
     // Mantine Select renders as a combobox whose display value is the LABEL.
     await expect.element(page.getByRole('textbox', { name: 'Category' })).toHaveValue('Utility');
+  });
+
+  /**
+   * 🔴 CALL-SITE ASSERTION for the CONTENT-RATING Select, which shipped
+   * `label: r` — the raw stored key — while the Category Select one control up
+   * was already mapped.
+   *
+   * The fixture stores `pg13` rather than `BASE_MANIFEST`'s `g` deliberately:
+   * `g` → `G` differs from its key only in CASE, so it cannot separate the
+   * shared map from a `toUpperCase()`. `pg13` → `PG-13` separates it from every
+   * mechanical transformation of the key at once.
+   */
+  test('🔴 the content-rating Select displays the LABEL, not the stored key', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={{ ...BASE_MANIFEST, contentRating: 'pg13' }}
+      />
+    );
+    const rating = page.getByRole('textbox', { name: 'Content rating' });
+    await expect.element(rating).toHaveValue('PG-13');
+    // 🔴 The two near-miss spellings, named so neither can ship silently — asserted
+    // by reading the value rather than through `expect.element(...).not.*`, which
+    // is INERT in this repo (#4197). The positive assertion above is this read's
+    // control: it proves the element resolves and carries a value at all.
+    const value = (rating.element() as HTMLInputElement).value;
+    expect(value).not.toBe('pg13');
+    expect(value).not.toBe('PG13');
   });
 
   test('Save includes the trimmed tagline + selected category on the patch', async () => {
@@ -341,5 +365,87 @@ describe('ManifestEditForm — tagline + category (manifest-governed store field
     expect('targets' in arg.patch).toBe(false);
     expect(arg.patch.tagline).toBe('Pitch');
     expect(arg.patch.category).toBe('games');
+  });
+});
+
+describe('ManifestEditForm — source repository (browser tier; the node tier owns the rules)', () => {
+  const REPO = 'https://github.com/civitai/my-block';
+
+  test('prefills from the stored manifest and submits an edited value', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={{ ...BASE_MANIFEST, repository: REPO }}
+      />
+    );
+    const input = page.getByRole('textbox', { name: 'Source repository' });
+    await expect.element(input).toHaveValue(REPO);
+
+    await userEvent.fill(input, 'https://gitlab.com/other/app');
+    await userEvent.click(page.getByRole('button', { name: 'Save & submit for review' }));
+
+    const arg = mocks.mutate.mock.calls[0][0] as { patch: { repository?: string | null } };
+    expect(arg.patch.repository).toBe('https://gitlab.com/other/app');
+  });
+
+  test('🔴 CLEARING the field sends an explicit null, not undefined', async () => {
+    // The server merges `{...stored, ...patch}`, and superjson may drop an `undefined`
+    // key in transit — so an author who cleared the box would see the old link come
+    // back. `null` is what makes the router DELETE the manifest key.
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={{ ...BASE_MANIFEST, repository: REPO }}
+      />
+    );
+    await userEvent.fill(page.getByRole('textbox', { name: 'Source repository' }), '');
+    await userEvent.click(page.getByRole('button', { name: 'Save & submit for review' }));
+
+    const arg = mocks.mutate.mock.calls[0][0] as { patch: Record<string, unknown> };
+    expect(arg.patch.repository).toBeNull();
+    expect('repository' in arg.patch).toBe(true);
+  });
+
+  test('an empty field on a manifest that had no link still sends null (idempotent clear)', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={BASE_MANIFEST}
+      />
+    );
+    await expect.element(page.getByRole('textbox', { name: 'Source repository' })).toHaveValue('');
+    await userEvent.click(page.getByRole('button', { name: 'Save & submit for review' }));
+    const arg = mocks.mutate.mock.calls[0][0] as { patch: Record<string, unknown> };
+    expect(arg.patch.repository).toBeNull();
+  });
+
+  test('an invalid link surfaces an inline error and BLOCKS the save', async () => {
+    renderWithProviders(
+      <ManifestEditForm
+        appBlockId="app-1"
+        slug="my-block"
+        currentVersion="1.0.0"
+        manifest={BASE_MANIFEST}
+      />
+    );
+    await userEvent.fill(
+      page.getByRole('textbox', { name: 'Source repository' }),
+      'https://gist.github.com/someone/deadbeef'
+    );
+    // The message is the SERVER validator's, verbatim (see the node-tier test).
+    await expect
+      .element(page.getByText(/not an accepted source host/))
+      .toBeInTheDocument();
+    // …and the mutation cannot fire while it is showing.
+    await expect
+      .element(page.getByRole('button', { name: 'Save & submit for review' }))
+      .toBeDisabled();
+    expect(mocks.mutate).not.toHaveBeenCalled();
   });
 });

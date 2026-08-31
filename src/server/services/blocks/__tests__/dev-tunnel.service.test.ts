@@ -94,6 +94,7 @@ import {
   buildDevTunnelApplyJob,
   buildDevTunnelIngressRoute,
   buildDevTunnelMiddleware,
+  chargeDevSessionOverage,
   deleteDevTunnelDns,
   deleteDevTunnelRoute,
   getActiveDevTunnel,
@@ -312,6 +313,34 @@ describe('startDevTunnel', () => {
     expect(s.grantedScopes).toEqual(['ai:write:budgeted', 'user:read:self']);
   });
 
+  it('#3703 step 1: startDevTunnel STILL PERSISTS ai:write:budgeted into the stored grantedScopes', async () => {
+    // The tunnel wrapper hardcodes spendEntitled/spendRequested = true/true, and it
+    // MUST stay that way: `startDevTunnel` clamps ONCE at WRITE and the result is
+    // what every later reader grants. A wrong value would not merely affect future
+    // mints — it would silently strip spend from ALREADY-STORED live sessions, and
+    // no re-clamp could restore them.
+    //
+    // Asserted at the layer where the value is STORED (the persisted session record
+    // read back out of redis), not merely where it is computed: a clamp that returns
+    // the right array but is never written is exactly the failure this guards.
+    await startDevTunnel({
+      userId: 555,
+      blockId: 'my-app',
+      sshPublicKey: PUBKEY,
+      declaredScopes: ['ai:write:budgeted', 'models:read:self'],
+    });
+    const stored = readSession();
+    // Enumerated set, never a word check.
+    expect(stored.grantedScopes).toEqual([
+      'ai:write:budgeted',
+      'models:read:self',
+      'user:read:self',
+    ]);
+    // And it really came off the persisted record, not an in-memory return value.
+    const raw = sysRedis._store.get('system:blocks:dev-tunnel:session:bki_testsession')!;
+    expect(JSON.parse(raw).grantedScopes).toEqual(stored.grantedScopes);
+  });
+
   it('absent declaredScopes → empty raw declared + read-only granted (user:read:self)', async () => {
     await startDevTunnel({ userId: 555, blockId: 'my-app', sshPublicKey: PUBKEY });
     const s = readSession();
@@ -488,6 +517,39 @@ describe('reserveDevSessionBuzz / refundDevSessionBuzz (F4 support)', () => {
     await refundDevSessionBuzz('sess', 60);
     // back under the cap → a fresh 60 fits again
     expect(await reserveDevSessionBuzz('sess', 60, cap)).toEqual({ allowed: true, total: 60 });
+  });
+});
+
+// 🔴 FIX 5 — the THIRD reservation. A step submit reserves on the per-user
+// daily cap, the per-app aggregate cap AND the dev session; the price-divergence
+// correction touched only the first two while claiming it corrected "both". A
+// divergent submit inside a dev tunnel left this counter under-reading by the
+// overage — the one direction a backstop must never drift.
+describe('chargeDevSessionOverage (divergence correction, third reservation)', () => {
+  it('tops the counter up unconditionally — with NO deny path, even past the cap', async () => {
+    const cap = 100;
+    await reserveDevSessionBuzz('sess', 60, cap);
+    // 60 + 80 = 140, well past the cap. Money that has already moved is an
+    // accounting fact, not a request to approve: unlike `reserveDevSessionBuzz`
+    // this must NOT roll back, or the counter would under-read real spend.
+    await chargeDevSessionOverage('sess', 80);
+    // Proven by effect: the session is now over its ceiling, so any further
+    // reservation is denied — which is exactly the stricter posture wanted.
+    expect(await reserveDevSessionBuzz('sess', 1, cap)).toEqual({ allowed: false, total: 140 });
+  });
+
+  it('is a no-op for a zero/negative overage and ROUNDS UP a fractional one', async () => {
+    const cap = 1000;
+    await chargeDevSessionOverage('sess', 0);
+    await chargeDevSessionOverage('sess', -5);
+    expect(await reserveDevSessionBuzz('sess', 10, cap)).toEqual({ allowed: true, total: 10 });
+    await chargeDevSessionOverage('sess', 2.1);
+    expect(await reserveDevSessionBuzz('sess', 0, cap)).toEqual({ allowed: true, total: 13 });
+  });
+
+  it('NEVER throws on a redis error (best-effort; an already-billed submit must not break)', async () => {
+    sysRedis.incrBy.mockRejectedValueOnce(new Error('redis down'));
+    await expect(chargeDevSessionOverage('sess', 5)).resolves.toBeUndefined();
   });
 });
 

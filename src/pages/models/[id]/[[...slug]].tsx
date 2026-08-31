@@ -33,7 +33,6 @@ import {
   IconEdit,
   IconExclamationMark,
   IconFlag,
-  IconInfoCircle,
   IconLock,
   IconLockOff,
   IconPlus,
@@ -61,6 +60,7 @@ import {
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
+import { openAddToHubModal } from '~/components/Dialog/triggers/add-to-hub';
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
@@ -80,6 +80,7 @@ const TransferModelOwnership = dynamic(
   { ssr: false }
 );
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { StatHoverCard } from '~/components/Stats/StatHoverCard';
@@ -88,6 +89,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 // import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
+import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { Gated } from '~/components/Gated/Gated';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
@@ -96,6 +98,7 @@ import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockMo
 import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
+import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
@@ -108,6 +111,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { env } from '~/env/client';
+import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
@@ -123,6 +127,7 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
 import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
@@ -131,7 +136,13 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
-import { Availability, CollectionType, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  CollectionType,
+  ModelStatus,
+  ModelType,
+  UserHubSourceType,
+} from '~/shared/utils/prisma/enums';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import {
   showErrorNotification,
@@ -157,6 +168,7 @@ import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
 import { getBaseModelSeoName } from '~/shared/constants/basemodel.constants';
 import { AdUnitSide_1, AdUnitTop } from '~/components/Ads/AdUnit';
 import { Meta } from '~/components/Meta/Meta';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 // Keep in sync with $rail-activate in [[...slug]].module.scss.
 const RAIL_ACTIVATE_WIDTH = 1440;
@@ -517,6 +529,46 @@ export default function ModelDetailsV2({
       showErrorNotification({ error: new Error(error.message) });
     },
   });
+  const handleUnpublishModel = async () => {
+    try {
+      // The client's global default is `staleTime: Infinity` (`src/utils/trpc.ts`), and `fetchQuery`
+      // applies it — so without this the dialog can show a Buzz figure cached from an earlier open.
+      const refund = await queryUtils.model.getEarlyAccessRefundRequirement.fetch(
+        { id },
+        { staleTime: 0 }
+      );
+      const exemptNote =
+        refund.exemptBuyerCount > 0
+          ? ` ${refund.exemptBuyerCount} earlier buyer(s) bought more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago; they lose access and are not refunded.`
+          : '';
+      if (refund.purchaseCount > 0) {
+        openConfirmModal({
+          title: 'Refund early access buyers',
+          children: `${
+            refund.buyerCount
+          } member(s) bought early access to this model in the last ${PAID_ACCESS_REFUND_WINDOW_DAYS} days. Unpublishing it now will refund them a total of ${refund.totalBuzz.toLocaleString()} Buzz from your account and revoke their early access.${exemptNote} Do you want to continue?`,
+          centered: true,
+          labels: { confirm: 'Refund & Unpublish', cancel: 'Cancel' },
+          confirmProps: { color: 'yellow' },
+          onConfirm: () => unpublishModelMutation.mutate({ id, refundEarlyAccess: true }),
+        });
+      } else if (refund.exemptBuyerCount > 0) {
+        openConfirmModal({
+          title: 'Unpublish model',
+          children: `${refund.exemptBuyerCount} member(s) bought early access to this model, all more than ${PAID_ACCESS_REFUND_WINDOW_DAYS} days ago. They lose access to the model and are not refunded, and nothing is taken from your account. Do you want to continue?`,
+          centered: true,
+          labels: { confirm: 'Unpublish', cancel: 'Cancel' },
+          onConfirm: () => unpublishModelMutation.mutate({ id }),
+        });
+      } else {
+        unpublishModelMutation.mutate({ id });
+      }
+    } catch (error) {
+      showErrorNotification({
+        error: error instanceof Error ? error : new Error('Could not check early access purchases'),
+      });
+    }
+  };
   const publishModelMutation = trpc.model.publish.useMutation({
     async onSuccess() {
       await queryUtils.model.getById.invalidate({ id });
@@ -1018,7 +1070,7 @@ export default function ModelDetailsV2({
                           <Menu.Item
                             leftSection={<IconBan size={14} stroke={1.5} />}
                             color="yellow"
-                            onClick={() => unpublishModelMutation.mutate({ id })}
+                            onClick={handleUnpublishModel}
                             disabled={unpublishModelMutation.isPending}
                           >
                             Unpublish
@@ -1037,60 +1089,6 @@ export default function ModelDetailsV2({
                               Republish
                             </Menu.Item>
                           )}
-                        {currentUser && isModerator && modelDeleted && (
-                          <Menu.Item
-                            leftSection={<IconRecycle size={14} stroke={1.5} />}
-                            color="green"
-                            onClick={() => restoreModelMutation.mutate({ id })}
-                            disabled={restoreModelMutation.isPending}
-                          >
-                            Restore
-                          </Menu.Item>
-                        )}
-                        {currentUser && isModerator && (
-                          <>
-                            {env.NEXT_PUBLIC_MODEL_LOOKUP_URL && (
-                              <Menu.Item
-                                component="a"
-                                target="_blank"
-                                leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-                                href={`${env.NEXT_PUBLIC_MODEL_LOOKUP_URL}${model.id}`}
-                              >
-                                Lookup Model
-                              </Menu.Item>
-                            )}
-                            {published && (
-                              <Menu.Item
-                                color="yellow"
-                                leftSection={<IconBan size={14} stroke={1.5} />}
-                                onClick={() => openUnpublishModal({ props: { modelId: model.id } })}
-                              >
-                                Unpublish as Violation
-                              </Menu.Item>
-                            )}
-                            <Menu.Item
-                              color="orange"
-                              leftSection={<IconBan size={14} stroke={1.5} />}
-                              onClick={() => handleToggleCannotPromote()}
-                            >
-                              {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
-                            </Menu.Item>
-                            <Menu.Item
-                              color="blue"
-                              leftSection={<IconRosetteDiscountCheck size={14} stroke={1.5} />}
-                              onClick={() => handleSetOfficial(!model.isOfficial)}
-                            >
-                              {model.isOfficial ? 'Unmark Official' : 'Mark Official'}
-                            </Menu.Item>
-                            <Menu.Item
-                              color="red.6"
-                              leftSection={<IconTrash size={14} stroke={1.5} />}
-                              onClick={() => handleDeleteModel({ permanently: true })}
-                            >
-                              Permanently Delete Model
-                            </Menu.Item>
-                          </>
-                        )}
                         {currentUser && isOwner && !modelDeleted && (
                           <>
                             <Menu.Item
@@ -1121,6 +1119,19 @@ export default function ModelDetailsV2({
                             }
                           />
                         )}
+                        <AddToHubMenuItem
+                          onClick={() =>
+                            openAddToHubModal({
+                              props: {
+                                source: {
+                                  type: UserHubSourceType.Model,
+                                  targetId: model.id,
+                                  alias: model.name,
+                                },
+                              },
+                            })
+                          }
+                        />
                         {isOwner && (
                           <AddToShowcaseMenuItem
                             key="add-to-showcase"
@@ -1143,24 +1154,11 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                           </LoginRedirect>
                         )}
-                        {isModerator && (
-                          <Menu.Item
-                            leftSection={
-                              rescanModelMutation.isPending ? (
-                                <Loader size={14} />
-                              ) : (
-                                <IconRadar2 size={14} stroke={1.5} />
-                              )
-                            }
-                            onClick={() => handleRescanModel()}
-                          >
-                            Rescan Files
-                          </Menu.Item>
-                        )}
                         {currentUser && (
                           <>
                             <Menu.Label>Moderation</Menu.Label>
                             <HideUserButton as="menu-item" userId={model.user.id} />
+                            <BlockUserButton as="menu-item" userId={model.user.id} />
                             <HideModelButton as="menu-item" modelId={model.id} />
                             <Menu.Item
                               leftSection={<IconTagOff size={14} stroke={1.5} />}
@@ -1172,6 +1170,68 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                             {isModerator && (
                               <>
+                                {/* The moderator app has no model page of its own; Bulk Image Manager
+                                    keyed to the model is every image across every version, which is
+                                    what a report about a model is about. */}
+                                <ModeratorLookupMenuItem
+                                  path={moderatorBulkImageManagerPath('model', model.id)}
+                                >
+                                  Lookup Model
+                                </ModeratorLookupMenuItem>
+                                {published && (
+                                  <Menu.Item
+                                    color="yellow"
+                                    leftSection={<IconBan size={14} stroke={1.5} />}
+                                    onClick={() =>
+                                      openUnpublishModal({ props: { modelId: model.id } })
+                                    }
+                                  >
+                                    Unpublish as Violation
+                                  </Menu.Item>
+                                )}
+                                <Menu.Item
+                                  color="orange"
+                                  leftSection={<IconBan size={14} stroke={1.5} />}
+                                  onClick={() => handleToggleCannotPromote()}
+                                >
+                                  {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
+                                </Menu.Item>
+                                <Menu.Item
+                                  color="blue"
+                                  leftSection={<IconRosetteDiscountCheck size={14} stroke={1.5} />}
+                                  onClick={() => handleSetOfficial(!model.isOfficial)}
+                                >
+                                  {model.isOfficial ? 'Unmark Official' : 'Mark Official'}
+                                </Menu.Item>
+                                <Menu.Item
+                                  color="red.6"
+                                  leftSection={<IconTrash size={14} stroke={1.5} />}
+                                  onClick={() => handleDeleteModel({ permanently: true })}
+                                >
+                                  Permanently Delete Model
+                                </Menu.Item>
+                                {modelDeleted && (
+                                  <Menu.Item
+                                    leftSection={<IconRecycle size={14} stroke={1.5} />}
+                                    color="green"
+                                    onClick={() => restoreModelMutation.mutate({ id })}
+                                    disabled={restoreModelMutation.isPending}
+                                  >
+                                    Restore
+                                  </Menu.Item>
+                                )}
+                                <Menu.Item
+                                  leftSection={
+                                    rescanModelMutation.isPending ? (
+                                      <Loader size={14} />
+                                    ) : (
+                                      <IconRadar2 size={14} stroke={1.5} />
+                                    )
+                                  }
+                                  onClick={() => handleRescanModel()}
+                                >
+                                  Rescan Files
+                                </Menu.Item>
                                 <ToggleLockModel modelId={model.id} locked={model.locked}>
                                   {({ onClick }) => (
                                     <Menu.Item
@@ -1396,6 +1456,7 @@ export default function ModelDetailsV2({
                   </Group>
                 </Alert>
               )}
+              {isCreator && model.minorFlagged && <ModelMinorFlagAlert model={model} />}
               {inaccurate && (
                 <Alert color="yellow">
                   <Group gap="xs" wrap="nowrap" align="flex-start">

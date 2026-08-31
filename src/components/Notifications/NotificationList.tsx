@@ -6,6 +6,11 @@ import type { MouseEvent } from 'react';
 import React, { useMemo } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { NotificationThumbnail } from '~/components/Notifications/NotificationThumbnail';
+import {
+  notificationImageId,
+  useNotificationThumbnails,
+} from '~/components/Notifications/notification-thumbnails';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { getNotificationMessage } from '~/server/notifications/utils.notifications';
 import type { NotificationGetAll } from '~/types/router';
@@ -54,6 +59,7 @@ export function NotificationList({
   searchText,
 }: Props) {
   const router = useRouter();
+  const thumbnails = useNotificationThumbnails(items);
 
   const fullItems = useMemo(() => {
     return items
@@ -90,6 +96,11 @@ export function NotificationList({
         const notificationDetails = notification.details;
         const details = notification.fullDetails;
 
+        // Through the same normaliser the ids were collected with. Reading the
+        // id a second way here is how the map ends up keyed on one thing and
+        // looked up with another, silently, with no test red.
+        const imageId = notificationImageId(notificationDetails);
+        const thumbnail = imageId ? thumbnails.get(imageId) : undefined;
         const systemNotification = notification.type === 'system-announcement';
         const milestoneNotification = notification.type.includes('milestone');
 
@@ -169,6 +180,7 @@ export function NotificationList({
                   </Group>
                 </Stack>
               </Group>
+              {thumbnail && <NotificationThumbnail image={thumbnail} />}
             </Group>
           </Paper>
         );

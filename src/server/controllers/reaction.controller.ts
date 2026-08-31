@@ -201,11 +201,10 @@ export const toggleReactionHandler = async ({
 
     // I worry a bit this may increase DB load, but it's a necessary check now that we opened
     // the door for private models.
-    const checkAccess = ['image', 'post', 'model'];
+    const checkAccess = ['image', 'post'];
     if (checkAccess.includes(input.entityType)) {
-      const entityType = input.entityType === 'model' ? 'Model' : 'Post';
       const entityId =
-        input.entityType === 'model' || input.entityType === 'post'
+        input.entityType === 'post'
           ? input.entityId
           : await dbRead.image
               .findUniqueOrThrow({ where: { id: input.entityId } })
@@ -215,7 +214,7 @@ export const toggleReactionHandler = async ({
         const [access] = await hasEntityAccess({
           userId: ctx.user.id,
           isModerator: ctx.user.isModerator,
-          entityType: entityType,
+          entityType: 'Post',
           entityIds: [entityId],
         });
 
@@ -230,7 +229,7 @@ export const toggleReactionHandler = async ({
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
     });
-    const trackerEvent = await getTrackerEvent(input, result);
+    const trackerEvent = result === 'noop' ? undefined : await getTrackerEvent(input, result);
     if (trackerEvent) {
       await ctx.track
         .reaction({
@@ -240,7 +239,7 @@ export const toggleReactionHandler = async ({
         .catch(handleLogError);
     }
 
-    if (input.entityType === 'image') {
+    if (input.entityType === 'image' && result !== 'noop') {
       const metricTypeFromInput = reactionMetricMap[input.reaction];
       if (metricTypeFromInput) {
         await updateEntityMetric({

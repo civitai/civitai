@@ -11,7 +11,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *   - unknown + PAGE_FORBIDDEN + out-of-allowlist scopes are STRIPPED (no error),
  *   - the OAuth ceiling is SKIPPED when oauthAllowed is null (pending/ephemeral —
  *     no client), applied when a bitmask is passed,
- *   - `keyCanSpend:false` strips the budgeted-spend scope,
+ *   - the SPEND ceiling is TWO required predicates: `ai:write:budgeted` survives
+ *     only when `spendEntitled && spendRequested` (#3703 step 1),
  *   - `user:read:self` is force-granted, output deduped + sorted,
  *   - the budget clamps to the LOWER dev cap,
  *   - the signed token is self-bound (userId), forced-SFW, dev:true, page ctx.
@@ -32,6 +33,7 @@ vi.mock('~/server/services/block-token.service', () => ({
 
 import {
   clampDevScopes,
+  clampTunnelDeclaredScopes,
   DEV_BUZZ_BUDGET_CAP,
   DEV_BUZZ_BUDGET_DEFAULT,
   DEV_TOKEN_SCOPE_ALLOWLIST,
@@ -66,7 +68,8 @@ describe('clampDevScopes', () => {
     const granted = clampDevScopes({
       scopeSource: FULL_SOURCE,
       oauthAllowed: null,
-      keyCanSpend: true,
+      spendEntitled: true,
+      spendRequested: true,
       allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
     });
     expect(granted).toEqual([
@@ -90,7 +93,8 @@ describe('clampDevScopes', () => {
     const granted = clampDevScopes({
       scopeSource: FULL_SOURCE,
       oauthAllowed: null,
-      keyCanSpend: true,
+      spendEntitled: true,
+      spendRequested: true,
       allowlist: DEV_TOKEN_SCOPE_ALLOWLIST,
     });
     expect(granted).toContain('apps:storage:read');
@@ -103,11 +107,12 @@ describe('clampDevScopes', () => {
     expect(granted).not.toContain('totally:fake:scope');
   });
 
-  it('keyCanSpend:false STRIPS ai:write:budgeted (read/catalog scopes unaffected)', () => {
+  it('spendEntitled:false STRIPS ai:write:budgeted (read/catalog scopes unaffected)', () => {
     const granted = clampDevScopes({
       scopeSource: ['models:read:self', 'ai:write:budgeted'],
       oauthAllowed: null,
-      keyCanSpend: false,
+      spendEntitled: false,
+      spendRequested: false,
       allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
     });
     expect(granted).not.toContain('ai:write:budgeted');
@@ -118,7 +123,8 @@ describe('clampDevScopes', () => {
     const withNull = clampDevScopes({
       scopeSource: ['models:read:self', 'ai:write:budgeted'],
       oauthAllowed: null,
-      keyCanSpend: true,
+      spendEntitled: true,
+      spendRequested: true,
       allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
     });
     expect(withNull).toContain('models:read:self');
@@ -126,7 +132,8 @@ describe('clampDevScopes', () => {
     const withCeiling = clampDevScopes({
       scopeSource: ['models:read:self', 'ai:write:budgeted'],
       oauthAllowed: AI_WRITE_BIT, // allows ai:write:budgeted, NOT models:read:self
-      keyCanSpend: true,
+      spendEntitled: true,
+      spendRequested: true,
       allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
     });
     expect(withCeiling).not.toContain('models:read:self');
@@ -138,7 +145,8 @@ describe('clampDevScopes', () => {
       scopeSource: ['models:read:self', 'media:read:owned', 'ai:write:budgeted'],
       oauthAllowed: null,
       requestedScopes: ['ai:write:budgeted'],
-      keyCanSpend: true,
+      spendEntitled: true,
+      spendRequested: true,
       allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
     });
     // Only the requested scope survives — plus the unconditional force-grant.
@@ -149,7 +157,8 @@ describe('clampDevScopes', () => {
     const granted = clampDevScopes({
       scopeSource: [],
       oauthAllowed: null,
-      keyCanSpend: true,
+      spendEntitled: true,
+      spendRequested: true,
       allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
     });
     expect(granted).toEqual(['user:read:self']);
@@ -158,10 +167,134 @@ describe('clampDevScopes', () => {
     const dedup = clampDevScopes({
       scopeSource: ['user:read:self', 'models:read:self'],
       oauthAllowed: null,
-      keyCanSpend: true,
+      spendEntitled: true,
+      spendRequested: true,
       allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
     });
     expect(dedup).toEqual(['models:read:self', 'user:read:self']);
+  });
+});
+
+/**
+ * #3703 step 1 — the spend ceiling is TWO independent, both-required predicates.
+ *
+ * `spendEntitled` (MAY this context spend?) and `spendRequested` (DID the caller ask
+ * to spend on THIS mint?) are ANDed. The full 2×2 matrix is pinned below on
+ * ENUMERATED granted sets — never `toContain('spend')`-style word checks, which pass
+ * while the hazard exists in a different shape.
+ *
+ * The two false/true rows are what kill an `&&` → `||` mutation, and they kill it in
+ * BOTH directions, so neither can be satisfied by the other's guard.
+ */
+describe('clampDevScopes — the two-predicate spend ceiling (#3703 step 1)', () => {
+  // Source declares spend + a read scope. The tunnel allowlist keeps both, so the
+  // ONLY thing varying across the matrix is the spend ceiling.
+  const SOURCE = ['models:read:self', 'ai:write:budgeted'];
+  const WITH_SPEND = ['ai:write:budgeted', 'models:read:self', 'user:read:self'];
+  const WITHOUT_SPEND = ['models:read:self', 'user:read:self'];
+
+  const clamp = (spendEntitled: boolean, spendRequested: boolean) =>
+    clampDevScopes({
+      scopeSource: SOURCE,
+      oauthAllowed: null,
+      spendEntitled,
+      spendRequested,
+      allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
+    });
+
+  it('entitled AND requested → the spend scope SURVIVES (not a blanket deny)', () => {
+    expect(clamp(true, true)).toEqual(WITH_SPEND);
+  });
+
+  it('entitled but NOT requested → the spend scope is STRIPPED (intent binds)', () => {
+    expect(clamp(true, false)).toEqual(WITHOUT_SPEND);
+  });
+
+  it('requested but NOT entitled → the spend scope is STRIPPED (entitlement binds)', () => {
+    // The `&&` → `||` mutant survives every entitled-side test; it dies HERE and on
+    // the row above, each on its own exact array.
+    expect(clamp(false, true)).toEqual(WITHOUT_SPEND);
+  });
+
+  it('neither entitled nor requested → the spend scope is STRIPPED', () => {
+    expect(clamp(false, false)).toEqual(WITHOUT_SPEND);
+  });
+
+  it('a DENIED spend request is a silent STRIP, never an error — the clamp still returns a usable set', () => {
+    // Every other step in this belt is a strip; erroring on the money path would be
+    // a NEW failure mode. Asserting the call does not throw is the point.
+    expect(() => clamp(false, true)).not.toThrow();
+    expect(clamp(false, true)).toEqual(WITHOUT_SPEND);
+  });
+
+  it('the ceiling touches ONLY ai:write:budgeted — read/catalog scopes are untouched by either predicate', () => {
+    const readSource = ['models:read:self', 'buzz:read:self', 'collections:read:self'];
+    const expected = [
+      'buzz:read:self',
+      'collections:read:self',
+      'models:read:self',
+      'user:read:self',
+    ];
+    for (const [e, r] of [
+      [true, true],
+      [true, false],
+      [false, true],
+      [false, false],
+    ] as const) {
+      expect(
+        clampDevScopes({
+          scopeSource: readSource,
+          oauthAllowed: null,
+          spendEntitled: e,
+          spendRequested: r,
+          allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
+        })
+      ).toEqual(expected);
+    }
+  });
+
+  /**
+   * RELATIONSHIP GUARD — the two mint paths diverge ON PURPOSE, and the hazard is
+   * that they drift apart later. Both halves of the intended asymmetry are asserted
+   * HERE, in one place, so the divergence is stated once and cannot rot in two.
+   */
+  it('ASYMMETRY: the tunnel path grants spend with NO request input, while a bearer that did not request it does NOT', () => {
+    // TUNNEL half — `clampTunnelDeclaredScopes` takes ONE argument. There is no
+    // request field to pass, because the declaring manifest IS the request; the
+    // wrapper hardcodes spendEntitled/spendRequested = true/true, permanently.
+    expect(clampTunnelDeclaredScopes(SOURCE)).toEqual(WITH_SPEND);
+    expect(clampTunnelDeclaredScopes.length).toBe(1);
+
+    // BEARER half — the same source, the same allowlist, spend-entitled, but the
+    // caller declined spend for this mint → stripped.
+    expect(clamp(true, false)).toEqual(WITHOUT_SPEND);
+
+    // …and the divergence is EXACTLY the spend scope: the rest of the set matches.
+    expect(clampTunnelDeclaredScopes(SOURCE).filter((s) => s !== 'ai:write:budgeted')).toEqual(
+      clamp(true, false)
+    );
+  });
+
+  /**
+   * PARITY WITH BASE — the tunnel path must be BYTE-IDENTICAL to pre-#3703
+   * behaviour. These enumerated sets are the pre-change outputs; they are what a
+   * wrong wrapper value (the persisted-`grantedScopes` hazard) would break.
+   */
+  it('PARITY: clampTunnelDeclaredScopes output is unchanged for the representative inputs', () => {
+    expect(
+      clampTunnelDeclaredScopes([
+        'models:read:self',
+        'ai:write:budgeted',
+        'apps:storage:write', // not in the tunnel allowlist → stripped
+        'social:tip:self', // money OUT → stripped
+        'buzz:read:self',
+      ])
+    ).toEqual(['ai:write:budgeted', 'buzz:read:self', 'models:read:self', 'user:read:self']);
+    expect(clampTunnelDeclaredScopes([])).toEqual(['user:read:self']);
+    expect(clampTunnelDeclaredScopes(['ai:write:budgeted'])).toEqual([
+      'ai:write:budgeted',
+      'user:read:self',
+    ]);
   });
 });
 
@@ -182,7 +315,8 @@ describe('buzz:read:self allowlist membership (own-ledger read, self-bound)', ()
     const granted = clampDevScopes({
       scopeSource: ['buzz:read:self', 'models:read:self'],
       oauthAllowed: null, // pre-approval dev tunnel — no OauthClient
-      keyCanSpend: true,
+      spendEntitled: true,
+      spendRequested: true,
       allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
     });
     // The scope survives → the block's REQUEST_CONSENT resolves a real
@@ -195,7 +329,8 @@ describe('buzz:read:self allowlist membership (own-ledger read, self-bound)', ()
     const granted = clampDevScopes({
       scopeSource: ['buzz:read:self', 'models:read:self'],
       oauthAllowed: null,
-      keyCanSpend: false,
+      spendEntitled: false,
+      spendRequested: false,
       allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
     });
     expect(granted).not.toContain('buzz:read:self');
@@ -224,7 +359,8 @@ describe('clampDevScopes — REVIEW_MINT_SCOPE_ALLOWLIST (mod review sandbox #28
     const granted = clampDevScopes({
       scopeSource: MALICIOUS_MANIFEST_SCOPES,
       oauthAllowed: null, // pending app — no OauthClient
-      keyCanSpend: false, // review preview never spends (belt-and-suspenders)
+      spendEntitled: false,
+      spendRequested: false, // review preview never spends (belt-and-suspenders)
       allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
     });
     // ONLY the render-only survivors (+ the unconditional user:read:self grant).
@@ -250,13 +386,14 @@ describe('clampDevScopes — REVIEW_MINT_SCOPE_ALLOWLIST (mod review sandbox #28
     }
   });
 
-  it('is STRICTER than the dev-tunnel allowlist — never grants ai:write:budgeted even with keyCanSpend:true', () => {
-    // Even if a caller mistakenly passed keyCanSpend:true, the allowlist itself
+  it('is STRICTER than the dev-tunnel allowlist — never grants ai:write:budgeted even with both spend predicates true', () => {
+    // Even if a caller mistakenly passed both spend predicates true, the allowlist itself
     // omits ai:write:budgeted, so spend can never survive the review clamp.
     const granted = clampDevScopes({
       scopeSource: ['ai:write:budgeted', 'models:read:self'],
       oauthAllowed: null,
-      keyCanSpend: true,
+      spendEntitled: true,
+      spendRequested: true,
       allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
     });
     expect(granted).not.toContain('ai:write:budgeted');
@@ -267,7 +404,8 @@ describe('clampDevScopes — REVIEW_MINT_SCOPE_ALLOWLIST (mod review sandbox #28
     const granted = clampDevScopes({
       scopeSource: [],
       oauthAllowed: null,
-      keyCanSpend: false,
+      spendEntitled: false,
+      spendRequested: false,
       allowlist: REVIEW_MINT_SCOPE_ALLOWLIST,
     });
     expect(granted).toEqual(['user:read:self']);
@@ -295,7 +433,8 @@ describe('clampDevScopes — REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST (mod opt-i
     const granted = clampDevScopes({
       scopeSource: MALICIOUS_MANIFEST_SCOPES,
       oauthAllowed: null, // pending app — no OauthClient
-      keyCanSpend: true, // run-for-real spends the mod's OWN Buzz
+      spendEntitled: true,
+      spendRequested: true, // run-for-real spends the mod's OWN Buzz
       allowlist: REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
     });
     expect(granted).toEqual([
@@ -320,7 +459,7 @@ describe('clampDevScopes — REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST (mod opt-i
     }
   });
 
-  it('NEVER grants social:tip:self even with keyCanSpend:true — the ALLOWLIST is the sole money-out gate (PAGE_FORBIDDEN is empty)', () => {
+  it('NEVER grants social:tip:self even with both spend predicates true — the ALLOWLIST is the sole money-out gate (PAGE_FORBIDDEN is empty)', () => {
     // PAGE_FORBIDDEN_SCOPES is intentionally empty (a PROD page token legitimately
     // carries a bounded social:tip:self tip button), so the review-sandbox exclusion
     // is the allowlist ALONE — assert both the allowlist omits it AND a manifest
@@ -329,18 +468,20 @@ describe('clampDevScopes — REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST (mod opt-i
     const granted = clampDevScopes({
       scopeSource: ['social:tip:self', 'ai:write:budgeted'],
       oauthAllowed: null,
-      keyCanSpend: true,
+      spendEntitled: true,
+      spendRequested: true,
       allowlist: REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
     });
     expect(granted).not.toContain('social:tip:self');
     expect(granted).toContain('ai:write:budgeted');
   });
 
-  it('keyCanSpend:false STILL strips the spend scope (belt-and-suspenders) even under the wider allowlist', () => {
+  it('spendEntitled:false STILL strips the spend scope (belt-and-suspenders) even under the wider allowlist', () => {
     const granted = clampDevScopes({
       scopeSource: ['ai:write:budgeted', 'models:read:self'],
       oauthAllowed: null,
-      keyCanSpend: false,
+      spendEntitled: false,
+      spendRequested: false,
       allowlist: REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST,
     });
     expect(granted).not.toContain('ai:write:budgeted');

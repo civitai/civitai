@@ -1,9 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
 
 // Use vi.hoisted to define mocks available in vi.mock factories
 const {
-  mockDbRead,
   mockGetChallengeConfig,
   mockGetChallengeById,
   mockAssertUserAccountInGoodStanding,
@@ -12,12 +13,6 @@ const {
   mockResolveJudgingCategories,
 } = vi.hoisted(() => {
   return {
-    mockDbRead: {
-      $queryRaw: vi.fn(),
-      modelVersion: { findMany: vi.fn() },
-      image: { findUnique: vi.fn(), findFirst: vi.fn() },
-      challenge: { findUnique: vi.fn() },
-    },
     mockGetChallengeConfig: vi.fn(),
     mockGetChallengeById: vi.fn(),
     mockAssertUserAccountInGoodStanding: vi.fn(),
@@ -26,11 +21,6 @@ const {
     mockResolveJudgingCategories: vi.fn(),
   };
 });
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: {},
-}));
 
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
@@ -319,6 +309,25 @@ describe('getUserChallengeForEdit — ownership/moderator gate', () => {
       getUserChallengeForEdit({ id: 1, userId: 222, isModerator: true })
     ).rejects.toThrow('This challenge cannot be edited here.');
   });
+
+  // The read stays status-unfiltered on purpose — the form goes read-only past Scheduled instead.
+  // Gating it here 404s the edit page for the owner and the moderators who need to inspect it.
+  it.each(['Active', 'Completing', 'Completed', 'Cancelled'] as const)(
+    'returns a %s challenge instead of throwing',
+    async (status) => {
+      mockDbRead.challenge.findUnique.mockResolvedValue({ ...guardRow, status });
+      mockGetChallengeById.mockResolvedValue(
+        makeMockChallenge({ source: 'User', createdById: 111, status })
+      );
+
+      await expect(getUserChallengeForEdit({ id: 1, userId: 111 })).resolves.toMatchObject({
+        id: 1,
+      });
+      await expect(
+        getUserChallengeForEdit({ id: 1, userId: 222, isModerator: true })
+      ).resolves.toMatchObject({ id: 1 });
+    }
+  );
 });
 
 describe('upsertUserChallenge — schedule limits', () => {

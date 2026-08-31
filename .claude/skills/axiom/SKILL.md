@@ -14,7 +14,7 @@ Create `.env` in this skill directory:
 
 ```
 AXIOM_TOKEN=xaat-your-token-here
-AXIOM_ORG_ID=civitai-cxe5
+AXIOM_ORG_ID=your-org-id
 AXIOM_DATASTREAM=civitai-prod
 AXIOM_DOMAIN=api.axiom.co
 ```

@@ -77,6 +77,12 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
       jsonArrayFrom(
         eb.selectFrom('UserRole').select(['UserRole.role']).whereRef('UserRole.userId', '=', 'User.id')
       ).as('roleRows'),
+      jsonObjectFrom(
+        eb
+          .selectFrom('UserMembershipOverride')
+          .select(['UserMembershipOverride.tier'])
+          .whereRef('UserMembershipOverride.userId', '=', 'User.id')
+      ).as('membershipOverride'),
     ])
     .executeTakeFirst();
 
@@ -110,6 +116,7 @@ export async function produceSessionUser(userId: number): Promise<SessionUser | 
     subscriptionRows: row.subscriptionRows,
     permissions,
     roles: row.roleRows.map((r) => r.role),
+    overrideTier: row.membershipOverride?.tier ?? undefined,
     tierKey: env.TIER_METADATA_KEY,
   });
 

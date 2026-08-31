@@ -1,19 +1,28 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { recordChallengeOperationSpentBuzz } from '~/server/prom/challenge.metrics';
+import {
+  recordChallengeOperationSpentBuzz,
+  recordChallengeWinnerConflictUnresolved,
+  recordChallengeWinnerPlaceDivergence,
+} from '~/server/prom/challenge.metrics';
 import { removeTags } from '~/utils/string-helpers';
 import type { ChallengeBuzzType } from '~/server/games/daily-challenge/challenge-currency';
 import { isImageHiddenFromGreenViewer } from '~/server/games/daily-challenge/challenge-visibility';
+import type { PersistedChallengeWinner } from '~/server/games/daily-challenge/challenge-winner-reconcile';
 import {
   challengeJudgingCategoriesSchema,
   type ChallengeJudgingCategory,
 } from '~/server/schema/challenge.schema';
+import { challengeJudgingEngineForCreate } from '~/server/services/challenge-judge.service';
 import {
   getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { CHALLENGE_JOB_BATCH_SIZE } from '~/shared/constants/challenge.constants';
+import {
+  CHALLENGE_JOB_BATCH_SIZE,
+  DEFAULT_CATEGORY_ROWS,
+} from '~/shared/constants/challenge.constants';
 import type { PoolTrigger } from '~/shared/utils/prisma/enums';
 import {
   ChallengeReviewCostType,
@@ -84,6 +93,7 @@ export type ChallengeDetails = {
   collectionId: number | null; // Collection for entries (null if not yet created)
   judgeId: number | null; // ChallengeJudge ID (null if no judge assigned)
   judgingPrompt: string | null;
+  judgingEngine: string;
   reviewPercentage: number;
   maxReviews: number | null;
   maxEntriesPerUser: number;
@@ -161,6 +171,7 @@ const challengeSelectFragment = Prisma.sql`
   c."collectionId",
   c."judgeId",
   c."judgingPrompt",
+  c."judgingEngine",
   c."reviewPercentage",
   c."maxReviews",
   c."maxEntriesPerUser",
@@ -288,7 +299,9 @@ export async function getEndedActiveChallengesFromDb(): Promise<ChallengeDetails
  * Returns challenges whose endsAt is within the last windowHours hours, ordered by endsAt ASC
  * (id tiebreak), bounded to CHALLENGE_JOB_BATCH_SIZE per run.
  */
-export async function getChallengesToReconcileFromDb(windowHours = 48): Promise<ChallengeDetails[]> {
+export async function getChallengesToReconcileFromDb(
+  windowHours = 48
+): Promise<ChallengeDetails[]> {
   const rows = await dbRead.$queryRaw<{ id: number }[]>`
     SELECT c.id
     FROM "Challenge" c
@@ -427,6 +440,7 @@ export type CreateChallengeInput = {
   source?: ChallengeSource;
   status?: ChallengeStatus;
   metadata?: Record<string, unknown>;
+  judgingCategories?: ChallengeJudgingCategory[];
 };
 
 /**
@@ -468,6 +482,9 @@ export async function createChallengeCollection(input: {
 }
 
 export async function createChallengeRecord(input: CreateChallengeInput): Promise<number> {
+  // Copied from the judge, not referenced: editing a judge must not re-point a live challenge.
+  const judgingEngine = await challengeJudgingEngineForCreate(input.judgeId);
+
   const challenge = await dbWrite.challenge.create({
     data: {
       startsAt: input.startsAt,
@@ -506,6 +523,12 @@ export async function createChallengeRecord(input: CreateChallengeInput): Promis
       source: input.source ?? ChallengeSource.System,
       status: input.status ?? ChallengeStatus.Scheduled,
       metadata: input.metadata as Prisma.InputJsonValue,
+      // Every challenge stores a rubric so scoring and display have exactly one path. Uses the
+      // static rows rather than resolveJudgingCategories so an unseeded ChallengeCategory table
+      // can't fail the nightly creation cron.
+      judgingCategories: (input.judgingCategories ??
+        DEFAULT_CATEGORY_ROWS) as unknown as Prisma.InputJsonValue,
+      ...judgingEngine,
     },
     select: { id: true },
   });
@@ -550,7 +573,32 @@ export type CreateWinnerInput = {
   reason?: string;
 };
 
-export async function createChallengeWinner(input: CreateWinnerInput): Promise<number | null> {
+/**
+ * Create the `ChallengeWinner` record for one winner and return the placement that is actually
+ * PERSISTED — which is not always the placement passed in.
+ *
+ * The table has a (challengeId, userId) unique key — note it is NOT the only one, see the P2002
+ * handling below — so a user already recorded as a winner of this challenge normally cannot get a
+ * second row: the insert conflicts (P2002) and the stored
+ * row keeps its ORIGINAL place. This used to return `null` on that conflict, which read as "record
+ * skipped, carry on" — and the caller then paid the freshly-picked place. Because the winner-prize
+ * externalTransactionId embeds the place, that paid under a brand-new key and MINTED A SECOND
+ * PRIZE for a user who had already been paid, with the stored row still showing the old place.
+ *
+ * So the conflict is now resolved rather than swallowed: the row is re-read from the primary and
+ * returned with `created: false`, and the caller reconciles the payout onto the stored place (see
+ * `reconcileWinnerToPersisted`). Record and payment can then never diverge.
+ */
+export async function createChallengeWinner(
+  input: CreateWinnerInput
+): Promise<PersistedChallengeWinner | null> {
+  const persistedFields = {
+    id: true,
+    place: true,
+    buzzAwarded: true,
+    pointsAwarded: true,
+  } as const;
+
   try {
     const winner = await dbWrite.challengeWinner.create({
       data: {
@@ -562,19 +610,83 @@ export async function createChallengeWinner(input: CreateWinnerInput): Promise<n
         pointsAwarded: input.pointsAwarded,
         reason: input.reason,
       },
-      select: { id: true },
+      select: persistedFields,
     });
-    return winner.id;
+    return { ...winner, created: true };
   } catch (error) {
-    // P2002 = unique constraint violation — record already exists (idempotent on recovery retry)
+    // P2002 = unique constraint violation. USUALLY that is (challengeId, userId) — this user is
+    // already recorded as a winner of this challenge, from an earlier run of the same completion or
+    // from a concurrent run that re-picked winners. Do NOT read it as a guarantee that such a row
+    // exists: this table carries more than one unique key, so the re-read below can legitimately
+    // come back empty. That case is handled and instrumented at the end of this block.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      logToAxiom({
-        type: 'info',
-        name: 'challenge-winner-duplicate',
-        message: `Duplicate winner skipped (recovery retry): challenge=${input.challengeId} user=${input.userId} place=${input.place}`,
-        challengeId: input.challengeId,
+      // Read from the PRIMARY: the row we are conflicting with may have been written moments ago,
+      // and a replica read that missed it would send us straight back down the mint path.
+      const persisted = await dbWrite.challengeWinner.findUnique({
+        where: { challengeId_userId: { challengeId: input.challengeId, userId: input.userId } },
+        select: persistedFields,
       });
-      return null;
+
+      if (!persisted) {
+        // NOT structurally unreachable. (challengeId, userId) is not this table's only unique
+        // constraint — `id Int @id @default(autoincrement())` is one too — so a P2002 here does not
+        // imply that a (challengeId, userId) row exists. A sequence that has fallen behind the
+        // table, the routine aftermath of a restore or a manual insert, makes the INSERT collide on
+        // `id`; that conflict says nothing about (challengeId, userId), and the re-read above
+        // correctly finds nothing.
+        //
+        // This is the only branch left in this function that can settle an unreconciled payout key.
+        // The caller is deliberately left on its in-memory placement — refusing to pay would
+        // introduce an UNDER-payment failure mode on a path where nobody has ever been underpaid —
+        // so the prize goes out under a freshly-picked `-place-N` id with NO ChallengeWinner row to
+        // key it to. Nothing durable then records what was paid, and a later completion that re-picks
+        // this user at any other place settles a second, non-conflicting id.
+        //
+        // Hence a counter of its own, not the divergence counter below it: that one means "the
+        // payout was reconciled onto the stored row", which is exactly what did NOT happen here, and
+        // it reads 0 on this path.
+        logToAxiom({
+          type: 'warning',
+          name: 'challenge-winner-conflict-unresolved',
+          message: `Winner insert conflicted but no stored row could be read; payout left on the freshly-picked place: challenge=${input.challengeId} user=${input.userId} place=${input.place}`,
+          challengeId: input.challengeId,
+          userId: input.userId,
+          attemptedPlace: input.place,
+        });
+        recordChallengeWinnerConflictUnresolved();
+        return null;
+      }
+
+      const placeDiverged = persisted.place !== input.place;
+      const prizeDiverged = persisted.buzzAwarded !== input.buzzAwarded;
+
+      if (placeDiverged || prizeDiverged) {
+        // The anomaly that caused real duplicate payouts. Loud + alertable, never info-level: at
+        // this point a payout under the freshly-picked place would have been a second mint.
+        logToAxiom({
+          type: 'warning',
+          name: 'challenge-winner-place-divergence',
+          message: `Winner re-picked at a different placement than the one recorded; payout reconciled to the stored place: challenge=${input.challengeId} user=${input.userId} storedPlace=${persisted.place} attemptedPlace=${input.place}`,
+          challengeId: input.challengeId,
+          userId: input.userId,
+          storedPlace: persisted.place,
+          attemptedPlace: input.place,
+          storedBuzzAwarded: persisted.buzzAwarded,
+          attemptedBuzzAwarded: input.buzzAwarded,
+        });
+        recordChallengeWinnerPlaceDivergence({
+          field: placeDiverged && prizeDiverged ? 'both' : placeDiverged ? 'place' : 'prize',
+        });
+      } else {
+        logToAxiom({
+          type: 'info',
+          name: 'challenge-winner-duplicate',
+          message: `Duplicate winner skipped (recovery retry): challenge=${input.challengeId} user=${input.userId} place=${input.place}`,
+          challengeId: input.challengeId,
+        });
+      }
+
+      return { ...persisted, created: false };
     }
     throw error;
   }
@@ -655,6 +767,13 @@ export async function getChallengeWinners(
  * Check if ChallengeWinner records already exist for a challenge.
  * Used to short-circuit LLM winner generation on retry — if winners were already
  * picked in a previous (failed) run, reuse them instead of re-running the LLM.
+ *
+ * Reads the PRIMARY, deliberately. An empty result here does not abort — it routes straight into a
+ * fresh, non-deterministic LLM re-pick, and the challenge's own in-flight winners are still
+ * eligible to be picked again (the winner cooldown only excludes Completed challenges). A stale
+ * replica read that missed rows written moments earlier therefore ends in a re-pick of the same
+ * users at permuted places, i.e. a second payout under a new transaction id. This runs at most a
+ * few times a day (once per challenge completion), so there is no load argument for the replica.
  */
 export async function getExistingWinnersForRetry(challengeId: number): Promise<
   Array<{
@@ -666,7 +785,7 @@ export async function getExistingWinnersForRetry(challengeId: number): Promise<
     reason: string | null;
   }>
 > {
-  return dbRead.$queryRaw`
+  return dbWrite.$queryRaw`
     SELECT
       cw."userId",
       cw."imageId",
@@ -755,6 +874,32 @@ export async function updateChallengeField<K extends keyof CreateChallengeInput>
   });
 }
 
+/**
+ * Buzz this challenge may still spend on judging, or `null` when it is unbounded.
+ *
+ * 🔴 `operationBudget = 0` means UNBOUNDED, not "spend nothing". The column is `Int @default(0)` and
+ * is 0 on every challenge in production, so reading 0 as a zero ceiling would stop judging on all of
+ * them the moment this shipped. Enforcement therefore only bites once somebody sets a budget, and
+ * until they do this returns null and nothing is capped — which is a real limitation, not a fix
+ * hiding behind a helper.
+ *
+ * The number is also a floor rather than a true remaining balance: `operationSpent` under-reports,
+ * partly because the permissive route bills reasoning tokens it does not declare (#3815). A budget
+ * set here will be overshot by roughly that margin.
+ */
+export async function operationBudgetRemaining(
+  challengeId: number
+): Promise<{ remaining: number | null; spent: number }> {
+  const challenge = await dbRead.challenge.findUnique({
+    where: { id: challengeId },
+    select: { operationBudget: true, operationSpent: true },
+  });
+  const budget = challenge?.operationBudget ?? 0;
+  const spent = challenge?.operationSpent ?? 0;
+  if (budget <= 0) return { remaining: null, spent };
+  return { remaining: Math.max(0, budget - spent), spent };
+}
+
 export async function incrementOperationSpent(challengeId: number, amount: number): Promise<void> {
   // Use atomic increment to avoid race conditions
   await dbWrite.$executeRaw`
@@ -788,15 +933,75 @@ export async function incrementOperationSpent(challengeId: number, amount: numbe
 /**
  * Atomically claim a challenge for completion processing.
  * Uses UPDATE ... WHERE status='Active' to prevent duplicate processing.
- * Returns true if this process owns the challenge, false if already claimed.
+ *
+ * Returns the claim stamp written to `metadata.completingClaimedAt` when this process owns the
+ * challenge, or `null` when the row was already claimed. The stamp is always a non-empty ISO
+ * string, so the historical `if (!claimed)` boolean reading is preserved exactly.
+ *
+ * Why the stamp is returned rather than a bare boolean: the claim is NOT held for the lifetime of
+ * the run. `resetStuckCompletingChallenges` below revokes a `Completing` claim purely on elapsed
+ * time — no liveness check, no ownership token — so a slow-but-alive run can have its claim taken
+ * over by a second run while it is still executing. A re-claim overwrites the stamp, so a run that
+ * re-reads the row and finds a DIFFERENT stamp knows it no longer owns the completion — see
+ * `challengeClaimStillHeld` and `completeChallengeIfClaimHeld` below.
  */
-export async function claimChallengeForCompletion(challengeId: number): Promise<boolean> {
+export async function claimChallengeForCompletion(challengeId: number): Promise<string | null> {
+  const claimedAt = new Date().toISOString();
   const result = await dbWrite.$executeRaw`
     UPDATE "Challenge"
     SET status = ${ChallengeStatus.Completing}::"ChallengeStatus",
-        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('completingClaimedAt', ${new Date().toISOString()})
+        metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('completingClaimedAt', ${claimedAt})
     WHERE id = ${challengeId}
     AND status = ${ChallengeStatus.Active}::"ChallengeStatus"
+  `;
+  return result > 0 ? claimedAt : null;
+}
+
+/**
+ * A stamp that is present AND different is the only proof of a takeover: an absent stamp reads the
+ * same whether nothing has claimed the row or the claim write is simply not visible yet, so it is
+ * treated as still held. Consequence: this can only ever stop a run that has demonstrably lost the
+ * challenge, never one that still owns it.
+ */
+export async function challengeClaimStillHeld(
+  challengeId: number,
+  claimedAt: string
+): Promise<boolean> {
+  const [row] = await dbWrite.$queryRaw<[{ held: boolean }?]>`
+    SELECT COALESCE(metadata->>'completingClaimedAt', '') IN ('', ${claimedAt}) AS held
+    FROM "Challenge"
+    WHERE id = ${challengeId}
+    LIMIT 1
+  `;
+  return row?.held ?? true;
+}
+
+/**
+ * Mark a challenge Completed only while this run still holds the claim it took, so a run that was
+ * evicted mid-flight cannot write an outcome over the run that replaced it. Same fail-open reading
+ * of a missing stamp as `challengeClaimStillHeld`.
+ *
+ * Returns whether the write landed; a `false` means some other run owns the completion, and the
+ * caller's completion side effects (telemetry, notifications) belong to that run instead.
+ */
+export async function completeChallengeIfClaimHeld({
+  challengeId,
+  claimedAt,
+  metadata,
+}: {
+  challengeId: number;
+  claimedAt: string;
+  metadata?: Prisma.InputJsonValue;
+}): Promise<boolean> {
+  const metadataUpdate =
+    metadata === undefined
+      ? Prisma.empty
+      : Prisma.sql`, metadata = ${JSON.stringify(metadata)}::jsonb`;
+  const result = await dbWrite.$executeRaw`
+    UPDATE "Challenge"
+    SET status = ${ChallengeStatus.Completed}::"ChallengeStatus"${metadataUpdate}
+    WHERE id = ${challengeId}
+    AND COALESCE(metadata->>'completingClaimedAt', '') IN ('', ${claimedAt})
   `;
   return result > 0;
 }
@@ -804,6 +1009,11 @@ export async function claimChallengeForCompletion(challengeId: number): Promise<
 /**
  * Reset challenges stuck in 'Completing' status back to 'Active' for retry.
  * A challenge is considered stuck if it has been in Completing for longer than timeoutMinutes.
+ *
+ * 🔴 This is purely TIME-BASED: there is no liveness check and no ownership token, so it can revoke
+ * the claim of a run that is still executing (a run slower than `timeoutMinutes` is assumed dead).
+ * Callers must therefore not treat "I claimed it" as "I still own it" — re-check the claim stamp
+ * (see `claimChallengeForCompletion`) before doing anything that must not happen twice.
  */
 export async function resetStuckCompletingChallenges(timeoutMinutes = 10): Promise<number> {
   const result = await dbWrite.$executeRaw`
@@ -833,6 +1043,7 @@ export type RecentEntry = {
   userId: number;
   username: string;
   url: string;
+  nsfwLevel: number;
 };
 
 /** Row shape for resource selection queries (used by processing and testing). */
@@ -840,6 +1051,10 @@ export type SelectedResource = {
   modelId: number;
   creator: string;
   title: string;
+  /** Creator-authored HTML. Only ever reaches a model through generateResourceConcept. */
+  description?: string | null;
+  /** Creator-authored, from the model's published versions. Same handling as description. */
+  trainedWords?: string[];
 };
 
 /** Event context for scoping winner cooldowns. */
@@ -864,11 +1079,9 @@ export async function resolveEventContext(eventId: number | null): Promise<Event
 
 /**
  * Resolve the `categories` + `nsfw` inputs generateReview() needs for judging a challenge entry.
- * Any challenge that stores judgingCategories is judged by them; those without fall back to the
- * default rubric (generateReview resolves DEFAULT_CATEGORY_ROWS from the DB). Parse defensively —
- * a malformed/corrupt value falls back to the fixed theme/wittiness/humor/aesthetic scoring schema
- * instead of failing the review. Mirrors reviewEntriesForChallenge
- * (~/server/jobs/daily-challenge-processing.ts).
+ * Every challenge is judged by its stored rubric; only a malformed/corrupt value resolves to
+ * `undefined`, which falls back to the fixed theme/wittiness/humor/aesthetic scoring schema.
+ * Mirrors reviewEntriesForChallenge (~/server/jobs/daily-challenge-processing.ts).
  */
 export async function resolveChallengeReviewInputs(challenge: {
   source: ChallengeSource;

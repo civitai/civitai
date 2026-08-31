@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  LISTING_ASSET_MAX_DIMENSION_PX,
+  LISTING_ICON_MAX_PX,
   validateListingImage,
   type ListingImageMeta,
 } from '~/server/schema/blocks/app-listing.schema';
@@ -24,9 +26,16 @@ const { mockDb, ids } = vi.hoisted(() => ({
   mockDb: {
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The lazy-mint shadow probe (`beginListingRevision`'s idempotent reuse).
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+      create: vi.fn(async (args: { data: unknown }) => args.data),
       update: vi.fn(async (args: { data: unknown }) => ({ ...(args as object) })),
     },
+    // 🔴 SEATS ARE LISTING-KEYED, so EVERY non-owner path now consults this table —
+    // there is no longer an "this listing has no AppBlock" short-circuit to skip it.
+    // Default: no seat, i.e. exactly the owner-only behaviour these cases assert.
+    appCollaborator: { findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     image: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
@@ -39,6 +48,11 @@ const { mockDb, ids } = vi.hoisted(() => ({
       createMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
       update: vi.fn(async (args: { where: unknown; data: unknown }) => args.data),
       delete: vi.fn(async (..._a: unknown[]) => ({})),
+      // The LISTING-SCOPED write forms the row-id-keyed procs now use — a bare
+      // `{ id }` write could land on the live parent after an approve reparents the
+      // shadow's rows (`applyApprovedRevision`).
+      updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
+      deleteMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
     },
     $transaction: vi.fn(async (ops: unknown[]) => Promise.all(ops as Promise<unknown>[])),
   },
@@ -57,17 +71,25 @@ const mod = { id: 7, isModerator: true } as never;
 function resetDb() {
   ids.n = 0;
   mockDb.appListing.findUnique.mockReset().mockResolvedValue(null);
+  mockDb.appListing.findFirst.mockReset().mockResolvedValue(null);
   mockDb.appListing.findMany.mockReset().mockResolvedValue([]);
+  mockDb.appListing.create.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
   mockDb.appListing.update.mockReset().mockResolvedValue({});
   mockDb.image.findUnique.mockReset().mockResolvedValue(null);
   mockDb.image.findMany.mockReset().mockResolvedValue([]);
   mockDb.appListingScreenshot.findUnique.mockReset().mockResolvedValue(null);
   mockDb.appListingScreenshot.findMany.mockReset().mockResolvedValue([]);
   mockDb.appListingScreenshot.count.mockReset().mockResolvedValue(0);
-  mockDb.appListingScreenshot.create.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
+  mockDb.appListingScreenshot.create
+    .mockReset()
+    .mockImplementation(async (a: { data: unknown }) => a.data);
   mockDb.appListingScreenshot.createMany.mockReset().mockResolvedValue({ count: 0 });
-  mockDb.appListingScreenshot.update.mockReset().mockImplementation(async (a: { data: unknown }) => a.data);
+  mockDb.appListingScreenshot.update
+    .mockReset()
+    .mockImplementation(async (a: { data: unknown }) => a.data);
   mockDb.appListingScreenshot.delete.mockReset().mockResolvedValue({});
+  mockDb.appListingScreenshot.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  mockDb.appListingScreenshot.deleteMany.mockReset().mockResolvedValue({ count: 1 });
   mockDb.$transaction.mockReset().mockImplementation(async (arg: unknown) => {
     // Interactive (callback) form: run it with mockDb as the tx client (dbRead ===
     // dbWrite === mockDb here). Array form: resolve the batched ops.
@@ -81,7 +103,13 @@ function resetDb() {
 // ---------------------------------------------------------------------------
 
 describe('validateListingImage', () => {
-  const base: ListingImageMeta = { type: 'image', width: 512, height: 512, mimeType: 'image/png', sizeBytes: 100_000 };
+  const base: ListingImageMeta = {
+    type: 'image',
+    width: 512,
+    height: 512,
+    mimeType: 'image/png',
+    sizeBytes: 100_000,
+  };
 
   it('accepts a square png icon', () => {
     expect(validateListingImage(base, 'icon').ok).toBe(true);
@@ -128,7 +156,9 @@ describe('validateListingImage', () => {
   it('accepts a normal screenshot, rejects a tiny one and a too-wide one', () => {
     expect(validateListingImage({ ...base, width: 1280, height: 720 }, 'screenshot').ok).toBe(true);
     expect(validateListingImage({ ...base, width: 200, height: 200 }, 'screenshot').ok).toBe(false);
-    expect(validateListingImage({ ...base, width: 2600, height: 400 }, 'screenshot').ok).toBe(false);
+    expect(validateListingImage({ ...base, width: 2600, height: 400 }, 'screenshot').ok).toBe(
+      false
+    );
   });
 
   it('rejects unknown/zero dimensions', () => {
@@ -139,6 +169,97 @@ describe('validateListingImage', () => {
   it('skips size/mime checks when those fields are absent (older Image rows)', () => {
     const r = validateListingImage({ type: 'image', width: 512, height: 512 }, 'icon');
     expect(r.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateListingImage — the per-side CEILING
+// ---------------------------------------------------------------------------
+
+/**
+ * The cover / screenshot rules are MINIMUMS + aspect; before this there was no
+ * maximum on either kind at all, and the attach gate is the one place every asset
+ * passes whatever created its `Image` row (`loadValidatedImage` gates on
+ * ownership, not provenance). So a full-resolution upload far above the ceiling —
+ * a 9000×4000 cover was accepted in production and stored at full size — cleared
+ * every rule that existed.
+ *
+ * The fixtures vary DIMENSIONS ONLY: `sizeBytes` is held at the same small value
+ * on both sides of the boundary, so a byte cap cannot account for either verdict.
+ */
+describe('validateListingImage (LISTING_ASSET_MAX_DIMENSION_PX ceiling)', () => {
+  const base: ListingImageMeta = {
+    type: 'image',
+    width: 512,
+    height: 512,
+    mimeType: 'image/png',
+    // Well under every per-kind byte cap (the tightest is the 1 MiB icon cap), so
+    // no size rule can fire on any fixture below.
+    sizeBytes: 100_000,
+  };
+
+  it('accepts a cover AT the ceiling and rejects one a single pixel over', () => {
+    // Aspect 2.0 and far above the 640px floor either side of the boundary — the
+    // only thing that changes across these two cases is one pixel of width.
+    expect(
+      validateListingImage(
+        { ...base, width: LISTING_ASSET_MAX_DIMENSION_PX, height: 4096 },
+        'cover'
+      )
+    ).toEqual({ ok: true });
+
+    const over = validateListingImage(
+      { ...base, width: LISTING_ASSET_MAX_DIMENSION_PX + 1, height: 4096 },
+      'cover'
+    );
+    expect(over).toEqual({
+      ok: false,
+      reason: `cover is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got ${
+        LISTING_ASSET_MAX_DIMENSION_PX + 1
+      }px)`,
+    });
+  });
+
+  it('rejects the 9000×4000 cover shape that was accepted in production', () => {
+    // Aspect 2.25 (inside 1.3–2.4) and 9000px wide (above the 640px floor): every
+    // pre-existing cover rule passes, so ONLY the ceiling can reject it.
+    const r = validateListingImage({ ...base, width: 9000, height: 4000 }, 'cover');
+    expect(r).toEqual({
+      ok: false,
+      reason: `cover is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got 9000px)`,
+    });
+  });
+
+  it('applies the ceiling to the TALLER side too, not just width', () => {
+    // Aspect 0.55 — a valid screenshot aspect, above the 320px floor, over the
+    // ceiling on height only.
+    const r = validateListingImage(
+      { ...base, width: 4500, height: LISTING_ASSET_MAX_DIMENSION_PX + 1 },
+      'screenshot'
+    );
+    expect(r).toEqual({
+      ok: false,
+      reason: `screenshot is too large (max ${LISTING_ASSET_MAX_DIMENSION_PX}px per side, got ${
+        LISTING_ASSET_MAX_DIMENSION_PX + 1
+      }px)`,
+    });
+    // Same aspect, same bytes, under the ceiling → accepted.
+    expect(
+      validateListingImage(
+        { ...base, width: 4500, height: LISTING_ASSET_MAX_DIMENSION_PX },
+        'screenshot'
+      )
+    ).toEqual({ ok: true });
+  });
+
+  it('keeps the icon on its own TIGHTER maximum', () => {
+    // The shared ceiling must not loosen the icon: 5000px square is inside 8192
+    // but outside LISTING_ICON_MAX_PX, and must still be rejected for that reason.
+    const r = validateListingImage({ ...base, width: 5000, height: 5000 }, 'icon');
+    expect(r).toEqual({
+      ok: false,
+      reason: expect.stringContaining(`${LISTING_ICON_MAX_PX}px on its longer side`),
+    });
   });
 });
 
@@ -168,18 +289,22 @@ describe('checkListingAssetsComplete / assertListingAssetsComplete', () => {
       complete: false,
       missing: ['screenshots'],
     });
-    expect(checkListingAssetsComplete({ iconId: null, coverId: null, screenshotCount: 0 })).toEqual({
-      complete: false,
-      missing: ['icon', 'cover', 'screenshots'],
-    });
+    expect(checkListingAssetsComplete({ iconId: null, coverId: null, screenshotCount: 0 })).toEqual(
+      {
+        complete: false,
+        missing: ['icon', 'cover', 'screenshots'],
+      }
+    );
   });
 
   it('assert throws with the missing list, passes when complete', async () => {
     const { assertListingAssetsComplete } = await import('../app-listing-assets.service');
-    expect(() => assertListingAssetsComplete({ iconId: null, coverId: null, screenshotCount: 0 })).toThrow(
-      /icon, cover, screenshots/
-    );
-    expect(() => assertListingAssetsComplete({ iconId: 1, coverId: 2, screenshotCount: 1 })).not.toThrow();
+    expect(() =>
+      assertListingAssetsComplete({ iconId: null, coverId: null, screenshotCount: 0 })
+    ).toThrow(/icon, cover, screenshots/);
+    expect(() =>
+      assertListingAssetsComplete({ iconId: 1, coverId: 2, screenshotCount: 1 })
+    ).not.toThrow();
   });
 });
 
@@ -294,11 +419,69 @@ describe('pure helpers', () => {
     expect(cover).not.toContain('<x>');
   });
 
+  // DRIFT GUARD (cross-surface): the GENERATED asset SVGs and the CLIENT
+  // render-time fallback (AppListingCard / AppListingDetailBody, via
+  // `listingPlaceholderGradient`) must derive from the SAME seed + stops. They
+  // used to be two hand-rolled designs that silently diverged — a generated
+  // seeded-hue icon next to a uniform grey cover placeholder. If someone
+  // recolours one side only, this fails.
+  it('generated SVG stops match the client placeholder gradient stops', async () => {
+    const { buildPlaceholderIconSvg, buildPlaceholderCoverSvg } = await import(
+      '../app-listing-assets.service'
+    );
+    const { listingPlaceholderGradient, listingPlaceholderSeed, placeholderHues, placeholderStop } =
+      await import('~/shared/constants/app-listing-placeholder.constants');
+
+    const slug = 'cool-app';
+    const category = 'games';
+    const { hue, hue2 } = placeholderHues(listingPlaceholderSeed(slug, category));
+
+    // 🔴 Assert the stop + its OFFSET as ONE string. A pair of order-agnostic
+    // `toContain(stop)` checks passes even if the two stops are SWAPPED — an
+    // inverted gradient on every generated icon, which is a real visual
+    // regression. Binding offset→colour is what actually pins the direction.
+    const icon = buildPlaceholderIconSvg({ slug, category, name: 'Cool App' });
+    expect(icon).toContain(`offset="0%" stop-color="${placeholderStop('icon', 'from', hue)}"`);
+    expect(icon).toContain(`offset="100%" stop-color="${placeholderStop('icon', 'to', hue2)}"`);
+
+    const cover = buildPlaceholderCoverSvg({ slug, category, name: 'Cool App' });
+    expect(cover).toContain(`offset="0%" stop-color="${placeholderStop('cover', 'from', hue)}"`);
+    expect(cover).toContain(`offset="100%" stop-color="${placeholderStop('cover', 'to', hue2)}"`);
+
+    // …and the CSS the client renders uses those very same stops, in the same
+    // order. BOTH surfaces are cross-checked: `icon` backs the Avatar monogram
+    // and `cover` backs the card/hero, so checking only one leaves the other
+    // free to drift.
+    expect(listingPlaceholderGradient({ slug, category, surface: 'cover' })).toBe(
+      `linear-gradient(135deg, ${placeholderStop('cover', 'from', hue)} 0%, ${placeholderStop(
+        'cover',
+        'to',
+        hue2
+      )} 100%)`
+    );
+    expect(listingPlaceholderGradient({ slug, category, surface: 'icon' })).toBe(
+      `linear-gradient(135deg, ${placeholderStop('icon', 'from', hue)} 0%, ${placeholderStop(
+        'icon',
+        'to',
+        hue2
+      )} 100%)`
+    );
+  });
+
   it('chooseScreenshotSource: existing → migrate(real only) → none', async () => {
     const { chooseScreenshotSource } = await import('../app-listing-assets.service');
     const base = {
-      id: 'apl_1', kind: 'onsite', slug: 's', name: 'n', category: null, contentRating: null, userId: 1,
-      iconId: null, coverId: null, appBlockId: 'ab_1', appBlockScreenshots: null,
+      id: 'apl_1',
+      kind: 'onsite',
+      slug: 's',
+      name: 'n',
+      category: null,
+      contentRating: null,
+      userId: 1,
+      iconId: null,
+      coverId: null,
+      appBlockId: 'ab_1',
+      appBlockScreenshots: null,
       screenshots: [] as { imageId: number | null; order: number }[],
     };
     // existing rows → nothing to do.
@@ -327,9 +510,9 @@ describe('pure helpers', () => {
     // on-site with no bundle screenshots → none (autogen removed).
     expect(chooseScreenshotSource({ ...base, appBlockScreenshots: [] })).toEqual({ mode: 'none' });
     // off-site → none (placeholder-screenshot fallback removed).
-    expect(
-      chooseScreenshotSource({ ...base, kind: 'offsite', appBlockId: null })
-    ).toEqual({ mode: 'none' });
+    expect(chooseScreenshotSource({ ...base, kind: 'offsite', appBlockId: null })).toEqual({
+      mode: 'none',
+    });
   });
 
   it('realDevBundleScreenshots keeps only string-keyed, non-autogenerated records', async () => {
@@ -356,13 +539,27 @@ describe('screenshot CRUD', () => {
   beforeEach(resetDb);
 
   const listingRow = {
-    id: 'apl_1', kind: 'onsite', slug: 's', name: 'n', category: null, contentRating: null, userId: 42,
-    iconId: null, coverId: null,
+    id: 'apl_1',
+    kind: 'onsite',
+    slug: 's',
+    name: 'n',
+    category: null,
+    contentRating: null,
+    userId: 42,
+    iconId: null,
+    coverId: null,
   };
   // A safe-to-publish image: scan-complete + PG (NsfwLevel.PG === 1).
   const validScreenshotImage = {
-    id: 500, userId: 42, type: 'image', width: 1280, height: 720, mimeType: 'image/png',
-    metadata: { size: 100_000 }, ingestion: 'Scanned', nsfwLevel: 1,
+    id: 500,
+    userId: 42,
+    type: 'image',
+    width: 1280,
+    height: 720,
+    mimeType: 'image/png',
+    metadata: { size: 100_000 },
+    ingestion: 'Scanned',
+    nsfwLevel: 1,
   };
 
   it('addScreenshot appends at the next order and enforces owner + validation', async () => {
@@ -374,16 +571,17 @@ describe('screenshot CRUD', () => {
     const res = await addListingScreenshot({ listingId: 'apl_1', imageId: 500 }, owner);
     expect(res).toMatchObject({ status: 'attached', order: 3 });
     expect(mockDb.appListingScreenshot.create).toHaveBeenCalledTimes(1);
-    const arg = (mockDb.appListingScreenshot.create.mock.calls[0][0] as { data: { order: number } }).data;
+    const arg = (mockDb.appListingScreenshot.create.mock.calls[0][0] as { data: { order: number } })
+      .data;
     expect(arg.order).toBe(3);
   });
 
   it('addScreenshot rejects a non-owner non-mod', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     const { addListingScreenshot } = await import('../app-listing-assets.service');
-    await expect(addListingScreenshot({ listingId: 'apl_1', imageId: 500 }, otherUser)).rejects.toThrow(
-      /do not own/
-    );
+    await expect(
+      addListingScreenshot({ listingId: 'apl_1', imageId: 500 }, otherUser)
+    ).rejects.toThrow(/do not own/);
   });
 
   it('addScreenshot enforces the ≤8 cap (rejects the 9th)', async () => {
@@ -402,16 +600,38 @@ describe('screenshot CRUD', () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({ ...validScreenshotImage, width: 100, height: 100 });
     const { addListingScreenshot } = await import('../app-listing-assets.service');
-    await expect(addListingScreenshot({ listingId: 'apl_1', imageId: 500 }, owner)).rejects.toThrow();
+    await expect(
+      addListingScreenshot({ listingId: 'apl_1', imageId: 500 }, owner)
+    ).rejects.toThrow();
     expect(mockDb.appListingScreenshot.create).not.toHaveBeenCalled();
   });
 
   it('setIcon rejects a non-square image and accepts a square one', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     const { setListingIcon } = await import('../app-listing-assets.service');
-    mockDb.image.findUnique.mockResolvedValue({ id: 9, userId: 42, type: 'image', width: 512, height: 200, mimeType: 'image/png', metadata: {}, ingestion: 'Scanned', nsfwLevel: 1 });
+    mockDb.image.findUnique.mockResolvedValue({
+      id: 9,
+      userId: 42,
+      type: 'image',
+      width: 512,
+      height: 200,
+      mimeType: 'image/png',
+      metadata: {},
+      ingestion: 'Scanned',
+      nsfwLevel: 1,
+    });
     await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.toThrow();
-    mockDb.image.findUnique.mockResolvedValue({ id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png', metadata: {}, ingestion: 'Scanned', nsfwLevel: 1 });
+    mockDb.image.findUnique.mockResolvedValue({
+      id: 9,
+      userId: 42,
+      type: 'image',
+      width: 512,
+      height: 512,
+      mimeType: 'image/png',
+      metadata: {},
+      ingestion: 'Scanned',
+      nsfwLevel: 1,
+    });
     const res = await setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner);
     expect(res).toEqual({ status: 'attached', iconId: 9 });
     expect(mockDb.appListing.update).toHaveBeenCalledWith(
@@ -433,25 +653,38 @@ describe('screenshot CRUD', () => {
       owner
     );
     expect(res.reordered).toBe(3);
-    expect(mockDb.appListingScreenshot.update).toHaveBeenCalledTimes(3);
-    const orders = mockDb.appListingScreenshot.update.mock.calls.map(
-      (c) => (c[0] as { where: { id: string }; data: { order: number } })
+    expect(mockDb.appListingScreenshot.updateMany).toHaveBeenCalledTimes(3);
+    const orders = mockDb.appListingScreenshot.updateMany.mock.calls.map(
+      (c) => c[0] as { where: { id: string; appListingId: string }; data: { order: number } }
     );
     expect(orders.map((o) => [o.where.id, o.data.order])).toEqual([
       ['c', 0],
       ['a', 1],
       ['b', 2],
     ]);
+    // 🔴 Every write is scoped to the RESOLVED listing, not the bare row id.
+    expect(orders.every((o) => o.where.appListingId === 'apl_1')).toBe(true);
   });
 
   it('updateScreenshotCaption enforces ownership via the parent listing', async () => {
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
-      id: 'a', appListing: { userId: 42 },
+      id: 'a',
+      appListingId: 'apl_1',
+      appListing: { userId: 42 },
+    });
+    // An in-place-editable (draft) listing → no shadow, no row-id re-map.
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      status: 'draft',
+      revisionOfId: null,
     });
     const { updateListingScreenshotCaption } = await import('../app-listing-assets.service');
     await updateListingScreenshotCaption({ screenshotId: 'a', caption: 'hi' }, owner);
-    expect(mockDb.appListingScreenshot.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'a' }, data: { caption: 'hi' } })
+    expect(mockDb.appListingScreenshot.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'a', appListingId: 'apl_1' },
+        data: { caption: 'hi' },
+      })
     );
     // non-owner rejected
     await expect(
@@ -461,72 +694,119 @@ describe('screenshot CRUD', () => {
 
   it('removeScreenshot deletes then re-packs remaining orders contiguously', async () => {
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
-      id: 'b', appListingId: 'apl_1', appListing: { userId: 42 },
+      id: 'b',
+      appListingId: 'apl_1',
+      appListing: { userId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      status: 'draft',
+      revisionOfId: null,
     });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([{ id: 'a' }, { id: 'c' }]);
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
     const res = await removeListingScreenshot({ screenshotId: 'b' }, owner);
     expect(res.removed).toBe('b');
-    expect(mockDb.appListingScreenshot.delete).toHaveBeenCalledWith({ where: { id: 'b' } });
-    const orders = mockDb.appListingScreenshot.update.mock.calls.map(
-      (c) => c[0] as { where: { id: string }; data: { order: number } }
+    expect(mockDb.appListingScreenshot.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'b', appListingId: 'apl_1' },
+    });
+    const orders = mockDb.appListingScreenshot.updateMany.mock.calls.map(
+      (c) => c[0] as { where: { id: string; appListingId: string }; data: { order: number } }
     );
     expect(orders.map((o) => [o.where.id, o.data.order])).toEqual([
       ['a', 0],
       ['c', 1],
     ]);
+    // 🔴 The re-pack is LISTING-SCOPED like every other screenshot write here. It used
+    // to be a bare `update({ where: { id } })`, which is the one write that could still
+    // land `order` on the LIVE listing if an approve reparented the shadow's rows
+    // between the survivor read and these writes.
+    expect(orders.every((o) => o.where.appListingId === 'apl_1')).toBe(true);
   });
 
   // -------------------------------------------------------------------------
-  // 🔴 Owner asset-edit guard (audit #3010): a LIVE approved, non-shadow listing
-  // must NOT have its assets mutated directly by its owner — that would bypass mod
-  // review. Edits route through a shadow revision (revisionOfId != null). Mods bypass.
+  // 🔴 Owner asset-edit guard (audit #3010): an owner's asset mutation must never
+  // land on a LIVE approved, non-shadow listing — that bypasses mod review.
+  //
+  // Under LAZY shadow creation the owner is no longer REFUSED: the mutation mints
+  // (or reuses) the shadow and applies there — see
+  // `app-listing-assets.lazy-revision.service.test.ts`, which asserts end-to-end
+  // against an in-memory store that the parent's rows survive untouched. What
+  // remains here is the guard's role as FAIL-CLOSED defence in depth: it runs on the
+  // RESOLVED target, so if the resolution ever yields the live parent the write is
+  // still refused. Mods bypass (deliberate live curation).
   // -------------------------------------------------------------------------
 
-  it('removeScreenshot REFUSES a live approved (non-shadow) listing for a non-mod owner', async () => {
+  it('🔴 removeScreenshot STILL REFUSES when the resolve yields the LIVE listing (fail-closed)', async () => {
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
       id: 'b',
       appListingId: 'apl_live',
-      appListing: { userId: 42, status: 'approved', revisionOfId: null },
+      appListing: { userId: 42 },
     });
+    const live = { ...listingRow, id: 'apl_live', status: 'approved', revisionOfId: null };
+    mockDb.appListing.findUnique.mockResolvedValue(live);
+    // FAULT INJECTION: the shadow probe resolves to the PARENT's own id, so the
+    // "shadow" the resolver loads back IS the live listing. The guard is the last
+    // thing between that and a delete off the served listing.
+    mockDb.appListing.findFirst.mockResolvedValue({ id: 'apl_live' });
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
     await expect(removeListingScreenshot({ screenshotId: 'b' }, owner)).rejects.toThrow(
       /live; edit its assets through a revision/
     );
-    expect(mockDb.appListingScreenshot.delete).not.toHaveBeenCalled();
+    expect(mockDb.appListingScreenshot.deleteMany).not.toHaveBeenCalled();
   });
 
   it('removeScreenshot ALLOWS removal on a SHADOW revision draft (revisionOfId set)', async () => {
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
       id: 'b',
       appListingId: 'apl_shadow',
-      appListing: { userId: 42, status: 'draft', revisionOfId: 'apl_parent' },
+      appListing: { userId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      id: 'apl_shadow',
+      status: 'draft',
+      revisionOfId: 'apl_parent',
     });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
     const res = await removeListingScreenshot({ screenshotId: 'b' }, owner);
     expect(res.removed).toBe('b');
-    expect(mockDb.appListingScreenshot.delete).toHaveBeenCalledWith({ where: { id: 'b' } });
+    // Scoped to the SHADOW, so an approve that reparents its rows makes this a no-op
+    // rather than a delete off the live parent.
+    expect(mockDb.appListingScreenshot.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'b', appListingId: 'apl_shadow' },
+    });
   });
 
   it('a MODERATOR bypasses the guard (may curate a live approved listing)', async () => {
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
       id: 'b',
       appListingId: 'apl_live',
-      appListing: { userId: 42, status: 'approved', revisionOfId: null },
+      appListing: { userId: 42 },
+    });
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      id: 'apl_live',
+      status: 'approved',
+      revisionOfId: null,
     });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
     const res = await removeListingScreenshot({ screenshotId: 'b' }, mod);
     expect(res.removed).toBe('b');
+    // A mod's edit is NOT staged on a shadow — nothing was cloned.
+    expect(mockDb.appListing.create).not.toHaveBeenCalled();
   });
 
-  it('setIcon REFUSES a live approved (non-shadow) listing for a non-mod owner (no write)', async () => {
+  it('🔴 setIcon STILL REFUSES when the resolve yields the LIVE listing (fail-closed)', async () => {
     mockDb.appListing.findUnique.mockResolvedValue({
       ...listingRow,
       status: 'approved',
       revisionOfId: null,
     });
+    // Same fault injection: the "shadow" resolves back to the live parent.
+    mockDb.appListing.findFirst.mockResolvedValue({ id: 'apl_1' });
     const { setListingIcon } = await import('../app-listing-assets.service');
     await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.toThrow(
       /live; edit its assets through a revision/
@@ -538,8 +818,15 @@ describe('screenshot CRUD', () => {
     // Caller owns the LISTING but attaches an Image belonging to someone else.
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
-      id: 9, userId: 99, type: 'image', width: 512, height: 512, mimeType: 'image/png',
-      metadata: {}, ingestion: 'Scanned', nsfwLevel: 1,
+      id: 9,
+      userId: 99,
+      type: 'image',
+      width: 512,
+      height: 512,
+      mimeType: 'image/png',
+      metadata: {},
+      ingestion: 'Scanned',
+      nsfwLevel: 1,
     });
     const { setListingIcon } = await import('../app-listing-assets.service');
     await expect(setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner)).rejects.toThrow(
@@ -552,9 +839,9 @@ describe('screenshot CRUD', () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({ ...validScreenshotImage, userId: 99 });
     const { addListingScreenshot } = await import('../app-listing-assets.service');
-    await expect(
-      addListingScreenshot({ listingId: 'apl_1', imageId: 500 }, owner)
-    ).rejects.toThrow(/do not own this image/);
+    await expect(addListingScreenshot({ listingId: 'apl_1', imageId: 500 }, owner)).rejects.toThrow(
+      /do not own this image/
+    );
     expect(mockDb.appListingScreenshot.create).not.toHaveBeenCalled();
   });
 
@@ -580,8 +867,15 @@ describe('screenshot CRUD', () => {
   it('setIcon on a not-yet-scanned (Pending) Image → STORES it { status: "attached", scanPending: true }', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
-      id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
-      metadata: {}, ingestion: 'Pending', nsfwLevel: 1,
+      id: 9,
+      userId: 42,
+      type: 'image',
+      width: 512,
+      height: 512,
+      mimeType: 'image/png',
+      metadata: {},
+      ingestion: 'Pending',
+      nsfwLevel: 1,
     });
     const { setListingIcon } = await import('../app-listing-assets.service');
     const res = await setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner);
@@ -595,7 +889,8 @@ describe('screenshot CRUD', () => {
   it('addScreenshot on a not-yet-scanned (PendingManualAssignment) Image → STORES the row, scanPending:true', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
-      ...validScreenshotImage, ingestion: 'PendingManualAssignment',
+      ...validScreenshotImage,
+      ingestion: 'PendingManualAssignment',
     });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
     mockDb.appListingScreenshot.count.mockResolvedValue(0);
@@ -609,8 +904,15 @@ describe('screenshot CRUD', () => {
   it('setIcon on a Scanned Image → { status: "attached", iconId } and writes', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
-      id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
-      metadata: {}, ingestion: 'Scanned', nsfwLevel: 1,
+      id: 9,
+      userId: 42,
+      type: 'image',
+      width: 512,
+      height: 512,
+      mimeType: 'image/png',
+      metadata: {},
+      ingestion: 'Scanned',
+      nsfwLevel: 1,
     });
     const { setListingIcon } = await import('../app-listing-assets.service');
     const res = await setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner);
@@ -620,6 +922,39 @@ describe('screenshot CRUD', () => {
     );
   });
 
+  // W13 draft-at-submit — media set on the PRE-APPROVAL DRAFT (status='draft',
+  // revisionOfId=null) is a DIRECT edit: `assertOwnerAssetEditable` only throws for an
+  // `approved && revisionOfId==null` (live) listing, so a draft edits in place — it must
+  // NOT open a shadow revision. Assert the write targets the SAME listing id directly.
+  it('setIcon on a pre-approval DRAFT → DIRECT write to the same listing (NO shadow revision)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      status: 'draft',
+      revisionOfId: null,
+    });
+    mockDb.image.findUnique.mockResolvedValue({
+      id: 9,
+      userId: 42,
+      type: 'image',
+      width: 512,
+      height: 512,
+      mimeType: 'image/png',
+      metadata: {},
+      ingestion: 'Scanned',
+      nsfwLevel: 1,
+    });
+    const { setListingIcon } = await import('../app-listing-assets.service');
+    const res = await setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner);
+
+    expect(res).toEqual({ status: 'attached', iconId: 9 });
+    // DIRECT edit: writes iconId onto the draft's OWN id, no revision clone.
+    expect(mockDb.appListing.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'apl_1' }, data: { iconId: 9 } })
+    );
+    // A shadow revision would be a NEW AppListing row (revisionOfId set) — never created.
+    expect(mockDb.appListing.create).not.toHaveBeenCalled();
+  });
+
   // A TERMINAL ingestion failure stays BAD_REQUEST, so the client stops polling
   // and shows a clear "upload it manually" error instead of an eternal scanning
   // spinner. This is the client-resilience half of the OG-pull-ingest fix — a
@@ -627,8 +962,15 @@ describe('screenshot CRUD', () => {
   it('setIcon on a NotFound image → TERMINAL BAD_REQUEST', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
-      id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
-      metadata: {}, ingestion: 'NotFound', nsfwLevel: 1,
+      id: 9,
+      userId: 42,
+      type: 'image',
+      width: 512,
+      height: 512,
+      mimeType: 'image/png',
+      metadata: {},
+      ingestion: 'NotFound',
+      nsfwLevel: 1,
     });
     const { setListingIcon } = await import('../app-listing-assets.service');
     const err = await captureAttachError(() =>
@@ -643,8 +985,15 @@ describe('screenshot CRUD', () => {
   it('setIcon on a Blocked image → TERMINAL BAD_REQUEST', async () => {
     mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.image.findUnique.mockResolvedValue({
-      id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
-      metadata: {}, ingestion: 'Blocked', nsfwLevel: 1,
+      id: 9,
+      userId: 42,
+      type: 'image',
+      width: 512,
+      height: 512,
+      mimeType: 'image/png',
+      metadata: {},
+      ingestion: 'Blocked',
+      nsfwLevel: 1,
     });
     const { setListingIcon } = await import('../app-listing-assets.service');
     const err = await captureAttachError(() =>
@@ -674,8 +1023,15 @@ describe('screenshot CRUD', () => {
   it('setIcon ATTACHES an over-declared-rating image (X image on a g listing)', async () => {
     mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, contentRating: 'g' });
     mockDb.image.findUnique.mockResolvedValue({
-      id: 9, userId: 42, type: 'image', width: 512, height: 512, mimeType: 'image/png',
-      metadata: {}, ingestion: 'Scanned', nsfwLevel: 8, // NsfwLevel.X
+      id: 9,
+      userId: 42,
+      type: 'image',
+      width: 512,
+      height: 512,
+      mimeType: 'image/png',
+      metadata: {},
+      ingestion: 'Scanned',
+      nsfwLevel: 8, // NsfwLevel.X
     });
     const { setListingIcon } = await import('../app-listing-assets.service');
     const res = await setListingIcon({ listingId: 'apl_1', imageId: 9 }, owner);
@@ -691,9 +1047,9 @@ describe('screenshot CRUD', () => {
     mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, contentRating: 'x' });
     mockDb.image.findUnique.mockResolvedValue({ ...validScreenshotImage, ingestion: 'Blocked' });
     const { addListingScreenshot } = await import('../app-listing-assets.service');
-    await expect(
-      addListingScreenshot({ listingId: 'apl_1', imageId: 500 }, owner)
-    ).rejects.toThrow(/rejected during scanning/);
+    await expect(addListingScreenshot({ listingId: 'apl_1', imageId: 500 }, owner)).rejects.toThrow(
+      /rejected during scanning/
+    );
     expect(mockDb.appListingScreenshot.create).not.toHaveBeenCalled();
   });
 
@@ -709,14 +1065,22 @@ describe('screenshot CRUD', () => {
   });
 
   it('removeScreenshot rejects a non-owner of the parent listing', async () => {
+    // The parent listing must be wired: ownership is decided by `loadOwnedListing`, which
+    // LOADS the listing and resolves its canonical owner. (This case used to pass off an
+    // earlier, denormalized-column copy of the same check that read `appListing.userId`
+    // straight off the screenshot row; that copy is gone — see
+    // `app-access.denormalized-owner-drift.test.ts`.)
+    mockDb.appListing.findUnique.mockResolvedValue(listingRow);
     mockDb.appListingScreenshot.findUnique.mockResolvedValue({
-      id: 'b', appListingId: 'apl_1', appListing: { userId: 42 },
+      id: 'b',
+      appListingId: 'apl_1',
+      appListing: { userId: 42 },
     });
     const { removeListingScreenshot } = await import('../app-listing-assets.service');
     await expect(removeListingScreenshot({ screenshotId: 'b' }, otherUser)).rejects.toThrow(
       /do not own/
     );
-    expect(mockDb.appListingScreenshot.delete).not.toHaveBeenCalled();
+    expect(mockDb.appListingScreenshot.deleteMany).not.toHaveBeenCalled();
   });
 
   it('completeness ignores a null-imageId screenshot row (deleted Image → SetNull)', async () => {
@@ -731,7 +1095,12 @@ describe('screenshot CRUD', () => {
   });
 
   it('getAssets returns assets + a completeness verdict (mod override reads any listing)', async () => {
-    mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, userId: 111, iconId: 1, coverId: 2 });
+    mockDb.appListing.findUnique.mockResolvedValue({
+      ...listingRow,
+      userId: 111,
+      iconId: 1,
+      coverId: 2,
+    });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([
       { id: 's1', imageId: 10, order: 0, caption: null },
     ]);
@@ -741,7 +1110,7 @@ describe('screenshot CRUD', () => {
     expect(res.screenshots).toHaveLength(1);
   });
 
-  it('getAssets includes each asset\'s nsfwLevel (icon + cover + screenshots) for the review derive', async () => {
+  it("getAssets includes each asset's nsfwLevel (icon + cover + screenshots) for the review derive", async () => {
     mockDb.appListing.findUnique.mockResolvedValue({ ...listingRow, iconId: 1, coverId: 2 });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([
       { id: 's1', imageId: 10, order: 0, caption: null },
@@ -794,12 +1163,26 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
   beforeEach(resetDb);
 
   const approvedListing = {
-    id: 'apl_live', kind: 'onsite', slug: 's', name: 'n', category: null, userId: 111,
-    iconId: null, coverId: null, status: 'approved', revisionOfId: null,
+    id: 'apl_live',
+    kind: 'onsite',
+    slug: 's',
+    name: 'n',
+    category: null,
+    userId: 111,
+    iconId: null,
+    coverId: null,
+    status: 'approved',
+    revisionOfId: null,
   };
   const validScreenshotImage = {
-    id: 500, userId: 7, type: 'image', width: 1280, height: 720, mimeType: 'image/png',
-    metadata: { size: 100_000 }, ingestion: 'Scanned',
+    id: 500,
+    userId: 7,
+    type: 'image',
+    width: 1280,
+    height: 720,
+    mimeType: 'image/png',
+    metadata: { size: 100_000 },
+    ingestion: 'Scanned',
   };
 
   it('mod adds an R screenshot to a null-rated live listing → floors contentRating up to r', async () => {
@@ -835,11 +1218,20 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
   it('setIcon by a mod raising a live listing floors contentRating up', async () => {
     // setIcon writes iconId THEN re-derives; assert the re-derive update fired.
     mockDb.appListing.findUnique.mockResolvedValue({
-      ...approvedListing, contentRating: 'pg', iconId: 9,
+      ...approvedListing,
+      contentRating: 'pg',
+      iconId: 9,
     });
     mockDb.image.findUnique.mockResolvedValue({
-      id: 9, userId: 7, type: 'image', width: 512, height: 512, mimeType: 'image/png',
-      metadata: {}, ingestion: 'Scanned', nsfwLevel: NsfwLevel.X,
+      id: 9,
+      userId: 7,
+      type: 'image',
+      width: 512,
+      height: 512,
+      mimeType: 'image/png',
+      metadata: {},
+      ingestion: 'Scanned',
+      nsfwLevel: NsfwLevel.X,
     });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([]); // no screenshots
     mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.X }]); // the new icon = X
@@ -860,7 +1252,10 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
     // Exercises the raise PAST the shared g/pg SFW ceiling (both map to PG): pg → pg13
     // is a real bump the null→r and x→no-lower cases don't cover.
     mockDb.appListing.findUnique.mockResolvedValue({ ...approvedListing, contentRating: 'pg' });
-    mockDb.image.findUnique.mockResolvedValue({ ...validScreenshotImage, nsfwLevel: NsfwLevel.PG13 });
+    mockDb.image.findUnique.mockResolvedValue({
+      ...validScreenshotImage,
+      nsfwLevel: NsfwLevel.PG13,
+    });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([{ order: 0, imageId: 500 }]);
     mockDb.appListingScreenshot.count.mockResolvedValue(1);
     mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.PG13 }]);
@@ -882,7 +1277,10 @@ describe('mod live-asset edit re-derives contentRating (raise-only)', () => {
     // for a non-mod on an approved non-shadow listing), so the `isModerator` guard
     // inside the helper is defense-in-depth only.
     mockDb.appListing.findUnique.mockResolvedValue({
-      ...approvedListing, id: 'apl_draft', status: 'draft', contentRating: null,
+      ...approvedListing,
+      id: 'apl_draft',
+      status: 'draft',
+      contentRating: null,
     });
     mockDb.image.findUnique.mockResolvedValue({ ...validScreenshotImage, nsfwLevel: NsfwLevel.R });
     mockDb.appListingScreenshot.findMany.mockResolvedValue([{ order: 0, imageId: 500 }]);
@@ -915,9 +1313,17 @@ describe('backfillListingAssets', () => {
 
   function row(over: Partial<Record<string, unknown>> = {}) {
     return {
-      id: 'apl_x', kind: 'onsite', slug: 's', name: 'n', category: 'games', userId: 42,
-      iconId: null, coverId: null, appBlockId: 'ab_x',
-      appBlock: { screenshots: null }, screenshots: [],
+      id: 'apl_x',
+      kind: 'onsite',
+      slug: 's',
+      name: 'n',
+      category: 'games',
+      userId: 42,
+      iconId: null,
+      coverId: null,
+      appBlockId: 'ab_x',
+      appBlock: { screenshots: null },
+      screenshots: [],
       ...over,
     };
   }
@@ -998,7 +1404,9 @@ describe('backfillListingAssets', () => {
 
   it('on-site with a MIX migrates ONLY the genuine dev screenshot (skeleton filtered)', async () => {
     mockDb.appListing.findMany.mockResolvedValue([
-      row({ appBlock: { screenshots: [{ key: 'skeleton', autogenerated: true }, { key: 'real' }] } }),
+      row({
+        appBlock: { screenshots: [{ key: 'skeleton', autogenerated: true }, { key: 'real' }] },
+      }),
     ]);
     const deps = makeDeps();
     // migrateBlockScreenshots receives only the filtered real record.
@@ -1111,6 +1519,91 @@ describe('backfillListingAssets', () => {
 // `ingestion` and throws unless EVERY asset is terminally `Scanned`.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// resolveListingRatingFloorInTx — the GO-LIVE rating floor for a listing whose media
+// was attached while it was directly asset-editable (pre-approval draft / reset
+// pending). The attach path DELIBERATELY accepts an image above the declared rating
+// (see "setIcon ATTACHES an over-declared-rating image" above) because draft/pending
+// listings are "rated at approve" — this helper IS that rating. Raise-only.
+// ---------------------------------------------------------------------------
+
+describe('resolveListingRatingFloorInTx (go-live rating floor, raise-only)', () => {
+  beforeEach(resetDb);
+
+  it('RAISES a g-declared listing to r when the pending media is R-rated', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: null });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.R }]);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    // 🔴 The exact bypass this guards: manifest declares 'g', the author attached an
+    // R-rated (Scanned, not Blocked) icon while pending. Approve must NOT stamp 'g'.
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'g')).resolves.toBe('r');
+  });
+
+  it('RAISES a null-declared listing (null → SFW floor) to the derived rating', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ iconId: null, coverId: 2 });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.X }]);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', null)).resolves.toBe('x');
+  });
+
+  it('does NOT lower an x-declared listing whose media is only PG (raise-only)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2 });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    mockDb.image.findMany.mockResolvedValue([
+      { nsfwLevel: NsfwLevel.PG },
+      { nsfwLevel: NsfwLevel.PG },
+    ]);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'x')).resolves.toBe('x');
+  });
+
+  it('takes the MAX across icon + cover + screenshots (a single mature screenshot raises)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2 });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([{ imageId: 10 }, { imageId: 11 }]);
+    mockDb.image.findMany.mockResolvedValue([
+      { nsfwLevel: NsfwLevel.PG },
+      { nsfwLevel: NsfwLevel.PG },
+      { nsfwLevel: NsfwLevel.PG },
+      { nsfwLevel: NsfwLevel.R },
+    ]);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'pg')).resolves.toBe('r');
+    // Every attached asset id is considered — icon, cover AND both screenshots.
+    expect(mockDb.image.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [1, 2, 10, 11] } } })
+    );
+  });
+
+  it('returns the declared rating unchanged when the listing has NO assets (no image query)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ iconId: null, coverId: null });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([]);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'pg')).resolves.toBe('pg');
+    expect(mockDb.image.findMany).not.toHaveBeenCalled();
+  });
+
+  it('returns the declared rating when the listing row is missing (no blind widening)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue(null);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_gone', 'pg')).resolves.toBe(
+      'pg'
+    );
+  });
+
+  it('ignores a null-imageId screenshot row (deleted Image → SetNull)', async () => {
+    mockDb.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: null });
+    mockDb.appListingScreenshot.findMany.mockResolvedValue([{ imageId: null }]);
+    mockDb.image.findMany.mockResolvedValue([{ nsfwLevel: NsfwLevel.PG }]);
+    const { resolveListingRatingFloorInTx } = await import('../app-listing-assets.service');
+    await expect(resolveListingRatingFloorInTx(mockDb as never, 'apl_1', 'pg')).resolves.toBe('pg');
+    expect(mockDb.image.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [1] } } })
+    );
+  });
+});
+
 describe('assertAssetsScanClean', () => {
   beforeEach(resetDb);
 
@@ -1216,5 +1709,25 @@ describe('getAssetScanStatuses', () => {
     const res = await getAssetScanStatuses([], owner);
     expect(res.statuses).toEqual([]);
     expect(mockDb.image.findMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 A ROW WITH A NULL `ingestion` COLUMN IS `pending` HERE, and that is THIS site's
+   * answer — not the shared predicate's.
+   *
+   * `assetScanStatusFromIngestion` reports absence as `null` and leaves the decision to
+   * each caller, because the three callers genuinely disagree: this poll says `pending`
+   * (the badge keeps spinning, which is right for a row whose scan has not been recorded),
+   * `getListingAssets` says `null` (no badge at all), and the batched list read says
+   * "contribute no entry". Before the predicate was consolidated this branch was the
+   * implicit `else` of a ternary and nothing pinned it, so a mutant flipping it to
+   * `scanned` — i.e. telling an author an unscanned asset is clean — survived a green
+   * suite. It does not now.
+   */
+  it('🔴 a row whose ingestion column is NULL reports pending, not scanned', async () => {
+    mockDb.image.findMany.mockResolvedValue([{ id: 1, ingestion: null }]);
+    const { getAssetScanStatuses } = await import('../app-listing-assets.service');
+    const res = await getAssetScanStatuses([1], owner);
+    expect(res.statuses).toEqual([{ imageId: 1, status: 'pending' }]);
   });
 });

@@ -31,7 +31,7 @@ Default resolution 1024x1024 (2K capable). Bilingual (CN/EN) text rendering.
    const booguVersionIds = { base: 3049541, edit: 3049824, turbo: 3050010 } as const;
    ```
 
-   Base-model flip (Other -> Boogu) script: `C:\Users\Zipp4\AppData\Local\Temp\boogu-flip.mjs` (dry-run default; `--execute` to write). Validated via dry-run; run after the v5.0.1868 deploy is live in prod.
+   Base-model flip (Other -> Boogu) script: `<local-path>/AppData\Local\Temp\boogu-flip.mjs` (dry-run default; `--execute` to write). Validated via dry-run; run after the v5.0.1868 deploy is live in prod.
 3. **Engine string + edit operation contract — orchestrator's call.** ZImage uses `engine: 'sdcpp', ecosystem: 'zImage'`. Boogu's engine (comfy? sdcpp? a new one?) and whether edit is `operation: 'editImage'` vs image-presence-inferred is whatever the orchestrator implements. Confirm with orchestrator team.
 
 ## Gating mechanism (answer to "Flipt or ecosystem mgmt?")

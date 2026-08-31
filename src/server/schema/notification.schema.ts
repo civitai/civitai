@@ -29,6 +29,8 @@ export const notificationSingleRow = z.object({
   userId: z.number(),
   type: z.string(),
   details: z.record(z.string(), z.any()),
+  // Shared across every type derivable from the same source event — see @civitai/notifications.
+  dedupeKey: z.string().nullish(),
 });
 
 export type NotificationSingleRowFull = z.infer<typeof notificationSingleRowFull>;

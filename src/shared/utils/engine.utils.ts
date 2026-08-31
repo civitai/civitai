@@ -11,7 +11,7 @@ export const ENGINE_TO_ECOSYSTEM: Record<string, string> = {
   vidu: 'Vidu',
   kling: 'Kling',
   hunyuan: 'HyV1',
-  minimax: 'MiniMax',
+  minimax: 'MiniMaxH3',
   mochi: 'Mochi',
   sora: 'Sora2',
   veo3: 'Veo3',

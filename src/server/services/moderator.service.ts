@@ -4,7 +4,15 @@ type TagActivities = 'moderateTag' | 'disableTag' | 'addTag' | 'deleteTag';
 
 type ModelModActivity = {
   entityType: 'model';
-  activity: TagActivities | 'review' | 'moderateFlag' | 'setMinor' | 'unsetMinor';
+  activity:
+    | TagActivities
+    | 'review'
+    | 'moderateFlag'
+    | 'setMinor'
+    | 'unsetMinor'
+    | 'setMinorAutoHash'
+    | 'rollbackMinorAutoHash'
+    | 'dismissMinorHashMatch';
 };
 
 type ModelVersionModActivity = {
@@ -39,12 +47,35 @@ type ImpersonateModActivity = {
 
 type UserModActivity = {
   entityType: 'user';
-  activity: 'setRewardsEligibility' | 'removeContent' | 'autoMuteScam';
+  activity:
+    | 'setRewardsEligibility'
+    | 'removeContent'
+    | 'autoMuteScam'
+    | 'mutePendingReview'
+    | 'overturnPendingReviewMute'
+    // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
+    // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
+    // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when
+    // the caller asserts one), and the reversal is a human action often enough that folding "auto"
+    // into the name would record it as a cron's. The WHY is not here — ModActivity has no free-text
+    // column — it stays in ClickHouse `metricExcludedUsers.reason`, keyed by the same userId.
+    | 'reactionAbuseExclude'
+    | 'reactionAbuseUnexclude'
+    // `UserStrike` is the record of the strike; this is the record that a moderator issued one, which
+    // is the question the account-history panel answers. `userId` is the issuer, -1 for an auto-strike.
+    | 'strike';
 };
 
 type ComicProjectModActivity = {
   entityType: 'comicProject';
   activity: 'tosViolation' | 'unpublishChapter' | 'setNsfwLevel';
+};
+
+/** A sticker placement, not the image it sits on: entity ids are per-type, so recording a placement
+ *  under 'image' would collide with real image ids and show a takedown on an unrelated image. */
+type PlacementModActivity = {
+  entityType: 'placement';
+  activity: 'removePlacement';
 };
 
 type ModActivity = {
@@ -59,14 +90,20 @@ type ModActivity = {
   | ImpersonateModActivity
   | UserModActivity
   | ComicProjectModActivity
+  | PlacementModActivity
 );
 
+// `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or
+// not a unique index exists, so this survives the pending migration that drops ModActivity's
+// (activity, entityType, entityId) unique index and makes the table append-only. Naming the target would
+// fail with 42P10 the moment that index goes; omitting the clause entirely would fail with 23505 until it
+// does. Do not add a target back.
 export async function trackModActivity(userId: number, input: ModActivity) {
   if (!input.entityId) {
     await dbWrite.$executeRaw`
       INSERT INTO "ModActivity" ("userId", "entityType", activity)
       VALUES (${userId}, ${input.entityType}, ${input.activity})
-      ON CONFLICT ("entityType", activity, "entityId") DO UPDATE SET "createdAt" = NOW(), "userId" = ${userId}
+      ON CONFLICT DO NOTHING
     `;
     return;
   }
@@ -75,6 +112,6 @@ export async function trackModActivity(userId: number, input: ModActivity) {
   await dbWrite.$executeRaw`
     INSERT INTO "ModActivity" ("userId", "entityType", activity, "entityId")
     SELECT ${userId}, ${input.entityType}, ${input.activity}, UNNEST(${input.entityId})
-    ON CONFLICT ("entityType", activity, "entityId") DO UPDATE SET "createdAt" = NOW(), "userId" = ${userId}
+    ON CONFLICT DO NOTHING
   `;
 }

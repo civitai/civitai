@@ -33,7 +33,10 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useMemo, useRef } from 'react';
+import { useRouter } from 'next/router';
 import clsx from 'clsx';
+import { STICKER_REVEAL_PARAM, stickerRevealRequested } from '~/components/Placement/queue-routes';
+import { useStickerRevealParam } from '~/store/sticker-reveal.store';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/client';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
@@ -57,14 +60,18 @@ import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToMode
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
+import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
+import { RemixGalleryCard } from '~/components/RemixGallery/RemixGalleryCard';
 import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
+import { ImageRemixOfDetails } from '~/components/Image/DetailV2/ImageRemixOfDetails';
 import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
 import { NextLink } from '~/components/NextLink/NextLink';
@@ -74,7 +81,6 @@ import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettings
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -82,7 +88,7 @@ import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddo
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
-import { generationGraphPanel } from '~/store/generation-graph.store';
+import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 
@@ -118,7 +124,6 @@ const sharedIconProps: IconProps = {
 export function ImageDetail2() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const { trackAction } = useTrackEvent();
   const {
     images,
     active,
@@ -138,6 +143,21 @@ export function ImageDetail2() {
     key: `image-detail-open`,
     defaultValue: true,
   });
+
+  // Here rather than in the overlay: the overlay is behind the `safe` gate in
+  // the carousel, so on a blurred image it never mounts and the link would
+  // silently do nothing on exactly the images where the reveal matters most.
+  //
+  // 🔴 `next/router`, NOT the browser router, and deliberately. Every writer of
+  // this param — the queue's `target="_blank"` link and the notification — is a
+  // real page load, which is the only case `router.query` sees. Reading the
+  // browser router instead would also cover a routed dialog opened over a feed,
+  // and would flip `forced` on every carousel settle, which re-renders every
+  // subscriber of the reveal store and writes localStorage each time (persist
+  // does not diff). If a routed-dialog writer ever appears, that is the cost to
+  // solve, and the answer is a second non-persisted store rather than a guard
+  // inside the effect.
+  useStickerRevealParam(stickerRevealRequested(useRouter().query[STICKER_REVEAL_PARAM]));
 
   const videoRef = useRef<EdgeVideoRef | null>(null);
   const adContainerRef = useRef<HTMLDivElement | null>(null);
@@ -197,8 +217,8 @@ export function ImageDetail2() {
 
   const handleSidebarToggle = () => setSidebarOpen((o) => !o);
 
-  const canCreate = image.hasPositivePrompt ?? image.hasMeta;
   const isOwner = currentUser?.id === image.user.id;
+  const canRemix = isRemixMenuVisible(image);
 
   const IconChevron = !active ? IconChevronUp : IconChevronDown;
   const IconLayoutSidebarRight = !sidebarOpen
@@ -207,28 +227,15 @@ export function ImageDetail2() {
 
   const LeftImageControls = (
     <>
-      {canCreate && (
-        <Button
-          {...sharedButtonProps}
-          color="blue"
-          onClick={() => {
-            trackAction({
-              type: 'Image_Remix_Click',
-              details: {
-                imageId: image.id,
-                imageType: image.type,
-                source: 'remix:image',
-              },
-            }).catch(() => undefined);
-            generationGraphPanel.open({ type: image.type, id: image.id });
-          }}
-          data-activity="remix:image"
-        >
-          <Group gap={4} wrap="nowrap">
-            <IconBrush size={16} />
-            <Text size="xs">Remix</Text>
-          </Group>
-        </Button>
+      {canRemix && (
+        <RemixMenu image={image} source="remix:image">
+          <Button {...sharedButtonProps} color="blue" data-activity="remix:image">
+            <Group gap={4} wrap="nowrap">
+              <IconBrush size={16} />
+              <Text size="xs">Remix</Text>
+            </Group>
+          </Button>
+        </RemixMenu>
       )}
       <Button {...sharedButtonProps} onClick={handleSaveClick}>
         <IconBookmark {...sharedIconProps} />
@@ -482,6 +489,9 @@ export function ImageDetail2() {
                             }}
                           >
                             <ImageDetailReactions image={image} />
+                            {/* Inside the provider, not beside it: the bar reads
+                                the same `buttonStyling` the reactions do. */}
+                            <StickerPlacementBar imageId={image.id} className="ml-2" />
                           </ReactionSettingsProvider>
                         </div>
                         <CarouselIndicators {...carouselNavigation} />
@@ -632,6 +642,7 @@ export function ImageDetail2() {
                       canAdd
                       collapsible
                       nsfwLevel={image.nsfwLevel}
+                      mediaType={image.type}
                     />
                     {post && (post.title || post.detail) && (
                       <Card className="flex flex-col gap-3 rounded-xl">
@@ -647,17 +658,18 @@ export function ImageDetail2() {
                       </Card>
                     )}
                     <ImageProcess imageId={image.id} />
-                    <ImageGenerationData imageId={image.id} />
-                    {/* <ImageRemixOfDetails imageId={image.id} />
-                    <ImageRemixesDetails imageId={image.id} /> */}
+                    <ImageRemixOfDetails imageId={image.id} />
+                    <RemixGalleryCard imageId={image.id} />
+                    <ImageGenerationData imageId={image.id} collapsible />
+                    {/* <ImageRemixesDetails imageId={image.id} /> */}
                     {/* {!hideAds && <AdUnitSide_3 />} */}
-                    <Card className="flex flex-col gap-3 rounded-xl">
-                      <Text className="flex items-center gap-2 text-xl font-semibold">
-                        <IconBrandWechat />
-                        <span>Discussion</span>
-                      </Text>
+                    <CollapsibleCard
+                      title="Discussion"
+                      icon={<IconBrandWechat />}
+                      storageKey="discussion"
+                    >
                       <ImageDetailComments imageId={image.id} userId={image.user.id} />
-                    </Card>
+                    </CollapsibleCard>
                     <ImageContestCollectionDetails
                       key={currentUser?.id}
                       image={image}

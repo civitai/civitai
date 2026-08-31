@@ -3,7 +3,7 @@ import { Group, Input, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import type { RichTextEditorProps } from '@mantine/tiptap';
 import { Link, RichTextEditor as RTE } from '@mantine/tiptap';
-import { IconAlertTriangle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconUnlink } from '@tabler/icons-react';
 import { TextStyleKit } from '@tiptap/extension-text-style';
 import ImageExtension from '@tiptap/extension-image';
 import { Placeholder } from '@tiptap/extensions';
@@ -11,12 +11,15 @@ import type { Editor, Extensions } from '@tiptap/react';
 import { Extension, nodePasteRule, useEditor } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
 import StarterKit from '@tiptap/starter-kit';
-import React, { useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import React, { useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { InsertInstagramEmbedControl } from '~/components/RichTextEditor/InsertInstagramEmbedControl';
 import { InsertStrawPollControl } from '~/components/RichTextEditor/InsertStrawPollControl';
 import { constants } from '~/server/common/constants';
 import { validateThirdPartyUrl } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { InsertImageControl, InsertImageControlLegacy } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
@@ -31,7 +34,14 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { TimestampEditNode } from '~/components/TipTap/TimestampNode';
+import { StickerEditNode } from '~/components/TipTap/StickerNode';
+import { useOwnedSticker } from '~/components/Sticker/sticker.util';
+import { InsertStickerControl } from '~/components/RichTextEditor/InsertStickerControl';
 import { InsertTimestampControl } from '~/components/RichTextEditor/InsertTimestampControl';
+import { InsertBlurbControl } from '~/components/RichTextEditor/InsertBlurbControl';
+import { openBlurbManager } from '~/components/Dialog/triggers/blurb-manager';
+import { insertBlurb } from '~/components/RichTextEditor/blurb.util';
+import { BlurbEditNode, BlurbEditorProvider } from '~/components/TipTap/BlurbNode';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -122,6 +132,7 @@ export function RichTextEditor({
   innerRef,
   onSuperEnter,
   withLinkValidation,
+  withoutBlockContainers = false,
   stickyToolbar,
   toolbarOffset = 0,
   inputClasses,
@@ -138,6 +149,41 @@ export function RichTextEditor({
   const addMentions = includeControls.includes('mentions');
   const addPolls = includeControls.includes('polls');
   const addTimestamp = includeControls.includes('timestamp');
+  const addStickers = includeControls.includes('sticker');
+  const addBlurbs = includeControls.includes('blurb');
+
+  // Autocomplete and the input rule are insertion paths just like the picker, so
+  // they answer to the same flag. StickerPicker gates itself at its own mount
+  // point; this is the equivalent for the two that don't go through it.
+  const stickersEnabled = useFeatureFlags().stickers && addStickers;
+  const { sticker: ownedStickers } = useOwnedSticker();
+  const { data: stickerBalances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
+    enabled: stickersEnabled,
+  });
+  // Exhausted stickers stay out of autocomplete and the input rule — offering
+  // one from a menu that never mentions the balance just fails at submit.
+  const availableStickers = useMemo(() => {
+    if (!stickersEnabled) return [];
+    const loaded = !!stickerBalances;
+    const balances = new Map((stickerBalances ?? []).map((b) => [b.cosmeticId, b.remaining]));
+    return ownedStickers
+      .filter((x) => balances.get(x.id) !== 0)
+      .map((x) => ({ ...x, remaining: loaded ? balances.get(x.id) ?? null : undefined }));
+  }, [stickersEnabled, ownedStickers, stickerBalances]);
+
+  const currentUser = useCurrentUser();
+  const blurbsEnabled = useFeatureFlags().textBlurbs && addBlurbs;
+  const [hasOrphanedBlurb, setHasOrphanedBlurb] = useState(false);
+  // Not also "the document holds a chip": `blurb.getMine` is behind the same flag, so a fetch
+  // without it is a guaranteed 403 rather than the orphan detection it used to buy.
+  const blurbsQuery = trpc.blurb.getMine.useQuery(undefined, {
+    enabled: !!currentUser && blurbsEnabled,
+  });
+  const blurbs = useMemo(() => blurbsQuery.data ?? [], [blurbsQuery.data]);
+  const blurbEditorState = useMemo(
+    () => ({ blurbs, resolved: blurbsQuery.isSuccess }),
+    [blurbs, blurbsQuery.isSuccess]
+  );
 
   const accepts = useMemo(() => {
     const accepts: MediaType[] = [];
@@ -158,8 +204,8 @@ export function RichTextEditor({
         italic: !addFormatting ? false : undefined,
         strike: !addFormatting ? false : undefined,
         code: !addFormatting ? false : undefined,
-        blockquote: !addFormatting ? false : undefined,
-        codeBlock: !addFormatting ? false : undefined,
+        blockquote: !addFormatting || withoutBlockContainers ? false : undefined,
+        codeBlock: !addFormatting || withoutBlockContainers ? false : undefined,
         dropcursor: !addMedia ? false : undefined,
         underline: !addFormatting ? false : undefined,
         link: false,
@@ -214,11 +260,22 @@ export function RichTextEditor({
     // Always register the timestamp node so pasting/typing `<t:...>` converts
     // anywhere; the toolbar insert button is gated by the `timestamp` control.
     arr.push(TimestampEditNode);
+    // Comment editors only. Verified rather than assumed: the four surfaces
+    // passing `includeControls: ['sticker']` are exactly the four comment
+    // editors, and nothing else loads comment content — so no editor that could
+    // legitimately hold a sticker span loses the node. Off these surfaces the
+    // remaining exposure was paste, and dropping the span on parse beats
+    // rendering it and having it vanish on save.
+    if (addStickers) arr.push(StickerEditNode);
+    if (addBlurbs) arr.push(BlurbEditNode);
 
     return arr;
   }, [
+    addStickers,
+    addBlurbs,
     addList,
     addFormatting,
+    withoutBlockContainers,
     addColors,
     addLink,
     withLinkValidation,
@@ -278,6 +335,51 @@ export function RichTextEditor({
     if (editor && !editorRef.current) editorRef.current = editor;
   }, [editor]);
 
+  // Written into per-editor storage rather than passed as an extension option:
+  // ownership loads async, and changing the extension array rebuilds the editor.
+  useEffect(() => {
+    if (!editor) return;
+    // No early return on the flag: availableStickers is already [] when it's off,
+    // and skipping the write would leave stale availability in storage if the flag
+    // flips mid-session, keeping both insertion paths alive.
+    const storage = editor.extensionStorage.sticker;
+    if (storage) storage.available = availableStickers;
+  }, [editor, availableStickers]);
+
+  useEffect(() => {
+    const storage = editor?.extensionStorage.blurb;
+    if (!storage) return;
+    storage.available = blurbs;
+    storage.loading = blurbsQuery.isLoading;
+    storage.enabled = blurbsEnabled;
+    storage.onManage = () =>
+      openBlurbManager({
+        onInsert: (blurb) => {
+          if (editor) insertBlurb(editor, blurb);
+        },
+      });
+    storage.refresh?.();
+  }, [editor, blurbs, blurbsQuery.isLoading, blurbsEnabled]);
+
+  useEffect(() => {
+    if (!editor || !addBlurbs) return;
+    const known = blurbsQuery.isSuccess ? new Set(blurbs.map((blurb) => blurb.id)) : null;
+    const scan = () => {
+      let orphaned = false;
+      editor.state.doc.descendants((node) => {
+        if (node.type.name !== 'blurb') return true;
+        if (known && !known.has(node.attrs.id)) orphaned = true;
+        return false;
+      });
+      setHasOrphanedBlurb(orphaned);
+    };
+    scan();
+    editor.on('update', scan);
+    return () => {
+      editor.off('update', scan);
+    };
+  }, [editor, addBlurbs, blurbs, blurbsQuery.isSuccess]);
+
   // Used to call editor commands outside the component via a ref
   useImperativeHandle(innerRef, () => ({
     insertContentAtCursor: (value) => {
@@ -285,6 +387,11 @@ export function RichTextEditor({
         const currentPosition = editorRef.current.state.selection.$anchor.pos;
         editorRef.current.commands.insertContentAt(currentPosition, value);
       }
+    },
+    // Composers that hide the toolbar mount the picker themselves, so they need
+    // the command without the control. Same command the toolbar control calls.
+    insertSticker: (attributes) => {
+      editorRef.current?.chain().focus().setSticker(attributes).run();
     },
     focus: () => {
       if (editorRef.current && innerRef) {
@@ -296,141 +403,173 @@ export function RichTextEditor({
   const editorSizeStyles = mapEditorSize[editorSize] || mapEditorSize.sm;
 
   return (
-    <Input.Wrapper
-      id={id}
-      label={label}
-      labelProps={labelProps}
-      description={description}
-      withAsterisk={withAsterisk}
-      error={error}
-      className={inputClasses}
-    >
-      <RTE
-        {...props}
-        editor={editor}
+    <BlurbEditorProvider value={blurbEditorState}>
+      <Input.Wrapper
         id={id}
-        classNames={{
-          ...props.classNames,
-          content: clsx(
-            classes.richTextEditor,
-            props.classNames && 'content' in props.classNames ? props.classNames.content : undefined
-          ),
-          toolbar: clsx(
-            'border-l border-l-gray-4 dark:border-l-dark-4',
-            props.classNames && 'toolbar' in props.classNames ? props.classNames.toolbar : undefined
-          ),
-        }}
-        style={
-          {
-            '--editor-min-height': editorSizeStyles.minHeight
-              ? `${editorSizeStyles.minHeight}px`
-              : undefined,
-            '--editor-font-size': editorSizeStyles.fontSize
-              ? `${editorSizeStyles.fontSize}px`
-              : undefined,
-          } as React.CSSProperties
-        }
+        label={label}
+        labelProps={labelProps}
+        description={description}
+        withAsterisk={withAsterisk}
+        error={error}
+        className={inputClasses}
       >
-        {!hideToolbar && (
-          <RTE.Toolbar sticky={stickyToolbar} stickyOffset={toolbarOffset}>
-            {addHeading && (
-              <RTE.ControlsGroup>
-                <RTE.H1 />
-                <RTE.H2 />
-                <RTE.H3 />
-              </RTE.ControlsGroup>
-            )}
-
-            {addFormatting && (
-              <RTE.ControlsGroup>
-                <RTE.Bold />
-                <RTE.Italic />
-                <RTE.Underline />
-                <RTE.Strikethrough />
-                <RTE.ClearFormatting />
-                <RTE.CodeBlock />
-                {addColors && (
-                  <RTE.ColorPicker colors={[...constants.richTextEditor.presetColors]} />
-                )}
-              </RTE.ControlsGroup>
-            )}
-
-            {addList && (
-              <RTE.ControlsGroup>
-                <RTE.BulletList />
-                <RTE.OrderedList />
-              </RTE.ControlsGroup>
-            )}
-
-            {addLink && (
-              <RTE.ControlsGroup>
-                <RTE.Link />
-                <RTE.Unlink />
-              </RTE.ControlsGroup>
-            )}
-
-            {addMedia && (
-              <RTE.ControlsGroup>
-                {addVideo && addImages ? (
-                  <InsertImageControl
-                    accepts={accepts}
-                    maxFileSize={constants.richTextEditor.maxFileSize}
-                  />
-                ) : addImages ? (
-                  <InsertImageControlLegacy maxFileSize={constants.richTextEditor.maxFileSize} />
-                ) : null}
-                <InsertYoutubeVideoControl />
-                <InsertInstagramEmbedControl />
-              </RTE.ControlsGroup>
-            )}
-            {addPolls && (
-              <RTE.ControlsGroup>
-                <InsertStrawPollControl />
-              </RTE.ControlsGroup>
-            )}
-            {addTimestamp && (
-              <RTE.ControlsGroup>
-                <InsertTimestampControl />
-              </RTE.ControlsGroup>
-            )}
-          </RTE.Toolbar>
-        )}
-
-        {editor && (
-          // Don't show the bubble menu for images, to prevent setting images as headings, etc.
-          <BubbleMenu
-            editor={editor}
-            shouldShow={({ editor }) => !editor.state.selection.empty && !editor.isActive('image')}
-            className={classes.bubbleTooltip}
-          >
-            <RTE.ControlsGroup>
-              {addHeading ? (
-                <>
+        <RTE
+          {...props}
+          editor={editor}
+          id={id}
+          classNames={{
+            ...props.classNames,
+            content: clsx(
+              classes.richTextEditor,
+              props.classNames && 'content' in props.classNames
+                ? props.classNames.content
+                : undefined
+            ),
+            toolbar: clsx(
+              'border-l border-l-gray-4 dark:border-l-dark-4',
+              props.classNames && 'toolbar' in props.classNames
+                ? props.classNames.toolbar
+                : undefined
+            ),
+          }}
+          style={
+            {
+              '--editor-min-height': editorSizeStyles.minHeight
+                ? `${editorSizeStyles.minHeight}px`
+                : undefined,
+              '--editor-font-size': editorSizeStyles.fontSize
+                ? `${editorSizeStyles.fontSize}px`
+                : undefined,
+            } as React.CSSProperties
+          }
+        >
+          {!hideToolbar && (
+            <RTE.Toolbar sticky={stickyToolbar} stickyOffset={toolbarOffset}>
+              {addHeading && (
+                <RTE.ControlsGroup>
                   <RTE.H1 />
                   <RTE.H2 />
                   <RTE.H3 />
-                </>
-              ) : null}
-              {addFormatting ? (
-                <>
+                </RTE.ControlsGroup>
+              )}
+
+              {addFormatting && (
+                <RTE.ControlsGroup>
                   <RTE.Bold />
                   <RTE.Italic />
-                </>
-              ) : null}
-              {addList ? <RTE.BulletList /> : null}
-              {addLink ? <RTE.Link /> : null}
-            </RTE.ControlsGroup>
-          </BubbleMenu>
-        )}
+                  <RTE.Underline />
+                  <RTE.Strikethrough />
+                  <RTE.ClearFormatting />
+                  {!withoutBlockContainers && <RTE.CodeBlock />}
+                  {addColors && (
+                    <RTE.ColorPicker colors={[...constants.richTextEditor.presetColors]} />
+                  )}
+                </RTE.ControlsGroup>
+              )}
 
-        <RTE.Content />
-      </RTE>
-    </Input.Wrapper>
+              {addList && (
+                <RTE.ControlsGroup>
+                  <RTE.BulletList />
+                  <RTE.OrderedList />
+                </RTE.ControlsGroup>
+              )}
+
+              {addLink && (
+                <RTE.ControlsGroup>
+                  <RTE.Link />
+                  <RTE.Unlink />
+                </RTE.ControlsGroup>
+              )}
+
+              {addMedia && (
+                <RTE.ControlsGroup>
+                  {addVideo && addImages ? (
+                    <InsertImageControl
+                      accepts={accepts}
+                      maxFileSize={constants.richTextEditor.maxFileSize}
+                    />
+                  ) : addImages ? (
+                    <InsertImageControlLegacy maxFileSize={constants.richTextEditor.maxFileSize} />
+                  ) : null}
+                  <InsertYoutubeVideoControl />
+                  <InsertInstagramEmbedControl />
+                </RTE.ControlsGroup>
+              )}
+              {addPolls && (
+                <RTE.ControlsGroup>
+                  <InsertStrawPollControl />
+                </RTE.ControlsGroup>
+              )}
+              {addTimestamp && (
+                <RTE.ControlsGroup>
+                  <InsertTimestampControl />
+                </RTE.ControlsGroup>
+              )}
+              {addStickers && (
+                <RTE.ControlsGroup>
+                  <InsertStickerControl />
+                </RTE.ControlsGroup>
+              )}
+              {blurbsEnabled && (
+                <RTE.ControlsGroup>
+                  <InsertBlurbControl />
+                </RTE.ControlsGroup>
+              )}
+            </RTE.Toolbar>
+          )}
+
+          {editor && (
+            // Not for images, to prevent setting them as headings, etc. Not for a blurb either:
+            // its words live on the blurb's own row, so every control here would be offering
+            // formatting that the next save discards.
+            <BubbleMenu
+              editor={editor}
+              shouldShow={({ editor }) =>
+                !editor.state.selection.empty &&
+                !editor.isActive('image') &&
+                !editor.isActive('blurb')
+              }
+              className={classes.bubbleTooltip}
+            >
+              <RTE.ControlsGroup>
+                {addHeading ? (
+                  <>
+                    <RTE.H1 />
+                    <RTE.H2 />
+                    <RTE.H3 />
+                  </>
+                ) : null}
+                {addFormatting ? (
+                  <>
+                    <RTE.Bold />
+                    <RTE.Italic />
+                  </>
+                ) : null}
+                {addList ? <RTE.BulletList /> : null}
+                {addLink ? <RTE.Link /> : null}
+              </RTE.ControlsGroup>
+            </BubbleMenu>
+          )}
+
+          <RTE.Content />
+
+          {hasOrphanedBlurb && (
+            <Group gap={8} wrap="nowrap" className="m-3 rounded-sm bg-red-1 p-2.5 dark:bg-red-8/20">
+              <IconUnlink size={14} stroke={1.5} className="shrink-0 text-red-6" />
+              <Text size="xs">
+                This snippet was deleted. The words stay — save and they become ordinary text.
+              </Text>
+            </Group>
+          )}
+        </RTE>
+      </Input.Wrapper>
+    </BlurbEditorProvider>
   );
 }
 
 export type EditorCommandsRef = {
   insertContentAtCursor: (value: string) => void;
+  insertSticker: (attributes: { id: number; slug?: string }) => void;
   focus: () => void;
 };
 
@@ -444,7 +583,9 @@ type ControlType =
   | 'mentions'
   | 'polls'
   | 'colors'
-  | 'timestamp';
+  | 'timestamp'
+  | 'sticker'
+  | 'blurb';
 export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
   Pick<InputWrapperProps, 'label' | 'labelProps' | 'description' | 'withAsterisk' | 'error'> & {
     value?: string;
@@ -459,6 +600,12 @@ export type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'
     innerRef?: React.ForwardedRef<EditorCommandsRef>;
     onSuperEnter?: () => void;
     withLinkValidation?: boolean;
+    /**
+     * Drops blockquote and code block from the `formatting` group. For a surface whose stored
+     * allowlist omits them: a control offering markup the save discards promises something it
+     * cannot keep.
+     */
+    withoutBlockContainers?: boolean;
     stickyToolbar?: boolean;
     toolbarOffset?: number;
     inputClasses?: string;

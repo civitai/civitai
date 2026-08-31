@@ -1,6 +1,7 @@
 import { createServerSideHelpers } from '@trpc/react-query/server';
 import type { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'next';
 import type { Session } from '~/types/session';
+import { jsonSafeSession } from '~/server/utils/session-props';
 import { Tracker } from '~/server/clickhouse/client';
 import { unionTransformer } from '~/shared/utils/trpc-union-transformer';
 import {
@@ -135,7 +136,7 @@ export function createServerSideProps<P>({
               ),
             }
           : {}),
-        session,
+        session: jsonSafeSession(session),
       } as NonNullable<P>,
     };
   };

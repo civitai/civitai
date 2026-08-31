@@ -32,6 +32,15 @@ generator kysely {
   enumFileName = "enums.ts"
 }
 
+// The set of tables carrying a Prisma `@updatedAt` column, consumed by @civitai/db-queries'
+// updatedAtPlugin. MUST stay registered here: the generated file is typed `Set<keyof DB>`
+// against prisma-kysely's output, so if this generator does not run alongside the one above,
+// the two drift and the mismatch surfaces as a repo-wide `tsc` failure.
+generator updatedAtTables {
+  provider = "node ./scripts/prisma-updated-at-generator.mjs"
+  output   = "../src/kysely/updated-at-tables.ts"
+}
+
 datasource db {
   provider          = "postgresql"
   // NOTE: When using postgresql, mysql or sqlserver, uncomment the @db.Text annotations in model Account below
@@ -408,6 +417,8 @@ model User {
   createdAt               DateTime               @default(now())
   deletedAt               DateTime?
   subscriptions           CustomerSubscription[]
+  membershipGiftsGiven    MembershipGift[]       @relation("membershipGiftsGiven")
+  membershipGiftsReceived MembershipGift[]       @relation("membershipGiftsReceived")
   mutedAt                 DateTime? /// Set on moderator mute-confirmation; cleared via trigger on unmute
   muted                   Boolean                @default(false)
   muteExpiresAt           DateTime? /// For timed mutes from strike escalation
@@ -442,6 +453,7 @@ model User {
   oauthClients         OauthClient[]
   oauthConsents        OauthConsent[]
   roles                UserRole[]
+  membershipOverride   UserMembershipOverride?
   links                UserLink[]
   comments             Comment[]
   commentReactions     CommentReaction[]
@@ -454,6 +466,7 @@ model User {
   engagedModelVersions ModelVersionEngagement[]
   metrics              UserMetric[]
   reports              Report[]
+  feedback             Feedback[]
   questions            Question[]
   answers              Answer[]
   commentsv2           CommentV2[]
@@ -486,9 +499,13 @@ model User {
   receivedReports            UserReport[]
   engagedImages              ImageEngagement[]
   collections                Collection[]
+  hubs                       UserHub[]
+  hubFollows                 UserHubFollow[]
   collectionItems            CollectionItem[]
   reviewedCollectionItems    CollectionItem[]               @relation("reviewedBy")
   contributingCollections    CollectionContributor[]
+  collectionInvitesReceived CollectionInvite[] @relation("collectionInviteRecipient")
+  collectionInvitesSent     CollectionInvite[] @relation("collectionInviteSender")
   homeBlocks                 HomeBlock[]
   bounties                   Bounty[]
   bountyEntries              BountyEntry[]
@@ -521,6 +538,8 @@ model User {
   addedCosmeticShopSections  CosmeticShopSection[]
   addedCosmeticShopItems     CosmeticShopItem[]
   purchasedCosmetics         UserCosmeticShopPurchases[]
+  wishlistedCosmeticShopItems UserCosmeticShopItemWishlist[]
+  resoldCosmeticShopItems    UserCosmeticShopItemResale[]
   createdCosmetics           Cosmetic[]                  @relation("CosmeticCreator")
   donationGoals              DonationGoal[]
   donations                  Donation[]
@@ -551,6 +570,7 @@ model User {
   voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
   generationPresets           GenerationPreset[]
   ownedWildcardSets           WildcardSet[]                   @relation("WildcardSetOwner")
+  blurbs                      Blurb[]
 
   // 3D Models
   model3ds                    Model3D[]                       @relation("model3dCreator")
@@ -580,7 +600,6 @@ model User {
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
   appUserScopeGrants         AppUserScopeGrant[]
-  appBlockReviews            AppBlockReview[]
   appDevForgejoIdentity      AppDevForgejoIdentity?
   appListings                        AppListing[]
   appListingReviews                  AppListingReview[]
@@ -589,6 +608,24 @@ model User {
   appListingReportsReported          AppListingReport[]         @relation("AppListingReportReporter")
   appListingReportsResolved          AppListingReport[]         @relation("AppListingReportResolver")
   appListingModerationEvents         AppListingModerationEvent[] @relation("AppListingModEventActor")
+  // App Listing Collaborators — editor seats held / issued, the ownership audit
+  // trail this user acted in or was targeted by, and any transfer they are party to.
+  appCollaboratorSeats               AppCollaborator[]          @relation("AppCollaboratorMember")
+  appCollaboratorInvitesSent         AppCollaborator[]          @relation("AppCollaboratorInviter")
+  appOwnershipEventsActed            AppOwnershipEvent[]        @relation("AppOwnershipEventActor")
+  appOwnershipEventsTargeted         AppOwnershipEvent[]        @relation("AppOwnershipEventTarget")
+  appOwnershipTransfersFrom          AppOwnershipTransfer[]     @relation("AppOwnershipTransferFrom")
+  appOwnershipTransfersTo            AppOwnershipTransfer[]     @relation("AppOwnershipTransferTo")
+  targetedAnnouncements              AnnouncementUser[]
+  authoredAnnouncements              Announcement[]             @relation("authoredAnnouncements")
+  announcementSpends                 AnnouncementSpend[]        @relation("announcementSpends")
+  announcementMutesGiven             UserAnnouncementMute[]     @relation("announcementMutesGiven")
+  announcementMutesReceived          UserAnnouncementMute[]     @relation("announcementMutesReceived")
+  placementSuspension                PlacementSuspension?       @relation("PlacementSuspensionUser")
+  placementsReceived                 Placement[]                @relation("PlacementOwner")
+  placementsMade                     Placement[]                @relation("PlacementPlacer")
+  placementsSold                     Placement[]                @relation("PlacementSeller")
+  pricingSlots                       PricingSlot[]
 
   @@index([deletedAt])
 }
@@ -620,6 +657,40 @@ enum PaymentProvider {
   Stripe
   Paddle
   Civitai
+}
+
+enum MembershipGiftStatus {
+  Pending
+  Fulfilled
+  Failed
+  Refunded
+  Revoked
+}
+
+model MembershipGift {
+  id          String               @id @default(cuid())
+  gifterId    Int
+  gifter      User                 @relation("membershipGiftsGiven", fields: [gifterId], references: [id], onDelete: Cascade)
+  recipientId Int
+  recipient   User                 @relation("membershipGiftsReceived", fields: [recipientId], references: [id], onDelete: Cascade)
+  tier        String
+  months      Int
+  amountCents Int
+  status      MembershipGiftStatus @default(Pending)
+  message     String?
+  anonymous   Boolean              @default(false)
+
+  stripeCheckoutSessionId String? @unique
+  stripePaymentIntentId   String? @unique
+  stripeCouponId          String?
+  stripeSubscriptionId    String?
+
+  fulfilledAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([recipientId])
+  @@index([gifterId])
 }
 
 model Product {
@@ -741,6 +812,7 @@ enum ModelType {
   Poses
   Wildcards
   Workflows
+  ComfyWorkflows
   Detection
   VisionLanguage
   CLIP
@@ -889,7 +961,9 @@ model Model {
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
-  allowCommercialUse    CommercialUse[] @default([Sell])
+  // Must stay equal to the column default in Postgres: Prisma supplies this itself on create, so a
+  // narrower value here never reaches the database default and silently licenses the row instead.
+  allowCommercialUse    CommercialUse[] @default([Image, RentCivit, Rent, Sell])
   allowDerivatives      Boolean         @default(true)
   allowDifferentLicense Boolean         @default(true)
 
@@ -1102,6 +1176,24 @@ model LicensingRoot {
   @@index([baseModel, modelType])
 }
 
+// One row per ENTITY an owner has put a price on — a licensing fee or a permanent paid-access gate,
+// not one per kind. A slot is returned only by clearing the last price off an entity nothing has
+// transacted against; the row is DELETED then, because the allowance counts rows created this calendar
+// month. No foreign key to the entity, because the key is polymorphic — so deleting a version does not
+// refund its slot, and rows outliving their entity are inert (the count is month-scoped).
+//
+// See the migration for the apply-order and lock caveats.
+model PricingSlot {
+  entityType PaidAccessEntityType
+  entityId   Int
+  ownerId    Int
+  owner      User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt  DateTime             @default(now())
+
+  @@id([entityType, entityId])
+  @@index([ownerId, createdAt])
+}
+
 enum LicensingFeeType {
   PerImageBuzz
 }
@@ -1133,6 +1225,9 @@ enum ModelHashType {
   SHA256
   CRC32
   BLAKE3
+  // SHA256 truncated to 12 — the width A1111/Forge write for LoRAs, which no other stored
+  // hash matches. Same kind of derived truncation as AutoV2 (sha256[0:10]).
+  SHA256_12
 }
 
 model RecommendedResource {
@@ -1332,6 +1427,9 @@ model DownloadHistory {
   @@index([userId, downloadAt])
 }
 
+/// Append-only moderator action trail. Deliberately NOT unique on (activity, entityType, entityId): the
+/// same action on the same entity happening twice is two events, and collapsing them loses the history the
+/// "who did what, when" panels are built on.
 model ModActivity {
   id         Int      @id @default(autoincrement())
   userId     Int?
@@ -1340,7 +1438,8 @@ model ModActivity {
   entityId   Int?
   createdAt  DateTime @default(now())
 
-  @@unique([activity, entityType, entityId])
+  @@index([entityType, entityId, createdAt])
+  @@index([userId, createdAt])
   @@index([createdAt])
 }
 
@@ -1353,6 +1452,7 @@ enum ReportReason {
   CSAM
   Automated
   Spam
+  StickerPlacement
 }
 
 enum ReportStatus {
@@ -1719,6 +1819,8 @@ model Image {
   collections         Collection[]
   connections         ImageConnection[]
   UserProfile         UserProfile[]
+  userProfileSfwCover UserProfile[]         @relation("UserProfileSfwCoverImage")
+  announcementCovers  Announcement[]        @relation("AnnouncementCover")
   clubCover           Club[]                @relation("coverImage")
   clubHeader          Club[]                @relation("headerImage")
   clubAvatar          Club[]                @relation("avatarImage")
@@ -1750,6 +1852,7 @@ model Image {
   @@index([featuredAt])
   @@index([postId], type: Hash)
   @@index([userId, postId])
+  @@index([userId, id], map: "image_userid_id_idx")
   @@index([sortAt])
 }
 
@@ -2060,7 +2163,24 @@ enum TagSource {
 
 model TagsOnImageNew {
   imageId    Int
-  image      Image @relation(fields: [imageId], references: [id])
+  // The FK on this column is INTENTIONALLY ABSENT and must not be re-added.
+  // Enforcement lives in the `after_image_delete_trigger` trigger (function
+  // `after_image_delete`, programmability/image_delete_triggers.sql), verified
+  // enabled in production, which deletes this table's rows on image delete. The
+  // FK was created ON DELETE CASCADE in 20250303170613_tags_on_image_new and
+  // deliberately dropped in 20250314203912_drop_tags_on_image, one day after that
+  // trigger took over — this table is far too large to carry the constraint.
+  // `onDelete: Cascade` documents the semantics the trigger already implements.
+  // It is NOT a to-do to add the constraint.
+  //
+  // 🔴 THE TOOLING WILL TRY TO ADD IT ANYWAY. This model carries no `/// @view`
+  // annotation, so `pnpm db:migrate` sees it and will emit
+  //   ALTER TABLE "TagsOnImageNew" ADD CONSTRAINT "TagsOnImageNew_imageId_fkey"
+  //     ... ON DELETE CASCADE;
+  // If you are reviewing a generated migration, DELETE that statement. Note it now
+  // reads as plausible: before this declaration was corrected the generated DDL said
+  // RESTRICT, which was obviously wrong on sight; CASCADE is not.
+  image      Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
   tagId      Int
   attributes Int   @db.SmallInt()
 
@@ -2217,6 +2337,22 @@ model KeyValue {
   value Json
 }
 
+/// Free-text feedback captured from in-product prompts. `area` is a plain
+/// string, not an enum, so adding a feedback surface needs no migration.
+model Feedback {
+  id        Int      @id @default(autoincrement())
+  area      String
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message   String
+  context   Json     @default("{}")
+  status    String   @default("new")
+  createdAt DateTime @default(now())
+
+  @@index([area, status, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+}
+
 enum ApiKeyType {
   System
   User
@@ -2300,6 +2436,20 @@ model Role {
   members     UserRole[]
 }
 
+/// Comped membership tier, managed from the auth hub (/admin/membership). The hub folds this into the
+/// session it produces, so the user gets tier-gated access without a CustomerSubscription. It grants only
+/// what reads `session.tier` — NOT the subscription-derived perks (monthly Buzz, vault, badge, multiplier).
+/// One row per user; the override only ever raises a tier, never lowers a paid one.
+model UserMembershipOverride {
+  userId      Int      @id
+  tier        String
+  note        String?
+  grantedById Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
 /// App Blocks — v1 substrate. Registry of all blocks across all apps (OauthClients).
 /// Application-generated TEXT primary key (prefixed ULID: `ab_<ulid>`).
 /// See docs/features/app-blocks.md for the architecture overview.
@@ -2368,6 +2518,40 @@ model AppBlock {
   // migration 20260629120000_add_appblock_external_url). NULL until applied.
   externalUrl        String?   @map("external_url")
 
+  // PER-APP generation SPEND CLASS — drives the daily-Buzz + velocity ceilings
+  // enforced by app-spend-cap.service.ts. 'standard' (the default, and every row
+  // that exists today) is byte-identical to the pre-change global ceilings.
+  //
+  // 🔴 A DEDICATED AXIS, NOT `trust_tier`. `trust_tier` is a BROWSER-ISOLATION
+  // decision — it gates the iframe sandbox allowlist (allow-same-origin +
+  // allow-scripts) and inline/hybrid renderMode. Deriving spend from it would
+  // mean a moderator granting a RENDERING capability silently granted a 5x money
+  // ceiling; production already carries rows tiered `internal` for rendering
+  // that were never a spend decision. The two vocabularies deliberately share no
+  // value, so one can never be silently written into the other's column.
+  //
+  // 🔴 PLATFORM-CONTROLLED, mod-only write (BlockRegistry.setAppSpendCapConfig
+  // behind moderatorProcedure). Never publisher-declared and never sourced from
+  // the manifest: a developer must not be able to raise their own abuse ceiling.
+  // Same posture as trust_tier / category / featured above.
+  spendTier          String    @default("standard") @map("spend_tier")
+
+  // PER-APP generation-cap OVERRIDE — the moderator escape hatch on top of the
+  // `spend_tier`-derived ceilings. NULL = no override, use the tier's limits. A
+  // non-NULL value REPLACES that one field only (they are independent), and may
+  // TIGHTEN as well as loosen — clamping a single abusive app without demoting
+  // its tier. Bounded 1..1e9 / 1..100_000 by CHECK constraints matching the code
+  // bounds exactly, so a hand-written value cannot mean one thing in the row and
+  // another at enforcement.
+  //
+  // ADDITIVE + MANUALLY APPLIED (migration
+  // 20260731120000_app_block_spend_tier_and_cap_override; CNPG nvme0 does not
+  // auto-apply). Apply BEFORE the deploy: the cap resolver itself degrades to
+  // the strictest tier (= the pre-change ceilings, never "uncapped"), but any
+  // `appBlock` query without an explicit `select` raises P2022 until it lands.
+  spendCapBuzzPerDay   Int?    @map("spend_cap_buzz_per_day")
+  spendVelocityMaxGens Int?    @map("spend_velocity_max_gens")
+
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -2379,8 +2563,11 @@ model AppBlock {
   publishRequests    AppBlockPublishRequest[]
   scopeInvocations   BlockScopeInvocation[]
   userScopeGrants    AppUserScopeGrant[]
-  reviews            AppBlockReview[]
   appListing         AppListing?
+  // NB: App Listing Collaborators (seats / ownership events / ownership transfers)
+  // are keyed to `AppListing`, NOT here — see the AppCollaborator model header. An
+  // off-site listing has no AppBlock at all, so a block-keyed seat could never exist
+  // for one of the store's two kinds.
 
   @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
   // W1 audit C-3 fix: enforce one app per slug at the DB layer. The
@@ -2394,44 +2581,155 @@ model AppBlock {
   @@map("app_blocks")
 }
 
-/// App Blocks marketplace review (F-E "marketplace" cluster). A parallel table
-/// to ResourceReview (which is hard-bound to model/version FKs) so we can carry
-/// star ratings for app blocks without bending the model-review shape.
+/// App Listing COLLABORATORS — a consent-gated editor seat on a STORE LISTING.
 ///
-/// 5-star rating (1..5, validated in the service). A blue-buzz reward fires
-/// ONCE per (user, app) on the first create. Self-reviews (app owner reviewing
-/// their own app) are rejected at the service layer AND excluded from the
-/// aggregate. `exclude`/`tosViolation` are moderator controls that keep abusive
-/// reviews out of the rating aggregate + the Bayesian marketplace sort.
+/// 🔴 KEYED TO `AppListing`, NOT `AppBlock`. `AppBlock` is the ON-SITE runtime record;
+/// an OFF-SITE listing (external-link / OAuth-connect) has no AppBlock at all
+/// (`app_listings.app_block_id IS NULL`), so a block-keyed seat was structurally unable
+/// to exist for one of the store's two kinds. `AppListing` is the store-facing parent of
+/// BOTH, so the seat lives here. Ownership remains canonically `OauthClient.userId` for
+/// an on-site listing — the seat's KEY and the ownership COLUMN are different questions.
 ///
-/// ADDITIVE + MANUALLY APPLIED (CNPG nvme0 does not auto-apply; see the
-/// migration). NULL/empty until applied — read only by the dark, mod-gated
-/// marketplace + the gated review procedures.
-model AppBlockReview {
-  id           Int      @id @default(autoincrement())
-  appBlockId   String   @map("app_block_id")
-  appBlock     AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
-  userId       Int      @map("user_id")
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  rating       Int // 1..5 (STARS — validated in the service)
-  recommended  Boolean  @default(true)
-  details      String?
-  exclude      Boolean  @default(false)
-  tosViolation Boolean  @default(false) @map("tos_violation")
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+/// 🔴 A SEAT BELONGS TO A **PARENT** LISTING, NEVER TO A SHADOW REVISION
+/// (`revisionOfId != null`). `applyApprovedRevision` DELETES the shadow, and this FK
+/// CASCADEs — a seat on a shadow would silently vanish on approve. A SQL CHECK cannot
+/// express "parent only" (it cannot see another row), so it is enforced in the service:
+/// `inviteCollaborator` refuses a shadow, and `resolveListingAccess` resolves a shadow
+/// to its parent before any seat lookup.
+///
+/// 🔴 WHAT A SEAT UNLOCKS IS DERIVED FROM THE LISTING'S `kind`, not stored. An off-site
+/// editor gets content/media, submit-for-review and analytics, but NOT earnings
+/// (`BlockBuzzAttribution` is block-scoped) and NOT submit-version / git (there is no
+/// bundle and no repo). See `capabilitiesForKind` in `app-access.service.ts`.
+///
+/// 🔴 `displayed` (the public-byline opt-in) LIVES HERE FOR A LOAD-BEARING REASON, and
+/// this is load-bearing rather than incidental: `applyApprovedRevision`'s OFFSITE
+/// branch copies the shadow's `name/tagline/description/category/contentRating/
+/// externalUrl/connect*` straight onto the live parent. An `AppListing` column
+/// holding a display-author flag would therefore be CLOBBERED by any later shadow
+/// approve — an immediate-apply product decision would silently revert on the next
+/// mod re-review. Collaborator rows are outside BOTH branches' copy sets, so
+/// immediate-apply is correct BY CONSTRUCTION, not by a promise to remember.
+///
+/// CONSENT MODEL (mirrors `EntityCollaborator`'s status-visibility rules, NOT its
+/// code — that model is hard-scoped to Posts): an invite starts `pending` and confers
+/// ZERO capability and ZERO public visibility. Only `accepted` grants anything.
+///
+/// `role` is TEXT (not an enum) so a future role needs no migration; `'editor'` is the
+/// only value the code writes today. `status` is TEXT for the same reason, bounded by
+/// a CHECK constraint in the migration.
+///
+/// MANUAL-APPLY (datapacket-talos rule #8): the main civitai DB (CNPG nvme0) does NOT
+/// run `prisma migrate deploy`. The committed SQL is hand-applied per environment. All
+/// reads are NULL-safe / empty-safe, so the feature is INERT until it lands.
+model AppCollaborator {
+  appListingId String   @map("app_listing_id")
+  appListing  AppListing @relation(fields: [appListingId], references: [id], onDelete: Cascade)
+  userId      Int       @map("user_id")
+  user        User      @relation("AppCollaboratorMember", fields: [userId], references: [id], onDelete: Cascade)
+  /// Capability role. 'editor' today. What it actually unlocks is DERIVED from the
+  /// listing's kind (`capabilitiesForKind`), not stored here: content + media + submit
+  /// for review + analytics on both kinds, plus earnings and submit-version/git on
+  /// on-site only. Owner-only actions (managing collaborators, initiating a transfer)
+  /// are NOT a role — they are reserved to the listing owner.
+  role        String    @default("editor")
+  /// 'pending' | 'accepted' | 'rejected'. Only 'accepted' confers capability, and
+  /// only 'accepted' is ever visible publicly.
+  status      String    @default("pending")
+  /// Public-byline opt-in. Immediate-apply (no mod review) — safe because this row is
+  /// outside the revision copy sets (see the header). A collaborator is listed on the
+  /// public listing only when status='accepted' AND displayed=true.
+  displayed   Boolean   @default(true)
+  /// The OWNER who issued the invite (audit + the "invited by" chip).
+  invitedBy   Int       @map("invited_by")
+  inviter     User      @relation("AppCollaboratorInviter", fields: [invitedBy], references: [id], onDelete: Cascade)
+  /// Last time an invite NOTIFICATION was emitted for this row — the re-invite
+  /// throttle key. NB: the `EntityCollaborator` sibling has an inverted throttle
+  /// (`>=` where it means `<=`); this one is written correctly (see the service).
+  lastNotifiedAt DateTime? @map("last_notified_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  respondedAt DateTime? @map("responded_at") @db.Timestamptz(6)
 
-  // One review per (user, app).
-  @@unique([appBlockId, userId], map: "app_block_reviews_app_user_uniq")
-  // Aggregate read path (AVG/COUNT WHERE NOT exclude).
-  @@index([appBlockId, exclude], map: "app_block_reviews_app_agg_idx")
-  @@map("app_block_reviews")
+  @@id([appListingId, userId])
+  /// "which listings can this user edit" — the hot path (`resolveAccessibleListingIds`).
+  @@index([userId, status], map: "app_collaborators_user_status_idx")
+  /// "who is on this listing" — the roster + the public byline read.
+  @@index([appListingId, status], map: "app_collaborators_listing_status_idx")
+  @@map("app_collaborators")
+}
+
+/// APPEND-ONLY audit trail of every collaborator/ownership action on a listing.
+///
+/// Deliberately a separate table from `AppListingModerationEvent` (which is
+/// mod-ACTION-scoped): these are AUTHOR actions. Mirrors that table's survivability
+/// posture — every FK is NULLABLE + SET NULL so an event outlives the listing, the
+/// actor and the target.
+model AppOwnershipEvent {
+  id           String      @id // aoe_<ULID>
+  appListingId String?     @map("app_listing_id")
+  appListing   AppListing? @relation(fields: [appListingId], references: [id], onDelete: SetNull)
+  /// Denormalized so the event stays self-describing after the listing is gone.
+  slug         String
+  /// invite | accept | reject | remove | leave | display | transfer_initiated |
+  /// transfer_accepted | transfer_cancelled. Bounded by a CHECK in the migration.
+  action       String
+  /// Who performed the action.
+  actorUserId  Int?      @map("actor_user_id")
+  actor        User?     @relation("AppOwnershipEventActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  /// Who it was performed ON (the invitee / removed editor / transfer recipient).
+  targetUserId Int?      @map("target_user_id")
+  target       User?     @relation("AppOwnershipEventTarget", fields: [targetUserId], references: [id], onDelete: SetNull)
+  /// Structured extras (role, before/after owner, expiry, …).
+  metadata     Json?
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([appListingId, createdAt(sort: Desc)], map: "app_ownership_events_listing_idx")
+  @@index([actorUserId, createdAt(sort: Desc)], map: "app_ownership_events_actor_idx")
+  @@map("app_ownership_events")
+}
+
+/// An IN-FLIGHT ownership transfer (owner initiates → recipient accepts).
+///
+/// 🔴 WHY A THIRD TABLE rather than folding this into `AppCollaborator` with a
+/// `role='owner_transfer'` row: `AppCollaborator`'s PK is `(appListingId, userId)`, so a
+/// transfer to someone who is ALREADY an editor would collide with their seat row and
+/// the two states would have to share one `status` column. And deriving the pending
+/// state from `AppOwnershipEvent` (the append-only log) cannot carry a UNIQUE, so two
+/// concurrent `initiateTransfer` calls could both "succeed". This table carries the
+/// real constraint: a PARTIAL UNIQUE on `app_listing_id WHERE status='pending'` — at
+/// most one in-flight transfer per listing, enforced at the DB.
+model AppOwnershipTransfer {
+  id           String     @id // aot_<ULID>
+  appListingId String     @map("app_listing_id")
+  appListing   AppListing @relation(fields: [appListingId], references: [id], onDelete: Cascade)
+  /// Snapshot of the owner at initiate time — re-asserted in-tx at accept, so a
+  /// transfer initiated by an owner who has since lost the listing cannot complete.
+  fromUserId  Int       @map("from_user_id")
+  fromUser    User      @relation("AppOwnershipTransferFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+  toUserId    Int       @map("to_user_id")
+  toUser      User      @relation("AppOwnershipTransferTo", fields: [toUserId], references: [id], onDelete: Cascade)
+  /// 'pending' | 'accepted' | 'cancelled' | 'rejected' | 'expired'. CHECK in the migration.
+  status      String    @default("pending")
+  /// Hard expiry — an unaccepted transfer stops being acceptable after this instant.
+  /// Enforced in the ACCEPT path (a read-time predicate), so no sweeper job is
+  /// required for correctness; a sweeper would only tidy the rows.
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  respondedAt DateTime? @map("responded_at") @db.Timestamptz(6)
+
+  /// NB: the migration ALSO creates a PARTIAL UNIQUE index
+  /// (`app_listing_id WHERE status='pending'`) that Prisma cannot express. That partial
+  /// index — not this plain one — is the one-in-flight-transfer guard; the service
+  /// relies on its P2002.
+  @@index([appListingId, status], map: "app_ownership_transfers_listing_status_idx")
+  @@index([toUserId, status], map: "app_ownership_transfers_to_status_idx")
+  @@map("app_ownership_transfers")
 }
 
 /// W1 v0 publish request — every version of every app goes through the
 /// moderator review queue. The dev uploads a ZIP via /apps/submit (first
 /// version) or /apps/<slug>/submit-version (subsequent). civitai-web
-/// stores the bundle on ssd-minio-backups MinIO, extracts + validates the
+/// stores the bundle on the in-cluster MinIO tenant, extracts + validates the
 /// manifest, computes diff summaries, and inserts a row here in
 /// status='pending'. A mod approves or rejects via /apps/review.
 ///
@@ -2463,6 +2761,15 @@ model AppBlockPublishRequest {
   rejectionReason       String?   @map("rejection_reason")
   approvalNotes         String?   @map("approval_notes")
   forgejoCommitSha      String?   @map("forgejo_commit_sha")                                // populated on approve after Forgejo commit succeeds
+  // #4059 build provenance — an UNTRUSTED CLIENT CLAIM about the tree the bundle
+  // was built from. NOT interchangeable with forgejoCommitSha above: that is a
+  // SERVER-side sha written on approve once the Forgejo commit succeeded, so it
+  // is a fact. These two are whatever the submitting client said; the server
+  // never confirms the bundle was actually built from sourceCommit, and nothing
+  // downstream may imply it did. NULL = unknown (a pre-feature row, or a client
+  // that sent nothing) — never "clean".
+  sourceCommit          String?   @map("source_commit")                                     // client-claimed 40-hex git sha the bundle was built from
+  sourceDirty           Boolean?  @map("source_dirty")                                      // client-claimed uncommitted-changes flag. NULL (unknown) != false (known clean)
   deployState           String?   @map("deploy_state")                                      // Phase 2 build/deploy lifecycle (approved requests): building|deploying|live|failed
   deployDetail          String?   @map("deploy_detail")                                      // human-readable detail, primarily the failure reason
   deployUpdatedAt       DateTime? @map("deploy_updated_at") @db.Timestamptz(6)              // last deploy_state transition
@@ -2536,6 +2843,15 @@ model AppListing {
   contentRating   String?      @map("content_rating")
   // Off-site external-link target (Visit CTA). NULL for on-site / OAuth-connect.
   externalUrl     String?      @map("external_url")
+  // OPTIONAL public source-repository link ("this app is open source"), rendered as
+  // a `Source` row on the store DETAIL page only — never on a grid card. NOT the
+  // internal Forgejo repo (`AppBlock.repoUrl`); this is an author-declared public
+  // link, host-allowlisted to github.com / gitlab.com / codeberg.org and normalised
+  // to `https://<host>/<owner>/<repo>` by `validateRepositoryUrl`. Manifest-governed
+  // for on-site listings (`manifest.repository`), listing-form-governed for off-site.
+  // MANUAL-APPLY, like every migration here — the read paths degrade to NULL while
+  // the column is absent rather than 500ing the public store.
+  sourceRepoUrl   String?      @map("source_repo_url")
   // Off-site OAuth-connect client (Connect CTA). NULL for on-site/external-link.
   connectClientId String?      @map("connect_client_id")
   connectClient   OauthClient? @relation(fields: [connectClientId], references: [id], onDelete: SetNull)
@@ -2583,6 +2899,12 @@ model AppListing {
   // P3b off-site moderation: user reports + the append-only mod audit trail.
   reports          AppListingReport[]
   moderationEvents AppListingModerationEvent[]
+  // App Listing Collaborators — the editor seats, the append-only ownership audit
+  // trail, and any in-flight ownership transfer. Keyed HERE (not to AppBlock) so an
+  // OFF-SITE listing, which has no AppBlock, can hold seats too.
+  collaborators      AppCollaborator[]
+  ownershipEvents    AppOwnershipEvent[]
+  ownershipTransfers AppOwnershipTransfer[]
 
   // Marketplace read-path indexes (future P2 read path).
   @@index([status, kind], map: "app_listings_status_kind_idx")
@@ -2626,13 +2948,13 @@ model AppListingScreenshot {
 }
 
 /// Steam-style "recommend" review, keyed to AppListing (NOT AppBlock). Shaped
-/// like ResourceReview (schema ResourceReview) core columns. P4 will migrate
-/// existing AppBlockReview rows here using their already-present `recommended`
-/// column and move the write/list UI over.
+/// like ResourceReview (schema ResourceReview) core columns. This is now the
+/// ONLY app-review table: the legacy 5-star `AppBlockReview` was removed
+/// unmigrated (it never held a production row, and its write form had no
+/// reachable entry point).
 ///
-/// P4 NOTE: the `reactions` (helpful votes) and `reports` CHILD tables that
-/// ResourceReview has are NOT built here — they arrive in P4 alongside the
-/// review-system swap.
+/// NOTE: the `reactions` (helpful votes) and `reports` CHILD tables that
+/// ResourceReview has are NOT built here.
 model AppListingReview {
   id           Int        @id @default(autoincrement())
   appListingId String     @map("app_listing_id")
@@ -3173,7 +3495,10 @@ model BlockSpendAttribution {
   /// (bounded, app-owned). NULL when the app supplied none.
   sharedContentKey    String? @map("shared_content_key")
 
-  status             String   @default("pending")
+  // Must stay equal to the column default in Postgres and to what backpay selects: Prisma supplies
+  // this itself on create, so a value backpay does not read makes an omitted-status row invisible to
+  // payout forever. Pinned by block-spend-attribution-status-default.test.ts.
+  status             String   @default("tracked")
   /// 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
   /// refund path, so this is never 'refund'/'chargeback'.
   voidedReason       String?  @map("voided_reason")
@@ -3452,6 +3777,7 @@ model Comment {
 
   @@index([modelId], type: Hash)
   @@index([parentId], type: Hash)
+  @@index([userId])
 }
 
 model CommentReaction {
@@ -3583,6 +3909,7 @@ model CommentV2 {
 
   @@index([threadId], type: Hash)
   @@index([reactionCount(sort: Desc), id(sort: Desc)])
+  @@index([userId])
 }
 
 model Thread {
@@ -3751,18 +4078,71 @@ enum DomainColor {
 }
 
 model Announcement {
-  id        Int           @id @default(autoincrement())
-  title     String
-  content   String
-  emoji     String?
-  color     String        @default("blue")
-  domain    DomainColor[] @default([all])
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-  startsAt  DateTime?
-  endsAt    DateTime?
-  metadata  Json?
-  disabled  Boolean       @default(false)
+  id          Int                @id @default(autoincrement())
+  title       String
+  content     String
+  emoji       String?
+  color       String             @default("blue")
+  domain      DomainColor[]      @default([all])
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  startsAt    DateTime?
+  endsAt      DateTime?
+  metadata    Json?
+  disabled    Boolean            @default(false)
+  /// Author. Null is Civitai itself; the sitewide caches select on null, so a
+  /// non-null row can never reach the global banner.
+  userId      Int?
+  user        User?              @relation("authoredAnnouncements", fields: [userId], references: [id], onDelete: Cascade)
+  coverId     Int?
+  cover       Image?             @relation("AnnouncementCover", fields: [coverId], references: [id], onDelete: SetNull)
+  /// Profile-only rows never enter the announcements feed and never notify.
+  profileOnly Boolean            @default(false)
+  targetUsers AnnouncementUser[]
+  spends      AnnouncementSpend[]
+
+  @@index([userId, startsAt])
+}
+
+/// One spent announcement slot. Deliberately outlives the announcement it paid for:
+/// counting live announcements would return the slot on delete, making the cap
+/// refundable and therefore not a cap.
+model AnnouncementSpend {
+  id             Int           @id @default(autoincrement())
+  userId         Int
+  announcementId Int?
+  createdAt      DateTime      @default(now())
+  user           User          @relation("announcementSpends", fields: [userId], references: [id], onDelete: Cascade)
+  announcement   Announcement? @relation(fields: [announcementId], references: [id], onDelete: SetNull)
+
+  /// The migration writes this as a PARTIAL unique (WHERE "announcementId" IS NOT NULL).
+  /// Same behaviour — Postgres already treats NULLs as distinct — so do not "correct"
+  /// either artifact to match the other.
+  @@unique([announcementId])
+  @@index([userId, createdAt])
+}
+
+/// A follower silencing one creator's announcements without unfollowing them.
+model UserAnnouncementMute {
+  userId    Int
+  creatorId Int
+  createdAt DateTime @default(now())
+  user      User     @relation("announcementMutesGiven", fields: [userId], references: [id], onDelete: Cascade)
+  creator   User     @relation("announcementMutesReceived", fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@id([userId, creatorId])
+  @@index([creatorId])
+}
+
+/// Allowlist of users an announcement targets. No rows = shown to everyone.
+model AnnouncementUser {
+  announcementId Int
+  userId         Int
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, announcementId])
+  @@index([announcementId])
 }
 
 model RewardsBonusEvent {
@@ -3790,6 +4170,11 @@ enum CosmeticType {
   ContentDecoration
   ProfileDecoration
   ProfileBackground
+  Sticker
+  // Applied, unused. Chat themes come with a membership; a cosmetic-granted
+  // theme is the shape a later pass would want, and an enum value cannot be
+  // dropped without recreating the type.
+  ChatTheme
 }
 
 enum CosmeticSource {
@@ -3827,10 +4212,17 @@ model Cosmetic {
   leaderboardId       String?
   leaderboardPosition Int?
   createdById         Int?
+  pHash               BigInt?
+  pHashUrl            String?
+  pHashHex            String?
+  pHashVersion        String?
+  pHashFailedAt      DateTime?
   creator             User?                       @relation("CosmeticCreator", fields: [createdById], references: [id], onDelete: SetNull)
   UserCosmetic        UserCosmetic[]
   purchases           UserCosmeticShopPurchases[]
+  purchaseComponents  UserCosmeticShopPurchaseCosmetic[]
   cosmeticShopItems   CosmeticShopItem[]
+  packMemberships     CosmeticShopItemCosmetic[]
 
   @@index([createdById])
 }
@@ -3856,6 +4248,7 @@ model UserCosmetic {
   equippedToType CosmeticEntity?
   forId          Int? // Locks the cosmetic to a specific entity
   forType        CosmeticEntity?
+  remaining      Int? // Consumable balance; NULL = unlimited (every pre-existing row)
 
   @@id([userId, cosmeticId, claimKey])
 }
@@ -3876,8 +4269,11 @@ model CosmeticShopSection {
 
 model CosmeticShopItem {
   id                Int       @id @default(autoincrement())
-  cosmeticId        Int
-  cosmetic          Cosmetic  @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  // NULL on a pack, whose contents live in `members`. Deliberately nullable
+  // rather than pointed at a primary member: an unmigrated read path fails
+  // loudly instead of silently rendering and granting one cosmetic.
+  cosmeticId        Int?
+  cosmetic          Cosmetic? @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
   unitAmount        Int
   addedById         Int?
   addedBy           User?     @relation(fields: [addedById], references: [id], onDelete: SetNull)
@@ -3893,9 +4289,55 @@ model CosmeticShopItem {
   reviewedById      Int?
   reviewedAt        DateTime?
   rejectionReason   String?
+  listed            Boolean   @default(true)
 
   purchases UserCosmeticShopPurchases[]
   sections  CosmeticShopSectionItem[]
+  wishlists UserCosmeticShopItemWishlist[]
+  resales   UserCosmeticShopItemResale[]
+  members   CosmeticShopItemCosmetic[]
+}
+
+// Cross-creator resale: another creator listing this item in their own shop.
+// `sellerShare` is captured when the row is created and never rewritten, so the
+// original creator lowering (or withdrawing) the item's terms can't retroactively
+// cut someone who already listed it.
+model UserCosmeticShopItemResale {
+  userId      Int
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shopItemId  Int
+  shopItem    CosmeticShopItem @relation(fields: [shopItemId], references: [id], onDelete: Cascade)
+  sellerShare Int
+  index       Int              @default(0)
+  createdAt   DateTime         @default(now())
+
+  @@id([userId, shopItemId])
+  @@index([shopItemId])
+}
+
+model CosmeticShopItemCosmetic {
+  shopItemId  Int
+  shopItem    CosmeticShopItem @relation(fields: [shopItemId], references: [id], onDelete: Cascade)
+  cosmeticId  Int
+  cosmetic    Cosmetic         @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  index       Int              @default(0)
+  // Snapshot of the member's list price when the pack was built. Live lookup
+  // would let a member's creator re-price every pack containing them.
+  floorAmount Int
+
+  @@id([shopItemId, cosmeticId])
+  @@index([cosmeticId])
+}
+
+model UserCosmeticShopItemWishlist {
+  userId     Int
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shopItemId Int
+  shopItem   CosmeticShopItem @relation(fields: [shopItemId], references: [id], onDelete: Cascade)
+  createdAt  DateTime         @default(now())
+
+  @@id([userId, shopItemId])
+  @@index([shopItemId])
 }
 
 model CosmeticShopSectionItem {
@@ -3912,14 +4354,37 @@ model CosmeticShopSectionItem {
 model UserCosmeticShopPurchases {
   userId            Int
   user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  cosmeticId        Int
-  cosmetic          Cosmetic         @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  // NULL on a pack purchase: N cosmetics cannot share one transaction-keyed
+  // row, so the components live in `components`.
+  cosmeticId        Int?
+  cosmetic          Cosmetic?        @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
   shopItemId        Int
   shopItem          CosmeticShopItem @relation(fields: [shopItemId], references: [id], onDelete: Cascade)
   unitAmount        Int
   purchasedAt       DateTime         @default(now())
   buzzTransactionId String           @id @default(cuid())
   refunded          Boolean
+  // Who was actually paid for this sale, and in which Buzz color(s) — the split
+  // depends on the storefront it was bought through, so a takedown can't
+  // reconstruct it after the fact. See UserCosmeticShopPurchaseMeta.
+  meta              Json?
+  components        UserCosmeticShopPurchaseCosmetic[]
+}
+
+model UserCosmeticShopPurchaseCosmetic {
+  buzzTransactionId String
+  purchase          UserCosmeticShopPurchases @relation(fields: [buzzTransactionId], references: [buzzTransactionId], onDelete: Cascade)
+  cosmeticId        Int
+  cosmetic          Cosmetic                  @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+  // The member's snapshotted list price this component was attributed at; the
+  // pack creator's share is the remainder, so these need not sum to the price.
+  unitAmount        Int
+  // Per-member payout record: each component pays a different creator, so the
+  // parent's meta cannot describe the split. See UserCosmeticShopPurchaseMeta.
+  meta              Json?
+
+  @@id([buzzTransactionId, cosmeticId])
+  @@index([cosmeticId])
 }
 
 enum BuzzAccountType {
@@ -4056,7 +4521,7 @@ model ArticleMetric {
 }
 
 model Leaderboard {
-  id                 String  @id
+  id                 String        @id
   index              Int
   title              String
   description        String
@@ -4064,6 +4529,7 @@ model Leaderboard {
   query              String
   active             Boolean
   public             Boolean
+  domain             DomainColor[] @default([all])
 
   results LeaderboardResult[]
 }
@@ -4165,9 +4631,11 @@ model Collection {
   metadata     Json                         @default("{}")
   availability Availability                 @default(Public)
   nsfwLevel    Int                          @default(0)
+  collaborationDisabledAt DateTime?
 
   items        CollectionItem[]
   contributors CollectionContributor[]
+  invites      CollectionInvite[]
   tags         TagsOnCollection[]
   post         Post[]
   reports      CollectionReport[]
@@ -4185,6 +4653,16 @@ enum CollectionItemStatus {
   ACCEPTED
   REVIEW
   REJECTED
+}
+
+enum CollectionItemRejectionReason {
+  OffTopic
+  WrongFormat
+  Duplicate
+  Quality
+  RulesViolation
+  Other
+  Automated
 }
 
 model CollectionItem {
@@ -4210,6 +4688,8 @@ model CollectionItem {
   reviewedAt   DateTime?
   note         String?
   status       CollectionItemStatus  @default(ACCEPTED)
+  rejectionReason CollectionItemRejectionReason?
+  rejectionDetail String?
   tagId        Int?
   tag          Tag?                  @relation(fields: [tagId], references: [id], onDelete: SetNull)
   scores       CollectionItemScore[]
@@ -4253,6 +4733,34 @@ model CollectionContributor {
   @@index([userId], type: Hash)
 }
 
+enum CollectionCollaboratorRole {
+  Contributor
+  Manager
+}
+
+enum CollectionInviteStatus {
+  Pending
+  Accepted
+  Declined
+}
+
+model CollectionInvite {
+  id           Int                        @id @default(autoincrement())
+  collectionId Int
+  collection   Collection                 @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  userId       Int
+  user         User                       @relation("collectionInviteRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  invitedById  Int
+  invitedBy    User                       @relation("collectionInviteSender", fields: [invitedById], references: [id], onDelete: Cascade)
+  role         CollectionCollaboratorRole
+  status       CollectionInviteStatus     @default(Pending)
+  createdAt    DateTime                   @default(now())
+  respondedAt  DateTime?
+
+  @@unique([collectionId, userId])
+  @@index([userId, status])
+}
+
 model TagsOnCollection {
   collectionId   Int
   tagId          Int
@@ -4274,6 +4782,7 @@ enum HomeBlockType {
   CosmeticShop
   FeaturedModelVersion
   FeaturedCollections
+  Feed
 }
 
 model HomeBlock {
@@ -4559,6 +5068,42 @@ model PaidAccess {
   @@index([entityType, endsAt]) // expiry-job + early-access-complete notification scan by end time
 }
 
+enum SaleDiscountType {
+  Fixed
+  Percent
+}
+
+// A scheduled discount laid OVER a version's PaidAccess price. The gate's own `terms` is never
+// rewritten, so a creator editing their base price mid-sale cannot lose it, and "what did this cost
+// on the day" stays answerable. Effective price is resolved at read time — see discountedTerms in
+// @civitai/buzz. Sales cover permanent paid access only, never a timed early-access window.
+model ModelVersionSale {
+  id             Int                   @id @default(autoincrement())
+  userId         Int
+  // Optional: naming a sale is a creator's choice, not a requirement.
+  name           String?
+  discountType   SaleDiscountType
+  // Buzz for Fixed, whole percent for Percent. Never a float — this reaches a price.
+  discountAmount Int
+  startsAt       DateTime
+  endsAt         DateTime
+  canceledAt     DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  versions       ModelVersionSaleItem[]
+
+  @@index([userId, startsAt])
+}
+
+model ModelVersionSaleItem {
+  saleId         Int
+  modelVersionId Int
+  sale           ModelVersionSale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@id([saleId, modelVersionId])
+  @@index([modelVersionId])
+}
+
 enum EntityCollaboratorStatus {
   Pending
   Approved
@@ -4717,7 +5262,7 @@ model ClubPost {
   title        String?
   description  String?
   coverImageId Int?
-  coverImage   Image?   @relation(fields: [coverImageId], references: [id])
+  coverImage   Image?   @relation(fields: [coverImageId], references: [id], onDelete: SetNull)
   entityId     Int?
   entityType   String?
 
@@ -4766,8 +5311,14 @@ model ClubMetric {
 model Chat {
   id        Int      @id @default(autoincrement())
   createdAt DateTime @default(now())
-  hash      String   @unique // hash of asc-sorted userIds
+  // Hash of asc-sorted userIds, and the dedupe key for 1:1 conversations. Null
+  // for groups: a group is identified by its row id, so two groups may hold the
+  // same people. Postgres treats nulls as distinct, so the unique index still
+  // holds for the 1:1 rows it applies to.
+  hash      String?  @unique
   ownerId   Int
+  isGroup   Boolean  @default(false)
+  name      String?
 
   owner User @relation(fields: [ownerId], references: [id])
 
@@ -4784,6 +5335,12 @@ enum ChatMemberStatus {
   Kicked
 }
 
+enum ChatNotifyLevel {
+  All
+  Mentions
+  None
+}
+
 model ChatMember {
   id                  Int              @id @default(autoincrement())
   createdAt           DateTime         @default(now()) // doubles as invited_at
@@ -4798,12 +5355,17 @@ model ChatMember {
   leftAt              DateTime? // do we need a rejoin option?
   kickedAt            DateTime?
   unkickedAt          DateTime? // TODO maybe remove
+  filteredAt          DateTime? // reached this member via Requests rather than their inbox
+  notifyLevel         ChatNotifyLevel @default(All)
+  pinnedAt            DateTime?
+  clearedAt           DateTime? // this member's clean-slate watermark; messages before it are hidden from them only
 
   user              User         @relation(fields: [userId], references: [id])
   chat              Chat         @relation(fields: [chatId], references: [id])
   lastViewedMessage ChatMessage? @relation(fields: [lastViewedMessageId], references: [id])
 
   @@index([userId, status, isMuted])
+  @@index([userId, status, filteredAt])
 }
 
 enum ChatMessageType {
@@ -4823,7 +5385,7 @@ model ChatMessage {
   contentType        ChatMessageType @default(Markdown)
   referenceMessageId Int?
   editedAt           DateTime?
-  // TODO deletedAt DateTime
+  deletedAt          DateTime? // hidden from both sides; the row is retained for moderation
 
   user             User         @relation(fields: [userId], references: [id])
   chat             Chat         @relation(fields: [chatId], references: [id])
@@ -4831,6 +5393,8 @@ model ChatMessage {
 
   referenceMessages  ChatMessage[] @relation("referenceMessage")
   lastViewedMessages ChatMember[]
+
+  @@index([chatId, id])
 }
 
 model BuildGuide {
@@ -4911,6 +5475,7 @@ enum JobQueueType {
   ModerationRequest
   BlockedImageDelete
   ImageScan
+  ReplacedImageDelete
 }
 
 model JobQueue {
@@ -5422,6 +5987,7 @@ model Challenge {
   judgingCategories Json? // User challenges: [{name, criteria}]; drives dynamic score schema + public display
   reviewPercentage  Int     @default(100) // % of entries to score
   maxReviews        Int? // Hard cap on reviews (cost control)
+  judgingEngine     String  @default("legacy-absolute") @db.VarChar(50) // which engine ranks the field
 
   // Entries - stored in a Contest Collection (auto-created if not provided)
   collectionId      Int? // Optional - auto-created on challenge creation
@@ -5475,6 +6041,8 @@ model Challenge {
   threads     Thread[]
   reports     ChallengeReport[]
   engagements ChallengeEngagement[]
+  standings   ChallengeEntryStanding[]
+  comparisons ChallengeEntryComparison[]
 
   // Event grouping
   eventId Int?
@@ -5488,6 +6056,60 @@ model Challenge {
   @@index([createdById, status]) // User's challenges by status
   @@index([judgeId])
   @@index([eventId])
+}
+
+// Pairwise judging (Challenge.judgingEngine = "pairwise-ladder"). Owned entirely by that engine:
+// the legacy absolute engine neither reads nor writes these tables, and nothing is migrated into
+// them from CollectionItem.note.
+//
+// imageId / userId are deliberately PLAIN COLUMNS with no relation — do not add one. Image is huge
+// and delete-heavy (moderation, ban removals); an FK would need indexes on imageId, imageIdA and
+// imageIdB to keep those deletes off a sequential scan, and cascading would destroy the record of
+// what the judge decided. Users are soft-deleted, so a userId FK enforces nothing. Orphans are
+// inert — nothing outside the store reads standings, and the challenge cascade cleans both tables.
+// Full reasoning in migrations/20260811090000_challenge_judging_engines/migration.sql.
+model ChallengeEntryStanding {
+  challengeId Int
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  imageId     Int
+  userId      Int
+
+  rank        Int // 1 = leader
+  comparisons Int    @default(0) // bouts this entry has been in
+  winRate     Float? // podium round-robin only; null outside the shortlist
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@id([challengeId, imageId])
+  @@index([challengeId, rank])
+}
+
+model ChallengeEntryComparison {
+  id          Int       @id @default(autoincrement())
+  challengeId Int
+  challenge   Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+
+  phase String @db.VarChar(20) // arrive | rerun | podium
+
+  // Pair columns are stored low-id first so one pair is one row whichever image was the
+  // challenger; firstSeatImageId is the seating that produced this verdict.
+  imageIdA         Int
+  imageIdB         Int
+  firstSeatImageId Int
+  winnerImageId    Int? // null = tie
+
+  margin      String? @db.VarChar(20)
+  model       String  @db.VarChar(200)
+  rerouted    Boolean @default(false) // routed judge refused; answered by the permissive one
+  perCategory Json?
+  reason      String? @db.Text
+  buzzCost    Int     @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@unique([challengeId, phase, imageIdA, imageIdB, firstSeatImageId], map: "ChallengeEntryComparison_pair_key")
+  @@index([challengeId, phase])
 }
 
 model ChallengeReport {
@@ -5516,6 +6138,7 @@ model ChallengeJudge {
   winnerSelectionPrompt String? @db.Text
   active                Boolean @default(true)
   userSelectable        Boolean @default(false) // offer this judge to users in the create form
+  judgingEngine         String  @default("legacy-absolute") @db.VarChar(50) // copied onto Challenge.judgingEngine at creation
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -5790,71 +6413,71 @@ model ArticleStat {
 model ArticleRank {
   articleId                    Int     @id
   article                      Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
-  cryCountDayRank              Int     @default(0)
-  cryCountWeekRank             Int     @default(0)
-  cryCountMonthRank            Int     @default(0)
-  cryCountYearRank             Int     @default(0)
-  cryCountAllTimeRank          Int     @default(0)
-  dislikeCountDayRank          Int     @default(0)
-  dislikeCountWeekRank         Int     @default(0)
-  dislikeCountMonthRank        Int     @default(0)
-  dislikeCountYearRank         Int     @default(0)
-  dislikeCountAllTimeRank      Int     @default(0)
-  heartCountDayRank            Int     @default(0)
-  heartCountWeekRank           Int     @default(0)
-  heartCountMonthRank          Int     @default(0)
-  heartCountYearRank           Int     @default(0)
-  heartCountAllTimeRank        Int     @default(0)
-  laughCountDayRank            Int     @default(0)
-  laughCountWeekRank           Int     @default(0)
-  laughCountMonthRank          Int     @default(0)
-  laughCountYearRank           Int     @default(0)
-  laughCountAllTimeRank        Int     @default(0)
-  likeCountDayRank             Int     @default(0)
-  likeCountWeekRank            Int     @default(0)
-  likeCountMonthRank           Int     @default(0)
-  likeCountYearRank            Int     @default(0)
-  likeCountAllTimeRank         Int     @default(0)
-  commentCountDayRank          Int     @default(0)
-  commentCountWeekRank         Int     @default(0)
-  commentCountMonthRank        Int     @default(0)
-  commentCountYearRank         Int     @default(0)
-  commentCountAllTimeRank      Int     @default(0)
-  reactionCountDayRank         Int     @default(0)
-  reactionCountWeekRank        Int     @default(0)
-  reactionCountMonthRank       Int     @default(0)
-  reactionCountYearRank        Int     @default(0)
-  reactionCountAllTimeRank     Int     @default(0)
-  viewCountDayRank             Int     @default(0)
-  viewCountWeekRank            Int     @default(0)
-  viewCountMonthRank           Int     @default(0)
-  viewCountYearRank            Int     @default(0)
-  viewCountAllTimeRank         Int     @default(0)
-  favoriteCountDayRank         Int     @default(0)
-  favoriteCountWeekRank        Int     @default(0)
-  favoriteCountMonthRank       Int     @default(0)
-  favoriteCountYearRank        Int     @default(0)
-  favoriteCountAllTimeRank     Int     @default(0)
-  hideCountDayRank             Int     @default(0)
-  hideCountWeekRank            Int     @default(0)
-  hideCountMonthRank           Int     @default(0)
-  hideCountYearRank            Int     @default(0)
-  hideCountAllTimeRank         Int     @default(0)
-  collectedCountDayRank        Int     @default(0)
-  collectedCountWeekRank       Int     @default(0)
-  collectedCountMonthRank      Int     @default(0)
-  collectedCountYearRank       Int     @default(0)
-  collectedCountAllTimeRank    Int     @default(0)
-  tippedCountDayRank           Int     @default(0)
-  tippedCountWeekRank          Int     @default(0)
-  tippedCountMonthRank         Int     @default(0)
-  tippedCountYearRank          Int     @default(0)
-  tippedCountAllTimeRank       Int     @default(0)
-  tippedAmountCountDayRank     Int     @default(0)
-  tippedAmountCountWeekRank    Int     @default(0)
-  tippedAmountCountMonthRank   Int     @default(0)
-  tippedAmountCountYearRank    Int     @default(0)
-  tippedAmountCountAllTimeRank Int     @default(0)
+  cryCountDayRank              Int?    @default(0)
+  cryCountWeekRank             Int?    @default(0)
+  cryCountMonthRank            Int?    @default(0)
+  cryCountYearRank             Int?    @default(0)
+  cryCountAllTimeRank          Int?    @default(0)
+  dislikeCountDayRank          Int?    @default(0)
+  dislikeCountWeekRank         Int?    @default(0)
+  dislikeCountMonthRank        Int?    @default(0)
+  dislikeCountYearRank         Int?    @default(0)
+  dislikeCountAllTimeRank      Int?    @default(0)
+  heartCountDayRank            Int?    @default(0)
+  heartCountWeekRank           Int?    @default(0)
+  heartCountMonthRank          Int?    @default(0)
+  heartCountYearRank           Int?    @default(0)
+  heartCountAllTimeRank        Int?    @default(0)
+  laughCountDayRank            Int?    @default(0)
+  laughCountWeekRank           Int?    @default(0)
+  laughCountMonthRank          Int?    @default(0)
+  laughCountYearRank           Int?    @default(0)
+  laughCountAllTimeRank        Int?    @default(0)
+  likeCountDayRank             Int?    @default(0)
+  likeCountWeekRank            Int?    @default(0)
+  likeCountMonthRank           Int?    @default(0)
+  likeCountYearRank            Int?    @default(0)
+  likeCountAllTimeRank         Int?    @default(0)
+  commentCountDayRank          Int?    @default(0)
+  commentCountWeekRank         Int?    @default(0)
+  commentCountMonthRank        Int?    @default(0)
+  commentCountYearRank         Int?    @default(0)
+  commentCountAllTimeRank      Int?    @default(0)
+  reactionCountDayRank         Int?    @default(0)
+  reactionCountWeekRank        Int?    @default(0)
+  reactionCountMonthRank       Int?    @default(0)
+  reactionCountYearRank        Int?    @default(0)
+  reactionCountAllTimeRank     Int?    @default(0)
+  viewCountDayRank             Int?    @default(0)
+  viewCountWeekRank            Int?    @default(0)
+  viewCountMonthRank           Int?    @default(0)
+  viewCountYearRank            Int?    @default(0)
+  viewCountAllTimeRank         Int?    @default(0)
+  favoriteCountDayRank         Int?    @default(0)
+  favoriteCountWeekRank        Int?    @default(0)
+  favoriteCountMonthRank       Int?    @default(0)
+  favoriteCountYearRank        Int?    @default(0)
+  favoriteCountAllTimeRank     Int?    @default(0)
+  hideCountDayRank             Int?    @default(0)
+  hideCountWeekRank            Int?    @default(0)
+  hideCountMonthRank           Int?    @default(0)
+  hideCountYearRank            Int?    @default(0)
+  hideCountAllTimeRank         Int?    @default(0)
+  collectedCountDayRank        Int?    @default(0)
+  collectedCountWeekRank       Int?    @default(0)
+  collectedCountMonthRank      Int?    @default(0)
+  collectedCountYearRank       Int?    @default(0)
+  collectedCountAllTimeRank    Int?    @default(0)
+  tippedCountDayRank           Int?    @default(0)
+  tippedCountWeekRank          Int?    @default(0)
+  tippedCountMonthRank         Int?    @default(0)
+  tippedCountYearRank          Int?    @default(0)
+  tippedCountAllTimeRank       Int?    @default(0)
+  tippedAmountCountDayRank     Int?    @default(0)
+  tippedAmountCountWeekRank    Int?    @default(0)
+  tippedAmountCountMonthRank   Int?    @default(0)
+  tippedAmountCountYearRank    Int?    @default(0)
+  tippedAmountCountAllTimeRank Int?    @default(0)
 }
 
 /// @view
@@ -5878,57 +6501,12 @@ model UserStat {
 /// @view
 
 model UserRank {
-  user                         User    @relation(fields: [userId], references: [id], onDelete: NoAction)
-  userId                       Int     @id
-  downloadCountDayRank         Int     @default(0)
-  downloadCountWeekRank        Int     @default(0)
-  downloadCountMonthRank       Int     @default(0)
-  downloadCountYearRank        Int     @default(0)
-  downloadCountAllTimeRank     Int     @default(0)
-  ratingCountDayRank           Int     @default(0)
-  ratingCountWeekRank          Int     @default(0)
-  ratingCountMonthRank         Int     @default(0)
-  ratingCountYearRank          Int     @default(0)
-  ratingCountAllTimeRank       Int     @default(0)
-  followerCountDayRank         Int     @default(0)
-  followerCountWeekRank        Int     @default(0)
-  followerCountMonthRank       Int     @default(0)
-  followerCountYearRank        Int     @default(0)
-  followerCountAllTimeRank     Int     @default(0)
-  ratingDayRank                Int     @default(0)
-  ratingWeekRank               Int     @default(0)
-  ratingMonthRank              Int     @default(0)
-  ratingYearRank               Int     @default(0)
-  ratingAllTimeRank            Int     @default(0)
-  favoriteCountDayRank         Int     @default(0)
-  favoriteCountWeekRank        Int     @default(0)
-  favoriteCountMonthRank       Int     @default(0)
-  favoriteCountYearRank        Int     @default(0)
-  favoriteCountAllTimeRank     Int     @default(0)
-  answerCountDayRank           Int     @default(0)
-  answerCountWeekRank          Int     @default(0)
-  answerCountMonthRank         Int     @default(0)
-  answerCountYearRank          Int     @default(0)
-  answerCountAllTimeRank       Int     @default(0)
-  answerAcceptCountDayRank     Int     @default(0)
-  answerAcceptCountWeekRank    Int     @default(0)
-  answerAcceptCountMonthRank   Int     @default(0)
-  answerAcceptCountYearRank    Int     @default(0)
-  answerAcceptCountAllTimeRank Int     @default(0)
-  thumbsUpCountDayRank         Int     @default(0)
-  thumbsUpCountWeekRank        Int     @default(0)
-  thumbsUpCountMonthRank       Int     @default(0)
-  thumbsUpCountYearRank        Int     @default(0)
-  thumbsUpCountAllTimeRank     Int     @default(0)
-  thumbsDownCountDayRank       Int     @default(0)
-  thumbsDownCountWeekRank      Int     @default(0)
-  thumbsDownCountMonthRank     Int     @default(0)
-  thumbsDownCountYearRank      Int     @default(0)
-  thumbsDownCountAllTimeRank   Int     @default(0)
-  leaderboardRank              Int?
-  leaderboardId                String?
-  leaderboardTitle             String?
-  leaderboardCosmetic          String?
+  user                User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId              Int     @id
+  leaderboardRank     Int?
+  leaderboardId       String?
+  leaderboardTitle    String?
+  leaderboardCosmetic String?
 }
 
 /// @view
@@ -5966,38 +6544,38 @@ model TagStat {
 /// @view
 
 model TagRank {
-  tag                      Tag @relation(fields: [tagId], references: [id], onDelete: NoAction)
+  tag                      Tag @relation(fields: [tagId], references: [id], onDelete: Cascade)
   tagId                    Int @id
-  followerCountDayRank     Int @default(0)
-  followerCountWeekRank    Int @default(0)
-  followerCountMonthRank   Int @default(0)
-  followerCountYearRank    Int @default(0)
-  followerCountAllTimeRank Int @default(0)
-  hiddenCountDayRank       Int @default(0)
-  hiddenCountWeekRank      Int @default(0)
-  hiddenCountMonthRank     Int @default(0)
-  hiddenCountYearRank      Int @default(0)
-  hiddenCountAllTimeRank   Int @default(0)
-  modelCountDayRank        Int @default(0)
-  modelCountWeekRank       Int @default(0)
-  modelCountMonthRank      Int @default(0)
-  modelCountYearRank       Int @default(0)
-  modelCountAllTimeRank    Int @default(0)
-  imageCountDayRank        Int @default(0)
-  imageCountWeekRank       Int @default(0)
-  imageCountMonthRank      Int @default(0)
-  imageCountYearRank       Int @default(0)
-  imageCountAllTimeRank    Int @default(0)
-  postCountDayRank         Int @default(0)
-  postCountWeekRank        Int @default(0)
-  postCountMonthRank       Int @default(0)
-  postCountYearRank        Int @default(0)
-  postCountAllTimeRank     Int @default(0)
-  articleCountDayRank      Int @default(0)
-  articleCountWeekRank     Int @default(0)
-  articleCountMonthRank    Int @default(0)
-  articleCountYearRank     Int @default(0)
-  articleCountAllTimeRank  Int @default(0)
+  followerCountDayRank     Int? @default(0)
+  followerCountWeekRank    Int? @default(0)
+  followerCountMonthRank   Int? @default(0)
+  followerCountYearRank    Int? @default(0)
+  followerCountAllTimeRank Int? @default(0)
+  hiddenCountDayRank       Int? @default(0)
+  hiddenCountWeekRank      Int? @default(0)
+  hiddenCountMonthRank     Int? @default(0)
+  hiddenCountYearRank      Int? @default(0)
+  hiddenCountAllTimeRank   Int? @default(0)
+  modelCountDayRank        Int? @default(0)
+  modelCountWeekRank       Int? @default(0)
+  modelCountMonthRank      Int? @default(0)
+  modelCountYearRank       Int? @default(0)
+  modelCountAllTimeRank    Int? @default(0)
+  imageCountDayRank        Int? @default(0)
+  imageCountWeekRank       Int? @default(0)
+  imageCountMonthRank      Int? @default(0)
+  imageCountYearRank       Int? @default(0)
+  imageCountAllTimeRank    Int? @default(0)
+  postCountDayRank         Int? @default(0)
+  postCountWeekRank        Int? @default(0)
+  postCountMonthRank       Int? @default(0)
+  postCountYearRank        Int? @default(0)
+  postCountAllTimeRank     Int? @default(0)
+  articleCountDayRank      Int? @default(0)
+  articleCountWeekRank     Int? @default(0)
+  articleCountMonthRank    Int? @default(0)
+  articleCountYearRank     Int? @default(0)
+  articleCountAllTimeRank  Int? @default(0)
 }
 
 /// @view
@@ -6100,22 +6678,22 @@ model CollectionStat {
 
 model CollectionRank {
   collectionId                Int        @id
-  collection                  Collection @relation(fields: [collectionId], references: [id], onDelete: NoAction)
-  followerCountDayRank        Int        @default(0)
-  followerCountWeekRank       Int        @default(0)
-  followerCountMonthRank      Int        @default(0)
-  followerCountYearRank       Int        @default(0)
-  followerCountAllTimeRank    Int        @default(0)
-  itemCountDayRank            Int        @default(0)
-  itemCountWeekRank           Int        @default(0)
-  itemCountMonthRank          Int        @default(0)
-  itemCountYearRank           Int        @default(0)
-  itemCountAllTimeRank        Int        @default(0)
-  contributorCountDayRank     Int        @default(0)
-  contributorCountWeekRank    Int        @default(0)
-  contributorCountMonthRank   Int        @default(0)
-  contributorCountYearRank    Int        @default(0)
-  contributorCountAllTimeRank Int        @default(0)
+  collection                  Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  followerCountDayRank        Int?       @default(0)
+  followerCountWeekRank       Int?       @default(0)
+  followerCountMonthRank      Int?       @default(0)
+  followerCountYearRank       Int?       @default(0)
+  followerCountAllTimeRank    Int?       @default(0)
+  itemCountDayRank            Int?       @default(0)
+  itemCountWeekRank           Int?       @default(0)
+  itemCountMonthRank          Int?       @default(0)
+  itemCountYearRank           Int?       @default(0)
+  itemCountAllTimeRank        Int?       @default(0)
+  contributorCountDayRank     Int?       @default(0)
+  contributorCountWeekRank    Int?       @default(0)
+  contributorCountMonthRank   Int?       @default(0)
+  contributorCountYearRank    Int?       @default(0)
+  contributorCountAllTimeRank Int?       @default(0)
 }
 
 /// @view
@@ -6262,6 +6840,13 @@ model UserProfile {
   bio                     String?
   message                 String?
   messageAddedAt          DateTime?
+  // SFW (green domain) overrides. Null means "inherit the field above"; a set
+  // value replaces it on civitai.com only.
+  sfwCoverImageId         Int?
+  sfwCoverImage           Image?    @relation("UserProfileSfwCoverImage", fields: [sfwCoverImageId], references: [id], onDelete: SetNull)
+  sfwBio                  String?
+  sfwMessage              String?
+  sfwMessageAddedAt       DateTime?
   location                String?
   nsfw                    Boolean   @default(false)
   privacySettings         Json      @default("{\"showFollowerCount\":true,\"showFollowingCount\":true,\"showReviewsRating\":true}")
@@ -6269,6 +6854,10 @@ model UserProfile {
   showcaseItems           Json      @default("[]")
 
   @@id([userId])
+  // Serves the ON DELETE SET NULL referential-integrity trigger for the
+  // sfwCoverImage relation. Without it every Image delete sequentially scans this
+  // whole table. Prisma does not index relation scalars on its own.
+  @@index([sfwCoverImageId])
 }
 
 /// @view
@@ -6312,37 +6901,37 @@ model BountyStat {
 
 model BountyRank {
   bountyId                   Int    @id
-  Bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: NoAction)
-  favoriteCountDayRank       Int    @default(0)
-  favoriteCountWeekRank      Int    @default(0)
-  favoriteCountMonthRank     Int    @default(0)
-  favoriteCountYearRank      Int    @default(0)
-  favoriteCountAllTimeRank   Int    @default(0)
-  trackCountDayRank          Int    @default(0)
-  trackCountWeekRank         Int    @default(0)
-  trackCountMonthRank        Int    @default(0)
-  trackCountYearRank         Int    @default(0)
-  trackCountAllTimeRank      Int    @default(0)
-  entryCountDayRank          Int    @default(0)
-  entryCountWeekRank         Int    @default(0)
-  entryCountMonthRank        Int    @default(0)
-  entryCountYearRank         Int    @default(0)
-  entryCountAllTimeRank      Int    @default(0)
-  benefactorCountDayRank     Int    @default(0)
-  benefactorCountWeekRank    Int    @default(0)
-  benefactorCountMonthRank   Int    @default(0)
-  benefactorCountYearRank    Int    @default(0)
-  benefactorCountAllTimeRank Int    @default(0)
-  unitAmountCountDayRank     Int    @default(0)
-  unitAmountCountWeekRank    Int    @default(0)
-  unitAmountCountMonthRank   Int    @default(0)
-  unitAmountCountYearRank    Int    @default(0)
-  unitAmountCountAllTimeRank Int    @default(0)
-  commentCountDayRank        Int    @default(0)
-  commentCountWeekRank       Int    @default(0)
-  commentCountMonthRank      Int    @default(0)
-  commentCountYearRank       Int    @default(0)
-  commentCountAllTimeRank    Int    @default(0)
+  Bounty                     Bounty @relation(fields: [bountyId], references: [id], onDelete: Cascade)
+  favoriteCountDayRank       Int?   @default(0)
+  favoriteCountWeekRank      Int?   @default(0)
+  favoriteCountMonthRank     Int?   @default(0)
+  favoriteCountYearRank      Int?   @default(0)
+  favoriteCountAllTimeRank   Int?   @default(0)
+  trackCountDayRank          Int?   @default(0)
+  trackCountWeekRank         Int?   @default(0)
+  trackCountMonthRank        Int?   @default(0)
+  trackCountYearRank         Int?   @default(0)
+  trackCountAllTimeRank      Int?   @default(0)
+  entryCountDayRank          Int?   @default(0)
+  entryCountWeekRank         Int?   @default(0)
+  entryCountMonthRank        Int?   @default(0)
+  entryCountYearRank         Int?   @default(0)
+  entryCountAllTimeRank      Int?   @default(0)
+  benefactorCountDayRank     Int?   @default(0)
+  benefactorCountWeekRank    Int?   @default(0)
+  benefactorCountMonthRank   Int?   @default(0)
+  benefactorCountYearRank    Int?   @default(0)
+  benefactorCountAllTimeRank Int?   @default(0)
+  unitAmountCountDayRank     Int?   @default(0)
+  unitAmountCountWeekRank    Int?   @default(0)
+  unitAmountCountMonthRank   Int?   @default(0)
+  unitAmountCountYearRank    Int?   @default(0)
+  unitAmountCountAllTimeRank Int?   @default(0)
+  commentCountDayRank        Int?   @default(0)
+  commentCountWeekRank       Int?   @default(0)
+  commentCountMonthRank      Int?   @default(0)
+  commentCountYearRank       Int?   @default(0)
+  commentCountAllTimeRank    Int?   @default(0)
 }
 
 /// @view
@@ -6401,52 +6990,52 @@ model BountyEntryStat {
 
 model BountyEntryRank {
   bountyEntryId                Int         @id
-  BountyEntry                  BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: NoAction)
-  cryCountDayRank              Int         @default(0)
-  cryCountWeekRank             Int         @default(0)
-  cryCountMonthRank            Int         @default(0)
-  cryCountYearRank             Int         @default(0)
-  cryCountAllTimeRank          Int         @default(0)
-  dislikeCountDayRank          Int         @default(0)
-  dislikeCountWeekRank         Int         @default(0)
-  dislikeCountMonthRank        Int         @default(0)
-  dislikeCountYearRank         Int         @default(0)
-  dislikeCountAllTimeRank      Int         @default(0)
-  heartCountDayRank            Int         @default(0)
-  heartCountWeekRank           Int         @default(0)
-  heartCountMonthRank          Int         @default(0)
-  heartCountYearRank           Int         @default(0)
-  heartCountAllTimeRank        Int         @default(0)
-  laughCountDayRank            Int         @default(0)
-  laughCountWeekRank           Int         @default(0)
-  laughCountMonthRank          Int         @default(0)
-  laughCountYearRank           Int         @default(0)
-  laughCountAllTimeRank        Int         @default(0)
-  likeCountDayRank             Int         @default(0)
-  likeCountWeekRank            Int         @default(0)
-  likeCountMonthRank           Int         @default(0)
-  likeCountYearRank            Int         @default(0)
-  likeCountAllTimeRank         Int         @default(0)
-  reactionCountDayRank         Int         @default(0)
-  reactionCountWeekRank        Int         @default(0)
-  reactionCountMonthRank       Int         @default(0)
-  reactionCountYearRank        Int         @default(0)
-  reactionCountAllTimeRank     Int         @default(0)
-  unitAmountCountDayRank       Int         @default(0)
-  unitAmountCountWeekRank      Int         @default(0)
-  unitAmountCountMonthRank     Int         @default(0)
-  unitAmountCountYearRank      Int         @default(0)
-  unitAmountCountAllTimeRank   Int         @default(0)
-  tippedCountDayRank           Int         @default(0)
-  tippedCountWeekRank          Int         @default(0)
-  tippedCountMonthRank         Int         @default(0)
-  tippedCountYearRank          Int         @default(0)
-  tippedCountAllTimeRank       Int         @default(0)
-  tippedAmountCountDayRank     Int         @default(0)
-  tippedAmountCountWeekRank    Int         @default(0)
-  tippedAmountCountMonthRank   Int         @default(0)
-  tippedAmountCountYearRank    Int         @default(0)
-  tippedAmountCountAllTimeRank Int         @default(0)
+  BountyEntry                  BountyEntry @relation(fields: [bountyEntryId], references: [id], onDelete: Cascade)
+  cryCountDayRank              Int?        @default(0)
+  cryCountWeekRank             Int?        @default(0)
+  cryCountMonthRank            Int?        @default(0)
+  cryCountYearRank             Int?        @default(0)
+  cryCountAllTimeRank          Int?        @default(0)
+  dislikeCountDayRank          Int?        @default(0)
+  dislikeCountWeekRank         Int?        @default(0)
+  dislikeCountMonthRank        Int?        @default(0)
+  dislikeCountYearRank         Int?        @default(0)
+  dislikeCountAllTimeRank      Int?        @default(0)
+  heartCountDayRank            Int?        @default(0)
+  heartCountWeekRank           Int?        @default(0)
+  heartCountMonthRank          Int?        @default(0)
+  heartCountYearRank           Int?        @default(0)
+  heartCountAllTimeRank        Int?        @default(0)
+  laughCountDayRank            Int?        @default(0)
+  laughCountWeekRank           Int?        @default(0)
+  laughCountMonthRank          Int?        @default(0)
+  laughCountYearRank           Int?        @default(0)
+  laughCountAllTimeRank        Int?        @default(0)
+  likeCountDayRank             Int?        @default(0)
+  likeCountWeekRank            Int?        @default(0)
+  likeCountMonthRank           Int?        @default(0)
+  likeCountYearRank            Int?        @default(0)
+  likeCountAllTimeRank         Int?        @default(0)
+  reactionCountDayRank         Int?        @default(0)
+  reactionCountWeekRank        Int?        @default(0)
+  reactionCountMonthRank       Int?        @default(0)
+  reactionCountYearRank        Int?        @default(0)
+  reactionCountAllTimeRank     Int?        @default(0)
+  unitAmountCountDayRank       Int?        @default(0)
+  unitAmountCountWeekRank      Int?        @default(0)
+  unitAmountCountMonthRank     Int?        @default(0)
+  unitAmountCountYearRank      Int?        @default(0)
+  unitAmountCountAllTimeRank   Int?        @default(0)
+  tippedCountDayRank           Int?        @default(0)
+  tippedCountWeekRank          Int?        @default(0)
+  tippedCountMonthRank         Int?        @default(0)
+  tippedCountYearRank          Int?        @default(0)
+  tippedCountAllTimeRank       Int?        @default(0)
+  tippedAmountCountDayRank     Int?        @default(0)
+  tippedAmountCountWeekRank    Int?        @default(0)
+  tippedAmountCountMonthRank   Int?        @default(0)
+  tippedAmountCountYearRank    Int?        @default(0)
+  tippedAmountCountAllTimeRank Int?        @default(0)
 }
 
 /// @view
@@ -6475,22 +7064,22 @@ model ClubStat {
 
 model ClubRank {
   clubId                   Int  @id
-  Club                     Club @relation(fields: [clubId], references: [id], onDelete: NoAction)
-  memberCountDayRank       Int  @default(0)
-  memberCountWeekRank      Int  @default(0)
-  memberCountMonthRank     Int  @default(0)
-  memberCountYearRank      Int  @default(0)
-  memberCountAllTimeRank   Int  @default(0)
-  resourceCountDayRank     Int  @default(0)
-  resourceCountWeekRank    Int  @default(0)
-  resourceCountMonthRank   Int  @default(0)
-  resourceCountYearRank    Int  @default(0)
-  resourceCountAllTimeRank Int  @default(0)
-  clubPostCountDayRank     Int  @default(0)
-  clubPostCountWeekRank    Int  @default(0)
-  clubPostCountMonthRank   Int  @default(0)
-  clubPostCountYearRank    Int  @default(0)
-  clubPostCountAllTimeRank Int  @default(0)
+  Club                     Club @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  memberCountDayRank       Int? @default(0)
+  memberCountWeekRank      Int? @default(0)
+  memberCountMonthRank     Int? @default(0)
+  memberCountYearRank      Int? @default(0)
+  memberCountAllTimeRank   Int? @default(0)
+  resourceCountDayRank     Int? @default(0)
+  resourceCountWeekRank    Int? @default(0)
+  resourceCountMonthRank   Int? @default(0)
+  resourceCountYearRank    Int? @default(0)
+  resourceCountAllTimeRank Int? @default(0)
+  clubPostCountDayRank     Int? @default(0)
+  clubPostCountWeekRank    Int? @default(0)
+  clubPostCountMonthRank   Int? @default(0)
+  clubPostCountYearRank    Int? @default(0)
+  clubPostCountAllTimeRank Int? @default(0)
 }
 
 enum EntityMetric_EntityType_Type {
@@ -6824,19 +7413,6 @@ enum UserRestrictionStatus {
 }
 
 // Moderator-curated allowlist for false-positive prompt triggers
-model PromptAllowlist {
-  id        Int      @id @default(autoincrement())
-  trigger   String
-  category  String
-  addedBy   Int
-  reason    String?
-  userRestrictionId Int?
-  createdAt DateTime @default(now())
-
-  @@unique([trigger, category])
-  @@index([category])
-}
-
 // Strike system — graduated user enforcement with points-based escalation
 enum StrikeReason {
   BlockedContent
@@ -7328,4 +7904,319 @@ model Outbox {
   createdAt  DateTime?    @default(now())
   details    Json?
   attempts   Int?
+}
+
+/// Per-app, per-page list of the roles allowed to reach a page, keyed by the app's own path strings.
+/// `roles` is authoritative wherever a row exists — an empty array means nobody, which is why this is one
+/// row per page rather than one per grant. A missing row means the app has never been told about the page
+/// and falls back to whatever its code declares. Roles are bare strings and `updatedById` has no FK on
+/// purpose: any app on this database can use the table with its own role vocabulary.
+model AppPageAccess {
+  app         String
+  path        String
+  roles       String[]
+  updatedById Int?
+  updatedAt   DateTime @default(now())
+
+  @@id([app, path])
+}
+
+/// A creator-owned space someone pays to occupy. `surface` and the entity columns are
+/// TEXT rather than enums so a new surface is a code change instead of a DDL migration —
+/// the same reasoning `entityMetricEvents.entityType` already runs on. Absent rows are
+/// not "off": resolution cascades image -> post -> user -> the surface default.
+model PlacementSpace {
+  id         Int      @id @default(autoincrement())
+  surface    String
+  entityType String
+  entityId   Int
+  mode       String
+  /// What the owner asks. The charged price is min(price, cap) computed at read; a
+  /// stored effective price goes stale the moment a membership lapses.
+  price      Int?
+  /// How many free placements this space accepts. NULL means the owner has never
+  /// chosen, which resolves to the surface's default (1) rather than to zero —
+  /// free capacity is opt-out. An explicit 0 is the owner taking none, which is
+  /// why this replaces an on/off toggle instead of sitting beside one.
+  ///
+  /// Stored uncapped and ceilinged at read by the score/tier table, exactly like
+  /// `price`: a stored effective value goes stale the moment a membership lapses.
+  ///
+  /// A column rather than a key in `settings`, because the foundation reads it
+  /// and `settings` is surface-owned by construction.
+  freeSlots  Int?
+  /// Surface-owned settings, read only by the surface that wrote them — a max
+  /// sticker size means nothing to a remix gallery. Kept as JSON so this layer
+  /// does not grow a column per surface idea.
+  settings   Json     @default("{}")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([surface, entityType, entityId])
+  @@index([entityType, entityId])
+}
+
+/// One paid occupation of a space. `data` is opaque here on purpose — the sticker and
+/// remix surfaces own their own payload shape, and this layer never reads inside it.
+///
+/// Money movements live in `PlacementTransaction`, not in columns here: a settlement
+/// that got half way has to say which half, and a status column cannot.
+///
+/// The DB carries CHECK constraints Prisma cannot express, all in the migration —
+/// `amount >= 0`, `status` confined to its five values, and `removedBy` tied to
+/// `status = 'removed'`. A `prisma migrate diff` will read them as drift and offer to
+/// drop them; don't let it.
+model Placement {
+  id                    Int       @id @default(autoincrement())
+  surface               String
+  targetType            String
+  targetId              Int
+  ownerId               Int
+  owner                 User      @relation("PlacementOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  placerId              Int
+  placer                User      @relation("PlacementPlacer", fields: [placerId], references: [id], onDelete: Cascade)
+  data                  Json      @default("{}")
+  status                String
+  /// 'owner' | 'moderator' | 'cosmeticTakedown', set with status 'removed'. The
+  /// removals refund different amounts, so the status alone cannot settle the
+  /// money. Constrained by "Placement_removedBy_check" — a new value needs a
+  /// migration even though the column is TEXT.
+  removedBy             String?
+  /// What the placer paid into escrow, in Buzz. Kept per row rather than read back from
+  /// the space, whose price may move between placement and release.
+  ///
+  /// Always 0 on a free placement, and nothing reads it there — the payout is
+  /// derived from receipted holds, of which a free placement has none.
+  amount                Int
+  /// A placement made against the space's free capacity rather than paid for.
+  ///
+  /// Escrow is bypassed entirely: zero-amount Buzz transactions are a landmine,
+  /// and the escrow's two-hold structure has neither a decline fee nor a
+  /// principal to hold. Settlement moves no money at all for one of these.
+  ///
+  /// On the row rather than inferred from `amount = 0`, which is also what a paid
+  /// placement into a zero-priced space looks like. It also has to be immutable
+  /// and readable by a sweeper that never saw the request that made it.
+  free                  Boolean   @default(false)
+  /// Which Buzz the placer paid in, so the settlement pays the same kind back out.
+  /// On the row for the same reason `amount` is: settlement is resumable, and the
+  /// domain that decided the currency is not visible to a sweeper.
+  ///
+  /// NULL means a placement made before this column existed. Those were booked
+  /// into escrow as yellow whatever was spent, and settle as yellow to match the
+  /// ledger. Deliberately not backfilled — the bank is not balance-constrained,
+  /// so it is a choice about legacy rows, not a limit. See `settledSpendType`.
+  spendType             String?
+  /// Who sold the thing being placed, when an approved placement owes them a cut.
+  /// On the row rather than passed in, because the settlement is resumable and a
+  /// sweeper that never saw the argument would strand the seller's share.
+  sellerId              Int?
+  seller                User?     @relation("PlacementSeller", fields: [sellerId], references: [id], onDelete: SetNull)
+  /// Set when a block declined this placement. A block is the owner refusing to
+  /// give attention to anyone, and the decline fee is the price of that attention,
+  /// so no fee is taken. Stored rather than inferred: settlement is resumable and
+  /// must replay the same decision.
+  feeWaived             Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  expiresAt             DateTime?
+  resolvedAt            DateTime?
+  resolvedById          Int?
+  /// A moderator takedown of an already-settled placement. Its own columns because
+  /// `resolvedAt`/`resolvedById` record who approved it, and overwriting them on the
+  /// one path whose purpose is a moderation record would destroy the approval trail.
+  takenDownAt           DateTime?
+  takenDownById         Int?
+  /// When this placement's Buzz reached the target's counter. The counter lives in
+  /// ClickHouse, which has no per-placement key to ask, so the fact that it was
+  /// counted is recorded here or nowhere. NULL on a placement that reached
+  /// `approved` is the reconcile sweep's work queue.
+  metricCountedAt       DateTime?
+  /// When a sweep took this row to count it. Two columns rather than one because
+  /// the claim has to be atomic and the confirmation cannot be: two sweeps can
+  /// overlap (the job lock fails open when Redis is down), and without a claim
+  /// both read the same unstamped rows and both emit before either stamps. The
+  /// counter never reverses, so that over-count is permanent. A claim older than
+  /// the recovery window is retried, which is what stops a crash between the two
+  /// writes turning into the loss this whole feature exists to end.
+  metricClaimedAt       DateTime?
+  /// How many times a sweep has taken this row. A row the tracker rejects fails
+  /// identically on every retry, and the claim orders by `resolvedAt`, so
+  /// without a ceiling one poisoned row sits at the head of the queue being
+  /// re-claimed forever and starves everything behind it.
+  metricAttempts        Int       @default(0)
+  transactions          PlacementTransaction[]
+
+  @@index([surface, targetType, targetId, status])
+  @@index([ownerId, status])
+  /// The owner review queue's paging order. Without it each page rescans and
+  /// re-sorts every pending row the owner has, and a refetch of a walk N pages
+  /// deep pays that N+1 times.
+  ///
+  /// `surface` is in it because both queues filter on it, and left out it cannot
+  /// be an index condition — an owner with 900 pending stickers would touch all
+  /// 900 heap tuples to fill one 50-row page of remix submissions. It sits after
+  /// `ownerId` rather than first so this does not become a strict prefix of
+  /// `[ownerId, status]` above, which the moderation lookups still want.
+  @@index([ownerId, surface, status, createdAt, id])
+  @@index([placerId, status])
+  /// Both free-placement entitlement checks, which run inside the claim
+  /// transaction and so are on the latency path of every free placement: the
+  /// daily allowance (this placer, free rows, since midnight UTC) and the
+  /// never-twice rule (this placer, free rows, this target). One index serves
+  /// both because the allowance bounds a placer to one free row per day, so
+  /// "every free row this placer has" is a handful of tuples either way.
+  ///
+  /// Applied as a PARTIAL index (`WHERE free`) — see the migration. Prisma cannot
+  /// express the predicate, and without it this indexes every placement ever made
+  /// to answer questions only about the free ones.
+  @@index([placerId, free, createdAt])
+  @@index([status, expiresAt])
+  /// Applied as a PARTIAL index (`WHERE "metricCountedAt" IS NULL`) — see the
+  /// migration. Prisma can express neither the predicate nor the reason the key
+  /// is `resolvedAt` alone, so the declaration here is the shape and the
+  /// migration is the truth.
+  @@index([resolvedAt])
+}
+
+/// One row per movement of money for a placement. `UNIQUE (placementId, kind)` is the
+/// idempotency guard: the insert is the lock, so a retried leg raises rather than paying
+/// twice. `transactionId` is the Buzz service's receipt, derived from the row
+/// (`placement-<id>-<kind>`) and never time-based, so the service's own dedupe is a real
+/// second line rather than something a retry steps around.
+model PlacementTransaction {
+  id            Int       @id @default(autoincrement())
+  placementId   Int
+  placement     Placement @relation(fields: [placementId], references: [id], onDelete: Cascade)
+  kind          String
+  transactionId String?
+  amount        Int
+  /// Failure accounting. Without it a leg that can never succeed is
+  /// indistinguishable from one that has not been tried yet, so it stays in the
+  /// recovery sweep forever and — past the batch limit — starves it, while the
+  /// sweep reports healthy numbers.
+  attempts      Int       @default(0)
+  lastAttemptAt DateTime?
+  lastError     String?
+  createdAt     DateTime  @default(now())
+
+  @@unique([placementId, kind])
+  @@index([kind, createdAt])
+}
+
+
+/// A moderator suspending a user's placement privileges sitewide. Deliberately not
+/// modelled as a block from a system account: that would inherit the block cache's
+/// staleness and pollute the block lists real users see.
+model PlacementSuspension {
+  userId      Int      @id
+  user        User     @relation("PlacementSuspensionUser", fields: [userId], references: [id], onDelete: Cascade)
+  reason      String?
+  createdAt   DateTime @default(now())
+  createdById Int?
+
+  @@index([createdAt])
+}
+
+enum UserHubSourceType {
+  User
+  Model
+  ModelVersion
+  Collection
+}
+
+/// A user-composed image feed: a named set of creators, models, versions and
+/// collections merged into one stream. The source list is resolved server-side
+/// from the hub id — a client-supplied id list would be an unbounded-cost query
+/// anyone could post, which is why `image.getInfinite` takes `hubId` and not the
+/// ids themselves.
+model UserHub {
+  id        Int             @id @default(autoincrement())
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  userId    Int
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  index     Int             @default(0)
+  sort      String          @default("Newest")
+  period    MetricTimeframe @default(AllTime)
+  mediaTypes MediaType[]
+  metadata  Json            @default("{}")
+  availability Availability @default(Private)
+  // A browsing-level bitmask the hub's own feed is capped to. 0 means uncapped —
+  // the viewer's own level decides, as it did before hubs could be shared.
+  //
+  // Named like Collection's and Challenge's, NOT `nsfwLevel`: every `nsfwLevel`
+  // column in this schema is a DERIVED content level that nsfwLevels.service.ts
+  // owns and overwrites. This one is a setting its owner chose.
+  forcedBrowsingLevel Int   @default(0)
+
+  sources   UserHubSource[]
+  followers UserHubFollow[]
+
+  @@index([userId])
+}
+
+model UserHubFollow {
+  userId    Int
+  hubId     Int
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hub       UserHub  @relation(fields: [hubId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, hubId])
+  @@index([hubId])
+}
+
+model UserHubSource {
+  id       Int               @id @default(autoincrement())
+  hubId    Int
+  hub      UserHub           @relation(fields: [hubId], references: [id], onDelete: Cascade)
+  type     UserHubSourceType
+  targetId Int
+  alias    String?
+  enabled  Boolean           @default(true)
+  index    Int               @default(0)
+
+  @@unique([hubId, type, targetId])
+  @@index([hubId])
+  @@index([type, targetId])
+}
+
+model Blurb {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String    @db.Citext
+  content     String
+  contentHash String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  references BlurbReference[]
+
+  // RAW partial unique index (NOT expressible in Prisma @@unique — it carries a WHERE):
+  // "Blurb_userId_name_key" UNIQUE (userId, name) WHERE "deletedAt" IS NULL. Created in
+  // 20260825000000_add_blurbs (manual-apply). createBlurb relies on its P2002 to report a
+  // duplicate name.
+  @@index([updatedAt])
+}
+
+model BlurbReference {
+  blurbId          Int
+  blurb            Blurb    @relation(fields: [blurbId], references: [id], onDelete: Cascade)
+  entityType       String
+  entityId         Int
+  materializedHash String
+  materializedAt   DateTime
+  /// Set when the blurb is edited or soft-deleted, cleared once the entity is rewritten. The
+  /// fan-out selector filters on it because the cross-table hash inequality it replaced cannot be
+  /// indexed — see the note in 20260825000000_add_blurbs.
+  pendingSince     DateTime?
+
+  @@id([blurbId, entityType, entityId])
+  @@index([entityType, entityId])
+  // RAW partial index (NOT expressible in Prisma — it carries a WHERE):
+  // "BlurbReference_pending_idx" ON ("materializedAt") WHERE "pendingSince" IS NOT NULL.
+  // Created in 20260825000000_add_blurbs (manual-apply).
 }

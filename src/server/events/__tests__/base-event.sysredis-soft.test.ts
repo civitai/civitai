@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEvent } from '~/server/events/base.event';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * STEP-7 sysRedis soft-dependency (Group A) — base.event.ts holiday-event reads.
@@ -28,15 +29,14 @@ const { hGetAll, hSet, mockWithSysReadDeadline, mockLogSysRedisFailOpen, mockGet
 vi.mock('~/server/redis/client', () => ({
   redis: { hGet: vi.fn(), hSet: vi.fn(), del: vi.fn(), hDel: vi.fn() },
   sysRedis: { hGetAll, hSet },
-  REDIS_KEYS: { COSMETICS: { IDS: 'cosmetics:ids' }, EVENT: { CACHE: 'event:cache' } },
+  REDIS_KEYS: { COSMETICS: { IDS: 'cosmeticIds' }, EVENT: { CACHE: 'packed:event' } },
   REDIS_SUB_KEYS: {
     EVENT: { MANUAL_ASSIGNMENTS: 'manual-assignments', DISCORD_ROLES: 'discord-roles', COSMETICS: 'cosmetics' },
   },
-  REDIS_SYS_KEYS: { EVENT: 'sys:event' },
+  REDIS_SYS_KEYS: { EVENT: 'event' },
   withSysReadDeadline: mockWithSysReadDeadline,
 }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/integrations/discord', () => ({ discord: { getAllRoles: mockGetAllRoles } }));
 
 const definition = {

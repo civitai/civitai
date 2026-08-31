@@ -1,6 +1,6 @@
-export function isDefined<T>(argument: T | undefined | null): argument is T {
-  return argument !== undefined && argument !== null;
-}
+// isDefined moved to @civitai/shared so packages and spokes can use it; re-exported here for the
+// 166 call sites that import it from this module.
+export { isDefined } from '@civitai/shared/type-guards';
 
 export function isNumber(value: unknown) {
   return isNaN(Number(value)) === false;

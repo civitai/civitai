@@ -1,0 +1,243 @@
+{
+  "$comment": "Test corpus for measure.mjs. Deliberately generic — the point is that the SAME prompts go to every ecosystem, and each guide should improve them differently. `has` lists what the prompt ALREADY supplies; recommending one of those back is the failure the harness counts. `has` is a judgement call, so keep entries unambiguous: tag only what a reader would agree is plainly present. `modality` filters video-only concepts (audio, shot duration) out of image runs.",
+  "dimensions": {
+    "subject": "concrete, specific subject description beyond a bare noun",
+    "lighting": "named light source, direction, quality, or time-of-day-as-lighting",
+    "camera": "shot type, angle, lens, framing, or camera movement",
+    "composition": "where elements sit in frame, depth, foreground/background",
+    "style": "named rendering style, medium, or artistic reference",
+    "audio": "sound design: ambient bed, named events (video only)",
+    "negative": "a negativePrompt field is supplied"
+  },
+  "prompts": [
+    { "id": "micro-1", "length": "micro", "modality": "both", "has": [], "text": "a cat" },
+    { "id": "micro-2", "length": "micro", "modality": "both", "has": [], "text": "sunset" },
+    {
+      "id": "micro-3",
+      "length": "micro",
+      "modality": "both",
+      "has": [],
+      "text": "cyberpunk street"
+    },
+    {
+      "id": "micro-4",
+      "length": "micro",
+      "modality": "both",
+      "has": ["style"],
+      "text": "watercolor fox"
+    },
+
+    {
+      "id": "short-tags-1",
+      "length": "short",
+      "modality": "image",
+      "has": ["subject"],
+      "text": "1girl, solo, long silver hair, red eyes, school uniform, standing"
+    },
+    {
+      "id": "short-tags-2",
+      "length": "short",
+      "modality": "image",
+      "has": ["subject", "style"],
+      "text": "masterpiece, best quality, 1boy, blue hoodie, short black hair, anime style"
+    },
+    {
+      "id": "short-tags-pony",
+      "length": "short",
+      "modality": "image",
+      "has": ["subject", "style"],
+      "text": "score_9, score_8_up, score_7_up, source_anime, 1girl, blue hair, red eyes, school uniform, cherry blossom background"
+    },
+    {
+      "id": "short-tags-noobai",
+      "length": "short",
+      "modality": "image",
+      "has": ["subject", "style"],
+      "text": "masterpiece, best quality, newest, absurdres, 1girl, solo, white hair, fox ears, kimono, holding umbrella, snowing"
+    },
+    {
+      "id": "underscore-tags",
+      "length": "short",
+      "modality": "image",
+      "has": ["subject"],
+      "text": "1girl, looking_at_viewer, long_hair, school_uniform, cherry_blossoms, outdoors"
+    },
+    {
+      "id": "short-prose-1",
+      "length": "short",
+      "modality": "both",
+      "has": ["subject"],
+      "text": "An elderly fisherman with weathered hands mending a net"
+    },
+    {
+      "id": "short-prose-2",
+      "length": "short",
+      "modality": "both",
+      "has": ["subject", "lighting"],
+      "text": "A brass telescope on a balcony, lit by low golden-hour sun from the left"
+    },
+    {
+      "id": "short-prose-3",
+      "length": "short",
+      "modality": "both",
+      "has": ["subject", "camera"],
+      "text": "Close-up on a chipped enamel mug of black coffee, shallow depth of field"
+    },
+
+    {
+      "id": "medium-1",
+      "length": "medium",
+      "modality": "both",
+      "has": ["subject", "lighting", "style"],
+      "text": "A greenhouse overrun with ferns and hanging vines, soft diffused morning light through fogged glass panes, rendered as a detailed oil painting"
+    },
+    {
+      "id": "medium-2",
+      "length": "medium",
+      "modality": "both",
+      "has": ["subject", "camera", "composition"],
+      "text": "Wide low-angle shot of two knights in dented plate armour circling each other on cracked lake ice, the pair small against a vast pale sky, crows scattered across the upper third of the frame"
+    },
+    {
+      "id": "medium-3",
+      "length": "medium",
+      "modality": "both",
+      "has": ["subject", "lighting", "camera"],
+      "text": "A night market stall selling grilled skewers, steam catching the red glow of a hanging paper lantern overhead, medium shot from across the walkway"
+    },
+    {
+      "id": "medium-4",
+      "length": "medium",
+      "modality": "image",
+      "has": ["subject", "style", "composition"],
+      "text": "A cutaway illustration of a beehive in cross-section, hexagonal cells filled with amber honey, bees drawn in flat vector style, arranged symmetrically around a central queen chamber"
+    },
+
+    {
+      "id": "long-1",
+      "length": "long",
+      "modality": "both",
+      "has": ["subject", "lighting", "camera", "composition", "style"],
+      "text": "A cartographer in a wool waistcoat leans over a half-finished map on a broad oak table, dividers in one hand, ink-stained fingers steadying the vellum. A single brass desk lamp throws warm light from camera right, leaving the shelves behind him in deep shadow. Shot as a slightly high three-quarter view, the map filling the lower half of the frame and the man's face in the upper left. Painterly, muted earth tones, fine detail on the paper texture."
+    },
+    {
+      "id": "long-2",
+      "length": "long",
+      "modality": "both",
+      "has": ["subject", "lighting", "composition", "style"],
+      "text": "An abandoned municipal swimming pool reclaimed by birch saplings pushing up through cracked tiles, drained deep end filled with drifted leaves, faded lane markings still visible on the walls. Flat overcast daylight with no hard shadows, the whole scene desaturated toward grey-green. Composition centred on the diving board, which juts from the left edge into empty air. Photographic realism, fine grain."
+    },
+
+    {
+      "id": "video-locked-1",
+      "length": "medium",
+      "modality": "video",
+      "has": ["subject", "camera", "audio"],
+      "text": "A locked frame never moves as a barista steams milk behind a counter. Audio: low espresso machine hiss, a spoon tapping ceramic twice, quiet cafe murmur."
+    },
+    {
+      "id": "video-camera-1",
+      "length": "short",
+      "modality": "video",
+      "has": ["subject", "camera"],
+      "text": "Slow push-in on a lighthouse keeper winding a clockwork mechanism"
+    },
+    {
+      "id": "video-audio-1",
+      "length": "short",
+      "modality": "video",
+      "has": ["subject", "audio"],
+      "text": "Two knights duel on a frozen lake. Audio: blades clashing, boots cracking ice, distant crow calls over a low wind bed."
+    },
+    {
+      "id": "video-full-1",
+      "length": "long",
+      "modality": "video",
+      "has": ["subject", "lighting", "camera", "audio"],
+      "text": "A signalman walks the length of a rain-slicked railway platform at night, lantern swinging at his side, coat collar turned up. The camera tracks him laterally from across the tracks, holding a steady medium-wide. Sodium platform lamps throw pooled orange light with long gaps of darkness between. Audio: rain on the canopy, boots on wet concrete, a distant coupling clank."
+    },
+    {
+      "id": "video-static-1",
+      "length": "short",
+      "modality": "video",
+      "has": ["subject", "camera"],
+      "text": "Static wide shot of laundry on a line in a courtyard, sheets moving in the wind"
+    },
+
+    {
+      "id": "neg-inline-1",
+      "length": "short",
+      "modality": "both",
+      "has": [],
+      "text": "a busy market street, no people, no cars, no signage"
+    },
+    {
+      "id": "neg-field-1",
+      "length": "short",
+      "modality": "both",
+      "has": ["subject", "negative"],
+      "negativePrompt": "blurry, low quality, extra limbs, watermark, text",
+      "text": "A tabby cat asleep on a stack of library books, paws tucked under"
+    },
+    {
+      "id": "neg-field-2",
+      "length": "medium",
+      "modality": "both",
+      "has": ["subject", "lighting", "negative"],
+      "negativePrompt": "cartoon, anime, 3d render, oversaturated, deformed hands",
+      "text": "A blacksmith quenching a glowing blade, steam boiling off the trough, forge fire as the only light source"
+    },
+
+    {
+      "id": "weight-syntax-1",
+      "length": "short",
+      "modality": "image",
+      "has": ["subject"],
+      "text": "(vibrant colors:1.4), a hummingbird at a feeder, (sharp focus:1.2), sad mood"
+    },
+    {
+      "id": "weight-syntax-2",
+      "length": "short",
+      "modality": "image",
+      "has": ["subject", "style"],
+      "text": "[oil painting] of a harbour at dawn, ((fishing boats)), impressionist"
+    },
+
+    {
+      "id": "text-render-1",
+      "length": "short",
+      "modality": "image",
+      "has": ["subject"],
+      "text": "A vintage diner sign with the name of the diner on it, neon tubing"
+    },
+    {
+      "id": "text-render-2",
+      "length": "medium",
+      "modality": "image",
+      "has": ["subject", "composition"],
+      "text": "A hardback book cover, bold serif title reading 'THE LONG SILENCE' centred across the upper third, a single crow silhouette below it"
+    },
+
+    {
+      "id": "edit-style-1",
+      "length": "short",
+      "modality": "both",
+      "has": [],
+      "text": "make the sky stormy and add a flock of birds"
+    },
+    {
+      "id": "multi-subject-1",
+      "length": "short",
+      "modality": "both",
+      "has": [],
+      "text": "three people at a table talking"
+    },
+    {
+      "id": "abstract-1",
+      "length": "micro",
+      "modality": "both",
+      "has": [],
+      "text": "loneliness"
+    }
+  ]
+}

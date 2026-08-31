@@ -12,6 +12,7 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import readline from 'readline';
+import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -28,8 +29,9 @@ const projectRoot = findProjectRoot(__dirname);
 const pidFile = resolve(__dirname, 'daemon.pid');
 const serverScript = resolve(__dirname, 'scripts/daemon.mjs');
 
-const DAEMON_PORT = 9444;
-const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
+// The whole decision — port included — is made in scripts/daemon-port.mjs, the same module the
+// daemon reads, so this file does no arithmetic on a port and cannot drift from it.
+const DAEMON_URL = resolveDaemonUrl();
 
 // ── ANSI ──────────────────────────────────────────────────────────────────────
 const C = {
@@ -84,9 +86,9 @@ async function isDaemonRunning() {
 }
 
 async function startDaemon() {
-  const command = `"${process.execPath}" "${serverScript}"`;
-  const child = spawn(command, [], {
-    detached: true, stdio: 'ignore', cwd: projectRoot, windowsHide: true, shell: true,
+  // No shell — see cli.mjs startDaemon.
+  const child = spawn(process.execPath, [serverScript], {
+    detached: true, stdio: 'ignore', cwd: projectRoot, windowsHide: true,
   });
   child.unref();
   writeFileSync(pidFile, String(child.pid));
@@ -123,6 +125,7 @@ async function listSessionsCli() {
     log(`  ${C.cyn}${i + 1}.${C.r} [${s.id}] ${s.branch}`);
     log(`     ${C.dim}Port:${C.r} ${s.port}  ${C.dim}Status:${C.r} ${status}  ${C.dim}Ready:${C.r} ${ready}`);
     log(`     ${C.dim}URL:${C.r} ${s.url}`);
+    if (s.envModeSummary) log(`     ${C.dim}Env:${C.r} ${s.envModeSummary}`);
     log('');
   });
   return sessions;
@@ -178,18 +181,36 @@ async function cmdDashboard(initialWorktree) {
   });
 
   let sessionId;
+  let attachNotice = null;
   if (startResult.ok) {
     sessionId = startResult.data.session.id;
+  } else if (startResult.data?.session?.id) {
+    // A refusal that names the session it refused for — a session already running this worktree
+    // with env modes a bare start would not reproduce. Watching it is what was asked for, but the
+    // dashboard must say so: the request and the session it attaches to disagree. Held for the
+    // alternate screen rather than logged here, where the dashboard's first repaint erases it.
+    attachNotice = startResult.data.error ?? 'Attached to a session with different env modes';
+    sessionId = startResult.data.session.id;
   } else {
-    // Try to find an existing session
+    // Scoped to THIS worktree. An unfiltered `find` opened the dashboard on whichever session came
+    // first in the map — another tree, another branch, its logs, and nothing saying so.
+    const sameTree = (s) =>
+      process.platform === 'win32'
+        ? resolve(s.worktree ?? '').toLowerCase() === cwd.toLowerCase()
+        : resolve(s.worktree ?? '') === cwd;
     const listResult = await daemonRequest('/sessions');
-    if (listResult.ok && listResult.data.sessions?.length) {
-      const running = listResult.data.sessions.find(s => s.status === 'running');
-      sessionId = running ? running.id : listResult.data.sessions[0].id;
-    } else {
-      log(`${C.red}No session available${C.r}`);
+    const mine = listResult.ok ? (listResult.data.sessions ?? []).filter(sameTree) : [];
+    const running = mine.find((s) => s.status === 'running');
+    sessionId = running ? running.id : mine[0]?.id;
+    if (!sessionId) {
+      log(`${C.red}No session available for ${cwd}${C.r}`);
+      if (startResult.data?.error) log(`${C.dim}${startResult.data.error}${C.r}`);
       process.exit(1);
     }
+    // The start was refused — a malformed env-modes.local carries no session in the body — and the
+    // session found here predates that edit. Repainting a healthy dashboard over it would read as
+    // the edit having taken effect.
+    if (startResult.data?.error) attachNotice = startResult.data.error;
   }
 
   const write = (s) => process.stdout.write(s);
@@ -198,6 +219,7 @@ async function cmdDashboard(initialWorktree) {
   let logCursor = -1;
   let logLines = [];        // all log entries (raw from daemon)
   let lastSession = null;
+  let allSessions = [];     // roster for the switcher, sorted by port
   let lastRgb = null;
   let lastAuth = null;
   let running = true;
@@ -224,6 +246,8 @@ async function cmdDashboard(initialWorktree) {
 
   // Enter alternate screen
   write(ALT_ON + CUR_HIDE);
+
+  if (attachNotice) flash(attachNotice);
 
   // Raw mode
   process.stdin.setRawMode(true);
@@ -288,6 +312,24 @@ async function cmdDashboard(initialWorktree) {
         exitDash();
         break;
 
+      // Cycle sessions. Each worktree is its own session, so this is how you move
+      // between branches you have running side by side.
+      case '\t':
+      case 's': {
+        if (allSessions.length < 2) {
+          flash('Only one session running');
+          break;
+        }
+        const idx = allSessions.findIndex((x) => x.id === sessionId);
+        const next = allSessions[(idx + 1) % allSessions.length];
+        sessionId = next.id;
+        logLines = [];
+        logCursor = 0;
+        lastSession = next;
+        flash(`Session ${next.id} — ${next.branch || '?'} :${next.port}`);
+        break;
+      }
+
       case '/':
       case 'f':
         searchMode = true;
@@ -304,7 +346,14 @@ async function cmdDashboard(initialWorktree) {
       case 'r':
         flash('Restarting session...');
         try {
-          await daemonRequest(`/sessions/${sessionId}/restart`, { method: 'POST' });
+          // daemonRequest resolves for every response, so a refusal arrives here as ok:false.
+          // Reporting it as a restart would clear the log pane as confirmation of something that
+          // did not happen — pressing `r` during a restart is exactly when that reads as damage.
+          const restart = await daemonRequest(`/sessions/${sessionId}/restart`, { method: 'POST' });
+          if (!restart.ok) {
+            flash(restart.data?.error || `Restart refused (${restart.status})`);
+            break;
+          }
           logCursor = -1;
           logLines = [];
           flash('Session restarted');
@@ -489,7 +538,25 @@ async function cmdDashboard(initialWorktree) {
       const statusStr = s.status === 'running' ? `${C.grn}running${C.r}` : `${C.ylw}${s.status}${C.r}`;
       const readyStr = s.ready ? `${C.grn}ready${C.r}` : `${C.ylw}starting${C.r}`;
       const uptimeStr = s.startedAt ? fmtUptime(Math.floor((Date.now() - new Date(s.startedAt).getTime()) / 1000)) : '';
-      info = `${s.branch || '?'}  ${C.dim}port${C.r} ${s.port}  ${statusStr}  ${readyStr}  ${C.dim}up${C.r} ${uptimeStr}`;
+      // `base` counts as production here: it means no section applied and the .env value stands,
+      // and this repo's .env is production for everything it does not override.
+      const prodGroups = Object.entries(s.envModes ?? {})
+        .filter(([, mode]) => mode !== 'dev')
+        .map(([group, mode]) => (mode === 'prod' ? group : `${group}(${mode})`));
+      const modeStr = prodGroups.length ? `  ${C.ylw}prod:${prodGroups.join(',')}${C.r}` : '';
+      // Sticky, not a 3s flash: this says the session is NOT what the dashboard asked to start, and
+      // after the flash cleared a mismatched dashboard looked exactly like a healthy one.
+      const noticeStr = attachNotice ? `  ${C.ylw}!env${C.r}` : '';
+      info = `${s.branch || '?'}  ${C.dim}port${C.r} ${s.port}  ${statusStr}  ${readyStr}  ${C.dim}up${C.r} ${uptimeStr}${modeStr}${noticeStr}`;
+    }
+    // Session counter, top-right. `n/N` so you know where you are in the rotation.
+    if (allSessions.length) {
+      const pos = allSessions.findIndex((x) => x.id === sessionId) + 1;
+      const label =
+        allSessions.length > 1
+          ? `${C.b}[${pos}/${allSessions.length} sessions]${C.r}${C.bgBlu}${C.wht}`
+          : `${C.dim}[1 session]${C.r}${C.bgBlu}${C.wht}`;
+      info = `${info}  ${label}`;
     }
     const infoClean = stripAnsi(info);
     const pad = Math.max(0, cols - title.length - infoClean.length - 1);
@@ -513,7 +580,17 @@ async function cmdDashboard(initialWorktree) {
         else if (st === 'error' || st === 'crashed') authStr = `  ${C.dim}AUTH:${C.r} ${C.red}${st}${C.r}`;
         else if (lastAuth.enabled) authStr = `  ${C.dim}AUTH:${C.r} ${C.ylw}${st}${C.r}`;
       }
-      buf.push(CLR_LINE + `  ${C.dim}URL:${C.r} ${url}  ${C.dim}Session:${C.r} ${s.id}  ${C.dim}${logCount}${C.r}${rgbStr}${authStr}\n`);
+      // The rgb-proxy backs localhost:3000 only, so the color hostnames reach whichever
+      // session holds that port. Say so explicitly rather than printing URLs that
+      // silently land on a different worktree.
+      let hostStr = '';
+      if (lastRgb?.status === 'running') {
+        hostStr =
+          s.port === 3000
+            ? `  ${C.dim}via${C.r} ${C.grn}civitai-dev.{red,green,blue}${C.r}`
+            : `  ${C.dim}via${C.r} ${C.ylw}localhost only (colors -> :3000)${C.r}`;
+      }
+      buf.push(CLR_LINE + `  ${C.dim}URL:${C.r} ${url}${hostStr}  ${C.dim}Session:${C.r} ${s.id}  ${C.dim}${logCount}${C.r}${rgbStr}${authStr}\n`);
     } else {
       buf.push(CLR_LINE + '\n');
     }
@@ -568,6 +645,7 @@ async function cmdDashboard(initialWorktree) {
         `${searchLabel}  ` +
         `${k('a', 'all')}  ` +
         `${C.dim}\u2502${C.r}  ` +
+        (allSessions.length > 1 ? `${k('s', 'ession')}  ` : '') +
         `${k('r', 'estart')}  ` +
         `${k('c', 'lear')}  ` +
         `${k('x', '-stop')}  ` +
@@ -588,6 +666,18 @@ async function cmdDashboard(initialWorktree) {
       const statusResult = await daemonRequest(`/sessions/${sessionId}`);
       if (statusResult.ok) {
         lastSession = statusResult.data.session;
+      }
+
+      // Roster for the session switcher + header count.
+      const listResult = await daemonRequest('/sessions');
+      if (listResult.ok) {
+        allSessions = (listResult.data.sessions || []).sort((a, b) => a.port - b.port);
+        // Current session disappeared (stopped elsewhere) — fall back to the first.
+        if (allSessions.length && !allSessions.some((x) => x.id === sessionId)) {
+          sessionId = allSessions[0].id;
+          logLines = [];
+          logCursor = 0;
+        }
       }
 
       // Fetch logs (always fetch all, filter client-side)

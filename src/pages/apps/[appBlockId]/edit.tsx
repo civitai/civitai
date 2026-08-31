@@ -1,10 +1,13 @@
-import { Anchor, Center, Container, Group, Loader, Stack, Tabs } from '@mantine/core';
+import { Anchor, Center, Group, Loader, Stack, Tabs } from '@mantine/core';
 import { IconArrowLeft, IconPhoto, IconSettings } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
 import { ListingMediaEditor } from '~/components/Apps/ListingMediaEditor';
 import { ManifestEditForm } from '~/components/Apps/ManifestEditForm';
-import { goBackOrFallback } from '~/components/Apps/listingEditNav';
+import { ALL_EDITOR_TABS } from '~/components/Apps/appListingEditorTabs';
+import { canonicalEditRedirect, goBackOrFallback } from '~/components/Apps/listingEditNav';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -34,7 +37,23 @@ export const getServerSideProps = createServerSideProps({
         redirect: { destination: getLoginLink({ returnUrl: ctx.resolvedUrl }), permanent: false },
       };
     }
-    return { props: {} };
+    // 🔴 302 TO THE CANONICAL LISTING-KEYED PAGE when this block HAS a listing,
+    // preserving `?tab=`. `/apps/listing/<appListingId>/edit` serves BOTH store kinds;
+    // this block-keyed route structurally cannot address an off-site listing, so it
+    // stops being the canonical authoring URL here.
+    //
+    // 🔴 IT MUST NOT REDIRECT UNCONDITIONALLY — a block whose first version is still
+    // pending approval has no `AppListing` row, hence no canonical URL, and an
+    // unconditional 302 would loop it onto itself. `canonicalEditRedirect` returns
+    // `{ props: {} }` for that case and the legacy page below renders as it always did.
+    const raw = ctx.params?.appBlockId;
+    const appBlockId = Array.isArray(raw) ? raw[0] : raw;
+    const appListingId = appBlockId
+      ? await (
+          await import('~/server/services/blocks/app-access.service')
+        ).listingIdForAppBlock(appBlockId)
+      : null;
+    return canonicalEditRedirect(raw, ctx.query?.tab, appListingId, ALL_EDITOR_TABS);
   },
 });
 
@@ -72,7 +91,26 @@ export default function AppEditPage() {
   return (
     <>
       <Meta title="Edit app — Civitai Apps" deIndex />
-      <Container size="sm" py="md">
+      {/*
+        🔴 THIS PAGE'S GATE DOES NOT IMPLY THE SUB-NAV'S. The `getServerSideProps` above
+        gates on `appBlocks` ALONE,
+        with no author requirement, while `AppsSubNav` hides itself entirely below TWO
+        qualifying tabs. Only "Marketplace" is unconditional; every other tab needs an
+        author capability, an install, an approved app, a pending invite or reviewer
+        status. So a viewer granted `app-blocks-enabled` in Flipt who is not a moderator,
+        not an author, and holds none of those — a seated collaborator on someone else's
+        listing is the realistic shape — reaches this page, qualifies for one tab, and
+        gets an EMPTY chrome band: the `Stack gap="xl"` above the body and nothing else.
+
+        Not a live defect (pre-GA the flag resolves for mods, who are authors), and not a
+        correctness problem when it does happen — it is 32px of dead space, not a broken
+        page. Recorded because the trigger is a RUNTIME Flipt toggle rather than a deploy:
+        `appBlocks` is `{ availability: ['mod'], fliptKey: 'app-blocks-enabled' }` and
+        `getFeatureFlags` returns the Flipt answer before it evaluates `availability`, so
+        this widens with no code change and no PR. See the fuller note in
+        `src/pages/apps/get-started.tsx`.
+      */}
+      <AppsPageLayout measure={APPS_PAGE_MEASURES['/apps/[appBlockId]/edit']}>
         <Stack gap="lg">
           {/* Item 3: history-aware back — pop history when there's any, else fall
               back to the app details page (the media editor is now a TAB here, so
@@ -134,7 +172,7 @@ export default function AppEditPage() {
             </Tabs.Panel>
           </Tabs>
         </Stack>
-      </Container>
+      </AppsPageLayout>
     </>
   );
 }

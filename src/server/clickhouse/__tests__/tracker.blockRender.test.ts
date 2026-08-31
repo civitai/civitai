@@ -16,25 +16,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * capture the POST body via a stubbed global fetch.
  */
 
-vi.mock('~/env/server', () => ({
-  env: {
-    CLICKHOUSE_TRACKER_URL: 'http://tracker.test',
-    // Unset so the module-level clickhouse client never connects.
-    CLICKHOUSE_HOST: undefined,
-    CLICKHOUSE_USERNAME: undefined,
-    CLICKHOUSE_PASSWORD: undefined,
-    IS_BUILD: true,
-    // createLogger (imported transitively by client.ts) reads env.LOGGING.
-    LOGGING: [],
-  },
-}));
 vi.mock('~/env/other', () => ({ isProd: false, isDev: true }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),
 }));
 
 import { Tracker } from '../client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 function lastFetchBody(fetchMock: ReturnType<typeof vi.fn>) {
   const call = fetchMock.mock.calls[fetchMock.mock.calls.length - 1];

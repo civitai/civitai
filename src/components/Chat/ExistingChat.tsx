@@ -6,23 +6,23 @@ import {
   Button,
   Center,
   createPolymorphicComponent,
-  Divider,
   Group,
   Image,
   Loader,
-  Menu,
   Spoiler,
   Stack,
   Text,
   Textarea,
-  Title,
   Tooltip,
+  UnstyledButton,
   useComputedColorScheme,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertTriangle,
   IconArrowBack,
+  IconCheck,
   IconChevronDown,
   IconChevronLeft,
   IconChevronUp,
@@ -30,8 +30,9 @@ import {
   IconCircleMinus,
   IconCircleX,
   IconCrown,
-  IconDotsVertical,
   IconSend,
+  IconPencil,
+  IconTrash,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -43,6 +44,8 @@ import { div } from 'motion/react-m';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatStore } from '~/components/Chat/ChatProvider';
+import { useChatLayout } from '~/components/Chat/useChatTheme';
+import { getMessageRowFlags, isSameDay } from '~/components/Chat/message-grouping';
 import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -56,14 +59,34 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import type { isTypingOutput } from '~/server/schema/chat.schema';
+import { ChatMemberMenu } from '~/components/Chat/ChatMemberMenu';
+import { activeMemberStatuses, formatChatSystemMessage } from '~/shared/utils/chat';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatAllMessages } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import sharedClasses from './Chat.module.scss';
 import classes from './ExistingChat.module.scss';
-import { BlurText } from '~/components/BlurText/BlurText';
+import { Sticker } from '~/components/Sticker/Sticker';
+import { StickerPicker } from '~/components/Sticker/StickerPicker';
+import { StickerProvider } from '~/components/Sticker/StickerProvider';
+import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
+import { useOwnedSticker } from '~/components/Sticker/sticker.util';
+import { useCleanText } from '~/hooks/useCheckProfanity';
+import {
+  STICKER_SIZE,
+  isStickerOnlyContent,
+  parseStickerIds,
+  parseStickerLines,
+  rankStickerMatch,
+  resolveStickerTokens,
+  stickerQueryAtCaret,
+  stripStickerTokens,
+} from '~/shared/utils/sticker-token';
+import { MAX_CHAT_MESSAGE_LENGTH } from '~/shared/utils/chat';
+import { BASE_EMOJI, isJumboEmojiText } from '~/shared/constants/base-emoji';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -73,26 +96,47 @@ type TypingStatus = {
   [key: string]: boolean;
 };
 
+/** A typeahead is a shortcut, not a browser — the picker is one click away. */
+const SUGGESTION_LIMIT = 8;
+
+/** The counter turns amber here, far enough out to still be editing rather than deleting. */
+const COUNTER_WARN_AT = 1800;
+
 const PStack = createPolymorphicComponent<'div', StackProps>(Stack);
 
+/**
+ * The detail sits behind a disclosure because this renders above every
+ * conversation: at full length it was the loudest thing in the pane and got
+ * read once, then dismissed. The claim and the report link stay in the line.
+ */
 function ScamWarningContent({ chatId }: { chatId: number }) {
+  const [expanded, setExpanded] = useState(false);
+
   return (
     <Text size="xs">
-      Beware of scam messages. Civitai staff will only message you from{' '}
+      Civitai staff only message you from{' '}
       <Text span c="red" fw={700}>
         red-nameplate
       </Text>{' '}
-      accounts and have a Civitai moderator badge next to their name (not the profile picture!). Do
-      not click unknown links or share payment info.{' '}
+      accounts.{' '}
+      {expanded && (
+        <>
+          They carry a Civitai moderator badge next to their name — not on the profile picture.
+          Never click unknown links or share payment info.{' '}
+        </>
+      )}
+      <Anchor component="button" type="button" size="xs" onClick={() => setExpanded((o) => !o)}>
+        {expanded ? 'Less' : 'More'}
+      </Anchor>
+      {' · '}
       <Anchor
         component="button"
         type="button"
         size="xs"
         onClick={() => openReportModal({ entityType: ReportEntity.Chat, entityId: chatId })}
       >
-        Report suspicious DMs
-      </Anchor>{' '}
-      immediately.
+        Report
+      </Anchor>
     </Text>
   );
 }
@@ -110,6 +154,7 @@ export function ExistingChat() {
   const [typingText, setTypingText] = useState<string | null>(null);
   const [isJoining, setIsJoining] = useState(false);
   const [replyId, setReplyId] = useState<number | undefined>(undefined);
+  const [editing, setEditing] = useState<{ id: number; content: string } | undefined>(undefined);
 
   // TODO there is a bug here. upon rejoining, you won't get a signal for the messages in the timespan between leaving and rejoining
   const { data, fetchNextPage, isLoading, isRefetching, hasNextPage, isError, error } =
@@ -128,8 +173,8 @@ export function ExistingChat() {
   // Mutating pages + pageParams simultaneously inside select breaks RQ v5 cursor
   // tracking and causes the hook to return empty data.
   // Note: We reverse the `pages` array (chunks) instead of the flattened array
-  // because the backend returns chunks in newest-to-oldest order, but the items 
-  // *inside* the chunks are correctly ordered chronologically. Reversing the 
+  // because the backend returns chunks in newest-to-oldest order, but the items
+  // *inside* the chunks are correctly ordered chronologically. Reversing the
   // flattened array would break the internal chronological order of the messages.
   const messagesChronological = useMemo(() => {
     if (!data?.pages) return [];
@@ -148,6 +193,12 @@ export function ExistingChat() {
     () => thisChat?.chatMembers.filter((cm) => cm.userId !== currentUser?.id),
     [thisChat, currentUser]
   );
+  // `chatMembers.length` is the fallback for threads that predate `Chat.isGroup`
+  // and have not been backfilled.
+  const isGroupAdmin =
+    (!!thisChat?.isGroup || (thisChat?.chatMembers.length ?? 0) > 2) &&
+    !!currentUser &&
+    thisChat?.ownerId === currentUser.id;
   // const lastViewed = myMember?.lastViewedMessageId;
   const modSender = useMemo(
     () => thisChat?.chatMembers.find((cm) => cm.isOwner === true && cm.user.isModerator === true),
@@ -194,6 +245,9 @@ export function ExistingChat() {
           if (!tMember) return old;
 
           tMember.status = data.status;
+          // Accepting clears the request mark server-side; dropping it here left
+          // the conversation stuck in the Requests tab.
+          tMember.filteredAt = data.filteredAt;
 
           // don't think we need this on the FE
           // if (data.status === ChatMemberStatus.Joined) tMember.joinedAt = data.joinedAt;
@@ -262,22 +316,44 @@ export function ExistingChat() {
     });
   };
 
+  // Captured the moment an older page starts loading, so the prepend can be
+  // anchored. Reading it after the fact is too late — the DOM has already grown.
+  const olderPageAnchor = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const anchorPageCount = useRef(0);
+
+  const loadOlderMessages = useCallback(() => {
+    const el = lastReadRef.current;
+    if (el) olderPageAnchor.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop };
+    return fetchNextPage();
+  }, [fetchNextPage]);
 
   useEffect(() => {
-    // - on a new message or initial load, scroll to the bottom. on load more, don't scroll
+    olderPageAnchor.current = null;
+  }, [existingChatId]);
 
-    if (!messagesChronological.length) return;
+  useEffect(() => {
+    const el = lastReadRef.current;
+    if (!el || !messagesChronological.length) return;
 
-    // if (data.pages.length !== oldPagesLength.current) return;
-    //
-    // oldPagesLength.current = data.pages.length;
+    const anchor = olderPageAnchor.current;
+    const pageCount = data?.pages.length ?? 0;
+    // Older messages prepend, growing the list above the viewport. Jumping to
+    // the bottom there is what made paging unusable and forced the 1,000-message
+    // default page. The page-count check matters: a message arriving while the
+    // fetch is in flight would otherwise consume the anchor, leaving the real
+    // prepend to take the jump-to-bottom branch.
+    if (anchor && pageCount > anchorPageCount.current) {
+      el.scrollTop = anchor.scrollTop + (el.scrollHeight - anchor.scrollHeight);
+      olderPageAnchor.current = null;
+      anchorPageCount.current = pageCount;
+    } else if (!anchor) {
+      el.scrollTop = el.scrollHeight - el.clientHeight;
+    }
+  }, [messagesChronological, data?.pages.length]);
 
-    lastReadRef.current?.scrollTo(
-      0,
-      lastReadRef.current?.scrollHeight - lastReadRef.current?.clientHeight
-    );
+  useEffect(() => {
+    if (!messagesChronological.length || !myMember) return;
 
-    if (!myMember) return;
     const newestMessageId = messagesChronological[messagesChronological.length - 1].id;
     if ((myMember.lastViewedMessageId ?? 0) >= newestMessageId) return;
     changeLastViewed({
@@ -359,6 +435,7 @@ export function ExistingChat() {
           </Group>
         }
         maxHeight={44}
+        className={sharedClasses.convoHead}
         styles={{
           root: { textAlign: 'center' },
         }}
@@ -379,76 +456,88 @@ export function ExistingChat() {
               {/* TODO online status (later), blocked users, etc */}
 
               {otherMembers?.map((cm) => (
-                <Button key={cm.userId} variant="light" color="gray" size="compact-sm">
-                  <UserAvatar
-                    user={cm.user}
-                    size="xs"
-                    withUsername
-                    linkToProfile
-                    badge={
-                      <Group gap={6} ml={4} align="center">
-                        {cm.user.isModerator ? (
-                          <Image
-                            src="/images/civ-c.png"
-                            title="Moderator"
-                            alt="Moderator"
-                            className="size-4"
-                          />
-                        ) : undefined}
-                        {cm.isOwner === true ? (
-                          <Box title="Creator" display="flex">
-                            <IconCrown size={16} fill="currentColor" />
+                <Group key={cm.userId} gap={2} wrap="nowrap">
+                  <Button variant="light" color="gray" size="compact-sm">
+                    <UserAvatar
+                      user={cm.user}
+                      size="xs"
+                      withUsername
+                      linkToProfile
+                      badge={
+                        <Group gap={6} ml={4} align="center">
+                          {cm.user.isModerator ? (
+                            <Image
+                              src="/images/civ-c.png"
+                              title="Moderator"
+                              alt="Moderator"
+                              className="size-4"
+                            />
+                          ) : undefined}
+                          {cm.isOwner === true ? (
+                            <Box title="Creator" display="flex">
+                              <IconCrown size={16} fill="currentColor" />
+                            </Box>
+                          ) : undefined}
+                          <Box
+                            title={
+                              cm.status === ChatMemberStatus.Invited ||
+                              cm.status === ChatMemberStatus.Ignored
+                                ? 'Invited'
+                                : cm.status
+                            }
+                            display="flex"
+                          >
+                            {cm.status === ChatMemberStatus.Joined ? (
+                              <IconCircleCheck size={16} color="green" />
+                            ) : cm.status === ChatMemberStatus.Left ||
+                              cm.status === ChatMemberStatus.Kicked ? (
+                              <IconCircleX size={16} color="orangered" />
+                            ) : (
+                              <IconCircleMinus size={16} />
+                            )}
                           </Box>
-                        ) : undefined}
-                        <Box
-                          title={
-                            cm.status === ChatMemberStatus.Invited ||
-                            cm.status === ChatMemberStatus.Ignored
-                              ? 'Invited'
-                              : cm.status
-                          }
-                          display="flex"
-                        >
-                          {cm.status === ChatMemberStatus.Joined ? (
-                            <IconCircleCheck size={16} color="green" />
-                          ) : cm.status === ChatMemberStatus.Left ||
-                            cm.status === ChatMemberStatus.Kicked ? (
-                            <IconCircleX size={16} color="orangered" />
-                          ) : (
-                            <IconCircleMinus size={16} />
-                          )}
-                        </Box>
-                      </Group>
-                    }
-                  />
-                </Button>
+                        </Group>
+                      }
+                    />
+                  </Button>
+                  {isGroupAdmin && !!thisChat && activeMemberStatuses.includes(cm.status) && (
+                    <ChatMemberMenu chatObj={thisChat} member={cm} />
+                  )}
+                </Group>
               ))}
             </Group>
           )}
           <ChatActions chatObj={thisChat} />
         </Group>
       </Spoiler>
-      <Divider mt="sm" />
       {!myMember ? (
         <Center h="100%">
           <Loader />
         </Center>
-      ) : myMember.status === ChatMemberStatus.Joined ||
-        myMember.status === ChatMemberStatus.Left ||
-        myMember.status === ChatMemberStatus.Kicked ? (
+      ) : !myMember.filteredAt &&
+        (myMember.status === ChatMemberStatus.Joined ||
+          myMember.status === ChatMemberStatus.Left ||
+          myMember.status === ChatMemberStatus.Kicked) ? (
         <>
           <DismissibleAlert
             id="chat-scam-warning"
             className="shrink-0"
             color="yellow"
-            icon={<IconAlertTriangle className="shrink-0" size={20} />}
+            icon={<IconAlertTriangle className="shrink-0" size={16} />}
             size="sm"
-            p="xs"
-            m="xs"
+            py={6}
+            px="xs"
+            mx="sm"
+            mt="xs"
           >
             <ScamWarningContent chatId={existingChatId!} />
           </DismissibleAlert>
-          <Box p="sm" style={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
+          <Box
+            py="sm"
+            className={sharedClasses.scroller}
+            style={{ flexGrow: 1, overflowY: 'auto' }}
+            ref={lastReadRef}
+          >
             {isRefetching || isLoading ? (
               <Center h="100%">
                 <Loader />
@@ -458,15 +547,24 @@ export function ExistingChat() {
                 <Text color="red">Error: {error?.message}</Text>
               </Center>
             ) : messagesChronological.length > 0 ? (
-              <Stack style={{ overflowWrap: 'break-word' }} gap={12}>
+              // gap 0: row spacing is each row's own padding, so a grouped message sits
+              // tight under its header instead of being spaced like a new sender.
+              <Stack style={{ overflowWrap: 'break-word' }} gap={0}>
                 {hasNextPage && (
-                  <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
+                  <InViewLoader
+                    loadFn={loadOlderMessages}
+                    loadCondition={!isRefetching && hasNextPage}
+                  >
                     <Center p="xl" style={{ height: 36 }} mt="md">
                       <Loader />
                     </Center>
                   </InViewLoader>
                 )}
-                <DisplayMessages chats={messagesChronological} setReplyId={setReplyId} />
+                <DisplayMessages
+                  chats={messagesChronological}
+                  setReplyId={setReplyId}
+                  setEditing={setEditing}
+                />
               </Stack>
             ) : (
               <Center h="100%">
@@ -474,38 +572,65 @@ export function ExistingChat() {
               </Center>
             )}
             {!!typingText && (
-              <Group className={classes.isTypingBox}>
+              <Group px="sm" className={classes.isTypingBox}>
                 <Text size="xs">{typingText}</Text>
                 <Loader type="dots" />
               </Group>
             )}
           </Box>
-          <Divider />
           {myMember.status === ChatMemberStatus.Joined ? (
-            <>
-              {!!replyId && (
-                <>
-                  <Group p="xs" wrap="nowrap">
-                    <Text size="xs">Replying:</Text>
-                    <Box style={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>
-                      {messagesChronological.find((ac) => ac.id === replyId)?.content ?? ''}
-                    </Box>
-                    <LegacyActionIcon onClick={() => setReplyId(undefined)} ml="auto">
-                      <IconX size={14} />
-                    </LegacyActionIcon>
-                  </Group>
-                  <Divider />
-                </>
+            <div className={sharedClasses.composerBar}>
+              {!!editing && (
+                <Group px="sm" pt="xs" gap={8} wrap="nowrap" className={classes.replyStrip}>
+                  <Text size="xs" c="yellow" fw={600}>
+                    Editing message
+                  </Text>
+                  <Text size="xs" truncate style={{ minWidth: 0 }}>
+                    {stripStickerTokens(editing.content)}
+                  </Text>
+                  <LegacyActionIcon
+                    size="sm"
+                    variant="subtle"
+                    onClick={() => setEditing(undefined)}
+                    ml="auto"
+                    aria-label="Cancel edit"
+                  >
+                    <IconX size={14} />
+                  </LegacyActionIcon>
+                </Group>
+              )}
+              {!!replyId && !editing && (
+                <Group px="sm" pt="xs" gap={8} wrap="nowrap" className={classes.replyStrip}>
+                  <Text size="xs" c="blue" fw={600}>
+                    Replying to
+                  </Text>
+                  <Text size="xs" truncate style={{ minWidth: 0 }}>
+                    {stripStickerTokens(
+                      messagesChronological.find((ac) => ac.id === replyId)?.content ?? ''
+                    )}
+                  </Text>
+                  <LegacyActionIcon
+                    size="sm"
+                    variant="subtle"
+                    onClick={() => setReplyId(undefined)}
+                    ml="auto"
+                    aria-label="Cancel reply"
+                  >
+                    <IconX size={14} />
+                  </LegacyActionIcon>
+                </Group>
               )}
               <ChatInputBox
                 isModSender={!!modSender}
                 replyId={replyId}
                 setReplyId={setReplyId}
+                editing={editing}
+                setEditing={setEditing}
                 getTypingStatus={getTypingStatus}
                 setTypingStatus={setTypingStatus}
                 setTypingText={setTypingText}
               />
-            </>
+            </div>
           ) : (
             <Center p="sm">
               <Group>
@@ -527,7 +652,8 @@ export function ExistingChat() {
             </Center>
           )}
         </>
-      ) : myMember.status === ChatMemberStatus.Invited ||
+      ) : !!myMember.filteredAt ||
+        myMember.status === ChatMemberStatus.Invited ||
         myMember.status === ChatMemberStatus.Ignored ? (
         <Center h="100%">
           <Stack>
@@ -535,12 +661,19 @@ export function ExistingChat() {
               <ScamWarningContent chatId={existingChatId!} />
             </Alert>
             {messagesChronological.length > 0 && (
-              <Text mb="md" p="sm" size="xs" italic align="center">{`"${messagesChronological[0].content.slice(
-                0,
-                70
-              )}${messagesChronological[0].content.length > 70 ? '...' : ''}"`}</Text>
+              <Text mb="md" p="sm" size="xs" italic align="center">{`"${stripStickerTokens(
+                messagesChronological[0].content
+              ).slice(0, 70)}${
+                stripStickerTokens(messagesChronological[0].content).length > 70 ? '...' : ''
+              }"`}</Text>
             )}
-            <Text align="center">Join the chat?</Text>
+            <Text align="center">
+              {!myMember.filteredAt
+                ? 'Join the chat?'
+                : myMember.clearedAt && myMember.clearedAt < myMember.filteredAt
+                ? 'You deleted this conversation. Accept it again?'
+                : 'Accept this request?'}
+            </Text>
             <Group p="sm" justify="center">
               <Button
                 disabled={isJoining || myMember.status === ChatMemberStatus.Ignored}
@@ -570,6 +703,8 @@ function ChatInputBox({
   isModSender,
   replyId,
   setReplyId,
+  editing,
+  setEditing,
   getTypingStatus,
   setTypingStatus,
   setTypingText,
@@ -577,6 +712,8 @@ function ChatInputBox({
   isModSender: boolean;
   replyId: number | undefined;
   setReplyId: React.Dispatch<React.SetStateAction<number | undefined>>;
+  editing: { id: number; content: string } | undefined;
+  setEditing: React.Dispatch<React.SetStateAction<{ id: number; content: string } | undefined>>;
   getTypingStatus: (newEntry: { [p: string]: boolean }) => {
     newTotalStatus: {
       // noinspection JSUnusedLocalSymbols
@@ -593,9 +730,22 @@ function ChatInputBox({
 
   const [isSending, setIsSending] = useState(false);
   const [chatMsg, setChatMsg] = useState<string>('');
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [caret, setCaret] = useState(0);
+  const [suggestIndex, setSuggestIndex] = useState(0);
+  const [suggestDismissed, setSuggestDismissed] = useState(false);
   const [debouncedChatMsg] = useDebouncedValue(chatMsg, 2000);
+  const ownedSticker = useOwnedSticker();
 
   const isMuted = currentUser?.muted && !isModSender;
+
+  // Counted against what actually gets sent: sticker tokens resolve to a longer
+  // `:sticker:<id>:` form, so counting the typed `:slug:` would under-report and
+  // the server would reject a message the counter called fine.
+  const charCount = resolveStickerTokens(chatMsg.trim(), {
+    resolveSlug: (slug) => ownedSticker.bySlug.get(slug)?.id,
+  }).length;
+  const isOverLimit = charCount > MAX_CHAT_MESSAGE_LENGTH;
 
   const { mutateAsync: doIsTyping } = trpc.chat.isTyping.useMutation();
   // const doIsTyping = async (x) => {};
@@ -617,6 +767,92 @@ function ChatInputBox({
       ),
     [currentUser, doIsTyping, isMuted, existingChatId]
   );
+
+  const activeQuery = suggestDismissed ? null : stickerQueryAtCaret(chatMsg, caret);
+  const activeQueryText = activeQuery?.query ?? null;
+
+  const suggestions = useMemo(() => {
+    if (!activeQueryText) return [];
+
+    const ranked: {
+      rank: number;
+      key: string;
+      slug: string;
+      insert: string;
+      sticker?: ResolvedSticker;
+    }[] = [];
+
+    for (const item of ownedSticker.sticker) {
+      const rank = rankStickerMatch(activeQueryText, item.slug, item.name);
+      if (rank !== null)
+        ranked.push({
+          rank,
+          key: `s${item.id}`,
+          slug: item.slug,
+          insert: `:${item.slug}:`,
+          sticker: item,
+        });
+    }
+    for (const item of BASE_EMOJI) {
+      const rank = rankStickerMatch(activeQueryText, item.slug, item.keywords);
+      if (rank !== null)
+        ranked.push({ rank, key: `e${item.slug}`, slug: item.slug, insert: item.char });
+    }
+
+    // Stickers before emoji at equal rank: an owned sticker is the more
+    // deliberate thing to have typed, and the free set is always there.
+    return ranked.sort((a, b) => a.rank - b.rank).slice(0, SUGGESTION_LIMIT);
+  }, [activeQueryText, ownedSticker.sticker]);
+
+  const suggestOpen = !!activeQuery && suggestions.length > 0;
+  const activeSuggestion = suggestions[Math.min(suggestIndex, suggestions.length - 1)];
+
+  const applySuggestion = (item: (typeof suggestions)[number]) => {
+    if (!activeQuery) return;
+    const before = chatMsg.slice(0, activeQuery.start);
+    const after = chatMsg.slice(caret);
+    const insert = `${item.insert} `;
+    const next = `${before}${insert}${after}`;
+
+    setChatMsg(next);
+    setSuggestIndex(0);
+    // The caret has to land after what was inserted, not at the end of a
+    // message the sender may be editing the middle of.
+    const nextCaret = before.length + insert.length;
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(nextCaret, nextCaret);
+      setCaret(nextCaret);
+    });
+  };
+
+  const { mutate: updateMessage, isPending: isSavingEdit } = trpc.chat.updateMessage.useMutation({
+    onSuccess({ messageId, chatId, content }) {
+      queryUtils.chat.getInfiniteMessages.setInfiniteData(
+        { chatId },
+        produce((old) => {
+          if (!old) return old;
+          for (const page of old.pages) {
+            const msg = page.items.find((m) => m.id === messageId);
+            if (msg) {
+              msg.content = content;
+              msg.editedAt = new Date();
+            }
+          }
+        })
+      );
+      queryUtils.chat.getAllByUser.invalidate();
+      setEditing(undefined);
+      setChatMsg('');
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to edit message.',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
+  });
 
   const { mutate } = trpc.chat.createMessage.useMutation({
     // TODO onMutate for optimistic
@@ -687,8 +923,11 @@ function ChatInputBox({
     },
   });
 
-  const handleChatTyping = (value: string) => {
+  const handleChatTyping = (value: string, nextCaret?: number) => {
     setChatMsg(value);
+    setCaret(nextCaret ?? value.length);
+    setSuggestDismissed(false);
+    setSuggestIndex(0);
     if (!currentUser) return;
 
     // only send signal if they're not erasing the chat
@@ -698,7 +937,7 @@ function ChatInputBox({
   };
 
   const sendMessage = () => {
-    if (isSending) return;
+    if (isSending || isOverLimit || isSavingEdit) return;
 
     // TODO can probably handle this earlier to disable from sending blank messages
     const strippedMessage = chatMsg.trim();
@@ -707,10 +946,22 @@ function ChatInputBox({
       return;
     }
 
+    if (editing) {
+      updateMessage({
+        messageId: editing.id,
+        content: resolveStickerTokens(strippedMessage, {
+          resolveSlug: (slug) => ownedSticker.bySlug.get(slug)?.id,
+        }),
+      });
+      return;
+    }
+
     setIsSending(true);
     mutate({
       chatId: existingChatId!,
-      content: strippedMessage,
+      content: resolveStickerTokens(strippedMessage, {
+        resolveSlug: (slug) => ownedSticker.bySlug.get(slug)?.id,
+      }),
       referenceMessageId: replyId,
     });
   };
@@ -728,56 +979,196 @@ function ChatInputBox({
 
   useEffect(() => {
     setChatMsg('');
+    setEditing(undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existingChatId]);
 
+  // Picking a message to reply to or edit is an instruction to start typing;
+  // without this the composer still has to be clicked before it takes a key.
+  useEffect(() => {
+    if (replyId || editing) inputRef.current?.focus();
+  }, [replyId, editing]);
+
+  useEffect(() => {
+    // Stored content carries resolved `:sticker:<id>:` tokens; show the slug the
+    // sender typed so an edit doesn't read as machine output.
+    setChatMsg(
+      editing
+        ? editing.content.replace(/:(?:sticker|emoji):(\d{1,9}):/g, (match, id: string) => {
+            const slug = ownedSticker.sticker.find((x) => x.id === Number(id))?.slug;
+            return slug ? `:${slug}:` : match;
+          })
+        : ''
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing?.id]);
+
   return (
-    <Group gap={0}>
-      <Textarea
-        style={{ flexGrow: 1 }}
-        disabled={isMuted}
-        placeholder={isMuted ? 'Your account has been restricted' : 'Send message'}
-        autosize
-        minRows={1}
-        maxRows={4}
-        value={chatMsg}
-        onChange={(event) => handleChatTyping(event.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            if (!e.shiftKey) {
-              e.preventDefault();
-              sendMessage();
-            }
+    <>
+      {suggestOpen && (
+        <div className={classes.suggestList} role="listbox" aria-label="Sticker suggestions">
+          {suggestions.map((item, idx) => (
+            <UnstyledButton
+              key={item.key}
+              role="option"
+              aria-selected={idx === suggestIndex}
+              className={clsx(classes.suggestItem, {
+                [classes.suggestActive]: idx === suggestIndex,
+              })}
+              // Pointer-down would blur the composer first, closing the list
+              // out from under the click.
+              onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
+              onMouseEnter={() => setSuggestIndex(idx)}
+              onClick={() => applySuggestion(item)}
+            >
+              <span className={classes.suggestGlyph}>
+                {item.sticker ? (
+                  <Sticker cosmeticId={item.sticker.id} size={STICKER_SIZE.preview} />
+                ) : (
+                  item.insert
+                )}
+              </span>
+              <span className={classes.suggestSlug}>{`:${item.slug}:`}</span>
+            </UnstyledButton>
+          ))}
+        </div>
+      )}
+      <div className={classes.composerRow}>
+        <StickerPicker
+          surface="chat"
+          disabled={isMuted}
+          // The trigger sits at the composer's left edge, so anchoring the
+          // dropdown's right edge to it throws the panel across the thread list.
+          position="top-start"
+          onSelect={(sticker) =>
+            handleChatTyping(
+              `${chatMsg}${chatMsg && !chatMsg.endsWith(' ') ? ' ' : ''}:${sticker.slug}: `
+            )
           }
-        }}
-        classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
-      />
-      <LegacyActionIcon
-        h="100%"
-        w={60}
-        onClick={sendMessage}
-        disabled={isSending || !chatMsg.length || isMuted}
-        style={{ borderRadius: 0 }}
-      >
-        {isSending ? <Loader /> : <IconSend />}
-      </LegacyActionIcon>
-    </Group>
+          onSelectEmoji={(char) => handleChatTyping(`${chatMsg}${char}`)}
+        />
+        <Textarea
+          ref={inputRef}
+          style={{ flexGrow: 1 }}
+          disabled={isMuted}
+          placeholder={
+            isMuted ? 'Your account has been restricted' : editing ? 'Edit message' : 'Send message'
+          }
+          autosize
+          minRows={1}
+          maxRows={4}
+          value={chatMsg}
+          onChange={(event) =>
+            handleChatTyping(event.currentTarget.value, event.currentTarget.selectionStart)
+          }
+          // Moving the caret with the mouse or arrows changes which token it
+          // sits in, and neither fires onChange.
+          onKeyUp={(e) => setCaret(e.currentTarget.selectionStart)}
+          onClick={(e) => setCaret(e.currentTarget.selectionStart)}
+          onBlur={() => setSuggestDismissed(true)}
+          onKeyDown={(e) => {
+            // The list owns these keys while it is up, or Enter sends the
+            // half-typed `:fi` instead of completing it.
+            if (suggestOpen) {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                const delta = e.key === 'ArrowDown' ? 1 : -1;
+                setSuggestIndex((i) => (i + delta + suggestions.length) % suggestions.length);
+                return;
+              }
+              if (e.key === 'Enter' || e.key === 'Tab') {
+                e.preventDefault();
+                if (activeSuggestion) applySuggestion(activeSuggestion);
+                return;
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setSuggestDismissed(true);
+                return;
+              }
+            }
+            if (e.key === 'Escape' && editing) {
+              e.preventDefault();
+              setEditing(undefined);
+              return;
+            }
+            if (e.key === 'Enter') {
+              if (!e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+              }
+            }
+          }}
+          classNames={{ input: classes.chatInput }}
+        />
+        <LegacyActionIcon
+          radius="xl"
+          size="lg"
+          variant="filled"
+          className={classes.sendButton}
+          onClick={sendMessage}
+          disabled={isSending || isSavingEdit || !chatMsg.length || isMuted || isOverLimit}
+          aria-label={editing ? 'Save edit' : 'Send'}
+        >
+          {isSending || isSavingEdit ? (
+            <Loader size="xs" />
+          ) : editing ? (
+            <IconCheck size={18} />
+          ) : (
+            <IconSend size={18} />
+          )}
+        </LegacyActionIcon>
+      </div>
+      <div className={classes.composerFoot}>
+        <Text className={classes.hint}>
+          {editing ? (
+            <>
+              <b>Enter</b> to save · <b>Esc</b> to cancel
+            </>
+          ) : (
+            <>
+              <b>Enter</b> to send · <b>Shift+Enter</b> for a new line
+            </>
+          )}
+        </Text>
+        {isOverLimit && (
+          <Text size="xs" c="red">
+            Too long to send — trim {charCount - MAX_CHAT_MESSAGE_LENGTH} characters.
+          </Text>
+        )}
+        <Text
+          className={clsx(classes.counter, {
+            [classes.near]: !isOverLimit && charCount >= COUNTER_WARN_AT,
+            [classes.over]: isOverLimit,
+          })}
+        >
+          {`${charCount} / ${MAX_CHAT_MESSAGE_LENGTH}`}
+        </Text>
+      </div>
+    </>
   );
 }
 
 const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
-  if (!href) return <Title order={6}>{title}</Title>;
+  if (!href) return <span className={classes.embedTitle}>{title}</span>;
 
   if (constants.chat.externalRegex.test(href)) {
     return (
-      <Anchor href={href} target="_blank" rel="noopener noreferrer" variant="link">
-        <Title order={6}>{title}</Title>
+      <Anchor
+        className={classes.embedTitle}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        underline="hover"
+      >
+        {title}
       </Anchor>
     );
   }
 
   return (
-    <Anchor component={Link} href={href} variant="link">
-      <Title order={6}>{title}</Title>
+    <Anchor className={classes.embedTitle} component={Link} href={href} underline="hover">
+      {title}
     </Anchor>
   );
 };
@@ -800,43 +1191,61 @@ const EmbedMessage = ({ content }: { content: string }) => {
   if (!title && !description && !image) return <></>;
 
   const modHref = getLinkHref(href);
+  // A link to an image unfurls to the image alone. Shown at thumbnail size it is
+  // an icon of itself, so the card becomes the frame and the preview fills it.
+  const isMediaOnly = !title && !description;
 
   return (
-    <Group
-      style={{
-        alignSelf: 'center',
-        border: '1px solid gray',
-      }}
-      className={clsx(classes.chatMessage)}
-      wrap="nowrap"
-    >
-      {(!!title || !!description) && (
-        <Stack>
+    <div className={clsx(classes.embedRow, { [classes.embedMedia]: isMediaOnly })}>
+      {!isMediaOnly && (
+        <div className={classes.embedBody}>
           {!!title && <EmbedLink href={modHref} title={title} />}
-          {!!description && <Text size="xs">{description}</Text>}
-        </Stack>
+          {!!description && <div className={classes.embedDesc}>{description}</div>}
+        </div>
       )}
-      {!!image && (
-        <EdgeMedia
-          src={image}
-          width={75}
-          height={75}
-          alt="Link preview"
-          style={{ objectFit: 'cover' }}
-        />
-      )}
-    </Group>
+      {!!image &&
+        (isMediaOnly ? (
+          <EdgeMedia src={image} width={450} alt="Link preview" className={classes.embedImage} />
+        ) : (
+          <EdgeMedia src={image} width={112} alt="Link preview" className={classes.embedThumb} />
+        ))}
+    </div>
   );
 };
 
 function DisplayMessages({
   chats,
   setReplyId,
+  setEditing,
 }: {
   chats: ChatAllMessages;
   setReplyId: React.Dispatch<React.SetStateAction<number | undefined>>;
+  setEditing: React.Dispatch<React.SetStateAction<{ id: number; content: string } | undefined>>;
 }) {
   const currentUser = useCurrentUser();
+  const queryUtils = trpc.useUtils();
+  const { mutate: deleteMessage } = trpc.chat.deleteMessage.useMutation({
+    onSuccess({ messageId, chatId }) {
+      queryUtils.chat.getInfiniteMessages.setInfiniteData(
+        { chatId },
+        produce((old) => {
+          if (!old) return old;
+          for (const page of old.pages) {
+            const idx = page.items.findIndex((m) => m.id === messageId);
+            if (idx !== -1) page.items.splice(idx, 1);
+          }
+        })
+      );
+      queryUtils.chat.getAllByUser.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to delete message.',
+        error: new Error(error.message),
+        autoClose: false,
+      });
+    },
+  });
   const existingChatId = useChatStore((state) => state.existingChatId);
   const { data: userSettings } = trpc.chat.getUserSettings.useQuery();
   const domainColor = useDomainColor();
@@ -845,160 +1254,259 @@ function DisplayMessages({
   const { data: allChatData } = trpc.chat.getAllByUser.useQuery();
   const tChat = allChatData?.find((chat) => chat.id === existingChatId);
 
-  // TODO we should be checking first if this exists in `chats`
-  //      then, grab the content
-  //      then, grab the user info from chatMembers (but what if its not there?)
-  const replyIds = chats
-    .filter((c) => isDefined(c.referenceMessageId))
-    .map((c) => c.referenceMessageId as number);
-  const replyData = trpc.useQueries((t) =>
-    replyIds.map((r) => t.chat.getMessageById({ messageId: r }))
+  const stickerIds = useMemo(
+    () => [
+      ...new Set(
+        chats.flatMap((c) => [
+          ...parseStickerIds(c.content),
+          ...(c.referenceMessage ? parseStickerIds(c.referenceMessage.content) : []),
+        ])
+      ),
+    ],
+    [chats]
   );
 
-  let loopMsgDate = new Date(1970);
-  let loopPreviousChatter = 0;
+  const blur = replaceBadWords || domainColor === 'green';
+
+  const rowFlags = useMemo(() => getMessageRowFlags(chats), [chats]);
+  const bubbles = useChatLayout() === 'bubbles';
 
   return (
-    <LazyMotion features={loadMotion}>
-      {chats.map((c, idx) => {
-        const hourDiff = (c.createdAt.valueOf() - loopMsgDate.valueOf()) / (1000 * 60 * 60);
-        const sameChatter = loopPreviousChatter === c.userId;
-        const shouldShowInfo = hourDiff >= 1 || !sameChatter;
+    <StickerProvider ids={stickerIds}>
+      <LazyMotion features={loadMotion}>
+        {chats.map((c, idx) => {
+          const { showHeader, showDayChip, isNewSender } = rowFlags[idx];
+          const isEmbed = c.contentType === ChatMessageType.Embed;
 
-        loopMsgDate = c.createdAt;
-        loopPreviousChatter = c.userId;
+          const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
+          const isMe = c.userId === currentUser?.id;
+          const isSystemChat = c.userId === -1;
+          // An unfurl is written by the system but belongs to whoever posted the
+          // link, so in Bubbles it takes that person's side rather than always
+          // the left — which would strand your own link previews opposite you.
+          const isMySide = isEmbed ? c.referenceMessage?.userId === currentUser?.id : isMe;
 
-        const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
-        const isMe = c.userId === currentUser?.id;
-
-        const tReplyData =
-          !!c.referenceMessageId && replyIds.indexOf(c.referenceMessageId) > -1
-            ? replyData[replyIds.indexOf(c.referenceMessageId)]
+          const quotedUser = !!c.referenceMessage
+            ? tChat?.chatMembers?.find((cm) => cm.userId === c.referenceMessage?.userId)?.user
             : undefined;
 
-        const isSystemChat = c.userId === -1;
-
-        return (
-          <PStack
-            component={div}
-            // ref={c.id === lastReadId ? lastReadRef : undefined}
-            key={c.id}
-            gap={12}
-            style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
-            initial={{ y: -20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ type: 'spring', duration: 0.4 }}
-          >
-            {isSystemChat && c.contentType === ChatMessageType.Embed ? (
-              <EmbedMessage content={c.content} />
-            ) : isSystemChat ? (
-              // <Group align="center" justify="center">
-              //   <Text size="xs">{formatDate(c.createdAt)}</Text>
-              //   ...Text (below)
-              // </Group>
-              <Text
-                className={clsx(classes.chatMessage)}
-                component="div"
-                size="xs"
-                py={0}
-                style={{
-                  alignSelf: 'center',
-                  border: '1px solid gray',
-                }}
+          return (
+            <React.Fragment key={c.id}>
+              {showDayChip && !isSystemChat && (
+                <div className={classes.dayChip}>{dayChipLabel(c.createdAt)}</div>
+              )}
+              <PStack
+                component={div}
+                gap={0}
+                className={clsx({
+                  [classes.bubbles]: bubbles,
+                  [classes.mineRow]: bubbles && isMySide,
+                })}
+                style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.12 }}
               >
-                <CustomMarkdown allowedElements={['a', 'p', 'strong']} unwrapDisallowed>
-                  {c.content.replace(currentUser?.username ?? '', 'You')}
-                </CustomMarkdown>
-              </Text>
-            ) : (
-              <>
-                {shouldShowInfo && (
-                  <Group className={clsx({ [classes.myDetails]: isMe })}>
-                    {!!cachedUser ? (
-                      <UserAvatar user={cachedUser} withUsername />
-                    ) : (
-                      <UserAvatar userId={c.userId} withUsername />
-                    )}
-                    <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
-                  </Group>
-                )}
-                {/* TODO this needs better styling and click -> message */}
-                {!!c.referenceMessageId && (
-                  <Group
-                    gap={6}
-                    justify="flex-end"
-                    style={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
-                  >
-                    <IconArrowBack size={14} />
-                    {!!tReplyData?.data?.user && (
-                      <Tooltip label={tReplyData.data.user.username}>
-                        <Box>
-                          <UserAvatar user={tReplyData.data.user} size="xs" />
-                        </Box>
-                      </Tooltip>
-                    )}
-                    <Text className={clsx([classes.chatMessage, classes.replyMessage])}>
-                      {!tReplyData || tReplyData.isError ? (
-                        <em>Could not load message.</em>
-                      ) : tReplyData.isLoading ? (
-                        <em>Loading content...</em>
-                      ) : (
-                        tReplyData.data?.content ?? <em>Could not load message.</em>
-                      )}
-                    </Text>
-                  </Group>
-                )}
-                <Group
-                  justify="flex-end"
-                  className={classes.highlightRow}
-                  style={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
-                >
-                  <Menu withArrow position={isMe ? 'left-start' : 'right-start'}>
-                    <Menu.Target>
-                      <LegacyActionIcon style={{ alignSelf: 'flex-start', display: 'none' }}>
-                        <IconDotsVertical />
-                      </LegacyActionIcon>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <Menu.Item
-                        leftSection={<IconArrowBack size={14} />}
-                        onClick={() => setReplyId(c.id)}
-                      >
-                        Reply
-                      </Menu.Item>
-                    </Menu.Dropdown>
-                  </Menu>
-                  <Tooltip
-                    label={
-                      !shouldShowInfo
-                        ? formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')
-                        : undefined
-                    }
-                    disabled={shouldShowInfo}
-                    style={{ opacity: 0.85 }}
-                    openDelay={350}
-                    position={isMe ? 'top-end' : 'top-start'}
-                    withArrow
-                  >
-                    <div
-                      className={clsx(classes.chatMessage, {
-                        [classes.otherMessage]: !isMe,
-                        [classes.myMessage]: isMe,
+                {isSystemChat && isEmbed ? (
+                  <EmbedMessage content={c.content} />
+                ) : isSystemChat ? (
+                  <Text className={classes.systemNote} component="div" size="xs">
+                    <CustomMarkdown allowedElements={['a', 'p', 'strong']} unwrapDisallowed>
+                      {formatChatSystemMessage({
+                        content: c.content,
+                        username: currentUser?.username,
                       })}
-                    >
-                      <Linkify options={linkifyOptions}>
-                        <BlurText blur={replaceBadWords || domainColor === 'green'}>
-                          {c.content}
-                        </BlurText>
-                      </Linkify>
+                    </CustomMarkdown>
+                  </Text>
+                ) : (
+                  <div
+                    className={clsx(classes.messageRow, {
+                      [classes.grouped]: !showHeader,
+                      [classes.newSender]: isNewSender,
+                    })}
+                  >
+                    {showHeader && (
+                      <Group gap={8} align="center" wrap="nowrap" className={classes.messageHead}>
+                        {!!cachedUser ? (
+                          <UserAvatar user={cachedUser} withUsername size="sm" />
+                        ) : (
+                          <UserAvatar userId={c.userId} withUsername size="sm" />
+                        )}
+                        <Text className={classes.messageTime}>
+                          {formatDate(c.createdAt, 'h:mm A')}
+                        </Text>
+                      </Group>
+                    )}
+
+                    <div className={classes.messageBody}>
+                      {!!c.referenceMessage && (
+                        <div className={classes.replyQuote}>
+                          <div className={classes.replyQuoteName}>
+                            {quotedUser?.username ?? 'Unknown user'}
+                          </div>
+                          <div className={classes.replyQuoteText}>
+                            <ChatMessageContent
+                              content={c.referenceMessage.content}
+                              blur={blur}
+                              stickerSize={STICKER_SIZE.preview}
+                              fallback={<em>Could not load message.</em>}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      <Tooltip
+                        label={formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}
+                        style={{ opacity: 0.85 }}
+                        openDelay={350}
+                        position={isMe ? 'top-end' : 'top-start'}
+                        withArrow
+                      >
+                        <div
+                          className={clsx(classes.messageText, {
+                            [classes.mine]: isMe,
+                            [classes.standalone]:
+                              isStickerOnlyContent(c.content) || isJumboEmojiText(c.content),
+                          })}
+                        >
+                          <ChatMessageContent content={c.content} blur={blur} />
+                          {!!c.editedAt && <span className={classes.editedTag}>edited</span>}
+                        </div>
+                      </Tooltip>
                     </div>
-                  </Tooltip>
-                </Group>
-              </>
-            )}
-          </PStack>
-        );
-      })}
-    </LazyMotion>
+
+                    <div className={classes.messageActions}>
+                      <Tooltip label="Reply" withArrow openDelay={350}>
+                        <LegacyActionIcon
+                          size="sm"
+                          variant="subtle"
+                          aria-label="Reply"
+                          onClick={() => setReplyId(c.id)}
+                        >
+                          <IconArrowBack size={16} />
+                        </LegacyActionIcon>
+                      </Tooltip>
+                      {isMe && (
+                        <Tooltip label="Edit" withArrow openDelay={350}>
+                          <LegacyActionIcon
+                            size="sm"
+                            variant="subtle"
+                            aria-label="Edit message"
+                            onClick={() => {
+                              setReplyId(undefined);
+                              setEditing({ id: c.id, content: c.content });
+                            }}
+                          >
+                            <IconPencil size={16} />
+                          </LegacyActionIcon>
+                        </Tooltip>
+                      )}
+                      {(isMe || currentUser?.isModerator) && (
+                        <Tooltip label="Delete" withArrow openDelay={350}>
+                          <LegacyActionIcon
+                            size="sm"
+                            variant="subtle"
+                            color="red"
+                            aria-label="Delete message"
+                            onClick={() =>
+                              openConfirmModal({
+                                title: 'Delete this message?',
+                                children: (
+                                  <Text size="sm">
+                                    It disappears for everyone in this conversation.
+                                  </Text>
+                                ),
+                                centered: true,
+                                labels: { confirm: 'Delete', cancel: 'Cancel' },
+                                confirmProps: { color: 'red' },
+                                onConfirm: () => deleteMessage({ messageId: c.id }),
+                              })
+                            }
+                          >
+                            <IconTrash size={16} />
+                          </LegacyActionIcon>
+                        </Tooltip>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </PStack>
+            </React.Fragment>
+          );
+        })}
+      </LazyMotion>
+    </StickerProvider>
+  );
+}
+
+function dayChipLabel(date: Date) {
+  const now = new Date();
+  if (isSameDay(date, now)) return 'Today';
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (isSameDay(date, yesterday)) return 'Yesterday';
+
+  return formatDate(date, 'MMM D, YYYY');
+}
+
+/**
+ * Profanity is checked once over the whole message with sticker tokens removed —
+ * splitting first would let `fu:sticker:1:ck` past the filter as two clean runs.
+ */
+function ChatMessageContent({
+  content,
+  blur,
+  stickerSize,
+  fallback,
+}: {
+  content: string;
+  blur: boolean;
+  stickerSize?: number;
+  fallback?: React.ReactNode;
+}) {
+  const scannable = stripStickerTokens(content);
+  const cleaned = useCleanText(scannable, { enabled: blur, replacementStyle: 'asterisk' });
+
+  if (!content.length) return <>{fallback ?? null}</>;
+
+  // A censored message renders as flat text, losing its sticker: re-inserting them
+  // means splitting again, which is the bypass this component exists to close.
+  if (cleaned !== scannable)
+    return (
+      <Text component="span">
+        <Linkify options={linkifyOptions}>{cleaned}</Linkify>
+      </Text>
+    );
+
+  return (
+    <>
+      {parseStickerLines(content).map((line, lineIdx) => (
+        <React.Fragment key={lineIdx}>
+          {/* `white-space: pre-line` renders these; splitting into lines would otherwise flatten them. */}
+          {lineIdx > 0 && '\n'}
+          {line.parts.map((part, idx) =>
+            part.type === 'sticker' ? (
+              <Sticker
+                key={idx}
+                cosmeticId={part.cosmeticId}
+                size={stickerSize ?? (line.jumbo ? STICKER_SIZE.jumbo : STICKER_SIZE.inline)}
+              />
+            ) : (
+              <Text
+                component="span"
+                key={idx}
+                className={
+                  !stickerSize && line.parts.length === 1 && isJumboEmojiText(part.value)
+                    ? classes.jumboEmoji
+                    : undefined
+                }
+              >
+                <Linkify options={linkifyOptions}>{part.value}</Linkify>
+              </Text>
+            )
+          )}
+        </React.Fragment>
+      ))}
+    </>
   );
 }

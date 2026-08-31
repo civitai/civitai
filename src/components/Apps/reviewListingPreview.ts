@@ -85,7 +85,6 @@ function cardKindData(row: OffsitePendingRow): ListingCardKindData {
   }
   return {
     kind: 'offsite',
-    subKind: row.appListing?.connectClientId != null ? 'connect' : 'external-link',
     externalUrl: row.appListing?.externalUrl ?? null,
   };
 }
@@ -96,7 +95,6 @@ function detailKindData(row: OffsitePendingRow): ListingDetailKindData {
   }
   return {
     kind: 'offsite',
-    subKind: row.appListing?.connectClientId != null ? 'connect' : 'external-link',
     externalUrl: row.appListing?.externalUrl ?? null,
     connectClientId: row.appListing?.connectClientId ?? null,
   };
@@ -124,7 +122,43 @@ export function buildListingDetailPreview(
     // serialId only feeds the comments thread, which the preview omits → 0.
     serialId: 0,
     tagline: null,
+    // 🔴 ALWAYS NULL HERE, and that is a limitation this builder OWNS rather than
+    // hides. This is the FALLBACK preview, built from the publish-request row —
+    // `OffsitePendingRow` carries no `sourceRepoUrl`, so there is nothing honest to
+    // put here. The REAL preview a moderator sees comes from
+    // `getListingPreviewForReview`, which projects the actual listing row through
+    // `projectListingDetail` and DOES carry it (guarded against the manual-apply
+    // column). Widening this fallback would mean widening the review-row query, which
+    // is a bigger change than the placeholder-art path warrants — but it does mean a
+    // mod who only ever saw THIS builder's output would not see the source link, so:
+    // if the fallback ever becomes the primary path, this must be revisited.
+    sourceRepoUrl: null,
     description: null,
+    // The mod REVIEW preview intentionally shows no collaborator byline: this row is
+    // built from an in-review publish request, not from a live listing, so there is no
+    // accepted-and-displayed set to read yet. An empty array is the honest answer, not
+    // a placeholder.
+    collaborators: [],
+    // 🔴 A REQUIRED-FIELD STAND-IN, NOT AN UPDATE TIME — and nothing may render it.
+    //
+    // The row is a PUBLISH REQUEST, not a live listing, so there is no
+    // `app_listings.updated_at` to read (which is what `ListingDetail.updatedAt` is
+    // declared to mean). The field is non-optional on the DTO, so the submission time
+    // goes in as the nearest available scalar, normalised to the same ISO string the
+    // real projection emits so both producers agree on the field's TYPE.
+    //
+    // An earlier note here claimed the value was "unobserved in practice" because the
+    // `preview` posture omits the header meta line. That was FALSE: the Details rail's
+    // `updated` row rendered it, under the label "Updated", so a moderator was shown
+    // the SUBMISSION date presented as the app's last update. Both surfaces now omit it
+    // in preview — the meta line in `AppListingDetailBody`, the rail row in
+    // `buildListingDetailRows` (rule 2 there) — and the seam between THIS builder and
+    // that one is pinned in `__tests__/reviewListingPreview.test.ts`, so the claim is a
+    // guarded one rather than a comment anybody has to take on trust.
+    updatedAt: new Date(row.submittedAt).toISOString(),
+    // An unapproved listing has never been installable. Same reasoning as the
+    // `EMPTY_RECOMMEND` rollup above: zero is the fact, not a placeholder.
+    installCount: 0,
     screenshots: images?.screenshots ?? [],
     kindData: detailKindData(row),
   };

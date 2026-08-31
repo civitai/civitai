@@ -10,8 +10,62 @@
 /**
  * no-io-in-transaction
  *
- * Flags awaited external / non-database I/O inside a Prisma interactive
- * transaction callback — `db.$transaction(async (tx) => { ... })`.
+ * Flags awaited external / non-database I/O inside an interactive transaction
+ * callback, in either of this repo's two forms:
+ *   - Prisma — `db.$transaction(async (tx) => { ... })`
+ *   - Kysely — `db.transaction().execute(async (trx) => { ... })`
+ *
+ * 🔴 THE KYSELY MATCHER IS FORWARD-LOOKING AND CURRENTLY MATCHES NOTHING. Say so
+ * rather than claiming coverage this does not have. Measured: the only Kysely
+ * `.transaction().execute(cb)` sites in the monorepo are in `apps/auth` (1) and
+ * `apps/creator-studio` (2), and neither is lintable — `pnpm lint` is
+ * `eslint src/`, CI filters changed files to `^(src|packages)/`, and
+ * creator-studio has its own `root: true` config without this plugin. `src/` and
+ * `packages/` have ZERO. So the reason to have it is that `src/server/db/kyselyDb.ts`
+ * builds four Kysely clients today and porting will move transactional units
+ * across — not that it is catching anything now. Extending lint scope to `apps/`
+ * is the separate change that would make it bite.
+ *
+ * Keyed to the literal string `$transaction`, this rule would have gone silently
+ * inert as that porting happened, and its fixtures are SOURCE STRINGS, so the
+ * suite would stay green while the detector stopped finding anything.
+ *
+ * KNOWN GAPS (measured, not hypothetical — all currently zero occurrences):
+ *   - `const t = db.transaction(); await t.execute(cb)` — the builder must be
+ *     called inline; a variable breaks the receiver walk.
+ *   - `await getTx().execute(cb)` — same reason.
+ *   - `db.startTransaction()` — Kysely's CONTROLLED transaction has no callback,
+ *     so there is no lexical boundary and this strategy structurally cannot see
+ *     it. I/O between it and `commit()` burns the same budget, invisibly.
+ *   - a named (non-inline) callback, same as the Prisma gap noted below.
+ *
+ * KNOWN GAPS in WHICH AWAITED EXPRESSIONS ARE READ (the shapes below are inside
+ * a correctly-detected callback; the rule simply cannot see the call):
+ *   - the awaited value came from a VARIABLE: `const p = bustUserSettings(id);
+ *     await p;` — resolving it needs scope analysis this rule does not do. Same
+ *     for an array built in a variable: `await Promise.all(jobs)`.
+ *   - a combinator argument that is neither an array literal nor an inline
+ *     `.map`/`.flatMap` callback: `await Promise.all(ids.map(makeJob))`,
+ *     `await Promise.all([...jobs, bust(id)])` (the SPREAD element specifically —
+ *     the sibling elements beside it ARE read).
+ *   - `await (cond ? bustUserSettings(id) : Promise.resolve())` — a conditional
+ *     is not unwrapped.
+ *   - a call reached through a locally aliased binding: `const b =
+ *     bustUserSettings; await b(id);` — detection is by CALLED NAME, never
+ *     resolved to an import.
+ * 🔴 A shape absent from BOTH lists above is NOT thereby covered. These are the
+ * ones someone went looking for; the honest summary of this rule is that it reads
+ * a curated set of syntactic shapes, so treat a clean run as "none of the shapes
+ * below the awaits I can read", not "no I/O in any transaction".
+ *
+ * DELIBERATELY out of scope, not a gap: an UN-AWAITED call —
+ * `void bustUserSettings(id)`, `logToAxiom({})` on its own line, or
+ * `bustUserSettings(id).catch(noop)`. Those do not consume the transaction's
+ * wall-clock budget, and "make pure-logging calls fire-and-forget" is one of the
+ * two fixes this rule's own message prescribes. Flagging them would flag the
+ * remedy. (A fire-and-forget write is a different hazard — it can outlive a
+ * rolled-back transaction — but it is not THIS rule's, and it has no timeout to
+ * blow.) Pinned by a `valid` case in the rule's test file.
  *
  * Interactive transactions hold a DB connection open under a wall-clock
  * timeout (Prisma default 5000ms, or an explicit `{ timeout }`). An awaited
@@ -28,6 +82,34 @@
  * Detection is a curated denylist of known I/O call names (low false-positive,
  * extend as new I/O helpers appear). Calls on the transaction client itself
  * (`tx.*`, including `tx.$queryRaw` / `tx.$executeRaw`) are always allowed.
+ *
+ * An `await` is read through three wrappers before the denylist is consulted:
+ * `.catch()/.then()/.finally()`; `Promise.all/allSettled/race/any` over an ARRAY
+ * LITERAL, whose elements are then each read the same way; and an inline
+ * `.map`/`.flatMap` callback with a concise (non-block) body passed to one of
+ * those combinators. One `await` can therefore report several calls. The
+ * combinator forms were added because `await Promise.all([cache.refresh(id),
+ * bustUserSettings(id)])` — the exact line in model.service.ts that motivated
+ * adding those two names to the denylist — passes its I/O as ARGUMENTS and so
+ * was invisible to the plain awaited-call walk. Measured on the pre-change rule:
+ * that shape produced 0 hits while the three direct-await cases beside it all
+ * flagged. Read the two gap lists above for what this still does not see.
+ *
+ * Blast radius of adding the combinator forms, measured over every .ts/.tsx under
+ * `src/` and `packages/` (5,310 files, 0 parse errors) with the rule run in
+ * isolation, immediately before and after the change: 6 reports -> 7. The one new
+ * report is a TRUE positive that was invisible before —
+ * `invalidateManyImageExistence(imageIds)` (N Redis `set`s) sharing a
+ * `Promise.all` with a legitimate `tx.image.deleteMany` inside
+ * `deleteBountyEntry`'s Prisma transaction, src/server/services/bountyEntry.service.ts.
+ * It is left reported rather than fixed here: hoisting a cache invalidation out of
+ * a transaction is a behaviour change to bounty deletion and wants its own diff,
+ * the same treatment `bugReportCounter` got from no-module-scope-cache. The rule
+ * is 'warn' and the file pre-exists, so it annotates and blocks nothing — see the
+ * severity note in .eslintrc.js.
+ *
+ * Re-derive that census rather than trusting the numbers above; they move.
+ *
  * Intentional exceptions should use:
  *   // eslint-disable-next-line local-rules/no-io-in-transaction -- <reason>
  */
@@ -56,6 +138,9 @@ const IO_CALL_NAMES = new Set([
   'updateDocs',
   'refresh', // *Cache.refresh(...) — Redis + cross-pool read
   'bust', // bustMvCache etc.
+  'bustUserSettings',
+  'getUserSettings',
+  'bustCache',
   'bustMvCache',
   'invalidateManyImageExistence',
   // email
@@ -65,6 +150,29 @@ const IO_CALL_NAMES = new Set([
 // Promise-combinator wrappers whose argument we should unwrap to find the
 // underlying call (e.g. `await foo().catch(() => null)` -> inspect `foo()`).
 const PASSTHROUGH_MEMBERS = new Set(['catch', 'then', 'finally']);
+
+/**
+ * `Promise.<x>(...)` statics that AWAIT their operands as a unit. An
+ * `await Promise.all([bust(id), refresh(id)])` puts both calls on the
+ * transaction's clock exactly as two consecutive `await`s would — the calls are
+ * ARGUMENTS rather than the awaited expression, which is the only reason the
+ * plain awaited-call walk missed them. `race`/`any` are included because the
+ * operands still all START inside the transaction; settling early does not
+ * cancel the losers, so their latency is on the same budget as the winner's.
+ */
+const PROMISE_COMBINATORS = new Set(['all', 'allSettled', 'race', 'any']);
+
+/**
+ * Array methods that invoke their callback SYNCHRONOUSLY, so
+ * `Promise.all(ids.map((i) => bust(i)))` really does run `bust` inside the
+ * transaction. Restricted to these two on purpose: a callback passed to anything
+ * else (`register(cb)`, `on('x', cb)`, `describe(cb)`) may be stored and run
+ * later, and reading it would report deferred work that never touches the
+ * transaction's budget. Only the CONCISE-body form needs reading here: the
+ * block-bodied `ids.map(async (i) => { await bust(i); })` is already reported by
+ * the function-stack walk, so reading it here too would report it twice.
+ */
+const EAGER_ITERATION_METHODS = new Set(['map', 'flatMap']);
 
 /** Walk a member chain to its root object identifier name (e.g. tx.user.x -> "tx"). */
 function rootObjectName(node) {
@@ -85,12 +193,74 @@ function calleeName(callExpr) {
   return null;
 }
 
+/** `Promise.all(...)` / `.allSettled` / `.race` / `.any`. */
+function isPromiseCombinatorCall(expr) {
+  const callee = expr.callee;
+  return (
+    callee &&
+    callee.type === 'MemberExpression' &&
+    callee.object &&
+    callee.object.type === 'Identifier' &&
+    callee.object.name === 'Promise' &&
+    callee.property &&
+    callee.property.type === 'Identifier' &&
+    PROMISE_COMBINATORS.has(callee.property.name)
+  );
+}
+
 /**
- * Resolve the "effective" I/O call inside an awaited expression, unwrapping
- * `.catch()/.then()/.finally()` passthroughs. Returns { name, node } or null.
+ * For a combinator argument, the expression(s) that are evaluated inside the
+ * transaction: an array literal's own elements, or an eagerly-invoked
+ * `.map`/`.flatMap` callback's concise body.
  */
-function resolveIoCall(expr, txParamNames) {
-  if (!expr || expr.type !== 'CallExpression') return null;
+function combinatorOperands(arg) {
+  if (!arg) return [];
+  if (arg.type === 'ArrayExpression') {
+    // Returned whole. A hole (`[, x]`) is null and a `...spread` is a
+    // SpreadElement — neither is a CallExpression, so `collectIoCalls` drops both
+    // on its own; filtering them here would be an unkillable no-op. The spread's
+    // own array stays unresolvable (KNOWN GAPS), but its SIBLINGS are read.
+    return arg.elements;
+  }
+  if (
+    arg.type === 'CallExpression' &&
+    arg.callee.type === 'MemberExpression' &&
+    arg.callee.property &&
+    arg.callee.property.type === 'Identifier' &&
+    EAGER_ITERATION_METHODS.has(arg.callee.property.name)
+  ) {
+    // The callback's BODY, whatever it is. A CONCISE body is an expression, so an
+    // I/O call there is read. A BLOCK body is a BlockStatement and a non-function
+    // argument has no `body` at all — `collectIoCalls` drops both, which is not an
+    // accident: the block-bodied form's `await` is already reported by the
+    // function-stack walk, and descending into it here would report the same call
+    // TWICE. (An earlier draft filtered these out explicitly; that filter could not
+    // be killed by any mutation, because it only ever removed nodes
+    // `collectIoCalls` was going to reject anyway.)
+    return (arg.arguments || []).map((cb) => cb.body);
+  }
+  return [];
+}
+
+/**
+ * Collect every I/O call an awaited expression puts on the transaction's clock,
+ * unwrapping `.catch()/.then()/.finally()` passthroughs and descending through
+ * `Promise.all([...])`-style combinators. Appends `{ name, node }` to `out`.
+ *
+ * Unbounded on purpose. Every recursive step moves STRICTLY to a child node
+ * (`expr.callee.object`, or an operand of `expr`), and a parsed ESLint AST is
+ * finite and acyclic, so the recursion terminates at the tree's own depth — the
+ * `walkSkippingFunctions` helper further down this file recurses the same way. A
+ * draft carried a `depth > 8` cut-off with a comment about self-referential
+ * sources blowing the stack; nothing can produce that input, and removing it,
+ * loosening it to 1000, and dropping its increment on the passthrough branch all
+ * survived the rule's 54-test suite. Only tightening it to 1 was caught, i.e. it
+ * only ever measured itself. It went the way of the two other guards this rule
+ * shed for the same reason — a guard nothing can kill is not protection, it is a
+ * comment claiming protection.
+ */
+function collectIoCalls(expr, txParamNames, out) {
+  if (!expr || expr.type !== 'CallExpression') return out;
   const name = calleeName(expr);
 
   // Unwrap promise passthroughs: await foo().catch(...) -> inspect foo()
@@ -100,15 +270,26 @@ function resolveIoCall(expr, txParamNames) {
     expr.callee.type === 'MemberExpression' &&
     expr.callee.object
   ) {
-    return resolveIoCall(expr.callee.object, txParamNames);
+    return collectIoCalls(expr.callee.object, txParamNames, out);
+  }
+
+  // `await Promise.all([bust(id), refresh(id)])` — the calls are arguments, not
+  // the awaited expression, but every one of them runs on the txn's budget.
+  if (isPromiseCombinatorCall(expr)) {
+    for (const arg of expr.arguments || []) {
+      for (const operand of combinatorOperands(arg)) {
+        collectIoCalls(operand, txParamNames, out);
+      }
+    }
+    return out;
   }
 
   // Allow calls on the transaction client itself: tx.*(...), tx.$queryRaw`...`
   const root = rootObjectName(expr.callee);
-  if (root && txParamNames.has(root)) return null;
+  if (root && txParamNames.has(root)) return out;
 
-  if (name && IO_CALL_NAMES.has(name)) return { name, node: expr };
-  return null;
+  if (name && IO_CALL_NAMES.has(name)) out.push({ name, node: expr });
+  return out;
 }
 
 const noIoInTransaction = {
@@ -116,13 +297,13 @@ const noIoInTransaction = {
     type: 'problem',
     docs: {
       description:
-        'Disallow awaited external/network I/O inside a Prisma interactive $transaction callback (blows the txn timeout budget).',
+        'Disallow awaited external/network I/O inside an interactive transaction callback — Prisma `$transaction(cb)` or Kysely `transaction().execute(cb)` (blows the txn timeout budget).',
       recommended: true,
     },
     schema: [],
     messages: {
       ioInTx:
-        "Awaited '{{name}}(...)' performs external I/O inside a $transaction callback — it consumes the transaction's timeout budget. Do this after the transaction commits, or make it fire-and-forget. If intentional, add: // eslint-disable-next-line local-rules/no-io-in-transaction -- <reason>",
+        "Awaited '{{name}}(...)' performs external I/O inside a transaction callback — it consumes the transaction's timeout budget. Do this after the transaction commits, or make it fire-and-forget. If intentional, add: // eslint-disable-next-line local-rules/no-io-in-transaction -- <reason>",
     },
   },
   create(context) {
@@ -132,17 +313,57 @@ const noIoInTransaction = {
     // Function nodes that are transaction callbacks -> their tx param name set.
     const txCallbackFns = new WeakMap();
 
-    function isTransactionCall(node) {
+    /** The call's first argument is an inline function — i.e. an interactive callback. */
+    function hasInlineCallback(node) {
+      const first = node.arguments && node.arguments[0];
+      return (
+        !!first && (first.type === 'ArrowFunctionExpression' || first.type === 'FunctionExpression')
+      );
+    }
+
+    /** `<method>(...)` where the method name matches. */
+    function isMethodCall(node, name) {
       return (
         node.type === 'CallExpression' &&
         node.callee.type === 'MemberExpression' &&
         node.callee.property &&
         node.callee.property.type === 'Identifier' &&
-        node.callee.property.name === '$transaction' &&
-        node.arguments.length > 0 &&
-        (node.arguments[0].type === 'ArrowFunctionExpression' ||
-          node.arguments[0].type === 'FunctionExpression')
+        node.callee.property.name === name
       );
+    }
+
+    /** Prisma: `db.$transaction(async (tx) => ...)`. The array/batch form has no callback. */
+    function isPrismaTransactionCall(node) {
+      return isMethodCall(node, '$transaction') && hasInlineCallback(node);
+    }
+
+    /**
+     * Kysely: `db.transaction().execute(async (trx) => ...)`, including builder
+     * chains such as `.transaction().setIsolationLevel('serializable').execute(cb)`.
+     *
+     * Anchored on `.execute(<inline function>)` and then walking the receiver
+     * chain back to a `.transaction()` call. Both halves are needed: every Kysely
+     * query builder ends in `.execute()`, but only the transaction builder's takes
+     * a callback, and only a `.transaction()` receiver makes it a transaction.
+     */
+    function isKyselyTransactionCall(node) {
+      if (!isMethodCall(node, 'execute') || !hasInlineCallback(node)) return false;
+      let cur = node.callee.object;
+      while (cur) {
+        if (cur.type === 'CallExpression') {
+          if (isMethodCall(cur, 'transaction')) return true;
+          cur = cur.callee;
+        } else if (cur.type === 'MemberExpression') {
+          cur = cur.object;
+        } else {
+          return false;
+        }
+      }
+      return false;
+    }
+
+    function isTransactionCall(node) {
+      return isPrismaTransactionCall(node) || isKyselyTransactionCall(node);
     }
 
     return {
@@ -166,8 +387,9 @@ const noIoInTransaction = {
       AwaitExpression(node) {
         if (txStack.length === 0) return;
         const txParamNames = txStack[txStack.length - 1];
-        const io = resolveIoCall(node.argument, txParamNames);
-        if (io) {
+        // One await can carry several I/O calls (`Promise.all([a(), b()])`), and
+        // each is a separate thing to move out — report them individually.
+        for (const io of collectIoCalls(node.argument, txParamNames, [])) {
           context.report({ node: io.node, messageId: 'ioInTx', data: { name: io.name } });
         }
       },
@@ -175,6 +397,1185 @@ const noIoInTransaction = {
   },
 };
 
+/**
+ * no-wholesale-module-mock
+ *
+ * Flags a `vi.mock('<module>', () => ({ ... }))` whose factory hand-writes a
+ * replacement object instead of spreading the REAL module via `importOriginal`.
+ *
+ * Why this is a test-infrastructure hazard and not a style nit:
+ *
+ * A wholesale factory pins the module's export surface to whatever the author
+ * happened to need on the day they wrote it. The moment the real module gains a
+ * new export that some OTHER file in the test's module graph imports, that
+ * import resolves to `undefined` and the ENTIRE test file fails to LOAD. A file
+ * that fails to load produces no failing assertion — it collects **0 tests**.
+ * Nothing goes red; the suite just quietly stops existing.
+ *
+ * That is exactly what happened to `~/utils/trpc`: adding `trpcVanilla` (and,
+ * separately, `OffsiteReviewModalBody`) silently disabled five browser suites
+ * and ~36 tests. It went undiagnosed partly because a cold Vite `optimizeDeps`
+ * cache ALSO yields "0 tests collected" ("Vitest failed to find the runner"),
+ * so the signature is ambiguous at runtime — which is the argument for catching
+ * it statically, here, instead.
+ *
+ * TypeScript cannot catch this. On the string-path overload Vitest types the
+ * factory's return as `Promisable<Partial<M>>` with `M = unknown`, so an
+ * omitted export is not a type error — not even under Vitest 4's typed
+ * `vi.mock(import('...'))` form. This rule is the only static gate available.
+ *
+ * The fix is to override narrowly and keep every other export real:
+ *
+ *   import type * as TrpcModule from '~/utils/trpc';
+ *
+ *   vi.mock('~/utils/trpc', async (importOriginal) => ({
+ *     ...(await importOriginal<typeof TrpcModule>()),
+ *     trpc: { ...only what this test overrides... },
+ *   }));
+ *
+ * Canonical in-repo example (with the same warning in a comment):
+ *   src/components/Challenge/__tests__/ChallengeUpsertForm.browser.test.tsx
+ *
+ * ---------------------------------------------------------------------------
+ * How the check works, and why it is structural rather than textual
+ * ---------------------------------------------------------------------------
+ *
+ * The question the rule answers is: "can I PROVE, from the AST, that everything
+ * this factory returns carries the original module's exports forward?" It is
+ * deliberately proof-based, so the failure mode is a false POSITIVE (a noisy
+ * squiggle on an exotic-but-safe factory, fixable with a disable comment) and
+ * never a false NEGATIVE (a silently-broken suite, which is the whole point).
+ *
+ * Two consequences worth stating, because both were real holes in the first cut
+ * of this rule:
+ *
+ *  1. The `importOriginal` reference is matched as a BINDING, not as text. The
+ *     factory's first parameter IS `importOriginal` whatever the author named
+ *     it (`async (orig) => ...` is correct and must pass), and conversely the
+ *     mere presence of the word — an unused parameter, a comment, a string —
+ *     proves nothing. A textual `/\bimportOriginal\b/` over the factory source
+ *     accepts `(importOriginal) => ({ ...localStub })` and rejects
+ *     `(orig) => ({ ...(await orig()) })`: wrong in both directions.
+ *
+ *  2. "Returns something I can't read" is NOT a pass. `return {...} as any`,
+ *     `return out`, `Object.assign({}, {...})`, `cached || {...}` and a factory
+ *     with no `return` at all are all wholesale mocks wearing a hat. Anything
+ *     the analysis cannot walk to an original-bearing spread is reported (as
+ *     `unprovableMock`, with a message that says so) rather than assumed safe.
+ *
+ * What counts as "carries the original forward" (`isOriginalPreserving`):
+ *   - `importOriginal(...)` where the callee resolves to the factory's own
+ *     first parameter, or `vi.importActual('<the same module>')`;
+ *   - an `await` of either;
+ *   - a local `const` whose initialiser is one of those (the common
+ *     `const actual = await importOriginal()` shape) — as long as the name is
+ *     not redeclared or reassigned;
+ *   - an object literal with a top-level spread of something original-bearing;
+ *   - `Object.assign(...)` where any argument is original-bearing (every source
+ *     argument's keys land on the result);
+ *   - a conditional / logical / sequence expression where every branch that can
+ *     be the value is itself original-bearing.
+ * Everything else is not provable, and is reported.
+ *
+ * Notably NOT accepted: `await import('<the mocked module>')` inside its own
+ * factory. Vitest intercepts that import and hands back the mock, so it is a
+ * self-reference, not the original — `importOriginal`/`vi.importActual` exist
+ * precisely because a plain dynamic import does not work here.
+ *
+ * `vi.mock('mod')` with no factory (automock) is untouched: it preserves the
+ * real export shape by construction. So is `vi.mock('mod', { spy: true })`.
+ *
+ * Scoped by the `modules` option (default: just `~/utils/trpc`) rather than
+ * applied to every mock in the repo — see the .eslintrc.js note. Extend the
+ * list rather than broadening the rule. Specifiers are compared after
+ * canonicalisation, so the `~/utils/trpc` target also matches a template
+ * literal and an equivalent relative path (`../../utils/trpc`).
+ *
+ * Known gaps (deliberate, documented rather than papered over):
+ *   - a factory passed as an identifier (`vi.mock(mod, factoryFn)`) is not
+ *     analysed — the definition may be anywhere, and the shape is unused here.
+ *     DO NOT reach for it to get past this rule: `const f = () => ({ trpc: {} });
+ *     vi.mock('~/utils/trpc', f)` is silently accepted and, unlike a disable
+ *     comment, leaves NOTHING for a reviewer or a later grep to find. If a
+ *     factory genuinely has to be exempt, use the disable comment below — it is
+ *     greppable and it carries your reason;
+ *   - `modules` entries are matched per-module, not by glob;
+ *   - only files ESLint already covers (`src/`, `packages/`) are seen at all.
+ *
+ * Known FALSE POSITIVES — safe shapes the analysis cannot walk, so they report
+ * `unprovableMock`. None exist in the tree today; they are listed so an author
+ * who hits one recognises their own shape and reaches for the disable comment
+ * instead of reshaping working code (or switching the rule off):
+ *   - destructure-and-rebuild: `const { trpc, ...rest } = await importOriginal();
+ *     return { ...rest, trpc: {} }` — `rest` comes from a destructuring pattern,
+ *     not an initialiser this rule tracks;
+ *   - `const [actual] = await Promise.all([importOriginal()])` — same reason;
+ *   - an aliased binding: `const f = importOriginal; return { ...(await f()) }`
+ *     — only the parameter itself is recognised as the original call;
+ *   - the `vi.hoisted` idiom, where the spread source is built outside the
+ *     factory entirely.
+ * Each is a one-line disable away, which is the intended cost: a false positive
+ * costs a comment, a false negative costs a silently-empty test suite.
+ *
+ * Intentional exceptions should use:
+ *   // eslint-disable-next-line local-rules/no-wholesale-module-mock -- <reason>
+ */
+const DEFAULT_WHOLESALE_MOCK_MODULES = ['~/utils/trpc'];
+
+/** Is this `vi.mock(...)` / `vitest.mock(...)` / `.doMock(...)`? */
+function isViMockCall(node) {
+  const callee = node.callee;
+  return (
+    callee &&
+    callee.type === 'MemberExpression' &&
+    callee.object &&
+    callee.object.type === 'Identifier' &&
+    (callee.object.name === 'vi' || callee.object.name === 'vitest') &&
+    callee.property &&
+    callee.property.type === 'Identifier' &&
+    (callee.property.name === 'mock' || callee.property.name === 'doMock')
+  );
+}
+
+/** Is this `vi.importActual(...)` / `vitest.importActual(...)`? */
+function isImportActualCallee(callee) {
+  return (
+    callee &&
+    callee.type === 'MemberExpression' &&
+    callee.object &&
+    callee.object.type === 'Identifier' &&
+    (callee.object.name === 'vi' || callee.object.name === 'vitest') &&
+    callee.property &&
+    callee.property.type === 'Identifier' &&
+    callee.property.name === 'importActual'
+  );
+}
+
+/**
+ * Strip the wrappers that change an expression's TYPE but not its VALUE, so the
+ * shape underneath can be inspected. `return { trpc: {} } as any` must be read
+ * as the object literal it is — reaching for `as any` is the first thing an
+ * author does when fighting a squiggle, which makes it the likeliest bypass.
+ */
+function unwrapExpression(node) {
+  let current = node;
+  while (
+    current &&
+    (current.type === 'TSAsExpression' ||
+      current.type === 'TSSatisfiesExpression' ||
+      current.type === 'TSNonNullExpression' ||
+      current.type === 'TSTypeAssertion' ||
+      current.type === 'TSInstantiationExpression' ||
+      current.type === 'ChainExpression')
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+/**
+ * Generic AST walk that does NOT descend into nested functions — so a
+ * `return` belonging to an inner callback is never mistaken for the factory's
+ * own return value, and an inner `const actual = ...` never leaks out.
+ */
+function walkSkippingFunctions(node, visit) {
+  if (!node || typeof node.type !== 'string') return;
+  visit(node);
+  for (const key of Object.keys(node)) {
+    if (key === 'parent') continue;
+    const value = node[key];
+    const children = Array.isArray(value) ? value : [value];
+    for (const child of children) {
+      if (!child || typeof child.type !== 'string') continue;
+      if (
+        child.type === 'FunctionDeclaration' ||
+        child.type === 'FunctionExpression' ||
+        child.type === 'ArrowFunctionExpression'
+      ) {
+        continue;
+      }
+      walkSkippingFunctions(child, visit);
+    }
+  }
+}
+
+/** Read a static module specifier: a string literal or an expressionless template. */
+function readModuleSpecifier(node) {
+  if (!node) return null;
+  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (
+    node.type === 'TemplateLiteral' &&
+    node.expressions.length === 0 &&
+    node.quasis.length === 1
+  ) {
+    return node.quasis[0].value.cooked;
+  }
+  return null;
+}
+
+/**
+ * Reduce a module specifier to a comparable form so that the configured target
+ * `~/utils/trpc` also matches `` `~/utils/trpc` `` and `../../utils/trpc`.
+ *
+ * `~/x` is this repo's tsconfig alias for `src/x`, so both are reduced to their
+ * `src/`-relative path; a relative specifier is resolved against the linted
+ * file first. Anything that does not reduce (a bare package name, a path that
+ * resolves outside `src/`) is compared verbatim, which is the conservative
+ * outcome: it simply will not match a `~/`-style target.
+ *
+ * The `src/` that `~` aliases is the ONE at the repo root — the directory
+ * beside this file — not any `src/` anywhere in the path. A workspace package
+ * has its own: from `packages/blocks-react/src/foo/x.test.tsx`, the specifier
+ * `../utils/trpc` means `packages/blocks-react/src/utils/trpc`, a DIFFERENT
+ * module from `~/utils/trpc`, and matching it would flag a file for mocking
+ * something the rule was never pointed at. Resolving against `REPO_SRC` rather
+ * than "the last `/src/` in the string" keeps the alias inside its own package
+ * boundary.
+ */
+function stripModuleExtension(modulePath) {
+  return modulePath.replace(/\.(?:m|c)?[jt]sx?$/, '').replace(/\/index$/, '');
+}
+
+function canonicalModulePath(specifier, fromFile) {
+  if (typeof specifier !== 'string' || specifier.length === 0) return null;
+  if (specifier.startsWith('~/')) return stripModuleExtension(specifier.slice(2));
+  if (specifier.startsWith('./') || specifier.startsWith('../')) {
+    if (!fromFile) return null;
+    const posixFile = String(fromFile).split(pathSep).join('/');
+    const resolved = posixNormalize(`${posixDirname(posixFile)}/${specifier}`);
+    // Absolute (how ESLint actually invokes the rule): must land under the
+    // repo's OWN src/, not a workspace package's.
+    //
+    // A Windows absolute path is `C:/…` after the separator swap above, not
+    // `/…`, so testing only for a leading slash sent every absolute filename
+    // down the repo-relative branch, where it matches neither `src/` nor
+    // anything else and canonicalises to null. Effect: on Windows this rule
+    // silently stopped matching RELATIVE specifiers — inert locally, working in
+    // CI, with the test suite red only on the developer's machine.
+    if (isPosixAbsolute(resolved)) {
+      return isUnderRepoSrc(resolved)
+        ? stripModuleExtension(resolved.slice(REPO_SRC.length + 1))
+        : null;
+    }
+    // A repo-relative filename (RuleTester, or eslint invoked with relative
+    // paths) is already rooted at the repo, so a leading `src/` is the alias
+    // root and a leading `packages/` is not.
+    if (resolved.startsWith('src/')) return stripModuleExtension(resolved.slice('src/'.length));
+    return null;
+  }
+  return stripModuleExtension(specifier);
+}
+
+// Tiny posix path helpers — `eslint-local-rules.js` is loaded by ESLint in
+// contexts where pulling in node:path is fine, but keeping these local makes
+// the reduction above explicit and platform-independent.
+const pathSep = require('path').sep;
+// The repo root is this file's own directory (ESLint loads `eslint-local-rules`
+// from it), so `<root>/src` is exactly what the `~` alias points at.
+const REPO_SRC = require('path').resolve(__dirname, 'src').split(pathSep).join('/');
+/** Absolute after the separator swap: posix `/x`, Windows `C:/x`, or UNC `//host/share`. */
+function isPosixAbsolute(p) {
+  return p.startsWith('/') || /^[A-Za-z]:\//.test(p);
+}
+
+/**
+ * Windows filenames are case-insensitive but `startsWith` is not, and ESLint is
+ * not guaranteed to hand us the same casing `path.resolve` produced: the CLI
+ * normalises the drive to uppercase via `process.cwd()`, while an editor or LSP
+ * passing an explicit path may not. A `c:\…` filename then fails the REPO_SRC
+ * comparison and the rule goes silently inert — the same failure mode as the
+ * leading-slash bug, one layer down. Linux stays byte-exact, where casing is
+ * genuinely significant.
+ */
+const CASE_INSENSITIVE_PATHS = pathSep === '\\';
+function isUnderRepoSrc(p) {
+  const prefix = `${REPO_SRC}/`;
+  const head = p.slice(0, prefix.length);
+  return CASE_INSENSITIVE_PATHS ? head.toLowerCase() === prefix.toLowerCase() : head === prefix;
+}
+
+function posixDirname(p) {
+  const i = p.lastIndexOf('/');
+  return i === -1 ? '.' : p.slice(0, i) || '/';
+}
+function posixNormalize(p) {
+  const out = [];
+  for (const seg of p.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') out.pop();
+    else out.push(seg);
+  }
+  // A UNC path's leading `//` is part of the root, not a redundant separator —
+  // collapsing it to `/` yields a path that can never match REPO_SRC.
+  const root = p.startsWith('//') ? '//' : p.startsWith('/') ? '/' : '';
+  return `${root}${out.join('/')}`;
+}
+
+/**
+ * Build the "does this expression carry the original module forward?" predicate
+ * for one factory. Everything it needs is factory-local: the `importOriginal`
+ * BINDING (the first parameter, whatever its name) and the factory's own
+ * top-level `const` initialisers.
+ */
+function createOriginalAnalyzer(factory, targetCanonical, filename) {
+  // The first parameter IS importOriginal, whatever it is named. A default
+  // value (`async (importOriginal = x) => ...`) parses as an AssignmentPattern
+  // wrapping the identifier, so unwrap that too — otherwise a correct factory
+  // written with a default is reported. A destructured or rest parameter has no
+  // single binding to call, and stays unrecognised.
+  let firstParam = factory.params && factory.params[0];
+  if (firstParam && firstParam.type === 'AssignmentPattern') firstParam = firstParam.left;
+  const originalBinding = firstParam && firstParam.type === 'Identifier' ? firstParam.name : null;
+
+  // Local `const actual = await importOriginal()` bindings. A name that is
+  // declared twice or reassigned is poisoned: we can no longer say which value
+  // reaches the spread, and "unsure" must mean "report".
+  const locals = new Map();
+  const poisoned = new Set();
+  if (factory.body && factory.body.type === 'BlockStatement') {
+    walkSkippingFunctions(factory.body, (n) => {
+      if (n.type === 'VariableDeclarator' && n.id && n.id.type === 'Identifier') {
+        if (locals.has(n.id.name)) poisoned.add(n.id.name);
+        locals.set(n.id.name, n.init || null);
+      } else if (n.type === 'AssignmentExpression' && n.left && n.left.type === 'Identifier') {
+        poisoned.add(n.left.name);
+      } else if (n.type === 'UpdateExpression' && n.argument && n.argument.type === 'Identifier') {
+        // `actual++` / `--actual` rebinds the name to a number.
+        poisoned.add(n.argument.name);
+      } else if (n.type === 'UnaryExpression' && n.operator === 'delete') {
+        // `delete actual.trpcVanilla` is the ONLY unary that mutates, and it is
+        // precisely the historical bug: the spread still looks right, but an
+        // export has been removed from the object being spread. Every other
+        // unary on a bare identifier — `!actual`, `typeof actual`, `void actual`,
+        // `-actual` — reads the value and cannot change it, so it must NOT
+        // poison: `if (!actual) throw ...` is correct defensive code and used to
+        // be reported.
+        let target = n.argument;
+        while (
+          target &&
+          (target.type === 'MemberExpression' || target.type === 'ChainExpression')
+        ) {
+          target = target.type === 'ChainExpression' ? target.expression : target.object;
+        }
+        if (target && target.type === 'Identifier') poisoned.add(target.name);
+      }
+    });
+  }
+
+  /** `importOriginal()` or `vi.importActual('<the module being mocked>')`. */
+  function isOriginalCall(call) {
+    if (call.type !== 'CallExpression') return false;
+    const callee = call.callee;
+    if (originalBinding && callee.type === 'Identifier' && callee.name === originalBinding) {
+      return true;
+    }
+    if (isImportActualCallee(callee)) {
+      // Must be the SAME module. `vi.importActual('~/utils/other')` spread into
+      // a `~/utils/trpc` mock leaves every trpc export missing.
+      const spec = readModuleSpecifier(call.arguments && call.arguments[0]);
+      return canonicalModulePath(spec, filename) === targetCanonical;
+    }
+    return false;
+  }
+
+  const seen = new Set();
+
+  function isOriginalPreserving(node) {
+    const expr = unwrapExpression(node);
+    if (!expr || typeof expr.type !== 'string') return false;
+    // Cycle guard: `let a = a` and friends must terminate, not blow the stack.
+    if (seen.has(expr)) return false;
+    seen.add(expr);
+    try {
+      switch (expr.type) {
+        case 'AwaitExpression':
+          return isOriginalPreserving(expr.argument);
+
+        case 'CallExpression': {
+          if (isOriginalCall(expr)) return true;
+          // `Object.assign(target, ...sources)` — every source's own enumerable
+          // keys land on the result, so one original-bearing argument is enough.
+          const callee = expr.callee;
+          if (
+            callee.type === 'MemberExpression' &&
+            callee.object &&
+            callee.object.type === 'Identifier' &&
+            callee.object.name === 'Object' &&
+            callee.property &&
+            callee.property.type === 'Identifier' &&
+            callee.property.name === 'assign'
+          ) {
+            // A `...sources` argument needs no special case: `SpreadElement`
+            // is not an expression type this analysis accepts, so it falls
+            // through to `false` on its own. (An explicit exclusion here was
+            // redundant — no input could distinguish it.)
+            return (expr.arguments || []).some((arg) => isOriginalPreserving(arg));
+          }
+          return false;
+        }
+
+        case 'ObjectExpression':
+          return expr.properties.some(
+            (p) => p.type === 'SpreadElement' && isOriginalPreserving(p.argument)
+          );
+
+        case 'Identifier': {
+          if (poisoned.has(expr.name) || !locals.has(expr.name)) return false;
+          const init = locals.get(expr.name);
+          return init ? isOriginalPreserving(init) : false;
+        }
+
+        case 'ConditionalExpression':
+          // Either branch can be the value, so BOTH must be safe.
+          return isOriginalPreserving(expr.consequent) && isOriginalPreserving(expr.alternate);
+
+        case 'LogicalExpression':
+          return isOriginalPreserving(expr.left) && isOriginalPreserving(expr.right);
+
+        case 'SequenceExpression':
+          return isOriginalPreserving(expr.expressions[expr.expressions.length - 1]);
+
+        default:
+          // ImportExpression (`await import('~/utils/trpc')` returns the MOCK,
+          // not the original), member access, `new`, template literals, ...
+          return false;
+      }
+    } finally {
+      seen.delete(expr);
+    }
+  }
+
+  return isOriginalPreserving;
+}
+
+/**
+ * Every expression the factory itself can return. `null` marks a bare `return;`
+ * or a block with no reachable `return` at all — both hand Vitest `undefined`,
+ * which is as wholesale as it gets.
+ */
+function collectFactoryReturns(factory) {
+  if (!factory.body) return [null];
+  if (factory.body.type !== 'BlockStatement') return [factory.body];
+
+  const returns = [];
+  walkSkippingFunctions(factory.body, (n) => {
+    if (n.type === 'ReturnStatement') returns.push(n.argument || null);
+  });
+  return returns.length ? returns : [null];
+}
+
+const noWholesaleModuleMock = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description:
+        'Require vi.mock factories for sensitive modules to spread the real module via importOriginal — a wholesale factory breaks the whole test FILE (0 tests collected) the day the module gains an export it omits.',
+      recommended: true,
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          modules: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        },
+        additionalProperties: false,
+      },
+    ],
+    messages: {
+      wholesaleMock:
+        "Wholesale vi.mock('{{module}}') factory — it replaces the module with a hand-written object, so the day '{{module}}' gains an export this factory omits, every importer in this test's module graph gets `undefined` and the whole FILE fails to load: 0 tests collected, no failing assertion, silently 'green' (this disabled ~36 tests via `trpcVanilla`). TypeScript cannot catch it — the factory's return is typed `Partial<unknown>`. Spread the real module and override only what you need: add `import type * as Mod from '{{module}}';` then `vi.mock('{{module}}', async (importOriginal) => ({ ...(await importOriginal<typeof Mod>()), /* overrides */ }));` — use the type-only namespace import, NOT `typeof import('...')`, which @typescript-eslint/consistent-type-imports rejects. If this factory really is intentional and safe, silence it explicitly rather than reshaping it: `// eslint-disable-next-line local-rules/no-wholesale-module-mock -- <reason>`. Canonical example: src/components/Challenge/__tests__/ChallengeUpsertForm.browser.test.tsx",
+      unprovableMock:
+        "vi.mock('{{module}}') factory returns a value this rule cannot prove carries the real module's exports ({{shape}}). That is reported rather than assumed safe: if '{{module}}' gains an export the factory omits, the whole test FILE fails to load and collects 0 tests with nothing turning red. Return an object literal that spreads the original directly — `vi.mock('{{module}}', async (importOriginal) => ({ ...(await importOriginal<typeof Mod>()), /* overrides */ }))` (with `import type * as Mod from '{{module}}';`) — so the spread is visible statically. Note `... as any` / `satisfies` do not change this; the spread itself is what has to be there. If this factory really is safe, silence it explicitly: `// eslint-disable-next-line local-rules/no-wholesale-module-mock -- <reason>`. Canonical example: src/components/Challenge/__tests__/ChallengeUpsertForm.browser.test.tsx",
+    },
+  },
+  create(context) {
+    const options = context.options[0] || {};
+    const filename = (context.filename || (context.getFilename && context.getFilename())) ?? null;
+    const targets = new Set(
+      (options.modules || DEFAULT_WHOLESALE_MOCK_MODULES)
+        .map((m) => canonicalModulePath(m, filename))
+        .filter(Boolean)
+    );
+
+    return {
+      CallExpression(node) {
+        if (!isViMockCall(node)) return;
+
+        const [moduleArg, factory] = node.arguments;
+        const specifier = readModuleSpecifier(moduleArg);
+        const targetCanonical = canonicalModulePath(specifier, filename);
+        if (!targetCanonical || !targets.has(targetCanonical)) return;
+
+        // Only an inline function factory is analysable. Everything else here
+        // is intentionally left alone:
+        //   - `vi.mock('mod')` (automock) and `vi.mock('mod', { spy: true })`
+        //     keep the real export shape by construction;
+        //   - a factory passed by reference (`vi.mock('mod', makeFactory)`) is
+        //     the documented gap above — its definition may be anywhere.
+        if (!factory) return;
+        if (factory.type !== 'ArrowFunctionExpression' && factory.type !== 'FunctionExpression') {
+          return;
+        }
+
+        const isOriginalPreserving = createOriginalAnalyzer(factory, targetCanonical, filename);
+
+        // Classify each un-provable return so the AUTHOR gets advice they can
+        // act on. The split is "did you even try to spread?":
+        //
+        //   no top-level spread at all -> `wholesaleMock`, whose advice is
+        //     "spread the real module" — exactly what is missing;
+        //   a spread the analysis cannot walk to the original (`...localStub`,
+        //     `...(actual ?? {})`, `...(await import('./elsewhere'))`), or any
+        //     non-object return -> `unprovableMock`, which says the spread is
+        //     unprovable and names the escape hatch.
+        //
+        // Telling an author who ALREADY spreads to "spread the real module" is
+        // how a rule gets switched off, and at 'error' that advice blocks them.
+        let wholesale = false;
+        let unprovable = null;
+        for (const returned of collectFactoryReturns(factory)) {
+          if (returned && isOriginalPreserving(returned)) continue;
+          const shape = returned ? unwrapExpression(returned) : null;
+          if (shape && shape.type === 'ObjectExpression') {
+            const spreads = shape.properties.filter((p) => p.type === 'SpreadElement');
+            if (spreads.length === 0) {
+              wholesale = true;
+            } else if (!unprovable) {
+              unprovable =
+                'an object literal whose spread does not provably carry the original module';
+            }
+          } else if (!unprovable) {
+            unprovable = shape ? shape.type : 'no return value';
+          }
+        }
+
+        if (!wholesale && !unprovable) return;
+
+        context.report({
+          node,
+          messageId: wholesale ? 'wholesaleMock' : 'unprovableMock',
+          data: { module: specifier, shape: unprovable || 'ObjectExpression' },
+        });
+      },
+    };
+  },
+};
+
+/**
+ * no-module-scope-cache
+ *
+ * Flags a `createCachedObject(...)` / `createCachedArray(...)` / `cachedCounter(...)`
+ * call that runs at MODULE SCOPE — i.e. during module evaluation, as a side
+ * effect of anyone merely importing the file.
+ *
+ * This is the OTHER end of the same failure that `no-wholesale-module-mock`
+ * catches. That rule guards the mock; this one guards the trigger.
+ *
+ * A test suite that wholesale-mocks `~/server/utils/cache-helpers` or
+ * `~/server/redis/client` replaces the entire module, so any export the factory
+ * omits is simply absent. If a service builds its cache at module scope, then
+ * every suite that mocks one of those modules and imports that service — even
+ * TRANSITIVELY, three hops down an import chain it never mentions — fails
+ * during COLLECTION, before a single test runs:
+ *
+ *   "No createCachedObject export is defined on the mock"   (cache-helpers)
+ *   "Cannot read properties of undefined (reading 'PAID_ACCESS_CAP_TIER')"
+ *                                                           (REDIS_KEYS.CACHES)
+ *
+ * Both signatures come from the SAME statement: building the cache eagerly needs
+ * the creator to exist AND evaluates its `REDIS_KEYS.*` key argument, right there
+ * at module scope. Which of the two you see depends on which module the suite
+ * mocked. See "What this rule does NOT catch" below — the second signature has
+ * other sources, and this rule guards only this one.
+ *
+ * Collection errors are reported one file at a time, so the causes peel off one
+ * per fix, and the blast radius is not the file you edited — it is every suite
+ * whose import graph happens to reach it. ~150 suites mock `redis/client` and
+ * ~26 mock `cache-helpers` today, so this is a broad live tripwire, not a
+ * hypothetical: adding one eager `capTierCache` to paid-access.service.ts
+ * killed three model-service suites (57 tests) and turned `Unit tests` red on
+ * `main` for every open PR (PRs #3505 / #3506).
+ *
+ * Fixing the ~150 mocks is the wrong end of the problem — each one is correct
+ * for what it tests, and the list only grows. Building the cache lazily is a
+ * three-line change that makes the whole class impossible.
+ *
+ * The fix — the house pattern, already documented in the file that broke:
+ *
+ *   function createCapTierCache() {
+ *     return createCachedObject<CachedCapTier>({ key: ..., lookupFn: ... });
+ *   }
+ *   let capTierCacheInstance: ReturnType<typeof createCapTierCache> | undefined;
+ *   function capTierCache() {
+ *     return (capTierCacheInstance ??= createCapTierCache());
+ *   }
+ *
+ * Call sites become `capTierCache().fetch(...)`. Nothing about runtime
+ * behaviour changes — the cache is still a per-process singleton, it is just
+ * built on first USE instead of on first IMPORT.
+ *
+ * Canonical in-repo example: `paidAccessCache` in
+ * src/server/services/paid-access.service.ts, whose comment gives this exact
+ * reasoning — the eager `capTierCache` was added directly beneath it.
+ *
+ * ---------------------------------------------------------------------------
+ * Scope, and why it is narrow
+ * ---------------------------------------------------------------------------
+ *
+ * Applied via an `overrides` entry in .eslintrc.js to `src/server/services/**`
+ * and `src/server/redis/**` — the two places module-scope caches actually live.
+ *
+ * There are 30 of them today. 8 are reported; the 22 in
+ * `src/server/redis/caches.ts` are silenced by a documented file-level disable
+ * in that file. Do NOT read that disable as "caches.ts is safe" — it is the
+ * hotter tripwire, not the exempt one: all 22 are keyed off `REDIS_KEYS` at
+ * module scope, and the module is imported far more widely than
+ * paid-access.service.ts was. The three suites #3505 repaired stay green only
+ * because they ALSO mock `~/server/redis/caches`; the next suite that mocks
+ * `~/server/redis/client` without `CACHES` and reaches caches.ts unmocked dies
+ * the same way, and making one service's cache lazy does not prevent that.
+ *
+ * The disable is a blast-radius decision, written down where the next author
+ * will read it: converting 22 call sites in the busiest cache module wants to be
+ * its own reviewable change. What the rule buys meanwhile is that the backlog
+ * stops GROWING — a new eager cache in a service creates a brand-new transitive
+ * tripwire on a module no suite knows to mock, which is exactly how one
+ * `capTierCache` took out three unrelated suites.
+ *
+ * ---------------------------------------------------------------------------
+ * What this rule does NOT catch, stated because its own message names the
+ * symptom rather than the construct
+ * ---------------------------------------------------------------------------
+ *
+ * The guarded construct is eager cache CONSTRUCTION. The rule does not know
+ * anything about `REDIS_KEYS`; it happens to cover the `REDIS_KEYS` dereference
+ * only because that dereference is the creator call's own argument.
+ *
+ * A bare module-scope read — `const CACHE_KEY = REDIS_KEYS.CACHES.X;`, with no
+ * creator call anywhere near it — reproduces the identical
+ * `TypeError: Cannot read properties of undefined (reading '<KEY>')` at
+ * collection time, and this rule reports 0 against it. There is one in scope
+ * today: src/server/services/nowpayments.service.ts.
+ *
+ * That shape is deliberately left unguarded, and the measurement is the reason.
+ * Counting module-scope `REDIS_KEYS.*` reads with this rule's own module-scope
+ * walk: 32 in the scoped dirs (plus 6 outside them). But 22 of the 32 are in
+ * caches.ts, already silenced by the file-level disable; 8 more ARE the key
+ * arguments of the 8 creator calls this rule already reports, so guarding them
+ * would double-report the same statements unless the rule also grew a
+ * "skip reads inside a call I already flagged" pass; and 1 of the remaining 2 is
+ * a test file's own `const KEY = REDIS_KEYS.CACHES.ACTIVE_AUCTIONS` (a suite that
+ * mocks the module itself, where the read is correct). So the extension buys ONE
+ * genuinely new guarded site at the cost of ~10 new reports, a dedup pass, and a
+ * rule whose name no longer describes what it does. Not worth it — the shape is
+ * written down here instead. Revisit if a second bare read appears.
+ *
+ * ---------------------------------------------------------------------------
+ *
+ * "Module scope" is decided structurally, by walking to the nearest enclosing
+ * function. A call inside a function is deferred and therefore fine — EXCEPT
+ * when that function is immediately invoked (`(() => createCachedObject())()`),
+ * which runs at module scope after all and is handled.
+ *
+ * Known gaps (deliberate):
+ *   - eager invocation through a callback the rule cannot classify:
+ *     `TYPES.map(() => createCachedObject(...))` at module scope is eager, but
+ *     the arrow makes it look deferred. Detecting this needs to know which
+ *     callees run their argument synchronously.
+ *     🔴 If you close this gap, do NOT do it by loosening `isImmediatelyInvoked`
+ *     to "the function is an argument to some call". `describe(() => ...)`,
+ *     `register(() => createCachedObject(...))` and every other deferred
+ *     callback stored for later are arguments to a call too, and that edit
+ *     flags all of them. The `valid` cases named "🔴 M8" in
+ *     src/server/services/__tests__/no-module-scope-cache.test.ts pin exactly
+ *     this and are the ones that go red if you try it;
+ *   - the callee is matched by NAME, not resolved to its import. A local helper
+ *     that happens to be called `createCachedObject` is reported (one disable
+ *     comment), and a cache built through an aliased import is not;
+ *   - a cache built at module scope by a helper the rule can't see through
+ *     (`const c = makeCache()` where makeCache calls createCachedObject) is not
+ *     reported. The hazard is real there too, but the shape is not in the tree.
+ *
+ * Intentional exceptions should use:
+ *   // eslint-disable-next-line local-rules/no-module-scope-cache -- <reason>
+ */
+// All three are `~/server/utils/cache-helpers` exports that (a) are absent from a
+// wholesale mock of that module and (b) take a `REDIS_KEYS.*` key as their first
+// argument, so an eager call carries both collection-failure signatures.
+// `cachedCounter` is the same hazard in a different wrapper — see
+// `bugReportCounter` in src/server/services/bug.service.ts.
+const DEFAULT_CACHE_CREATORS = ['createCachedObject', 'createCachedArray', 'cachedCounter'];
+
+/**
+ * `(() => ...)()` / `(function () { ... })()` — the function runs where it sits.
+ *
+ * The `parent.callee === fn` half is load-bearing and is NOT redundant with the
+ * `CallExpression` check: without it, a function passed as an ARGUMENT
+ * (`describe(() => ...)`, `register(() => createCachedObject(...))`) reads as an
+ * IIFE, and every deferred callback in the scoped dirs gets reported. Pinned by
+ * the "🔴 M8" valid cases in the rule's test file.
+ */
+function isImmediatelyInvoked(fn) {
+  const parent = fn.parent;
+  return !!parent && parent.type === 'CallExpression' && parent.callee === fn;
+}
+
+/**
+ * Does this node evaluate during module evaluation?
+ *
+ * Walk to the Program. Any enclosing function DEFERS the call (its body runs
+ * when it is called, not when the module loads) — unless the function is itself
+ * immediately invoked, in which case we keep walking from the invocation. A
+ * non-static class property initialiser runs per instantiation, so it defers
+ * too; a static one does not.
+ */
+function isEvaluatedAtModuleScope(node) {
+  let current = node;
+  let parent = current.parent;
+
+  while (parent) {
+    if (
+      parent.type === 'FunctionDeclaration' ||
+      parent.type === 'FunctionExpression' ||
+      parent.type === 'ArrowFunctionExpression'
+    ) {
+      if (!isImmediatelyInvoked(parent)) return false;
+      // An IIFE: resume the walk from the call that invokes it.
+      current = parent.parent;
+      parent = current.parent;
+      continue;
+    }
+
+    if (parent.type === 'PropertyDefinition' && parent.value === current && !parent.static) {
+      return false;
+    }
+
+    current = parent;
+    parent = current.parent;
+  }
+
+  return current.type === 'Program';
+}
+
+const noModuleScopeCache = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description:
+        'Require createCachedObject/createCachedArray/cachedCounter in services to be built lazily — a module-scope call breaks test COLLECTION for every suite that wholesale-mocks cache-helpers or redis/client and transitively imports the service. Guards eager cache CONSTRUCTION only: a bare module-scope `REDIS_KEYS.*` read that feeds no creator call produces the same collection error and is deliberately not covered (reasoning and counts in the rule header).',
+      recommended: true,
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          creators: { type: 'array', items: { type: 'string' }, minItems: 1 },
+        },
+        additionalProperties: false,
+      },
+    ],
+    messages: {
+      moduleScopeCache:
+        '`{{creator}}(...)` at MODULE SCOPE — it runs when this file is IMPORTED, not when the cache is used, so importing this file needs `{{creator}}` to exist AND evaluates the `REDIS_KEYS.*` key argument on this line. ~150 suites wholesale-mock `~/server/redis/client` and ~26 mock `~/server/utils/cache-helpers`; every one of them that reaches this service transitively then fails at COLLECTION, before any test runs — "No {{creator}} export is defined on the mock" if cache-helpers was the mocked one, or "Cannot read properties of undefined (reading \'<KEY>\')" from this line\'s key argument if it was redis/client. Nothing in the failing suite mentions this file. Build it lazily instead: `function createX() { return {{creator}}({ ... }); }` plus `let xInstance: ReturnType<typeof createX> | undefined; function x() { return (xInstance ??= createX()); }`, and call through the getter (`x().fetch(...)`). Runtime behaviour is unchanged — still one instance per process, built on first USE instead of first IMPORT. Canonical example: `paidAccessCache` in src/server/services/paid-access.service.ts. If this one really must be eager, silence it explicitly: `// eslint-disable-next-line local-rules/no-module-scope-cache -- <reason>`. (Scope: this rule guards eager cache CONSTRUCTION. A bare module-scope `REDIS_KEYS.*` read that feeds no creator call throws the same TypeError and is NOT guarded — see the rule header for why.)',
+    },
+  },
+  create(context) {
+    const options = context.options[0] || {};
+    const creators = new Set(options.creators || DEFAULT_CACHE_CREATORS);
+
+    return {
+      CallExpression(node) {
+        const callee = node.callee;
+        if (!callee || callee.type !== 'Identifier' || !creators.has(callee.name)) return;
+        if (!isEvaluatedAtModuleScope(node)) return;
+
+        context.report({
+          node,
+          messageId: 'moduleScopeCache',
+          data: { creator: callee.name },
+        });
+      },
+    };
+  },
+};
+
+/**
+ * no-unloadable-image-fixture
+ *
+ * Flags an http(s) URL string LITERAL used as an image source in a browser-mode
+ * component test (`*.browser.test.tsx`).
+ *
+ * Nothing serves an external URL to the test browser, so such an `<img>` never
+ * loads: the element's real `error` event fires a few milliseconds after mount.
+ * What happens NEXT depends on the component, and the distinction is the whole
+ * reason this rule is narrow rather than a blanket ban — each clause below was
+ * read off the installed `@mantine/core`, not assumed:
+ *
+ *   - DESTROYS the `<img>`: Mantine `Avatar` (`Avatar.mjs:70,91` — `useState(!src)`
+ *     + `onError -> setError(true)`, then renders a `<span>` placeholder INSTEAD
+ *     of the `<img>`), measured at ~11 ms from mount to swap. Same for a bespoke
+ *     `onError -> placeholder` handler, e.g. `src/components/Apps/AppListingCard.tsx:135`.
+ *   - KEEPS the `<img>`: Mantine `Image` (`Image.mjs:58` — `if (error && fallbackSrc)`
+ *     swaps to a DIFFERENT `<img>`; with no `fallbackSrc` it re-renders the SAME
+ *     one, so the element survives with a failed src). `fallbackSrc` appears ZERO
+ *     times in `src/`, so in this repo Mantine `Image` never destroys anything.
+ *
+ * So only the first group can flake an `<img>`-existence assertion, by racing that
+ * ~11 ms window: green on a fast local machine, intermittently red on a loaded CI
+ * box. That exact defect sat red on `main` across five PRs before #3551 fixed it,
+ * and the fixture it fixed was a duplicate of one that already existed in another
+ * test file — a convention nobody could see was not enough.
+ *
+ * 🔴 An earlier draft of this header claimed "every image-rendering component in
+ * this codebase" destroys the `<img>`. That was false, and it mattered: it is the
+ * rationale a future maintainer reads when deciding whether to widen or delete
+ * this rule, and it overstated how much of the codebase is actually at risk.
+ *
+ * Fix: use the shared `LOADABLE_IMAGE_DATA_URI` from `test/component-setup`. It
+ * is a 1x1 transparent PNG `data:` URI, so it resolves locally and synchronously
+ * and the `<img>` survives the whole test.
+ *
+ * Measured population at the time of writing (all 117 `*.browser.test.tsx`
+ * instrumented with a document-level capture listener that records every `<img>`
+ * firing a real `error` event with an http(s) src): 14 distinct external image
+ * URLs across 6 files really do mount as broken images today. They are latent,
+ * not theoretical — each becomes a flake the day someone adds an `<img>`
+ * assertion beside it, which is precisely what happened to AppBlockChrome.
+ *
+ * 🔴 COVERAGE IS PARTIAL — do not read the two numbers above and below as a pair.
+ * This rule reports 9 distinct URLs of those 14, so AT LEAST 5 (~36%) of the
+ * measured mounting fixtures are OUTSIDE it. The gap has a known shape: `url` is
+ * the single most common http-literal binding in the browser suite (36
+ * occurrences) and is deliberately NOT in `IMAGE_URL_KEYS`, because `url` is also
+ * the overwhelmingly common name for non-image URLs. That leaves ~38 uncovered
+ * http literals carrying an image extension across 12 files — including 8 more
+ * sites in `ListingAssetStep.browser.test.tsx`, a file this rule already flags
+ * elsewhere. Widening to `url` behind the existing `IMAGE_EXT_RE` proof would be
+ * a one-line change with identical false-positive discipline; it is deferred, not
+ * overlooked. Most of those feed Mantine `Image`, which per the mechanism note
+ * above does NOT destroy the `<img>`, so the latent risk is lower than the raw
+ * count suggests — but it is not zero, and it is not covered.
+ *
+ * SCOPE / false-positive control. Two independent conditions must hold, so the
+ * rule cannot reach a non-image URL:
+ *   1. the literal must start `http://` or `https://`, AND
+ *   2. it must sit in an image-source position:
+ *      - a property / JSX attribute / variable named as an unambiguous image
+ *        source (`iconUrl`, `coverUrl`, `iconImageUrl`, `coverImageUrl`,
+ *        `imageUrl`, `avatarUrl`, `thumbnailUrl`, `logoUrl`, `posterUrl`,
+ *        `bannerUrl`, `backgroundImageUrl`) — these can only ever be an image; or
+ *      - the AMBIGUOUS `src`, which is additionally required to point at an
+ *        image file extension, or to sit on an `<img>`-family JSX element.
+ * `src` is gated that way on purpose: `iframe: { src: 'https://example.com/block' }`
+ * in OnsiteReviewModal.browser.test.tsx is an iframe document, not an image, and
+ * must not be reported. A URL that merely *appears* in a test (`liveUrl`,
+ * `externalUrl`, `reviewRepoUrl`, a markdown body such as AgentReviewChat's
+ * `![tracking](https://example.com/pixel.png)`) is likewise untouched — it is not
+ * in an image-source position, so it can never mount an `<img>` this way.
+ *
+ * Not covered, deliberately: a same-origin RELATIVE path that 404s
+ * (`/api/blocks/screenshot/app-1/0.png` in AppBlockCard / AppDetailsModal) is
+ * also unloadable, but "relative path that happens not to be served" is not
+ * decidable from the source text, and treating every relative image path as
+ * suspect would flag the many that a component genuinely renders from fixtures.
+ * The http(s) form is the one that is unloadable BY CONSTRUCTION.
+ *
+ * ESCAPE HATCH. An unloadable image is sometimes the point — testing an
+ * `onError` fallback needs a URL that really fails. Opt out per line, with a
+ * reason, matching the convention the repo's other local rules use:
+ *   // eslint-disable-next-line local-rules/no-unloadable-image-fixture -- <reason>
+ * There is one such site in the repo today: the deliberate broken-cover test in
+ * AppListingCard.browser.test.tsx.
+ */
+const IMAGE_URL_KEYS = new Set([
+  'iconUrl',
+  'coverUrl',
+  'iconImageUrl',
+  'coverImageUrl',
+  'imageUrl',
+  'avatarUrl',
+  'thumbnailUrl',
+  'logoUrl',
+  'posterUrl',
+  'bannerUrl',
+  'backgroundImageUrl',
+]);
+
+/** Keys that MIGHT be an image but are also used for iframes/scripts/media. */
+const AMBIGUOUS_SRC_KEYS = new Set(['src']);
+
+/** JSX elements whose `src` is unambiguously an image. */
+const IMAGE_ELEMENTS = new Set(['img', 'Img', 'Image', 'Avatar', 'EdgeMedia']);
+
+const HTTP_URL_RE = /^https?:\/\//i;
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif|svg|bmp|ico|apng|tiff?)(?:[?#]|$)/i;
+
+/** The literal's string value, or null if it isn't a plain string literal. */
+function plainStringValue(node) {
+  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (
+    node.type === 'TemplateLiteral' &&
+    node.expressions.length === 0 &&
+    node.quasis.length === 1
+  ) {
+    return node.quasis[0].value.cooked;
+  }
+  return null;
+}
+
+/** Property / JSX-attribute / variable name a literal is bound to, plus its JSX element. */
+function bindingFor(node) {
+  const parent = node.parent;
+  if (!parent) return null;
+
+  // { iconUrl: 'https://…' }  /  { 'icon-url': 'https://…' }
+  if (parent.type === 'Property' && parent.value === node && !parent.computed) {
+    const key = parent.key;
+    const name =
+      key.type === 'Identifier' ? key.name : key.type === 'Literal' ? String(key.value) : null;
+    return name ? { name, element: null } : null;
+  }
+
+  // <img src="https://…" />  /  <Avatar src={'https://…'} />
+  let attr = null;
+  if (parent.type === 'JSXAttribute' && parent.value === node) attr = parent;
+  else if (
+    parent.type === 'JSXExpressionContainer' &&
+    parent.parent &&
+    parent.parent.type === 'JSXAttribute' &&
+    parent.parent.value === parent
+  ) {
+    attr = parent.parent;
+  }
+  if (attr && attr.name && attr.name.type === 'JSXIdentifier') {
+    const opening = attr.parent;
+    const elName =
+      opening && opening.name && opening.name.type === 'JSXIdentifier' ? opening.name.name : null;
+    return { name: attr.name.name, element: elName };
+  }
+
+  // const iconUrl = 'https://…'
+  if (
+    parent.type === 'VariableDeclarator' &&
+    parent.init === node &&
+    parent.id.type === 'Identifier'
+  ) {
+    return { name: parent.id.name, element: null };
+  }
+
+  // obj.iconUrl = 'https://…'
+  if (
+    parent.type === 'AssignmentExpression' &&
+    parent.right === node &&
+    parent.left.type === 'MemberExpression' &&
+    !parent.left.computed &&
+    parent.left.property.type === 'Identifier'
+  ) {
+    return { name: parent.left.property.name, element: null };
+  }
+
+  return null;
+}
+
+const noUnloadableImageFixture = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description:
+        'Disallow an http(s) URL literal as an image source in a *.browser.test.tsx fixture — nothing serves it to the test browser, so the <img> errors and every onError fallback in this codebase destroys it a few ms after mount, making any "the <img> exists" assertion an intermittent CI flake. Use LOADABLE_IMAGE_DATA_URI from test/component-setup.',
+      recommended: true,
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: {
+          extraKeys: { type: 'array', items: { type: 'string' } },
+        },
+        additionalProperties: false,
+      },
+    ],
+    messages: {
+      unloadableImageFixture:
+        "`{{key}}: '{{url}}'` is an http(s) image source in a browser test — nothing serves it to the test browser, so the <img> fires a real `error` event a few ms after mount and the component's onError fallback replaces it with a placeholder (Mantine Avatar: measured ~11 ms). Any assertion that the <img> EXISTS then races that window — green locally, intermittently red on a loaded CI box. This exact defect sat red on `main` across five PRs (fixed in #3551). Use the shared fixture instead: `import { LOADABLE_IMAGE_DATA_URI } from '<relative>/test/component-setup';` — a 1x1 transparent PNG data: URI that resolves locally, so the <img> survives the whole test. If the image is MEANT to fail to load (you are testing the onError/placeholder path), say so explicitly: // eslint-disable-next-line local-rules/no-unloadable-image-fixture -- <reason>",
+    },
+  },
+  create(context) {
+    const options = context.options[0] || {};
+    const keys = new Set([...IMAGE_URL_KEYS, ...(options.extraKeys || [])]);
+
+    function check(node) {
+      const url = plainStringValue(node);
+      if (url === null || !HTTP_URL_RE.test(url)) return;
+
+      const binding = bindingFor(node);
+      if (!binding) return;
+
+      const { name, element } = binding;
+      if (!keys.has(name)) {
+        // `src` only counts when we can prove it is an image: either the URL
+        // names an image file, or the JSX element is an image component. That
+        // is what keeps `iframe: { src: 'https://example.com/block' }` clean.
+        if (!AMBIGUOUS_SRC_KEYS.has(name)) return;
+        const provablyImage = IMAGE_EXT_RE.test(url) || (element && IMAGE_ELEMENTS.has(element));
+        if (!provablyImage) return;
+      }
+
+      context.report({
+        node,
+        messageId: 'unloadableImageFixture',
+        data: { key: name, url },
+      });
+    }
+
+    return {
+      Literal: check,
+      TemplateLiteral: check,
+    };
+  },
+};
+
+// `cursor` only. `nextCursor` is a real API field on this codebase's paginated payloads
+// (model.service.ts and friends), so defaulting to it flags data fixtures that cannot loop.
+// Opt in per-file via `extraKeys` for a fake that spells it that way.
+const CURSOR_KEYS = new Set(['cursor']);
+const TERMINAL_CURSORS = new Set(['0', '']);
+
+function isTerminalCursorValue(node) {
+  if (!node) return false;
+  if (node.type === 'Literal') {
+    if (node.value === null) return true;
+    if (typeof node.value === 'number') return node.value === 0;
+    if (typeof node.value === 'bigint') return node.value === 0n;
+    if (typeof node.value === 'string') return TERMINAL_CURSORS.has(node.value);
+    return false;
+  }
+  if (node.type === 'TemplateLiteral' && node.expressions.length === 0) {
+    return TERMINAL_CURSORS.has(node.quasis[0].value.cooked);
+  }
+  if (node.type === 'Identifier') return node.name === 'undefined';
+  // `cursor: done ? 1 : 0` terminates — one branch is enough.
+  if (node.type === 'ConditionalExpression') {
+    return isTerminalCursorValue(node.consequent) || isTerminalCursorValue(node.alternate);
+  }
+  if (node.type === 'LogicalExpression') {
+    return isTerminalCursorValue(node.left) || isTerminalCursorValue(node.right);
+  }
+  if (node.type === 'TSAsExpression' || node.type === 'TSNonNullExpression') {
+    return isTerminalCursorValue(node.expression);
+  }
+  return false;
+}
+
+function cursorPropertyOf(node, keys) {
+  if (!node || node.type !== 'ObjectExpression') return null;
+  return (
+    node.properties.find(
+      (p) =>
+        p.type === 'Property' &&
+        !p.computed &&
+        ((p.key.type === 'Identifier' && keys.has(p.key.name)) ||
+          (p.key.type === 'Literal' && keys.has(p.key.value)))
+    ) || null
+  );
+}
+
+/** Unwrap `Promise.resolve(x)` / `await x` so a fake written either way is still seen. */
+function unwrapReturned(node) {
+  let current = node;
+  for (let i = 0; i < 4 && current; i++) {
+    if (current.type === 'AwaitExpression') current = current.argument;
+    else if (
+      current.type === 'CallExpression' &&
+      current.callee.type === 'MemberExpression' &&
+      current.callee.object.type === 'Identifier' &&
+      current.callee.object.name === 'Promise' &&
+      current.callee.property.type === 'Identifier' &&
+      current.callee.property.name === 'resolve' &&
+      current.arguments.length === 1
+    ) {
+      current = current.arguments[0];
+    } else break;
+  }
+  return current;
+}
+
+const noUnboundedPagingFake = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description:
+        "Require a test fake that returns a paging cursor to have a return path yielding a terminal cursor, so a regression fails legibly instead of hanging CI. A cursor fake that never returns '0' turns a reverted bound into an infinite loop of await-on-already-resolved promises — a pure microtask loop that starves the macrotask queue, so vitest's setTimeout-based testTimeout never fires.",
+      recommended: true,
+    },
+    schema: [
+      {
+        type: 'object',
+        properties: { extraKeys: { type: 'array', items: { type: 'string' } } },
+        additionalProperties: false,
+      },
+    ],
+    messages: {
+      unboundedPagingFake:
+        "This fake returns a `{{key}}` but has no return path where `{{key}}` is terminal ('0', '', 0, null or undefined), so it never stops paging on its own. If the bound under test is ever removed, the consumer loops forever on already-resolved promises — a pure microtask loop that starves the macrotask queue, so vitest's setTimeout-based `testTimeout` NEVER fires and CI hangs with no assertion failure and nothing to read (measured: 4,194,305 iterations in 4s with a 300ms setTimeout that never ran). Add a cap so the fake terminates itself, and assert the loop stopped early — `if (pages > 50) return { {{key}}: '0', fields: [] };` turns an unreportable hang into `expected 51 to be less than 5` in under a second. See CLAUDE.md, \"A passing test says nothing about how it FAILS\". If the non-termination is the point and the consumer is independently bounded, say so: // eslint-disable-next-line local-rules/no-unbounded-paging-fake -- <reason>",
+    },
+  },
+  create(context) {
+    const options = context.options[0] || {};
+    const keys = new Set([...CURSOR_KEYS, ...(options.extraKeys || [])]);
+    // One entry per function currently being walked. Returns are attributed to the
+    // innermost enclosing function, so a nested callback never satisfies its parent.
+    const stack = [];
+
+    function enter() {
+      stack.push({ cursorNode: null, key: null, terminates: false });
+    }
+
+    function record(returned) {
+      const frame = stack[stack.length - 1];
+      if (!frame) return;
+      const object = unwrapReturned(returned);
+      const prop = cursorPropertyOf(object, keys);
+      if (!prop) return;
+      const key = prop.key.type === 'Identifier' ? prop.key.name : prop.key.value;
+      if (isTerminalCursorValue(prop.value)) frame.terminates = true;
+      else if (!frame.cursorNode) {
+        frame.cursorNode = prop;
+        frame.key = key;
+      }
+    }
+
+    function exit() {
+      const frame = stack.pop();
+      if (!frame || !frame.cursorNode || frame.terminates) return;
+      context.report({
+        node: frame.cursorNode,
+        messageId: 'unboundedPagingFake',
+        data: { key: frame.key },
+      });
+    }
+
+    return {
+      FunctionExpression: enter,
+      ArrowFunctionExpression(node) {
+        enter();
+        // Implicit-return arrow: `() => ({ cursor: '0' })`
+        if (node.body.type !== 'BlockStatement') record(node.body);
+      },
+      FunctionDeclaration: enter,
+      ReturnStatement(node) {
+        if (node.argument) record(node.argument);
+      },
+      'FunctionExpression:exit': exit,
+      'ArrowFunctionExpression:exit': exit,
+      'FunctionDeclaration:exit': exit,
+    };
+  },
+};
+
 module.exports = {
   'no-io-in-transaction': noIoInTransaction,
+  'no-module-scope-cache': noModuleScopeCache,
+  'no-unbounded-paging-fake': noUnboundedPagingFake,
+  'no-unloadable-image-fixture': noUnloadableImageFixture,
+  'no-wholesale-module-mock': noWholesaleModuleMock,
 };

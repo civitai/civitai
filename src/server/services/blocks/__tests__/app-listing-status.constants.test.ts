@@ -21,7 +21,7 @@ import { APP_LISTING_STATUSES } from '~/server/services/blocks/app-listing-statu
 
 // repo root: this file is src/server/services/blocks/__tests__ → 5 levels up.
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
-const MIGRATIONS_DIR = path.join(REPO_ROOT, 'prisma/migrations');
+const MIGRATIONS_DIR = path.join(REPO_ROOT, 'packages/civitai-db-schema/prisma/migrations');
 
 /**
  * Resolve the LATEST `app_listing_status_*` migration `.sql` — glob rather than
@@ -34,7 +34,7 @@ function latestStatusCheckMigration(): string {
     .filter((d) => /_app_listing_status_/.test(d))
     .sort();
   if (dirs.length === 0)
-    throw new Error('no *_app_listing_status_* migration dir found under prisma/migrations');
+    throw new Error('no *_app_listing_status_* migration dir found under packages/civitai-db-schema/prisma/migrations');
   return path.join(MIGRATIONS_DIR, dirs[dirs.length - 1], 'migration.sql');
 }
 

@@ -78,7 +78,6 @@ import { FormFooter, MetadataExtractionFooter } from './FormFooter';
 import { GenerationLayout, GenerationFooter } from './GenerationLayout';
 import {
   ResourceAlerts,
-  ExperimentalModelAlert,
   GrokEcosystemAlert,
   SeedanceImg2VidAlert,
   ReadyAlert,
@@ -110,6 +109,9 @@ import {
   ImageUploadMultipleInput,
   type ImageStatusAnnotation,
 } from './inputs/ImageUploadMultipleInput';
+import type { ImageMetadataApply } from '~/components/Generation/Input/ImageMetadataModal';
+import type { GenerationResource } from '~/shared/types/generation.types';
+import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { fetchBlobAsFile } from '~/utils/file-utils';
 import { ExifParser } from '~/utils/metadata';
 import { VideoInput } from './inputs/VideoInput';
@@ -271,12 +273,20 @@ export function GenerationForm() {
 
   // Configure tour steps based on user state
   useEffect(() => {
+    const through = (steps: typeof contentGenerationTour, target: string) => {
+      const end = steps.findIndex((step) => step.target === `[data-tour="${target}"]`);
+      return end === -1 ? steps : steps.slice(0, end + 1);
+    };
+
     if (!running || currentStep > 0 || loadingGeneratorData) return;
     const isRemix = remixOfId && activeTour === 'remix-content-generation';
     let genSteps = isRemix ? remixContentGenerationTour : contentGenerationTour;
 
-    if (!loadingGenQueueRequests && !hasGeneratedImages) genSteps = genSteps.slice(0, -2);
-    if (!currentUser) genSteps = isRemix ? genSteps.slice(0, 4) : genSteps.slice(0, 6);
+    // Both cuts name the step they end on. As positional indexes they silently
+    // re-aimed at whatever moved into the slot — inserting the remix-menu step
+    // pushed `gen:submit` out of the signed-out tour, and nothing failed.
+    if (!loadingGenQueueRequests && !hasGeneratedImages) genSteps = through(genSteps, 'gen:feed');
+    if (!currentUser) genSteps = through(genSteps, 'gen:submit');
 
     const alreadyReviewedTerms =
       window?.localStorage?.getItem('review-generation-terms') === 'true';
@@ -607,23 +617,26 @@ export function GenerationForm() {
               />
             </div>
 
-            {/* API version selector (e.g., Veo 3.0 vs 3.1) */}
+            {/* API version selector (e.g. Veo 3.1). Hidden while a single
+                version is offered — the value is still sent. */}
             <Controller
               graph={graph}
               name="version"
-              render={({ value, meta, onChange }) => (
-                <Radio.Group
-                  value={value}
-                  onChange={(v) => onChange(v as typeof value)}
-                  label="API Version"
-                >
-                  <Group mt="xs">
-                    {meta.options.map((o: { label: string; value: string }) => (
-                      <Radio key={o.value} value={o.value} label={o.label} />
-                    ))}
-                  </Group>
-                </Radio.Group>
-              )}
+              render={({ value, meta, onChange }) =>
+                meta.options.length < 2 ? null : (
+                  <Radio.Group
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    label="API Version"
+                  >
+                    <Group mt="xs">
+                      {meta.options.map((o: { label: string; value: string }) => (
+                        <Radio key={o.value} value={o.value} label={o.label} />
+                      ))}
+                    </Group>
+                  </Radio.Group>
+                )
+              }
             />
 
             {/* Additional resources (LoRA, etc.) */}
@@ -680,16 +693,11 @@ export function GenerationForm() {
               )}
             />
 
-            {/* Experimental Ecosystem Alert */}
+            {/* Grok terms warning */}
             <Controller
               graph={graph}
               name="ecosystem"
-              render={({ value }) => (
-                <>
-                  <ExperimentalModelAlert ecosystem={value} />
-                  <GrokEcosystemAlert ecosystem={value} />
-                </>
-              )}
+              render={({ value }) => <GrokEcosystemAlert ecosystem={value} />}
             />
 
             {/* Seedance img2vid copyright-filter warning */}
@@ -1052,6 +1060,7 @@ export function GenerationForm() {
                                 negativePrompt?: string;
                                 resources?: ResourcesNodeValue;
                                 snippets?: SnippetsNodeValue;
+                                images?: { url: string; width?: number; height?: number }[];
                               };
                               triggerPromptEnhance(
                                 {
@@ -1060,6 +1069,7 @@ export function GenerationForm() {
                                   ecosystem: snap.ecosystem ?? '',
                                   resources: snap.resources,
                                   snippetTargets: snap.snippets?.targets,
+                                  images: snap.images,
                                 },
                                 (wf) =>
                                   graph.set({
@@ -1263,6 +1273,46 @@ export function GenerationForm() {
                 toggle. The `process` node in `polygen-graph.ts` has a
                 `transform` on `workflow` that keeps the two in sync. */}
 
+            {/* PolyGen: Meshy version. Both buttons render on BOTH 3D workflows
+                whenever `meshyV7Generator` is on — v7 is image-only, but hiding
+                it on txt2model3d (the 3D default) hid the choice entirely. v7
+                is not runnable there, so picking it moves the user to Image to
+                3D in the same `graph.set` the version lands in. Without the
+                flag there is only one option and the control is pointless, so
+                it stays hidden. */}
+            <Controller
+              graph={graph}
+              name="polygenVersion"
+              render={({ value, meta, onChange }) => {
+                const options = (
+                  meta as { options: { label: string; value: string; description?: string }[] }
+                ).options;
+                if (options.length < 2) return null;
+                return (
+                  <div className="flex flex-col gap-1">
+                    <ControllerLabel
+                      label="Meshy version"
+                      info="v7 produces higher-fidelity geometry and accepts up to four views of the same object, but has no text-to-3D mode. v6 is the only version with a text prompt."
+                    />
+                    <ButtonGroupInput
+                      value={value as string}
+                      onChange={(v) => {
+                        if (v === 'v7' && snapshot.workflow === 'txt2model3d') {
+                          graph.set({
+                            workflow: 'img2model3d',
+                            polygenVersion: 'v7',
+                          } as Parameters<typeof graph.set>[0]);
+                          return;
+                        }
+                        onChange(v as typeof value);
+                      }}
+                      data={options}
+                    />
+                  </div>
+                );
+              }}
+            />
+
             {/* PolyGen: text mode (preview | full) — text-to-3D only.
                 Rendered ABOVE the prompt so Mode is the first decision the
                 user sees after the workflow header, matching Image. */}
@@ -1360,6 +1410,65 @@ export function GenerationForm() {
                     data={(meta as { options: { label: string; value: string }[] }).options}
                   />
                 </div>
+              )}
+            />
+
+            {/* ============================================================
+                Meshy v7-only controls. Everything v7 shares with v6 (images,
+                polycount, topology, symmetry, texture prompt, remesh, PBR,
+                animate) is rendered by the Controllers above/below; these
+                auto-hide while `polygenVersion` is v6.
+                ============================================================ */}
+
+            {/* Meshy v7: pose mode */}
+            <Controller
+              graph={graph}
+              name="poseMode"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel
+                    label="Pose"
+                    info="Force the character into an A-pose or T-pose, which rigs and animates more reliably. Auto lets Meshy keep the pose from your image."
+                  />
+                  <ButtonGroupInput
+                    value={value as string}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={(meta as { options: { label: string; value: string }[] }).options}
+                  />
+                </div>
+              )}
+            />
+
+            {/* Meshy v7: model type — single-image only */}
+            <Controller
+              graph={graph}
+              name="modelType"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel
+                    label="Model type"
+                    info="Low poly produces a stylized, game-ready mesh and ignores the polycount, topology and remesh controls."
+                  />
+                  <ButtonGroupInput
+                    value={value as string}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={(meta as { options: { label: string; value: string }[] }).options}
+                  />
+                </div>
+              )}
+            />
+
+            {/* Meshy v7: ultra mode — single-image only */}
+            <Controller
+              graph={graph}
+              name="ultraMode"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Ultra fidelity"
+                  description="Higher-fidelity geometry with finer surface detail (slower and more expensive)"
+                  checked={!!value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
               )}
             />
 
@@ -2079,6 +2188,52 @@ export function GenerationForm() {
                 )}
               />
 
+              {/* Meshy v7 advanced — both only apply to a rigged mesh, so
+                  the graph hides them unless "Animate" is on. */}
+              <Controller
+                graph={graph}
+                name="riggingHeightMeters"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    label={
+                      <ControllerLabel
+                        label="Character height (m)"
+                        info="Approximate real-world height of the character, used to scale the skeleton."
+                      />
+                    }
+                    value={value as number}
+                    onChange={onChange}
+                    min={(meta as { min: number }).min}
+                    max={(meta as { max: number }).max}
+                    step={(meta as { step: number }).step}
+                    precision={1}
+                  />
+                )}
+              />
+              <Controller
+                graph={graph}
+                name="animationActionId"
+                render={({ value, meta, onChange }) => {
+                  const m = meta as { min?: number; max?: number; placeholder?: string };
+                  return (
+                    <NumberInput
+                      label={
+                        <ControllerLabel
+                          label="Animation preset"
+                          info="Id from Meshy's animation library. 0 is Idle; see https://docs.meshy.ai/en/api/animation-library for the full list."
+                        />
+                      }
+                      value={(value as number | undefined) ?? ''}
+                      onChange={(v) => onChange(typeof v === 'number' ? v : undefined)}
+                      min={m.min}
+                      max={m.max}
+                      placeholder={m.placeholder ?? '0 (Idle)'}
+                      allowDecimal={false}
+                    />
+                  );
+                }}
+              />
+
               {/* Seed */}
               <Controller
                 graph={graph}
@@ -2255,6 +2410,20 @@ export function GenerationForm() {
                   <Checkbox
                     label="Generate audio"
                     description="Generate audio along with the video"
+                    checked={value}
+                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  />
+                )}
+              />
+
+              {/* Turbo LoRA toggle (MiniMax H3 comfy) */}
+              <Controller
+                graph={graph}
+                name="turbo"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    label="Turbo"
+                    description="Use the turbo LoRA — converges in fewer steps"
                     checked={value}
                     onChange={(e) => onChange(e.currentTarget.checked)}
                   />
@@ -2451,6 +2620,7 @@ function PromptEnhancePanelWrapper({
       ecosystem={data.ecosystem}
       triggerWords={data.triggerWords}
       snippetTargets={data.snippetTargets}
+      images={data.images}
       onBack={onBack}
       onApply={(enhancedPrompt, enhancedNegativePrompt) => {
         graph.set({ prompt: enhancedPrompt } as Parameters<typeof graph.set>[0]);
@@ -2495,6 +2665,28 @@ function ImagesInput({
     | undefined;
   const aiMetaAnnotations = useAiMetadataAnnotations(value);
   const annotations = useMergedAnnotations(graphAnnotations, aiMetaAnnotations);
+  // The active graph IS the applicability rule: a param is offered only when
+  // there's a node to put it in, so a video workflow drops the image-only
+  // settings on its own and no per-workflow list has to be maintained here.
+  const resourcesSnapshot = useGraphSubscription(graph, 'resources');
+  const resourceLimit = (resourcesSnapshot?.meta as { limit?: number } | undefined)?.limit;
+  const metadataApply: ImageMetadataApply = {
+    canApply: (key) => graph.hasNode(key),
+    onApply: (values) => graph.set(values as Parameters<typeof graph.set>[0]),
+    resourceOptions: (resourcesSnapshot?.meta as { options?: ResourceSelectOptions } | undefined)
+      ?.options,
+    onAddResource: resourcesSnapshot
+      ? (resource) => {
+          const current =
+            ((graph.getSnapshot() as Record<string, unknown>).resources as
+              | GenerationResource[]
+              | undefined) ?? [];
+          if (current.some((r) => r.id === resource.id)) return;
+          if (resourceLimit != null && current.length >= resourceLimit) return;
+          graph.set({ resources: [...current, resource] } as Parameters<typeof graph.set>[0]);
+        }
+      : undefined,
+  };
 
   return (
     <ImageUploadMultipleInput
@@ -2512,6 +2704,8 @@ function ImagesInput({
       cropToFirstImage={meta?.cropToFirstImage}
       imageAnnotations={annotations}
       imageLayout="wrap"
+      enableMetadataExtraction
+      metadataApply={metadataApply}
     />
   );
 }

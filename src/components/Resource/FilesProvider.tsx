@@ -649,7 +649,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     );
 
     try {
-      return await upload(
+      const result = await upload(
         {
           file,
           type: type === 'Model' ? UploadType.Model : UploadType.Default,
@@ -705,6 +705,24 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           }
         }
       );
+
+      // The store resolves undefined when the transfer or its completion call failed —
+      // without this the row stays stuck mid-upload with no way back to retry.
+      if (!result) {
+        const failed =
+          useS3UploadStore.getState().items.find((x) => x.meta?.uuid === uuid)?.status === 'error';
+        setFiles((state) =>
+          state.map((x) => (x.uuid === uuid ? { ...x, isPending: true, isUploading: false } : x))
+        );
+        if (failed)
+          showErrorNotification({
+            title: 'Failed to upload file',
+            reason: 'The upload did not finish. Please retry this file.',
+            error: new Error(file.name),
+          });
+      }
+
+      return result;
     } catch (e) {
       showErrorNotification({
         title: 'Failed to upload file',
@@ -851,6 +869,7 @@ const showConflictNotification = (conflicts: FileFromContextProps[][]) => {
 /** Model types whose primary file is an archive/config rather than model weights */
 const archivePrimaryModelTypes: ModelType[] = [
   ModelType.Workflows,
+  ModelType.ComfyWorkflows,
   ModelType.Poses,
   ModelType.Wildcards,
   ModelType.Other,
@@ -1215,6 +1234,18 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: {
       extensions: [...archiveExts, ...configExts],
       fileTypes: [...primaryFileTypesByModelType.Workflows],
+      maxFiles: 1,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive', 'Other'],
+      maxFiles: 1,
+    },
+  },
+  ComfyWorkflows: {
+    primary: {
+      extensions: [...archiveExts, ...configExts],
+      fileTypes: [...primaryFileTypesByModelType.ComfyWorkflows],
       maxFiles: 1,
     },
     additional: {

@@ -73,36 +73,12 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: vi.fn(),
 }));
 vi.mock('~/server/services/user.service', () => ({ getUserById: vi.fn() }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlock: { findUnique: vi.fn() } },
-  dbWrite: {},
-}));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
-  return {
-    ...actual,
-    redis: { get: vi.fn(), set: vi.fn() },
-    sysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
-  };
-});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
-}));
-// F-E marketplace reviews — the router now statically imports these; stub them
-// so this test stays isolated (it exercises getMyAppRepo, not reviews).
-vi.mock('~/server/rewards/active/appBlockReview.reward', () => ({
-  appBlockReviewReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
-}));
-vi.mock('~/server/services/appBlockReview.service', () => ({
-  upsertAppBlockReview: vi.fn(),
-  listAppBlockReviews: vi.fn(),
-  getMyAppBlockReview: vi.fn(),
-  setAppReviewExcluded: vi.fn(),
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
   return { rateLimit: () => middleware(async ({ next }) => next()) };
@@ -111,6 +87,9 @@ vi.mock('~/server/middleware.trpc', async () => {
 import { blocksRouter } from '../blocks.router';
 import { dbRead } from '~/server/db/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 function fakeCtx(user: unknown) {
   return {

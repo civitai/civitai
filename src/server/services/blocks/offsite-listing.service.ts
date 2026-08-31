@@ -6,9 +6,21 @@ import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
+  listingAssetTooLargeReason,
+  MAX_LISTING_ASSET_SIZE_BYTES,
+} from '~/server/schema/blocks/app-listing.schema';
+import {
   assertNoOnPlatformSurface,
   validateExternalUrl,
+  validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
+import {
+  assertSourceRepoWritable,
+  isSourceRepoColumnAvailable,
+  readListingSourceRepoUrl,
+  sourceRepoWriteFragment,
+  type ListingSourceRepoRead,
+} from '~/server/services/blocks/app-listing-source-repo.service';
 import {
   OFFSITE_CONTENT_RATINGS,
   OFFSITE_REJECTION_REASON_MAX,
@@ -17,6 +29,7 @@ import {
   type PersistListingAssetImageInput,
   type SubmitExternalListingInput,
 } from '~/server/schema/blocks/offsite-listing.schema';
+import { MATERIAL_LISTING_PATCH_FIELDS } from '~/shared/constants/app-capabilities.constants';
 import { isAppBlockOauthClientId } from '~/shared/constants/block-scope.constants';
 import {
   connectScopesSubsetOfCeiling,
@@ -27,8 +40,24 @@ import {
 import {
   assertAssetsScanClean,
   assertListingMeetsFloor,
+  resolveListingRatingFloorInTx,
 } from '~/server/services/blocks/app-listing-assets.service';
-import { computeListingProblems } from '~/server/services/blocks/listing-problems';
+import { assertOffsiteListingActionable } from '~/server/services/blocks/app-listing-actionable.service';
+import {
+  isOwnerUnpublishedListing,
+  readLastModerationAction,
+  isOwnerUnpublishAction,
+  LISTING_STATUS_CHANGING_MODERATION_ACTIONS,
+} from '~/server/services/blocks/app-listing-owner-unpublish';
+// TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
+// a dynamic import, so this adds nothing to the module graph. See `resolveListingRole`.
+import type { AppRole } from '~/server/services/blocks/app-access.service';
+import {
+  computeListingProblems,
+  type ListingProblemKind,
+} from '~/server/services/blocks/listing-problems';
+import { measureUploadedImage } from '~/server/services/blocks/measure-uploaded-image';
+import { storedObjectEtagMetadata } from '~/server/services/blocks/stored-object-integrity';
 import { notifyAppListingOwner } from '~/server/services/blocks/app-listing-notify';
 import {
   deriveContentRatingFromAssets,
@@ -83,7 +112,12 @@ export type OffsiteRequestErrorCode =
   | 'MUST_RESUBMIT'
   // A shadow-draft revision precondition failed (not a shadow / not a draft /
   // a concurrent revision is already pending / the parent isn't approved).
-  | 'INVALID_REVISION';
+  | 'INVALID_REVISION'
+  // The author tried to change a MATERIAL field (externalUrl / name / contentRating /
+  // sourceRepoUrl / the disclosed scope mask) on a listing the OWNER has unpublished.
+  // Trivial copy edits on that listing are fine; a material one has to go back through
+  // review, which means republishing first and editing through the shadow path.
+  | 'MATERIAL_CHANGE_BLOCKED';
 
 export class OffsiteRequestError extends Error {
   readonly code: OffsiteRequestErrorCode;
@@ -170,6 +204,31 @@ export async function submitExternalListing(opts: {
   // is exported + unit-tested directly, not only reached through the schema.
   const url = input.externalUrl != null ? validateExternalUrl(input.externalUrl) : null;
   if (url && !url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
+  // Same posture for the OPTIONAL public source-repository link: re-run the shared
+  // validator (this fn is exported + unit-tested directly, not only reached through the
+  // schema) and STORE THE NORMALISED FORM, so a later material-change comparison is
+  // against a canonical value rather than whatever the author happened to paste.
+  const sourceRepo =
+    input.sourceRepoUrl != null ? validateRepositoryUrl(input.sourceRepoUrl) : null;
+  if (sourceRepo && !sourceRepo.ok) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: sourceRepo.error });
+  }
+  // 🔴 THE AUTHOR SUPPLIED A LINK, SO THE COLUMN MUST EXIST BEFORE WE PROMISE TO STORE
+  // IT. `app_listings.source_repo_url` is MANUAL-APPLY; writing it before a human runs
+  // the SQL raises P2022 and the author gets a 500 naming a database column, and
+  // dropping it silently would return "submitted" for a listing whose source link is
+  // simply gone. Neither is acceptable, so refuse with a message that names the field.
+  //
+  // 🔴 PROBED ONLY WHEN THERE IS SOMETHING TO WRITE. An author who leaves the field
+  // empty must be able to submit exactly as before — same query count, same behaviour —
+  // which is also why the create below OMITS the key rather than writing `null`.
+  //
+  // Probed on `dbWrite` (the PRIMARY), because the primary is where the create lands: a
+  // replica probe could answer "absent" for a column DDL that has already committed on
+  // the primary and not yet replicated, refusing a submit that would have worked.
+  if (sourceRepo && sourceRepo.ok) {
+    assertSourceRepoWritable(await isSourceRepoColumnAvailable(dbWrite));
+  }
   const surface = assertNoOnPlatformSurface({
     page: input.page,
     targets: input.targets,
@@ -267,6 +326,21 @@ export async function submitExternalListing(opts: {
           contentRating,
           // OPTIONAL homepage / Visit link — canonicalized when provided, else null.
           externalUrl: url && url.ok ? url.url : null,
+          // OPTIONAL public source-repository link, canonicalized.
+          //
+          // The key is OMITTED ENTIRELY when the author supplied none, rather than
+          // written as `null`. That keeps the column out of the INSERT's column list.
+          //
+          // 🔴 IT DOES **NOT** MAKE THIS CREATE SAFE AGAINST AN UNAPPLIED MIGRATION, and
+          // an earlier version of this comment claimed it did ("the column is simply
+          // never mentioned"). Prisma returns the created row, so it emits
+          // `INSERT … RETURNING <every scalar the MODEL declares>` — and `sourceRepoUrl`
+          // is on the model. The generated SQL names `source_repo_url` regardless of
+          // `data`, so this create raises P2022 on any database without the column.
+          // Measured on the PR preview env: 5 smoke specs 500'd here, for authors who
+          // supplied no link at all. The migration is therefore a HARD PRE-DEPLOY step —
+          // see the header of 20260823120000_app_listing_source_repo/migration.sql.
+          ...(sourceRepo && sourceRepo.ok ? { sourceRepoUrl: sourceRepo.url } : {}),
           // REQUIRED OAuth client link + the disclosed (review-only) scope set
           // (SERVER-DERIVED from the client's allowedScopes) + per-scope justifications.
           connectClientId: input.connectClientId,
@@ -472,11 +546,22 @@ export async function deriveScopePatch(opts: {
  * from the PRIMARY and resolve: now `withdrawn` → idempotent success; now
  * `approved`/`rejected` → NOT_PENDING. Mirrors `withdrawRequest`
  * (publish-request.service.ts).
+ *
+ * 🔴 RETURNS WHAT IT DID, because the two outcomes are not equally reversible and the
+ * caller was announcing them with one sentence. Withdrawing a first-time submission
+ * (`'deleted'`) throws away a draft. Withdrawing the review of a FORMERLY-LIVE listing
+ * (`'removed'`) leaves it `removed` behind a `delist` event, which `republishOwnListing`'s
+ * last-event guard reads as a moderator takedown — so the owner cannot put it back and a
+ * moderator must `relistListing`. That is deliberate (see `closeTerminalListing`), but
+ * "Submission withdrawn." is not an honest description of it, so the outcome is surfaced
+ * and the UI says which one happened.
  */
+export type WithdrawExternalRequestResult = { outcome: CloseTerminalListingOutcome };
+
 export async function withdrawExternalRequest(opts: {
   publishRequestId: string;
   userId: number;
-}): Promise<void> {
+}): Promise<WithdrawExternalRequestResult> {
   const { publishRequestId, userId } = opts;
 
   const row = await dbRead.appListingPublishRequest.findUnique({
@@ -489,7 +574,9 @@ export async function withdrawExternalRequest(opts: {
   if (row.submittedByUserId !== userId) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only withdraw your own publish requests');
   }
-  if (row.status === 'withdrawn') return;
+  // Already withdrawn — idempotent success. `'none'` rather than a remembered outcome:
+  // this call did nothing, and the UI must not narrate someone else's close as its own.
+  if (row.status === 'withdrawn') return { outcome: 'none' };
   if (row.status !== 'pending') {
     throw new OffsiteRequestError(
       'NOT_PENDING',
@@ -509,15 +596,14 @@ export async function withdrawExternalRequest(opts: {
       where: { id: publishRequestId, status: 'pending' },
       data: { status: 'withdrawn' },
     });
-    if (count === 0) return false;
-    await closeTerminalListing(tx, row.appListingId, {
+    if (count === 0) return null;
+    return await closeTerminalListing(tx, row.appListingId, {
       actorUserId: userId,
       reason: null,
     });
-    return true;
   });
-  if (flipped) {
-    return;
+  if (flipped !== null) {
+    return { outcome: flipped };
   }
 
   // Raced: re-read from the PRIMARY (a replica read could be lag-stale and still
@@ -528,8 +614,9 @@ export async function withdrawExternalRequest(opts: {
   });
   if (!after || after.status === 'withdrawn') {
     // Raced into withdrawn (or vanished) → idempotent success. The concurrent
-    // withdraw owns the draft cleanup, so we do NOT re-delete here.
-    return;
+    // withdraw owns the draft cleanup, so we do NOT re-delete here — and it owns the
+    // outcome too, so this call reports `'none'`.
+    return { outcome: 'none' };
   }
   // Raced into approved/rejected → the not-pending guarantee, now true under
   // concurrency.
@@ -554,11 +641,12 @@ export type CloseTerminalListingOutcome = 'deleted' | 'removed' | 'none';
  *                 `removed` (recoverable via mod `relistListing`) AND write a `delist`
  *                 `AppListingModerationEvent`. 🔴 The action is UNCONDITIONALLY `delist`
  *                 (Fix #1 authz), for BOTH the reject and the withdraw caller: a
- *                 formerly-live `pending` listing is ALWAYS mod-mandated (only the mod
- *                 reset fns set `pending` on a live listing), so an owner who withdraws
- *                 the re-review must NOT be able to self-restore — `delist` makes the
- *                 last event a takedown, so `republishOwnListing` FORBIDS the owner and
- *                 a mod must relist. (This replaced a most-recent-event probe that an
+ *                 formerly-live `pending` listing is in review — mod-mandated, or (since
+ *                 the owner-republish asset-change gate) owner-initiated — and an owner
+ *                 who withdraws a re-review must NOT be able to self-restore, so `delist`
+ *                 makes the last event a takedown: `republishOwnListing` FORBIDS the owner
+ *                 and a mod must relist. Written UNCONDITIONALLY for both; see the
+ *                 in-branch note. (This replaced a most-recent-event probe that an
  *                 intervening report-resolve/dismiss event could defeat.)
  *   - anything else (approved/removed) → no-op (a terminal request never targets one;
  *                 guarded defensively).
@@ -601,14 +689,24 @@ async function closeTerminalListing(
     // ALWAYS mod-mandated, so the close ALWAYS writes a `delist` event (never
     // `owner-unpublish`), regardless of which caller (reject or withdraw) reached here.
     //
-    // WHY the pending branch is unconditionally mod-mandated: the ONLY writers of
-    // `status='pending'` for a formerly-LIVE listing are the two mod reset fns
-    // (`resetListingToPending` / `resetOnsiteListingToPending`). A first-time submission
-    // is `draft` (handled by the branch above → deleted); a revision is a `draft`
-    // shadow (also the `draft` branch); owner unpublish/republish only move
-    // approved↔removed and never touch `pending`. So reaching here means a mod bounced
-    // a live listing back to review — an owner withdrawing that re-review must NOT be
-    // able to self-restore the pre-reset content with no re-review.
+    // WHY the pending branch is written unconditionally: a first-time submission is
+    // `draft` (handled by the branch above → deleted) and a revision is a `draft` shadow
+    // (also the `draft` branch), so reaching here means a formerly-LIVE listing was
+    // bounced back to review — and an owner withdrawing a re-review must NOT be able to
+    // self-restore the pre-reset content with no re-review.
+    //
+    // 🔴 THE WRITER SET IS NO LONGER ONLY THE TWO MOD RESET FNS, and this comment used to
+    // say it was. `republishOwnListing`'s ASSET-CHANGE REVIEW GATE
+    // (`offsite-moderation.service`) also writes `pending` on a formerly-live listing:
+    // when an owner republishes a listing whose assets changed since the last approval, it
+    // routes to review instead of going live. So this branch can now close an
+    // OWNER-INITIATED review as well as a mod-mandated one, and it treats both the same —
+    // `delist`, i.e. the owner must ask a moderator to relist rather than self-restoring.
+    // For the mod-mandated case that is the point. For the owner-initiated case it is a
+    // deliberate FAIL-CLOSED choice, not an oversight: distinguishing them means
+    // re-introducing a most-recent-event probe here, and the last one was removed because
+    // it was exploitable (below). Nothing unreviewed reaches the store either way; the
+    // cost is that an owner who withdraws their own re-review needs a moderator.
     //
     // This REPLACES an earlier most-recent-event probe (`last event == reset-to-pending
     // ? delist : owner-unpublish`), which was BOTH exploitable and unsafe-by-default: an
@@ -649,7 +747,12 @@ async function closeTerminalListing(
 //                      separately) is staged on a hidden DRAFT clone (the shadow)
 //                      and applied to the parent only on mod re-approve.
 //   rejected         → no row exists (reject deletes it) → MUST_RESUBMIT.
-//   removed          → mod-only takedown → FORBIDDEN for an author edit.
+//   removed          → SPLIT BY THE LAST STATUS-CHANGING MODERATION EVENT. A moderator
+//                      takedown stays FORBIDDEN. An OWNER self-unpublish
+//                      (`owner-unpublish`) is a REPAIR state: TRIVIAL fields edit in
+//                      place; any MATERIAL change is REFUSED (MATERIAL_CHANGE_BLOCKED)
+//                      — republish first, then edit through the shadow path, which is
+//                      the only route back into review.
 // ---------------------------------------------------------------------------
 
 /**
@@ -662,8 +765,24 @@ async function closeTerminalListing(
  * listing to SFW users. `externalUrl`/`name` are the listing's identity/destination.
  * `tagline`/`description`/`category` stay trivial — quick copy edits are intended
  * and are delistable if abused.
+ *
+ * `sourceRepoUrl` is MATERIAL for the same reason `externalUrl` is: it is an OUTBOUND
+ * LINK rendered on a public store page, and the moderator approved a specific
+ * destination. The host allowlist bounds where it can point but not what is THERE —
+ * a repo can be replaced, renamed or transferred — so a change re-enters review
+ * rather than going live silently. Like `externalUrl` it compares against the
+ * validator's CANONICAL form, so re-saving `…/a/b` as `…/a/b.git` is correctly seen
+ * as no change and does not cost a pointless mod re-review.
+ *
+ * 🔴 THE LIST ITSELF NOW LIVES IN `shared/`, and this is an ALIAS of it — not a copy. The
+ * EDIT FORM has to disable exactly these inputs while a listing is unpublished (the
+ * `removed` branch below refuses them with `MATERIAL_CHANGE_BLOCKED`), and it cannot import
+ * this module: `offsite-listing.service` top-level-imports `~/server/db/client`, so reading
+ * the list from here would drag Prisma into the browser bundle. A second literal in the
+ * component is how the form starts offering a field the server refuses. See
+ * {@link MATERIAL_LISTING_PATCH_FIELDS}.
  */
-const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating'] as const;
+const MATERIAL_PATCH_FIELDS = MATERIAL_LISTING_PATCH_FIELDS;
 
 /**
  * Validate + normalize an update patch (shared by the in-place + shadow paths).
@@ -675,7 +794,7 @@ const MATERIAL_PATCH_FIELDS = ['externalUrl', 'name', 'contentRating'] as const;
  */
 export function buildListingPatchData(
   patch: UpdateListingPatch,
-  opts?: {
+  opts: {
     /**
      * The connect client's `allowedScopes` ceiling (from the listing's
      * `connectClientId`). REQUIRED when the patch touches `requestedScopes` /
@@ -684,6 +803,21 @@ export function buildListingPatchData(
      * is rejected.
      */
     connectAllowedScopes?: number | null;
+    /**
+     * Whether the MANUAL-APPLY `app_listings.source_repo_url` column actually exists,
+     * from the caller's guarded read (`EditableListing.sourceRepoAvailable`).
+     *
+     * 🔴 REQUIRED, AND `opts` IS NO LONGER OPTIONAL, PRECISELY SO A NEW CALL SITE
+     * CANNOT FORGET IT. This function is the single place every off-site scalar edit
+     * funnels through — `updateListing`'s three branches and `updateRevisionDraft` —
+     * and the first version of this feature took no availability parameter at all, so
+     * every one of those four paths wrote the column unconditionally and 500'd with a
+     * P2022 naming a database column. A defaulted parameter would have re-created that
+     * silently; a required one makes the compiler ask the question at each call site.
+     * At runtime an absent value is read as `false` (fail CLOSED — a refusal the author
+     * can act on beats a 500 they cannot).
+     */
+    sourceRepoAvailable: boolean;
   }
 ): Prisma.AppListingUpdateInput {
   const data: Prisma.AppListingUpdateInput = {};
@@ -691,6 +825,26 @@ export function buildListingPatchData(
     const url = validateExternalUrl(patch.externalUrl);
     if (!url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
     data.externalUrl = url.url;
+  }
+  // Public source-repository link. Follows this builder's established convention
+  // exactly: an OMITTED key leaves the column untouched, an explicit `null` CLEARS it,
+  // and a provided value is validated + stored NORMALISED (so the material-change
+  // comparison below is against a canonical value).
+  if (patch.sourceRepoUrl !== undefined) {
+    // 🔴 THE COLUMN GATE COMES FIRST, before the value is even looked at. An explicit
+    // `null` is as unwritable as a URL while the column is missing — Prisma raises the
+    // same P2022 for `{sourceRepoUrl: null}` as for a value — so BOTH instructions have
+    // to be refused, and refused with a message about the environment rather than about
+    // the author's input. `opts?.` is deliberate belt-and-braces on a REQUIRED field:
+    // absent reads as `false`, which refuses rather than 500s.
+    assertSourceRepoWritable(opts?.sourceRepoAvailable === true);
+    if (patch.sourceRepoUrl === null) {
+      data.sourceRepoUrl = null;
+    } else {
+      const repo = validateRepositoryUrl(patch.sourceRepoUrl);
+      if (!repo.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: repo.error });
+      data.sourceRepoUrl = repo.url;
+    }
   }
   if (patch.name !== undefined) data.name = patch.name;
   if (patch.tagline !== undefined) data.tagline = patch.tagline;
@@ -740,20 +894,30 @@ export function buildListingPatchData(
 }
 
 /**
- * True iff the patch changes a MATERIAL field (see MATERIAL_PATCH_FIELDS) to a
- * value DIFFERENT from the live listing. Iterates the material-field list so the
- * set is edited in ONE place; `externalUrl` compares against the validator's
- * canonical form, the rest are plain scalar inequality.
+ * The names of the MATERIAL fields this patch actually CHANGES relative to the live
+ * listing — `[]` when the edit is trivial-only. `patchHasMaterialChange` is the boolean
+ * view of this; the approved branch only needs the boolean, the `removed` branch needs the
+ * NAMES so its refusal can tell the caller which key to drop.
+ *
+ * 🔴 ONE ITERATION OVER {@link MATERIAL_PATCH_FIELDS}, and the two callers read the SAME
+ * answer. The `removed` branch could have re-listed the fields it wants to block; a second
+ * copy of that list is how `sourceRepoUrl` (added to the set later than the rest) would get
+ * blocked on one path and waved through on the other.
+ *
+ * `externalUrl`/`sourceRepoUrl` compare against the validator's CANONICAL form, the rest
+ * are plain scalar inequality.
  */
-function patchHasMaterialChange(
+function materialPatchChanges(
   patch: UpdateListingPatch,
   live: {
     externalUrl: string | null;
     name: string;
     contentRating: string | null;
+    sourceRepoUrl: string | null;
     connectRequestedScopes: number | null;
   }
-): boolean {
+): string[] {
+  const changed: string[] = [];
   for (const field of MATERIAL_PATCH_FIELDS) {
     const patched = patch[field];
     if (patched === undefined) continue;
@@ -761,11 +925,30 @@ function patchHasMaterialChange(
       const url = validateExternalUrl(patched);
       // An invalid URL is a material change (it will be rejected downstream, but
       // it is not "unchanged").
-      if (!url.ok || url.url !== live.externalUrl) return true;
+      if (!url.ok || url.url !== live.externalUrl) changed.push(field);
+      continue;
+    }
+    if (field === 'sourceRepoUrl') {
+      // 🔴 COMPARED IN CANONICAL FORM, not as a raw string — the same treatment
+      // `externalUrl` gets one branch up, and for a sharper reason. The author edits
+      // this in a text box, so `https://github.com/a/b`, `…/a/b/` and `…/a/b.git` all
+      // arrive from an author who changed NOTHING. Plain inequality would route each of
+      // those onto a shadow revision and back into the moderator queue, which is both
+      // noise for the mod and a needless "pending re-review" banner for the author.
+      if (patched === null) {
+        // An explicit CLEAR is material iff there was something to clear.
+        if (live.sourceRepoUrl !== null) changed.push(field);
+        continue;
+      }
+      const repo = validateRepositoryUrl(patched);
+      // An invalid value is material (rejected downstream, but not "unchanged") —
+      // mirrors the externalUrl branch, so an author cannot slip an unreviewed value
+      // through the trivial in-place path by making it malformed.
+      if (!repo.ok || repo.url !== live.sourceRepoUrl) changed.push(field);
       continue;
     }
     // name / contentRating: plain scalar inequality vs the live value.
-    if (patched !== live[field]) return true;
+    if (patched !== live[field]) changed.push(field);
   }
   // A change to the DISCLOSED OAuth scope subset is material — the mod approved a
   // specific set of scopes, so a new set must re-enter review (the shadow carries the
@@ -774,9 +957,21 @@ function patchHasMaterialChange(
     patch.requestedScopes !== undefined &&
     patch.requestedScopes !== (live.connectRequestedScopes ?? 0)
   ) {
-    return true;
+    changed.push('requestedScopes');
   }
-  return false;
+  return changed;
+}
+
+/**
+ * True iff the patch changes a MATERIAL field (see MATERIAL_PATCH_FIELDS) to a
+ * value DIFFERENT from the live listing. The boolean view of
+ * {@link materialPatchChanges}.
+ */
+function patchHasMaterialChange(
+  patch: UpdateListingPatch,
+  live: Parameters<typeof materialPatchChanges>[1]
+): boolean {
+  return materialPatchChanges(patch, live).length > 0;
 }
 
 export type UpdateListingResult = {
@@ -798,6 +993,15 @@ type EditableListing = {
   kind: string;
   slug: string;
   status: string;
+  /**
+   * The CALLER's role on this listing, as resolved by the access gate in
+   * {@link loadOwnedEditableListing} — never `null`, because a null role throws there.
+   *
+   * 🔴 NOT THE SAME THING AS `userId` BELOW, and conflating them is the bug this exists to
+   * prevent. `userId` is the listing's denormalized OWNER column; `callerRole` is who the
+   * CALLER is relative to this row. They differ for every accepted editor seat.
+   */
+  callerRole: AppRole;
   userId: number;
   revisionOfId: string | null;
   name: string;
@@ -811,6 +1015,18 @@ type EditableListing = {
   connectScopeJustifications: Prisma.JsonValue | null;
   iconId: number | null;
   coverId: number | null;
+  /**
+   * The public source-repository link, resolved SEPARATELY from the select below.
+   *
+   * 🔴 IT IS DELIBERATELY NOT IN `editableListingSelect`. `source_repo_url` is a
+   * MANUAL-APPLY column, so naming it in that select would make every author edit and
+   * every `beginListingRevision` throw P2022 until a human runs the migration —
+   * breaking two pre-existing flows for an additive field. `loadOwnedEditableListing`
+   * fills it via the guarded `readListingSourceRepoUrl` instead.
+   */
+  sourceRepoUrl: string | null;
+  /** See {@link ListingSourceRepoRead.available} — `false` ⇒ never write the column. */
+  sourceRepoAvailable: boolean;
 };
 
 const editableListingSelect = {
@@ -833,7 +1049,73 @@ const editableListingSelect = {
   coverId: true,
 } as const;
 
-/** Load a listing and assert the caller is its OWNER (strict — no mod override on the author edit path). */
+/**
+ * The caller's role on this listing — `'owner'`, `'editor'`, or `null` for no access.
+ *
+ * 🔴 THE WHOLE GATE, not just its collaborator half. Every author gate in this file
+ * asks THIS, never `listing.userId !== userId`, because that column is a DENORMALIZED
+ * copy of the owner for an ON-SITE listing — the canonical owner is the backing
+ * `AppBlock.app.userId`. Comparing against the copy inverts the gate in BOTH directions
+ * on a drifted row: it refuses the real owner and admits whoever the stale row names.
+ * `resolveListingAccess` resolves the owner KIND-AWARE (the block's `OauthClient.userId`
+ * for an onsite listing; the PARENT listing's own column for an offsite one, even when it
+ * carries a block — issue #3844), hops a shadow revision to its parent, and answers the
+ * seat question in the same call.
+ *
+ * 🔴 WHERE THE DRIFT ACTUALLY COMES FROM — a SHADOW REVISION, and this is worth stating
+ * precisely because an earlier version of this comment named the wrong mechanism and
+ * would have sent the next maintainer to the wrong file. {@link beginListingRevision}
+ * clones the parent with `userId: parent.userId`; `acceptTransfer` step 3 updates ONLY
+ * `{ id: <the transferred listing> }` and never that listing's shadows, and
+ * {@link applyApprovedRevision} never copies `userId` back onto the parent. So a shadow
+ * that outlives a transfer keeps the OLD owner FROZEN while its parent and the
+ * `OauthClient` both name the new one. That is reachable on every path in this file that
+ * can be handed a shadow id — `updateRevisionDraft` → {@link loadOwnedEditableListing},
+ * and {@link submitListingRevision}, which takes nothing else.
+ *
+ * 🔴 NOT via `acceptTransfer`'s onsite listing write, which is what that earlier comment
+ * claimed. That write is `where: { id }` — UNCONDITIONAL, in the same transaction as the
+ * `OauthClient` move and after an in-tx read of the row through its own FK — so it HEALS
+ * the parent's copy rather than drifting it, and a 0-count there would require the row to
+ * be absent, which the pre-read precludes. There is no other in-app writer of
+ * `OauthClient.userId`. The top-level row's copy therefore has no drift mechanism at all;
+ * only clones of it do. (`getMyListingForApp` resolves its row by `appBlockId`/`slug`, so
+ * it only ever sees a parent — it goes through this helper for uniformity, not because a
+ * stale copy can reach it.)
+ *
+ * 🔴 IT COSTS ONE EXTRA READ ON THE OWNER PATH, deliberately. The bare comparison was
+ * free for the owner because the row was already in hand — but "already in hand" is
+ * exactly the stale copy. These are author EDIT paths (a handful of calls per editing
+ * session), not a hot read, so correctness wins. The non-owner path costs the same as
+ * before: it already resolved through here.
+ *
+ * Dynamic import: `app-access.service` is small and IO-only, but keeping the import
+ * inside the body matches this file's existing discipline for cross-service reach
+ * (`beginListingRevision`'s import of the asset service) and keeps the module graph of
+ * a plain listing read unchanged.
+ */
+async function resolveListingRole(listingId: string, userId: number): Promise<AppRole | null> {
+  const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
+  const access = await resolveListingAccess(listingId, userId);
+  return access?.role ?? null;
+}
+
+/**
+ * Load a listing and assert the caller may edit it: its OWNER or an ACCEPTED
+ * collaborator ON THE LISTING (seats are listing-keyed since the re-key; the backing
+ * AppBlock is not the seat key, and an off-site listing has none).
+ *
+ * 🔴 STILL NO MODERATOR OVERRIDE — unchanged, and deliberately different from
+ * `app-listing-assets.service::loadOwnedListing`, which does bypass for mods. That
+ * divergence between two sibling gates PREDATES collaborators; it was surfaced by
+ * consolidating the predicate and is recorded in `app-access.call-site-ledger.test.ts`
+ * rather than quietly normalised, because "make the mod bypass consistent" is a
+ * behaviour change to the author edit path that deserves its own decision.
+ *
+ * 🔴 THE OWNER HALF IS `resolveListingRole`, NOT `listing.userId` — the row loaded here
+ * carries the DENORMALIZED copy, which is stale-able for onsite. See
+ * {@link resolveListingRole}.
+ */
 async function loadOwnedEditableListing(
   listingId: string,
   userId: number
@@ -841,14 +1123,31 @@ async function loadOwnedEditableListing(
   const listing = (await dbRead.appListing.findUnique({
     where: { id: listingId },
     select: editableListingSelect,
-  })) as EditableListing | null;
+  })) as Omit<EditableListing, 'sourceRepoUrl' | 'sourceRepoAvailable'> | null;
   if (!listing) {
     throw new OffsiteRequestError('NOT_FOUND', `listing ${listingId} not found`);
   }
-  if (listing.userId !== userId) {
+  // 🔴 THE RESOLVED ROLE IS KEPT AND RETURNED, not merely null-checked — and note that
+  // this function's NAME oversells its gate. It admits the OWNER *or* an accepted editor
+  // seat (that is what `resolveListingRole` returns non-null for); "Owned" here means "you
+  // hold a role on it", not "you own it". Callers that need to distinguish the two — the
+  // repair-state copy does, because Republish is owner-only — read `callerRole` rather
+  // than re-deriving it from a second read or from the session.
+  const callerRole = await resolveListingRole(listingId, userId);
+  if (callerRole === null) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only edit your own listings');
   }
-  return listing;
+  // Guarded second read for the MANUAL-APPLY `source_repo_url` column — see the
+  // `sourceRepoUrl` field note on `EditableListing`. Costs one extra round trip on an
+  // author edit path (a handful of calls per editing session, not a hot read); the
+  // alternative is a select that 500s the whole edit flow until a human runs SQL.
+  const sourceRepo: ListingSourceRepoRead = await readListingSourceRepoUrl(listingId, dbRead);
+  return {
+    ...listing,
+    callerRole,
+    sourceRepoUrl: sourceRepo.value,
+    sourceRepoAvailable: sourceRepo.available,
+  };
 }
 
 /**
@@ -891,14 +1190,116 @@ export async function updateListing(opts: {
     userId,
     isModerator,
   });
-  const patchOpts = { connectAllowedScopes };
+  // 🔴 HOISTED ABOVE THE STATE ROUTING, for the same reason the scope validation above
+  // is: the `approved` + material branch opens a SHADOW REVISION before it builds the
+  // patch data, so a refusal raised inside `buildListingPatchData` would land AFTER
+  // `beginListingRevision` has minted one — leaving the author an orphan revision draft
+  // and their listing stuck in "pending re-review" for an edit that never applied.
+  // Checked here, nothing has been written when it throws.
+  //
+  // `listing.sourceRepoAvailable` comes from the guarded read on the REPLICA. That is
+  // the safe direction for a REFUSAL: DDL reaches the primary first, so a replica that
+  // can see the column proves the primary can, and the only error this can make is a
+  // transient false refusal during the seconds a freshly-applied `ALTER TABLE` takes to
+  // replicate. The opposite mistake — believing a column the primary lacks — is the one
+  // that 500s, and it is not reachable from this direction.
+  if (effectivePatch.sourceRepoUrl !== undefined) {
+    assertSourceRepoWritable(listing.sourceRepoAvailable);
+  }
+  const patchOpts = {
+    connectAllowedScopes,
+    sourceRepoAvailable: listing.sourceRepoAvailable,
+  };
 
   switch (listing.status) {
-    case 'removed':
-      throw new OffsiteRequestError(
-        'FORBIDDEN',
-        'this listing has been removed by a moderator and can no longer be edited'
-      );
+    case 'removed': {
+      // 🔴 `removed` IS TWO DIFFERENT STATES WEARING ONE STATUS STRING. An owner who
+      // unpublished their own app to fix it up lands here, and so does a listing a
+      // moderator took down; only the last moderation event separates them. Refusing both
+      // meant the owner's "take it down, repair it, put it back" loop had no repair step.
+      // See `app-listing-owner-unpublish` — PRIMARY read, `null` (no events) fails closed.
+      //
+      // 🔴 THE PREDICATE IS ABOUT THE LISTING, THE GATE ABOVE IS ABOUT THE CALLER, AND
+      // THEY ARE DELIBERATELY DIFFERENT QUESTIONS. `readLastModerationAction` selects only
+      // `action` — never `actorUserId` — so this asks "is this listing in owner-repair
+      // state?", not "did YOU unpublish it?". `loadOwnedEditableListing` has already
+      // admitted the OWNER **or an accepted collaborator** (`resolveListingRole`), so an
+      // accepted seat-holder can make trivial edits here while the owner has the app down.
+      //
+      // That is INTENDED, not an oversight, and the reasoning is: (a) a seat-holder already
+      // has exactly this power on `draft`, `pending` and `approved`, so refusing only in the
+      // repair state would make "unpublish → fix your copy → republish" the one flow a team
+      // cannot share — which is the flow most likely to need a second pair of hands; (b) the
+      // seat is itself an authorization the OWNER granted and can revoke; and (c) with the
+      // material-field refusal below, everything reachable here is copy. Note the asymmetry
+      // this leaves standing on purpose: `unpublishOwnListing` and `republishOwnListing` are
+      // OWNER-ONLY (`loadOwnedListingInTx`), so a collaborator can repair the copy but
+      // cannot take the app down or put it back. Pinned by
+      // `offsite-listing.owner-unpublish-editable.service.test.ts`.
+      if (!(await isOwnerUnpublishedListing(dbWrite, listingId))) {
+        throw new OffsiteRequestError(
+          'FORBIDDEN',
+          'this listing has been removed by a moderator and can no longer be edited'
+        );
+      }
+      // 🔴 TRIVIAL FIELDS ONLY. A MATERIAL change is REFUSED here — it is NOT applied in
+      // place, and it is NOT staged on a shadow.
+      //
+      // 🔴 WHY, and this corrects what this comment used to claim. The earlier version
+      // asserted that "the go-live gates run on the way BACK UP — `republishOwnListing`
+      // re-asserts scan-clean assets + off-site actionability — so an edit made while down
+      // still cannot reach the store unreviewed." THAT IS FALSE, and it was the load-bearing
+      // safety claim on this branch. Neither of those gates is a CONTENT review:
+      // `assertListingAssetsScanCleanInTx` asks whether the images finished scanning, and
+      // `assertOffsiteListingActionableInTx` asks whether an https destination exists AT
+      // ALL — neither asks whether a MODERATOR ever approved the value now in the column.
+      // So without this refusal an owner drives the whole loop themselves, no moderator
+      // involved: `approved` → `unpublishOwnListing` (which requires `approved`) → patch
+      // `externalUrl` in place here → `republishOwnListing` → `approved` again, and the
+      // store's destination URL has been swapped after approval. `contentRating` is the
+      // same shape and worse: it drives the public SFW filter, and nothing on the republish
+      // path re-derives a rating floor. Both are reachable today through the
+      // `appListings.updateListing` tRPC mutation and by CLI token under
+      // `TokenScope.AppBlocksSubmit`; "there is no UI button" is not a gate.
+      //
+      // 🔴 WHY REFUSE RATHER THAN ROUTE TO A SHADOW. The shadow mechanism is defined for a
+      // parent that STAYS LIVE while its replacement is reviewed — `beginListingRevision`
+      // refuses any parent that is not `approved`, and `applyApprovedRevision` copies the
+      // shadow onto a live parent on approve. A `removed` parent has no live copy to
+      // protect and no defined post-approval status, so routing here would mean widening
+      // the revision state machine (and deciding whether approving a revision of an
+      // unpublished listing silently republishes it — a moderator action nobody asked for).
+      // Refusing keeps ONE way for a material change to reach the store: through review of
+      // a live listing. The author's path is stated in the message.
+      //
+      // The feature this branch exists for is untouched: `tagline`, `description` and
+      // `category` are not material, so "unpublish → fix your copy → republish" still works.
+      const material = materialPatchChanges(effectivePatch, {
+        externalUrl: listing.externalUrl,
+        name: listing.name,
+        contentRating: listing.contentRating,
+        sourceRepoUrl: listing.sourceRepoUrl,
+        connectRequestedScopes: listing.connectRequestedScopes,
+      });
+      if (material.length > 0) {
+        throw new OffsiteRequestError(
+          'MATERIAL_CHANGE_BLOCKED',
+          `${material.join(', ')} cannot be changed while this listing is unpublished, ` +
+            `because that change needs moderator review and an unpublished listing has no ` +
+            `way to reach it. Republish the listing first, then edit ` +
+            `${material.length > 1 ? 'those fields' : 'that field'} — the edit will be ` +
+            `staged for review. Tagline, description and category can be edited now.`
+        );
+      }
+      // Everything left is trivial, so edit IN PLACE exactly like draft/pending: the
+      // listing is not being served, so there is nothing live to protect with a shadow
+      // revision. Any material key still present in the patch is byte-identical to the live
+      // value (`material` is empty), so writing it is a harmless no-op — the same argument
+      // the `approved` trivial-only branch makes.
+      const data = buildListingPatchData(effectivePatch, patchOpts);
+      await dbWrite.appListing.update({ where: { id: listingId }, data });
+      return { listingId, status: listing.status, requiresReview: false, shadowId: null };
+    }
     case 'rejected':
       // reject() deletes the draft, so this row usually doesn't exist (→ NOT_FOUND
       // above). If a rejected row somehow persists, steer the caller to resubmit.
@@ -919,6 +1320,7 @@ export async function updateListing(opts: {
         externalUrl: listing.externalUrl,
         name: listing.name,
         contentRating: listing.contentRating,
+        sourceRepoUrl: listing.sourceRepoUrl,
         connectRequestedScopes: listing.connectRequestedScopes,
       });
       if (!material) {
@@ -967,10 +1369,7 @@ export async function beginListingRevision(opts: {
   const parent = await loadOwnedEditableListing(listingId, userId);
 
   if (parent.revisionOfId != null) {
-    throw new OffsiteRequestError(
-      'INVALID_REVISION',
-      'cannot open a revision of a revision draft'
-    );
+    throw new OffsiteRequestError('INVALID_REVISION', 'cannot open a revision of a revision draft');
   }
   if (parent.status !== 'approved') {
     throw new OffsiteRequestError(
@@ -985,6 +1384,21 @@ export async function beginListingRevision(opts: {
     select: { id: true },
   });
   if (existing) return { shadowId: existing.id, created: false };
+
+  // 🔴 RE-READ THE SOURCE REPO ON THE **PRIMARY**, not from `parent` (which came off the
+  // REPLICA via `loadOwnedEditableListing`). The two clients can disagree about this
+  // column for a few seconds after the manual `ALTER TABLE`, and the disagreement DELETES
+  // DATA in exactly one direction: clone-time reads the replica and sees "unavailable",
+  // so the shadow is created WITHOUT the column; apply-time reads the primary
+  // (`applyApprovedRevision`, inside its own tx) and sees "available", so the fragment
+  // emits `{sourceRepoUrl: null}` and the approve wipes the parent's live public link —
+  // no error, no moderator-visible diff, the link simply gone.
+  //
+  // Reading on the primary makes both ends of the round trip ask the SAME database, so
+  // the pair is consistent by construction rather than by luck of replication timing.
+  // It costs one query on a path that already runs a transaction, and only when a shadow
+  // is actually being minted (the idempotent-reuse return above is ahead of it).
+  const parentSourceRepo = await readListingSourceRepoUrl(listingId, dbWrite);
 
   const shadowId = newAppListingId();
   // Synthetic, globally-unique slug: the shadow is never public, but slug is
@@ -1012,6 +1426,17 @@ export async function beginListingRevision(opts: {
           category: parent.category,
           contentRating: parent.contentRating,
           externalUrl: parent.externalUrl,
+          // 🔴 CARRIED ONTO THE SHADOW, or a revision that does NOT touch the source
+          // link would silently CLEAR it on approve — `applyApprovedRevision` copies the
+          // shadow's value onto the parent unconditionally, so an uncopied column here
+          // becomes a deletion there. Same reasoning as `connectRequestedScopes` below.
+          // Omitted entirely (not null) when the manual-apply column is unreadable, so
+          // opening a revision keeps working before the migration lands.
+          //
+          // 🔴 FROM THE PRIMARY READ ABOVE, NOT FROM `parent` — see that comment. A
+          // replica-sourced `available: false` paired with a primary-sourced
+          // `available: true` at apply time is what silently clears a live link.
+          ...sourceRepoWriteFragment(parentSourceRepo),
           connectClientId: parent.connectClientId,
           // Carry the disclosed OAuth scope subset + justifications onto the shadow so
           // a revision that DOESN'T touch scopes preserves them (and one that does
@@ -1036,13 +1461,15 @@ export async function beginListingRevision(opts: {
       });
       if (shots.length > 0) {
         await tx.appListingScreenshot.createMany({
-          data: shots.map((s: { imageId: number | null; order: number; caption: string | null }) => ({
-            id: newAppListingScreenshotId(),
-            appListingId: shadowId,
-            imageId: s.imageId,
-            order: s.order,
-            caption: s.caption,
-          })),
+          data: shots.map(
+            (s: { imageId: number | null; order: number; caption: string | null }) => ({
+              id: newAppListingScreenshotId(),
+              appListingId: shadowId,
+              imageId: s.imageId,
+              order: s.order,
+              caption: s.caption,
+            })
+          ),
         });
       }
     });
@@ -1107,24 +1534,34 @@ export async function submitListingRevision(opts: {
       coverId: true,
       revisionOf: { select: { slug: true, status: true } },
     },
-  })) as
-    | {
-        id: string;
-        kind: string;
-        status: string;
-        userId: number;
-        revisionOfId: string | null;
-        externalUrl: string | null;
-        iconId: number | null;
-        coverId: number | null;
-        revisionOf: { slug: string; status: string } | null;
-      }
-    | null;
+  })) as {
+    id: string;
+    kind: string;
+    status: string;
+    userId: number;
+    revisionOfId: string | null;
+    externalUrl: string | null;
+    iconId: number | null;
+    coverId: number | null;
+    revisionOf: { slug: string; status: string } | null;
+  } | null;
 
   if (!shadow) {
     throw new OffsiteRequestError('NOT_FOUND', `revision draft ${shadowId} not found`);
   }
-  if (shadow.userId !== userId) {
+  // Owner OR an ACCEPTED collaborator, resolved from the SHADOW id — {@link
+  // resolveListingRole} hops to the parent, which is where both the seat and the
+  // canonical owner live.
+  //
+  // 🔴 A shadow is the WORST row to read `userId` off, and it is where the drift is
+  // actually MINTED rather than merely inherited. `beginListingRevision` clones with
+  // `userId: parent.userId`, and nothing ever revisits that clone: an ownership transfer
+  // updates only the parent row (`where: { id }`), and the revision-apply copies assets
+  // back, never `userId`. So the bare equality was wrong twice over — it refused an
+  // editor on their own shadow (the clone names the parent owner, not them) AND, on any
+  // shadow that outlives a transfer of its parent, it named an owner who had already
+  // been replaced, refusing the new owner and admitting the old one.
+  if ((await resolveListingRole(shadowId, userId)) === null) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only submit your own revision');
   }
   if (shadow.revisionOfId == null || !shadow.revisionOf) {
@@ -1217,6 +1654,13 @@ export type ListingEditScalars = {
   category: string | null;
   contentRating: string | null;
   externalUrl: string | null;
+  /**
+   * The public source-repository link. `null` for "not set" AND (indistinguishably, on
+   * purpose) while the manual-apply column is absent: to the FORM those are the same
+   * state — an empty input — and the form's diff only emits the field when the author
+   * types into it, so an unreadable column cannot cause a spurious write.
+   */
+  sourceRepoUrl: string | null;
 };
 
 export type ListingEditAsset = { imageId: number | null; url: string | null };
@@ -1229,12 +1673,32 @@ export type ListingEditScreenshot = {
 };
 
 export type GetMyListingForEditResult = {
+  /**
+   * The listing's KIND. 🔴 Additive OUTPUT field (no input schema is touched), and the
+   * edit form branches on it: an ON-SITE listing must not be offered the App URL step or
+   * the OAuth-scope disclosure, and `buildScalarPatch` refuses to emit `externalUrl` for
+   * it. Needed because the canonical authoring page now opens on the DETAILS tab, which
+   * routes on-site owners into this form for the first time.
+   */
+  kind: string;
   /** The LIVE (parent) listing id — always the caller's edit target identity. */
   parentId: string;
   /** The parent's PUBLIC slug — immutable in edit mode (identity/URL). */
   slug: string;
   /** The parent's status (draft | pending | approved). */
   status: string;
+  /**
+   * The CALLER's role on this listing — `owner` or an accepted `editor` seat.
+   *
+   * 🔴 SAME REASON AS `GetMyListingForAppResult.role`, AND THE SAME MISREADING TO CORRECT.
+   * `loadOwnedEditableListing` is named for ownership but gates on
+   * `resolveListingRole(...) === null`, so an accepted editor reaches this prefill. The
+   * unpublished-state copy (`materialEditBlockedReason`) tells the caller to "republish the
+   * app from the Publishing tab" — owner-only in `editorTabsFor`, so for an editor that is
+   * an instruction they cannot follow. The role is resolved by the gate anyway; returning
+   * it is what lets the copy say the true thing to each.
+   */
+  role: AppRole;
   /** True when an in-flight shadow revision is already under review. */
   hasPendingRevision: boolean;
   /**
@@ -1271,15 +1735,41 @@ export type GetMyListingForEditResult = {
 };
 
 /** Load a listing's scalars + current assets (edge-resolved URLs) + connect scope
- *  snapshot for edit prefill. */
-async function loadListingEditView(listingId: string): Promise<{
+ *  snapshot for edit prefill.
+ *
+ * 🔴 READ-AFTER-WRITE: defaults to the REPLICA (`dbRead`) — correct only for a row that
+ * was written long ago. A caller reading a SHADOW revision MUST pass `dbWrite`.
+ *
+ * The predicate is "is the target a shadow?", NOT "did I just create it".
+ * `beginListingRevision(...).created === false` means only that *this* call did not do
+ * the INSERT — it says NOTHING about whether the replica has the row. The shadow is
+ * minted on the PRIMARY by whoever got there first, and in this flow that is routinely
+ * microseconds earlier and in a DIFFERENT request: the media editor fires its own
+ * client-side `beginListingRevision` mutation on mount, `getMyListingForEdit` mints one
+ * for the same parent, a second tab does either. So a `created === false` read off the
+ * replica misses under lag exactly like a `created === true` one: the `findUnique`
+ * returns null, this throws NOT_FOUND → tRPC NOT_FOUND → the editor renders
+ * `<NotFound />` (its query has `retry: false`), discarding the whole editor including
+ * any in-flight upload. Because the client invalidates on every asset mutation, that is
+ * once per mutation, not once per page load.
+ *
+ * Same hazard the screenshot re-pack guards against in `app-listing-assets.service.ts`.
+ * Do NOT route a non-shadow (in-place draft/pending) read to the primary. */
+async function loadListingEditView(
+  listingId: string,
+  db: typeof dbRead = dbRead
+): Promise<{
   scalars: ListingEditScalars;
   assets: GetMyListingForEditResult['assets'];
   connectRequestedScopes: number | null;
   connectScopeJustifications: Record<string, string> | null;
 }> {
-  const { getEdgeUrl } = await import('~/client-utils/cf-images-utils');
-  const row = (await dbRead.appListing.findUnique({
+  const { getEdgeUrl } = await import('~/client-utils/edge-url');
+  // Guarded, SEPARATE read of the manual-apply `source_repo_url` column — never added
+  // to the select below, which would 500 the whole author edit-prefill page until a
+  // human runs the migration. Degrades to null; see app-listing-source-repo.service.
+  const sourceRepo = await readListingSourceRepoUrl(listingId, db);
+  const row = (await db.appListing.findUnique({
     where: { id: listingId },
     select: {
       name: true,
@@ -1337,6 +1827,7 @@ async function loadListingEditView(listingId: string): Promise<{
       category: row.category,
       contentRating: row.contentRating,
       externalUrl: row.externalUrl,
+      sourceRepoUrl: sourceRepo.value,
     },
     connectRequestedScopes: row.connectRequestedScopes ?? null,
     connectScopeJustifications:
@@ -1364,8 +1855,9 @@ async function loadListingEditView(listingId: string): Promise<{
 /**
  * AUTHOR: owner-gated prefill read for the dual-mode edit wizard. Loads the
  * caller's OWN listing (NOT_OWNED / NOT_FOUND), asserts it is EDITABLE
- * (draft/pending/approved; rejected → MUST_RESUBMIT, removed → FORBIDDEN,
- * an internal shadow → INVALID_REVISION), and returns the prefill scalars +
+ * (draft/pending/approved; rejected → MUST_RESUBMIT; removed → editable ONLY when the
+ * owner unpublished it themselves, else FORBIDDEN; an internal shadow →
+ * INVALID_REVISION), and returns the prefill scalars +
  * current assets from the EFFECTIVE source: an approved parent's in-progress
  * shadow when one exists (so a resumed revision prefills its edited state), else
  * the listing itself. `slug` + `status` + `parentId` always describe the live
@@ -1385,11 +1877,19 @@ export async function getMyListingForEdit(opts: {
     );
   }
   switch (listing.status) {
-    case 'removed':
-      throw new OffsiteRequestError(
-        'FORBIDDEN',
-        'this listing has been removed by a moderator and can no longer be edited'
-      );
+    case 'removed': {
+      // 🔴 Same two-states-one-string branch as `updateListing` — the prefill read has to
+      // agree with the write path it prefills, or the owner gets an editor they are then
+      // refused by. `app-listing-owner-unpublish` is the single spelling of the predicate.
+      const lastAction = await readLastModerationAction(dbWrite, listingId);
+      if (!isOwnerUnpublishAction(lastAction)) {
+        throw new OffsiteRequestError(
+          'FORBIDDEN',
+          'this listing has been removed by a moderator and can no longer be edited'
+        );
+      }
+      break;
+    }
     case 'rejected':
       throw new OffsiteRequestError(
         'MUST_RESUBMIT',
@@ -1439,7 +1939,10 @@ export async function getMyListingForEdit(opts: {
     hasPendingRevision = !!pendingRevisionReq;
   }
 
-  const view = await loadListingEditView(effectiveId);
+  // 🔴 READ-AFTER-WRITE — same rule as `getMyListingForApp`: a SHADOW target is read
+  // from the PRIMARY (it may have been minted microseconds ago by ANY caller), an
+  // in-place target from the replica. See `loadListingEditView`.
+  const view = await loadListingEditView(effectiveId, effectiveId !== listingId ? dbWrite : dbRead);
 
   // Resolve the connect client's CURRENT allowedScopes — this is the derived
   // requested-scope set the edit form displays read-only + re-submits (the server
@@ -1456,8 +1959,10 @@ export async function getMyListingForEdit(opts: {
 
   return {
     parentId: listingId,
+    kind: listing.kind,
     slug: listing.slug,
     status: listing.status,
+    role: listing.callerRole,
     hasPendingRevision,
     shadowId,
     scalars: view.scalars,
@@ -1474,35 +1979,201 @@ export type GetMyListingForAppResult = {
   appListingId: string;
   /** The listing's TRUE lifecycle status (`draft|pending|approved|rejected|removed`). */
   status: string;
+  /**
+   * The CALLER's role on this listing — `owner` or an accepted `editor` seat.
+   *
+   * 🔴 THIS PROC HAS NEVER BEEN OWNER-ONLY, and the media editor's copy assumed it was.
+   * The gate below is `resolveListingRole(...) === null`, which admits an accepted
+   * collaborator; the role it resolves was then thrown away. So `ListingMediaEditor` had no
+   * way to tell the two apart and told an editor "you unpublished it" and "republish it
+   * from the Publishing tab" — a thing they did not do, and a tab `editorTabsFor` does not
+   * give them (`publishing` is owner-only). Returning the role the gate ALREADY computes is
+   * what lets the copy be true for both, without a second access read and without the
+   * component guessing from the session.
+   */
+  role: AppRole;
   /** The listing's stored content rating (drives the asset NSFW-scan threshold). */
   contentRating: string;
   /** Whether a shadow-revision publish request is already under review for this listing. */
   hasPendingRevision: boolean;
+  /**
+   * The in-progress SHADOW revision id for an APPROVED parent (resolved server-side,
+   * idempotently — the same id the client's `beginListingRevision` returns), else
+   * `null`. Mirrors `GetMyListingForEditResult.shadowId`.
+   */
+  shadowId: string | null;
+  /**
+   * The id the client hands to the asset procs: `shadowId` when a shadow already
+   * exists, else `appListingId`. Under LAZY shadow creation the first asset mutation
+   * on an approved parent arrives carrying the PARENT id — the asset service mints the
+   * shadow and re-targets (and re-maps screenshot row ids) server-side. See
+   * `resolveOwnerAssetEditTarget` in `app-listing-assets.service`.
+   */
+  editTargetId: string;
+  /**
+   * Non-null when this listing's media CANNOT be edited at all (`removed` / `rejected`
+   * / the row is itself an internal shadow). The editor renders it as its inline alert
+   * instead of mounting the asset step — the same surface the client's on-mount
+   * `beginListingRevision` used to produce via `INVALID_REVISION`. `null` for every
+   * editable listing (`draft` / `pending` edited in place; `approved` via a revision).
+   */
+  editBlockedReason: string | null;
+  /**
+   * The EDITABLE target's current assets, edge-resolved — icon / cover / screenshots.
+   *
+   * 🔴 These are the assets of the EFFECTIVE edit target: the SHADOW's rows when a
+   * shadow EXISTS, the listing's own rows otherwise. NEVER the live parent's rows
+   * when a shadow exists — the media editor mutates + floor-checks exactly what it
+   * is handed, so returning the parent's `AppListingScreenshot` ids alongside a live
+   * shadow would let a "remove screenshot" delete a row from the LIVE served listing,
+   * bypassing moderator review. Same rule as `getMyListingForEdit`.
+   *
+   * 🔴 Under LAZY creation an approved parent with NO shadow yet projects the PARENT's
+   * rows — which IS the hazard above, so it is contained on the WRITE side: every
+   * screenshot proc re-maps a parent row id onto the freshly-minted shadow's clone
+   * before mutating, and `assertOwnerAssetEditable` fires (fail-closed) if that re-map
+   * ever hands back the parent. See `resolveOwnerAssetEditTarget`.
+   */
+  assets: {
+    icon: ListingEditAsset;
+    cover: ListingEditAsset;
+    screenshots: ListingEditScreenshot[];
+  };
 };
 
 /**
- * OWNER: resolve the caller's OWN listing by its backing `appBlockId`
- * (`AppListing.appBlockId` is `@unique`) — the entry read for the owner-facing
- * on-site listing-media page. Returns the `AppListing.id` (the target the page
- * then passes to `beginListingRevision` + the owner-gated asset procs), the
- * listing's lifecycle status + content rating, and whether a revision is already
- * under review. Owner-bound: a listing owned by another user → NOT_OWNED
- * (→FORBIDDEN); no listing row for the app → NOT_FOUND. Kind-agnostic (works for
- * both on-site and off-site listings — the on-site owner UI is the first caller).
+ * OWNER: resolve the caller's OWN listing for a listing-media surface. TWO selectors,
+ * and `appBlockId` WINS: the backing `appBlockId` (`AppListing.appBlockId` is `@unique`)
+ * is tried first, and the slug arm runs only when that lookup MISSED or no `appBlockId`
+ * was supplied — so passing both a block id and a slug that name DIFFERENT listings
+ * returns the `appBlockId` one. At least one of the two must be given (enforced by the
+ * schema's `.refine`).
+ *
+ * The slug arm resolves ANY TOP-LEVEL listing — either `kind`, any `status`, with or
+ * without a backing `appBlockId` — narrowed only by `revisionOfId: null`
+ * (civitai/civitai#3984). It is deliberately NOT scoped to the W13 pre-approval draft it
+ * was first written for; that shape is one member of the set, alongside an OFF-SITE
+ * listing (which `appBlockId` cannot address, see the inline comment) and an approved
+ * on-site listing whose caller only holds the slug. A `removed` / `rejected` listing
+ * resolves too and comes back carrying an `editBlockedReason` instead of throwing, so
+ * the surface renders the reason rather than a blank page.
+ *
+ * Returns the `AppListing.id` (the target the caller then passes to
+ * `beginListingRevision` + the owner-gated asset procs), the listing's lifecycle
+ * status + content rating, and whether a revision is already under review.
+ * Owner-bound: a listing owned by another user → NOT_OWNED (→FORBIDDEN); no listing
+ * row for the app → NOT_FOUND. Kind-agnostic (works for both on-site and off-site
+ * listings — the on-site owner UI was the first caller).
+ *
+ * ALSO projects the EDITABLE target's current `assets` (+ its `shadowId`). Without
+ * them the media editor had no way to see the icon/cover it is about to edit: it
+ * rendered every slot as "none" and its publish-floor check (icon+cover attached)
+ * could never be satisfied, so "Submit for review" stayed permanently disabled —
+ * the whole on-site listing-media flow was uncompletable. The assets come from the
+ * EFFECTIVE source: an approved parent's shadow WHEN ONE ALREADY EXISTS, else the
+ * listing's own rows.
+ *
+ * 🔴 THIS IS A READ. It does NOT create a shadow. It used to call
+ * `beginListingRevision`, so merely OPENING the media tab minted a `draft`
+ * `AppListing` — measured on prod 2026-07-30: 7 shadows, 7/7 with
+ * `updated_at == created_at` (never written since their clone tx), 6 of them minted
+ * that day purely by page views, three 1.5 s apart; 78% of approved onsite parents
+ * carried a shadow representing no edit, and they self-refilled on sight. A `.query`
+ * must not write. The shadow is now minted LAZILY by the first asset MUTATION (see
+ * `resolveOwnerAssetEditTarget` in `app-listing-assets.service`), so every shadow
+ * that exists represents real work.
  */
 export async function getMyListingForApp(opts: {
-  appBlockId: string;
+  appBlockId?: string;
+  slug?: string;
   userId: number;
 }): Promise<GetMyListingForAppResult> {
-  const { appBlockId, userId } = opts;
-  const listing = await dbRead.appListing.findUnique({
-    where: { appBlockId },
-    select: { id: true, userId: true, status: true, contentRating: true },
-  });
-  if (!listing) {
-    throw new OffsiteRequestError('NOT_FOUND', `no listing found for app ${appBlockId}`);
+  const { appBlockId, slug, userId } = opts;
+  // 🔴 `userId` is deliberately NOT selected. Nothing below reads it any more (the gate
+  // is `resolveListingRole`), and leaving the denormalized owner column sitting next to
+  // an access check is an invitation to compare against it again.
+  const entrySelect = {
+    id: true,
+    status: true,
+    contentRating: true,
+    revisionOfId: true,
+  } as const;
+  let listing = appBlockId
+    ? await dbRead.appListing.findUnique({
+        where: { appBlockId },
+        select: entrySelect,
+      })
+    : null;
+  // SLUG fallback — 🔴 SECOND, and only on a MISS. `appBlockId` is the primary selector
+  // and wins whenever it resolves; this arm runs when that lookup missed or when no
+  // `appBlockId` was supplied. (Pinned: "appBlockId WINS over a slug naming a DIFFERENT
+  // listing" in `offsite-listing.get-my-listing-for-app.service.test.ts`.) Two callers
+  // need it:
+  //   - (W13 draft-at-submit) a FIRST-version on-site app has no backing AppBlock yet,
+  //     so its draft listing (minted at submit) has `appBlockId = NULL` and is only
+  //     reachable BY SLUG while it is pending; and
+  //   - any client whose ONLY handle is the slug — in particular an OFF-SITE listing,
+  //     which in practice carries no AppBlock, so `appBlockId` cannot address it
+  //     (civitai/civitai#3984).
+  //
+  // 🟡 "off-site ⇒ no AppBlock" is EMPIRICAL, NOT STRUCTURAL — do not restate it as
+  // "never, ever". `AppListing.appBlockId` is "set for EVERY backfilled row — on-site
+  // AND the #2821 off-site rows (both come from an AppBlock). It is NOT a kind
+  // discriminator: discriminate on `kind`, never on appBlockId nullness"
+  // (schema.full.prisma). Only a NATIVELY-created off-site listing leaves it NULL, and
+  // `mapAppBlockToListing` can still mint `kind:'offsite'` + a non-null `appBlockId`.
+  // That shape measured 0 rows in production on 2026-08-11 (see
+  // `resolveAccessibleAppBlockIds` / `appListingEditorTabs.ts`), so today the slug is
+  // the only handle every off-site listing has — but a backfilled class exists and the
+  // widening below is correct either way: it admits the row on EITHER selector.
+  //
+  // 🔴 `revisionOfId: null` IS LOAD-BEARING, not decoration. `beginListingRevision`
+  // mints a shadow with a synthetic `rev-<ulid>` slug that is never public but IS a
+  // real row — `kind: parent.kind`, `appBlockId` NULL, status `draft`. For an ON-SITE
+  // parent that is exactly the previous, apparently-narrower clause, so those shadows
+  // matched it; a shadow of an OFF-SITE parent is `kind:'offsite'` and did not. Either
+  // way, excluding revisions here is what makes the comment below ("only ever sees a
+  // top-level parent") true by construction rather than by the accident that nobody
+  // knows a shadow's slug — and it is now the ONLY clause standing between the widened
+  // arm and every shadow in the table.
+  //
+  // `AppListing.slug` is `@unique` across BOTH kinds (schema.full.prisma), so this is
+  // unambiguous without an index change. Owner-bound below (unchanged): a slug that
+  // is not yours is refused by `resolveListingRole`, not by this `where`.
+  if (!listing && slug) {
+    listing = await dbRead.appListing.findFirst({
+      where: { slug, revisionOfId: null },
+      select: entrySelect,
+    });
   }
-  if (listing.userId !== userId) {
+  if (!listing) {
+    throw new OffsiteRequestError(
+      'NOT_FOUND',
+      `no listing found for app ${appBlockId ?? slug ?? '(unspecified)'}`
+    );
+  }
+  // Owner OR an ACCEPTED collaborator ON THE LISTING (the seat key since the re-key).
+  // This is the media editor's entry read; an editor who cannot reach it cannot edit
+  // anything. The owner half goes through {@link resolveListingRole} too, for UNIFORMITY
+  // rather than because a stale copy can reach here: this read resolves its row by
+  // `appBlockId`/`slug`, so it only ever sees a top-level parent, and a parent's copy has
+  // no drift mechanism (see {@link resolveListingRole}). One spelling of the gate across
+  // the file is the point — a second spelling is what drifts.
+  //
+  // 🟡 KNOWN, ACCEPTED: this re-reads the same row on the same pool, so a listing DELETED
+  // between the two reads reports `NOT_OWNED` instead of `NOT_FOUND` (`resolveListingAccess`
+  // returns null for a missing row, and null role is the refusal here). It is cosmetic —
+  // the caller is refused either way, no capability turns on it — and the alternative is
+  // to distinguish "no row" from "no role" in the shared resolver's return, which widens
+  // it for every caller to improve one error string on a race with a moderator delete.
+  // Written down rather than left as a puzzle for whoever next reads a NOT_OWNED in the
+  // logs for a listing that no longer exists.
+  // 🔴 KEEP THE RESOLVED ROLE — it is returned, not just null-checked. The copy in
+  // `ListingMediaEditor` branches on it (an editor is not told they unpublished the app,
+  // nor pointed at an owner-only Publishing tab). Discarding it here is what forced that
+  // component to have no answer.
+  const callerRole = await resolveListingRole(listing.id, userId);
+  if (callerRole === null) {
     throw new OffsiteRequestError('NOT_OWNED', 'you can only manage your own listings');
   }
   // A pending revision REQUEST (not mere shadow existence) drives the "already
@@ -1512,14 +2183,144 @@ export async function getMyListingForApp(opts: {
     where: { status: 'pending', appListing: { revisionOfId: listing.id } },
     select: { id: true },
   });
+
+  // Resolve the EFFECTIVE edit target before reading assets — WITHOUT creating one.
+  // For an approved parent that is its shadow revision IF one already exists; a
+  // non-approved listing (draft / pending) has no shadow and is edited in place.
+  //
+  // 🔴 The existence probe reads the PRIMARY, not the replica. The client invalidates
+  // this query after EVERY asset mutation, and the FIRST such mutation is what mints
+  // the shadow — so the very next call is a read-after-write on a row inserted
+  // milliseconds ago. Missing it on a lagging replica would re-project the PARENT's
+  // rows (and their screenshot row ids) right after the shadow started diverging.
+  let effectiveId = listing.id;
+  let shadowId: string | null = null;
+  if (listing.status === 'approved' && listing.revisionOfId == null) {
+    const existing = await dbWrite.appListing.findFirst({
+      where: { revisionOfId: listing.id },
+      select: { id: true },
+    });
+    if (existing) {
+      shadowId = existing.id;
+      effectiveId = existing.id;
+    }
+  }
+  // 🔴 READ-AFTER-WRITE: read a SHADOW back from the PRIMARY — always. A shadow read
+  // that misses on the replica throws NOT_FOUND → tRPC NOT_FOUND → `<NotFound />`
+  // (`retry: false`), discarding the editor mid-upload. Every non-shadow target
+  // (draft/pending edited in place, or an approved parent with no shadow yet) is old
+  // and stays on the replica.
+  const { assets } = await loadListingEditView(
+    effectiveId,
+    effectiveId !== listing.id ? dbWrite : dbRead
+  );
+
+  // 🔴 Only a `removed` listing needs this — it is the ONE status whose editability is not
+  // decided by the status column alone (owner self-unpublish and moderator takedown both
+  // write it). Gated on the status so the common path keeps its existing round-trip count.
+  // PRIMARY, not the replica: see `readLastModerationAction` — a lagging replica can hide
+  // a moderator's just-written `delist` behind the owner's older `owner-unpublish`, and
+  // reading the primary can only err toward refusing.
+  const ownerUnpublished =
+    listing.status === 'removed' ? await isOwnerUnpublishedListing(dbWrite, listing.id) : false;
+
   return {
     appListingId: listing.id,
     status: listing.status,
+    role: callerRole,
     // Nullable column; fall back to the safest rating so the asset step's scan
     // threshold is always defined.
     contentRating: listing.contentRating ?? 'g',
     hasPendingRevision: !!pendingRevisionReq,
+    shadowId,
+    editTargetId: effectiveId,
+    editBlockedReason: listingMediaEditBlockedReason(listing, ownerUnpublished),
+    assets,
   };
+}
+
+/**
+ * Why this listing's MEDIA cannot be edited at all, or `null` when it can.
+ *
+ * The client used to learn this by firing `beginListingRevision` on mount and
+ * rendering its `INVALID_REVISION` message inline — the only thing that stopped the
+ * media editor mounting against a `removed` / `rejected` listing. Lazy creation
+ * removes that call, so the verdict is computed here (read-only) and surfaced on the
+ * read. Mirrors `updateListing`'s state routing: draft/pending edit in place,
+ * approved edits through a revision, rejected → resubmit, removed → terminal UNLESS the
+ * owner removed it themselves. An internal shadow (`revisionOfId != null`) is not a page
+ * the owner addresses directly.
+ *
+ * 🔴 STILL PURE AND STILL SYNCHRONOUS — the one bit that `removed` cannot supply arrives
+ * as an ARGUMENT rather than as a DB read inside this function. `status='removed'` is
+ * written by both an owner self-unpublish and a moderator takedown, so answering
+ * "editable?" needs the listing's last moderation action; making this function fetch that
+ * itself would have made it `async` and DB-bound, and the reason it is exported at all is
+ * that its branch table is unit-testable WITHOUT a DB. Its only caller already has the
+ * listing loaded and is already `async`, so the read belongs there.
+ *
+ * 🔴 `ownerUnpublished` IS REQUIRED, NOT OPTIONAL-DEFAULTING-TO-FALSE. A default would be
+ * the safe VALUE (refuse) but the wrong ERGONOMICS: a future caller could omit it and
+ * silently reintroduce exactly the defect this parameter fixes, with nothing going red.
+ * Required means every call site has to decide, out loud.
+ *
+ * Pure + exported so the branch table is unit-testable without a DB.
+ */
+export function listingMediaEditBlockedReason(
+  listing: {
+    status: string;
+    revisionOfId: string | null;
+  },
+  /**
+   * Did the OWNER take this listing down themselves (last moderation action ===
+   * `owner-unpublish`)? Only consulted on `removed`. `false` on a moderator takedown AND
+   * on a listing with no recorded events — see `app-listing-owner-unpublish`.
+   */
+  ownerUnpublished: boolean
+): string | null {
+  if (listing.revisionOfId != null) {
+    return 'this listing is an internal revision draft and cannot be edited directly';
+  }
+  switch (listing.status) {
+    case 'draft':
+    case 'pending':
+    case 'approved':
+      return null;
+    case 'rejected':
+      return 'this listing was rejected; submit a new listing instead of editing it';
+    case 'removed':
+      // 🔴 The owner's OWN unpublish is a repair state, not a terminal one: they took the
+      // app down to fix it, so the media editor mounts. A MODERATOR takedown stays
+      // terminal — and keeps saying so, which for this caller is now only ever the true
+      // attribution.
+      //
+      // 🔴 DO NOT RESTATE THE CLAIM THIS COMMENT USED TO MAKE. It said `republishOwnListing`
+      // "re-runs the scan-clean + actionability go-live gates, so editing while it is down
+      // cannot sneak anything past review". Those gates exist, but neither is a review:
+      // `assertListingAssetsScanCleanInTx` asks whether the images finished scanning
+      // without being `Blocked`, `assertOffsiteListingActionableInTx` asks whether an https
+      // destination exists. Neither asks whether a moderator ever saw the current values.
+      // What actually holds the line is per-surface: for SCALARS, `updateListing`'s
+      // MATERIAL_CHANGE_BLOCKED refusal on this same state. For ASSETS — which is what this
+      // verdict unblocks — `assertOwnerAssetEditable` refuses only an `approved` top-level
+      // listing, so a `removed` listing has been directly asset-editable all along. This
+      // verdict changes WHO IS TOLD WHAT, not what the asset procs permit.
+      //
+      // 🔴 THE LAST SENTENCE OF THAT PARAGRAPH USED TO SAY "`republishOwnListing` runs no
+      // rating floor (`resolveListingRatingFloorInTx` is wired into the approve paths
+      // only)". THAT HAS BEEN FALSE SINCE #4418 — republish derives and applies the
+      // raise-only floor itself, on every arm — and it is the kind of false comment that
+      // does damage rather than merely aging: it reads as a licence to skip the floor
+      // anywhere else on the republish path, which is exactly the hole #4440 had to close
+      // in `approveRequest`'s reset re-approve. The remaining "nothing reviews the assets"
+      // half was true when written and is what #4440 closed: an asset change across an
+      // owner unpublish/republish now re-enters the moderation queue.
+      return ownerUnpublished
+        ? null
+        : 'this listing has been removed by a moderator and can no longer be edited';
+    default:
+      return `cannot edit a listing in status ${listing.status}`;
+  }
 }
 
 /**
@@ -1565,7 +2366,17 @@ export async function updateRevisionDraft(opts: {
     userId,
     isModerator,
   });
-  const data = buildListingPatchData(effectivePatch, { connectAllowedScopes });
+  // Same up-front column gate as `updateListing` — a shadow edit writes the same column
+  // through the same builder, so an unapplied migration must refuse here too rather than
+  // reach Prisma. (No shadow is opened on this path, so there is nothing to orphan; the
+  // check is hoisted anyway to keep the two edit entry points reading identically.)
+  if (effectivePatch.sourceRepoUrl !== undefined) {
+    assertSourceRepoWritable(shadow.sourceRepoAvailable);
+  }
+  const data = buildListingPatchData(effectivePatch, {
+    connectAllowedScopes,
+    sourceRepoAvailable: shadow.sourceRepoAvailable,
+  });
   await dbWrite.appListing.update({ where: { id: shadowId }, data });
   return { shadowId };
 }
@@ -1574,11 +2385,26 @@ export async function updateRevisionDraft(opts: {
 // Listing-request kinds surfaced by the CONSOLIDATION half of the flow
 // (approve/reject + the mod review queue + my-submissions).
 //
-// 🔴 INVARIANT: the ONLY producer of a `kind='onsite'` `AppListingPublishRequest`
-// is `submitListingRevision` on an onsite SHADOW (i.e. an onsite media revision) —
-// the onsite CODE review runs over a DIFFERENT table (`AppBlockPublishRequest`).
-// So widening these gates from `'offsite'` to this set surfaces EXACTLY onsite
-// media revisions, nothing else. (Asserted in the service tests.)
+// 🔴 THERE ARE TWO PRODUCERS OF A `kind='onsite'` `AppListingPublishRequest`, and this
+// comment used to name only one. The onsite CODE review still runs over a DIFFERENT
+// table (`AppBlockPublishRequest`); what changed is that the LISTING table now carries
+// on-site rows of two shapes:
+//
+//   1. `submitListingRevision` on an onsite SHADOW — a media revision, `revisionOfId`
+//      SET on the target listing, the parent slug denormalized onto the request.
+//   2. `routeRepublishToReviewInTx` (owner republish whose assets changed since the last
+//      approval) — NON-SHADOW, `revisionOfId` NULL, targeting the live listing itself.
+//
+// So widening these gates from `'offsite'` to this set no longer surfaces "exactly onsite
+// media revisions": it surfaces onsite media revisions AND onsite republish re-reviews.
+// Both belong in the queue — the modal reads `request.appListingId` and is kind-agnostic —
+// but any consumer that reasons "onsite request ⇒ shadow" is now wrong. Check
+// `revisionOfId` when you need to tell them apart, never `kind`.
+//
+// The producer SET is pinned as a ledger in
+// `src/server/services/blocks/__tests__/offsite-listing.onsite-revision.service.test.ts`
+// (`LISTING_REQUEST_PRODUCERS`), which fails when it GROWS or SHRINKS — this sentence went
+// stale precisely because nothing could notice a producer being added.
 // ---------------------------------------------------------------------------
 const REVIEWABLE_LISTING_KINDS = ['onsite', 'offsite'] as const;
 
@@ -1645,6 +2471,55 @@ async function resolveApprovalContentRating(
   return nsfwLevelFromContentRating(override) < nsfwLevelFromContentRating(derived)
     ? derived // floor: an under-rating override is clamped up to the derived value
     : override;
+}
+
+/**
+ * The ON-SITE counterpart of {@link resolveApprovalContentRating}, and the difference is
+ * the whole reason it exists rather than being one more branch inside that function.
+ *
+ * 🔴 OFF-SITE: the rating IS the assets — a listing has no other content, so the derived
+ * value REPLACES whatever was stored (`resolveApprovalContentRating` returns `derived`).
+ * 🔴 ON-SITE: the rating belongs to the APP, not to its store card. It is manifest-declared
+ * by the author and describes what the app DOES; its icon and cover are a strictly smaller
+ * surface. Replacing it with an asset-derived value would LOWER a `pg13` app to `g` because
+ * its store art happens to be tame — an under-rating of the runtime, produced by looking at
+ * a picture. So the app's declaration is a FLOOR that is raised by mature media and never
+ * lowered by tame media: exactly {@link resolveListingRatingFloorInTx}, the same helper
+ * `approveRequest`'s draft→approved transition and `republishOwnListing` use, so all three
+ * on-site rating sites have ONE spelling.
+ *
+ * A moderator override may still RAISE above the floor (a mod may always rate up) and is
+ * ignored when it would lower.
+ *
+ * 🔴 NOT quite "the same discipline as the off-site clamp above" — that sentence used to
+ * live here and it is inaccurate AT EQUAL LEVEL, which is a reachable case rather than a
+ * pedantic one. `nsfwLevelFromContentRating` maps BOTH `'g'` and `'pg'` to
+ * `NsfwLevel.PG`, so the two ratings are indistinguishable to these comparisons. Off-site
+ * asks `override < derived ? derived : override` and therefore returns the OVERRIDE on a
+ * tie; on-site asks `override > floored ? override : floored` and returns the FLOOR. So a
+ * moderator who explicitly picks `'pg'` for a `'g'`-declared app has that choice honoured
+ * off-site and silently dropped on-site.
+ *
+ * Left as-is deliberately: the two values carry the SAME maturity ceiling, so nothing
+ * about who can see the listing changes — the divergence is which LABEL is stored, and
+ * deciding that a tie-breaking override should overwrite an author's declaration is a
+ * product call, not a safety fix to make in passing. Recorded here so the next reader
+ * does not infer symmetry that is not there.
+ */
+async function resolveOnsiteApprovalContentRating(
+  tx: Prisma.TransactionClient,
+  args: {
+    appListingId: string;
+    declared: string | null;
+    override?: OffsiteContentRating | null;
+  }
+): Promise<string | null> {
+  const floored = await resolveListingRatingFloorInTx(tx, args.appListingId, args.declared);
+  const override = args.override ?? null;
+  if (override == null) return floored;
+  return nsfwLevelFromContentRating(override) > nsfwLevelFromContentRating(floored)
+    ? override
+    : floored;
 }
 
 /**
@@ -1788,6 +2663,9 @@ export async function approveExternalRequest(opts: {
       userId: true,
       name: true,
       slug: true,
+      // `kind` + `slug` also feed the go-live ACTIONABILITY gate in (4c) — the
+      // check is off-site-only, so it needs the discriminator, not just the URL.
+      kind: true,
     },
   });
   if (!listing) {
@@ -1858,6 +2736,19 @@ export async function approveExternalRequest(opts: {
   // row (`connectClientId == null`); runs for every OAuth-linked external listing.
   assertConnectSensitiveScopesJustified(listing);
 
+  // (4c) 🔴 GO-LIVE ACTIONABILITY gate — an off-site listing may not be published
+  // while the store would render it a primary CTA with nothing to click. This is
+  // the gate that was MISSING when three connect listings were approved onto the
+  // dead "Connecting this app will be available soon." stub (07-24 → 07-28), each
+  // one going live with no way for a user to open the app.
+  //
+  // It re-runs the REAL detail view-model rather than re-deriving a second
+  // "is this actionable?" rule — see `app-listing-actionable.service`. On-site
+  // requests are a no-op (a model-slot app is legitimately non-navigable).
+  // Fail-fast copy on the replica; re-asserted AUTHORITATIVELY on the primary in
+  // (5), same TOCTOU discipline as the floor + scan gates above.
+  assertOffsiteListingActionable(listing);
+
   // (5) One transaction: RE-ASSERT the asset gate on the PRIMARY (row-consistent
   // with the flip) + guarded request flip + guarded listing flip + supersede.
   await dbWrite.$transaction(async (tx) => {
@@ -1882,6 +2773,15 @@ export async function approveExternalRequest(opts: {
         connectRequestedScopes: true,
         connectScopeJustifications: true,
         connectClient: { select: { allowedScopes: true } },
+        // Go-live ACTIONABILITY gate (re-asserted below) — off-site-only, so it
+        // needs the kind discriminator; `slug` names the listing in the error.
+        kind: true,
+        slug: true,
+        // ON-SITE approve inputs, read on the PRIMARY with everything else so they are
+        // row-consistent with the flip: the app's DECLARED rating (the raise-only floor —
+        // see `resolveOnsiteApprovalContentRating`) and the backing block to un-suspend.
+        contentRating: true,
+        appBlockId: true,
       },
     });
     if (!primaryListing) {
@@ -1912,6 +2812,22 @@ export async function approveExternalRequest(opts: {
       },
       tx
     );
+    // AUTHORITATIVE go-live ACTIONABILITY gate on the PRIMARY (`tx`) — row-consistent
+    // with the flip below. `externalUrl` is owner-editable in place while the request
+    // sits pending, so an owner who cleared the URL after the replica read in (4c) is
+    // caught HERE and the whole tx rolls back BEFORE anything is approved. Upholds the
+    // invariant: no approved off-site listing may render a primary CTA the viewer
+    // cannot click.
+    //
+    // 🔴 `connectClientId` IS NOT EDITABLE IN PLACE, and this comment used to say it
+    // was — one of the seven false-mechanism comments #4126 corrected. `buildListingPatchData`
+    // never assigns the column and `updateListingPatchSchema` has no such key, so "or
+    // linked an OAuth client" named a mutation no code path can perform. It was also
+    // backwards about direction: `assertOffsiteListingActionable` fails on a connect
+    // listing with NO usable `href`, so ACQUIRING a client alongside a valid URL would
+    // not break actionability anyway. The column is still passed to the gate because it
+    // selects the sub-kind the CTA is derived from — a real input, just not a mutable one.
+    assertOffsiteListingActionable(primaryListing);
     // Validate the stored externalUrl ONLY WHEN present (it's optional in the merged
     // model); a null URL approves fine. See step (4).
     if (primaryListing.externalUrl != null) {
@@ -1944,7 +2860,9 @@ export async function approveExternalRequest(opts: {
       // submit/edit time). A connect listing always has a `connectClient` row here
       // (FK-backed by the non-null `connectClientId`); treat a null ceiling as 0.
       const allowedScopes = primaryListing.connectClient?.allowedScopes ?? 0;
-      if (!connectScopesSubsetOfCeiling(primaryListing.connectRequestedScopes ?? 0, allowedScopes)) {
+      if (
+        !connectScopesSubsetOfCeiling(primaryListing.connectRequestedScopes ?? 0, allowedScopes)
+      ) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: 'requested scopes exceed the OAuth client’s allowed scopes',
@@ -1972,12 +2890,26 @@ export async function approveExternalRequest(opts: {
     // Derive (+ mod-override, floored) the content rating from the assets' max
     // detected nsfwLevel and stamp it on the listing as it goes live. The author is
     // never blocked on the scanner's rating — it is confirmed HERE at review.
-    const finalRating = await resolveApprovalContentRating(tx, {
-      appListingId,
-      iconId: primaryListing.iconId,
-      coverId: primaryListing.coverId,
-      override: opts.contentRating,
-    });
+    //
+    // 🔴 ON-SITE TAKES THE RAISE-ONLY VARIANT, and this branch is NEW because until the
+    // owner-republish asset-review route existed nothing could reach this path with
+    // `kind: 'onsite'` — every other on-site listing request is a media REVISION and
+    // returns above via `applyApprovedRevision`. An on-site listing's `contentRating`
+    // describes the APP (manifest-declared), so it must be raised by mature media and
+    // never lowered by tame media. See {@link resolveOnsiteApprovalContentRating}.
+    const finalRating =
+      request.kind === 'onsite'
+        ? await resolveOnsiteApprovalContentRating(tx, {
+            appListingId,
+            declared: primaryListing.contentRating,
+            override: opts.contentRating,
+          })
+        : await resolveApprovalContentRating(tx, {
+            appListingId,
+            iconId: primaryListing.iconId,
+            coverId: primaryListing.coverId,
+            override: opts.contentRating,
+          });
     // Guard flips a `draft` OR a `pending` listing → approved. `pending` is the W13
     // post-approval-mgmt REOPEN path: `resetListingToPending` bounces an approved
     // listing back to `pending` + mints a fresh pending request pointing at it (a
@@ -1996,6 +2928,26 @@ export async function approveExternalRequest(opts: {
         'NOT_PENDING',
         `cannot approve — the draft/pending listing is no longer available`
       );
+    }
+
+    // 🔴 ON-SITE: RESTORE THE RUNTIME, NOT ONLY THE STORE CARD. `AppBlock.status` is the
+    // ONLY gate on whether a hosted app serves; `AppListing.status` gates store
+    // visibility and nothing else. `unpublishOwnListing` suspends the block, and the
+    // owner-republish review arm deliberately leaves it suspended so an app whose store
+    // card is awaiting review does not serve. Approving the card therefore has to undo
+    // BOTH halves, or the listing goes live pointing at a dead app — store-visible and
+    // not self-recoverable, the same failure `approveRequest`'s `(3b-reset)` branch
+    // exists to prevent on the block-request surface.
+    //
+    // Guarded to `suspended` so it is a 0-row no-op for every other case: a first-time
+    // on-site draft (there is no such listing request today, but the guard means one
+    // would be harmless), an on-site listing whose block is already approved, and every
+    // off-site listing (no `appBlockId` at all).
+    if (request.kind === 'onsite' && primaryListing.appBlockId) {
+      await tx.appBlock.updateMany({
+        where: { id: primaryListing.appBlockId, status: 'suspended' },
+        data: { status: 'approved' },
+      });
     }
     // Supersede any OTHER pending off-site request pointing at the SAME listing row
     // (`appListingId`), NOT merely the same slug. 🔴 A pending REVISION request
@@ -2096,6 +3048,19 @@ async function applyApprovedRevision(opts: {
     );
   }
 
+  // Does the MANUAL-APPLY column exist? Asked HERE, OUTSIDE the transaction, and on the
+  // same primary the transaction will run against.
+  //
+  // 🔴 THE POINT IS TO NEVER ISSUE A FAILING STATEMENT INSIDE THE TRANSACTION. The
+  // guarded read below swallows P2022 at the application level, but PostgreSQL puts a
+  // transaction into the aborted state on ANY statement error, and Prisma's interactive
+  // transactions issue no savepoints — so a caught-and-ignored missing-column error can
+  // still leave every following statement failing with 25P02 and take the whole revision
+  // apply down. Probing first means that when the column is absent the transaction never
+  // names it at all, which is what makes "until the SQL runs, the feature is inert" true
+  // of this path rather than merely intended.
+  const sourceRepoColumnAvailable = await isSourceRepoColumnAvailable(dbWrite);
+
   await dbWrite.$transaction(async (tx) => {
     // (1) AUTHORITATIVE re-read of the shadow on the PRIMARY (row-consistent with
     // the copy). The sibling asset mutators write to dbWrite, so a pre-tx replica
@@ -2129,6 +3094,19 @@ async function applyApprovedRevision(opts: {
         'cannot approve — the revision draft is no longer available'
       );
     }
+    // The shadow's public source-repository link, read through the MANUAL-APPLY guard
+    // rather than added to the select above — a missing column there would abort this
+    // whole transaction and make every off-site revision unapprovable until a human
+    // runs the migration. Read on `tx` (the PRIMARY, inside the transaction) for the
+    // same row-consistency reason the select is.
+    //
+    // 🔴 `available` — NOT `value != null` — decides whether the copy below writes the
+    // column at all. Conflating them would mean an unreadable column looked exactly
+    // like "the author removed the link", and the copy would need to distinguish
+    // "clear it" from "don't touch it". It can, because it asks the right question.
+    const shadowSourceRepo: ListingSourceRepoRead = sourceRepoColumnAvailable
+      ? await readListingSourceRepoUrl(shadowId, tx)
+      : { available: false, value: null };
     const shadowScreenshotRows = await tx.appListingScreenshot.findMany({
       where: { appListingId: shadowId, imageId: { not: null } },
       select: { imageId: true },
@@ -2204,6 +3182,33 @@ async function applyApprovedRevision(opts: {
       );
     }
 
+    // (2c) 🔴 GO-LIVE ACTIONABILITY gate on the POST-COPY state. A revision is a
+    // CONTENT go-live: it writes no `status`, but the off-site branch below copies
+    // the shadow's `externalUrl` + `connectClientId` straight onto an ALREADY-LIVE
+    // parent — so a revision that clears the URL is precisely how a working listing
+    // becomes a dead CTA without any status write.
+    //
+    // 🔴 ONLY THE URL. This comment used to add "(or links an OAuth client)" — one of
+    // the seven false-mechanism comments #4126 corrected. The shadow's
+    // `connectClientId` is `parent.connectClientId` verbatim: `beginListingRevision`
+    // copies it in, nothing on the revision edit path can change it
+    // (`buildListingPatchData` never assigns it, `updateListingPatchSchema` has no such
+    // key), and the copy below writes the same value back. So this copy CANNOT link a
+    // client; the round trip is an identity on that column. The column is still passed
+    // to the gate because it selects the sub-kind the CTA is derived from.
+    //
+    // 🔴 Asserted on the PROJECTED result of the copy — the parent's `kind`/`slug`
+    // (neither is copied) with the SHADOW's URL/client (which are) — NOT on the
+    // parent as it stands. Re-reading the parent here would gate the state we are
+    // about to overwrite and would pass every regression this is meant to stop.
+    // On-site revisions are a no-op: they copy assets only, never these columns.
+    assertOffsiteListingActionable({
+      kind: parent.kind,
+      slug: parent.slug,
+      externalUrl: shadow.externalUrl,
+      connectClientId: shadow.connectClientId,
+    });
+
     // (3) Copy the shadow's contents onto the parent (id / slug / appBlockId / status
     // untouched). KIND-AWARE:
     if (parent.kind === 'onsite') {
@@ -2243,6 +3248,13 @@ async function applyApprovedRevision(opts: {
           category: shadow.category,
           contentRating: finalRating,
           externalUrl: shadow.externalUrl,
+          // The reviewed source-repository link. UNCONDITIONAL in both directions, like
+          // every other scalar here: a revision that cleared it clears it on the parent.
+          // That is exactly why `beginListingRevision` copies it onto the shadow — and
+          // why `OFFSITE_UNCOMPARED_APPLY_FIELDS` names it, so the drift panel cannot
+          // tell a moderator this apply "changes nothing" while it rewrites a public
+          // outbound link. Omitted (not null) while the manual-apply column is absent.
+          ...sourceRepoWriteFragment(shadowSourceRepo),
           connectClientId: shadow.connectClientId,
           // Apply the revision's disclosed OAuth scopes + justifications onto the live
           // parent (a scope change is material, so the shadow carries the reviewed set).
@@ -2384,9 +3396,20 @@ export async function rejectExternalRequest(opts: {
     });
   });
 
-  // Post-commit, best-effort: notify the owner their first-time submission was not
-  // approved, carrying the mod reason. Skipped for a revision reject (parent still
-  // live) and when there was no listing. Keyed by the request → dedups a replay.
+  // Post-commit, best-effort: notify the owner their submission was not approved,
+  // carrying the mod reason. Skipped for a revision reject (parent still live) and when
+  // there was no listing. Keyed by the request → dedups a replay.
+  //
+  // 🔴 "FIRST-TIME submission" is what this comment used to say, and `revisionOfId == null`
+  // is no longer a test for that. The owner-republish asset-review route mints a NON-shadow
+  // request on a listing that has been live for as long as the app has existed, so a
+  // long-lived app's owner now reaches this branch. That is the right call — the reject
+  // ran `closeTerminalListing`, which took the listing OFF the store behind a `delist`, so
+  // the owner must be told — and the copy carries it: `app-listing-rejected` renders
+  // "<app> was not approved: <reason>", which claims nothing about it being a first
+  // submission. What is NOT covered is that the notice does not say the listing has been
+  // delisted and now needs a moderator to restore it; distinguishing the two cases needs a
+  // second notification type, which is a product decision rather than a correction.
   if (rejectedListing && rejectedListing.revisionOfId == null) {
     await notifyAppListingOwner({
       type: 'app-listing-rejected',
@@ -2407,31 +3430,62 @@ export async function rejectExternalRequest(opts: {
 // ---------------------------------------------------------------------------
 
 /**
- * Materialise a CF-uploaded image into an `Image` row (owned by the caller) and
+ * The byte cap is the LOOSEST per-kind cap: bytes above it satisfy no kind, and the
+ * kind is not known until attach, so it is the only size rejection that can happen
+ * this early.
+ *
+ * The DIMENSION ceiling does not need the kind either — it is the same for all of
+ * them — so it is applied here too, on the measured (never the declared) pair. A
+ * byte cap does not bound decoded dimensions: a small, highly-compressed file can
+ * decode to an enormous canvas, and the presigned-upload path had no ceiling at
+ * all, so an image far above the bound was stored at full size and only its
+ * MINIMUMS were ever checked. Rejecting here keeps the bytes out of `createImage`
+ * + the scan pipeline; {@link validateListingImage} re-applies the same bound at
+ * attach for rows this path did not create.
+ */
+const measureListingAssetUpload = async (key: string) => {
+  const measured = await measureUploadedImage(key, {
+    maxBytes: MAX_LISTING_ASSET_SIZE_BYTES,
+    subject: 'listing media',
+  });
+  const tooLarge = listingAssetTooLargeReason('That image', measured.width, measured.height);
+  if (tooLarge) throw new TRPCError({ code: 'BAD_REQUEST', message: `${tooLarge}.` });
+  return measured;
+};
+
+/**
+ * Materialise an uploaded image into an `Image` row (owned by the caller) and
  * return its numeric id, so the submit form's asset step can attach it to the
  * draft listing via the P1 asset-CRUD procs. Kicks off the standard ingestion/scan
  * pipeline (`createImage` with default ingestion) — the P1 attach proc enforces
- * `ingestion === Scanned` + the per-kind image validation, so this proc does NOT
- * re-validate dimensions/mime (it only persists). `createImage` is dynamically
- * imported so the heavy `image.service` module stays out of this service's static
- * graph (mirrors the router's dynamic-import discipline + keeps the unit tests,
- * which mock only `dbRead`/`dbWrite`, light).
+ * `ingestion === Scanned` + the per-kind image validation.
+ *
+ * The persisted dimensions / MIME / byte size are DERIVED FROM THE STORED BYTES
+ * (see {@link measureListingAssetUpload}); the same fields on the input are
+ * ignored. `createImage` and the probe are dynamically imported so the heavy
+ * `image.service` / `sharp` graphs stay out of this service's static graph
+ * (mirrors the router's dynamic-import discipline + keeps the unit tests, which
+ * mock only `dbRead`/`dbWrite`, light).
  */
 export async function persistListingAssetImage(opts: {
   input: PersistListingAssetImageInput;
   userId: number;
 }): Promise<{ imageId: number }> {
   const { input, userId } = opts;
+  const measured = await measureListingAssetUpload(input.url);
   const { createImage } = await import('~/server/services/image.service');
   const image = await createImage({
     url: input.url,
     name: input.name ?? undefined,
     type: 'image',
-    width: input.width,
-    height: input.height,
-    mimeType: input.mimeType,
-    // The P1 image validator reads the byte size from `Image.metadata.size`.
-    metadata: input.sizeBytes != null ? { size: input.sizeBytes } : undefined,
+    width: measured.width,
+    height: measured.height,
+    mimeType: measured.mimeType,
+    // The P1 image validator reads the byte size from `Image.metadata.size`. The
+    // entity tag alongside it records WHICH stored object those measurements came
+    // from, so the attach gate can re-check that the object still is that one
+    // instead of trusting a reading taken before the upload grant expired.
+    metadata: { size: measured.sizeBytes, ...storedObjectEtagMetadata(measured.etag) },
     userId,
   });
   return { imageId: image.id };
@@ -2498,6 +3552,18 @@ const mySubmissionSelect = {
   appListing: {
     select: {
       ...submissionSelect.appListing.select,
+      /**
+       * The LISTING's kind, feeding `computeListingProblems`' kind-aware empty-text
+       * labels.
+       *
+       * 🔴 THE LISTING'S KIND, NOT THE REQUEST'S, even though `submissionSelect`
+       * already carries `kind` on the REQUEST and the two agree today. They are
+       * different columns on different tables, and the advisory is a statement about
+       * the LISTING — reusing the request's would be a derived surface standing in for
+       * the defining one. Selected only on `mySubmissionSelect` (the author-facing
+       * read); the mod queues that spread the base `submissionSelect` are untouched.
+       */
+      kind: true,
       iconId: true,
       coverId: true,
       description: true,
@@ -2537,9 +3603,7 @@ export type ListOffsiteRequestsOptions = { limit?: number; cursor?: string };
  * a rejected/withdrawn submission — is still shown.) The shape is otherwise
  * backward-compatible: `hasPendingRevision` is purely additive.
  */
-export async function listMySubmissions(
-  opts: { userId: number } & ListOffsiteRequestsOptions
-) {
+export async function listMySubmissions(opts: { userId: number } & ListOffsiteRequestsOptions) {
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appListingPublishRequest.findMany({
     where: {
@@ -2549,16 +3613,23 @@ export async function listMySubmissions(
       // surfaced as a `hasPendingRevision` flag on the PARENT's own submission row.
       // Keep requests with no listing.
       //
-      // ONSITE: an onsite listing is auto-created and has NO own publish request, so
-      // there is no parent row to badge — its ONLY representation IS the revision
-      // request (all onsite requests are shadow revisions, per the invariant). Include
-      // them directly via the `{ kind: 'onsite' }` OR branch so onsite media revisions
-      // appear on my-submissions (decision: yes).
-      OR: [
-        { appListingId: null },
-        { appListing: { revisionOfId: null } },
-        { kind: 'onsite' },
-      ],
+      // ONSITE: an onsite listing is auto-created and has NO own publish request, so a
+      // SHADOW revision has no parent row to badge — the revision request is its only
+      // representation. The `{ kind: 'onsite' }` OR branch surfaces it directly
+      // (decision: yes).
+      //
+      // 🔴 THAT BRANCH IS NO LONGER THE ONLY ROUTE FOR AN ONSITE ROW, and the sentence it
+      // used to carry — "all onsite requests are shadow revisions, per the invariant" —
+      // is false since the owner-republish asset-review route (see the producer ledger
+      // above `REVIEWABLE_LISTING_KINDS`). A republish re-review is NON-shadow, so the
+      // middle branch (`revisionOfId: null`) already matches it; `OR` is a set union, so
+      // it appears exactly once either way and this query is unchanged in behaviour. What
+      // IS affected is downstream: `hasPendingRevision` below is keyed on `revisionOfId`
+      // and is correctly `false` for such a row, and `lastActionByListing` populates only
+      // for `status: 'removed'`, so a listing sitting in republish review carries no
+      // last-action badge. Both are deliberate; neither may be re-derived from "onsite
+      // implies shadow".
+      OR: [{ appListingId: null }, { appListing: { revisionOfId: null } }, { kind: 'onsite' }],
     },
     orderBy: { submittedAt: 'desc' },
     take: limit + 1,
@@ -2574,9 +3645,7 @@ export async function listMySubmissions(
   // existence. An abandoned shadow (opened via beginListingRevision but never
   // submitListingRevision-ed → no pending request) must NOT falsely badge the
   // parent "revision in review".
-  const parentIds = page
-    .map((r) => r.appListingId)
-    .filter((id): id is string => id != null);
+  const parentIds = page.map((r) => r.appListingId).filter((id): id is string => id != null);
   const pendingRevisionReqs =
     parentIds.length > 0
       ? await dbRead.appListingPublishRequest.findMany({
@@ -2595,10 +3664,21 @@ export async function listMySubmissions(
   );
 
   // W13 post-approval mgmt (owner controls): for every REMOVED listing on the page,
-  // fetch its MOST-RECENT moderation-event action so the my-submissions UI can tell
-  // an owner-hidden listing (last event `owner-unpublish` → republish-eligible) from
-  // a moderator takedown (last event `delist` → republish FORBIDDEN, shown as
-  // "removed by a moderator") WITHOUT a per-row history fetch.
+  // fetch its MOST-RECENT STATUS-CHANGING moderation-event action so the my-submissions
+  // UI can tell an owner-hidden listing (last event `owner-unpublish` →
+  // republish-eligible) from a moderator takedown (last event `delist` → republish
+  // FORBIDDEN, shown as "removed by a moderator") WITHOUT a per-row history fetch.
+  //
+  // 🔴 THE `action IN (…)` PREDICATE IS LOAD-BEARING, AND ITS VALUES COME FROM
+  // `LISTING_STATUS_CHANGING_MODERATION_ACTIONS` — the same constant the Prisma reads use.
+  // This is the PRIMARY surface for the feature, and an unfiltered `DISTINCT ON` answers a
+  // different question from the server gate (`republishOwnListing`, the author edit paths):
+  // a `message-owner` / `claim` / `report-resolve` row newer than the owner's own
+  // `owner-unpublish` would badge the listing "removed by a moderator" and hide Republish on
+  // a listing the server would happily republish. Raw SQL is exactly where a second
+  // hand-maintained spelling of the set would go unnoticed, so the list is interpolated as
+  // BOUND PARAMETERS from the constant rather than typed out. The whole normalised statement
+  // is pinned in `offsite-listing.edit.service.test.ts`.
   //
   // Fix B4 (scaling): a Prisma `findMany({ distinct, orderBy: createdAt })` CANNOT
   // emit Postgres `DISTINCT ON` here — the `distinct` column (`appListingId`) is not
@@ -2619,6 +3699,7 @@ export async function listMySubmissions(
             action
           FROM app_listing_moderation_events
           WHERE app_listing_id IN (${Prisma.join(removedParentIds)})
+            AND action IN (${Prisma.join([...LISTING_STATUS_CHANGING_MODERATION_ACTIONS])})
           ORDER BY app_listing_id, created_at DESC, id DESC
         `)
       : [];
@@ -2648,9 +3729,7 @@ export async function listMySubmissions(
       })
     : [];
   const ingestionByImageId = new Map(ingestionRows.map((i) => [i.id, i.ingestion ?? null]));
-  const scanStatusOf = (
-    ingestion: string | null | undefined
-  ): 'scanned' | 'pending' | 'blocked' =>
+  const scanStatusOf = (ingestion: string | null | undefined): 'scanned' | 'pending' | 'blocked' =>
     ingestion === 'Scanned' ? 'scanned' : ingestion === 'Blocked' ? 'blocked' : 'pending';
   const assetScansFor = (listing: {
     iconId: number | null;
@@ -2686,6 +3765,13 @@ export async function listMySubmissions(
     // was deleted) — nothing to flag.
     problems: r.appListing
       ? computeListingProblems({
+          // 🔴 `listMySubmissions` IS NOT AN OFF-SITE-ONLY READ despite this file's name:
+          // its `where` has an explicit `{ kind: 'onsite' }` OR-branch so on-site MEDIA
+          // REVISIONS appear on /apps/my-submissions. A hardcoded 'offsite' here would
+          // therefore give manifest-governed listings the author-surface advice — exactly
+          // the defect being fixed. A fake that ignores `select` degrades to the original
+          // labels rather than throwing.
+          kind: (r.appListing.kind ?? 'offsite') as ListingProblemKind,
           iconId: r.appListing.iconId,
           coverId: r.appListing.coverId,
           screenshotCount: r.appListing._count.screenshots,

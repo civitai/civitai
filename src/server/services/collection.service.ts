@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-feature';
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -16,6 +17,8 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
+import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { recordChallengeEntrySubmitted } from '~/server/prom/challenge.metrics';
@@ -28,7 +31,6 @@ import type {
   AddCollectionItemInput,
   BulkSaveCollectionItemsInput,
   CollectionMetadataSchema,
-  EnableCollectionYoutubeSupportInput,
   GetAllCollectionItemsSchema,
   GetAllCollectionsInfiniteSchema,
   GetAllUserCollectionsInputSchema,
@@ -39,7 +41,9 @@ import type {
   UpdateCollectionCoverImageInput,
   UpdateCollectionItemsStatusInput,
   UpsertCollectionInput,
+  SetCollectionAiReviewInput,
 } from '~/server/schema/collection.schema';
+import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
 import type { UserMeta } from '~/server/schema/user.schema';
@@ -52,6 +56,8 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
 import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
+import { getModeratedTags } from '~/server/services/system-cache';
+import { applyTagRules, insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { getAllImages, enqueueImageIngestion } from '~/server/services/image.service';
@@ -62,6 +68,7 @@ import {
 } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -71,12 +78,16 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getYoutubeRefreshToken } from '~/server/youtube/client';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import type { MediaType } from '~/shared/utils/prisma/enums';
+import {
+  DETAIL_BACKED_REASONS,
+  resolveRejectionCopy,
+} from '~/shared/constants/collection-rejection.constants';
+import type { CollectionItemRejectionReason, MediaType } from '~/shared/utils/prisma/enums';
 import {
   ChallengeSource,
   CollectionContributorPermission,
+  CollectionInviteStatus,
   CollectionItemStatus,
   CollectionMode,
   CollectionReadConfiguration,
@@ -90,6 +101,12 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { assertUserChallengeAcceptingEntries } from '~/server/games/daily-challenge/challenge-entry-gate';
+import { liveInviteWhere } from '~/server/services/collection-invite.utils';
+import {
+  collectionSupportsCollaborators,
+  freeGrantBaseline,
+  isCollaboratorRow,
+} from '~/server/services/collection-permission.utils';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -99,6 +116,8 @@ export type CollectionContributorPermissionFlags = {
   manage: boolean;
   follow: boolean;
   isContributor: boolean;
+  isCollaborator: boolean;
+  collaborationDisabled: boolean;
   isOwner: boolean;
   followPermissions: CollectionContributorPermission[];
   publicCollection: boolean;
@@ -196,6 +215,8 @@ export async function getUserCollectionPermissionsByIds({
     type: CollectionType | null;
     mode: CollectionMode | null;
     contributorPermissions: CollectionContributorPermission[] | null;
+    collaborationDisabledAt: Date | null;
+    hasAcceptedSeat: boolean;
   };
 
   const collections = await dbRead.$queryRaw<CollectionPermissionRow[]>`
@@ -206,15 +227,20 @@ export async function getUserCollectionPermissionsByIds({
       c."userId",
       c.type::"CollectionType" as "type",
       c.mode::"CollectionMode" as "mode",
+      c."collaborationDisabledAt",
       ${
         userId
-          ? Prisma.sql`cc.permissions as "contributorPermissions"`
-          : Prisma.sql`NULL as "contributorPermissions"`
+          ? Prisma.sql`cc.permissions as "contributorPermissions", ci.id IS NOT NULL as "hasAcceptedSeat"`
+          : Prisma.sql`NULL as "contributorPermissions", false as "hasAcceptedSeat"`
       }
     FROM "Collection" c
     ${
       userId
-        ? Prisma.sql`LEFT JOIN "CollectionContributor" cc ON cc."collectionId" = c.id AND cc."userId" = ${userId}`
+        ? Prisma.sql`
+          LEFT JOIN "CollectionContributor" cc ON cc."collectionId" = c.id AND cc."userId" = ${userId}
+          LEFT JOIN "CollectionInvite" ci ON ci."collectionId" = c.id AND ci."userId" = ${userId}
+            AND ci.status = ${CollectionInviteStatus.Accepted}::"CollectionInviteStatus"
+        `
         : Prisma.empty
     }
     WHERE c.id IN (${Prisma.join(ids)})
@@ -237,6 +263,8 @@ export async function getUserCollectionPermissionsByIds({
       manage: false,
       follow: false,
       isContributor: false,
+      isCollaborator: false,
+      collaborationDisabled: !!collection.collaborationDisabledAt,
       isOwner: false,
       publicCollection: false,
       followPermissions: [],
@@ -266,6 +294,18 @@ export async function getUserCollectionPermissionsByIds({
       permissions.followPermissions.push(CollectionContributorPermission.ADD_REVIEW);
     }
 
+    const freelyGranted = freeGrantBaseline(collection);
+
+    if (collection.collaborationDisabledAt) {
+      permissions.write = false;
+      permissions.writeReview = false;
+      permissions.followPermissions = permissions.followPermissions.filter(
+        (p) =>
+          p !== CollectionContributorPermission.ADD &&
+          p !== CollectionContributorPermission.ADD_REVIEW
+      );
+    }
+
     if (!userId) {
       return permissions;
     }
@@ -292,15 +332,34 @@ export async function getUserCollectionPermissionsByIds({
 
     permissions.isContributor = true;
 
+    permissions.isCollaborator =
+      collectionSupportsCollaborators(collection) &&
+      isCollaboratorRow({
+        permissions: contributorPermissions,
+        freeBaseline: freelyGranted,
+        hasAcceptedSeat: collection.hasAcceptedSeat,
+      });
+
     if (contributorPermissions.includes(CollectionContributorPermission.VIEW)) {
       permissions.read = true;
     }
 
-    if (contributorPermissions.includes(CollectionContributorPermission.ADD)) {
+    // A contributor row that merely mirrors the free-tier grant (e.g. a follower auto-added
+    // with the collection's own followPermissions) must not resurrect access the lapse block
+    // just closed — only a grant beyond the free tier survives a lapse.
+    if (
+      contributorPermissions.includes(CollectionContributorPermission.ADD) &&
+      (!collection.collaborationDisabledAt ||
+        !freelyGranted.has(CollectionContributorPermission.ADD))
+    ) {
       permissions.write = true;
     }
 
-    if (contributorPermissions.includes(CollectionContributorPermission.ADD_REVIEW)) {
+    if (
+      contributorPermissions.includes(CollectionContributorPermission.ADD_REVIEW) &&
+      (!collection.collaborationDisabledAt ||
+        !freelyGranted.has(CollectionContributorPermission.ADD_REVIEW))
+    ) {
       permissions.writeReview = true;
     }
 
@@ -327,6 +386,47 @@ export async function getUserCollectionPermissionsById({
   return results[0] ?? createEmptyPermissions(id);
 }
 
+// The exact permissions array a follow row is written with for a given read/write pair.
+// Order matters — the contributor resync compares it against stored rows with `equals` — so it
+// must stay identical to the order `getUserCollectionPermissionsByIds` builds
+// `followPermissions` in above.
+function freeGrantPermissions(collection: {
+  read: CollectionReadConfiguration;
+  write: CollectionWriteConfiguration;
+}): CollectionContributorPermission[] {
+  const permissions: CollectionContributorPermission[] = [];
+  if (collection.read !== CollectionReadConfiguration.Private) {
+    permissions.push(CollectionContributorPermission.VIEW);
+  }
+  if (collection.write === CollectionWriteConfiguration.Public) {
+    permissions.push(CollectionContributorPermission.ADD);
+  }
+  if (collection.write === CollectionWriteConfiguration.Review) {
+    permissions.push(CollectionContributorPermission.ADD_REVIEW);
+  }
+  return permissions;
+}
+
+// Where a new entry lands. The queue is for the public: everyone the collection has actually
+// vouched for — the owner, its managers, and the collaborators it invited — posts straight through.
+//
+// `writeReview` alone can't express that. It is granted to EVERYONE on a write:Review collection,
+// the owner included, so reading it by itself put the people who work the queue into their own
+// queue: production carries 108 items a collection's own owner submitted and never approved, the
+// oldest from 2025-01-03. `isCollaborator` is the invited half, and it is false on contest and
+// system collections, so contest entries keep going to review.
+export function submissionStatus(
+  permission: Pick<
+    CollectionContributorPermissionFlags,
+    'writeReview' | 'manage' | 'isOwner' | 'isCollaborator'
+  >
+): CollectionItemStatus {
+  const vouchedFor = permission.manage || permission.isOwner || permission.isCollaborator;
+  return permission.writeReview && !vouchedFor
+    ? CollectionItemStatus.REVIEW
+    : CollectionItemStatus.ACCEPTED;
+}
+
 function createEmptyPermissions(collectionId: number): CollectionContributorPermissionFlags {
   return {
     collectionId,
@@ -336,6 +436,8 @@ function createEmptyPermissions(collectionId: number): CollectionContributorPerm
     manage: false,
     follow: false,
     isContributor: false,
+    isCollaborator: false,
+    collaborationDisabled: false,
     isOwner: false,
     publicCollection: false,
     followPermissions: [],
@@ -374,7 +476,7 @@ export const getUserCollectionsWithPermissions = async <
   // By default, owned collections will be always returned
   const AND: Prisma.Sql[] = [];
   const SELECT: Prisma.Sql = Prisma.raw(
-    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type", c."mode"`
+    `SELECT c."id", c."name", c."description", c."read", c."userId", c."write", c."imageId", c."type", c."mode", c."createdAt", c."updatedAt"`
   );
 
   if (input.type) {
@@ -509,11 +611,28 @@ export const getUserCollectionsWithPermissions = async <
     },
   });
 
+  // Someone else's collection needs to say whose it is — two people can name a collection the
+  // same thing, and the picker offers collections the user neither owns nor follows.
+  const ownerIds = Array.from(
+    new Set(collections.map((c) => c.userId).filter((id) => id !== userId))
+  );
+  const ownerUsernames = new Map(
+    ownerIds.length
+      ? (
+          await dbRead.user.findMany({
+            where: { id: { in: ownerIds } },
+            select: { id: true, username: true },
+          })
+        ).map((owner) => [owner.id, owner.username])
+      : []
+  );
+
   // Return user collections first && add isOwner  property
   return collections
     .map((collection) => ({
       ...collection,
       isOwner: collection.userId === userId,
+      ownerUsername: ownerUsernames.get(collection.userId) ?? null,
       image: images.find((i) => i.id === collection.imageId),
       tags: collectionTags
         .filter((t) => t.collectionId === collection.id)
@@ -555,12 +674,93 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
   };
 };
 
+export const getPendingReviewCount = (collectionId: number) =>
+  dbRead.collectionItem.count({
+    where: { collectionId, status: CollectionItemStatus.REVIEW },
+  });
+
 const inputToCollectionType = {
   modelId: CollectionType.Model,
   articleId: CollectionType.Article,
   imageId: CollectionType.Image,
   postId: CollectionType.Post,
 } as const;
+
+/**
+ * Apply a collection's configured `metadata.autoTagId` to the images just added to it.
+ *
+ * Runs AFTER the write and independently of `CollectionItemStatus`, so a submission
+ * awaiting review is tagged the same as an accepted one — the point is to mark what was
+ * submitted, not what a moderator kept.
+ *
+ * Takes the metadata rather than a collection id: both callers already hold the
+ * collection in scope, and re-reading it would add a query to every image submission on
+ * the site for a field almost no collection sets.
+ *
+ * `insertTagsOnImageNew` handles cache busting and the search-index push that feed
+ * filtering depends on, so nothing else needs syncing here.
+ *
+ * Never throws into the caller: a failed tag must not fail (or roll back) the
+ * submission itself.
+ */
+async function applyCollectionAutoTag(
+  metadata: CollectionMetadataSchema | null | undefined,
+  imageIds: number[]
+) {
+  const tagId = metadata?.autoTagId;
+  if (!tagId || !imageIds.length) return;
+
+  try {
+    // Defense in depth. `upsertCollection` already restricts `autoTagId` to moderators,
+    // because nothing in the save path validates that the submitter OWNS the images —
+    // so a self-owned collection plus someone else's imageIds would otherwise write tags
+    // onto a stranger's content. A moderated tag is the sharp end of that: it drives
+    // `updateImageNsfwLevels` and could push another user's image out of view.
+    //
+    // Tested against `getModeratedTags()` — what `updateImageNsfwLevels` itself gates on.
+    // `Tag.type === 'Moderation'` is NOT the same set: it misses ~37 prod tags that are
+    // moderated via `nsfwLevel > PG` or by inheriting a Parent edge, so checking type
+    // would look like a guard while letting all of them through.
+    //
+    // Resolved through `applyTagRules` FIRST, because a TagsOnTags rule can rewrite a
+    // permitted tag into a moderated one (~36 such rules in prod) — checking the raw
+    // `autoTagId` would pass while a moderated row still lands. Test what actually gets
+    // written, not what was configured. Both lookups are in-proc memoized.
+    const resolved = await applyTagRules(
+      imageIds.map((imageId) => ({ imageId, tagId, source: 'User' as const }))
+    );
+    const moderatedTagIds = await getModeratedTags().then((tags) => tags.map((t) => t.id));
+    const offending = resolved.find((t) => moderatedTagIds.includes(t.tagId));
+    if (offending) {
+      logToAxiom({
+        type: 'warning',
+        name: 'collection-auto-tag-refused',
+        message: 'autoTagId resolves to a moderated tag',
+        tagId,
+        resolvedTagId: offending.tagId,
+      }).catch();
+      return;
+    }
+
+    await insertTagsOnImageNew(
+      [...new Set(imageIds)].map((imageId) => ({
+        imageId,
+        tagId,
+        source: 'User' as const,
+        confidence: 100,
+        automated: true,
+      }))
+    );
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'collection-auto-tag-failed',
+      message: (error as Error).message,
+      tagId,
+      imageIds: imageIds.slice(0, 20),
+    }).catch();
+  }
+}
 
 export const saveItemInCollections = async ({
   input: {
@@ -604,8 +804,37 @@ export const saveItemInCollections = async ({
     }
   }
 
+  // Every collection this request touches, in one lookup — the adds need it to spot no-op re-submissions
+  // (below) and the removes need each item's id and author. Keyed on the item column alone: `input` also
+  // carries `note`, and spreading it into the filter made a save-with-note silently match nothing.
+  const touchedCollectionIds = uniq([
+    ...upsertCollectionItems.map((c) => c.collectionId),
+    ...removeFromCollectionIds,
+  ]);
+  const existingItems = await dbRead.collectionItem.findMany({
+    where: { collectionId: { in: touchedCollectionIds }, [itemKey]: input[itemKey] },
+    select: { id: true, collectionId: true, tagId: true, addedById: true, note: true },
+  });
+  const existingItemsByCollection = new Map(existingItems.map((item) => [item.collectionId, item]));
+
+  // Collections the item is ALREADY in with the same tag — the upsert below writes nothing for these.
+  // Callers may send the item's whole desired membership rather than just the additions, and re-running
+  // the contest gates on an existing entry fails the save to an UNRELATED collection as soon as one of
+  // those entries sits in a contest whose submission window has closed (or whose per-user cap it already
+  // counts against). A tag CHANGE is a real write, so it still validates.
+  const unwrittenCollectionIds = new Set(
+    upsertCollectionItems
+      .filter((upsert) => {
+        const item = existingItemsByCollection.get(upsert.collectionId);
+        return item && (upsert.tagId ?? null) === (item.tagId ?? null);
+      })
+      .map((upsert) => upsert.collectionId)
+  );
+
   // Check if any contest collections are involved and validate ONCE
-  const contestCollections = collections.filter((c) => c.mode === CollectionMode.Contest);
+  const contestCollections = collections.filter(
+    (c) => c.mode === CollectionMode.Contest && !unwrittenCollectionIds.has(c.id)
+  );
   if (contestCollections.length > 0) {
     // Validate once for all contest collections instead of in the loop
     for (const contestCollection of contestCollections) {
@@ -622,7 +851,8 @@ export const saveItemInCollections = async ({
 
   // Check if any featured collections are involved and validate ONCE
   const featuredCollections = collections.filter(
-    (c) => c.userId === -1 && !c.mode && c.name.includes('Featured')
+    (c) =>
+      c.userId === -1 && !c.mode && c.name.includes('Featured') && !unwrittenCollectionIds.has(c.id)
   );
   if (featuredCollections.length > 0) {
     // Validate once for all featured collections instead of in the loop
@@ -631,14 +861,20 @@ export const saveItemInCollections = async ({
     });
   }
 
-  // Batch fetch all permissions upfront instead of in the loop (N queries → 1 query)
-  const collectionIds = upsertCollectionItems.map((c) => c.collectionId);
+  // Batch fetch all permissions upfront instead of in the loop (N queries → 1 query), adds and removes
+  // together — they're one round trip over the same table whether or not this request does both.
   const permissionsArray = await getUserCollectionPermissionsByIds({
-    ids: collectionIds,
+    ids: touchedCollectionIds,
     userId,
     isModerator,
   });
   const permissionsMap = new Map(permissionsArray.map((p) => [p.collectionId, p]));
+
+  // Submitting to a collection you don't already follow follows it — but that's a side effect of the
+  // entry landing, so it's collected here and applied after the write. Doing it inline left a user
+  // following collections they never joined whenever the save went on to write nothing (no write
+  // permission on any of them, or the empty-transaction guard below).
+  const followCollectionIds: number[] = [];
 
   const data = (
     await Promise.all(
@@ -672,35 +908,9 @@ export const saveItemInCollections = async ({
           throw throwBadRequestError('Provided tag is not part of this collection');
         }
 
-        const metadata = (collection?.metadata ?? {}) as CollectionMetadataSchema;
         // Use batched permissions instead of individual query
         const permission = permissionsMap.get(collectionId);
         if (!permission) {
-          return null;
-        }
-
-        if (
-          !permission.isContributor &&
-          !permission.isOwner &&
-          !metadata?.disableFollowOnSubmission
-        ) {
-          // Make sure to follow the collection
-          await addContributorToCollection({
-            targetUserId: userId,
-            userId: userId,
-            collectionId,
-          });
-        }
-
-        // Non-owners who don't contribute may still submit to Public-write (write) or Review-write
-        // (writeReview) collections — the follow above is skipped when disableFollowOnSubmission is
-        // set, so gate on the standing write grant rather than contributor status.
-        if (
-          !permission.isContributor &&
-          !permission.isOwner &&
-          !permission.writeReview &&
-          !permission.write
-        ) {
           return null;
         }
 
@@ -708,14 +918,24 @@ export const saveItemInCollections = async ({
           return null;
         }
 
+        // Queued rather than written: applied once the entry is actually in. `follow`/`manage` is what
+        // addContributorToCollection would throw on, and a missing grant must not fail a save that has
+        // already succeeded — so an ineligible collection is simply not followed. Skipping anyone who
+        // already holds a row also keeps the upsert, which REPLACES permissions, off a collaborator's seat.
+        const metadata = (collection.metadata ?? {}) as CollectionMetadataSchema;
+        if (
+          !permission.isContributor &&
+          !permission.isOwner &&
+          !metadata?.disableFollowOnSubmission &&
+          (permission.follow || permission.manage)
+        ) {
+          followCollectionIds.push(collectionId);
+        }
+
         return {
           addedById: userId,
           collectionId,
-          status: permission.writeReview
-            ? CollectionItemStatus.REVIEW
-            : CollectionItemStatus.ACCEPTED,
-          reviewedById: permission.write ? userId : null,
-          reviewedAt: permission.write ? new Date() : null,
+          status: submissionStatus(permission),
           [itemKey]: input[itemKey],
           tagId,
         };
@@ -753,53 +973,54 @@ export const saveItemInCollections = async ({
   }
 
   if (removeFromCollectionIds?.length) {
-    // Batch permissions for remove operations too
-    const removePermissionsArray = await getUserCollectionPermissionsByIds({
-      ids: removeFromCollectionIds,
-      userId,
-      isModerator,
+    const removeAllowedCollectionItemIds = removeFromCollectionIds
+      .map((collectionId) => {
+        const permission = permissionsMap.get(collectionId);
+        const item = existingItemsByCollection.get(collectionId);
+        if (!permission || !item) {
+          return null;
+        }
+
+        if (item.addedById !== userId && !permission.isOwner && !permission.manage) {
+          // This person shouldn't cannot be removing that item
+          return null;
+        }
+
+        return item.id;
+      })
+      .filter(isDefined);
+
+    // The "Save to collection" modal is the other door into removal, and a delete through it
+    // would let the job re-add the image the removal was meant to stop.
+    const autoFeatureUserId = await getAutoFeatureUserId();
+    const autoFeaturedIds = removeAllowedCollectionItemIds.filter((id) => {
+      const item = existingItems.find((i) => i.id === id);
+      return !!item && isAutoFeaturedRow(item, autoFeatureUserId);
     });
-    const removePermissionsMap = new Map(removePermissionsArray.map((p) => [p.collectionId, p]));
+    const deletableIds = removeAllowedCollectionItemIds.filter(
+      (id) => !autoFeaturedIds.includes(id)
+    );
 
-    const removeAllowedCollectionItemIds = (
-      await Promise.all(
-        removeFromCollectionIds.map(async (collectionId) => {
-          const permission = removePermissionsMap.get(collectionId);
-          if (!permission) {
-            return null;
-          }
+    removedCount = removeAllowedCollectionItemIds.length;
 
-          const item = await dbRead.collectionItem.findFirst({
-            where: {
-              collectionId,
-              ...input,
-            },
-            select: {
-              addedById: true,
-              id: true,
-            },
-          });
-
-          if (!item) {
-            return null;
-          }
-
-          if (item.addedById !== userId && !permission.isOwner && !permission.manage) {
-            // This person shouldn't cannot be removing that item
-            return null;
-          }
-
-          return item.id;
+    if (autoFeaturedIds.length > 0) {
+      transactions.push(
+        dbWrite.collectionItem.updateMany({
+          where: { id: { in: autoFeaturedIds } },
+          data: {
+            status: CollectionItemStatus.REJECTED,
+            reviewedById: userId,
+            reviewedAt: new Date(),
+          },
         })
-      )
-    ).filter(isDefined);
+      );
+    }
 
     // if we have items to remove, add a deleteMany mutation to the transaction
-    if (removeAllowedCollectionItemIds.length > 0) {
-      removedCount = removeAllowedCollectionItemIds.length;
+    if (deletableIds.length > 0) {
       transactions.push(
         dbWrite.collectionItem.deleteMany({
-          where: { id: { in: removeAllowedCollectionItemIds } },
+          where: { id: { in: deletableIds } },
         })
       );
     }
@@ -815,6 +1036,90 @@ export const saveItemInCollections = async ({
   }
 
   await dbWrite.$transaction(transactions);
+
+  if (followCollectionIds.length > 0) {
+    await Promise.all(
+      followCollectionIds.map((collectionId) =>
+        addContributorToCollection({
+          targetUserId: userId,
+          userId,
+          collectionId,
+          permissionFlags: permissionsMap.get(collectionId),
+        })
+      )
+    );
+  }
+
+  if (itemKey === 'imageId' && input.imageId) {
+    const imageId = input.imageId;
+    for (const { collectionId } of data) {
+      const collection = collections.find((c) => c.id === collectionId);
+      await applyCollectionAutoTag(collection?.metadata as CollectionMetadataSchema | null, [
+        imageId,
+      ]);
+    }
+  }
+
+  const reviewCollectionIds = uniq(
+    data.filter((d) => d.status === CollectionItemStatus.REVIEW).map((d) => d.collectionId)
+  );
+  if (reviewCollectionIds.length > 0) {
+    try {
+      const managers = await dbRead.collectionContributor.findMany({
+        where: {
+          collectionId: { in: reviewCollectionIds },
+          permissions: { has: CollectionContributorPermission.MANAGE },
+        },
+        select: { collectionId: true, userId: true },
+      });
+
+      await Promise.all(
+        reviewCollectionIds.map((collectionId) => {
+          const collection = collections.find((c) => c.id === collectionId);
+          if (!collection) return;
+
+          const recipients = uniq([
+            collection.userId,
+            ...managers.filter((m) => m.collectionId === collectionId).map((m) => m.userId),
+          ]).filter((id) => id !== userId);
+          if (recipients.length === 0) return;
+
+          return createNotification({
+            userIds: recipients,
+            type: 'collection-submission-received',
+            category: NotificationCategory.Update,
+            key: `collection-submission-received:${collectionId}:${uuid()}`,
+            details: { collectionId, collectionName: collection.name },
+          });
+        })
+      );
+    } catch (error) {
+      // The item write above already committed — a failure resolving recipients or notifying
+      // them must not fail the submit itself, or the caller sees an error for an action that
+      // actually succeeded and is likely to retry and double-submit.
+      logToAxiom({
+        type: 'error',
+        name: 'collection-submission-notify-failed',
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        collectionIds: reviewCollectionIds,
+      }).catch(() => {
+        // swallow — best-effort logging must never break the submit it is observing
+      });
+    }
+  }
+
+  // The feed index carries collection membership for hubs, and nothing about a
+  // CollectionItem write reaches it on its own. Covers both directions: the
+  // collections written to, and the ones the item was removed from, which are
+  // only knowable from what was read before the write.
+  if (input.imageId)
+    await queueCollectionMembershipUpdate({
+      collectionIds: [
+        ...new Set([...collections.map((c) => c.id), ...existingItems.map((i) => i.collectionId)]),
+      ],
+      imageIds: [input.imageId],
+    });
 
   // Check for updates to featured models
   if (input.modelId && collections.some((c) => c.id === FEATURED_MODEL_COLLECTION_ID)) {
@@ -850,11 +1155,12 @@ export const saveItemInCollections = async ({
 export const upsertCollection = async ({
   input,
 }: {
-  input: UpsertCollectionInput & { userId: number; isModerator?: boolean };
+  input: UpsertCollectionInput & { userId: number; isModerator?: boolean; isMember?: boolean };
 }) => {
   const {
     userId,
     isModerator,
+    isMember,
     id,
     name,
     description,
@@ -869,6 +1175,32 @@ export const upsertCollection = async ({
     tags,
     ...collectionItem
   } = input;
+
+  // `autoTagId` writes tag rows onto every image submitted to the collection, including
+  // images the submitter doesn't own (nothing in the save path validates image
+  // ownership). In a collection anyone can create and manage, that would let a user
+  // stamp an arbitrary tag onto a stranger's image — and a MODERATED tag additionally
+  // drives `updateImageNsfwLevels`, so it could raise someone else's image out of view.
+  // Moderator-only. Every other field here only affects the collection itself.
+  // Non-moderators can't set or change it, but the edit modal round-trips the whole
+  // metadata blob — so rejecting on PRESENCE would 403 a co-manager who opened Edit and
+  // hit Save without touching (or knowing about) the field. Pin it to the stored value
+  // instead: their save becomes a no-op on this field rather than a wall.
+  if (!isModerator && metadata) {
+    const storedAutoTagId = id
+      ? (
+          (
+            await dbRead.collection.findUnique({
+              where: { id },
+              select: { metadata: true },
+            })
+          )?.metadata as CollectionMetadataSchema | null
+        )?.autoTagId
+      : undefined;
+
+    if (storedAutoTagId === undefined) delete metadata.autoTagId;
+    else metadata.autoTagId = storedAutoTagId;
+  }
 
   if (id) {
     const permission = await getUserCollectionPermissionsById({
@@ -886,12 +1218,29 @@ export const upsertCollection = async ({
       select: {
         id: true,
         read: true,
+        write: true,
         mode: true,
         createdAt: true,
         image: { select: { id: true } },
       },
     });
     if (!currentCollection) throw throwNotFoundError(`No collection with id ${id}`);
+
+    const canConfigure = permission.isOwner || !!isModerator;
+    const nextRead = canConfigure ? read : undefined;
+    const nextWrite = canConfigure ? write : undefined;
+    const nextMode = canConfigure ? mode : undefined;
+
+    const opensSubmissions =
+      !!nextWrite &&
+      nextWrite !== currentCollection.write &&
+      nextWrite !== CollectionWriteConfiguration.Private;
+
+    if (opensSubmissions && !isMember && !isModerator) {
+      throw throwAuthorizationError(
+        'A membership is required to open a collection to submissions.'
+      );
+    }
 
     // nb - if we ever allow a cover image on create, copy this logic below
     // TODO commenting this out - other users can manage collections
@@ -931,9 +1280,9 @@ export const upsertCollection = async ({
           name,
           description,
           nsfw,
-          read,
-          write,
-          mode,
+          read: nextRead,
+          write: nextWrite,
+          mode: nextMode,
           metadata: (metadata ?? {}) as Prisma.JsonObject,
           image: imageId
             ? { connect: { id: imageId } }
@@ -945,7 +1294,10 @@ export const upsertCollection = async ({
                     where: { id: image.id ?? -1 },
                     create: {
                       ...image,
-                      meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                      meta:
+                        (sanitizeProvenance(
+                          image?.meta as Record<string, unknown> | null | undefined
+                        ) as Prisma.JsonObject | undefined) ?? Prisma.JsonNull,
                       userId,
                       resources: undefined,
                       id: undefined,
@@ -984,10 +1336,7 @@ export const upsertCollection = async ({
     // add network latency to the interactive transaction's timeout budget.
     await userCollectionCountCache.refresh(updated.userId);
 
-    if (
-      input.read === CollectionReadConfiguration.Public &&
-      currentCollection.read !== input.read
-    ) {
+    if (nextRead === CollectionReadConfiguration.Public && currentCollection.read !== nextRead) {
       // Set publishedAt for all post belonging to this collection if changing privacy to public
       await dbWrite.$queryRaw`
         UPDATE "Post" SET
@@ -995,7 +1344,7 @@ export const upsertCollection = async ({
           "metadata" = jsonb_set("metadata", '{prevPublishedAt}', NULL)
         WHERE "collectionId" = ${updated.id}
       `;
-    } else if (!updated.mode && input.read !== CollectionReadConfiguration.Public) {
+    } else if (!updated.mode && nextRead !== CollectionReadConfiguration.Public) {
       // otherwise set publishedAt to null when no mode is setup.
       await dbWrite.$queryRaw`
         UPDATE "Post" SET
@@ -1005,31 +1354,38 @@ export const upsertCollection = async ({
       `;
     }
 
-    // Update contributors:
+    // Follow rows carry whatever the collection granted for free when they were written, so
+    // they have to be re-derived whenever that grant changes — otherwise closing a collection
+    // leaves every follower holding ADD, which both keeps them writing to it and makes them
+    // read as elevated collaborators to the roster. Compare against `currentCollection`, NOT
+    // the post-update row: `updated.write` already holds the new value, so the condition was
+    // false exactly when it needed to fire.
     if (
-      (input.write && input.write !== updated.write) ||
-      (input.read && input.read !== updated.read)
+      (nextWrite && nextWrite !== currentCollection.write) ||
+      (nextRead && nextRead !== currentCollection.read)
     ) {
-      // Update contributors permissions:
-      const permissions: CollectionContributorPermission[] = [];
-      if (updated.read !== CollectionReadConfiguration.Private) {
-        permissions.push(CollectionContributorPermission.VIEW);
-      }
+      const previousFreeGrant = freeGrantPermissions(currentCollection);
+      const permissions = freeGrantPermissions(updated);
 
-      if (updated.write === CollectionWriteConfiguration.Public) {
-        permissions.push(CollectionContributorPermission.ADD);
-      }
+      // An invited collaborator's grant is theirs, not the collection's — resetting it here
+      // would revoke every collaborator the moment the owner touches privacy. Matches the
+      // seat definition the caps and the roster use, so a re-invited collaborator (invite
+      // flipped back to Pending) stays protected.
+      const collaborators = await dbWrite.collectionInvite.findMany({
+        where: liveInviteWhere(updated.id),
+        select: { userId: true },
+      });
 
-      if (updated.write === CollectionWriteConfiguration.Review) {
-        permissions.push(CollectionContributorPermission.ADD_REVIEW);
-      }
-
+      // Only rows that are EXACTLY the grant the collection used to hand out for free — i.e.
+      // rows `addContributorToCollection` wrote from `followPermissions`. Rows carrying
+      // anything else were granted by something other than following (an accepted invite, the
+      // contest-manager join URL, historical staff rows), and this resync has never run in
+      // production, so "not explicitly excluded" would silently revoke all of them.
       await dbWrite.collectionContributor.updateMany({
         where: {
           collectionId: updated.id,
-          userId: {
-            not: updated.userId,
-          },
+          userId: { notIn: [updated.userId, ...collaborators.map((c) => c.userId)] },
+          permissions: { equals: previousFreeGrant },
         },
         data: {
           permissions,
@@ -1063,6 +1419,10 @@ export const upsertCollection = async ({
     await preventReplicationLag('collection', updated.id);
 
     return updated;
+  }
+
+  if (write && write !== CollectionWriteConfiguration.Private && !isMember && !isModerator) {
+    throw throwAuthorizationError('A membership is required to open a collection to submissions.');
   }
 
   // TODO allow cover image
@@ -1139,7 +1499,7 @@ export const updateCollectionCoverImage = async ({
   });
 
   if (!permission.manage) {
-    return;
+    throw throwAuthorizationError('You do not have permission to manage this collection');
   }
 
   // TODO if necessary, check image ownership here
@@ -1182,6 +1542,8 @@ export type CollectionItemExpanded = {
   status?: CollectionItemStatus;
   createdAt: Date | null;
   scores?: { userId: number; score: number }[] | null;
+  rejectionReason?: CollectionItemRejectionReason | null;
+  rejectionDetail?: string | null;
 } & (ModelCollectionItem | PostCollectionItem | ImageCollectionItem | ArticleCollectionItem);
 
 // Helper to parse cursor for collection items
@@ -1214,6 +1576,9 @@ export type CollectionItemsResult = {
   nextCursor?: string;
 };
 
+// The AI review job stamps this as the reviewer on items it hands to a human.
+export const AI_REVIEW_SYSTEM_USER_ID = -1;
+
 export const getCollectionItemsByCollectionId = async ({
   input,
   user,
@@ -1228,6 +1593,7 @@ export const getCollectionItemsByCollectionId = async ({
     collectionId,
     cursor,
     forReview,
+    awaitingHumanReview,
     reviewSort,
     collectionTagId,
   } = input;
@@ -1263,6 +1629,12 @@ export const getCollectionItemsByCollectionId = async ({
 
   const useRandomSort = !forReview && collection.mode === CollectionMode.Contest;
 
+  // The system user stamps every item it touches, accept and reject included, so the stamp alone
+  // means "the AI saw this". Only a stamped item still sitting in REVIEW is waiting on a person.
+  const awaitingHumanCondition = awaitingHumanReview
+    ? Prisma.sql`AND ci."reviewedById" = ${AI_REVIEW_SYSTEM_USER_ID} AND ci.status = 'REVIEW'::"CollectionItemStatus"`
+    : Prisma.sql``;
+
   // For contest mode, use hash-based random ordering with cursor support
   let collectionItems: {
     id: number;
@@ -1274,6 +1646,8 @@ export const getCollectionItemsByCollectionId = async ({
     createdAt: Date | null;
     scores?: { userId: number; score: number }[];
     sortKey?: number;
+    rejectionReason?: CollectionItemRejectionReason | null;
+    rejectionDetail?: string | null;
   }[];
   let currentSeed: number | undefined;
 
@@ -1336,6 +1710,7 @@ export const getCollectionItemsByCollectionId = async ({
       WHERE ci."collectionId" = ${collectionId}
         AND ci."status" IN (${Prisma.raw(statusArray)})
         ${tagCondition}
+        ${awaitingHumanCondition}
         ${imageIngestionCondition}
         ${cursorCondition}
       ORDER BY "sortKey" DESC, ci.id DESC
@@ -1394,6 +1769,8 @@ export const getCollectionItemsByCollectionId = async ({
         articleId: number | null;
         status: CollectionItemStatus | null;
         createdAt: Date | null;
+        rejectionReason: CollectionItemRejectionReason | null;
+        rejectionDetail: string | null;
       }[]
     >`
       SELECT
@@ -1403,6 +1780,11 @@ export const getCollectionItemsByCollectionId = async ({
         ci."imageId",
         ci."articleId",
         ${forReview ? Prisma.sql`ci."status"::text as status,` : Prisma.sql``}
+        ${
+          forReview
+            ? Prisma.sql`ci."rejectionReason"::text as "rejectionReason", ci."rejectionDetail",`
+            : Prisma.sql``
+        }
         ci."createdAt"
       FROM "CollectionItem" ci
       ${
@@ -1413,6 +1795,7 @@ export const getCollectionItemsByCollectionId = async ({
       WHERE ci."collectionId" = ${collectionId}
         AND ci."status" IN (${Prisma.raw(statusArray)})
         ${tagCondition}
+        ${awaitingHumanCondition}
         ${imageIngestionCondition}
         ${cursorCondition}
       ORDER BY ci."createdAt" ${Prisma.raw(sortDirection)}, ci.id DESC
@@ -1613,6 +1996,40 @@ export const getCollectionItemsByCollectionId = async ({
   return { items: collectionItemsExpanded, nextCursor };
 };
 
+// Who authored the entity itself. `removeCollectionItem` lets an author pull their own work out of
+// any collection, so the flag below has to account for them or the action is authorized on the
+// server and missing from the UI.
+async function getEntityOwnerId({
+  modelId,
+  imageId,
+  articleId,
+  postId,
+}: {
+  modelId?: number;
+  imageId?: number;
+  articleId?: number;
+  postId?: number;
+}): Promise<number | null> {
+  const select = { userId: true };
+  if (modelId) {
+    const model = await dbRead.model.findUnique({ where: { id: modelId }, select });
+    return model?.userId ?? null;
+  }
+  if (imageId) {
+    const image = await dbRead.image.findUnique({ where: { id: imageId }, select });
+    return image?.userId ?? null;
+  }
+  if (postId) {
+    const post = await dbRead.post.findUnique({ where: { id: postId }, select });
+    return post?.userId ?? null;
+  }
+  if (articleId) {
+    const article = await dbRead.article.findUnique({ where: { id: articleId }, select });
+    return article?.userId ?? null;
+  }
+  return null;
+}
+
 export const getUserCollectionItemsByItem = async ({
   input,
 }: {
@@ -1632,6 +2049,9 @@ export const getUserCollectionItemsByItem = async ({
   });
 
   if (userCollections.length === 0) return [];
+
+  const entityOwnerId = await getEntityOwnerId({ modelId, imageId, articleId, postId });
+  const ownsEntity = entityOwnerId !== null && entityOwnerId === userId;
 
   const collectionItems = await dbRead.collectionItem.findMany({
     select: {
@@ -1663,7 +2083,8 @@ export const getUserCollectionItemsByItem = async ({
 
       return {
         ...collectionItem,
-        canRemoveItem: collectionItem.addedById === userId || permission.manage,
+        canRemoveItem:
+          collectionItem.addedById === userId || ownsEntity || permission.manage || !!isModerator,
       };
     })
   );
@@ -1692,6 +2113,14 @@ export const deleteCollectionById = async ({
 
   const res = await dbWrite.collection.delete({ where: { id } });
 
+  // UserHubSource.targetId is polymorphic, so there is no foreign key to cascade
+  // through — a hub would keep pointing at a collection that no longer exists and
+  // go on filtering the feed by its id. Removing the sources here is what makes
+  // the now-unreachable membership left in the search index harmless.
+  await dbWrite.userHubSource.deleteMany({
+    where: { type: UserHubSourceType.Collection, targetId: id },
+  });
+
   await collectionsSearchIndex.queueUpdate([
     {
       id,
@@ -1714,19 +2143,29 @@ export const addContributorToCollection = async ({
   userId,
   targetUserId,
   permissions,
+  permissionFlags,
 }: {
   userId: number;
   targetUserId: number;
   collectionId: number;
   permissions?: CollectionContributorPermission[];
+  /** The caller's flags for this collection, when it has already resolved them — skips the lookup. */
+  permissionFlags?: CollectionContributorPermissionFlags;
 }) => {
   // check if user can add contributors:
-  const { followPermissions, manage, follow } = await getUserCollectionPermissionsById({
-    id: collectionId,
-    userId,
-  });
+  const { followPermissions, manage, follow } =
+    permissionFlags ?? (await getUserCollectionPermissionsById({ id: collectionId, userId }));
 
   if (!manage && !follow) {
+    throw throwAuthorizationError(
+      'You do not have permission to add contributors to this collection.'
+    );
+  }
+
+  // The upsert REPLACES the target's permissions, so without this any follower of a
+  // community collection could rewrite a manager's row and strip their MANAGE.
+  // Mirrors removeContributorFromCollection's guard.
+  if (targetUserId !== userId && !manage) {
     throw throwAuthorizationError(
       'You do not have permission to add contributors to this collection.'
     );
@@ -1825,16 +2264,88 @@ export const getAvailableCollectionItemsFilterForUser = ({
   return { AND, rawAND };
 };
 
+export const COLLECTION_AI_REVIEW_KEY_PREFIX = 'collection-ai-review:';
+export const collectionAiReviewKey = (collectionId: number) =>
+  `${COLLECTION_AI_REVIEW_KEY_PREFIX}${collectionId}`;
+
+// The prompt is deliberately not in the repo: it describes exactly which signals reject versus
+// escalate, and this repository is public.
+export const getCollectionAiReviewDefaultPrompt = async () => {
+  const row = await dbRead.keyValue.findUnique({
+    where: { key: `${COLLECTION_AI_REVIEW_KEY_PREFIX}default` },
+    select: { value: true },
+  });
+  const value = row?.value as { prompt?: string } | null;
+  return value?.prompt ?? '';
+};
+
+export const getCollectionAiReview = async (collectionId: number) => {
+  const row = await dbRead.keyValue.findUnique({
+    where: { key: collectionAiReviewKey(collectionId) },
+    select: { value: true },
+  });
+  if (!row) return null;
+
+  const parsed = collectionAiReviewSchema.safeParse(row.value);
+  return parsed.success ? parsed.data : null;
+};
+
+export const setCollectionAiReview = async ({
+  collectionId,
+  aiReview,
+}: SetCollectionAiReviewInput) => {
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, mode: true },
+  });
+  if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+
+  if (aiReview.enabled && collection.mode !== CollectionMode.Contest)
+    throw throwBadRequestError('AI review can only be enabled on Contest collections.');
+
+  const key = collectionAiReviewKey(collectionId);
+  await dbWrite.keyValue.upsert({
+    where: { key },
+    create: { key, value: aiReview },
+    update: { value: aiReview },
+  });
+
+  return aiReview;
+};
+
 export const updateCollectionItemsStatus = async ({
   input,
   userId,
   isModerator,
+  isSystem,
+  rejectionDetail,
 }: {
   input: UpdateCollectionItemsStatusInput;
   userId: number;
   isModerator?: boolean;
+  /**
+   * In-process callers (the AI review job) act as the system user, which holds no contributor row.
+   * Never accept this from a tRPC input.
+   */
+  isSystem?: boolean;
+  /**
+   * Free text shown to the submitter, for the reasons that have no fixed copy. Deliberately not
+   * part of the wire schema: a reviewer writes about someone else's entry, so only the AI review
+   * job supplies this. Never accept it from a tRPC input.
+   */
+  rejectionDetail?: string;
 }) => {
-  const { collectionId, collectionItemIds, status } = input;
+  const { collectionId, collectionItemIds, status, rejectionReason } = input;
+
+  const isRejection = status === CollectionItemStatus.REJECTED;
+  const persistedReason = isRejection ? rejectionReason ?? null : null;
+  // Only the detail-backed reasons ever read the detail back, so anything else would leave text
+  // on the row that no surface displays.
+  const persistedDetail =
+    persistedReason && DETAIL_BACKED_REASONS.has(persistedReason)
+      ? rejectionDetail?.trim() || null
+      : null;
+  const reason = resolveRejectionCopy({ reason: persistedReason, detail: persistedDetail });
 
   // Check if collection actually exists before anything
   const collection = await dbWrite.collection.findUnique({
@@ -1844,14 +2355,18 @@ export const updateCollectionItemsStatus = async ({
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
 
-  const { manage, isOwner } = await getUserCollectionPermissionsById({
-    id: collectionId,
-    userId,
-    isModerator,
-  });
+  if (!isSystem) {
+    const { manage, isOwner } = await getUserCollectionPermissionsById({
+      id: collectionId,
+      userId,
+      isModerator,
+    });
 
-  if (!manage && !isOwner)
-    throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
+    if (!manage && !isOwner)
+      throw throwAuthorizationError(
+        'You do not have permissions to manage contributor item status.'
+      );
+  }
 
   const collectionMetadata = collection.metadata as CollectionMetadataSchema;
 
@@ -1898,13 +2413,15 @@ export const updateCollectionItemsStatus = async ({
 
   // Capture prior state before the status write so we only notify on real transitions.
   const priorItems =
-    collection.mode === CollectionMode.Contest && isReviewOutcome && collectionItemIds.length > 0
+    isReviewOutcome && collectionItemIds.length > 0
       ? await dbWrite.collectionItem.findMany({
           where: { id: { in: collectionItemIds }, collectionId },
           select: {
             id: true,
             addedById: true,
             status: true,
+            rejectionReason: true,
+            rejectionDetail: true,
             imageId: true,
             articleId: true,
             modelId: true,
@@ -1919,7 +2436,9 @@ export const updateCollectionItemsStatus = async ({
       SET "reviewedById" = ${userId},
       "reviewedAt" = ${new Date()},
       "updatedAt" = ${new Date()},
-      "status" = ${status}::"CollectionItemStatus"
+      "status" = ${status}::"CollectionItemStatus",
+      "rejectionReason" = ${persistedReason}::"CollectionItemRejectionReason",
+      "rejectionDetail" = ${persistedDetail}
       WHERE "collectionId" = ${collectionId} AND "id" IN (${Prisma.join(collectionItemIds)})
     `;
   }
@@ -1932,8 +2451,17 @@ export const updateCollectionItemsStatus = async ({
 
     await Promise.all(
       priorItems.map(async (item) => {
-        // Skip missing submitter, self-review, and no-op status changes.
-        if (!item.addedById || item.addedById === userId || item.status === status) return;
+        // A re-reject rewrites the stored reason, so "same status" alone is not a no-op: without
+        // the copy comparison the row would end up disagreeing with the sentence the submitter read.
+        const isNoop =
+          item.status === status &&
+          resolveRejectionCopy({
+            reason: item.rejectionReason,
+            detail: item.rejectionDetail,
+          }) === reason;
+
+        // Skip missing submitter, self-review, and no-op reviews.
+        if (!item.addedById || item.addedById === userId || isNoop) return;
 
         await createNotification({
           type: notificationType,
@@ -1942,6 +2470,7 @@ export const updateCollectionItemsStatus = async ({
           key: `${notificationType}:${item.id}:${uuid()}`,
           details: {
             status,
+            reason,
             collectionId: collection.id,
             collectionName: collection.name,
             imageId: item.imageId,
@@ -2396,17 +2925,26 @@ export const validateContestCollectionEntry = async ({
       select: { modelVersionIds: true },
     });
     if (resourceChallenge) {
+      // `detected: true` only — the resource has to have been read out of the image's own generation
+      // metadata. A `detected: false` row is asserted by the uploader, by either route that writes
+      // one: linking the post to the model version (unrestricted — about half of version-linked
+      // posts point at someone else's model), or `addResourceToPostImage`, which credits a resource
+      // by hand and refuses on-site generations. Counting those would make the requirement
+      // self-certifiable on a challenge with a real prize pool.
       const withRequiredResource = await dbRead.imageResourceNew.findMany({
         where: {
           imageId: { in: imageIds },
           modelVersionId: { in: resourceChallenge.modelVersionIds },
+          detected: true,
         },
         select: { imageId: true },
         distinct: ['imageId'],
       });
       const validImageIds = new Set(withRequiredResource.map((r) => r.imageId));
       if (imageIds.some((id) => !validImageIds.has(id))) {
-        throw throwBadRequestError('This image does not use a required model for this challenge.');
+        throw throwBadRequestError(
+          "This image doesn't use a required model for this challenge. The model has to be readable from the image's own generation metadata — a resource credited by hand doesn't count. Generate on site, or re-upload the image with its metadata intact."
+        );
       }
     }
   }
@@ -2574,12 +3112,13 @@ export const bulkSaveItems = async ({
     });
   }
 
+  const status = submissionStatus(permissions);
   const baseData = {
     collectionId,
     addedById: userId,
-    status: permissions.writeReview ? CollectionItemStatus.REVIEW : CollectionItemStatus.ACCEPTED,
-    reviewedAt: permissions.write ? new Date() : null,
-    reviewedById: permissions.write ? userId : null,
+    status,
+    reviewedAt: status === CollectionItemStatus.ACCEPTED ? new Date() : null,
+    reviewedById: status === CollectionItemStatus.ACCEPTED ? userId : null,
     tagId,
   };
   let data: Prisma.CollectionItemCreateManyInput[] = [];
@@ -2662,13 +3201,14 @@ export const bulkSaveItems = async ({
   }
 
   const { count } = await dbWrite.collectionItem.createMany({ data });
+  const savedImageIds = data.map((d) => d.imageId).filter(isDefined);
 
   // Entry fee (user challenges): charge AFTER the entries are written so a failed save never
   // leaves a paid-but-missing entry. Charges are idempotent per (challenge, image) and NEVER
   // refunded (see challenge-funding.ts) — on a partial charge we keep the paid entries and
   // roll back only the unpaid rows; a Buzz charge can't be undone by a Postgres rollback.
   if (collection.mode === CollectionMode.Contest) {
-    const chargeImageIds = data.map((d) => d.imageId).filter(isDefined);
+    const chargeImageIds = savedImageIds;
     const rollbackItems = async (imageIds: number[], originalError: unknown) => {
       await dbWrite.collectionItem
         .deleteMany({
@@ -2707,9 +3247,14 @@ export const bulkSaveItems = async ({
 
     if (chargeResult && chargeResult.unpaidImageIds.length > 0) {
       await rollbackItems(chargeResult.unpaidImageIds, new Error('insufficient funds'));
-      // The paid entries above stay committed, so bust the cache before aborting the request.
-      if (chargeResult.paidImageIds.length > 0)
+      // The paid entries above stay committed, so tag and bust the cache before aborting
+      // the request. The unpaid ones were just deleted and must NOT be tagged — a rolled-back
+      // submission that stayed tagged would be filtered out of feeds for an entry that never
+      // landed, with nothing to undo it.
+      if (chargeResult.paidImageIds.length > 0) {
+        await applyCollectionAutoTag(metadata, chargeResult.paidImageIds);
         await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
+      }
       throw throwInsufficientFundsError(
         chargeResult.paidImageIds.length > 0
           ? `You ran out of Buzz partway through: ${chargeResult.paidImageIds.length} ${
@@ -2719,6 +3264,9 @@ export const bulkSaveItems = async ({
       );
     }
   }
+
+  // Tag AFTER the entry-fee block, so anything rolled back for non-payment is never tagged.
+  await applyCollectionAutoTag(metadata, savedImageIds);
 
   // Bust AFTER the write so a concurrent read can't repopulate the cache with pre-write data.
   await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
@@ -2949,21 +3497,62 @@ export const removeCollectionItem = async ({
 
   isOwner = item.userId === userId;
 
+  const idColumn = Prisma.raw(`"${tableKey.toLowerCase()}Id"`);
+
+  // Decided here rather than as a SQL predicate: both columns are nullable, and
+  // `NOT (addedById = X AND note LIKE Y)` is NULL — not TRUE — whenever `note` is NULL, so the
+  // statement silently matched nothing and still reported success.
+  // Unbounded: prod has a partial unique index per entity type, but those indexes exist in no
+  // migration, and the statement this replaced deleted every matching row regardless.
+  const existing = await dbWrite.$queryRaw<
+    { id: number; addedById: number | null; note: string | null }[]
+  >`
+    SELECT id, "addedById", note
+    FROM "CollectionItem"
+    WHERE "collectionId" = ${collectionId} AND ${idColumn} = ${itemId}
+  `;
+
+  // Every row, not some: removal below takes them all, so a submitter must not be able to drop
+  // someone else's duplicate row alongside their own.
+  const addedByCaller = existing.length > 0 && existing.every((row) => row.addedById === userId);
+
   // Deliberately does NOT accept `permissions.write` / `permissions.writeReview`: both are granted
   // to every authenticated user on a Public/Review-write collection regardless of ownership, so
   // honoring them here let anyone delete anyone else's item. A write grant authorizes adding.
-  if (!isOwner && !permissions.manage && !isModerator) {
+  // `addedByCaller` is what the save modal's own Remove action offers ("you added this"), and
+  // leaving it out here meant that button rendered for a Contributor and then 401'd.
+  if (!isOwner && !addedByCaller && !permissions.manage && !isModerator) {
     throw throwAuthorizationError(
       'You do not have permission to remove items from this collection.'
     );
   }
 
-  await dbWrite.$queryRaw`
-    DELETE FROM "CollectionItem"
-    WHERE "collectionId" = ${collectionId} AND "${Prisma.raw(
-    `${tableKey.toLowerCase()}Id`
-  )}" = ${itemId}
-  `;
+  if (existing.length) {
+    // An automatically featured item is rejected rather than deleted. Deleting it would let the
+    // next job run re-add the same image, since the job's dedupe is "is there already a row" —
+    // so for these rows the tombstone IS the removal. REJECTED is invisible to the render path,
+    // which defaults to ACCEPTED only.
+    const autoFeatureUserId = await getAutoFeatureUserId();
+    const isAuto = (row: (typeof existing)[number]) => isAutoFeaturedRow(row, autoFeatureUserId);
+
+    const tombstoneIds = existing.filter(isAuto).map((row) => row.id);
+    const deletableIds = existing.filter((row) => !isAuto(row)).map((row) => row.id);
+
+    if (tombstoneIds.length) {
+      await dbWrite.collectionItem.updateMany({
+        where: { id: { in: tombstoneIds } },
+        data: {
+          status: CollectionItemStatus.REJECTED,
+          reviewedById: userId,
+          reviewedAt: new Date(),
+        },
+      });
+    }
+
+    if (deletableIds.length) {
+      await dbWrite.collectionItem.deleteMany({ where: { id: { in: deletableIds } } });
+    }
+  }
 
   return {
     collectionId,
@@ -3136,76 +3725,6 @@ export const setCollectionItemNsfwLevel = async ({
   await imagesSearchIndex.queueUpdate([
     { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },
   ]);
-};
-
-export const enableCollectionYoutubeSupport = async ({
-  collectionId,
-  userId,
-  authenticationCode,
-}: EnableCollectionYoutubeSupportInput & { userId: number }) => {
-  const user = await dbRead.user.findUnique({ where: { id: userId } });
-  if (!user?.isModerator) {
-    throw throwAuthorizationError('You do not have permission to enable youtube support');
-  }
-
-  const collection = await getCollectionById({ input: { id: collectionId } });
-
-  if (collection.mode !== CollectionMode.Contest) {
-    throw throwBadRequestError('Only contest collections can have youtube support enabled');
-  }
-
-  if (collection.type !== CollectionType.Image) {
-    throw throwBadRequestError('Only image collections can have youtube support enabled');
-  }
-
-  const metadata = collection.metadata as CollectionMetadataSchema;
-
-  if (metadata.youtubeSupportEnabled) {
-    throw throwBadRequestError('Youtube support is already enabled for this collection');
-  }
-
-  // Attempt to save the auth code on the key-value store.
-  try {
-    const { tokens } = await getYoutubeRefreshToken(
-      authenticationCode,
-      '/collections/youtube/auth'
-    );
-    const collectionKey = `collection:${collectionId}:youtube-authentication-code`;
-
-    if (!tokens.refresh_token) {
-      throw throwBadRequestError('Failed to get youtube refresh token');
-    }
-    await dbWrite.$transaction(async (tx) => {
-      await tx.keyValue.upsert({
-        where: {
-          key: collectionKey,
-        },
-        update: {
-          value: tokens.refresh_token as string,
-        },
-        create: {
-          key: collectionKey,
-          value: tokens.refresh_token as string,
-        },
-      });
-
-      await tx.collection.update({
-        where: {
-          id: collection.id,
-        },
-        data: {
-          metadata: {
-            ...metadata,
-            youtubeSupportEnabled: true,
-          },
-        },
-      });
-    });
-
-    return { collectionId, youtubeSupportEnabled: true };
-  } catch {
-    throw throwBadRequestError('Failed to save youtube authentication code');
-  }
 };
 
 export type CollectionEntityType = 'image' | 'model' | 'post' | 'article';

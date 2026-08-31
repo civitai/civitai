@@ -28,7 +28,7 @@ requireApiKey();
 // Ban reason codes
 const BAN_REASONS = [
   'SexualMinor', 'SexualMinorGenerator', 'SexualMinorTraining',
-  'SexualPOI', 'Bestiality', 'Scat', 'Nudify', 'Harassment',
+  'SexualPOI', 'Bestiality', 'Scat', 'Nudify', 'Harassment', 'SpamBot',
   'LeaderboardCheating', 'BuzzCheating', 'RRDViolation', 'Other'
 ];
 

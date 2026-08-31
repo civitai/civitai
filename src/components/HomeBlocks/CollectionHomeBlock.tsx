@@ -22,8 +22,11 @@ import {
 } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageCard } from '~/components/Cards/ImageCard';
+import { RemixFlyoutLayoutProvider } from '~/components/RemixGallery/remix-flyout-layout';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
+import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
+import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { PostCard } from '~/components/Cards/PostCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
@@ -59,8 +62,7 @@ export const CollectionHomeBlock = ({ showAds, ...props }: Props) => {
   );
 };
 
-const ITEMS_PER_ROW = 7;
-const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
+const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props) => {
   const { data: homeBlock, isLoading } = trpc.homeBlock.getHomeBlock.useQuery(
     { id: homeBlockId },
     { trpc: { context: { skipBatch: true } } }
@@ -74,7 +76,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
 
   const shuffled = useMemo(() => {
     if (!collection?.items) return [];
-    return shuffle(collection.items);
+    return shuffle([...collection.items]);
   }, [collection?.items]);
 
   const shuffledData = useMemo(() => shuffled.map((x) => x.data), [shuffled]);
@@ -87,26 +89,12 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   });
 
   const maxPerUser = metadata.collection?.maxPerUser;
-  const items = useMemo(() => {
-    const itemsToShow = ITEMS_PER_ROW * rows;
-    if (!maxPerUser) return filtered.slice(0, itemsToShow);
-
-    const perUserCount = new Map<number, number>();
-    const capped: typeof filtered = [];
-    for (const item of filtered) {
-      if (capped.length >= itemsToShow) break;
-      const userId = (item as any)?.user?.id as number | undefined;
-      if (userId == null) {
-        capped.push(item);
-        continue;
-      }
-      const count = perUserCount.get(userId) ?? 0;
-      if (count >= maxPerUser) continue;
-      perUserCount.set(userId, count + 1);
-      capped.push(item);
-    }
-    return capped;
-  }, [filtered, rows, maxPerUser]);
+  const items = useDedupedCappedItems(filtered as { id: number; user?: { id: number } | null }[], {
+    order: dedupeOrder(blockIndex),
+    entity: type,
+    rows,
+    maxPerUser,
+  }) as typeof filtered;
 
   // useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
 
@@ -250,27 +238,29 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         </div>
       ) : (
         <div className={classes.grid}>
-          <ImagesProvider
-            hideReactionCount={collection?.mode === CollectionMode.Contest}
-            images={type === 'image' ? (items as any) : undefined}
-          >
-            <ReactionSettingsProvider
-              settings={{
-                hideReactionCount: collection?.mode === CollectionMode.Contest,
-                hideReactions: collection && contestCollectionReactionsHidden(collection),
-              }}
+          <RemixFlyoutLayoutProvider layout="side">
+            <ImagesProvider
+              hideReactionCount={collection?.mode === CollectionMode.Contest}
+              images={type === 'image' ? (items as any) : undefined}
             >
-              {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
-              {items.map((item) => (
-                <div key={item.id} className="p-2">
-                  {type === 'model' && <ModelCard data={item as any} forceInView />}
-                  {type === 'image' && <ImageCard data={item as any} />}
-                  {type === 'post' && <PostCard data={item as any} />}
-                  {type === 'article' && <ArticleCard data={item as any} />}
-                </div>
-              ))}
-            </ReactionSettingsProvider>
-          </ImagesProvider>
+              <ReactionSettingsProvider
+                settings={{
+                  hideReactionCount: collection?.mode === CollectionMode.Contest,
+                  hideReactions: collection && contestCollectionReactionsHidden(collection),
+                }}
+              >
+                {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
+                {items.map((item) => (
+                  <div key={item.id} className="p-2">
+                    {type === 'model' && <ModelCard data={item as any} forceInView />}
+                    {type === 'image' && <ImageCard data={item as any} />}
+                    {type === 'post' && <PostCard data={item as any} />}
+                    {type === 'article' && <ArticleCard data={item as any} />}
+                  </div>
+                ))}
+              </ReactionSettingsProvider>
+            </ImagesProvider>
+          </RemixFlyoutLayoutProvider>
         </div>
       )}
 
@@ -287,4 +277,9 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   );
 };
 
-type Props = { homeBlockId: number; metadata: HomeBlockMetaSchema; showAds?: boolean };
+type Props = {
+  homeBlockId: number;
+  metadata: HomeBlockMetaSchema;
+  showAds?: boolean;
+  blockIndex: number;
+};

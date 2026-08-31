@@ -1,0 +1,226 @@
+import { z } from 'zod';
+import { dbRead } from '~/server/db/client';
+import { getCapTier } from '~/server/services/subscriptions.service';
+import type { MembershipTier } from '~/shared/utils/subscription-tokens';
+import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
+import {
+  clampApprovalShares,
+  clampDeclineFeeRate,
+  PLACEMENT_FREE_SLOT_CAP_TIERS,
+  PLACEMENT_PRICE_CAP_TIERS,
+  PLACEMENT_SURFACES,
+  placementFreeSlotCap,
+  placementPriceCap,
+} from '~/shared/utils/placement';
+
+export const PLACEMENT_CONFIG_KEY = 'placement:config';
+
+// Buzz is integral. A fractional cap flows through the effective price into a
+// non-integer amount, which the split then refuses — on the money path, after
+// the hold has already been taken.
+const buzzAmount = z.number().int().min(0);
+
+const priceCapTierSchema = z.object({
+  minScore: z.number().int().min(0),
+  caps: z.object({
+    free: buzzAmount,
+    bronze: buzzAmount,
+    silver: buzzAmount,
+    gold: buzzAmount,
+  }),
+});
+
+const placementConfigSchema = z.object({
+  declineFeeRates: z.record(z.string(), z.number()).optional(),
+  expiryHours: z.record(z.string(), z.number().positive()).optional(),
+  priceCapTiers: z.array(priceCapTierSchema).min(1).optional(),
+  /** Per-surface override, so stickers and galleries can be priced apart later. */
+  priceCapTiersBySurface: z.record(z.string(), z.array(priceCapTierSchema).min(1)).optional(),
+  freeSlotTiers: z.array(priceCapTierSchema).min(1).optional(),
+  freeSlotTiersBySurface: z.record(z.string(), z.array(priceCapTierSchema).min(1)).optional(),
+  approvalShares: z
+    .record(
+      z.string(),
+      z.object({ seller: z.number().optional(), platform: z.number().optional() })
+    )
+    .optional(),
+});
+
+export type PlacementConfig = {
+  declineFeeRate: (surface: PlacementSurface) => number;
+  expiryHours: (surface: PlacementSurface) => number;
+  priceCapTiers: (surface: PlacementSurface) => PlacementPriceTier[];
+  /** Same table shape and same resolver as the price caps — see the constant. */
+  freeSlotTiers: (surface: PlacementSurface) => PlacementPriceTier[];
+  /** The only producer of the approved-placement shares. Nothing may pass its own. */
+  approvalShares: (surface: PlacementSurface) => { seller: number; platform: number };
+};
+
+/**
+ * Operator-tunable values, in `KeyValue` alongside the other things we change
+ * without a deploy. One accessor rather than a read at each refund site, so the
+ * decline fee cannot differ between charging it and refunding around it.
+ *
+ * A malformed or missing row falls back to the compiled defaults instead of
+ * throwing: placements failing closed on a bad config edit would take out the
+ * whole feature, and every value it supplies is clamped anyway.
+ */
+export async function getPlacementConfig(): Promise<PlacementConfig> {
+  let stored: z.infer<typeof placementConfigSchema> = {};
+
+  try {
+    const row = await dbRead.keyValue.findUnique({ where: { key: PLACEMENT_CONFIG_KEY } });
+    const parsed = placementConfigSchema.safeParse(row?.value ?? {});
+    if (parsed.success) stored = parsed.data;
+  } catch {
+    // Fall through to defaults.
+  }
+
+  return {
+    declineFeeRate: (surface) =>
+      clampDeclineFeeRate(
+        stored.declineFeeRates?.[surface],
+        PLACEMENT_SURFACES[surface].defaultDeclineFeeRate
+      ),
+    expiryHours: (surface) =>
+      clampExpiryHours(stored.expiryHours?.[surface], PLACEMENT_SURFACES[surface].expiryHours),
+    priceCapTiers: (surface) =>
+      usableCapTiers(
+        stored.priceCapTiersBySurface?.[surface] ?? stored.priceCapTiers,
+        PLACEMENT_PRICE_CAP_TIERS
+      ),
+    freeSlotTiers: (surface) =>
+      usableCapTiers(
+        stored.freeSlotTiersBySurface?.[surface] ?? stored.freeSlotTiers,
+        PLACEMENT_FREE_SLOT_CAP_TIERS
+      ),
+    approvalShares: (surface) =>
+      clampApprovalShares(stored.approvalShares?.[surface] ?? {}, {
+        seller: PLACEMENT_SURFACES[surface].defaultSellerShare,
+        platform: PLACEMENT_SURFACES[surface].defaultPlatformShare,
+      }),
+  };
+}
+
+export type PlacementPriceRange = {
+  min: number;
+  max: number;
+  /**
+   * The most free placements this creator may accept on one space.
+   *
+   * Carried here rather than on its own query because it is decided by the same
+   * two facts — creator score and membership tier — and both are one round trip
+   * each. A second endpoint would double that cost to answer with the same
+   * numbers, and would be free to disagree about them.
+   */
+  freeSlotCap: number;
+  score: number;
+  tier: 'free' | MembershipTier;
+};
+
+/**
+ * The single authority on what a creator may charge, and on how much free
+ * capacity they may offer. D and E must not each reimplement the score-and-tier
+ * scaling, and nothing may persist the result — the caps move the moment a
+ * membership lapses or a score is recomputed.
+ */
+export async function placementPriceRange(
+  userId: number,
+  surface: PlacementSurface
+): Promise<PlacementPriceRange> {
+  const [scoreRow, capTier, config] = await Promise.all([
+    // Cast through `numeric`: `::int` raises on a fractional stored total rather
+    // than truncating it. Text that isn't a number at all still raises.
+    dbRead.$queryRaw<{ score: number | null }[]>`
+      SELECT floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
+      FROM "User" WHERE id = ${userId}
+    `,
+    // Not `getHighestTierSubscription`, which keeps bad-state subscriptions: a
+    // creator mid-failed-payment would price against a tier they aren't paying
+    // for, while the UI showed them the free cap. Every other monetization cap
+    // in the app resolves through this helper.
+    getCapTier(userId),
+    getPlacementConfig(),
+  ]);
+
+  // `total` already nets penalties — `reportsAgainst` is stored negative — so a
+  // heavily-reported creator can land below zero and gets the bottom band.
+  const score = scoreRow[0]?.score ?? 0;
+  const tier = toPriceCapTier(capTier ?? undefined);
+
+  return {
+    min: PLACEMENT_SURFACES[surface].serverMinPrice,
+    max: placementPriceCap(score, tier, config.priceCapTiers(surface)),
+    freeSlotCap: placementFreeSlotCap(score, tier, config.freeSlotTiers(surface)),
+    score,
+    tier,
+  };
+}
+
+/**
+ * Escrow with no timeout is money frozen indefinitely, which is the whole reason
+ * expiry exists — so an operator typo of `8760` must not quietly become a year
+ * of held Buzz.
+ */
+export const MIN_EXPIRY_HOURS = 1;
+export const MAX_EXPIRY_HOURS = 24 * 14;
+
+const clampExpiryHours = (hours: number | undefined, fallback: number) => {
+  if (typeof hours !== 'number' || !Number.isFinite(hours)) return fallback;
+  return Math.min(Math.max(hours, MIN_EXPIRY_HOURS), MAX_EXPIRY_HOURS);
+};
+
+/**
+ * A stored table whose lowest band starts above zero gives every creator beneath
+ * it a cap of 0, i.e. a space nobody can be charged for. It fails toward free
+ * rather than toward overcharging, but silently, and the schema can't see it.
+ */
+const usableCapTiers = (tiers: PlacementPriceTier[] | undefined, fallback: PlacementPriceTier[]) =>
+  tiers?.some((tier) => tier.minScore === 0) ? tiers : fallback;
+
+const MEMBERSHIP_TIERS: MembershipTier[] = ['bronze', 'silver', 'gold'];
+
+/** Anything unrecognised is treated as free rather than guessed upward. */
+const toPriceCapTier = (tier: string | undefined): 'free' | MembershipTier =>
+  MEMBERSHIP_TIERS.find((known) => known === tier) ?? 'free';
+
+/**
+ * How many placements are waiting on this owner, per surface, for the badges on
+ * the unified `/user/placements` page and the user menu entry that points at it.
+ *
+ * One grouped query rather than one per surface: the two queues are one table
+ * and one predicate apart, and this runs for every signed-in user on every
+ * session (it rides on `user.checkNotifications` — see the handler). Two counts
+ * would be two round trips for one badge row.
+ *
+ * A count rather than the queue's own `items.length`: those page at 50 and join
+ * every image, so using them for a number both under-reports a large queue and
+ * pays for artwork nobody is looking at.
+ *
+ * Deliberately unfiltered by browsing level, matching both queues: a row outside
+ * the viewer's band still expires, and expiry pays the placer back and costs the
+ * owner their fee. A badge that hid those would count down to zero over a queue
+ * that still had rows in it.
+ *
+ * `[ownerId, surface, status, createdAt, id]` covers this — verified on prod as
+ * an Index Only Scan with all three equality columns in the Index Cond.
+ *
+ * One divergence from the pages, deliberate but worth knowing: they drop rows
+ * whose `data` will not parse, after fetching. So a count here can read higher
+ * than the rows rendered. An unparseable row is still pending, still holds a
+ * slot and still expires, so counting it is the honest answer.
+ */
+export async function getPendingPlacementCounts({ ownerId }: { ownerId: number }) {
+  const rows = await dbRead.placement.groupBy({
+    by: ['surface'],
+    where: { ownerId, status: 'pending' },
+    _count: { _all: true },
+  });
+
+  const bySurface = new Map(rows.map((row) => [row.surface, row._count._all]));
+
+  return {
+    sticker: bySurface.get('sticker') ?? 0,
+    remix: bySurface.get('remixGallery') ?? 0,
+  };
+}

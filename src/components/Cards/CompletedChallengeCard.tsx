@@ -14,7 +14,8 @@ import type {
 import { isDefined } from '~/utils/type-guards';
 
 export function CompletedChallengeCard({ data }: Props) {
-  const { id, title, theme, endsAt, prizePool, buzzType, entryCount, winners } = data;
+  const { id, title, theme, endsAt, prizePool, buzzType, entryCount, winners, judgingCategories } =
+    data;
   const challengeUrl = `/challenges/${id}/${slugit(title)}`;
 
   // Podium order: [2nd, 1st, 3rd] — same as detail page
@@ -92,6 +93,7 @@ export function CompletedChallengeCard({ data }: Props) {
                 isFirst={winner.place === 1}
                 className={winner.place === 1 ? 'z-10' : ''}
                 compact
+                judgingCategories={judgingCategories}
                 buzzType={buzzType}
               />
             ))}

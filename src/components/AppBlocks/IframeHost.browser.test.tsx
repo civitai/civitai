@@ -22,6 +22,20 @@ const mocks = vi.hoisted(() => ({
 // moderator gate; these suites render the real host without a CivitaiSessionProvider.
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
+// IframeHost now reads `appBlocks && appBlocksPages` (the run route's own
+// predicate) to decide whether the chrome may offer `/apps/run/<blockId>`
+// shortcuts; the real hook THROWS without a FeatureFlagsProvider (which this
+// scaffold does not mount). Dark flags = the production default, and these
+// suites assert host lifecycle, not the menu.
+// Deliberately a WHOLE-module factory, not an `importOriginal` spread: the real
+// module imports `setTrpcBatchingEnabled` from '~/utils/trpc', which the
+// wholesale trpc factory below does not provide, so spreading the original makes
+// the file fail to LOAD ("does not provide an export named
+// setTrpcBatchingEnabled") — verified by removing this mock.
+vi.mock('~/providers/FeatureFlagsProvider', () => ({
+  useFeatureFlags: () => ({ appBlocks: false, appBlocksPages: false }),
+}));
+
 vi.mock('~/utils/trpc', () => ({
   trpc: {
     blocks: {
@@ -48,6 +62,7 @@ vi.mock('~/utils/trpc', () => ({
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -60,6 +75,7 @@ vi.mock('~/utils/trpc', () => ({
           list: { fetch: vi.fn() },
           getCount: { fetch: vi.fn() },
           getCounts: { fetch: vi.fn() },
+          get: { fetch: vi.fn() },
         },
         storage: {
           get: { fetch: vi.fn() },
@@ -81,6 +97,8 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
 import { IframeHost } from '~/components/AppBlocks/IframeHost';
 // eslint-disable-next-line import/first
 import type { BlockInstall, ModelSlotContext } from '~/components/AppBlocks/types';
+// eslint-disable-next-line import/first
+import { IframeInitController } from '~/components/AppBlocks/iframeInitController';
 
 /**
  * Analytics Phase 2 — block render/impression beacon on the MODEL slot host.
@@ -264,8 +282,10 @@ describe('IframeHost block render/impression (Analytics Phase 2, model.sidebar_t
     await vi.waitFor(() => expect(beaconCalls()).toHaveLength(1));
 
     // A second/third BLOCK_READY (block re-ack, or a re-render re-running
-    // listeners) finds status === 'ready', so `appliedReady` stays false AND
-    // the emit-once ref is already set → no re-emit.
+    // listeners) can't re-emit: the beacon now fires from the COMMITTED
+    // loading→ready effect, which is already past its once-per-mount guard, and
+    // the shared emit-once ref is set. (See IframeHostReadyTransition.browser
+    // .test.tsx for the batching-immunity + H-11 coverage of that effect.)
     postFromBlock('BLOCK_READY', {});
     postFromBlock('BLOCK_READY', {});
     await new Promise((r) => setTimeout(r, 150));
@@ -341,5 +361,47 @@ describe('IframeHost GET_BUZZ_BALANCE handler (Phase 3, model.sidebar_top)', () 
     expect(mocks.balance).not.toHaveBeenCalled();
     expect(replies.last('BUZZ_BALANCE_RESULT')).toBeUndefined();
     replies.stop();
+  });
+});
+
+/**
+ * The readiness-announce SEAM on the model-slot host — the one link no pure
+ * unit test can reach, because it is a claim about how the COMPONENT is wired
+ * rather than about what the controller computes.
+ *
+ * What `notifyHello` DOES (and, crucially, does not do — it never cancels the
+ * retry loop or the readiness timeout) is pinned deterministically in
+ * `__tests__/iframeInitController.test.ts`. Asserting the CALL here rather than
+ * counting BLOCK_INIT posts is deliberate: a count would race the host's own
+ * 400ms retry tick and could pass for the wrong reason.
+ */
+describe('IframeHost readiness announce (BLOCK_HELLO)', () => {
+  test('a BLOCK_HELLO from the frame reaches IframeInitController.notifyHello', async () => {
+    const helloSpy = vi.spyOn(IframeInitController.prototype, 'notifyHello');
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('block-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+    expect(helloSpy).not.toHaveBeenCalled(); // positive control: nothing yet
+
+    postFromBlock('BLOCK_HELLO');
+
+    await vi.waitFor(() => expect(helloSpy).toHaveBeenCalled());
+    helloSpy.mockRestore();
+  });
+
+  test('an unrelated message type does NOT reach notifyHello (negative control)', async () => {
+    const helloSpy = vi.spyOn(IframeInitController.prototype, 'notifyHello');
+    renderWithProviders(<IframeHost {...baseProps} />);
+    await vi.waitFor(() => {
+      const el = page.getByTestId('block-iframe').element() as HTMLIFrameElement;
+      if (!el.contentWindow) throw new Error('not mounted yet');
+    });
+
+    postFromBlock('BLOCK_HELLO_NOT_REALLY');
+    await new Promise((r) => setTimeout(r, 150));
+    expect(helloSpy).not.toHaveBeenCalled();
+    helloSpy.mockRestore();
   });
 });

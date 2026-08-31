@@ -17,7 +17,7 @@ import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
+import { blockedCustomModels } from '~/shared/constants/training.constants';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { trpc } from '~/utils/trpc';
 import type {
@@ -39,9 +39,12 @@ import {
   trainingDetailsBaseModelsFlux2Klein,
   trainingDetailsBaseModelsHiDreamO1,
   trainingDetailsBaseModelsHunyuan,
+  trainingDetailsBaseModelsIdeogram4,
   trainingDetailsBaseModelsLtx2,
   trainingDetailsBaseModelsLtx23,
+  trainingDetailsBaseModelsLtx25,
   trainingDetailsBaseModelsMageFlow,
+  trainingDetailsBaseModelsMiniMaxH3,
   trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
@@ -91,16 +94,17 @@ const ModelSelector = ({
   color: MantineColor;
   name: string;
   value: string | null;
-  baseType: TrainingBaseModelType;
+  baseType: TrainingBaseModelType | TrainingBaseModelType[];
   makeDefaultParams: (data: TrainingRunUpdate) => void;
   isNew?: boolean;
   isCustom?: boolean;
   isVideo?: boolean;
   allowedKeys?: string[];
 }) => {
+  const baseTypes = Array.isArray(baseType) ? baseType : [baseType];
   const versions = Object.entries(trainingModelInfo).filter(
     ([k, v]) =>
-      v.type === baseType && v.disabled !== true && (!allowedKeys || allowedKeys.includes(k))
+      baseTypes.includes(v.type) && v.disabled !== true && (!allowedKeys || allowedKeys.includes(k))
   );
   if (!versions.length) return null;
 
@@ -131,7 +135,7 @@ const ModelSelector = ({
           onChange={(value) => {
             makeDefaultParams({
               base: value,
-              baseType: baseType,
+              baseType: trainingModelInfo[value as TrainingDetailsBaseModelList].type,
               customModel: null,
             });
           }}
@@ -467,6 +471,16 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsLtx23 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelLtx25 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsLtx25 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelMiniMaxH3 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsMiniMaxH3 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelErnie =
     !!formBaseModel &&
     (trainingDetailsBaseModelsErnie as ReadonlyArray<string>).includes(formBaseModel)
@@ -495,6 +509,11 @@ export const ModelSelect = ({
   const baseModelMageFlow =
     !!formBaseModel &&
     (trainingDetailsBaseModelsMageFlow as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelIdeogram4 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsIdeogram4 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
   const baseModelAcestep15 =
@@ -697,6 +716,17 @@ export const ModelSelect = ({
                       isNew={new Date() < new Date('2026-08-27')}
                     />
                   )}
+                  {features.ideogram4Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="grape"
+                      name="Ideogram 4"
+                      value={baseModelIdeogram4}
+                      baseType="ideogram4"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew={new Date() < new Date('2026-09-19')}
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'audio' && (
@@ -760,16 +790,30 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
-                  {features.ltx23Training && (
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="lime"
+                    name="LTX"
+                    value={baseModelLtx23 ?? baseModelLtx25}
+                    baseType={['ltx23', 'ltx25']}
+                    makeDefaultParams={makeDefaultParams}
+                    isVideo
+                    isNew
+                    allowedKeys={[
+                      ...(features.ltx23Training ? ['ltx23'] : []),
+                      ...(features.ltx25Training ? ['ltx25'] : []),
+                    ]}
+                  />
+                  {features.minimaxh3Training && (
                     <ModelSelector
                       selectedRun={selectedRun}
-                      color="lime"
-                      name="LTX 2.3"
-                      value={baseModelLtx23}
-                      baseType="ltx23"
+                      color="orange"
+                      name="MiniMax H3"
+                      value={baseModelMiniMaxH3}
+                      baseType="minimaxh3"
                       makeDefaultParams={makeDefaultParams}
                       isVideo
-                      isNew
+                      isNew={new Date() < new Date('2026-09-07')}
                     />
                   )}
                 </>
@@ -832,11 +876,14 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'wan' ||
                   selectedRun.baseType === 'ltx2' ||
                   selectedRun.baseType === 'ltx23' ||
+                  selectedRun.baseType === 'ltx25' ||
+                  selectedRun.baseType === 'minimaxh3' ||
                   selectedRun.baseType === 'hidream-o1' ||
                   selectedRun.baseType === 'anima' ||
                   selectedRun.baseType === 'boogu' ||
                   selectedRun.baseType === 'krea2' ||
                   selectedRun.baseType === 'mageflow' ||
+                  selectedRun.baseType === 'ideogram4' ||
                   selectedRun.baseType === 'acestep15' ||
                   selectedRun.baseType === 'acestep15xl' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">

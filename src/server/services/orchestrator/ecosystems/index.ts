@@ -66,6 +66,7 @@ import { createHunyuan3dInput } from './hunyuan3d-graph.handler';
 import { createWanSteps } from './wan.handler';
 import { createViduInput } from './vidu.handler';
 import { createKlingInput } from './kling.handler';
+import { createMiniMaxInput } from './minimax.handler';
 import { createHunyuanInput } from './hunyuan.handler';
 import { createLTXInput } from './ltx.handler';
 import { createMochiInput } from './mochi.handler';
@@ -74,6 +75,7 @@ import { createVeo3Input } from './veo3.handler';
 import { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 import { createSeedanceInput } from './seedance.handler';
 import { createHappyHorseInput } from './happy-horse.handler';
+import { createFlux3VideoInput } from './flux3-video.handler';
 
 // =============================================================================
 // Types - Derived from GenerationGraph
@@ -190,11 +192,14 @@ export type ViduCtx = EcosystemGraphOutput & { ecosystem: 'Vidu' };
 /** Kling context */
 export type KlingCtx = EcosystemGraphOutput & { ecosystem: 'Kling' };
 
+/** MiniMax (Hailuo) context */
+export type MiniMaxCtx = EcosystemGraphOutput & { ecosystem: 'MiniMaxH3' };
+
 /** Hunyuan (HyV1) context */
 export type HunyuanCtx = EcosystemGraphOutput & { ecosystem: 'HyV1' };
 
-/** LTX (LTXV2 + LTXV23) context */
-export type LTXCtx = EcosystemGraphOutput & { ecosystem: 'LTXV2' | 'LTXV23' };
+/** LTX (LTXV2 + LTXV23 + LTXV25) context */
+export type LTXCtx = EcosystemGraphOutput & { ecosystem: 'LTXV2' | 'LTXV23' | 'LTXV25' };
 
 /** Mochi context */
 export type MochiCtx = EcosystemGraphOutput & { ecosystem: 'Mochi' };
@@ -213,6 +218,9 @@ export type SeedanceCtx = EcosystemGraphOutput & { ecosystem: 'Seedance' };
 
 /** HappyHorse context */
 export type HappyHorseCtx = EcosystemGraphOutput & { ecosystem: 'HappyHorse' };
+
+/** Flux 3 Video context */
+export type Flux3VideoCtx = EcosystemGraphOutput & { ecosystem: 'Flux3Video' };
 
 /** AceAudio context */
 export type AceAudioCtx = EcosystemGraphOutput & { ecosystem: 'Ace' };
@@ -258,6 +266,7 @@ export { createHunyuan3dInput } from './hunyuan3d-graph.handler';
 export { createWanSteps } from './wan.handler';
 export { createViduInput } from './vidu.handler';
 export { createKlingInput } from './kling.handler';
+export { createMiniMaxInput } from './minimax.handler';
 export { createHunyuanInput } from './hunyuan.handler';
 export { createLTXInput } from './ltx.handler';
 export { createMochiInput } from './mochi.handler';
@@ -266,6 +275,7 @@ export { createVeo3Input } from './veo3.handler';
 export { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 export { createSeedanceInput } from './seedance.handler';
 export { createHappyHorseInput } from './happy-horse.handler';
+export { createFlux3VideoInput } from './flux3-video.handler';
 
 // Shared utilities
 export { createComfyInput } from './comfy-input';
@@ -395,6 +405,7 @@ async function createEcosystemStep(
     // Qwen family
     case 'Qwen':
     case 'Qwen2':
+    case 'Qwen3':
       return createQwenInput(normalizedData, handlerCtx);
 
     // Seedream
@@ -452,6 +463,7 @@ async function createEcosystemStep(
     case 'WanVideo-25-I2V':
     case 'WanImage27':
     case 'WanVideo27':
+    case 'WanVideo30':
       return createWanSteps(normalizedData, handlerCtx);
 
     // Vidu
@@ -462,13 +474,18 @@ async function createEcosystemStep(
     case 'Kling':
       return createKlingInput(normalizedData, handlerCtx);
 
+    // MiniMax (Hailuo)
+    case 'MiniMaxH3':
+      return createMiniMaxInput(normalizedData, handlerCtx);
+
     // Hunyuan (HyV1)
     case 'HyV1':
       return createHunyuanInput(normalizedData, handlerCtx);
 
-    // LTX (v2 + v2.3)
+    // LTX (v2 + v2.3 + v2.5)
     case 'LTXV2':
     case 'LTXV23':
+    case 'LTXV25':
       return createLTXInput(normalizedData, handlerCtx);
 
     // Mochi
@@ -490,6 +507,10 @@ async function createEcosystemStep(
     // HappyHorse
     case 'HappyHorse':
       return createHappyHorseInput(normalizedData, handlerCtx);
+
+    // Flux 3 Video (BFL via FAL)
+    case 'Flux3Video':
+      return createFlux3VideoInput(normalizedData, handlerCtx);
 
     // Grok (image + video)
     case 'Grok': {

@@ -15,7 +15,7 @@
  * - The store enables re-editing: looking up a composite URL retrieves the original image + lines
  */
 
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import type { InputWrapperProps } from '@mantine/core';
 import { Badge, Input, Text, Tooltip } from '@mantine/core';
 import { IconPhoto } from '@tabler/icons-react';
@@ -26,9 +26,13 @@ import {
   type ImageAnnotation,
   type ImageSlot,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
+import { RecentImagesButton } from '~/components/Generation/Input/RecentImagesPicker';
+import type { RecentSourceImage } from '~/store/recent-source-images.store';
+import { sourceImageKey, useRecentSourceImagesStore } from '~/store/recent-source-images.store';
 import type { DrawingElement } from '~/components/Generation/Input/DrawingEditor/drawing.types';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { useSourceMetadataStore, sourceMetadataStore } from '~/store/source-metadata.store';
+import type { ImageMetadataApply } from '~/components/Generation/Input/ImageMetadataModal';
 
 // =============================================================================
 // Types
@@ -79,6 +83,10 @@ export interface ImageUploadMultipleInputProps
   imageAnnotations?: (ImageStatusAnnotation | null)[];
   /** Image strip layout: 'scroll' (horizontal scroll, default) or 'wrap' (flex-wrap) */
   imageLayout?: 'scroll' | 'wrap';
+  /** Show a per-image action that opens the extracted-metadata modal */
+  enableMetadataExtraction?: boolean;
+  /** How the form takes prompts pulled out of an image. Omit to make the modal read-only. */
+  metadataApply?: ImageMetadataApply;
 }
 
 // Re-export ImageSlot for convenience
@@ -108,6 +116,8 @@ export function ImageUploadMultipleInput({
   urlHint,
   imageAnnotations,
   imageLayout = 'scroll',
+  enableMetadataExtraction = false,
+  metadataApply,
   ...inputWrapperProps
 }: ImageUploadMultipleInputProps) {
   const isSlotsMode = !!slots?.length;
@@ -115,23 +125,75 @@ export function ImageUploadMultipleInput({
   const completedImages = value?.filter((v) => !!v.url) ?? [];
   const showClearAll = completedImages.length > 1;
 
-  const labelWithClear = showClearAll ? (
-    <div className="flex w-full items-center justify-between">
-      <span>{label}</span>
-      <Text
-        component="button"
-        type="button"
-        size="xs"
-        c="red"
-        className="cursor-pointer border-0 bg-transparent p-0"
-        onClick={() => onChange?.([])}
-      >
-        Clear all
-      </Text>
-    </div>
-  ) : (
-    label
-  );
+  // The picker is opened from a snapshot of props, so read value at commit time —
+  // an upload that lands while it is open must not be overwritten.
+  const valueRef = useRef(value);
+  valueRef.current = value;
+
+  /**
+   * How many more images can be added. Slots mode can only ever append to the next
+   * index (value is kept compacted), so capacity there is 0 or 1 and a disabled slot
+   * means 0 — otherwise the graph silently truncates the pick straight back off.
+   */
+  const capacityFrom = (images: ImageValue[]) => {
+    if (!slots) return max - images.length;
+    const next = slots[images.length];
+    return next && !next.disabled ? 1 : 0;
+  };
+
+  const remaining = capacityFrom(completedImages);
+  const hasRecent = useRecentSourceImagesStore((state) => state.images.length > 0);
+  const showRecent = hasRecent && !disabled && remaining > 0;
+
+  function handleSelectRecent(images: RecentSourceImage[]) {
+    const current = (valueRef.current ?? []).filter((v) => !!v.url);
+    const existing = new Set(current.map((image) => sourceImageKey(image.url)));
+    const additions = images
+      .filter((image) => !existing.has(sourceImageKey(image.url)))
+      .map(({ url, width, height }) => ({ url, width, height }))
+      .slice(0, capacityFrom(current));
+    if (additions.length) onChange?.([...current, ...additions]);
+  }
+
+  // Only wrap the label when there is an action to show. Mantine renders a label
+  // element for any truthy `label`, and a JSX wrapper is always truthy — so wrapping
+  // unconditionally puts an empty row on every image input that has no label, which
+  // is most of them (imagesNode has no default).
+  const labelWithActions =
+    showRecent || showClearAll ? (
+      <div className="flex w-full items-center justify-between gap-3">
+        <span>{label}</span>
+        <div className="flex items-center gap-3">
+          {showRecent && (
+            <RecentImagesButton
+              remaining={remaining}
+              aspectRatios={aspectRatios}
+              cropToRatio={
+                cropToFirstImage && completedImages[0]
+                  ? completedImages[0].width / completedImages[0].height
+                  : undefined
+              }
+              existingUrls={completedImages.map((image) => image.url)}
+              onSelect={handleSelectRecent}
+            />
+          )}
+          {showClearAll && (
+            <Text
+              component="button"
+              type="button"
+              size="xs"
+              c="red"
+              className="cursor-pointer border-0 bg-transparent p-0"
+              onClick={() => onChange?.([])}
+            >
+              Clear all
+            </Text>
+          )}
+        </div>
+      </div>
+    ) : (
+      label
+    );
 
   // Build annotations array from the store for the current images
   const metadataByUrl = useSourceMetadataStore((state) => state.metadataByUrl);
@@ -196,7 +258,7 @@ export function ImageUploadMultipleInput({
     return (
       <Input.Wrapper
         {...inputWrapperProps}
-        label={label}
+        label={labelWithActions}
         description={description}
         error={error}
         required={required}
@@ -210,6 +272,8 @@ export function ImageUploadMultipleInput({
           aspectRatios={aspectRatios}
           cropToFirstImage={cropToFirstImage}
           disabled={disabled}
+          enableMetadataExtraction={enableMetadataExtraction}
+          metadataApply={metadataApply}
         />
       </Input.Wrapper>
     );
@@ -220,7 +284,7 @@ export function ImageUploadMultipleInput({
     return (
       <Input.Wrapper
         {...inputWrapperProps}
-        label={labelWithClear}
+        label={labelWithActions}
         description={description}
         error={error}
         required={required}
@@ -235,6 +299,8 @@ export function ImageUploadMultipleInput({
           aspectRatios={aspectRatios}
           cropToFirstImage={cropToFirstImage}
           disabled={disabled}
+          enableMetadataExtraction={enableMetadataExtraction}
+          metadataApply={metadataApply}
         >
           {(previewItems) => {
             const hasImages = previewItems.length > 0;
@@ -289,7 +355,7 @@ export function ImageUploadMultipleInput({
   return (
     <Input.Wrapper
       {...inputWrapperProps}
-      label={labelWithClear}
+      label={labelWithActions}
       description={description}
       error={error}
       required={required}
@@ -308,6 +374,8 @@ export function ImageUploadMultipleInput({
         annotations={annotations}
         onDrawingComplete={enableDrawing ? handleDrawingComplete : undefined}
         onRemove={enableDrawing ? handleRemove : undefined}
+        enableMetadataExtraction={enableMetadataExtraction}
+        metadataApply={metadataApply}
       >
         {(previewItems) => {
           const hasImages = previewItems.length > 0;

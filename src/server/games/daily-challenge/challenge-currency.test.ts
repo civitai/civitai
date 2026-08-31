@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
 import { NsfwLevel } from '~/server/common/enums';
 import { nsfwBrowsingLevelsFlag, sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
@@ -8,6 +9,7 @@ import {
   isChallengeHiddenByDomainCurrency,
   computeNsfwEscalation,
 } from './challenge-currency';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 describe('deriveDomainCurrency', () => {
   it('returns green on the green domain', () => {

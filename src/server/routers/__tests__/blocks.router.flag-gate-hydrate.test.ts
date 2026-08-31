@@ -35,10 +35,6 @@ const {
   mockGetSessionUser,
   mockIsFlipt,
   mockGetUserBuzzAccounts,
-  mockLogToAxiom,
-  mockRedis,
-  mockSysRedis,
-  mockDbRead,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -48,20 +44,6 @@ const {
   mockGetSessionUser: vi.fn(),
   mockIsFlipt: vi.fn(),
   mockGetUserBuzzAccounts: vi.fn(),
-  mockLogToAxiom: vi.fn(async () => undefined),
-  mockRedis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-  mockSysRedis: {
-    get: vi.fn(async () => null),
-    incrBy: vi.fn(async () => 0),
-    decrBy: vi.fn(async () => 0),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => -1),
-  },
-  mockDbRead: {
-    modelVersion: { findUnique: vi.fn() },
-    modelBlockInstall: { findUnique: vi.fn() },
-    model: { findUnique: vi.fn() },
-  },
 }));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -95,22 +77,11 @@ vi.mock('~/server/auth/session-client', () => ({
 vi.mock('~/server/flipt/client', () => ({
   isFlipt: (...a: unknown[]) => mockIsFlipt(...a),
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
-}));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
-  return { ...actual, redis: mockRedis, sysRedis: mockSysRedis };
-});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: (...a: unknown[]) => mockGetUserBuzzAccounts(...a),
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
 }));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: {
@@ -130,6 +101,18 @@ vi.mock('~/server/middleware.trpc', async () => {
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
+const mockLogToAxiom = loggingMock.logToAxiom;
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.decrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.expire.mockImplementation(async () => true);
+redisMock.sysRedis.ttl.mockImplementation(async () => -1);
 
 function validClaims(over: Record<string, unknown> = {}) {
   return {
@@ -180,7 +163,12 @@ beforeEach(() => {
   mockVerifyBlockToken.mockResolvedValue(validClaims());
   mockParseSubjectUserId.mockImplementation((sub: string) => (sub === 'anon' ? null : 42));
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
-  mockGetWorkflow.mockResolvedValue({ id: 'wf_1', status: 'succeeded', cost: { total: 0 }, steps: [] });
+  mockGetWorkflow.mockResolvedValue({
+    id: 'wf_1',
+    status: 'succeeded',
+    cost: { total: 0 },
+    steps: [],
+  });
   // assertViewerIsModerator reads the (trimmed) row directly — keep it a mod.
   mockGetUserById.mockResolvedValue({ id: 42, isModerator: true });
   mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 10000, blue: 0, green: 0 });

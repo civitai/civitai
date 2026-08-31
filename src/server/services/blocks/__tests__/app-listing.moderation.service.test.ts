@@ -16,11 +16,18 @@ const { mockDbRead } = vi.hoisted(() => ({
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
     },
+    // The slug-keyed ON-SITE "is this draft under review?" lookup. It has no FK to include,
+    // so it is a second batched query rather than a relation — and until this mock existed
+    // the branch was unreachable in tests: every fixture was off-site, so `onsiteSlugs` was
+    // empty and the call short-circuited before touching an undefined mock.
+    appBlockPublishRequest: {
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    },
   },
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (src: string) => src }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
 vi.mock('~/server/utils/cache-helpers', () => ({
@@ -206,5 +213,84 @@ describe('listAllListingsForModeration — filters, keyset + pagination', () => 
     const { items, nextCursor } = await listAllListingsForModeration({ limit: 25 });
     expect(items).toHaveLength(1);
     expect(nextCursor).toBeNull();
+  });
+});
+
+/**
+ * 🔴 `hasPendingBlockRequest` — the ON-SITE "is this draft under review?" signal, and the ONE
+ * thing standing between the mod table and offering a destructive Purge on a live submission.
+ *
+ * It cannot come from a relation: an on-site pre-approval draft's request is an
+ * `AppBlockPublishRequest` joined to the listing by the shared `@unique` SLUG with no foreign
+ * key (`AppListingPublishRequest.appListingId` is "On-site: NULL until approve"). So it is a
+ * second, batched, slug-keyed query — and that is precisely why it needs its own tests: an
+ * `include` would have been type-checked, a hand-rolled second query is not.
+ *
+ * 🔴 THESE EXIST BECAUSE THE SIGNAL SHIPPED WITH ZERO COVERAGE. Hardwiring the projection to
+ * `false` AND breaking the query's status filter left 315 files / 7209 tests green, because
+ * every fixture in this file was off-site, so `onsiteSlugs` was empty and the branch
+ * short-circuited before the (then missing) mock was touched. A fixture that never reaches the
+ * code proves nothing about it.
+ */
+describe('listAllListingsForModeration — the on-site pending-block-request signal', () => {
+  beforeEach(() => {
+    mockDbRead.appListing.findMany.mockReset();
+    mockDbRead.appListing.findMany.mockResolvedValue([]);
+    mockDbRead.appBlockPublishRequest.findMany.mockReset();
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
+  });
+
+  it('flags the on-site row whose slug HAS a pending block request, and only that row', async () => {
+    mockDbRead.appListing.findMany.mockResolvedValueOnce([
+      modRow({ id: 'apl_live', slug: 'under-review', kind: 'onsite', status: 'draft' }),
+      modRow({ id: 'apl_dead', slug: 'abandoned', kind: 'onsite', status: 'draft' }),
+    ]);
+    // Only one of the two slugs comes back — so a mutant that ignores the result and returns a
+    // constant cannot satisfy both rows.
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValueOnce([{ slug: 'under-review' }]);
+
+    const { items } = await listAllListingsForModeration({ limit: 25 });
+    expect(items.map((i) => [i.slug, i.hasPendingBlockRequest])).toEqual([
+      ['under-review', true],
+      ['abandoned', false],
+    ]);
+  });
+
+  it('queries the RIGHT table with the page’s on-site slugs and the pending status', async () => {
+    mockDbRead.appListing.findMany.mockResolvedValueOnce([
+      modRow({ id: 'apl_a', slug: 'onsite-a', kind: 'onsite', status: 'draft' }),
+      modRow({ id: 'apl_b', slug: 'offsite-b', kind: 'offsite' }),
+    ]);
+    await listAllListingsForModeration({ limit: 25 });
+
+    // Literal, not built from the implementation. Pins the table, the key and the status — the
+    // three things that were wrong the first time this guard was written.
+    expect(mockDbRead.appBlockPublishRequest.findMany).toHaveBeenCalledWith({
+      where: { slug: { in: ['onsite-a'] }, status: 'pending' },
+      select: { slug: true },
+    });
+  });
+
+  it('issues NO second query when the page has no on-site rows', async () => {
+    mockDbRead.appListing.findMany.mockResolvedValueOnce([modRow({ kind: 'offsite' })]);
+    const { items } = await listAllListingsForModeration({ limit: 25 });
+    expect(mockDbRead.appBlockPublishRequest.findMany).not.toHaveBeenCalled();
+    expect(items[0].hasPendingBlockRequest).toBe(false);
+  });
+
+  it('never flags an OFF-SITE row, even when its slug collides with a pending block request', async () => {
+    mockDbRead.appListing.findMany.mockResolvedValueOnce([
+      modRow({ id: 'apl_off', slug: 'shared-slug', kind: 'offsite' }),
+      modRow({ id: 'apl_on', slug: 'onsite-x', kind: 'onsite', status: 'draft' }),
+    ]);
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValueOnce([
+      { slug: 'shared-slug' },
+      { slug: 'onsite-x' },
+    ]);
+    const { items } = await listAllListingsForModeration({ limit: 25 });
+    expect(items.map((i) => [i.id, i.hasPendingBlockRequest])).toEqual([
+      ['apl_off', false],
+      ['apl_on', true],
+    ]);
   });
 });

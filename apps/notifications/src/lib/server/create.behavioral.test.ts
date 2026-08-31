@@ -82,9 +82,12 @@ function payload(over: Partial<CreateNotificationPendingRow> = {}): CreateNotifi
   };
 }
 
-const settingsCall = () => h.state.mainCalls.find((c) => c.sql.includes('UserNotificationSettings'));
-const updateCall = () => h.state.notifCalls.find((c) => c.sql.includes('UPDATE "PendingNotification"'));
-const insertCall = () => h.state.notifCalls.find((c) => c.sql.includes('INSERT INTO "PendingNotification"'));
+const settingsCall = () =>
+  h.state.mainCalls.find((c) => c.sql.includes('UserNotificationSettings'));
+const updateCall = () =>
+  h.state.notifCalls.find((c) => c.sql.includes('UPDATE "PendingNotification"'));
+const insertCall = () =>
+  h.state.notifCalls.find((c) => c.sql.includes('INSERT INTO "PendingNotification"'));
 
 beforeEach(() => {
   h.reset();
@@ -177,12 +180,12 @@ describe('UPDATE-first → INSERT-ON-CONFLICT fallback', () => {
     expect(ret).toEqual({ queued: 2 });
   });
 
-  it('INSERT positional params + casts are indexed $1..$6 in the documented order', async () => {
+  it('INSERT positional params + casts are indexed $1..$7 in the documented order', async () => {
     h.state.updateRows = [];
     await createNotification(payload({ userIds: [11, 22], debounceSeconds: 300 }));
 
     const ins = insertCall()!;
-    // $1 key, $2 type, $3 category, $4 users, $5 details(json), $6 debounceSeconds
+    // $1 key, $2 type, $3 category, $4 users, $5 details(json), $6 debounceSeconds, $7 dedupeKey
     expect(ins.params).toEqual([
       'comment:1',
       'comment',
@@ -190,6 +193,7 @@ describe('UPDATE-first → INSERT-ON-CONFLICT fallback', () => {
       [11, 22],
       JSON.stringify({ foo: 'bar' }),
       300,
+      null,
     ]);
     // Casts must line up with the placeholders (the real off-by-one / cast-shape risk).
     expect(ins.sql).toContain('$3::"NotificationCategory"');

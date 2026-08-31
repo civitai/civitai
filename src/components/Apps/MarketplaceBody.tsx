@@ -49,7 +49,6 @@ import { type ModelSlotId } from '~/shared/constants/slot-registry';
 type SlotFilter = ModelSlotId;
 
 const SORT_OPTIONS: { value: MarketplaceSort; label: string }[] = [
-  { value: 'rating', label: 'Top rated' },
   { value: 'popular', label: 'Most popular' },
   { value: 'newest', label: 'Newest' },
   { value: 'name', label: 'Name (A–Z)' },
@@ -60,7 +59,7 @@ export function MarketplaceBody() {
   const currentUser = useCurrentUser();
   const [slotFilter, setSlotFilter] = useState<SlotFilter | null>(null);
   const [category, setCategory] = useState<MarketplaceCategory | null>(null);
-  const [sort, setSort] = useState<MarketplaceSort>('rating');
+  const [sort, setSort] = useState<MarketplaceSort>('popular');
   const [searchInput, setSearchInput] = useState('');
   const [debouncedSearch] = useDebouncedValue(searchInput, 300);
 
@@ -69,9 +68,14 @@ export function MarketplaceBody() {
   // hydration mismatch); the real list is loaded in an effect after mount, and
   // updated whenever the viewer opens an app via handleOpen.
   const [recents, setRecents] = useState<RecentApp[]>([]);
+  // 🔴 Keyed by ACCOUNT (#4048): localStorage is per browser profile, so the
+  // store only hands back entries the CURRENT viewer wrote. `ownerId` is in the
+  // dep list so a sign-in / sign-out / account switch inside the SPA re-reads
+  // the (now different, usually empty) bucket instead of keeping the old rail.
+  const ownerId = currentUser?.id ?? null;
   useEffect(() => {
-    setRecents(getRecentlyOpenedApps());
-  }, []);
+    setRecents(getRecentlyOpenedApps(ownerId));
+  }, [ownerId]);
 
   // The marketplace listing is anon-CAPABLE (publicProcedure) — it fires for
   // any viewer who has the appBlocks flag, including a session-less one once
@@ -234,12 +238,15 @@ export function MarketplaceBody() {
     // optional in the store, so a null coverUrl/appName just falls back to the
     // generic icon / blockId handle.
     setRecents(
-      recordRecentlyOpenedApp({
-        id: block.id,
-        blockId: block.blockId,
-        name: block.appName ?? undefined,
-        iconUrl: block.coverUrl ?? undefined,
-      })
+      recordRecentlyOpenedApp(
+        {
+          id: block.id,
+          blockId: block.blockId,
+          name: block.appName ?? undefined,
+          iconUrl: block.coverUrl ?? undefined,
+        },
+        ownerId
+      )
     );
   }
 
@@ -277,7 +284,7 @@ export function MarketplaceBody() {
           label="Sort"
           data={SORT_OPTIONS}
           value={sort}
-          onChange={(v) => setSort((v as MarketplaceSort) ?? 'rating')}
+          onChange={(v) => setSort((v as MarketplaceSort) ?? 'popular')}
           allowDeselect={false}
           w={170}
         />

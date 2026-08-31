@@ -91,6 +91,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
                   type: r.type,
                   category: category,
                   details: r.details,
+                  dedupeKey: r.dedupeKey ?? null,
                   users: [r.userId],
                 };
               } else {

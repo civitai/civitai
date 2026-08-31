@@ -41,11 +41,17 @@ export * from '@civitai/telemetry/client';
 // a module-init cycle (this module imports pgDb → db-helpers, which would import the
 // histogram back), which webpack's CJS chunking can break with a TDZ error at runtime.
 
+// `heavyBulkheadGaugeInitialized` was declared here and is gone: a globalThis flag guarding a
+// per-graph registry is the bug this file documents at length below, not a pattern to reach for.
+// Deduplication for anything on the shared registry comes from registerInstrumentationMetric,
+// which checks the same registry it writes to, so the flag's one legitimate job is covered.
+//
+// `pgGaugeInitialized` SURVIVES, deliberately, and is the exception that proves the rule — see the
+// long note above the pg block near the bottom of this file. Those gauges cannot move to the
+// shared registry until the pools they read are themselves process-wide.
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
   var pgGaugeInitialized: boolean;
-  // eslint-disable-next-line no-var
-  var heavyBulkheadGaugeInitialized: boolean;
 }
 
 // Image-ingestion working-state backlog + oldest-age gauges. These are DB-derived,
@@ -158,29 +164,94 @@ registerInstrumentationMetric(
     })
 );
 
-// Heavy-route bulkhead observability (per pod). collect()-based so it reflects the
-// live in-process state on each scrape with no per-request work. This is the signal
-// for tuning HEAVY_REQUEST_CONCURRENCY: rejects climbing means the pod is shedding.
-if (!global.heavyBulkheadGaugeInitialized) {
-  new client.Gauge({
-    name: PROM_PREFIX + 'heavy_bulkhead_active',
-    help: 'In-flight heavy-route bulkhead slots per key (per pod)',
-    labelNames: ['key'],
-    collect() {
-      for (const { key, active } of bulkheadSnapshot()) this.set({ key }, active);
-    },
-  });
-  new client.Gauge({
-    name: PROM_PREFIX + 'heavy_bulkhead_rejects',
-    help: 'Cumulative heavy-route bulkhead fast-fail rejects per key (per pod); monotonic, use rate()',
-    labelNames: ['key'],
-    collect() {
-      for (const { key, rejects } of bulkheadSnapshot()) this.set({ key }, rejects);
-    },
-  });
-  global.heavyBulkheadGaugeInitialized = true;
-}
+// 🔴 WHY THE BULKHEAD GAUGES USE registerInstrumentationMetric, AND WHY A globalThis
+// "initialized" FLAG IS THE WRONG TOOL FOR THEM.
+//
+// Not every gauge below: the nine pg pool gauges further down deliberately KEEP
+// `if (!global.pgGaugeInitialized)` and stay off the shared registry. The note at that block
+// explains why moving them was tried, measured, and reverted.
+//
+// This module is evaluated in BOTH webpack graphs: the instrumentation graph reaches it at pod
+// start (instrumentation.node.ts -> ~/server/eventloop-longtask -> here), and the pages/API graph
+// reaches it later, on the first request that loads a route importing it — including /api/metrics
+// itself. prom-client is not in serverExternalPackages, so each graph gets its own module instance
+// and therefore its own default `client.register`. /api/metrics scrapes the PAGES graph's default
+// registry plus the globalThis-pinned `instrumentationRegistry`; the instrumentation graph's
+// default registry is scraped by nobody.
+//
+// The bulkhead block below used to be wrapped in `if (!global.heavyBulkheadGaugeInitialized)`,
+// exactly as the pg block still is. That pairs a PROCESS-scoped flag with a GRAPH-scoped
+// registry, and the mismatch is fatal in one direction only: the instrumentation graph gets here
+// first, registers every gauge into its own unscraped registry, and sets the flag — so when the
+// pages graph evaluates this module it takes the early-out and registers NOTHING into the registry
+// that is actually served. The metrics look registered in code, in a deployed image, on a hot
+// route, and emit no series ever.
+//
+// Measured on production before the fix: civitai_app_heavy_bulkhead_{active,rejects} and all nine
+// node_postgres_* gauges = 0 series, while `civitai_app_image_ingestion_backlog` (same file, but
+// registered via registerInstrumentationMetric) = 640 series and `images_search_*` (default
+// registry, pages graph, NO globalThis flag) = 181 series. Those three groups isolate the flag as
+// the variable: same file and same registry choice differ only by the guard.
+//
+// registerInstrumentationMetric is the correct idempotence primitive because it dedupes against
+// the SHARED registry it registers into, so the two scopes agree: whichever graph arrives first
+// creates the gauge, the second finds it and reuses it, and either way it is scraped.
+//
+// The gauges are collect()-based, so it also matters WHICH graph's closure wins — the state they
+// read must be shared too. request-bulkhead.ts pins its slot/reject maps on globalThis for exactly
+// this reason; fixing this file alone would have left both gauges registered, scraped, and still
+// emitting nothing.
+registerInstrumentationMetric(
+  PROM_PREFIX + 'heavy_bulkhead_active',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'heavy_bulkhead_active',
+      help: 'In-flight heavy-route bulkhead slots per key (per pod)',
+      labelNames: ['key'],
+      registers: [instrumentationRegistry],
+      collect() {
+        for (const { key, active } of bulkheadSnapshot()) this.set({ key }, active);
+      },
+    })
+);
+// Deliberately NOT this.reset()-ed: the value is cumulative per key for the life of the pod, which
+// is what makes rate() meaningful. A reset would still be atomic within collect(), but stating the
+// intent here keeps a later "tidy-up" from turning a counter-shaped gauge into a sawtooth.
+registerInstrumentationMetric(
+  PROM_PREFIX + 'heavy_bulkhead_rejects',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'heavy_bulkhead_rejects',
+      help: 'Cumulative heavy-route bulkhead fast-fail rejects per key (per pod); monotonic, use rate()',
+      labelNames: ['key'],
+      registers: [instrumentationRegistry],
+      collect() {
+        for (const { key, rejects } of bulkheadSnapshot()) this.set({ key }, rejects);
+      },
+    })
+);
 
+// 🔴 THE PG POOL GAUGES ARE DELIBERATELY LEFT ON THE UNSCRAPED REGISTRY. DO NOT "FIX" THEM
+// THE WAY THE BULKHEAD GAUGES WERE FIXED — IT WAS TRIED HERE AND IT MAKES THEM WORSE.
+//
+// They carry the same registration defect (a globalThis flag guarding a per-graph registry), so
+// moving them to `instrumentationRegistry` does make them appear in the scrape. But a
+// collect()-based metric needs BOTH halves shared: the registry it registers into AND the state
+// its closure reads. The bulkhead has both — `request-bulkhead.ts` pins its maps on globalThis.
+// These do not: `src/server/db/pgDb.ts` globalThis-pins the pools ONLY in the `!isProd` branch, so
+// in production every emitted copy of that module builds its OWN pg pools. The graph that wins
+// registration is the instrumentation graph, whose pools serve nothing but the ingestion-backlog
+// query in this file.
+//
+// Measured on a preview running exactly that change: `node_postgres_read_total_count` read 1 while
+// idle and still 1 under 30 concurrent `/api/v1/images` requests, with every write-pool gauge at 0
+// throughout. Frozen, plausible-looking, and wrong — which is strictly worse than the honest
+// absence they have today. It is the same false-all-clear class as an `or vector(0)` on a panel
+// whose metric does not exist: an absent metric prompts a question, a confident 0 ends one.
+//
+// Making them real means pinning the pools in `pgDb.ts` for prod too. That changes production DB
+// connection topology (today: one pool set per emitted graph), so it is its own change with its
+// own blast radius, not a rider on a metrics fix.
 if (!global.pgGaugeInitialized) {
   new client.Gauge({
     name: 'node_postgres_read_total_count',
@@ -262,3 +333,116 @@ if (!global.pgGaugeInitialized) {
 
   global.pgGaugeInitialized = true;
 }
+
+/**
+ * Buzz still parked in escrow because a payout leg gave up.
+ *
+ * A gauge rather than an error log, because this is "something is still broken"
+ * rather than "something just broke". The one-shot error at the moment a leg
+ * exhausts carries the event; a windowed error log cannot carry the state, since
+ * an exhausted leg stops being touched and so drops out of any window over its
+ * last attempt — reporting for a while and then going permanently silent with
+ * the money still parked.
+ */
+export const placementExhaustedLegsGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'placement_exhausted_legs',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'placement_exhausted_legs',
+      help: 'Placement payout legs that have exhausted their retries and still hold Buzz in escrow',
+      registers: [instrumentationRegistry],
+    })
+);
+
+/**
+ * Settled placements with no payout plan and no escrow behind them.
+ *
+ * These are terminal rather than recoverable, so `sweepUnplannedSettlements`
+ * excludes them from its batch — otherwise they match its query forever and,
+ * past the batch limit, crowd out settlements that can still be resolved. A
+ * gauge is what keeps that exclusion from meaning silence.
+ *
+ * The population is mostly benign: a placement whose escrow could not be taken
+ * is expired immediately and lands here. It also contains the one case nothing
+ * can recover — a hold charged whose receipt was lost to a crash — which is
+ * indistinguishable from a hold that never charged, and is the reason this is
+ * reported at all rather than filtered away.
+ */
+export const placementUnfundedSettlementsGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'placement_unfunded_settlements',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'placement_unfunded_settlements',
+      help: 'Settled placements with no payout plan and no receipted escrow behind them',
+      registers: [instrumentationRegistry],
+    })
+);
+
+/**
+ * Images that the restricted-base-model reconcile had to flag on its last run.
+ *
+ * A steady zero is the healthy state, so this gauge cannot be read on its own:
+ * a gauge that was never set scrapes as 0, and so does a job that has not run
+ * since October. Alert on it together with
+ * `restricted_image_reconcile_last_success_timestamp` below, which is the only
+ * thing that distinguishes "no drift" from "no job".
+ */
+export const restrictedImageDriftGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'restricted_image_drift',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'restricted_image_drift',
+      help: 'Images the restricted-base-model reconcile flagged on its last run',
+      registers: [instrumentationRegistry],
+    })
+);
+
+export const restrictedImageReconcileLastSuccessGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'restricted_image_reconcile_last_success_timestamp',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'restricted_image_reconcile_last_success_timestamp',
+      help: 'Unix seconds at which the restricted-base-model reconcile last completed',
+      registers: [instrumentationRegistry],
+    })
+);
+
+/**
+ * Base models the code licence data and the `RestrictedBaseModels` table disagree about.
+ *
+ * `missing_in_db` is the failure that produced the 2025-10 exposure: a licence
+ * restricting NSFW was added in code, nobody added the DB row, and every Postgres
+ * read path went on treating that base model as unrestricted while search hid it.
+ * Nothing reconciles the two by design — restricting a base model hides live
+ * creator content, so it stays a deliberate act rather than a deploy artifact.
+ */
+export const restrictedBaseModelDivergenceGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'restricted_base_model_divergence',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'restricted_base_model_divergence',
+      help: 'Base models present in one restricted list and not the other',
+      labelNames: ['direction'],
+      registers: [instrumentationRegistry],
+    })
+);
+
+/**
+ * Flagged images that no longer qualify — the recovery queue, reported and never acted on.
+ *
+ * Un-hiding restores content to public feeds, which is a moderation decision rather
+ * than a reconciliation, so the job never clears the flag. This is the number that
+ * says how much is sitting hidden without a current reason, and the query behind it
+ * is also the answer to "which images do we restore" if a model owner ever flips a
+ * base model to a restricted value and back. Read it with the heartbeat below: an
+ * unset gauge scrapes as 0, which here reads as the reassuring answer.
+ */
+export const restrictedImageOverhiddenGauge = registerInstrumentationMetric(
+  PROM_PREFIX + 'restricted_image_overhidden',
+  () =>
+    new client.Gauge({
+      name: PROM_PREFIX + 'restricted_image_overhidden',
+      help: 'Images flagged modelRestricted that no longer match any restricted base model',
+      registers: [instrumentationRegistry],
+    })
+);

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import * as z from 'zod';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * STEP-7 sysRedis soft-dependency (Group A) — training.service.getTrainingServiceStatus.
@@ -19,17 +20,23 @@ import * as z from 'zod';
  * the parse still exercises the real default (available:true).
  */
 
-const { hGet, mockWithSysReadDeadline, mockLogSysRedisFailOpen } = vi.hoisted(() => ({
-  hGet: vi.fn(),
-  mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
+const { mockLogSysRedisFailOpen } = vi.hoisted(() => ({
   mockLogSysRedisFailOpen: vi.fn(),
 }));
 
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: { hGet },
-  REDIS_SYS_KEYS: { SYSTEM: { FEATURES: 'system:features' }, TRAINING: { STATUS: 'training:status' } },
-  withSysReadDeadline: mockWithSysReadDeadline,
-}));
+// The canonical redis mock (registered globally in src/__tests__/setup.ts) supplies sysRedis and
+// the `withSysReadDeadline` seam. The seam matters here: it is the ONLY lever this suite has, since
+// the deadline is a wall-clock race a mocked client can never lose on its own. Its canonical
+// default is the REAL wrapper, so `beforeEach` below still has to make it transparent — the same
+// thing the hand-rolled mock this replaces did, and what the timeout case then overrides.
+//
+// The local REDIS_SYS_KEYS table that used to live here is gone; the real one now reaches the
+// service. Its two entries were byte-identical to the real constants
+// (packages/civitai-redis/src/client.ts:1814, :1818), so no assertion changes — but nothing in this
+// file was ever asserting a key, which is the reason a drifted copy could have gone unnoticed.
+const hGet = redisMock.sysRedis.hGet;
+const mockWithSysReadDeadline = redisMock.withSysReadDeadline;
+
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 
 // Replace the client-coupled schema module with an equivalent local schema so
@@ -44,17 +51,25 @@ vi.mock('~/server/schema/training.schema', () => ({
 }));
 
 // Heavy import-graph deps — trivial stubs so the module imports in node.
-vi.mock('@aws-sdk/lib-storage', () => ({ Upload: class {} }));
+// `default` alongside the named export: pre-bundling wraps this CJS dep for interop, so the
+// consumer resolves through `default` and a factory without one yields undefined. It fails by
+// collecting almost no tests rather than by going red, so the check is the collected count.
+vi.mock('@aws-sdk/lib-storage', () => {
+  const Upload = class {};
+  return { Upload, default: { Upload } };
+});
 vi.mock('@civitai/client', () => ({}));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({ preventModelVersionLag: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: {} }));
 vi.mock('~/server/services/orchestrator/client', () => ({ internalOrchestratorClient: {} }));
 vi.mock('~/utils/s3-utils', () => ({ getS3Client: vi.fn(), deleteObject: vi.fn() }));
-vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({ getOrchestratorCaller: vi.fn() }));
+vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({
+  getOrchestratorCaller: vi.fn(),
+}));
 
 import { getTrainingServiceStatus } from '~/server/services/training.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 beforeEach(() => {
   vi.clearAllMocks();

@@ -1,9 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
 import {
   rollupImageScoreDeltas,
   foldImageDeltasOntoStored,
   getImageScore,
 } from '~/server/jobs/update-user-score';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const mult = { reactions: 10, comments: 20 };
 

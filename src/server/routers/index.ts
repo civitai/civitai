@@ -10,6 +10,9 @@ export const appRouter = router({
   appListings: lazy(() =>
     import('~/server/routers/app-listings.router').then((m) => m.appListingsRouter)
   ),
+  appCollaborators: lazy(() =>
+    import('~/server/routers/app-collaborators.router').then((m) => m.appCollaboratorsRouter)
+  ),
   blockImageUpload: lazy(() =>
     import('~/server/routers/block-image-upload.router').then((m) => m.blockImageUploadRouter)
   ),
@@ -19,16 +22,19 @@ export const appRouter = router({
   apiKey: lazy(() => import('./apiKey.router').then((m) => m.apiKeyRouter)),
   article: lazy(() => import('./article.router').then((m) => m.articleRouter)),
   auth: lazy(() => import('./auth.router').then((m) => m.authRouter)),
+  blurb: lazy(() => import('./blurb.router').then((m) => m.blurbRouter)),
   bounty: lazy(() => import('./bounty.router').then((m) => m.bountyRouter)),
   bountyEntry: lazy(() => import('./bountyEntry.router').then((m) => m.bountyEntryRouter)),
   buzz: lazy(() => import('./buzz.router').then((m) => m.buzzRouter)),
   chat: lazy(() => import('./chat.router').then((m) => m.chatRouter)),
   collection: lazy(() => import('./collection.router').then((m) => m.collectionRouter)),
   comment: lazy(() => import('./comment.router').then((m) => m.commentRouter)),
+  contestScore: lazy(() => import('./contest-score.router').then((m) => m.contestScoreRouter)),
   commentv2: lazy(() => import('./commentv2.router').then((m) => m.commentv2Router)),
   common: lazy(() => import('~/server/routers/common.router').then((m) => m.commonRouter)),
   content: lazy(() => import('./content.router').then((m) => m.contentRouter)),
   download: lazy(() => import('./download.router').then((m) => m.downloadRouter)),
+  feedback: lazy(() => import('./feedback.router').then((m) => m.feedbackRouter)),
   homeBlock: lazy(() => import('./home-block.router').then((m) => m.homeBlockRouter)),
   image: lazy(() => import('./image.router').then((m) => m.imageRouter)),
   merch: lazy(() => import('./merch.router').then((m) => m.merchRouter)),
@@ -38,12 +44,14 @@ export const appRouter = router({
   modelVersion: lazy(() => import('./model-version.router').then((m) => m.modelVersionRouter)),
   notification: lazy(() => import('./notification.router').then((m) => m.notificationRouter)),
   partner: lazy(() => import('./partner.router').then((m) => m.partnerRouter)),
+  placement: lazy(() => import('./placement.router').then((m) => m.placementRouter)),
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
   question: lazy(() => import('./question.router').then((m) => m.questionRouter)),
   reaction: lazy(() => import('./reaction.router').then((m) => m.reactionRouter)),
   report: lazy(() => import('./report.router').then((m) => m.reportRouter)),
   resourceReview: lazy(() => import('./resourceReview.router').then((m) => m.resourceReviewRouter)),
   signals: lazy(() => import('./signals.router').then((m) => m.signalsRouter)),
+  stickerBook: lazy(() => import('./sticker-book.router').then((m) => m.stickerBookRouter)),
   stripe: lazy(() => import('./stripe.router').then((m) => m.stripeRouter)),
   subscriptions: lazy(() =>
     import('~/server/routers/subscriptions.router').then((m) => m.subscriptionsRouter)
@@ -52,6 +60,7 @@ export const appRouter = router({
   track: lazy(() => import('./track.router').then((m) => m.trackRouter)),
   training: lazy(() => import('./training.router').then((m) => m.trainingRouter)),
   user: lazy(() => import('./user.router').then((m) => m.userRouter)),
+  userHub: lazy(() => import('./user-hub.router').then((m) => m.userHubRouter)),
   userRestriction: lazy(() =>
     import('~/server/routers/user-restriction.router').then((m) => m.userRestrictionRouter)
   ),
@@ -94,10 +103,19 @@ export const appRouter = router({
   redeemableCode: lazy(() =>
     import('~/server/routers/redeemableCode.router').then((m) => m.redeemableCodeRouter)
   ),
+  membershipGift: lazy(() =>
+    import('~/server/routers/membership-gift.router').then((m) => m.membershipGiftRouter)
+  ),
   tool: lazy(() => import('~/server/routers/tool.router').then((m) => m.toolRouter)),
-  cosmeticShop: lazy(() => import('~/server/routers/cosmetic-shop.router').then((m) => m.cosmeticShopRouter)),
-  creatorShop: lazy(() => import('~/server/routers/creator-shop.router').then((m) => m.creatorShopRouter)),
-  productBadge: lazy(() => import('~/server/routers/product-badge.router').then((m) => m.productBadgeRouter)),
+  cosmeticShop: lazy(() =>
+    import('~/server/routers/cosmetic-shop.router').then((m) => m.cosmeticShopRouter)
+  ),
+  creatorShop: lazy(() =>
+    import('~/server/routers/creator-shop.router').then((m) => m.creatorShopRouter)
+  ),
+  productBadge: lazy(() =>
+    import('~/server/routers/product-badge.router').then((m) => m.productBadgeRouter)
+  ),
   technique: lazy(() => import('~/server/routers/technique.router').then((m) => m.techniqueRouter)),
   donationGoal: lazy(() =>
     import('~/server/routers/donation-goal.router').then((m) => m.donationGoalRouter)
@@ -111,7 +129,6 @@ export const appRouter = router({
   ),
   games: lazy(() => import('~/server/routers/games.router').then((m) => m.gamesRouter)),
   paddle: lazy(() => import('~/server/routers/paddle.router').then((m) => m.paddleRouter)),
-  blocklist: lazy(() => import('~/server/routers/blocklist.router').then((m) => m.blocklistRouter)),
   challenge: lazy(() => import('~/server/routers/challenge.router').then((m) => m.challengeRouter)),
   dailyChallenge: lazy(() =>
     import('~/server/routers/daily-challenge.router').then((m) => m.dailyChallengeRouter)
@@ -131,14 +148,12 @@ export const appRouter = router({
   rewardsBonusEvent: lazy(() =>
     import('./rewards-bonus-event.router').then((m) => m.rewardsBonusEventRouter)
   ),
+  rewardConfig: lazy(() => import('./reward-config.router').then((m) => m.rewardConfigRouter)),
   oauthClient: lazy(() =>
     import('~/server/routers/oauth-client.router').then((m) => m.oauthClientRouter)
   ),
   oauthConsent: lazy(() =>
     import('~/server/routers/oauth-consent.router').then((m) => m.oauthConsentRouter)
-  ),
-  scannerReview: lazy(() =>
-    import('~/server/routers/scanner-review.router').then((m) => m.scannerReviewRouter)
   ),
   scannerPolicies: lazy(() =>
     import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter)

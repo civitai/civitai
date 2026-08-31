@@ -4,14 +4,19 @@ import { ModelFileVisibility, ModelModifier, ModelStatus } from '~/shared/utils/
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isProd } from '~/env/other';
 import { getDownloadFilename } from '~/server/services/file.service';
-import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import {
+  createModelFileDownloadUrl,
+  createSerializedFileDownloadUrl,
+} from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
 import type { ModelVersionApiReturn } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getVaeFiles } from '~/server/services/model.service';
+import type { PublicPaidAccessDto } from '~/server/services/paid-access.service';
+import { getPaidAccess, toPublicPaidAccessDto } from '~/server/services/paid-access.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
@@ -54,11 +59,6 @@ export default MixedAuthEndpoint(async function handler(
   const allowedBrowsingLevels = isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
   try {
-    // NOTE(paid-access): this endpoint intentionally does NOT return early-access state
-    // (`earlyAccessEndsAt` / `earlyAccessConfig` were dropped with the legacy columns). Decision
-    // (confirmed): the public v1 API should not surface paid-access gate details; there are no active
-    // consumers of these fields. If that ever needs to change, reconstruct from PaidAccess (endsAt +
-    // terms) the way mini/[id].ts does.
     const modelVersion = await dbRead.$queryRaw<
       (ModelVersionApiReturn & { vaeId?: number | null })[]
     >`
@@ -173,7 +173,9 @@ export default MixedAuthEndpoint(async function handler(
 export async function prepareModelVersionResponse(
   modelVersion: ModelVersionApiReturn & { vaeId?: number | null },
   baseUrl: URL,
-  images?: AsyncReturnType<typeof getImagesForModelVersion>
+  images?: AsyncReturnType<typeof getImagesForModelVersion>,
+  // `null` means known-ungated; only `undefined` self-fetches.
+  paidAccess?: PublicPaidAccessDto | null
 ) {
   const { files, model, metrics, vaeId, ...version } = modelVersion;
   const vae = !!vaeId ? await getVaeFiles({ vaeIds: [vaeId] }) : [];
@@ -189,6 +191,10 @@ export async function prepareModelVersionResponse(
     include: ['meta'],
     imagesPerVersion: 10,
   });
+  if (paidAccess === undefined)
+    paidAccess = toPublicPaidAccessDto(
+      (await getPaidAccess('ModelVersion', [version.id]))[version.id]
+    );
   const includeDownloadUrl = model.mode !== ModelModifier.Archived;
   const includeImages = model.mode !== ModelModifier.TakenDown;
 
@@ -225,6 +231,7 @@ export async function prepareModelVersionResponse(
     ...version,
     // licensingFee is a Prisma Decimal; coerce so the public API keeps emitting a number, not a JSON string.
     licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
+    paidAccess,
     air: stringifyAIR({
       baseModel: version.baseModel,
       type: model.type,
@@ -248,10 +255,21 @@ export async function prepareModelVersionResponse(
               getDownloadFilename({ model, modelVersion: version, file })
             ),
             primary: primaryFile.id === file.id,
-            downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
-              versionId: version.id,
-              type: file.type,
-              meta: metadata,
+            // Pin the URL to THIS file — see the matching note in
+            // src/pages/api/v1/models/[id].ts. Without `fileId` the download
+            // route re-resolves the file from the caller's filePreferences, so
+            // the advertised `hashes`/`sizeKB`/`name` and the bytes actually
+            // served can disagree on a multi-file version.
+            //
+            // `castedFiles` is NOT all this version's own files: the `vaeId`
+            // splice above pushes files that live on the LINKED VAE version.
+            // createSerializedFileDownloadUrl pins ONLY a file this version
+            // owns; a spliced one keeps its original discriminator URL, which
+            // the download route resolves through the linked-component
+            // fallback. See the invariant note on that helper.
+            downloadUrl: `${baseUrl.origin}${createSerializedFileDownloadUrl({
+              file: { id: file.id, modelVersionId, type: file.type, metadata },
+              hostVersionId: version.id,
               primary: primaryFile.id === file.id,
             })}`,
           }))

@@ -417,7 +417,15 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                   name="description"
                   label="About your bounty"
                   editorSize="xl"
-                  includeControls={['heading', 'formatting', 'list', 'link', 'media', 'colors']}
+                  includeControls={[
+                    'heading',
+                    'formatting',
+                    'list',
+                    'link',
+                    'media',
+                    'colors',
+                    'blurb',
+                  ]}
                   placeholder="What kind of entries are you looking for? Why did you make this? What's it for? Examples of the best case and worst case outputs from bounty entries"
                   withAsterisk
                   stickyToolbar

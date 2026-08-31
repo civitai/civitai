@@ -1,42 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Coinbase } from '~/server/http/coinbase/coinbase.schema';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Use vi.hoisted so mocks are available inside vi.mock factories
-const {
-  mockDbRead,
-  mockDbWrite,
-  mockCoinbaseCaller,
-  mockGrantBuzzPurchase,
-  mockGrantCosmetics,
-  mockEmailSend,
-} = vi.hoisted(() => {
-  const mockRedeemableCode = {
-    findFirst: vi.fn(),
-    create: vi.fn(),
-  };
-
-  const mockProduct = {
-    findFirst: vi.fn(),
-  };
-
-  const mockUser = {
-    findUnique: vi.fn(),
-  };
-
-  return {
-    mockDbRead: {
-      redeemableCode: { findFirst: vi.fn() },
-      product: mockProduct,
-      user: mockUser,
-    },
-    mockDbWrite: {
-      redeemableCode: mockRedeemableCode,
-      $transaction: vi.fn(async (callback: (tx: any) => Promise<any>) => {
-        return callback({
-          redeemableCode: mockRedeemableCode,
-        });
-      }),
-    },
+const { mockCoinbaseCaller, mockGrantBuzzPurchase, mockGrantCosmetics, mockEmailSend } = vi.hoisted(
+  () => ({
     mockCoinbaseCaller: {
       createCharge: vi.fn(),
       isAPIHealthy: vi.fn(),
@@ -44,23 +12,25 @@ const {
     mockGrantBuzzPurchase: vi.fn().mockResolvedValue('tx_123'),
     mockGrantCosmetics: vi.fn().mockResolvedValue(undefined),
     mockEmailSend: vi.fn().mockResolvedValue(undefined),
-  };
-});
+  })
+);
+
+// The two clients were already distinct here, so there is no alias to resolve: `product.findFirst`
+// (coinbase.service:75), `redeemableCode.findFirst` (:201) and `user.findUnique` (:263) are dbRead,
+// and the code is created inside `dbWrite.$transaction` (:243).
+//
+// ✅ The canonical `$transaction` is safe to inherit: the old fixture handed the callback
+// `{ redeemableCode: mockRedeemableCode }` where that object WAS `mockDbWrite.redeemableCode`, so
+// in-transaction and direct calls were already indistinguishable — and `tx.redeemableCode.create`
+// (:248) is the only tx member the service touches, so widening tx cannot satisfy anything new.
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 // Mock modules
 vi.mock('process', () => ({
   env: {
     NEXTAUTH_URL: 'https://civitai.com',
   },
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: mockDbWrite,
 }));
 
 vi.mock('~/server/http/coinbase/coinbase.caller', () => ({
@@ -424,9 +394,9 @@ describe('coinbase.service', () => {
 
     describe('validation', () => {
       it('should throw when internalOrderId is missing', async () => {
-        await expect(
-          processCodeOrder(makeEventData({ metadata: {} }))
-        ).rejects.toThrow('Missing required metadata');
+        await expect(processCodeOrder(makeEventData({ metadata: {} }))).rejects.toThrow(
+          'Missing required metadata'
+        );
       });
 
       it('should throw when userId cannot be parsed from orderId', async () => {

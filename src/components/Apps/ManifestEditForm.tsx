@@ -17,12 +17,16 @@ import { buildScopeJustifications } from '~/components/Apps/blockScopeSelection'
 import {
   ALLOWED_CONTENT_RATINGS,
   MANIFEST_TAGLINE_MAX_LENGTH,
+  MAX_REPOSITORY_URL_LENGTH,
+  REPOSITORY_HOST_ALLOWLIST,
+  validateRepositoryUrl,
 } from '~/server/services/block-manifest-validator.service';
 import {
   MARKETPLACE_CATEGORIES,
   MARKETPLACE_CATEGORY_LABELS,
   isMarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -45,6 +49,7 @@ type StoredManifest = Record<string, unknown> & {
   name?: string;
   description?: string;
   tagline?: string;
+  repository?: string;
   category?: string;
   contentRating?: string;
   scopes?: string[];
@@ -76,6 +81,9 @@ export function ManifestEditForm({
   // category = "not set" and is sent as an explicit `null` so the server CLEARS
   // the manifest key (see the nullable patch fields in blocks.router).
   const [tagline, setTagline] = useState<string>(manifest.tagline ?? '');
+  // Public source-repository link — manifest-governed on exactly the same terms as
+  // tagline/category, so the same empty-string → explicit-`null` clearing applies.
+  const [repository, setRepository] = useState<string>(manifest.repository ?? '');
   const [category, setCategory] = useState<string | null>(
     isMarketplaceCategory(manifest.category) ? manifest.category : null
   );
@@ -141,6 +149,11 @@ export function ManifestEditForm({
         // Explicit `null` = clear the manifest key (an `undefined` may be dropped
         // in transit and the server merge would then retain the stored value).
         tagline: tagline.trim() || null,
+        // Explicit `null` = clear the manifest key, for the same reason as `tagline`:
+        // the server merges `{...stored, ...patch}`, so an `undefined` (which superjson
+        // may drop in transit) would silently RETAIN the old repository link — an author
+        // clearing the field would see it come back.
+        repository: repository.trim() || null,
         category: category ?? null,
         contentRating,
         scopes,
@@ -160,8 +173,23 @@ export function ManifestEditForm({
   // Advisory client gate only — the server re-validates every field with
   // BlockManifestValidator (which is what actually enforces the tagline cap).
   const taglineTooLong = tagline.trim().length > MANIFEST_TAGLINE_MAX_LENGTH;
+  // Advisory too — the SAME `validateRepositoryUrl` the server runs, so the inline
+  // message is character-for-character what a save would return rather than a
+  // second, drifting approximation of the rule.
+  const repositoryError =
+    repository.trim().length > 0
+      ? (() => {
+          const res = validateRepositoryUrl(repository);
+          return res.ok ? undefined : res.error;
+        })()
+      : undefined;
   const canSave =
-    versionValid && versionHigher && !mutation.isPending && name.trim().length > 0 && !taglineTooLong;
+    versionValid &&
+    versionHigher &&
+    !mutation.isPending &&
+    name.trim().length > 0 &&
+    !taglineTooLong &&
+    !repositoryError;
 
   return (
     <Stack gap="md">
@@ -202,6 +230,18 @@ export function ManifestEditForm({
         onChange={(e) => setDescription(e.currentTarget.value)}
       />
 
+      <TextInput
+        label="Source repository"
+        description={`Public link to your app's source code, shown on its Apps store page. Optional — leave it empty for no link. ${REPOSITORY_HOST_ALLOWLIST.join(
+          ', '
+        )} only, linking to the repository itself (e.g. https://github.com/your-org/your-app). Max ${MAX_REPOSITORY_URL_LENGTH} characters.`}
+        placeholder="https://github.com/your-org/your-app"
+        value={repository}
+        onChange={(e) => setRepository(e.currentTarget.value)}
+        error={repositoryError}
+        data-testid="apps-manifest-source-repo"
+      />
+
       <Select
         label="Category"
         description="Where your app is filed in the Apps store. Optional — a moderator can categorise it for you. A category a moderator has already set is not overwritten."
@@ -217,7 +257,12 @@ export function ManifestEditForm({
 
       <Select
         label="Content rating"
-        data={[...ALLOWED_CONTENT_RATINGS].map((r) => ({ value: r, label: r }))}
+        // `ALLOWED_CONTENT_RATINGS` is the manifest validator's own copy of the same
+        // five values; the LABEL still comes from the one display map (was `label: r`).
+        data={[...ALLOWED_CONTENT_RATINGS].map((r) => ({
+          value: r,
+          label: offsiteContentRatingLabel(r),
+        }))}
         value={contentRating}
         onChange={(v) => setContentRating(v ?? 'g')}
       />
@@ -302,7 +347,7 @@ export function ManifestEditForm({
       {mutation.data && (
         <Alert color="green" variant="light">
           Submitted as review request <code>{mutation.data.publishRequestId}</code>. Track it on{' '}
-          <Link href="/apps/my-submissions">My submissions</Link>.
+          <Link href="/apps/mine">My apps</Link>.
         </Alert>
       )}
     </Stack>

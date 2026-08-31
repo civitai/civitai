@@ -22,7 +22,6 @@ import {
   IconAdjustmentsAlt,
   IconAlertTriangle,
   IconCheck,
-  IconCode,
   IconExternalLink,
   IconInfoCircle,
   IconKey,
@@ -47,8 +46,10 @@ import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants'
 import {
   MARKETPLACE_CATEGORIES,
   MARKETPLACE_CATEGORY_LABELS,
+  marketplaceCategoryLabel,
   type MarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import {
   SCOPE_DESCRIPTIONS,
   SLOT_DESCRIPTIONS,
@@ -295,182 +296,176 @@ export function OnsiteReviewModalBody({
 
   return (
     <Stack gap="md">
-        <Group gap="xs" align="flex-start">
-          <Text size="xs" c="dimmed">
-            Submitter:
-          </Text>
-          <Text size="xs">
-            {request.submittedBy.username ?? `#${request.submittedBy.id}`}
-          </Text>
-          <Text size="xs" c="dimmed">
-            ·
-          </Text>
-          <Text size="xs" c="dimmed">
-            {formatDate(request.submittedAt)}
-          </Text>
-          <Text size="xs" c="dimmed">
-            · {formatBytes(request.bundleSizeBytes)}
-          </Text>
-        </Group>
+      <Group gap="xs" align="flex-start">
+        <Text size="xs" c="dimmed">
+          Submitter:
+        </Text>
+        <Text size="xs">{request.submittedBy.username ?? `#${request.submittedBy.id}`}</Text>
+        <Text size="xs" c="dimmed">
+          ·
+        </Text>
+        <Text size="xs" c="dimmed">
+          {formatDate(request.submittedAt)}
+        </Text>
+        <Text size="xs" c="dimmed">
+          · {formatBytes(request.bundleSizeBytes)}
+        </Text>
+      </Group>
 
-        {(approved || rejected) && (
-          <Alert
-            color={approved ? 'green' : 'red'}
-            variant="light"
-            icon={approved ? <IconCheck size={16} /> : <IconX size={16} />}
-            title={
-              <Group gap={6}>
-                <Text size="sm" fw={600}>
-                  {approved ? 'Approved by' : 'Rejected by'}{' '}
-                  {(approved ?? rejected)?.reviewedBy
-                    ? (approved ?? rejected)!.reviewedBy!.username
-                      ? `@${(approved ?? rejected)!.reviewedBy!.username}`
-                      : `#${(approved ?? rejected)!.reviewedBy!.id}`
-                    : 'unknown'}
-                </Text>
-                <Text size="xs" c="dimmed">
-                  · {formatDate((approved ?? rejected)!.reviewedAt)}
-                </Text>
-              </Group>
-            }
-          >
-            {approved && approved.approvalNotes && (
-              <Stack gap={2}>
-                <Text size="xs" c="dimmed">
-                  Approval notes
-                </Text>
-                <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {approved.approvalNotes}
-                </Text>
-              </Stack>
-            )}
-            {approved && !approved.approvalNotes && (
-              <Text size="xs" c="dimmed" fs="italic">
-                No approval notes were recorded.
+      {(approved || rejected) && (
+        <Alert
+          color={approved ? 'green' : 'red'}
+          variant="light"
+          icon={approved ? <IconCheck size={16} /> : <IconX size={16} />}
+          title={
+            <Group gap={6}>
+              <Text size="sm" fw={600}>
+                {approved ? 'Approved by' : 'Rejected by'}{' '}
+                {(approved ?? rejected)?.reviewedBy
+                  ? (approved ?? rejected)!.reviewedBy!.username
+                    ? `@${(approved ?? rejected)!.reviewedBy!.username}`
+                    : `#${(approved ?? rejected)!.reviewedBy!.id}`
+                  : 'unknown'}
               </Text>
-            )}
-            {rejected && rejected.rejectionReason && (
-              <Stack gap={2}>
-                <Text size="xs" c="dimmed">
-                  Rejection reason
-                </Text>
-                <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                  {rejected.rejectionReason}
-                </Text>
-              </Stack>
-            )}
-          </Alert>
-        )}
+              <Text size="xs" c="dimmed">
+                · {formatDate((approved ?? rejected)!.reviewedAt)}
+              </Text>
+            </Group>
+          }
+        >
+          {approved && approved.approvalNotes && (
+            <Stack gap={2}>
+              <Text size="xs" c="dimmed">
+                Approval notes
+              </Text>
+              <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {approved.approvalNotes}
+              </Text>
+            </Stack>
+          )}
+          {approved && !approved.approvalNotes && (
+            <Text size="xs" c="dimmed" fs="italic">
+              No approval notes were recorded.
+            </Text>
+          )}
+          {rejected && rejected.rejectionReason && (
+            <Stack gap={2}>
+              <Text size="xs" c="dimmed">
+                Rejection reason
+              </Text>
+              <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {rejected.rejectionReason}
+              </Text>
+            </Stack>
+          )}
+        </Alert>
+      )}
 
-        {/* MOD REVIEW SANDBOX (#2831) — run the PENDING version in a temporary,
+      {/* MOD REVIEW SANDBOX (#2831) — run the PENDING version in a temporary,
             mod-gated preview before approving. Pending requests only; dark
             unless the mod-only review-sandbox flag is enabled. */}
-        {mode === 'pending' && <ReviewPreviewPanel publishRequestId={request.id} slug={request.slug} />}
+      {mode === 'pending' && (
+        <ReviewPreviewPanel publishRequestId={request.id} slug={request.slug} />
+      )}
 
-        {/* AGENTIC MOD CODE-REVIEW (App Blocks P2) — dispatch + poll + render an
+      {/* AGENTIC MOD CODE-REVIEW (App Blocks P2) — dispatch + poll + render an
             agent code-review/security-audit report before approving. On-site
             PENDING only, and DARK unless the mod-only `app-blocks-agentic-review`
             CLIENT flag is enabled (fail-closed: absent Flipt flag → does not
             render, so the panel is inert on merge). External/connect requests are
             out of P2 scope — hidden. */}
-        {mode === 'pending' &&
-          !!features?.appBlocksAgenticReview &&
-          isOnsiteReviewRequest(request) && (
-            <AgentReviewPanel publishRequestId={request.id} slug={request.slug} />
-          )}
+      {mode === 'pending' &&
+        !!features?.appBlocksAgenticReview &&
+        isOnsiteReviewRequest(request) && (
+          <AgentReviewPanel publishRequestId={request.id} slug={request.slug} />
+        )}
 
-        {/* F-E E5 — publisher screenshot gallery review. Publisher-supplied
+      {/* F-E E5 — publisher screenshot gallery review. Publisher-supplied
             images are an abuse vector → the mod sees them (here, derived from
             the submitted bundle) before approving. Renders for every mode so an
             approved app's screenshots can be re-checked too. */}
-        <ScreenshotsReviewPanel publishRequestId={request.id} />
+      <ScreenshotsReviewPanel publishRequestId={request.id} />
 
-        {/* F-E E4 curation — marketplace metadata (category / featured / order).
+      {/* F-E E4 curation — marketplace metadata (category / featured / order).
             Only for an APPROVED request that has a linked app_block: featuring
             is approved-only, and the meta lives on the app_block row. */}
-        {mode === 'approved' && request.appBlockId && (
-          <CurationPanel key={request.appBlockId} appBlockId={request.appBlockId} />
+      {mode === 'approved' && request.appBlockId && (
+        <CurationPanel key={request.appBlockId} appBlockId={request.appBlockId} />
+      )}
+
+      <Stack gap={4}>
+        <Text size="sm" fw={600}>
+          Files
+        </Text>
+        <Group gap={6}>
+          <Text size="sm">{fs.files?.length ?? 0} total</Text>
+          {(fs.added?.length ?? 0) > 0 && (
+            <Badge color="green" variant="light">
+              +{fs.added.length} added
+            </Badge>
+          )}
+          {(fs.changed?.length ?? 0) > 0 && (
+            <Badge color="yellow" variant="light">
+              ~{fs.changed.length} changed
+            </Badge>
+          )}
+          {(fs.removed?.length ?? 0) > 0 && (
+            <Badge color="red" variant="light">
+              −{fs.removed.length} removed
+            </Badge>
+          )}
+        </Group>
+        {/* The raw-source deep-link that used to sit here has been retired
+              (#3498). In-review snapshots are private now, so an anonymous
+              click on it 404s — a dead link is worse than no link. Source
+              review happens in the "Show code diff" panel below, which reads
+              the submitted artifact server-side and needs no second login.
+              `request.reviewRepoUrl` / `request.pushCommitUrl` are intentionally
+              still carried on the payload: a richer in-app file browser is
+              being designed separately and will reuse them. */}
+        {mds.kind === 'update' && (
+          <FileListPreview added={fs.added} removed={fs.removed} changed={fs.changed} />
         )}
-
-        <Stack gap={4}>
-          <Text size="sm" fw={600}>
-            Files
-          </Text>
-          <Group gap={6}>
-            <Text size="sm">{fs.files?.length ?? 0} total</Text>
-            {(fs.added?.length ?? 0) > 0 && (
-              <Badge color="green" variant="light">
-                +{fs.added.length} added
-              </Badge>
-            )}
-            {(fs.changed?.length ?? 0) > 0 && (
-              <Badge color="yellow" variant="light">
-                ~{fs.changed.length} changed
-              </Badge>
-            )}
-            {(fs.removed?.length ?? 0) > 0 && (
-              <Badge color="red" variant="light">
-                −{fs.removed.length} removed
-              </Badge>
-            )}
-          </Group>
-          <Button
-            component="a"
-            href={request.pushCommitUrl ?? request.reviewRepoUrl}
-            target="_blank"
-            rel="noopener"
-            variant="default"
-            leftSection={<IconCode size={14} />}
-            rightSection={<IconExternalLink size={12} />}
-          >
-            View full source
-          </Button>
-          {mds.kind === 'update' && (
-            <FileListPreview added={fs.added} removed={fs.removed} changed={fs.changed} />
-          )}
-          {/* Line-level code diff — lazy (only fetched when the mod toggles it
+        {/* Line-level code diff — lazy (only fetched when the mod toggles it
               open) so the modal stays light by default. Bounded server-side;
-              binary / oversized / huge-diff files fall back to the Forgejo link
-              above. */}
-          <CodeDiffPanel
-            publishRequestId={request.id}
-            forgejoUrl={request.pushCommitUrl ?? request.reviewRepoUrl}
-          />
-        </Stack>
+              binary / oversized / huge-diff files are labelled as not-shown
+              rather than linked out. */}
+        <CodeDiffPanel publishRequestId={request.id} />
+      </Stack>
 
-        <Stack gap={4}>
-          <Text size="sm" fw={600}>
-            Manifest diff
+      <Stack gap={4}>
+        <Text size="sm" fw={600}>
+          Manifest diff
+        </Text>
+        {mds.kind === 'first-version' ? (
+          <Text size="xs" c="dimmed">
+            First version — full manifest below.
           </Text>
-          {mds.kind === 'first-version' ? (
-            <Text size="xs" c="dimmed">
-              First version — full manifest below.
-            </Text>
-          ) : (
-            <ManifestDiffPreview diff={mds} />
-          )}
-        </Stack>
+        ) : (
+          <ManifestDiffPreview diff={mds} />
+        )}
+      </Stack>
 
-        <Stack gap={4}>
-          <Text size="sm" fw={600}>
-            Manifest
-          </Text>
-          <ManifestView manifest={manifest} />
-        </Stack>
+      <Stack gap={4}>
+        <Text size="sm" fw={600}>
+          Manifest
+        </Text>
+        <ManifestView manifest={manifest} />
+      </Stack>
 
-        {/* Approve/reject controls. Rendered inline here for the modal (its
+      {/* Approve/reject controls. Rendered inline here for the modal (its
             footer, unchanged), and SUPPRESSED on the page (`hideInlineActions`),
             which renders the same `ReviewActionBar` pinned in a sticky bottom bar.
             The bar self-suppresses for read-only approved/rejected history. */}
-        {!hideInlineActions && (
-          <ReviewActionBar
-            selection={selection}
-            onClose={onClose}
-            onActioned={onActioned}
-            busyRef={busyRef}
-          />
-        )}
-      </Stack>
+      {!hideInlineActions && (
+        <ReviewActionBar
+          selection={selection}
+          onClose={onClose}
+          onActioned={onActioned}
+          busyRef={busyRef}
+        />
+      )}
+    </Stack>
   );
 }
 
@@ -532,18 +527,14 @@ function ReviewPreviewPanel({
           Review preview
         </Text>
         {state && (
-          <Badge
-            size="sm"
-            variant="light"
-            color={isLive ? 'green' : isFailed ? 'red' : 'blue'}
-          >
+          <Badge size="sm" variant="light" color={isLive ? 'green' : isFailed ? 'red' : 'blue'}>
             {state.replace('preview-', '')}
           </Badge>
         )}
       </Group>
       <Text size="xs" c="dimmed">
-        Run this pending version in a temporary, mod-only preview before approving.
-        Torn down automatically when you approve or reject.
+        Run this pending version in a temporary, mod-only preview before approving. Torn down
+        automatically when you approve or reject.
       </Text>
 
       <Group gap="xs">
@@ -616,13 +607,34 @@ function ReviewPreviewPanel({
         // runs reviewMode (read-only NACKs). The `?mr=` entry-token URL keeps its
         // pickReviewIframeSrc stabilization here; PageBlockHost's own iframe sets
         // referrerPolicy="no-referrer" so the entry token never leaks via Referer.
+        // 🔴 THE FLEX COLUMN IS LOAD-BEARING, not styling. This panel is the only
+        // thing that bounds the preview's height, and `ReviewBlockPreviewHost`
+        // now passes `fit="fill"` to `PageBlockHost` — which resolves against
+        // this box. As a plain block container it bounded the height for
+        // `overflow: hidden` (i.e. it CLIPPED) without giving the host anything
+        // to fill, so the host sat at its `FILL_MIN_HEIGHT_PX` floor and left the
+        // rest of the panel empty. Drop `display: flex` and that is what comes
+        // back — a short preview in a tall box, which reads as a styling nit
+        // rather than a regression.
         <div
           style={{
             width: '100%',
             height: 420,
+            display: 'flex',
+            flexDirection: 'column',
             border: '1px solid var(--mantine-color-default-border)',
             borderRadius: 6,
-            overflow: 'hidden',
+            // 🔴 `auto`, NOT `hidden` — the scroll container of last resort.
+            // `fit="fill"` floors the host at `FILL_MIN_HEIGHT_PX`, so on a
+            // narrow window (where the read-only banner above it wraps to two or
+            // three rows) the host can still be a few px taller than the panel.
+            // Under `overflow: hidden` that residue was unreachable, which is the
+            // same class of defect as the original bug in a much narrower window
+            // — and the reason the run page's wrapper carries this too. It does
+            // not fire at ordinary modal widths: 420 minus a one-row banner
+            // leaves ~382, comfortably above the floor. Still clips to the
+            // rounded border, which is what `hidden` was here for.
+            overflow: 'auto',
           }}
         >
           <ReviewBlockPreviewHost
@@ -689,7 +701,13 @@ function ScreenshotsReviewPanel({ publishRequestId }: { publishRequestId: string
           </Text>
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
             {items.map((shot) => (
-              <Card key={shot.index} withBorder padding={0} radius="md" style={{ overflow: 'hidden' }}>
+              <Card
+                key={shot.index}
+                withBorder
+                padding={0}
+                radius="md"
+                style={{ overflow: 'hidden' }}
+              >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={shot.dataUrl}
@@ -791,8 +809,7 @@ function CurationPanel({ appBlockId }: { appBlockId: string }) {
           <>
             {!isApproved && (
               <Alert color="yellow" variant="light" icon={<IconAlertTriangle size={16} />}>
-                This app is{' '}
-                <Code>{meta?.status ?? 'unknown'}</Code> — only an approved app can be
+                This app is <Code>{meta?.status ?? 'unknown'}</Code> — only an approved app can be
                 featured. Category/order can still be set.
               </Alert>
             )}
@@ -854,8 +871,8 @@ function CurationPanel({ appBlockId }: { appBlockId: string }) {
 // Line-level code diff — expands the file-level summary with the actual unified
 // line diff per changed/added text file. Lazy: the query only fires once the mod
 // toggles "Show code diff" on, so the modal default stays light. Bounded
-// server-side (text-only, byte/line/file caps); elided files render a "view in
-// Forgejo" fallback rather than inlining unbounded content.
+// server-side (text-only, byte/line/file caps); elided files are labelled with
+// WHY they were skipped rather than inlining unbounded content.
 //
 // The presentational panels (FileListPreview / FileDiffEntry / DiffHunkView /
 // ManifestDiffPreview) + the FileLineDiff type live in the server-free
@@ -863,13 +880,7 @@ function CurationPanel({ appBlockId }: { appBlockId: string }) {
 // browser mode without importing this page's tRPC server graph.
 // ---------------------------------------------------------------------------
 
-function CodeDiffPanel({
-  publishRequestId,
-  forgejoUrl,
-}: {
-  publishRequestId: string;
-  forgejoUrl: string;
-}) {
+function CodeDiffPanel({ publishRequestId }: { publishRequestId: string }) {
   const features = useFeatureFlags();
   const [show, setShow] = useState(false);
 
@@ -894,7 +905,7 @@ function CodeDiffPanel({
         {show && !isLoading && !error && (
           <Text size="xs" c="dimmed">
             {files.length} file{files.length === 1 ? '' : 's'} changed
-            {data?.truncated ? ' (some elided — view in Forgejo)' : ''}
+            {data?.truncated ? ' (some elided)' : ''}
           </Text>
         )}
       </Group>
@@ -915,7 +926,7 @@ function CodeDiffPanel({
         ) : (
           <Stack gap={6}>
             {files.map((f) => (
-              <FileDiffEntry key={f.path} file={f} forgejoUrl={forgejoUrl} />
+              <FileDiffEntry key={f.path} file={f} />
             ))}
           </Stack>
         ))}
@@ -942,6 +953,10 @@ const HANDLED_MANIFEST_KEYS = new Set([
   // description — not buried in the "Other manifest fields" raw-JSON disclosure.
   // The mod is the only gate on store-visible copy changing.
   'tagline',
+  // Store-visible OUTBOUND LINK, manifest-governed, published on approve — so it must
+  // be visible INLINE to the reviewer, not folded into the raw-JSON disclosure. A link
+  // the mod never actually looked at is the one thing this whole surface exists to stop.
+  'repository',
   'category',
   'type',
   'minApiVersion',
@@ -1018,14 +1033,13 @@ function ManifestView({ manifest }: { manifest: Record<string, unknown> }) {
 
 function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
   const name = typeof manifest.name === 'string' ? manifest.name : null;
-  const description =
-    typeof manifest.description === 'string' ? manifest.description : null;
+  const description = typeof manifest.description === 'string' ? manifest.description : null;
   const tagline = typeof manifest.tagline === 'string' ? manifest.tagline : null;
+  const repository = typeof manifest.repository === 'string' ? manifest.repository : null;
   const category = typeof manifest.category === 'string' ? manifest.category : null;
   const blockId = typeof manifest.blockId === 'string' ? manifest.blockId : null;
   const version = typeof manifest.version === 'string' ? manifest.version : null;
-  const contentRating =
-    typeof manifest.contentRating === 'string' ? manifest.contentRating : null;
+  const contentRating = typeof manifest.contentRating === 'string' ? manifest.contentRating : null;
   const trustTier = typeof manifest.trustTier === 'string' ? manifest.trustTier : null;
   const renderMode = typeof manifest.renderMode === 'string' ? manifest.renderMode : null;
 
@@ -1055,7 +1069,7 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
               {category && (
                 <Tooltip label="Marketplace category">
                   <Badge color="gray" variant="light">
-                    {category}
+                    {marketplaceCategoryLabel(category)}
                   </Badge>
                 </Tooltip>
               )}
@@ -1065,7 +1079,7 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
             {contentRating && (
               <Tooltip label="Content rating">
                 <Badge color={ratingColor(contentRating)} variant="filled">
-                  {contentRating}
+                  {offsiteContentRatingLabel(contentRating)}
                 </Badge>
               </Tooltip>
             )}
@@ -1085,6 +1099,16 @@ function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
             )}
           </Group>
         </Group>
+        {/* Store-visible source-repository link (manifest-governed — goes live on
+            approve). PLAIN TEXT, deliberately NOT an anchor: a reviewer must be able to
+            READ the destination before deciding, and a one-click link out of a review
+            modal is exactly the affordance a hostile submission would want. Shown
+            VERBATIM (not normalised) so the mod sees what the author actually wrote. */}
+        {repository && (
+          <Text size="xs" c="dimmed" data-testid="apps-onsite-review-source-repo">
+            Source: <Code>{repository}</Code>
+          </Text>
+        )}
         {description && (
           <Text size="sm" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
             {description}
@@ -1212,8 +1236,8 @@ function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
               </Tooltip>
             </Group>
             <Text size="xs" c="dimmed" fs="italic">
-              No permissions requested — block can only consume host postMessage
-              data, no scope-gated platform APIs.
+              No permissions requested — block can only consume host postMessage data, no
+              scope-gated platform APIs.
             </Text>
           </>
         ) : (
@@ -1292,9 +1316,7 @@ function ManifestTargets({ manifest }: { manifest: Record<string, unknown> }) {
             const slotId = typeof t.slotId === 'string' ? t.slotId : '?';
             const priority = typeof t.priority === 'number' ? t.priority : null;
             const requiredContext = Array.isArray(t.requiredContext)
-              ? (t.requiredContext as unknown[]).filter(
-                  (c): c is string => typeof c === 'string'
-                )
+              ? (t.requiredContext as unknown[]).filter((c): c is string => typeof c === 'string')
               : [];
             const slotDesc = SLOT_DESCRIPTIONS[slotId];
             return (
@@ -1451,13 +1473,11 @@ function ManifestSettings({ manifest }: { manifest: Record<string, unknown> }) {
         </Group>
         <Stack gap={8}>
           {entries.map(([key, raw]) => {
-            const def =
-              raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+            const def = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
             const type = typeof def.type === 'string' ? def.type : '?';
             const widget = typeof def.widget === 'string' ? def.widget : null;
             const label = typeof def.label === 'string' ? def.label : null;
-            const description =
-              typeof def.description === 'string' ? def.description : null;
+            const description = typeof def.description === 'string' ? def.description : null;
             const scope = typeof def.scope === 'string' ? def.scope : null;
             const defaultVal = def.default;
             const min = typeof def.min === 'number' ? def.min : null;
@@ -1496,8 +1516,7 @@ function ManifestSettings({ manifest }: { manifest: Record<string, unknown> }) {
                 <Group gap={8} pl={4}>
                   {defaultVal !== undefined && (
                     <Text size="xs" c="dimmed">
-                      default:{' '}
-                      <Code style={{ fontSize: 10 }}>{JSON.stringify(defaultVal)}</Code>
+                      default: <Code style={{ fontSize: 10 }}>{JSON.stringify(defaultVal)}</Code>
                     </Text>
                   )}
                   {(min !== null || max !== null) && (

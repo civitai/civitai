@@ -475,6 +475,111 @@ export async function deleteModelFileObjects(urls: string[]) {
 const DOWNLOAD_EXPIRATION = 60 * 60 * 24; // 24 hours
 const UPLOAD_EXPIRATION = 60 * 60 * 12; // 12 hours
 const FILE_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
+const MAX_UPLOAD_PARTS = 1000;
+
+/**
+ * Every part URL of a multipart upload is signed up front and expires together, so a
+ * slow client on a huge file races one deadline across every part it hasn't reached
+ * yet. Growing the chunk keeps the part count — and with it both that race and the
+ * odds of hitting at least one transient part failure — bounded regardless of size.
+ */
+export function getUploadChunkSize(size: number) {
+  let chunkSize = FILE_CHUNK_SIZE;
+  while (Math.ceil(size / chunkSize) > MAX_UPLOAD_PARTS) chunkSize *= 2;
+  return chunkSize;
+}
+
+/** Re-sign a single part of an in-flight multipart upload whose original URL expired. */
+export async function getUploadPartUrl({
+  bucket,
+  key,
+  uploadId,
+  partNumber,
+  s3,
+}: {
+  bucket: string;
+  key: string;
+  uploadId: string;
+  partNumber: number;
+  s3?: S3Client | null;
+}) {
+  if (!s3) s3 = getS3Client();
+  const url = await getSignedUrl(
+    s3,
+    new UploadPartCommand({ Bucket: bucket, Key: key, UploadId: uploadId, PartNumber: partNumber }),
+    { expiresIn: UPLOAD_EXPIRATION }
+  );
+  if (B2_BUCKET_NAMES.has(bucket)) recordB2PresignIssued(bucket);
+  return { url };
+}
+
+/**
+ * Outcome of a single HeadObject probe against an explicit `bucket` + `key`.
+ *
+ * 🔴 THREE states, not two. `absent` means the bucket ANSWERED that the key is not
+ * there (404/NotFound); `unknown` means the bucket could not be consulted at all
+ * (missing/rotated credentials, a 403, a network blip, an abort). A caller that
+ * rejects on absence MUST treat `unknown` as "don't know" and fail open — collapsing
+ * it into `absent` turns an infrastructure hiccup into a user-facing rejection.
+ *
+ * `size` is the object's `ContentLength`, or `null` when the backend did not report
+ * one. `null` is "size unknown", NOT "size zero" — a size check must not fire on it.
+ */
+export type ObjectHeadResult =
+  | { status: 'present'; size: number | null }
+  | { status: 'absent' }
+  | { status: 'unknown' };
+
+/**
+ * HeadObject probe against an explicit bucket + key, returning the object's size as
+ * well as its presence.
+ *
+ * {@link objectExists} is the boolean view of this and delegates to it, so the
+ * not-found classification lives in exactly one place. Prefer this one when the
+ * caller cares whether the object has any bytes: presence alone cannot tell a
+ * finalized object from an empty one.
+ *
+ * 🔴 Never throws. Resolving the client is inside the try, so an unconfigured
+ * environment lands on `unknown` rather than propagating — a probe used to GUARD a
+ * working code path must not be able to fail that path by its own absence.
+ *
+ * 🔴 `abortSignal` is how a caller on a user-facing path bounds this. The client is
+ * built with SDK-default retries and no request timeout, so an unbounded probe
+ * against a degraded backend turns a guard into a hang. As documented on
+ * {@link checkFileExists}, the signal bounds each network attempt but is not a
+ * wall-clock cap: the SDK sleeps between retries on a non-abort-aware timer, so
+ * worst-case wall time is the budget plus one backoff. An abort surfaces as a plain
+ * `AbortError`, which is not a not-found shape, so it lands on `unknown` and the
+ * caller fails open like any other "could not consult the bucket" outcome.
+ */
+export async function headObject(
+  bucket: string,
+  key: string,
+  s3: S3Client | null = null,
+  { abortSignal }: { abortSignal?: AbortSignal } = {}
+): Promise<ObjectHeadResult> {
+  try {
+    if (!s3) s3 = getS3Client();
+    const head = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }), {
+      abortSignal,
+    });
+    return {
+      status: 'present',
+      size: typeof head?.ContentLength === 'number' ? head.ContentLength : null,
+    };
+  } catch (e) {
+    return isNotFoundError(e) ? { status: 'absent' } : { status: 'unknown' };
+  }
+}
+
+/** `null` when the bucket couldn't be consulted, so callers can tell that from a real miss. */
+export async function objectExists(bucket: string, key: string, s3: S3Client | null = null) {
+  const head = await headObject(bucket, key, s3);
+  if (head.status === 'present') return true;
+  if (head.status === 'absent') return false;
+  return null;
+}
+
 export async function getMultipartPutUrl(
   key: string,
   size: number,
@@ -508,7 +613,7 @@ export async function getMultipartPutUrl(
   // browser-direct and invisible pod-side.
   if (bucket && B2_BUCKET_NAMES.has(bucket)) recordB2PresignIssued(bucket);
 
-  return { urls, bucket, key, uploadId: UploadId };
+  return { urls, bucket, key, uploadId: UploadId, chunkSize };
 }
 
 interface MultipartUploadPart {
@@ -752,7 +857,48 @@ export async function getGetUrlByKey(
   return { url, bucket, key };
 }
 
-export async function checkFileExists(key: string, s3: S3Client | null = null) {
+/** A HeadObject rejection that definitively means "this key is not in the bucket". */
+function isNotFoundError(e: unknown) {
+  const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return (
+    err?.name === 'NotFound' || err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404
+  );
+}
+
+/**
+ * HeadObject existence probe.
+ *
+ * 🔴 TRI-STATE on purpose:
+ *  - `true`  — the object is present.
+ *  - `false` — the bucket answered, definitively, that the key is absent (404/NotFound).
+ *  - `null`  — the bucket could not be consulted at all: missing credentials, a 403 from a
+ *              rotated key, a network blip.
+ *
+ * A caller that REJECTS on absence must treat `null` as "don't know" and fail open.
+ * Collapsing `null` into `false` (as this helper used to) turns an infrastructure hiccup
+ * into a user-facing rejection — the same fail-open discipline the announcement media
+ * check applies for the same reason.
+ *
+ * 🔴 `abortSignal` is how a caller on a USER-FACING path bounds this. The client is built with
+ * SDK-default retries and no request timeout, so an unbounded probe against a degraded backend
+ * turns a guard into a hang. The signal is passed once and shared by every retry attempt, so it
+ * bounds every network attempt — but it is NOT a wall-clock cap on the call: the SDK's retry
+ * middleware sleeps between attempts with a plain, non-abort-aware timer, so a deadline landing
+ * mid-backoff lets that sleep run to completion and only the NEXT attempt short-circuits.
+ * Worst-case wall time is therefore the budget plus one backoff. (Measured against the installed
+ * SDK: a 300 ms budget with a ~5 s backoff in flight returned in ~4.7 s.) An abort surfaces as a
+ * plain `AbortError` (no `$metadata`), which is not a not-found shape and is not classified
+ * retryable — so the call ends there, lands on `null`, and the caller fails open exactly like any
+ * other "could not consult the bucket" outcome.
+ */
+export async function checkFileExists(
+  key: string,
+  {
+    s3,
+    bucket,
+    abortSignal,
+  }: { s3?: S3Client | null; bucket?: string; abortSignal?: AbortSignal } = {}
+): Promise<boolean | null> {
   if (!s3) s3 = getS3Client();
 
   try {
@@ -760,11 +906,12 @@ export async function checkFileExists(key: string, s3: S3Client | null = null) {
     await s3.send(
       new HeadObjectCommand({
         Key: parsedKey,
-        Bucket: parsedBucket ?? env.S3_UPLOAD_BUCKET,
-      })
+        Bucket: parsedBucket ?? bucket ?? env.S3_UPLOAD_BUCKET,
+      }),
+      { abortSignal }
     );
-  } catch {
-    return false;
+  } catch (e) {
+    return isNotFoundError(e) ? false : null;
   }
 
   return true;

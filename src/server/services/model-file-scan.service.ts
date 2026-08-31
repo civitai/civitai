@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import type { WorkflowEvent } from '@civitai/client';
 import { getWorkflow } from '@civitai/client';
 import type { NextApiRequest } from 'next';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -13,6 +14,7 @@ import {
   findOfficialFileByHash,
 } from '~/server/services/model-file.service';
 import { unpublishModelById } from '~/server/services/model.service';
+import { checkMinorHashOnScan, MINOR_HASH_FILE_TYPE } from '~/server/services/minor-hash.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   createModelFileScanRequest,
@@ -28,6 +30,8 @@ import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import type { ModelFileType } from '~/server/common/constants';
 import { addLinkedComponent } from '~/server/services/model-version.service';
+import { Tracker } from '~/server/clickhouse/client';
+import { diffEntityChanges } from '~/server/utils/entity-change-helpers';
 
 // -----------------------------------------------------------------------------
 // Shared scan outcome — the normalized shape that both webhook adapters produce
@@ -200,7 +204,9 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
 
   // Hash upsert (delete + createMany) — same pattern as legacy.
   if (outcome.hashes) {
-    const hashRows = (Object.entries(outcome.hashes) as Array<[ModelHashType, string]>)
+    const hashRows = (
+      Object.entries(normalizeScanHashes(outcome.hashes)) as Array<[ModelHashType, string]>
+    )
       .filter(([, hash]) => Boolean(hash))
       .map(([type, hash]) => ({ fileId, type, hash }));
 
@@ -209,17 +215,50 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         dbWrite.modelFileHash.deleteMany({ where: { fileId } }),
         dbWrite.modelFileHash.createMany({ data: hashRows }),
       ]);
+
+      // Entity-change audit: record the file's SHA256 lineage. First scan writes
+      // '' → hash; a re-upload writes old → new. "Did the file change after
+      // upload" = more than one distinct newValue for this fileId. Rescans of
+      // unchanged bytes diff equal and emit nothing.
+      const newSha256 = outcome.hashes.SHA256;
+      if (newSha256) {
+        const existingSha256 = existingHashes.find((h) => h.type === ModelHashType.SHA256)?.hash;
+        const changeRows = diffEntityChanges({
+          entityType: 'ModelFile',
+          entityId: fileId,
+          ownerId: file.modelVersion?.model?.userId ?? 0,
+          before: { 'hash.SHA256': existingSha256 },
+          after: { 'hash.SHA256': newSha256 },
+          actorRole: 'system',
+          reason: 'file-scan',
+        });
+        new Tracker().entityChanges(changeRows).catch(() => null);
+      }
     }
 
-    // D2: hash-blocking is intentionally disabled here, matching legacy
-    // scan-result.ts:126-128 which is also commented out. Re-enable as a
-    // separate decision; will need pre-existing SHA256 capture above.
-    // const newSha256 = outcome.hashes.SHA256;
-    // const existingSha256 = existingHashes.find((h) => h.type === ModelHashType.SHA256)?.hash;
-    // const hashChanged = !existingSha256 || existingSha256 !== newSha256;
-    // if (newSha256 && hashChanged && (await isModelHashBlocked(newSha256))) {
-    //   await unpublishBlockedModel(file.modelVersionId);
-    // }
+    const scannedSha256 = outcome.hashes.SHA256;
+    const scannedModelId = file.modelVersion?.modelId;
+    const scannedUserId = file.modelVersion?.model?.userId;
+    // Scan requests aren't type-filtered, but the sweep and the review queue
+    // both only cover MINOR_HASH_FILE_TYPE. Without this gate a Training
+    // Data/VAE/Config match would auto-flag on a path no sweep reaches, or
+    // queue for a review page that can never surface it.
+    if (
+      scannedSha256 &&
+      scannedModelId &&
+      scannedUserId &&
+      file.type === MINOR_HASH_FILE_TYPE &&
+      // Checked last so the kill switch is the only thing evaluated per scan
+      // once the cheap local gates have already excluded the file.
+      (await isFlipt(FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG))
+    ) {
+      await checkMinorHashOnScan({
+        fileId,
+        modelId: scannedModelId,
+        userId: scannedUserId,
+        sha256: scannedSha256,
+      });
+    }
   }
 
   // Safety net for uploads that slipped past the client-side check: a non-official
@@ -253,7 +292,12 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       }
     } catch (e) {
       logToAxiom(
-        { type: 'warning', name: 'post-scan-official-dedup', message: (e as Error).message, fileId },
+        {
+          type: 'warning',
+          name: 'post-scan-official-dedup',
+          message: (e as Error).message,
+          fileId,
+        },
         'webhooks'
       ).catch(() => null);
     }
@@ -377,6 +421,9 @@ type ModelScanStep =
   | ModelHashStep
   | ModelParseMetadataStep;
 
+const AUTOV3_LENGTH = 12;
+const SHA256_12_LENGTH = 12;
+
 const orchestratorHashFieldMap: Record<string, ModelHashType> = {
   sha256: ModelHashType.SHA256,
   autoV1: ModelHashType.AutoV1,
@@ -385,6 +432,55 @@ const orchestratorHashFieldMap: Record<string, ModelHashType> = {
   blake3: ModelHashType.BLAKE3,
   crc32: ModelHashType.CRC32,
 };
+/**
+ * Canonical stored form of the orchestrator's hash step output.
+ *
+ * Two adjustments, both idempotent so re-running over already-normalized values is a no-op:
+ *
+ *   AutoV3     arrives full-length (per @civitai/client: "SHA256 of the file with safetensors
+ *              header metadata stripped"). We store 12 chars, the width A1111 writes.
+ *   SHA256_12  is sent by nothing. It is sha256[0:12] — the width A1111/Forge write for LoRAs,
+ *              which no other stored hash matches, so resource detection fails without it.
+ *              See docs/image-resource-hash-matching.md.
+ *
+ * Every writer of ModelFileHash that can carry a hash the orchestrator produced must run it
+ * through this. There are THREE writers, and the ledger test enumerates them from source —
+ * src/server/services/__tests__/model-file-hash-writers.test.ts fails when the set grows OR
+ * shrinks, so a new writer forces a decision here rather than inheriting one:
+ *
+ *   applyScanOutcome (this file)                     normalizes
+ *   /api/mod/reprocess-scan                          normalizes
+ *   createModelFileScanRequest's dev-only skip       EXEMPT — see below
+ *     (orchestrator/orchestrator.service.ts)
+ *
+ * The exemption is not "it's dev-only": it is that the sentinel that writer stores (SHA256 =
+ * 64 zeroes, "file unreachable") is a fixed point of this function, so calling it there would
+ * change nothing. That is a property of both modules at once, so it is pinned behaviourally in
+ * src/server/services/orchestrator/__tests__/createModelFileScanRequest.test.ts — change the
+ * sentinel, or drop the all-zero guard below, and that test goes red.
+ *
+ * This is the ONLY thing enforcing the AutoV3 width. A truncate_autov3_hash trigger used to do
+ * it in the database as well, and is dropped in migration 20260819010000 once this ships — so a
+ * writer that skips this helper stores a 64-char AutoV3 and silently breaks matching for the
+ * type carrying ~85-88% of LoRA references.
+ *
+ * AutoV1, AutoV2, BLAKE3, CRC32 and SHA256 pass through untouched — the orchestrator is the
+ * authority for those, and re-deriving them here would put two systems in charge of one value.
+ */
+export function normalizeScanHashes(
+  hashes: Partial<Record<ModelHashType, string>>
+): Partial<Record<ModelHashType, string>> {
+  const out: Partial<Record<ModelHashType, string>> = { ...hashes };
+
+  if (out.AutoV3) out.AutoV3 = out.AutoV3.slice(0, AUTOV3_LENGTH);
+
+  // The scan-request path writes an all-zero SHA256 as a "file unreachable" sentinel. Deriving
+  // from it would give every such file the same 12-char hash and make them match each other.
+  const sha256 = out.SHA256;
+  if (sha256 && !/^0+$/.test(sha256)) out.SHA256_12 = sha256.slice(0, SHA256_12_LENGTH);
+
+  return out;
+}
 
 // Orchestrator now reports scan outcomes via a `status` enum (and explicit
 // boolean flags) instead of POSIX exit codes. Map the known status strings,

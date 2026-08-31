@@ -5,7 +5,6 @@ import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -70,8 +69,8 @@ function ToolFeedPage() {
         <MasonryContainer>
           <Stack gap="xs">
             <IsClient>
-              <ImageCategories />
               <ImagesInfinite
+                showFeedbackPrompt
                 filters={{
                   period,
                   sort,

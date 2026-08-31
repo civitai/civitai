@@ -557,7 +557,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
           linkToProfile
         />
         {b.awardedToId && (
-          <Tooltip label="This supporter has already awarded an entry" color="dark" withinPortal>
+          <Tooltip label="This supporter has already awarded an entry" withinPortal>
             <IconTrophy color={config.color} fill={config.color} size={18} />
           </Tooltip>
         )}

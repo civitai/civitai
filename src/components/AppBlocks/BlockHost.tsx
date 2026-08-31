@@ -16,14 +16,24 @@ interface BlockHostProps {
  * so v2 can light it up without a structural refactor.
  */
 export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
-  const { token, expiresAt, error, pending, missingScopes, domain, maxBrowsingLevel, refresh } =
+  const { token, expiresAt, terminal, pending, missingScopes, domain, maxBrowsingLevel, refresh } =
     useBlockToken(blockInstall, slotContext);
 
-  // Terminal token-mint failure → collapse (render null, take no space)
-  // rather than show a visible "authorization error" card. Matches the
-  // IframeHost terminal-failure collapse: a block that can't load shows
-  // nothing. The brief loading skeleton below is preserved.
-  if (error) {
+  // TERMINAL token-mint failure → collapse (render null, take no space) rather
+  // than show a visible "authorization error" card. Matches the IframeHost
+  // terminal-failure collapse (`hostRenderDecision`): an error card for a block
+  // the viewer never asked for, on someone else's model page, is worse than
+  // silence. The brief loading skeleton below is preserved.
+  //
+  // 🔴 GATE ON `terminal`, NOT `error`. This used to read `if (error) return null`,
+  // which collapsed the slot on ANY mint failure — including a TRANSIENT
+  // mid-session refresh blip. That unmounted IframeHost, destroying whatever the
+  // user had in progress, and the eventual recovery REMOUNTED it: a fresh
+  // BLOCK_INIT and a SECOND impression beacon for one logical view (the beacon's
+  // emit-once guard is per IframeHost mount). `terminal` is true only once the
+  // hook has exhausted its bounded automatic retries AND no usable token remains,
+  // so a recoverable failure now keeps the block alive instead of erasing it.
+  if (terminal) {
     return null;
   }
   if (pending || !token || !expiresAt) {

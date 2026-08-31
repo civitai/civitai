@@ -1,5 +1,11 @@
 import * as z from 'zod';
 import { MARKETPLACE_CATEGORIES } from '~/server/services/blocks/marketplace-categories.constants';
+import type { PublicOwnerChip } from '~/server/services/blocks/public-owner';
+import {
+  APP_CAP_OVERRIDE_MAX_DAILY_BUZZ,
+  APP_CAP_OVERRIDE_MAX_VELOCITY_GENS,
+  APP_SPEND_TIERS,
+} from '~/server/services/blocks/app-cap-limits.constants';
 
 /**
  * Two user-controlled install scopes. Both live in the same
@@ -181,11 +187,6 @@ export type AvailableBlock = {
   // computed `https://<slug>.<APPS_DOMAIN>` liveUrl, hides Install + scopes, and
   // flags the app as off-site. NULL = a normal on-platform app. Always https://.
   externalUrl: string | null;
-  // Marketplace reviews (F-E "marketplace" cluster). avgRating is NULL when the
-  // app has no aggregate-eligible reviews (0-review apps); reviewCount excludes
-  // mod-excluded + self-reviews. Both display-safe (aggregate numbers only).
-  avgRating: number | null;
-  reviewCount: number;
   // Card cover image: the FIRST publisher-supplied screenshot's PUBLIC display
   // URL, or NULL when the app shipped no screenshots. Built via the SAME
   // `toPublicScreenshots` projection the detail page uses (opaque gated route,
@@ -227,16 +228,18 @@ export function toPublicBlockManifest(raw: unknown): PublicBlockManifest {
 
 /**
  * F-E marketplace sort options:
- *   - `rating` (DEFAULT) — Bayesian-shrinkage avg rating DESC (a few-review 5★
- *                          app can't outrank a many-review 4.x app; 0-review
- *                          apps sit mid-pack at the global mean `m`). Ties fall
- *                          back to install_count then id.
- *   - `popular`          — install_count DESC (distinct-user installs).
- *   - `newest`           — current_version_deployed_at DESC, falling back to
- *                          created_at for pre-W2 rows with no deploy timestamp.
- *   - `name`             — manifest name ASC (case-insensitive).
+ *   - `popular` (DEFAULT) — install_count DESC (distinct-user installs).
+ *   - `newest`            — current_version_deployed_at DESC, falling back to
+ *                           created_at for pre-W2 rows with no deploy timestamp.
+ *   - `name`              — manifest name ASC (case-insensitive).
+ *
+ * There is deliberately NO `rating` option. It used to be the default and was
+ * a Bayesian-shrinkage sort over the 5-star `AppBlockReview` table, which has
+ * been removed — the store's review signal is the thumbs-based
+ * `AppListingReview` rollup, sorted by `appListings.listAvailable`'s own
+ * `top-rated` key (see `app-listing.service.ts`).
  */
-export const marketplaceSortSchema = z.enum(['rating', 'popular', 'newest', 'name']);
+export const marketplaceSortSchema = z.enum(['popular', 'newest', 'name']);
 export type MarketplaceSort = z.infer<typeof marketplaceSortSchema>;
 
 export const listAvailableSchema = z.object({
@@ -248,10 +251,10 @@ export const listAvailableSchema = z.object({
   // taxonomy const (MARKETPLACE_CATEGORIES) so the schema and the UI/DB share
   // ONE list — adding a category is a one-line const edit, no schema migration.
   category: z.enum(MARKETPLACE_CATEGORIES).optional(),
-  // F-E marketplace: sort order; defaults to `rating` (Bayesian-shrinkage avg
-  // rating desc) so the best-reviewed apps surface first; 0-review apps sit
-  // mid-pack at the global mean (not unfairly buried).
-  sort: marketplaceSortSchema.default('rating'),
+  // F-E marketplace: sort order; defaults to `popular` (install_count desc).
+  // It used to default to a Bayesian `rating` sort over the removed 5-star
+  // `AppBlockReview` table; `popular` is the surviving install-signal default.
+  sort: marketplaceSortSchema.default('popular'),
   cursor: z.string().max(64).optional(),
   limit: z.number().int().min(1).max(50).default(20),
 });
@@ -311,32 +314,87 @@ export const getMarketplaceMetaSchema = z.object({
 export type GetMarketplaceMetaInput = z.infer<typeof getMarketplaceMetaSchema>;
 
 // ---------------------------------------------------------------------------
-// F-E marketplace REVIEWS (5-star) — schemas.
+// PER-APP generation SPEND CAP CONFIG (mod-only) — schemas.
 // ---------------------------------------------------------------------------
 
-/** Upsert (create-or-update) the viewer's review for an app block. */
-export const upsertAppBlockReviewSchema = z.object({
+/**
+ * MOD-ONLY: set the app's SPEND TIER and/or the per-app override on the
+ * generation spend/velocity ceilings enforced by `app-spend-cap.service.ts`.
+ *
+ * 🔴 SPEND IS ITS OWN AXIS. `spendTier` is NOT `trustTier`. `trustTier` gates
+ * the iframe sandbox allowlist and inline/hybrid renderMode — a browser-isolation
+ * decision that says nothing about money. They are set through different fields,
+ * carry disjoint vocabularies, and moving one never moves the other.
+ *
+ * Semantics, mirroring `setMarketplaceMetaSchema`: a field OMITTED (undefined) is
+ * left unchanged; an explicit `null` CLEARS an override so the app falls back
+ * to its spend tier's limit. A positive integer replaces that field's ceiling
+ * for this app only, and may tighten as well as loosen.
+ *
+ * 🔴 `.min(1)` is deliberate — 0 is NOT accepted. "Cannot generate at all" is a
+ * DISABLE decision whose surface is the app's `status`, not a cap of zero (which
+ * would present to users as a permanent, unexplained rate-limit rejection).
+ * The maxima are `APP_CAP_OVERRIDE_MAX_*` from `app-cap-limits.constants.ts`
+ * ITSELF (not re-typed literals), which is also where the migration's CHECK
+ * constraints and the read-time clamp get them — one number, three enforcement
+ * points, no drift.
+ *
+ * 🔴 There is deliberately NO publisher-facing counterpart to this schema. An
+ * app must never be able to raise its own abuse ceiling, which is why none of
+ * these fields exist in the manifest or in any developer-reachable input.
+ */
+export const setAppSpendCapConfigSchema = z.object({
   appBlockId: z.string().min(1).max(64),
-  rating: z.number().int().min(1).max(5), // STARS
-  recommended: z.boolean().optional(),
-  details: z.string().max(10000).nullish(),
+  /** The app's spend class. Omitted = unchanged. */
+  spendTier: z.enum(APP_SPEND_TIERS).optional(),
+  /** Per-UTC-day aggregate Buzz ceiling for this app. Max 1e9 Buzz ≈ $1M/day. */
+  spendCapBuzzPerDay: z
+    .number()
+    .int()
+    .min(1)
+    .max(APP_CAP_OVERRIDE_MAX_DAILY_BUZZ)
+    .nullable()
+    .optional(),
+  /** Gens per velocity window for this app. Max 100k ≈ 1,666/sec at the 60s window. */
+  spendVelocityMaxGens: z
+    .number()
+    .int()
+    .min(1)
+    .max(APP_CAP_OVERRIDE_MAX_VELOCITY_GENS)
+    .nullable()
+    .optional(),
 });
-export type UpsertAppBlockReviewInput = z.infer<typeof upsertAppBlockReviewSchema>;
+export type SetAppSpendCapConfigInput = z.infer<typeof setAppSpendCapConfigSchema>;
 
-/** Keyset-paginated list of an app's reviews (newest first). */
-export const listAppBlockReviewsSchema = z.object({
+/** Input for the MOD-ONLY `blocks.getAppSpendCapConfig` (seeds the mod form). */
+export const getAppSpendCapConfigSchema = z.object({
   appBlockId: z.string().min(1).max(64),
-  cursor: z.number().int().positive().optional(),
-  limit: z.number().int().min(1).max(50).default(20),
 });
-export type ListAppBlockReviewsInput = z.infer<typeof listAppBlockReviewsSchema>;
+export type GetAppSpendCapConfigInput = z.infer<typeof getAppSpendCapConfigSchema>;
 
-/** MOD-ONLY: flip `exclude` on a review (keeps abuse out of the aggregate). */
-export const setAppReviewExcludedSchema = z.object({
-  id: z.number().int().positive(),
-  exclude: z.boolean(),
-});
-export type SetAppReviewExcludedInput = z.infer<typeof setAppReviewExcludedSchema>;
+/**
+ * MOD-ONLY view of one app's cap configuration: the spend tier, the raw override
+ * columns, and the RESOLVED ceilings actually enforced — so a moderator can see
+ * the effective number without re-deriving the tier table by hand (and can see
+ * when a deploy-time `BLOCK_APP_SPEND_*` clamp is overriding their value).
+ *
+ * 🔴 `trustTier` is deliberately absent: surfacing it here would re-suggest the
+ * coupling this field exists to break.
+ *
+ * 🔴 Mod surface only. Never returned by an anon/publisher-facing procedure: the
+ * exact ceiling is withheld from apps on purpose (`blocks.router.ts` returns a
+ * no-number rejection) so a hostile app can't probe where its limit sits.
+ */
+export type AppSpendCapConfig = {
+  appBlockId: string;
+  /** The app's server-owned SPEND tier (the source of the default limits). */
+  spendTier: string;
+  /** NULL when no override is set for that field. */
+  spendCapBuzzPerDay: number | null;
+  spendVelocityMaxGens: number | null;
+  /** What the reserve path will actually enforce (global clamp ∘ (override ?? tier)). */
+  effective: { dailyBuzz: number; velocityMaxGens: number };
+};
 
 /**
  * MOD-ONLY current marketplace metadata for one app_block — returned by
@@ -443,15 +501,24 @@ export type PublicAppDetail = {
   id: string;
   blockId: string;
   appId: string;
+  /**
+   * The OAuth CLIENT's name. 🔴 This is the APP's own title, NOT its author —
+   * for every approved block in prod `OauthClient.name` equals the app title.
+   * Rendering it in an author slot ("by {appName}") is a bug; use `owner`.
+   */
   appName: string | null;
+  /**
+   * The app's real owner, as the standard public `{id, username, image}` chip
+   * (see `~/server/services/blocks/public-owner.ts` for the allowlist). `null`
+   * when the owner row can't be resolved; `username` is independently nullable,
+   * and the UI renders no attribution rather than a fallback in that case.
+   */
+  owner: PublicOwnerChip | null;
   manifest: PublicBlockManifest;
   scopes: string[];
   contentRating: string | null;
   version: string | null;
   installCount: number;
-  // Marketplace reviews (aggregate-eligible). avgRating NULL = 0-review app.
-  avgRating: number | null;
-  reviewCount: number;
   liveUrl: string;
   screenshots: PublicScreenshot[];
   // Off-site (external-link) app — PURE EXTERNAL LINK. When non-null, the detail

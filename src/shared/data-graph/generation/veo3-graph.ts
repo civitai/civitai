@@ -11,12 +11,11 @@
  * Nodes:
  * - model: Model version selector (Fast/Standard per workflow)
  * - seed: Optional seed for reproducibility
- * - enablePromptEnhancer: Toggle for prompt enhancement
  * - negativePrompt: Negative prompt for generation
  * - aspectRatio: Output aspect ratio (txt2vid only)
  * - duration: Video duration (4, 6, or 8 seconds)
  * - generateAudio: Toggle for audio generation
- * - version: API version selector (3.0 vs 3.1)
+ * - version: API version selector
  * - resources: Additional LoRAs
  */
 
@@ -42,26 +41,21 @@ import {
 /** Veo3 base model name */
 const veo3BaseModel = 'Veo 3';
 
-/** Veo3 model version mapping */
+/**
+ * Veo3 model version mapping.
+ *
+ * Veo 3.1 ships one pair for every workflow, where 3.0 had a separate txt2vid
+ * and img2vid pair. Both workflows now offer the same two versions.
+ */
 const veo3VersionIds = {
-  // txt2vid versions
-  txt2vid_fast: 1995399,
-  txt2vid_standard: 1885367,
-  // img2vid versions
-  img2vid_fast: 2082027,
-  img2vid_standard: 1996013,
+  fast: 2827948,
+  standard: 2827945,
 } as const;
 
-/** Veo3 version options for txt2vid */
-const veo3Txt2VidVersionOptions = [
-  { label: 'Fast Mode', value: veo3VersionIds.txt2vid_fast, baseModel: veo3BaseModel },
-  { label: 'Standard', value: veo3VersionIds.txt2vid_standard, baseModel: veo3BaseModel },
-];
-
-/** Veo3 version options for img2vid */
-const veo3Img2VidVersionOptions = [
-  { label: 'Fast Mode', value: veo3VersionIds.img2vid_fast, baseModel: veo3BaseModel },
-  { label: 'Standard', value: veo3VersionIds.img2vid_standard, baseModel: veo3BaseModel },
+/** Veo3 version options */
+const veo3VersionOptions = [
+  { label: 'Fast Mode', value: veo3VersionIds.fast, baseModel: veo3BaseModel },
+  { label: 'Standard', value: veo3VersionIds.standard, baseModel: veo3BaseModel },
 ];
 
 /** Veo3 aspect ratio options */
@@ -78,14 +72,19 @@ const veo3Durations = [
   { label: '8 seconds', value: 8 },
 ];
 
-/** Veo3 API version options */
-const veo3ApiVersions = ['3.0', '3.1'] as const;
+/**
+ * Veo3 API version options.
+ *
+ * 3.0 is absent because Google retired veo-3.0-generate-001 and
+ * veo-3.0-fast-generate-001 on 2026-08-28; they 404. The node stays even with a
+ * single option so `version` is always sent explicitly — the orchestrator's
+ * Veo3Version enum has 3.0 as its zero value, so omitting the field selects the
+ * retired endpoint.
+ */
+const veo3ApiVersions = ['3.1'] as const;
 type Veo3ApiVersion = (typeof veo3ApiVersions)[number];
 
-const veo3ApiVersionOptions = [
-  { label: 'Veo 3.0', value: '3.0' as Veo3ApiVersion },
-  { label: 'Veo 3.1', value: '3.1' as Veo3ApiVersion },
-];
+const veo3ApiVersionOptions = [{ label: 'Veo 3.1', value: '3.1' as Veo3ApiVersion }];
 
 // =============================================================================
 // Veo3 Graph
@@ -97,12 +96,12 @@ type Veo3Ctx = { ecosystem: string; workflow: string };
 /** Workflow-specific version configuration for Veo3 */
 const veo3WorkflowVersions = {
   txt2vid: {
-    versions: { options: veo3Txt2VidVersionOptions },
-    defaultModelId: veo3VersionIds.txt2vid_fast,
+    versions: { options: veo3VersionOptions },
+    defaultModelId: veo3VersionIds.fast,
   },
   img2vid: {
-    versions: { options: veo3Img2VidVersionOptions },
-    defaultModelId: veo3VersionIds.img2vid_fast,
+    versions: { options: veo3VersionOptions },
+    defaultModelId: veo3VersionIds.fast,
   },
 };
 
@@ -121,7 +120,8 @@ export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
       if (ctx.workflow === 'img2vid:ref2vid') {
         return {
           ...imagesNode({
-            max: 7,
+            // Veo 3.1 accepts at most three asset reference images.
+            max: 3,
             warnOnMissingAiMetadata: true,
             aspectRatios: ['16:9', '9:16'],
           }),
@@ -155,13 +155,6 @@ export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
 
   // Seed node
   .node('seed', seedNode())
-
-  // Prompt enhancer toggle
-  .node('enablePromptEnhancer', {
-    input: z.boolean().optional(),
-    output: z.boolean(),
-    defaultValue: false,
-  })
 
   // Prompt + triggerWords + negativePrompt
   .merge(triggerWordsGraph)
@@ -212,11 +205,11 @@ export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
     defaultValue: false,
   })
 
-  // API version selector (3.0 vs 3.1)
+  // API version selector
   .node('version', {
     input: z.enum(veo3ApiVersions).optional(),
     output: z.enum(veo3ApiVersions),
-    defaultValue: '3.0' as Veo3ApiVersion,
+    defaultValue: '3.1' as Veo3ApiVersion,
     meta: {
       options: veo3ApiVersionOptions,
     },
@@ -238,8 +231,7 @@ export {
   veo3AspectRatios,
   veo3Durations,
   veo3VersionIds,
-  veo3Txt2VidVersionOptions,
-  veo3Img2VidVersionOptions,
+  veo3VersionOptions,
   veo3ApiVersions,
   veo3ApiVersionOptions,
 };

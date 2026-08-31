@@ -193,6 +193,7 @@ export const deleteUserSchema = z.object({
   id: z.number(),
   username: usernameSchema.optional(),
   removeModels: z.boolean().optional(),
+  removeImages: z.boolean().optional(),
 });
 
 export type RestoreUserInput = z.infer<typeof restoreUserSchema>;
@@ -282,9 +283,31 @@ export const userSettingsSchema = z.object({
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
   disableHidden: z.boolean().optional(),
+  // Opt-in: receive in-progress features ahead of general release. Unlike every
+  // other key here this one is PROJECTED ONTO THE SESSION (auth hub
+  // `shapeSessionUser` → `SessionUser.isEarlyAdopter` → `buildFliptContext`), so
+  // Flipt can segment on it. That projection is cached, which is why the write
+  // path re-produces the session on CHANGE — see `setUserSettingHandler`.
+  isEarlyAdopter: z.boolean().optional(),
+  // Opt-in: horizontal drag on multi-image gallery post cards. Off by default —
+  // the feed mounts hundreds of cards and each one costs an embla engine.
+  swipeGalleryCards: z.boolean().optional(),
+  // Opt-in: leave blue buzz out of the header badge, which otherwise adds blue and the domain's
+  // main type into one number. Blue is granted and non-transferable, so a creator watching what
+  // they hold is reading one of the two, not the sum. NOT a filter for earned buzz — yellow and
+  // green are `purchasable`, so the remaining balance still mixes earned and bought.
+  hideBlueBuzzInHeader: z.boolean().optional(),
+  // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
+  // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
+  // only covers people who set it at the OS level.
+  disableStickerMotion: z.boolean().optional(),
   // Creator opt-out: when true, the public donation-goal display (progress + collected
   // amount) is hidden from non-owner/non-mod viewers on all of this user's models.
   hideDonationGoals: z.boolean().optional(),
+  // The two sticker book opt-outs. Both absent means a visible book showing the
+  // stickers the creator owns; the rules are in `shared/utils/sticker-book.ts`.
+  hideStickerBook: z.boolean().optional(),
+  hidePurchasedStickers: z.boolean().optional(),
   // Creator Controls defaults: baseline metric-privacy for all of this user's
   // models. Effective only while the user holds a valid Creator Program
   // membership (see server/utils/model-metric-privacy.ts).
@@ -317,7 +340,6 @@ export const userSettingsSchema = z.object({
       enabled: z.boolean().optional(),
       showModels: z.boolean().optional(),
       featuredItemIds: z.array(z.number()).optional(),
-      resoldItemIds: z.array(z.number()).optional(),
       description: z.string().nullish(),
       coverImageId: z.number().nullish(),
       // Ordered storefront sections with per-section visibility.
@@ -346,7 +368,13 @@ export const setUserSettingsInput = z.object({
   creatorsProgramCodeOfConductAccepted: z.date().optional(),
   cosmeticStoreLastViewed: z.date().optional(),
   allowAds: z.boolean().optional(),
+  isEarlyAdopter: z.boolean().optional(),
+  swipeGalleryCards: z.boolean().optional(),
+  disableStickerMotion: z.boolean().optional(),
+  hideBlueBuzzInHeader: z.boolean().optional(),
   hideDonationGoals: z.boolean().optional(),
+  hideStickerBook: z.boolean().optional(),
+  hidePurchasedStickers: z.boolean().optional(),
   hideModelBuzz: z.boolean().optional(),
   hideModelDownloads: z.boolean().optional(),
   hideModelGenerations: z.boolean().optional(),
@@ -376,7 +404,9 @@ export const userOnboardingSchema = z.discriminatedUnion('step', [
   z.object({
     step: z.literal(OnboardingSteps.Profile),
     username: usernameInputSchema,
-    email: z.string(),
+    // `.email()`, not a bare string: this is the only writer of `User.email` that was unvalidated,
+    // so a tRPC caller could post `x@!!!` and have it stored verbatim.
+    email: z.string().email(),
   }),
   z.object({ step: z.literal(OnboardingSteps.BrowsingLevels) }),
   z.object({
@@ -432,6 +462,12 @@ export const userMeta = z.object({
   membershipChangedAt: z.date().optional(),
   strikeFlaggedForReview: z.boolean().optional(),
   strikeFlaggedAt: z.date().optional(),
+  // Set by the moderator mute (free text) and by strike escalation (`STRIKE_MUTE_REASON`); automatic
+  // mutes leave it unset, which is how the ToS gate refuses them. Cleared with `mutedBy` as one unit
+  // by `clearedMuteFields`.
+  muteReason: z.string().optional(),
+  mutedBy: z.number().optional(),
+  imageRemoval: z.enum(['grace', 'immediate']).optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 
@@ -455,6 +491,7 @@ export const toggleBanUserSchema = z.object({
   type: z.enum(['universal', 'contest']).default('universal').optional(),
   removeMedia: z.boolean().optional(),
   removeModels: z.boolean().optional(),
+  removeComments: z.boolean().optional(),
 });
 
 export type GetBanContentPreviewInput = z.infer<typeof getBanContentPreviewSchema>;

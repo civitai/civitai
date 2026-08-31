@@ -53,9 +53,14 @@ vi.mock('~/components/Apps/AppListingsModerationTable', () => ({
 vi.mock('~/components/Apps/ActivePreviewsPanel', () => ({ ActivePreviewsPanel: () => null }));
 // The off-site review modal is now PAGE-OWNED (rendered by the page) — stub it + the
 // reports queue so this test isolates the on-site pending queue's selection path.
+// NOTE: this is a WHOLESALE module mock, so it must re-stub EVERY export of
+// `OffsiteReviewQueue.tsx` that anything in the page's graph statically imports —
+// `CombinedReviewModal` imports `OffsiteReviewModalBody` from here. Miss one and the
+// file's ESM link fails ("does not provide an export named ...") and it collects 0 tests.
 vi.mock('~/components/Apps/OffsiteReviewQueue', () => ({
   OffsiteReportsQueue: () => null,
   OffsiteReviewModal: () => null,
+  OffsiteReviewModalBody: () => null,
 }));
 vi.mock('~/components/Meta/Meta', () => ({ Meta: () => null }));
 

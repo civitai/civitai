@@ -1,0 +1,453 @@
+import { sql } from '@civitai/db/kysely';
+import { dbRead } from '$lib/server/db';
+import type { ModelType } from '@civitai/db-schema';
+import {
+  acceptsBlueBuzz,
+  hasCurrentRightsAffirmation,
+  type ModelVersionTerms,
+} from '@civitai/buzz';
+import {
+  DEFAULT_GENERATION_TRIAL_LIMIT,
+  type PaidAccessConfig,
+} from '$lib/monetization/paid-access';
+import { saleEligibleFilter } from '$lib/server/monetization/sale-eligibility';
+
+// "Sold in any form": an active PaidAccess row — a timed window still open OR a permanent (no end date) gate.
+function paidAccessFilter(alias: string) {
+  const p = sql.raw(`${alias}.`);
+  return sql<boolean>`exists (select 1 from "PaidAccess" pa where pa."entityType" = 'ModelVersion' and pa."entityId" = ${p}"id" and (pa."endsAt" is null or pa."endsAt" > now()))`;
+}
+
+// A stored 0 counts as OFF: legacy rows still hold 0 from the old clear path, and an IS NOT NULL
+// test would list them as "fee set".
+// Parenthesized because this is AND'd into a larger WHERE: OR binds looser, so an unwrapped `x is null or
+// x <= 0` would reassociate and drop every other filter.
+function feeFilter(alias: string, mode: 'set' | 'off') {
+  const f = sql.raw(`${alias}."licensingFee"`);
+  return mode === 'set'
+    ? sql<boolean>`(${f} is not null and ${f} > 0)`
+    : sql<boolean>`(${f} is null or ${f} <= 0)`;
+}
+
+// Rebuild the UI-facing PaidAccessConfig from an active PaidAccess row (terms bundle + timeframeDays).
+// timeframeDays null => permanent. Donation-goal fields are sourced separately, not from PaidAccess.
+function paidAccessToConfig(timeframeDays: number | null, terms: unknown): PaidAccessConfig | null {
+  const t = terms as ModelVersionTerms | null;
+  if (!t) return null;
+  const gen = t.generation;
+  const paidGen = gen && !('free' in gen) ? gen : undefined;
+  // "Price for access" is the download price when downloadable; for a gen-only version (no download tier)
+  // it's the generation price. The separate generation-only tier only exists alongside a download bundle.
+  return {
+    timeframe: timeframeDays ?? 0,
+    permanent: timeframeDays == null,
+    accessPrice: t.download?.price ?? paidGen?.price,
+    generationPrice: t.download ? paidGen?.price : undefined,
+    freeGeneration: !!gen && 'free' in gen,
+    acceptsBlueBuzz: acceptsBlueBuzz(t),
+    freePreviewGenerations: paidGen?.trialLimit ?? DEFAULT_GENERATION_TRIAL_LIMIT,
+    donationGoalEnabled: false,
+    donationGoal: undefined,
+  };
+}
+
+export type CreatorModelVersion = {
+  id: number;
+  name: string;
+  baseModel: string;
+  status: string;
+  publishedAt: Date | null;
+  initialPublishedAt: Date | null;
+  licensingFee: number | null;
+  // Governs whether the version can be gated: Download (download + gen), Generation (on-site gen only,
+  // no download charge), or other (no paid access). See paidAccessUsageOk in the models page.
+  usageControl: string;
+  hasPaidAccess: boolean;
+  paidAccessConfig: PaidAccessConfig | null;
+  /** Already on record as cleared to monetize — the editors skip the affirmation checkbox for these. */
+  rightsAffirmed: boolean;
+};
+
+export type CreatorModel = {
+  id: number;
+  name: string;
+  type: string;
+  status: string;
+  // Drive the "view on Civitai" link to civitai.red vs civitai.com (see $lib/model-url).
+  nsfw: boolean;
+  nsfwLevel: number;
+  versions: CreatorModelVersion[];
+};
+
+export type ModelsSort = 'recent' | 'name';
+export type FeeFilter = 'set' | 'off';
+// Default (undefined) hides drafts (M3); 'all' shows them, 'published'/'draft' narrow to one.
+export type StatusFilter = 'all' | 'published' | 'draft';
+
+export type ModelsQuery = {
+  userId: number;
+  q?: string;
+  fee?: FeeFilter;
+  baseModel?: string;
+  /** Model type (Checkpoint / LORA / …) — a Model-level filter (868ke491e). */
+  type?: string;
+  status?: StatusFilter;
+  access?: boolean; // has early / paid access on a version
+  /** Usage-control filter (bulk paid-access scoping): 'download' or 'generation'. */
+  usage?: 'download' | 'generation';
+  /** Only versions a sale could actually discount — the sale picker's list (868kwp6mp). */
+  saleEligible?: boolean;
+  sort?: ModelsSort;
+  page?: number;
+  /** Rows per page (defaults to MODELS_PER_PAGE); the page's cookie-backed size selector sets it. */
+  perPage?: number;
+  /** Also compute the full matching version-id set for bulk "select all" (only needed in bulk mode). */
+  withMatchingVersionIds?: boolean;
+};
+
+export type CreatorModelsResult = {
+  models: CreatorModel[];
+  total: number;
+  page: number;
+  pageCount: number;
+  baseModels: string[];
+  modelTypes: string[];
+  matchingVersionIds: number[];
+};
+
+// Flat per-version row for the CSV fee round-trip — the creator's versions matching the current filters, with the
+// fields the sheet shows (id is the immutable join key on re-upload).
+export type CsvVersionRow = {
+  versionId: number;
+  modelId: number;
+  modelName: string;
+  versionName: string;
+  baseModel: string;
+  modelType: string;
+  status: string;
+  usageControl: string;
+  licensingFee: number | null;
+  licensingFeeType: string | null;
+  licensingFeeSettlementCurrency: string | null;
+  // 'permanent' | 'early' | '' — derived, because the two raw columns disagree on 22 of ~2.8k rows and a
+  // reader of the file has no way to know which one decides. `timeframeDays == null` is the predicate the
+  // server uses (isPermanentGate); `endsAt` is not.
+  accessKind: string;
+  timeframeDays: number | null;
+  endsAt: Date | null;
+  downloadPrice: number | null;
+  generationPrice: number | null;
+  generationFree: boolean | null;
+  generationTrialLimit: number | null;
+  // At most one goal per version — checked across all 21,693 versions that have one, so these stay flat
+  // columns rather than forcing a second row.
+  donationGoalTitle: string | null;
+  donationGoalAmount: number | null;
+  donationGoalActive: boolean | null;
+};
+
+// Every version matching the page's filters (no pagination) for CSV export. Mirrors getCreatorModels' filters so
+// "export" matches what the creator is currently looking at.
+export async function getCreatorVersionsForCsv(query: ModelsQuery): Promise<CsvVersionRow[]> {
+  const { userId, q, fee, baseModel, type, status, access } = query;
+  let qb = dbRead
+    .selectFrom('ModelVersion as mv')
+    .innerJoin('Model as m', 'm.id', 'mv.modelId')
+    .where('m.userId', '=', userId)
+    .where('m.deletedAt', 'is', null);
+  if (q) qb = qb.where('m.name', 'ilike', `%${q}%`);
+  if (type) qb = qb.where('m.type', '=', type as ModelType);
+  if (status === 'published') qb = qb.where('m.status', '=', 'Published');
+  else if (status === 'draft') qb = qb.where('m.status', '=', 'Draft');
+  else if (status !== 'all') qb = qb.where('m.status', '!=', 'Draft');
+  if (baseModel) qb = qb.where('mv.baseModel', '=', baseModel);
+  if (access) qb = qb.where(paidAccessFilter('mv'));
+  if (fee === 'set') qb = qb.where(feeFilter('mv', 'set'));
+  if (fee === 'off') qb = qb.where(feeFilter('mv', 'off'));
+  // Both joins are LEFT: a version without a gate or a goal is still a row, with those columns empty.
+  // DonationGoal's target is the polymorphic (entityType, entityId) pair; `modelVersionId` is the legacy
+  // column being dual-written until the re-key migration drops it, so it's only a fallback for older rows.
+  const rows = await qb
+    .leftJoin('PaidAccess as pa', (join) =>
+      join.onRef('pa.entityId', '=', 'mv.id').on('pa.entityType', '=', 'ModelVersion')
+    )
+    .leftJoin('DonationGoal as dg', (join) =>
+      join.on((eb) =>
+        eb.or([
+          eb.and([
+            eb('dg.entityType', '=', 'ModelVersion'),
+            eb(eb.ref('dg.entityId'), '=', eb.ref('mv.id')),
+          ]),
+          eb(eb.ref('dg.modelVersionId'), '=', eb.ref('mv.id')),
+        ])
+      )
+    )
+    .select([
+      'mv.id as versionId',
+      'mv.name as versionName',
+      'mv.baseModel as baseModel',
+      'mv.status as versionStatus',
+      'mv.usageControl as usageControl',
+      'm.id as modelId',
+      'm.name as modelName',
+      'm.type as modelType',
+      'mv.licensingFee as licensingFee',
+      'mv.licensingFeeType as licensingFeeType',
+      'mv.licensingFeeSettlementCurrency as licensingFeeSettlementCurrency',
+      'pa.timeframeDays as timeframeDays',
+      'pa.endsAt as endsAt',
+      'pa.terms as terms',
+      'dg.title as donationGoalTitle',
+      'dg.goalAmount as donationGoalAmount',
+      'dg.active as donationGoalActive',
+    ])
+    .orderBy('m.name', 'asc')
+    .orderBy('mv.index', 'asc')
+    .execute();
+  return rows.map((r) => {
+    const config = paidAccessToConfig(r.timeframeDays, r.terms);
+    return {
+      versionId: r.versionId,
+      modelId: r.modelId,
+      modelName: r.modelName,
+      versionName: r.versionName,
+      baseModel: r.baseModel,
+      modelType: r.modelType,
+      status: r.versionStatus,
+      usageControl: r.usageControl,
+      licensingFee: r.licensingFee == null ? null : Number(r.licensingFee),
+      licensingFeeType: r.licensingFeeType ?? null,
+      licensingFeeSettlementCurrency: r.licensingFeeSettlementCurrency ?? null,
+      accessKind: config ? (config.permanent ? 'permanent' : 'early') : '',
+      timeframeDays: r.timeframeDays ?? null,
+      endsAt: r.endsAt ?? null,
+      downloadPrice: config?.accessPrice ?? null,
+      generationPrice: config?.generationPrice ?? null,
+      generationFree: config ? !!config.freeGeneration : null,
+      generationTrialLimit: config?.freePreviewGenerations ?? null,
+      donationGoalTitle: r.donationGoalTitle ?? null,
+      donationGoalAmount: r.donationGoalAmount == null ? null : Number(r.donationGoalAmount),
+      donationGoalActive: r.donationGoalActive ?? null,
+    };
+  });
+}
+
+export const MODELS_PER_PAGE = 20;
+// Cookie-backed page-size options shared across paged Studio surfaces (868ke493p).
+export const PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
+export const PAGE_SIZE_COOKIE = 'cs-page-size';
+
+// The creator's models with versions nested, filterable by search / fee / base model / status / access, with
+// sort + pagination. Version-level filters (fee/baseModel/access) both narrow the model list (models with ≥1
+// matching version) AND restrict the versions shown, so "select all" selects exactly what's on screen.
+export async function getCreatorModels(query: ModelsQuery): Promise<CreatorModelsResult> {
+  const {
+    userId,
+    q,
+    fee,
+    baseModel,
+    type,
+    status,
+    access,
+    usage,
+    saleEligible,
+    sort = 'recent',
+  } = query;
+  const page = Math.max(1, query.page ?? 1);
+  const perPage = query.perPage ?? MODELS_PER_PAGE;
+  const usageValue =
+    usage === 'generation' ? 'Generation' : usage === 'download' ? 'Download' : null;
+
+  // Model-list filter (shared by count + page query; kysely builders are immutable, so branch off one).
+  let filtered = dbRead
+    .selectFrom('Model')
+    .where('userId', '=', userId)
+    .where('deletedAt', 'is', null);
+  if (q) filtered = filtered.where('name', 'ilike', `%${q}%`);
+  if (type) filtered = filtered.where('type', '=', type as ModelType);
+  if (status === 'published') filtered = filtered.where('status', '=', 'Published');
+  else if (status === 'draft') filtered = filtered.where('status', '=', 'Draft');
+  else if (status !== 'all') filtered = filtered.where('status', '!=', 'Draft'); // default: hide drafts
+  const hasVersionFilter = !!baseModel || !!access || !!fee || !!usageValue || !!saleEligible;
+  if (hasVersionFilter)
+    filtered = filtered.where((eb) =>
+      eb.exists(
+        eb
+          .selectFrom('ModelVersion as mv')
+          .select('mv.id')
+          .whereRef('mv.modelId', '=', 'Model.id')
+          .$if(!!baseModel, (b) => b.where('mv.baseModel', '=', baseModel!))
+          .$if(!!access, (b) => b.where(paidAccessFilter('mv')))
+          .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
+          .$if(fee === 'set', (b) => b.where(feeFilter('mv', 'set')))
+          .$if(fee === 'off', (b) => b.where(feeFilter('mv', 'off')))
+          .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv', userId)))
+      )
+    );
+
+  const [totalRow, models, baseModelRows, modelTypeRows] = await Promise.all([
+    filtered.select((eb) => eb.fn.countAll().as('count')).executeTakeFirst(),
+    filtered
+      .select(['id', 'name', 'type', 'status', 'nsfw', 'nsfwLevel'])
+      .orderBy(sort === 'name' ? 'name' : 'lastVersionAt', sort === 'name' ? 'asc' : 'desc')
+      .limit(perPage)
+      .offset((page - 1) * perPage)
+      .execute(),
+    // Distinct base models the creator actually has — the base-model filter options.
+    dbRead
+      .selectFrom('ModelVersion as mv')
+      .innerJoin('Model as m', 'm.id', 'mv.modelId')
+      .where('m.userId', '=', userId)
+      .where('m.deletedAt', 'is', null)
+      .select('mv.baseModel')
+      .distinct()
+      .orderBy('mv.baseModel', 'asc')
+      .execute(),
+    // Distinct model types the creator has — the model-type filter options (868ke491e).
+    dbRead
+      .selectFrom('Model')
+      .where('userId', '=', userId)
+      .where('deletedAt', 'is', null)
+      .select('type')
+      .distinct()
+      .orderBy('type', 'asc')
+      .execute(),
+  ]);
+  const total = Number(totalRow?.count ?? 0);
+  const baseModels = baseModelRows.map((r) => r.baseModel).filter(Boolean);
+  const modelTypes = modelTypeRows.map((r) => r.type).filter(Boolean);
+
+  const pageCount = Math.max(1, Math.ceil(total / perPage));
+  if (models.length === 0)
+    return { models: [], total, page, pageCount, baseModels, modelTypes, matchingVersionIds: [] };
+
+  const versions = await dbRead
+    .selectFrom('ModelVersion as mv')
+    .leftJoin('PaidAccess as pa', (join) =>
+      join
+        .onRef('pa.entityId', '=', 'mv.id')
+        .on('pa.entityType', '=', 'ModelVersion')
+        .on((eb) => eb.or([eb('pa.endsAt', 'is', null), eb('pa.endsAt', '>', new Date())]))
+    )
+    .select([
+      'mv.id',
+      'mv.modelId',
+      'mv.name',
+      'mv.baseModel',
+      'mv.status',
+      'mv.publishedAt',
+      'mv.initialPublishedAt',
+      'mv.licensingFee',
+      'mv.usageControl',
+      'mv.meta as meta',
+      'pa.timeframeDays as paTimeframeDays',
+      'pa.terms as paTerms',
+    ])
+    // Subquery, not a join: a join here multiplies the version row per goal, and duplicate
+    // versions blow up the keyed {#each} on the page with each_key_duplicate (blank page).
+    .select((eb) =>
+      eb
+        .selectFrom('DonationGoal as dg')
+        .select('dg.goalAmount')
+        // Matches the CSV join and versionsWithDonationGoal: `modelVersionId` is the legacy column still
+        // being dual-written, so entityId alone misses goals created before the re-key.
+        .where((eb) =>
+          eb.or([
+            eb.and([
+              eb('dg.entityType', '=', 'ModelVersion'),
+              eb(eb.ref('dg.entityId'), '=', eb.ref('mv.id')),
+            ]),
+            eb(eb.ref('dg.modelVersionId'), '=', eb.ref('mv.id')),
+          ])
+        )
+        .orderBy('dg.active', 'desc')
+        .orderBy('dg.createdAt', 'desc')
+        .limit(1)
+        .as('donationGoalAmount')
+    )
+    .where(
+      'mv.modelId',
+      'in',
+      models.map((m) => m.id)
+    )
+    .$if(!!baseModel, (b) => b.where('mv.baseModel', '=', baseModel!))
+    .$if(!!access, (b) => b.where(paidAccessFilter('mv')))
+    .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
+    .$if(fee === 'set', (b) => b.where(feeFilter('mv', 'set')))
+    .$if(fee === 'off', (b) => b.where(feeFilter('mv', 'off')))
+    .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv', userId)))
+    .orderBy('mv.index', 'asc')
+    .execute();
+
+  // Select-all set: every version matching the filter across ALL pages (bulk mode only — it can be large).
+  let matchingVersionIds: number[] = [];
+  if (query.withMatchingVersionIds) {
+    const idRows = await dbRead
+      .selectFrom('ModelVersion as mv')
+      .innerJoin('Model as m', 'm.id', 'mv.modelId')
+      .where('m.userId', '=', userId)
+      .where('m.deletedAt', 'is', null)
+      .$if(!!q, (b) => b.where('m.name', 'ilike', `%${q}%`))
+      .$if(!!type, (b) => b.where('m.type', '=', type as ModelType))
+      .$if(status === 'published', (b) => b.where('m.status', '=', 'Published'))
+      .$if(status === 'draft', (b) => b.where('m.status', '=', 'Draft'))
+      .$if(!status || (status !== 'all' && status !== 'published' && status !== 'draft'), (b) =>
+        b.where('m.status', '!=', 'Draft')
+      )
+      .$if(!!baseModel, (b) => b.where('mv.baseModel', '=', baseModel!))
+      .$if(!!access, (b) => b.where(paidAccessFilter('mv')))
+      .$if(!!usageValue, (b) => b.where('mv.usageControl', '=', usageValue!))
+      .$if(fee === 'set', (b) => b.where(feeFilter('mv', 'set')))
+      .$if(fee === 'off', (b) => b.where(feeFilter('mv', 'off')))
+      .$if(!!saleEligible, (b) => b.where(saleEligibleFilter('mv', userId)))
+      .select('mv.id')
+      .execute();
+    matchingVersionIds = idRows.map((r) => r.id);
+  }
+
+  const byModel = new Map<number, CreatorModelVersion[]>();
+  for (const v of versions) {
+    const list = byModel.get(v.modelId) ?? [];
+    // The left join only matched an ACTIVE gate, so a rebuilt config means the version is currently sold.
+    const paidAccessConfig = paidAccessToConfig(v.paTimeframeDays, v.paTerms);
+    // A donation goal (create-once, timed-only) is a separate row from the gate — fold the existing one
+    // into the config so the editor reflects it. Permanent gates never carry a goal.
+    if (paidAccessConfig && !paidAccessConfig.permanent && v.donationGoalAmount != null) {
+      paidAccessConfig.donationGoalEnabled = true;
+      paidAccessConfig.donationGoal = Number(v.donationGoalAmount);
+    }
+    list.push({
+      id: v.id,
+      name: v.name,
+      baseModel: v.baseModel,
+      status: v.status,
+      publishedAt: v.publishedAt,
+      initialPublishedAt: v.initialPublishedAt,
+      // kysely types the DECIMAL column as string (prisma-kysely maps Decimal→string); the app carries a number.
+      licensingFee: v.licensingFee == null ? null : Number(v.licensingFee),
+      usageControl: v.usageControl,
+      hasPaidAccess: paidAccessConfig !== null,
+      paidAccessConfig,
+      rightsAffirmed: hasCurrentRightsAffirmation(v.meta, userId),
+    });
+    byModel.set(v.modelId, list);
+  }
+
+  return {
+    models: models.map((m) => ({
+      id: m.id,
+      name: m.name,
+      type: m.type,
+      status: m.status,
+      nsfw: !!m.nsfw,
+      nsfwLevel: Number(m.nsfwLevel ?? 0),
+      versions: byModel.get(m.id) ?? [],
+    })),
+    total,
+    page,
+    pageCount,
+    baseModels,
+    modelTypes,
+    matchingVersionIds,
+  };
+}

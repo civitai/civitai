@@ -1,45 +1,46 @@
 import * as z from 'zod';
-import { queryModelVersionsForModeratorHandler } from '~/server/controllers/model-version.controller';
 import { getModelsPagedSimpleHandler } from '~/server/controllers/model.controller';
-import {
-  handleApproveTrainingData,
-  handleDenyTrainingData,
-} from '~/server/controllers/training.controller';
 import { getByIdSchema, getByIdsSchema } from '~/server/schema/base.schema';
-import { getModeratorArticlesSchema } from '~/server/schema/article.schema';
 import {
   modCashAdjustmentSchema,
   updateCashWithdrawalSchema,
 } from '~/server/schema/creator-program.schema';
 import { getFlaggedModelsSchema } from '~/server/schema/model-flag.schema';
-import { queryModelVersionsSchema } from '~/server/schema/model-version.schema';
+import { getAllModelsSchema, transferModelOwnershipSchema } from '~/server/schema/model.schema';
 import {
-  getAllModelsSchema,
-  getTrainingModerationFeedSchema,
-  transferModelOwnershipSchema,
-} from '~/server/schema/model.schema';
-import { getModeratorArticles } from '~/server/services/article.service';
+  getAutoFlaggedMinorDetailSchema,
+  getAutoFlaggedMinorModelsSchema,
+  getMinorFlagAppealsSchema,
+  getMinorHashMatchDetailSchema,
+  getMinorHashMatchesSchema,
+  resolveMinorFlagAppealSchema,
+} from '~/server/schema/minor-hash.schema';
 import {
   getCash,
   getWithdrawalHistory,
   modAdjustCashBalance,
   updateCashWithdrawal,
 } from '~/server/services/creator-program.service';
+import { getModelChangeHistory } from '~/server/services/entity-change.service';
 import { getImagesModRules } from '~/server/services/image.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
 import {
   getModelModerationDetail,
   getModelModRules,
-  getTrainingModelsForModerators,
   transferModelOwnership,
 } from '~/server/services/model.service';
-import { moderatorProcedure, protectedProcedure, router, isFlagProtected } from '~/server/trpc';
-import { throwDbError } from '~/server/utils/errorHandling';
-import type { ModerationRule } from '~/shared/utils/prisma/models';
-
-const trainingModerationProcedure = protectedProcedure.use(
-  isFlagProtected('trainingModelsModeration')
-);
+import {
+  confirmMinorHashAutoFlag,
+  dismissMinorHashMatch,
+  getAutoFlaggedMinorDetail,
+  getAutoFlaggedMinorModels,
+  getMinorFlagAppealsForReview,
+  getMinorHashMatchDetail,
+  getMinorHashMatchesForReview,
+  resolveMinorFlagAppeal,
+  revertMinorHashAutoFlag,
+} from '~/server/services/minor-hash.service';
+import { moderatorProcedure, router, isFlagProtected } from '~/server/trpc';
 
 const cashManagementProcedure = moderatorProcedure.use(isFlagProtected('cashManagement'));
 
@@ -52,29 +53,48 @@ export const modRouter = router({
     resolveFlagged: moderatorProcedure
       .input(getByIdsSchema)
       .mutation(({ input, ctx }) => resolveFlaggedModel({ ...input, userId: ctx.user.id })),
-    queryTraining: trainingModerationProcedure
-      .input(getTrainingModerationFeedSchema)
-      .query(({ input }) => getTrainingModelsForModerators(input)),
     transferOwnership: moderatorProcedure
       .input(transferModelOwnershipSchema)
       .mutation(({ input, ctx }) => transferModelOwnership({ ...input, modUserId: ctx.user.id })),
     getModerationDetail: moderatorProcedure
       .input(getByIdSchema)
       .query(({ input }) => getModelModerationDetail(input)),
-  }),
-  modelVersions: router({
-    query: moderatorProcedure
-      .input(queryModelVersionsSchema)
-      .query(queryModelVersionsForModeratorHandler),
-  }),
-  articles: router({
-    query: moderatorProcedure
-      .input(getModeratorArticlesSchema)
-      .query(({ input }) => getModeratorArticles({ ...input, limit: input.limit ?? 50 })),
-  }),
-  trainingData: router({
-    approve: moderatorProcedure.input(getByIdSchema).mutation(handleApproveTrainingData),
-    deny: moderatorProcedure.input(getByIdSchema).mutation(handleDenyTrainingData),
+    getChangeHistory: moderatorProcedure
+      .input(getByIdSchema)
+      .query(({ input }) => getModelChangeHistory({ modelId: input.id })),
+    queryMinorHashMatches: moderatorProcedure
+      .input(getMinorHashMatchesSchema)
+      .query(({ input }) => getMinorHashMatchesForReview(input)),
+    queryMinorHashMatchDetail: moderatorProcedure
+      .input(getMinorHashMatchDetailSchema)
+      .query(({ input }) => getMinorHashMatchDetail(input)),
+    dismissMinorHashMatch: moderatorProcedure
+      .input(getByIdSchema)
+      .mutation(({ input, ctx }) =>
+        dismissMinorHashMatch({ modelId: input.id, userId: ctx.user.id })
+      ),
+    queryAutoFlaggedMinorModels: moderatorProcedure
+      .input(getAutoFlaggedMinorModelsSchema)
+      .query(({ input }) => getAutoFlaggedMinorModels(input)),
+    queryAutoFlaggedMinorDetail: moderatorProcedure
+      .input(getAutoFlaggedMinorDetailSchema)
+      .query(({ input }) => getAutoFlaggedMinorDetail(input)),
+    confirmMinorHashAutoFlag: moderatorProcedure
+      .input(getByIdSchema)
+      .mutation(({ input, ctx }) =>
+        confirmMinorHashAutoFlag({ modelId: input.id, userId: ctx.user.id })
+      ),
+    revertMinorHashAutoFlag: moderatorProcedure
+      .input(getByIdSchema)
+      .mutation(({ input, ctx }) =>
+        revertMinorHashAutoFlag({ modelId: input.id, userId: ctx.user.id })
+      ),
+    queryMinorFlagAppeals: moderatorProcedure
+      .input(getMinorFlagAppealsSchema)
+      .query(({ input }) => getMinorFlagAppealsForReview(input)),
+    resolveMinorFlagAppeal: moderatorProcedure
+      .input(resolveMinorFlagAppealSchema)
+      .mutation(({ input, ctx }) => resolveMinorFlagAppeal({ ...input, userId: ctx.user.id })),
   }),
   cash: router({
     getCashForUser: cashManagementProcedure
@@ -89,25 +109,6 @@ export const modRouter = router({
     updateWithdrawal: cashManagementProcedure
       .input(updateCashWithdrawalSchema)
       .mutation(({ input }) => updateCashWithdrawal(input)),
-  }),
-  rules: router({
-    getById: moderatorProcedure
-      .input(getByIdSchema.extend({ entityType: z.enum(['Model', 'Image']) }))
-      .query(async ({ input }) => {
-        const { id, entityType } = input;
-        let modRule: Pick<ModerationRule, 'id' | 'action' | 'definition'> | undefined;
-
-        if (entityType === 'Model') {
-          const modelModRules = await getModelModRules();
-          modRule = modelModRules.find((rule) => rule.id === id);
-        } else {
-          const imageModRules = await getImagesModRules();
-          modRule = imageModRules.find((rule) => rule.id === id);
-        }
-
-        if (!modRule) throw throwDbError('Rule not found');
-        return modRule;
-      }),
   }),
 });
 

@@ -23,12 +23,6 @@ import { isDefined } from '~/utils/type-guards';
 export const basePath = '/models/train';
 export const maxSteps = 3;
 
-// nb: these should be proper AIRs now
-export const blockedCustomModels = [
-  'civitai:53761@285757',
-  'urn:air:sd1:checkpoint:civitai:53761@285757',
-];
-
 /**
  * Computes the number of decimal points in a given input using magic math
  */
@@ -163,6 +157,10 @@ export const useTrainingSignals = () => {
           }
         })
       );
+
+      // The epoch-selection screen reads the live workflow rather than this cache, so it needs
+      // its own nudge when a training update lands.
+      queryUtils.training.getRunState.invalidate({ modelVersionId: updated.modelVersionId }).then();
 
       // Update select file page
       queryUtils.model.getById.setData(

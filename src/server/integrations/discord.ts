@@ -234,13 +234,19 @@ const getAllRoles = async () => {
   return res as DiscordRole[];
 };
 
+const UNKNOWN_MEMBER = 10007;
+
+// Returns false when the role could not be granted because the user isn't in the guild yet.
+// Callers must not record the role as granted in that case, or it will never be retried.
 const addRoleToUser = async (user_id: string, role_id: string) => {
   const discord = getDiscordClient();
   if (!env.DISCORD_GUILD_ID) throw new Error('DISCORD_GUILD_ID not set');
   try {
     await discord.put(Routes.guildMemberRole(env.DISCORD_GUILD_ID, user_id, role_id));
+    return true;
   } catch (e: any) {
-    if (e.code !== 10007) throw e;
+    if (e.code !== UNKNOWN_MEMBER) throw e;
+    return false;
   }
 };
 
@@ -250,8 +256,9 @@ const removeRoleFromUser = async (user_id: string, role_id: string) => {
   try {
     await discord.delete(Routes.guildMemberRole(env.DISCORD_GUILD_ID, user_id, role_id));
   } catch (e: any) {
-    if (e.code !== 10007) throw e;
+    if (e.code !== UNKNOWN_MEMBER) throw e;
   }
+  return true;
 };
 
 export const getDiscordId = async (userId: number) => {

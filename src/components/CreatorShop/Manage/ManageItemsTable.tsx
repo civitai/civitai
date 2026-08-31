@@ -6,15 +6,17 @@ import { useManageColumns } from '~/components/CreatorShop/Manage/manage.columns
 export function ManageItemsTable({
   items,
   archiveItem,
+  setItemListed,
   unarchiveItem,
   deleteItem,
 }: {
   items: CreatorShopManageItem[];
   archiveItem: ReturnType<typeof useMutateCreatorShop>['archiveItem'];
+  setItemListed: ReturnType<typeof useMutateCreatorShop>['setItemListed'];
   unarchiveItem: ReturnType<typeof useMutateCreatorShop>['unarchiveItem'];
   deleteItem: ReturnType<typeof useMutateCreatorShop>['deleteItem'];
 }) {
-  const columns = useManageColumns(archiveItem, unarchiveItem, deleteItem);
+  const columns = useManageColumns(archiveItem, setItemListed, unarchiveItem, deleteItem);
 
   return (
     <Paper withBorder radius="md" className="overflow-hidden">

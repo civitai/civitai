@@ -47,12 +47,13 @@ const {
   mockAddRoleToUser: vi.fn(async () => undefined),
 }));
 
-vi.mock('~/server/redis/client', () => ({
+// 🔴 Spread the REAL package for the key constants rather than re-typing them. The
+// hand-typed REDIS_SYS_KEYS.EVENT here read 'sys:event' while production uses 'event', so
+// this suite exercised a key Redis never sees. Client and control surface stay overridden.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
   sysRedis: { lRange: mockLRange, lPush: mockLPush, lLen: mockLLen, lPopCount: mockLPopCount },
   redis: { get: vi.fn(), set: vi.fn(), del: vi.fn(), purgeTags: vi.fn() },
-  REDIS_KEYS: { EVENT: { EVENT_CLEANUP: 'event:cleanup', BASE: 'event' } },
-  REDIS_SUB_KEYS: { EVENT: { PARTNERS: 'partners', ADD_ROLE: 'add-role', CONTRIBUTORS: 'contributors' } },
-  REDIS_SYS_KEYS: { EVENT: 'sys:event' },
   withSysReadDeadline: mockWithSysReadDeadline,
 }));
 
@@ -81,7 +82,6 @@ vi.mock('~/server/integrations/discord', () => ({
 // Heavy runtime deps in the module graph — stub so import doesn't pull DB /
 // clickhouse / buzz factories.
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
   getAccountSummary: vi.fn(),
@@ -91,6 +91,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/user.service', () => ({ updateLeaderboardRank: vi.fn() }));
 
 import { eventEngine } from '~/server/events/index';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 beforeEach(() => {
   vi.clearAllMocks();

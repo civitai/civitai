@@ -32,7 +32,7 @@ import {
   CollectionType,
   CollectionWriteConfiguration,
 } from '~/shared/utils/prisma/enums';
-import type { CollectionByIdModel } from '~/types/router';
+import type { CollectionByIdModel, RouterOutput } from '~/types/router';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -185,7 +185,7 @@ export const collectionReadPrivacyData: Record<CollectionReadConfiguration, Priv
     icon: IconLock,
     label: 'Private',
     value: CollectionReadConfiguration.Private,
-    description: 'Only you and contributors for this collection can see this',
+    description: 'Only you and the collaborators you invite can see this',
   },
   [CollectionReadConfiguration.Public]: {
     icon: IconWorld,
@@ -204,22 +204,21 @@ export const collectionReadPrivacyData: Record<CollectionReadConfiguration, Priv
 export const collectionWritePrivacyData: Record<CollectionWriteConfiguration, PrivacyData> = {
   [CollectionWriteConfiguration.Private]: {
     icon: IconLock,
-    label: 'Private - only the owner can add content',
+    label: 'Me and my collaborators',
     value: CollectionWriteConfiguration.Private,
-    description: 'No one will be able to add content to this collection',
+    description: 'Only you and the collaborators you invite can add to this collection',
   },
   [CollectionWriteConfiguration.Public]: {
     icon: IconWorld,
-    label: 'Public - No review required',
+    label: 'Anyone, no review',
     value: CollectionWriteConfiguration.Public,
-    description: 'Anyone can add content to this collection. No review required.',
+    description: 'Anyone can add to this collection and their entries appear right away',
   },
   [CollectionWriteConfiguration.Review]: {
     icon: IconEyeOff,
-    label: 'Public - Review required',
+    label: 'Anyone, with review',
     value: CollectionWriteConfiguration.Review,
-    description:
-      'Anyone can add content to this collection, but content needs to be reviewed before it is visible.',
+    description: 'Anyone can submit, and you or a Manager approves entries before they appear',
   },
 };
 
@@ -329,21 +328,43 @@ export const useCollection = (
     enabled?: boolean;
   }
 ) => {
-  const { data: { collection, permissions } = {}, ...rest } = trpc.collection.getById.useQuery(
-    {
-      id: collectionId,
-    },
-    {
-      enabled: true,
-      ...opts,
-    }
-  );
+  const { data: { collection, permissions, collaborators, pendingReviewCount } = {}, ...rest } =
+    trpc.collection.getById.useQuery(
+      {
+        id: collectionId,
+      },
+      {
+        enabled: true,
+        ...opts,
+      }
+    );
 
   return {
     collection,
     permissions,
+    collaborators,
+    pendingReviewCount,
     ...rest,
   };
+};
+
+// Module scope so the default doesn't mint a new array — and through `useMemo` a new Map — on
+// every render of a subscribed component.
+const EMPTY_PERMISSION_DETAILS: RouterOutput['collection']['getPermissionDetails'] = [];
+
+// `getAllUser` rows carry no permission flags, so callers needing isCollaborator/collaborationDisabled
+// batch-fetch them here via getPermissionDetails, keyed by collection id.
+export const useCollectionsPermissionsMap = (
+  collectionIds: number[],
+  opts?: { enabled?: boolean }
+) => {
+  const enabled = (opts?.enabled ?? true) && collectionIds.length > 0;
+  const { data = EMPTY_PERMISSION_DETAILS, isLoading } =
+    trpc.collection.getPermissionDetails.useQuery({ ids: collectionIds }, { enabled });
+
+  const map = useMemo(() => new Map(data.map((c) => [c.id, c.permissions])), [data]);
+
+  return { map, isLoading: enabled && isLoading };
 };
 
 export const contestCollectionReactionsHidden = (

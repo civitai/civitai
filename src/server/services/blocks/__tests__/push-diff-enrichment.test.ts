@@ -9,14 +9,10 @@ vi.mock('../forgejo.service', () => ({
   listRepoTreeAtRef: vi.fn(),
   getBlobContent: vi.fn(),
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlockPublishRequest: { findFirst: vi.fn() } },
-  dbWrite: { appBlockPublishRequest: { updateMany: vi.fn() } },
-}));
-
 import { computePushDiffSummaries, enrichPushRequestRow } from '../publish-request.service';
 import { getBlobContent, listRepoTreeAtRef } from '../forgejo.service';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const manifestV2 = {
   blockId: 'demo',

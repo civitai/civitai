@@ -1,0 +1,167 @@
+/* Applied once at the chat window root so every pane inherits the same tokens.
+   Mantine's `c="blue"` resolves to blue-6 in light but blue-8 in dark, which is
+   near-invisible on a dark panel — hence an explicit accent rather than a role. */
+.surface {
+  --chat-accent: light-dark(var(--mantine-color-blue-7), var(--mantine-color-blue-4));
+  --chat-line: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  --chat-panel: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-6));
+  --chat-meta: light-dark(var(--mantine-color-gray-6), var(--mantine-color-dark-2));
+
+  /* Translucent rather than a palette step: it composites over whatever the row
+     sits on, so the band stays visible instead of landing on the neighbouring
+     shade of the surface it is meant to lift off. */
+  --chat-hover: light-dark(rgb(0 0 0 / 5%), rgb(255 255 255 / 6%));
+
+  /* Matches what `.card` already paints, so the default theme is unchanged —
+     it exists so a theme has one variable to move the window with. The class is
+     doubled to outrank `.card`, which is the same specificity and could win on
+     source order alone. */
+  --chat-bg: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+  --chat-send: var(--mantine-color-blue-filled);
+
+  /* Lifted above --chat-panel: popovers and the selected thread have to read as
+     nearer the reader than the rail they sit on. */
+  --chat-panel-strong: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
+  --chat-selected: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+
+  /* Body copy, and the quieter grade used for quoted text and inline labels.
+     --chat-text is also what the window inherits from, so a fixed palette is
+     not left reading the app's own light/dark text colour. */
+  --chat-text: inherit;
+  --chat-text-dim: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
+
+  /* A theme paints over the base colour rather than replacing it, so `none`
+     leaves --chat-bg showing through untouched. */
+  --chat-bg-image: none;
+
+  /* Type and geometry are as much of a skin as colour is — a terminal that is
+     merely green is a recolour, not a terminal. --chat-ui-font is the window's
+     own face: the rail, the headers and the usernames, which a theme that
+     restyles only the messages leaves speaking in the app's voice. */
+  --chat-ui-font: inherit;
+  --chat-msg-font: inherit;
+  --chat-msg-size: 13.5px;
+  --chat-radius: 19px;
+
+  /* Left UNDEFINED rather than set to transparent: the stock surface is flat
+     rows, and a bubble is a thing a theme opts into — but the Bubbles layout has
+     to draw one whatever theme is on, and var()'s fallback is the only way to
+     say "unless someone already answered this". Defining them here as
+     transparent would answer it, and every theme would flatten to one palette.
+     See .messageText / .bubbles in ExistingChat.module.scss. */
+
+  /* Derived so a theme only has to name its accent — the quote and reply tints
+     follow it instead of each carrying a hand-mixed colour. */
+  --chat-accent-soft: color-mix(in srgb, var(--chat-accent) 12%, transparent);
+}
+
+.surface.surface {
+  background-color: var(--chat-bg);
+  background-image: var(--chat-bg-image);
+  font-family: var(--chat-ui-font);
+  color: var(--chat-text);
+}
+
+/* The rail, the conversation header and the composer are the chrome around the
+   message canvas. In the default palette --chat-panel and --chat-bg resolve to
+   the same colour, so this is a no-op there and depth a theme can actually use
+   everywhere else. */
+.rail {
+  background-color: var(--chat-panel);
+  border-right: 1px solid var(--chat-line);
+}
+
+.convoHead {
+  background-color: var(--chat-panel);
+  border-bottom: 1px solid var(--chat-line);
+}
+
+.composerBar {
+  background-color: var(--chat-panel);
+  border-top: 1px solid var(--chat-line);
+}
+
+/* A default scrollbar is a strip of OS chrome sitting inside a skinned window. */
+.scroller {
+  scrollbar-width: thin;
+  scrollbar-color: var(--chat-line) transparent;
+}
+
+.themeOption {
+  position: relative;
+  display: grid;
+  gap: 5px;
+  justify-items: center;
+  padding: 7px 9px 6px;
+  border: 1px solid var(--chat-line);
+  background-color: var(--chat-panel);
+  border-radius: var(--mantine-radius-md);
+  font-size: 10.5px;
+  color: var(--chat-meta);
+
+  &:hover:not(:disabled) {
+    border-color: var(--chat-accent);
+  }
+
+  &[aria-pressed='true'] {
+    border-color: var(--chat-accent);
+    color: var(--chat-accent);
+  }
+}
+
+.themeLocked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.themeSwatch {
+  width: 56px;
+  height: 30px;
+  border-radius: 5px;
+  border: 1px solid var(--chat-line);
+}
+
+.themeLock {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+}
+
+.groupHead {
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--chat-line);
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--chat-meta);
+}
+
+/* A dot alone does not carry selection across four options with wrapping
+   descriptions — the row has to light up. */
+.option {
+  border-radius: var(--mantine-radius-sm);
+  border: 1px solid transparent;
+  padding: 7px 9px;
+
+  &:hover {
+    background-color: var(--chat-panel);
+  }
+
+  &.selected {
+    background-color: var(--chat-accent-soft);
+    border-color: var(--chat-accent);
+  }
+}
+
+/* Dashed marks it as the consequence of a choice rather than another setting. */
+.previewStrip {
+  margin-top: 3px;
+  padding: 9px 11px;
+  border-radius: var(--mantine-radius-sm);
+  background-color: var(--chat-panel);
+  border: 1px dashed var(--chat-line);
+  font-size: 12px;
+  line-height: 1.5;
+}

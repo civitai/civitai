@@ -28,6 +28,7 @@ import {
   ModelUploadType,
 } from '~/shared/utils/prisma/enums';
 import { deleteModelFileObject } from '~/utils/s3-utils';
+import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 
@@ -49,7 +50,13 @@ export async function fetchModelFilesForCache(ids: number[]) {
     );
 }
 
-export const filesForModelVersionCache = createCachedObject({
+/**
+ * NOT EXPORTED — on purpose. Every read must go through `getFilesForModelVersionCache` (which
+ * hands back a caller-owned `files` array) and every bust through
+ * `deleteFilesForModelVersionCache`. Keeping the cache object module-private makes bypassing
+ * the accessor structurally impossible rather than merely discouraged by a comment.
+ */
+const filesForModelVersionCache = createCachedObject({
   key: REDIS_KEYS.CACHES.FILES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
   ttl: CacheTTL.day,
@@ -78,8 +85,55 @@ export function reduceToBasicFileMetadata(
   };
 }
 
+/**
+ * Read the per-version file lists, returning records whose nested `files` array is the
+ * CALLER'S OWN — safe to append to, sort, or splice.
+ *
+ * 🔴 THE COPY IS FORWARD-PROTECTION, NOT A FIX FOR A LIVE MUTATOR. The one mutator that
+ * existed — `getModelsWithVersions` doing `files.push(...vaeFile)` — is gone; that call site
+ * now builds a new array (`model.service.ts`). So no caller in the tree mutates the returned
+ * `files` today, and this copy is deliberately kept as belt-and-braces for the NEXT one.
+ *
+ * 🔴 That does NOT make the two halves circular. The call site is pinned INDEPENDENTLY of this
+ * copy by `model.service.vae-append-no-mutation.test.ts`, which stubs this accessor to hand back
+ * the raw cache-owned array — the copy removed — so restoring the `push` turns it red on its own.
+ * Deleting this copy is therefore a real decision, not a no-op, and one that must be argued
+ * against the cache layer's own contract below (relevant if the deep-clone in issue #3872 lands:
+ * a clone THERE would make this copy redundant, but only once it is actually in place).
+ *
+ * What it protects against is the shared cache layer, whose contract is genuinely unsafe here:
+ * `createCachedArray` only ever SHALLOW-clones a record before handing it out, and says so —
+ * "shallow only protects TOP-LEVEL fields — nested refs are shared … consumers MUST treat
+ * returned values as read-only for nested fields"
+ * (`packages/civitai-redis/src/cached-array.ts`). Its FAIL-OPEN DEGRADED fetch (taken whenever
+ * a cluster read rejects) resolves ONE record per id for every caller that joins the in-flight
+ * lookup, so the shallow clone leaves all of them holding the SAME `files` array. An in-process
+ * L1 hit shares it the same way; this cache sets no `localTtl`, so that path is latent.
+ *
+ * Because `filesForModelVersionCache` is module-private, EVERY read routes through here, which
+ * is what makes this the single place a future appender can be made safe. Cost is one array
+ * copy per record (~a few hundred short-lived allocations per feed hydration) — negligible
+ * against the msgpack unpack already done on the same path.
+ *
+ * Array-level is the right DEPTH: no consumer mutates an individual file object, only the list.
+ * Guarded rather than unconditional so a record without a `files` array keeps its pre-existing
+ * shape instead of throwing on a hot public-API path. NOTE: with the real cache that guard is
+ * not reachable — `lookupFn` above always initialises `files: []`, and marker records are
+ * skipped inside the cache layer — so its test is an invariant guard, not regression coverage.
+ *
+ * The result is built into a `typeof records`-annotated object rather than cast: the annotation
+ * is the only thing that makes dropping a field from the returned shape a type error.
+ */
 export async function getFilesForModelVersionCache(modelVersionIds: number[]) {
-  return await filesForModelVersionCache.fetch(modelVersionIds);
+  const records = await filesForModelVersionCache.fetch(modelVersionIds);
+  const isolated: typeof records = {};
+  for (const [id, record] of Object.entries(records)) {
+    isolated[id] = {
+      ...record,
+      files: Array.isArray(record.files) ? [...record.files] : record.files,
+    };
+  }
+  return isolated;
 }
 export async function deleteFilesForModelVersionCache(modelVersionId: number) {
   await filesForModelVersionCache.bust(modelVersionId);
@@ -263,6 +317,28 @@ export async function deleteFile({
         })
       )
       .catch(() => {});
+  }
+
+  // Post-commit: drop this file's storage-resolver registry row (best-effort).
+  // Deleting one file leaves its model version alive, so the version-keyed
+  // deregistration can never reach this entry — without a file-keyed call the
+  // registry keeps describing a file that no longer exists. Keyed on `id`, the
+  // id the DELETE above actually removed (a returned `row` is the proof it did),
+  // never a re-read. Same fire-and-forget shape as the object cleanup beside it,
+  // with a terminal .catch so an Axiom-side rejection can't leak as an unhandled
+  // rejection. The helper is best-effort and never throws, but the wrapper keeps
+  // a future change from turning a registry blip into a failed delete.
+  if (row) {
+    deregisterFileLocationsByFile([id])
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'model-file-delete-deregister-file-locations',
+          message: `Failed to deregister file locations for file ${id}`,
+          error,
+        })
+      )
+      .catch(() => undefined);
   }
 
   return row ? { modelVersionId: row.modelVersionId, modelId: row.modelId } : undefined;

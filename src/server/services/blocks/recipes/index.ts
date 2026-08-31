@@ -17,8 +17,16 @@ import { starterComfyTxt2imgRecipe } from './starter-comfy-txt2img.recipe';
 // `<name>.recipe.ts`, register it below, add golden-graph tests. The `kind`
 // (`customComfy`) and the SDK are untouched — only the recipe id enum widens.
 //
-// INERT/DARK: nothing here is wired into the live blocks.router submit/estimate
-// path yet — PR6 (router + post-paid budget belt) is what will call `getRecipe`.
+// 🔴 LIVE — this registry is on the SECURITY-CRITICAL post-paid submit path.
+// `blocks.router` branches on `kind === 'customComfy'` and resolves the recipe
+// through `getRecipe`, then runs the §5.3 timeout-cap budget belt over the
+// recipe's declared `budgetFor()` ceiling. A change here changes what a block
+// can spend, so treat every edit as a spend-safety review, not a content edit.
+//
+// (Previously marked INERT/DARK pending PR6 — that shipped; the router calls
+// `getRecipe` on the live path. Kept as a note because a stale "nothing here is
+// wired up yet" on a spend-critical trust root is exactly the comment that gets
+// a future reviewer to wave a change through.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A ComfyUI /prompt graph node: class_type + inputs, link refs `['id', slot]`. */
@@ -64,9 +72,13 @@ export type RecipeCivitaiResource = {
 //
 // WHY this is a hard invariant and not just a preference: a raw customComfy step
 // submits its `input.resources` AIR array DIRECTLY to the orchestrator, which
-// BYPASSES `getGenerationResourceData`'s early-access / Private belt — that belt
-// only runs over generation-GRAPH steps (textToImage/comfy), never over a
-// hand-authored customComfy `resources` array. The router-side gate the belt
+// BYPASSES the generation path's early-access / Private belt — that belt
+// (`validateAndEnrichResources` → `getResourceData`, which folds
+// `applyPaidAccessGating`) only runs over generation-GRAPH steps
+// (textToImage/comfy), never over a hand-authored customComfy `resources` array.
+// 🔴 NAME CORRECTED: this used to cite `getGenerationResourceData`, which does
+// not exist anywhere in `src` — the substance was right, the address was not.
+// The router-side gate the belt
 // leans on (`resolveCanGenerateForVersions` → `assertViewerCanGeneratePageResources`
 // in blocks.router.ts `submitCustomComfyWorkflow`) covers baseline generatability
 // (usageControl / covered / NSFW-tier) but does NOT currently cover early-access
@@ -95,6 +107,19 @@ export type RecipeCivitaiResource = {
 // Private-subscription entitlement gate over `recipeCivitaiVersionIds(recipe)` in
 // `submitCustomComfyWorkflow` (blocks.router.ts) so the invariant is ENFORCED at
 // submit, not merely asserted by review — then this comment can relax to "prefer".
+//
+// 🔴 STATUS: THAT GATE NOW EXISTS, BUT ONLY ON THE INLINE ARM — THIS TODO IS
+// STILL OPEN FOR RECIPES. `assertViewerEntitledToInlineResources`
+// (`services/blocks/inline-comfy.service`) is exactly the gate described above:
+// it runs `getResourceData` (early-access `hasAccess` folded in) plus the
+// Private/epoch subscription check, plus anti-drop and anti-substitute asserts.
+// It is wired into `submitCustomComfyWorkflow`'s INLINE branch only, because
+// that branch has no code review behind it and needed a mechanical replacement.
+// The RECIPE branch above still runs `assertViewerCanGeneratePageResources`
+// (the weaker gate), so the invariant in this block remains load-bearing for
+// every recipe. Pointing the recipe branch at the same function is a small,
+// separate change — deliberately not folded in here, because it would alter the
+// behaviour of the two SHIPPED recipes in a PR whose subject is a new arm.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**

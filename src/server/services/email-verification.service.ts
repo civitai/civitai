@@ -2,10 +2,15 @@ import { randomBytes } from 'crypto';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { emailVerificationEmail } from '~/server/email/templates/emailVerification.email';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  handleLogError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { userUpdateCounter } from '~/server/prom/client';
+import { assertEmailAllowed } from '~/server/services/blocklist.service';
 
 const EMAIL_VERIFICATION_EXPIRY = 15 * 60; // 15 minutes in seconds
 
@@ -78,6 +83,8 @@ export async function verifyEmailChangeToken(token: string) {
 }
 
 export async function requestEmailChange(userId: number, newEmail: string) {
+  await assertEmailAllowed(newEmail);
+
   // Check if the new email is already in use
   const existingUser = await dbRead.user.findFirst({
     where: { email: newEmail },
@@ -108,8 +115,16 @@ export async function requestEmailChange(userId: number, newEmail: string) {
   // Send verification email
   await sendVerificationEmail(newEmail, user.username || 'User', token);
 
-  // Invalidate the user's session to ensure they re-authenticate after email change
-  await refreshSession(userId);
+  // Refresh the cached session shape. 🔴 This does NOT log the user out or force a re-authentication
+  // — `refreshSession` marks the user's tokens `refresh` and busts the shaped session-user entry;
+  // only `invalidateSession` marks them `invalid`. (The comment here used to claim re-authentication,
+  // which would make the `.catch` below read as downgrading a security control. There is no such
+  // control on this path, and nothing on the user row has changed yet at this point.)
+  //
+  // Best-effort: the verification email has already been SENT and the token issued, so a failed
+  // cache bust must not 500 this call — the user would see "failed", re-request, and receive a
+  // second email for work that already succeeded. Logged rather than swallowed.
+  await refreshSession(userId, { caller: 'email-verification' }).catch(handleLogError);
 
   return { success: true, message: 'Verification email sent' };
 }
@@ -127,8 +142,13 @@ export async function confirmEmailChange(token: string) {
 
   userUpdateCounter?.inc({ location: 'email-verification.service:confirmEmailChange' });
 
-  // Invalidate the user's session after successful email change
-  await refreshSession(userId);
+  // Refresh the cached session shape so the new email is served rather than the old one. As above,
+  // this is a REFRESH, not a logout — see the note in `requestEmailChange`.
+  // 🔴 Best-effort is load-bearing here: the email column is already written AND the one-time token
+  // has been consumed, so a throw would report a permanent failure for a change that succeeded and
+  // that the user can no longer retry (the link is spent). Staleness is bounded by the session
+  // entry's own TTL; a misreported, unretryable write is not.
+  await refreshSession(userId, { caller: 'email-verification' }).catch(handleLogError);
 
   return { success: true, message: 'Email address updated successfully' };
 }

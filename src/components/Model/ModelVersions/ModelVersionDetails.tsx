@@ -1,4 +1,5 @@
 import { type ModelVersionTerms, generationPrice } from '@civitai/buzz';
+import { formatLicensingFee } from '~/utils/licensing-fee-display';
 import {
   Accordion,
   ActionIcon,
@@ -94,10 +95,13 @@ import {
   useModelVersionPermission,
   useQueryModelVersionsEngagement,
 } from '~/components/Model/ModelVersions/model-version.utils';
+import { getModelVersionActionLayout } from '~/components/Model/ModelVersions/model-version-layout';
 import ModelVersionDonationGoal from '~/components/Model/ModelVersions/ModelVersionDonationGoal';
+import { ModelVersionSaleBanner } from '~/components/Model/ModelVersions/ModelVersionSaleBadge';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
+import { BaseModelWarningAlert } from '~/components/Model/BaseModelWarningAlert/BaseModelWarningAlert';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -125,6 +129,7 @@ import {
   CAROUSEL_LIMIT,
   constants,
   getEffectiveCommercialUse,
+  getEffectiveDifferentLicense,
   getRestrictedNsfwLevelsForBaseModel,
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -133,7 +138,11 @@ import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { getPrimaryFile, groupFilesByVariant } from '~/server/utils/model-helpers';
+import {
+  getPrimaryFile,
+  groupFilesByVariant,
+  resolveActiveFile,
+} from '~/server/utils/model-helpers';
 import {
   Availability,
   CollectionType,
@@ -147,9 +156,8 @@ import {
 import type { ModelById } from '~/types/router';
 import { HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
-import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
+import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-icons';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -197,6 +205,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     isSelectableInGenerator,
     canDownload: hasDownloadPermissions,
     canGenerate: hasGeneratePermissions,
+    generationRequiresPurchase,
   } = useModelVersionPermission({
     modelVersionId: version.id,
   });
@@ -228,7 +237,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const primaryFile = getPrimaryFile(version.files, {
     metadata: user?.filePreferences,
   });
-  const hashes = primaryFile?.hashes ?? [];
 
   const filesCount = version.files?.length;
   // ExternalGeneration versions are intentionally file-less (routed via external engines),
@@ -259,8 +267,19 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const tensorMetadataEnabled = detailAccordions.includes('tensor-metadata');
 
   // Shared active-file selection: the download variant picker drives it, and the
-  // Tensors panel follows it (instead of having its own file selector).
+  // Tensors panel and the details rows below follow it (instead of each having
+  // its own file selector).
   const [selectedFileId, setSelectedFileId] = useState<number | null>(null);
+  // modelFilesVisible is empty for component-only and ExternalGeneration
+  // versions, which still need a file for the Hash/AIR rows below.
+  const activeFile = useMemo(
+    () =>
+      resolveActiveFile(modelFilesVisible, selectedFileId, {
+        metadata: user?.filePreferences,
+      }) ?? primaryFile,
+    [modelFilesVisible, selectedFileId, user?.filePreferences, primaryFile]
+  );
+  const hashes = activeFile?.hashes ?? [];
 
   // Check if this is a component-only model (no model files, only components)
   const isComponentOnlyModel =
@@ -283,11 +302,21 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const paidAccessEndsAt = version?.paidAccess?.endsAt;
   const isEarlyAccess = !!paidAccessEndsAt && paidAccessEndsAt > new Date();
   const paidAccessTerms = version?.paidAccess?.terms as ModelVersionTerms | undefined;
+  // Owners see it too, worded differently: they are quoted their stored price, but their own live sale
+  // should not be invisible on their own model page.
+  const saleForViewer = version?.paidAccess?.sale ?? null;
+  // What the PAGE shows. `paidAccess.terms` stays the stored value because the version edit form
+  // initialises from it and would otherwise save a discounted price back over the creator's own — the
+  // same reason the tier cap is never folded into it. That rule protects an editor, not a button: an
+  // owner reading their own model page should see the price a buyer is quoted, like everyone else.
+  const displayTerms = saleForViewer?.buyerTerms ?? paidAccessTerms;
   const isDraft = version?.status === ModelStatus.Draft;
 
   // const shouldOmit = [1562709, 1672021, 1669468].includes(model.id) && !user?.isModerator;
+  // Drafts hide the action, except for owners/mods on ExternalGeneration versions: those carry no
+  // weights, so generating is the only way to check the wiring before publishing.
   const couldGenerate =
-    !isDraft && // We don't wanna show the action for drafts.
+    (!isDraft || (isExternalGeneration && isOwnerOrMod)) &&
     isSelectableInGenerator &&
     features.imageGeneration &&
     // !shouldOmit &&
@@ -506,6 +535,63 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       !model.allowDerivatives ||
       model.allowDifferentLicense);
 
+  const { branch, showDownloadSection } = getModelVersionActionLayout({
+    showRequestReview,
+    showPublishButton: !!showPublishButton,
+    hideDownload,
+    isComponentOnlyModel,
+    hasVisibleFiles,
+  });
+
+  const downloadSection = showDownloadSection ? (
+    <Card withBorder data-tour="model:download">
+      <Card.Section withBorder inheritPadding py="xs" px="sm">
+        <Group justify="space-between">
+          <Text size="sm" fw={600}>
+            Download
+          </Text>
+          <Group gap="xs">
+            {isOwnerOrMod && (
+              <RoutedDialogLink name="filesEdit" state={{ modelVersionId: version.id }}>
+                <Text c="blue.4" size="xs">
+                  Manage
+                </Text>
+              </RoutedDialogLink>
+            )}
+            <Text size="xs" c="dimmed">
+              {modelFilesVisible.length} variant
+              {modelFilesVisible.length !== 1 ? 's' : ''} available
+            </Text>
+          </Group>
+        </Group>
+      </Card.Section>
+      <Card.Section>
+        <DownloadVariantDropdown
+          files={filesVisible}
+          versionId={version.id}
+          modelType={model.type}
+          userPreferences={user?.filePreferences}
+          selectedFileId={selectedFileId}
+          onSelectFileId={setSelectedFileId}
+          canDownload={canDownload}
+          downloadPrice={
+            !hasDownloadPermissions && !isLoadingAccess && displayTerms?.download
+              ? displayTerms.download.price
+              : undefined
+          }
+          listedPrice={
+            hasDownloadPermissions && isOwnerOrMod && displayTerms?.download
+              ? displayTerms.download.price
+              : undefined
+          }
+          isLoadingAccess={isLoadingAccess}
+          archived={archived}
+          onPurchase={() => onPurchase('download')}
+        />
+      </Card.Section>
+    </Card>
+  ) : null;
+
   return (
     <ContainerGrid2 gutter={{ base: 'xl', sm: 'sm', md: 'xl' }}>
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
@@ -549,7 +635,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               theme: colorScheme === 'dark' ? 'dark' : 'light',
             }}
           />
-          {showRequestReview ? (
+          {branch === 'request-review' ? (
             <Button
               color="yellow"
               onClick={handleRequestReviewClick}
@@ -559,7 +645,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             >
               Request a Review
             </Button>
-          ) : showPublishButton ? (
+          ) : branch === 'publish-pending' ? (
             <Stack gap={4}>
               {canGenerate && isOwnerOrMod && (
                 <GenerateButton
@@ -630,6 +716,12 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   </Group>
                 </Stack>
               )}
+              <ModelVersionSaleBanner
+                sale={saleForViewer}
+                isOwner={isOwner}
+                isModerator={!!user?.isModerator}
+              />
+              {downloadSection}
             </Stack>
           ) : (
             <Stack gap="md">
@@ -656,8 +748,13 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       data-activity="create:model"
                       disabled={isLoadingAccess || !!model.mode}
                       generationPrice={
-                        !hasGeneratePermissions && !isLoadingAccess && paidAccessTerms
-                          ? generationPrice(paidAccessTerms)
+                        generationRequiresPurchase && !isLoadingAccess && displayTerms
+                          ? generationPrice(displayTerms)
+                          : undefined
+                      }
+                      listedPrice={
+                        !generationRequiresPurchase && isOwnerOrMod && displayTerms
+                          ? generationPrice(displayTerms) || undefined
                           : undefined
                       }
                       onPurchase={() => onPurchase('generation')}
@@ -880,9 +977,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                   </div>
                 </Stack>
               </Card>
-              {user?.isModerator && (
-                <ModelModerationCard modelId={model.id} versionFlags={version.flags} />
-              )}
               {/* Component-only model message */}
               {isComponentOnlyModel && (
                 <AlertWithIcon
@@ -896,50 +990,18 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 </AlertWithIcon>
               )}
               {/* Download Section */}
-              {!hideDownload && !isComponentOnlyModel && hasVisibleFiles && (
-                <Card withBorder>
-                  <Card.Section withBorder inheritPadding py="xs" px="sm">
-                    <Group justify="space-between">
-                      <Text size="sm" fw={600}>
-                        Download
-                      </Text>
-                      <Group gap="xs">
-                        {isOwnerOrMod && (
-                          <RoutedDialogLink name="filesEdit" state={{ modelVersionId: version.id }}>
-                            <Text c="blue.4" size="xs">
-                              Manage
-                            </Text>
-                          </RoutedDialogLink>
-                        )}
-                        <Text size="xs" c="dimmed">
-                          {modelFilesVisible.length} variant
-                          {modelFilesVisible.length !== 1 ? 's' : ''} available
-                        </Text>
-                      </Group>
-                    </Group>
-                  </Card.Section>
-                  <Card.Section>
-                    <DownloadVariantDropdown
-                      files={filesVisible}
-                      versionId={version.id}
-                      modelType={model.type}
-                      userPreferences={user?.filePreferences}
-                      selectedFileId={selectedFileId}
-                      onSelectFileId={setSelectedFileId}
-                      canDownload={canDownload}
-                      downloadPrice={
-                        !hasDownloadPermissions && !isLoadingAccess && paidAccessTerms?.download
-                          ? paidAccessTerms.download.price
-                          : undefined
-                      }
-                      isLoadingAccess={isLoadingAccess}
-                      archived={archived}
-                      onPurchase={() => onPurchase('download')}
-                    />
-                  </Card.Section>
-                </Card>
-              )}
+              <ModelVersionSaleBanner
+                sale={saleForViewer}
+                isOwner={isOwner}
+                isModerator={!!user?.isModerator}
+              />
+              {downloadSection}
             </Stack>
+          )}
+          {/* Outside the branch ternary on purpose: `publish-pending` is the branch a
+              moderator reviewing an unpublished or draft model lands in. */}
+          {user?.isModerator && (
+            <ModelModerationCard modelId={model.id} versionFlags={version.flags} />
           )}
           {/* Download-related alert */}
           {hideDownload && (
@@ -1027,6 +1089,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             baseModel={version.baseModel}
             usageControl={version.usageControl}
           />
+          <BaseModelWarningAlert baseModel={version.baseModel} />
 
           <Accordion
             variant="separated"
@@ -1424,7 +1487,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       <Group gap={4} wrap="nowrap">
                         <CurrencyIcon currency="BUZZ" size={16} />
                         <Text size="sm">
-                          {numberWithCommas(Number(version.licensingFee))} / image
+                          {formatLicensingFee(Number(version.licensingFee), version.baseModel)}
                         </Text>
                         <Popover
                           width={260}
@@ -1567,7 +1630,8 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                         type={model.type}
                         modelId={model.id}
                         modelVersionId={version.id}
-                        fileType={primaryFile?.type}
+                        fileId={activeFile?.id}
+                        fileType={activeFile?.type}
                       />
                     </div>
                   )}
@@ -1818,12 +1882,17 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                 ...model,
                 // Permissions are derived per displayed version from its base model:
                 // non-commercial base models (e.g. Ideogram) force commercial use off,
-                // and mature-restricted base models force SFW-only generation.
+                // mature-restricted base models force SFW-only generation, and
+                // same-license base models (e.g. LTXV 2.5) force merges to match.
                 allowCommercialUse: getEffectiveCommercialUse(
                   model.allowCommercialUse,
                   version.baseModel
                 ),
                 sfwOnly: model.sfwOnly || baseModelRestrictsMature,
+                allowDifferentLicense: getEffectiveDifferentLicense(
+                  model.allowDifferentLicense,
+                  version.baseModel
+                ),
               }}
               ml="auto"
             />

@@ -105,7 +105,7 @@ describe('reviewDiffPanels — dark-theme-aware backgrounds (Bug 2)', () => {
         },
       ],
     };
-    renderWithProviders(<FileDiffEntry file={file} forgejoUrl="https://forge.example/x" />);
+    renderWithProviders(<FileDiffEntry file={file} />);
 
     // Collapsed by default → no diff panel painted yet.
     expect(
@@ -121,4 +121,60 @@ describe('reviewDiffPanels — dark-theme-aware backgrounds (Bug 2)', () => {
     expect(panel, 'FileDiffEntry expanded code panel background').toBeTruthy();
     assertNoLightOnlyDiffBg();
   });
+});
+
+/**
+ * #3498 regression guard for the ELIDED-file row.
+ *
+ * A file that cannot be diffed inline (binary, too large, over the diff/file
+ * cap) used to render a per-file button linking straight out to the raw
+ * in-review snapshot, and its label ended in "— view in Forgejo". That
+ * affordance was removed; the row now just states the reason.
+ *
+ * This is the only place that guard can be asserted for real: an elided row only
+ * exists when `FileDiffEntry` is mounted with a non-null `skipReason`, so a
+ * "no external link" assertion made anywhere the component isn't mounted (e.g.
+ * against the review modal, whose code-diff panel is collapsed by default) is
+ * vacuous — it passes on the unfixed code too.
+ */
+const ELIDED_LABELS: Array<[NonNullable<FileLineDiff['skipReason']>, string]> = [
+  ['binary', 'Binary file — no inline diff'],
+  ['too-large', 'File too large to diff'],
+  ['diff-too-large', 'Diff too large to display'],
+  ['file-cap', 'Too many changed files — this one not diffed'],
+];
+
+const elidedFile = (skipReason: NonNullable<FileLineDiff['skipReason']>): FileLineDiff => ({
+  path: 'assets/logo.png',
+  changeKind: 'changed',
+  skipReason,
+  added: 0,
+  removed: 0,
+  hunks: [],
+});
+
+describe('reviewDiffPanels — an elided file offers no external link (#3498)', () => {
+  for (const [skipReason, label] of ELIDED_LABELS) {
+    test(`skipReason "${skipReason}" states the reason and renders no link out`, async () => {
+      const { container } = await renderWithProviders(
+        <FileDiffEntry file={elidedFile(skipReason)} />
+      );
+
+      // The row is mounted and the reason is what the mod is shown instead.
+      await expect.element(page.getByText(label)).toBeInTheDocument();
+      await expect.element(page.getByText('assets/logo.png')).toBeInTheDocument();
+
+      // 🔴 THE GUARD: no anchor at all — not the old button, not any other
+      // deep-link out of the in-app diff.
+      expect(container.querySelectorAll('a').length, 'anchors inside the file row').toBe(0);
+      expect(document.querySelectorAll('a[href]').length, 'anchors on the page').toBe(0);
+      expect(page.getByText('View in Forgejo').elements()).toHaveLength(0);
+
+      // Clicking an elided row must not expand a link into existence either —
+      // an elided entry has nothing to expand.
+      await page.getByText('assets/logo.png').click();
+      expect(document.querySelectorAll('a[href]').length, 'anchors after click').toBe(0);
+      expect(page.getByText('View in Forgejo').elements()).toHaveLength(0);
+    });
+  }
 });

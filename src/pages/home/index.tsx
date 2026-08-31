@@ -11,6 +11,7 @@ import { CosmeticShopSectionHomeBlock } from '~/components/HomeBlocks/CosmeticSh
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
 import { FeaturedModelVersionHomeBlock } from '~/components/HomeBlocks/FeaturedModelVersionHomeBlock';
 import { HomeBlocksSkeleton } from '~/components/HomeBlocks/HomeBlockSkeleton';
+import { FeedHomeBlock } from '~/components/HomeBlocks/FeedHomeBlock';
 import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
 import { SocialHomeBlock } from '~/components/HomeBlocks/SocialHomeBlock';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
@@ -67,17 +68,29 @@ export function Home() {
               return (
                 <React.Fragment key={homeBlock.id}>
                   {homeBlock.type === HomeBlockType.Collection && (
-                    <CollectionHomeBlock homeBlockId={homeBlock.id} metadata={homeBlock.metadata} />
+                    <CollectionHomeBlock
+                      homeBlockId={homeBlock.id}
+                      metadata={homeBlock.metadata}
+                      blockIndex={i}
+                    />
                   )}
                   {homeBlock.type === HomeBlockType.FeaturedCollections && (
                     <FeaturedCollectionsHomeBlock
                       homeBlockId={homeBlock.id}
                       metadata={homeBlock.metadata}
+                      blockIndex={i}
                     />
                   )}
                   {/* {homeBlock.type === HomeBlockType.Announcement && (
                     <AnnouncementHomeBlock homeBlockId={homeBlock.id} />
                   )} */}
+                  {homeBlock.type === HomeBlockType.Feed && (
+                    <FeedHomeBlock
+                      homeBlockId={homeBlock.id}
+                      metadata={homeBlock.metadata}
+                      blockIndex={i}
+                    />
+                  )}
                   {homeBlock.type === HomeBlockType.Leaderboard && (
                     <LeaderboardsHomeBlock
                       homeBlockId={homeBlock.id}
@@ -100,6 +113,7 @@ export function Home() {
                     <FeaturedModelVersionHomeBlock
                       homeBlockId={homeBlock.id}
                       metadata={homeBlock.metadata}
+                      blockIndex={i}
                     />
                   )}
                   {showAds && <AdUnitTop className="py-3" />}
@@ -114,129 +128,127 @@ export function Home() {
             skeleton swaps to real blocks. Restores main's load sequencing. */}
         {!isLoading && (
           <BrowsingLevelProvider browsingLevel={publicBrowsingLevelsFlag}>
-          {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
-            <Box ref={ref}>
-              <MasonryContainer py={32}>
-                {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
-                  <IsClient>
-                    <Group mb="md" justify="space-between">
-                      <Group>
-                        <Title className="text-2xl @sm:text-3xl">Images</Title>
-                        <Popover withArrow width={380}>
-                          <Popover.Target>
-                            <Box
-                              role="button"
-                              tabIndex={0}
-                              aria-label="About this section"
-                              display="inline-block"
-                              style={{ lineHeight: 0.3, cursor: 'pointer' }}
-                              color="white"
-                            >
-                              <IconInfoCircle size={20} />
-                            </Box>
-                          </Popover.Target>
-                          <Popover.Dropdown maw="100%">
-                            <Text size="sm" mb="xs">
-                              Pre-filtered list of the highest rated images post by the community
-                              over the last week
-                            </Text>
-                          </Popover.Dropdown>
-                        </Popover>
+            {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
+              <Box ref={ref}>
+                <MasonryContainer py={32}>
+                  {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
+                    <IsClient>
+                      <Group mb="md" justify="space-between">
+                        <Group>
+                          <Title className="text-2xl @sm:text-3xl">Images</Title>
+                          <Popover withArrow width={380}>
+                            <Popover.Target>
+                              <Box
+                                role="button"
+                                tabIndex={0}
+                                aria-label="About this section"
+                                display="inline-block"
+                                style={{ lineHeight: 0.3, cursor: 'pointer' }}
+                                color="white"
+                              >
+                                <IconInfoCircle size={20} />
+                              </Box>
+                            </Popover.Target>
+                            <Popover.Dropdown maw="100%">
+                              <Text size="sm" mb="xs">
+                                Pre-filtered list of the highest rated images post by the community
+                                over the last week
+                              </Text>
+                            </Popover.Dropdown>
+                          </Popover>
+                        </Group>
+
+                        <Link legacyBehavior href="/images" passHref>
+                          <Button
+                            h={34}
+                            component="a"
+                            variant="subtle"
+                            rightSection={<IconArrowRight size={16} />}
+                          >
+                            View all
+                          </Button>
+                        </Link>
                       </Group>
 
-                      <Link legacyBehavior href="/images" passHref>
-                        <Button
-                          h={34}
-                          component="a"
-                          variant="subtle"
-                          rightSection={<IconArrowRight size={16} />}
-                        >
-                          View all
-                        </Button>
-                      </Link>
-                    </Group>
+                      <ImagesInfinite
+                        showAds
+                        showFeedbackPrompt
+                        disableStoreFilters
+                        filters={{
+                          period: MetricTimeframe.Week,
+                          sort: ImageSort.MostReactions,
+                          withMeta: true,
+                        }}
+                      />
+                    </IsClient>
+                  )}
+                </MasonryContainer>
+              </Box>
+            ) : (
+              <Box ref={ref}>
+                <MasonryContainer py={32}>
+                  {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
+                    <IsClient>
+                      <Group mb="md" justify="space-between">
+                        <Group>
+                          <Title className="text-2xl @sm:text-3xl">Models</Title>
+                          <Popover withArrow width={380}>
+                            <Popover.Target>
+                              <Box
+                                role="button"
+                                tabIndex={0}
+                                aria-label="About this section"
+                                display="inline-block"
+                                style={{ lineHeight: 0.3, cursor: 'pointer' }}
+                                color="white"
+                              >
+                                <IconInfoCircle size={20} />
+                              </Box>
+                            </Popover.Target>
+                            <Popover.Dropdown maw="100%">
+                              <Text size="sm" mb="xs">
+                                Pre-filtered list of models uploaded by the community that are the
+                                highest rated over the last week
+                              </Text>
+                            </Popover.Dropdown>
+                          </Popover>
+                        </Group>
 
-                    <ImagesInfinite
-                      showAds
-                      filters={{
-                        // Required to override localStorage filters
-                        period: MetricTimeframe.Week,
-                        sort: ImageSort.MostReactions,
-                        types: undefined,
-                        hidden: undefined,
-                        followed: false,
-                        withMeta: true,
-                      }}
-                    />
-                  </IsClient>
-                )}
-              </MasonryContainer>
-            </Box>
-          ) : (
-            <Box ref={ref}>
-              <MasonryContainer py={32}>
-                {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
-                  <IsClient>
-                    <Group mb="md" justify="space-between">
-                      <Group>
-                        <Title className="text-2xl @sm:text-3xl">Models</Title>
-                        <Popover withArrow width={380}>
-                          <Popover.Target>
-                            <Box
-                              role="button"
-                              tabIndex={0}
-                              aria-label="About this section"
-                              display="inline-block"
-                              style={{ lineHeight: 0.3, cursor: 'pointer' }}
-                              color="white"
-                            >
-                              <IconInfoCircle size={20} />
-                            </Box>
-                          </Popover.Target>
-                          <Popover.Dropdown maw="100%">
-                            <Text size="sm" mb="xs">
-                              Pre-filtered list of models uploaded by the community that are the
-                              highest rated over the last week
-                            </Text>
-                          </Popover.Dropdown>
-                        </Popover>
+                        <Link legacyBehavior href="/models" passHref>
+                          <Button
+                            h={34}
+                            component="a"
+                            variant="subtle"
+                            rightSection={<IconArrowRight size={16} />}
+                          >
+                            View all
+                          </Button>
+                        </Link>
                       </Group>
 
-                      <Link legacyBehavior href="/models" passHref>
-                        <Button
-                          h={34}
-                          component="a"
-                          variant="subtle"
-                          rightSection={<IconArrowRight size={16} />}
-                        >
-                          View all
-                        </Button>
-                      </Link>
-                    </Group>
-
-                    <ModelsInfinite
-                      showAds
-                      disableStoreFilters
-                      filters={{
-                        // excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
-                        excludedTagIds: homeExcludedTags.map((tag) => tag.id),
-                        // Required to override localStorage filters
-                        period: isProd ? MetricTimeframe.Week : MetricTimeframe.AllTime,
-                        sort: ModelSort.HighestRated,
-                        types: undefined,
-                        collectionId: undefined,
-                        earlyAccess: false,
-                        status: undefined,
-                        checkpointType: undefined,
-                        baseModels: undefined,
-                        hidden: undefined,
-                      }}
-                    />
-                  </IsClient>
-                )}
-              </MasonryContainer>
-            </Box>
-          )}
+                      <ModelsInfinite
+                        showAds
+                        disableStoreFilters
+                        filters={{
+                          // excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
+                          excludedTagIds: homeExcludedTags.map((tag) => tag.id),
+                          // Required to override localStorage filters
+                          period: isProd ? MetricTimeframe.Week : MetricTimeframe.AllTime,
+                          sort: ModelSort.HighestRated,
+                          types: undefined,
+                          collectionId: undefined,
+                          earlyAccess: false,
+                          status: undefined,
+                          checkpointType: undefined,
+                          baseModels: undefined,
+                          hidden: undefined,
+                        }}
+                      />
+                    </IsClient>
+                  )}
+                </MasonryContainer>
+              </Box>
+            )}
           </BrowsingLevelProvider>
         )}
       </div>

@@ -45,6 +45,8 @@ type ImagesAsPostsInfiniteState = {
   hiddenImageIds?: number[];
   hiddenTags?: number[];
   hiddenUsers?: number[];
+  /** Resolved once here so each card doesn't register its own `getSettings` observer. */
+  swipeGalleryCards?: boolean;
 };
 const ImagesAsPostsInfiniteContext = createContext<ImagesAsPostsInfiniteState | null>(null);
 export const useImagesAsPostsInfiniteContext = () => {

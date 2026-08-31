@@ -55,12 +55,10 @@ vi.mock('~/server/db/client', () => ({
   dbWrite: mocks.dbWrite,
 }));
 
-vi.mock('~/server/db/pgDb', () => ({
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, 
   pgDbRead: mocks.pgDbRead,
   pgDbWrite: mocks.pgDbWrite,
 }));
-
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 
 vi.mock('~/server/meilisearch/client', () => ({
   metricsSearchClient: null,
@@ -79,9 +77,9 @@ vi.mock('~/server/redis/client', () => ({
   sysRedis: mocks.sysRedis,
   REDIS_SYS_KEYS: {
     SYSTEM: {
-      DISABLED_HEALTHCHECKS: 'sys:disabled-healthchecks',
-      NON_CRITICAL_HEALTHCHECKS: 'sys:non-critical-healthchecks',
-      FEATURES: 'sys:features',
+      DISABLED_HEALTHCHECKS: 'disabled-healthchecks',
+      NON_CRITICAL_HEALTHCHECKS: 'non-critical-healthchecks',
+      FEATURES: 'system:features',
     },
   },
 }));
@@ -93,6 +91,7 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
 vi.mock('~/utils/number-helpers', () => ({ getRandomInt: () => 123 }));
 
 import { runHealthChecks } from '~/pages/api/health';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // A never-aborted signal so runHealthChecks runs the full check set.
 const liveSignal = () => new AbortController().signal;

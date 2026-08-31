@@ -6,6 +6,16 @@
 export function parseTaskId(input) {
   if (!input) return null;
 
+  // Strip leading # prefix
+  if (input.startsWith('#')) {
+    input = input.slice(1);
+  }
+
+  // Custom task IDs with prefix (e.g., DEV-123, PROJ-456)
+  if (/^[a-zA-Z]+-\d+$/.test(input)) {
+    return input;
+  }
+
   // Already a task ID (alphanumeric, typically 9 chars)
   if (/^[a-zA-Z0-9]+$/.test(input) && !input.includes('/')) {
     return input;
@@ -78,4 +88,21 @@ export function parsePageId(input) {
   if (pageMatch) return pageMatch[1];
 
   return input; // Return as-is, let API handle validation
+}
+
+// Extract space ID from URL or return as-is
+// Space URL: https://app.clickup.com/{team_id}/v/s/{space_id}
+export function parseSpaceId(input) {
+  if (!input) return null;
+
+  // Already a space ID (numeric)
+  if (/^\d+$/.test(input)) {
+    return input;
+  }
+
+  // URL format: https://app.clickup.com/{team_id}/v/s/{space_id}
+  const spaceMatch = input.match(/\/s\/(\d+)/);
+  if (spaceMatch) return spaceMatch[1];
+
+  return null; // Not a valid space ID or URL
 }

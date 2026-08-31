@@ -4,7 +4,6 @@ import { Page } from '~/components/AppLayout/Page';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { PostCategories } from '~/components/Post/Infinite/PostCategories';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 
@@ -21,7 +20,6 @@ function PostsPage() {
       <MasonryContainer>
         <Stack gap="xs">
           <IsClient>
-            <PostCategories />
             <PostsInfinite filters={query} showEof showAds />
           </IsClient>
         </Stack>

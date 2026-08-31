@@ -23,11 +23,10 @@ import type {
   ModelHashType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { Availability } from '~/shared/utils/prisma/enums';
+import { Availability, ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 import { Flags } from '~/shared/utils/flags';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
-import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
 export const schema = z.object({
   // Bound to Postgres int4 (the `ModelVersion.id` column type, max 2147483647).
@@ -70,6 +69,8 @@ type VersionRow = {
   isLicensingRoot: boolean;
   licensingSourceVersionId: number | null;
   sourceLicensingFeeRecipientUserId: number | null;
+  sourceModelType: string | null;
+  sourceBaseModel: string | null;
   sourceLicensingFee: number | null;
   sourceLicensingFeeType: LicensingFeeType | null;
   sourceLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
@@ -125,6 +126,8 @@ export default MixedAuthEndpoint(async function handler(
       (lr.id IS NOT NULL) AS "isLicensingRoot",
       mv."licensingSourceVersionId",
       lsm."userId" AS "sourceLicensingFeeRecipientUserId",
+      lsm."type" AS "sourceModelType",
+      lsv."baseModel" AS "sourceBaseModel",
       lsv."licensingFee"::float8 AS "sourceLicensingFee",
       lsv."licensingFeeType" AS "sourceLicensingFeeType",
       lsv."licensingFeeSettlementCurrency" AS "sourceLicensingFeeSettlementCurrency",
@@ -151,7 +154,7 @@ export default MixedAuthEndpoint(async function handler(
           WHEN pa."terms"->'generation' IS NOT NULL
             AND COALESCE(pa."terms"->'generation'->>'free', '') <> 'true'
         THEN
-          COALESCE(CAST(pa."terms"->'generation'->>'trialLimit' AS int), ${DEFAULT_GENERATION_TRIAL_LIMIT})
+          COALESCE(CAST(pa."terms"->'generation'->>'trialLimit' AS int), ${DEFAULT_GENERATION_TRIAL_LIMIT})::int
         ELSE
           NULL
         END
@@ -187,9 +190,62 @@ export default MixedAuthEndpoint(async function handler(
   `;
 
   const { modelFileId } = results.data;
+
+  // Visibility gate, mirroring `getFileForModelVersion` (the download route this
+  // endpoint's `downloadUrl` points at): owners and moderators see every file of
+  // the version, everyone else only Public ones. The raw query above does NOT
+  // filter visibility, so without this the endpoint could advertise a non-public
+  // file's hash/name/size — and now that the url names that exact file, the
+  // download route would answer 404 for it.
+  //
+  // 🔴 The gate constrains ONLY the path that delegates to the download route.
+  // The training-results/epoch branch below builds `downloadUrl` from the
+  // orchestrator (`epoch.model_url`) and never touches
+  // /api/download/models/[modelVersionId], so the justification above simply
+  // does not apply to it — and a Private version's training file is non-Public
+  // by construction, so gating it would turn a working epoch url into
+  // `404 Missing model file` for every non-owner caller (including holders of an
+  // EntityAccess grant). Hence: resolve the caller's target over the UNFILTERED
+  // population first (this is exactly the pre-existing resolution), decide which
+  // url shape applies, and only then apply the gate to the download-route path.
+  const isOwner = !!user?.id && user.id === modelVersion.modelUserId;
+  const isMod = !!user?.isModerator;
+  const visibleFiles =
+    isOwner || isMod ? files : files.filter((f) => f.visibility === ModelFileVisibility.Public);
+
+  // The download route merges the requesting user's `filePreferences` into
+  // `getPrimaryFile` (see `getFileForModelVersion` in file.service.ts). Pinning
+  // the url to a `fileId` took that merge out of the loop, so the endpoint has to
+  // apply the preferences itself or a caller's format/size/fp choice is silently
+  // dropped. (The download route also merges explicit `format`/`size`/`fp`/
+  // `quantType` query params; this endpoint accepts none of those.)
+  //
+  // 🔴 …but ONLY on the download-route arm. The branch below selects which KIND
+  // of resource this response addresses — an orchestrator epoch artifact vs a
+  // civitai ModelFile — and that choice determines the AIR, a shared identifier
+  // that is logged, cached and handed to the orchestrator. It must not vary per
+  // caller: a preference answers "which variant do I want", not "which resource
+  // is this". So the branch is decided with the DEFAULT preferences and is
+  // identical for every caller; the caller's preferences are applied only once
+  // the download-route arm has been chosen. Hash/url consistency is unaffected —
+  // `targetFile` still governs both on that arm.
+  const filePreferences = { metadata: user?.filePreferences };
+
   // Caller-specified file overrides the version's primary file. Falls back to
   // primary when modelFileId is omitted, preserving legacy behavior.
-  const targetFile = modelFileId ? files.find((f) => f.id === modelFileId) : getPrimaryFile(files);
+  // Default preferences deliberately — see the note above; this value only ever
+  // decides `useEpochUrl` and, on the epoch arm, names the training file.
+  const requestedFile = modelFileId
+    ? files.find((f) => f.id === modelFileId)
+    : getPrimaryFile(files);
+  const useEpochUrl =
+    modelVersion.availability === Availability.Private && !!requestedFile?.metadata.trainingResults;
+
+  const targetFile = useEpochUrl
+    ? requestedFile
+    : modelFileId
+    ? visibleFiles.find((f) => f.id === modelFileId)
+    : getPrimaryFile(visibleFiles, filePreferences);
   if (!targetFile) {
     return res.status(404).json({
       error: modelFileId
@@ -202,15 +258,26 @@ export default MixedAuthEndpoint(async function handler(
   let air: string;
   let downloadUrl: string;
 
-  if (modelVersion.availability === Availability.Private && !!targetFile.metadata.trainingResults) {
+  // `useEpochUrl` already implies `targetFile === requestedFile` and that it
+  // carries `trainingResults`; reading the field back here is purely so the type
+  // narrows for the block below.
+  const trainingResults = useEpochUrl ? targetFile.metadata.trainingResults : undefined;
+
+  if (trainingResults) {
     const epoch =
-      targetFile.metadata.trainingResults.epochs?.find((e) => {
+      trainingResults.epochs?.find((e) => {
         if ('epoch_number' in e) {
           return e.epoch_number === results.data.epoch;
         }
 
         return e.epochNumber === results.data.epoch;
-      }) ?? targetFile.metadata.trainingResults.epochs?.pop();
+      }) ??
+      // Non-mutating last-element read. `epochs?.pop()` would MUTATE the
+      // metadata object this handler was handed, and it is the only reader here
+      // that does; `model-version.service.ts` already expresses the same
+      // "latest epoch" selection as `epochs?.[epochs.length - 1]`. Consolidated
+      // on the non-mutating form.
+      trainingResults.epochs?.[trainingResults.epochs.length - 1];
 
     if (!epoch) {
       return res.status(404).json({ error: 'Missing epoch' });
@@ -233,11 +300,30 @@ export default MixedAuthEndpoint(async function handler(
     // this does not work for things like Flux
     // if (targetFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });
 
+    // `fileId` is the QUERY PARAM, deliberately — not `targetFile.id`. The two
+    // agree whenever the caller supplied one (`targetFile` was looked up BY that
+    // id); when the caller omitted it the AIR simply carries no `+<fileId>`
+    // disambiguator, so it under-specifies rather than contradicting the url.
+    // Switching it to `targetFile.id` would append `+<fileId>` to the AIR of
+    // every mini response that omits the param — i.e. essentially all of them —
+    // and the AIR is a shared identifier that is logged, cached and handed to
+    // the orchestrator. That is a deliberate non-change here; see the
+    // AIR-arguments test that pins the current shape both ways.
     air = stringifyAIR({ ...modelVersion, fileId: modelFileId, fileType: targetFile.type });
+    // Pin the url to the file this response actually describes. What this
+    // replaced was a BARE `/api/download/models/[modelVersionId]` with no query
+    // string at all (`createModelFileDownloadUrl`'s `primary` flag only
+    // SUPPRESSES the other selectors — `QS.stringify` has no `primary` key, so
+    // none was ever emitted). A bare url names no file, so
+    // /api/download/models/[modelVersionId] resolves one independently: it
+    // re-runs `getPrimaryFile` over a different population (visibility-filtered)
+    // with different preferences (the requesting user's `filePreferences`) — so
+    // on a multi-file version the url could serve a file other than the one
+    // whose hash/size/name is returned here, and any consumer verifying the hash
+    // fails.
     downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
       versionId: modelVersion.id,
-      fileId: modelFileId,
-      primary: !modelFileId,
+      fileId: targetFile.id,
     })}`;
   }
 
@@ -330,7 +416,7 @@ export default MixedAuthEndpoint(async function handler(
   if (isLicensingRoot) {
     fees.push({
       role: 'baseModel',
-      amount: modelVersion.licensingFee!,
+      amount: modelVersion.licensingFee ?? 0,
       type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,
@@ -339,7 +425,7 @@ export default MixedAuthEndpoint(async function handler(
   } else if (hasSourceRule) {
     fees.push({
       role: 'baseModel',
-      amount: modelVersion.sourceLicensingFee!,
+      amount: modelVersion.sourceLicensingFee ?? 0,
       type: lowerFirst(modelVersion.sourceLicensingFeeType ?? 'PerImageBuzz'),
       settlementCurrency: lowerFirst(modelVersion.sourceLicensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.licensingSourceVersionId!,
@@ -349,7 +435,7 @@ export default MixedAuthEndpoint(async function handler(
   if (hasOwnFee) {
     fees.push({
       role: 'version',
-      amount: modelVersion.licensingFee!,
+      amount: modelVersion.licensingFee ?? 0,
       type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
       settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
       recipientModelVersionId: modelVersion.id,
@@ -357,9 +443,11 @@ export default MixedAuthEndpoint(async function handler(
     });
   }
 
+  // A version charging its own fee earns through that channel instead of tips + creator comp. The
+  // lineage fee (hasSourceRule) settles to a different creator, so it doesn't opt THIS one out.
   const payoutEnabled =
     !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
-    !Flags.hasFlag(modelVersion.versionFlags, ModelVersionFlag.DisablePayout);
+    !(modelVersion.licensingFee != null && modelVersion.licensingFee > 0);
 
   const data = {
     air,

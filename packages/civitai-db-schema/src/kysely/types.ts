@@ -15,6 +15,7 @@ import type {
   CryptoTransactionStatus,
   RewardsEligibility,
   PaymentProvider,
+  MembershipGiftStatus,
   UserEngagementType,
   LinkType,
   ModelType,
@@ -72,7 +73,10 @@ import type {
   CollectionType,
   CollectionMode,
   CollectionItemStatus,
+  CollectionItemRejectionReason,
   CollectionContributorPermission,
+  CollectionCollaboratorRole,
+  CollectionInviteStatus,
   HomeBlockType,
   Currency,
   BountyType,
@@ -82,9 +86,11 @@ import type {
   CsamReportType,
   Availability,
   PaidAccessEntityType,
+  SaleDiscountType,
   EntityCollaboratorStatus,
   ClubAdminPermission,
   ChatMemberStatus,
+  ChatNotifyLevel,
   ChatMessageType,
   PurchasableRewardUsage,
   EntityType,
@@ -125,6 +131,7 @@ import type {
   Model3DEngagementType,
   ShopifyMerchOrderStatus,
   OutboxEntity,
+  UserHubSourceType,
 } from './enums';
 
 export type Account = {
@@ -162,6 +169,26 @@ export type Announcement = {
   endsAt: Timestamp | null;
   metadata: unknown | null;
   disabled: Generated<boolean>;
+  /**
+   * Author. Null is Civitai itself; the sitewide caches select on null, so a
+   * non-null row can never reach the global banner.
+   */
+  userId: number | null;
+  coverId: number | null;
+  /**
+   * Profile-only rows never enter the announcements feed and never notify.
+   */
+  profileOnly: Generated<boolean>;
+};
+export type AnnouncementSpend = {
+  id: Generated<number>;
+  userId: number;
+  announcementId: number | null;
+  createdAt: Generated<Timestamp>;
+};
+export type AnnouncementUser = {
+  announcementId: number;
+  userId: number;
 };
 export type Answer = {
   id: Generated<number>;
@@ -273,6 +300,9 @@ export type AppBlock = {
   featured_order: number | null;
   screenshots: unknown | null;
   external_url: string | null;
+  spend_tier: Generated<string>;
+  spend_cap_buzz_per_day: number | null;
+  spend_velocity_max_gens: number | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
@@ -295,23 +325,48 @@ export type AppBlockPublishRequest = {
   rejection_reason: string | null;
   approval_notes: string | null;
   forgejo_commit_sha: string | null;
+  source_commit: string | null;
+  source_dirty: boolean | null;
   deploy_state: string | null;
   deploy_detail: string | null;
   deploy_updated_at: Timestamp | null;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
-export type AppBlockReview = {
-  id: Generated<number>;
-  app_block_id: string;
+export type AppCollaborator = {
+  app_listing_id: string;
   user_id: number;
-  rating: number;
-  recommended: Generated<boolean>;
-  details: string | null;
-  exclude: Generated<boolean>;
-  tos_violation: Generated<boolean>;
+  /**
+   * Capability role. 'editor' today. What it actually unlocks is DERIVED from the
+   * listing's kind (`capabilitiesForKind`), not stored here: content + media + submit
+   * for review + analytics on both kinds, plus earnings and submit-version/git on
+   * on-site only. Owner-only actions (managing collaborators, initiating a transfer)
+   * are NOT a role — they are reserved to the listing owner.
+   */
+  role: Generated<string>;
+  /**
+   * 'pending' | 'accepted' | 'rejected'. Only 'accepted' confers capability, and
+   * only 'accepted' is ever visible publicly.
+   */
+  status: Generated<string>;
+  /**
+   * Public-byline opt-in. Immediate-apply (no mod review) — safe because this row is
+   * outside the revision copy sets (see the header). A collaborator is listed on the
+   * public listing only when status='accepted' AND displayed=true.
+   */
+  displayed: Generated<boolean>;
+  /**
+   * The OWNER who issued the invite (audit + the "invited by" chip).
+   */
+  invited_by: number;
+  /**
+   * Last time an invite NOTIFICATION was emitted for this row — the re-invite
+   * throttle key. NB: the `EntityCollaborator` sibling has an inverted throttle
+   * (`>=` where it means `<=`); this one is written correctly (see the service).
+   */
+  last_notified_at: Timestamp | null;
   created_at: Generated<Timestamp>;
-  updated_at: Timestamp;
+  responded_at: Timestamp | null;
 };
 export type AppDevForgejoIdentity = {
   user_id: number;
@@ -348,6 +403,7 @@ export type AppListing = {
   status: Generated<string>;
   content_rating: string | null;
   external_url: string | null;
+  source_repo_url: string | null;
   connect_client_id: string | null;
   connect_requested_scopes: number | null;
   connect_scope_justifications: unknown | null;
@@ -433,6 +489,61 @@ export type AppListingScreenshot = {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
+export type AppOwnershipEvent = {
+  id: string;
+  app_listing_id: string | null;
+  /**
+   * Denormalized so the event stays self-describing after the listing is gone.
+   */
+  slug: string;
+  /**
+   * invite | accept | reject | remove | leave | display | transfer_initiated |
+   * transfer_accepted | transfer_cancelled. Bounded by a CHECK in the migration.
+   */
+  action: string;
+  /**
+   * Who performed the action.
+   */
+  actor_user_id: number | null;
+  /**
+   * Who it was performed ON (the invitee / removed editor / transfer recipient).
+   */
+  target_user_id: number | null;
+  /**
+   * Structured extras (role, before/after owner, expiry, …).
+   */
+  metadata: unknown | null;
+  created_at: Generated<Timestamp>;
+};
+export type AppOwnershipTransfer = {
+  id: string;
+  app_listing_id: string;
+  /**
+   * Snapshot of the owner at initiate time — re-asserted in-tx at accept, so a
+   * transfer initiated by an owner who has since lost the listing cannot complete.
+   */
+  from_user_id: number;
+  to_user_id: number;
+  /**
+   * 'pending' | 'accepted' | 'cancelled' | 'rejected' | 'expired'. CHECK in the migration.
+   */
+  status: Generated<string>;
+  /**
+   * Hard expiry — an unaccepted transfer stops being acceptable after this instant.
+   * Enforced in the ACCEPT path (a read-time predicate), so no sweeper job is
+   * required for correctness; a sweeper would only tidy the rows.
+   */
+  expires_at: Timestamp;
+  created_at: Generated<Timestamp>;
+  responded_at: Timestamp | null;
+};
+export type AppPageAccess = {
+  app: string;
+  path: string;
+  roles: string[];
+  updatedById: number | null;
+  updatedAt: Generated<Timestamp>;
+};
 export type AppReviewAgentReport = {
   id: string;
   publish_request_id: string;
@@ -515,71 +626,71 @@ export type ArticleMetric = {
 };
 export type ArticleRank = {
   articleId: number;
-  cryCountDayRank: Generated<number>;
-  cryCountWeekRank: Generated<number>;
-  cryCountMonthRank: Generated<number>;
-  cryCountYearRank: Generated<number>;
-  cryCountAllTimeRank: Generated<number>;
-  dislikeCountDayRank: Generated<number>;
-  dislikeCountWeekRank: Generated<number>;
-  dislikeCountMonthRank: Generated<number>;
-  dislikeCountYearRank: Generated<number>;
-  dislikeCountAllTimeRank: Generated<number>;
-  heartCountDayRank: Generated<number>;
-  heartCountWeekRank: Generated<number>;
-  heartCountMonthRank: Generated<number>;
-  heartCountYearRank: Generated<number>;
-  heartCountAllTimeRank: Generated<number>;
-  laughCountDayRank: Generated<number>;
-  laughCountWeekRank: Generated<number>;
-  laughCountMonthRank: Generated<number>;
-  laughCountYearRank: Generated<number>;
-  laughCountAllTimeRank: Generated<number>;
-  likeCountDayRank: Generated<number>;
-  likeCountWeekRank: Generated<number>;
-  likeCountMonthRank: Generated<number>;
-  likeCountYearRank: Generated<number>;
-  likeCountAllTimeRank: Generated<number>;
-  commentCountDayRank: Generated<number>;
-  commentCountWeekRank: Generated<number>;
-  commentCountMonthRank: Generated<number>;
-  commentCountYearRank: Generated<number>;
-  commentCountAllTimeRank: Generated<number>;
-  reactionCountDayRank: Generated<number>;
-  reactionCountWeekRank: Generated<number>;
-  reactionCountMonthRank: Generated<number>;
-  reactionCountYearRank: Generated<number>;
-  reactionCountAllTimeRank: Generated<number>;
-  viewCountDayRank: Generated<number>;
-  viewCountWeekRank: Generated<number>;
-  viewCountMonthRank: Generated<number>;
-  viewCountYearRank: Generated<number>;
-  viewCountAllTimeRank: Generated<number>;
-  favoriteCountDayRank: Generated<number>;
-  favoriteCountWeekRank: Generated<number>;
-  favoriteCountMonthRank: Generated<number>;
-  favoriteCountYearRank: Generated<number>;
-  favoriteCountAllTimeRank: Generated<number>;
-  hideCountDayRank: Generated<number>;
-  hideCountWeekRank: Generated<number>;
-  hideCountMonthRank: Generated<number>;
-  hideCountYearRank: Generated<number>;
-  hideCountAllTimeRank: Generated<number>;
-  collectedCountDayRank: Generated<number>;
-  collectedCountWeekRank: Generated<number>;
-  collectedCountMonthRank: Generated<number>;
-  collectedCountYearRank: Generated<number>;
-  collectedCountAllTimeRank: Generated<number>;
-  tippedCountDayRank: Generated<number>;
-  tippedCountWeekRank: Generated<number>;
-  tippedCountMonthRank: Generated<number>;
-  tippedCountYearRank: Generated<number>;
-  tippedCountAllTimeRank: Generated<number>;
-  tippedAmountCountDayRank: Generated<number>;
-  tippedAmountCountWeekRank: Generated<number>;
-  tippedAmountCountMonthRank: Generated<number>;
-  tippedAmountCountYearRank: Generated<number>;
-  tippedAmountCountAllTimeRank: Generated<number>;
+  cryCountDayRank: Generated<number | null>;
+  cryCountWeekRank: Generated<number | null>;
+  cryCountMonthRank: Generated<number | null>;
+  cryCountYearRank: Generated<number | null>;
+  cryCountAllTimeRank: Generated<number | null>;
+  dislikeCountDayRank: Generated<number | null>;
+  dislikeCountWeekRank: Generated<number | null>;
+  dislikeCountMonthRank: Generated<number | null>;
+  dislikeCountYearRank: Generated<number | null>;
+  dislikeCountAllTimeRank: Generated<number | null>;
+  heartCountDayRank: Generated<number | null>;
+  heartCountWeekRank: Generated<number | null>;
+  heartCountMonthRank: Generated<number | null>;
+  heartCountYearRank: Generated<number | null>;
+  heartCountAllTimeRank: Generated<number | null>;
+  laughCountDayRank: Generated<number | null>;
+  laughCountWeekRank: Generated<number | null>;
+  laughCountMonthRank: Generated<number | null>;
+  laughCountYearRank: Generated<number | null>;
+  laughCountAllTimeRank: Generated<number | null>;
+  likeCountDayRank: Generated<number | null>;
+  likeCountWeekRank: Generated<number | null>;
+  likeCountMonthRank: Generated<number | null>;
+  likeCountYearRank: Generated<number | null>;
+  likeCountAllTimeRank: Generated<number | null>;
+  commentCountDayRank: Generated<number | null>;
+  commentCountWeekRank: Generated<number | null>;
+  commentCountMonthRank: Generated<number | null>;
+  commentCountYearRank: Generated<number | null>;
+  commentCountAllTimeRank: Generated<number | null>;
+  reactionCountDayRank: Generated<number | null>;
+  reactionCountWeekRank: Generated<number | null>;
+  reactionCountMonthRank: Generated<number | null>;
+  reactionCountYearRank: Generated<number | null>;
+  reactionCountAllTimeRank: Generated<number | null>;
+  viewCountDayRank: Generated<number | null>;
+  viewCountWeekRank: Generated<number | null>;
+  viewCountMonthRank: Generated<number | null>;
+  viewCountYearRank: Generated<number | null>;
+  viewCountAllTimeRank: Generated<number | null>;
+  favoriteCountDayRank: Generated<number | null>;
+  favoriteCountWeekRank: Generated<number | null>;
+  favoriteCountMonthRank: Generated<number | null>;
+  favoriteCountYearRank: Generated<number | null>;
+  favoriteCountAllTimeRank: Generated<number | null>;
+  hideCountDayRank: Generated<number | null>;
+  hideCountWeekRank: Generated<number | null>;
+  hideCountMonthRank: Generated<number | null>;
+  hideCountYearRank: Generated<number | null>;
+  hideCountAllTimeRank: Generated<number | null>;
+  collectedCountDayRank: Generated<number | null>;
+  collectedCountWeekRank: Generated<number | null>;
+  collectedCountMonthRank: Generated<number | null>;
+  collectedCountYearRank: Generated<number | null>;
+  collectedCountAllTimeRank: Generated<number | null>;
+  tippedCountDayRank: Generated<number | null>;
+  tippedCountWeekRank: Generated<number | null>;
+  tippedCountMonthRank: Generated<number | null>;
+  tippedCountYearRank: Generated<number | null>;
+  tippedCountAllTimeRank: Generated<number | null>;
+  tippedAmountCountDayRank: Generated<number | null>;
+  tippedAmountCountWeekRank: Generated<number | null>;
+  tippedAmountCountMonthRank: Generated<number | null>;
+  tippedAmountCountYearRank: Generated<number | null>;
+  tippedAmountCountAllTimeRank: Generated<number | null>;
 };
 export type ArticleRatingReview = {
   id: Generated<number>;
@@ -1005,6 +1116,29 @@ export type BlockUserSubscription = {
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
+export type Blurb = {
+  id: Generated<number>;
+  userId: number;
+  name: string;
+  content: string;
+  contentHash: string;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  deletedAt: Timestamp | null;
+};
+export type BlurbReference = {
+  blurbId: number;
+  entityType: string;
+  entityId: number;
+  materializedHash: string;
+  materializedAt: Timestamp;
+  /**
+   * Set when the blurb is edited or soft-deleted, cleared once the entity is rewritten. The
+   * fan-out selector filters on it because the cross-table hash inequality it replaced cannot be
+   * indexed — see the note in 20260825000000_add_blurbs.
+   */
+  pendingSince: Timestamp | null;
+};
 export type Bounty = {
   id: Generated<number>;
   userId: number | null;
@@ -1071,51 +1205,51 @@ export type BountyEntryMetric = {
 };
 export type BountyEntryRank = {
   bountyEntryId: number;
-  cryCountDayRank: Generated<number>;
-  cryCountWeekRank: Generated<number>;
-  cryCountMonthRank: Generated<number>;
-  cryCountYearRank: Generated<number>;
-  cryCountAllTimeRank: Generated<number>;
-  dislikeCountDayRank: Generated<number>;
-  dislikeCountWeekRank: Generated<number>;
-  dislikeCountMonthRank: Generated<number>;
-  dislikeCountYearRank: Generated<number>;
-  dislikeCountAllTimeRank: Generated<number>;
-  heartCountDayRank: Generated<number>;
-  heartCountWeekRank: Generated<number>;
-  heartCountMonthRank: Generated<number>;
-  heartCountYearRank: Generated<number>;
-  heartCountAllTimeRank: Generated<number>;
-  laughCountDayRank: Generated<number>;
-  laughCountWeekRank: Generated<number>;
-  laughCountMonthRank: Generated<number>;
-  laughCountYearRank: Generated<number>;
-  laughCountAllTimeRank: Generated<number>;
-  likeCountDayRank: Generated<number>;
-  likeCountWeekRank: Generated<number>;
-  likeCountMonthRank: Generated<number>;
-  likeCountYearRank: Generated<number>;
-  likeCountAllTimeRank: Generated<number>;
-  reactionCountDayRank: Generated<number>;
-  reactionCountWeekRank: Generated<number>;
-  reactionCountMonthRank: Generated<number>;
-  reactionCountYearRank: Generated<number>;
-  reactionCountAllTimeRank: Generated<number>;
-  unitAmountCountDayRank: Generated<number>;
-  unitAmountCountWeekRank: Generated<number>;
-  unitAmountCountMonthRank: Generated<number>;
-  unitAmountCountYearRank: Generated<number>;
-  unitAmountCountAllTimeRank: Generated<number>;
-  tippedCountDayRank: Generated<number>;
-  tippedCountWeekRank: Generated<number>;
-  tippedCountMonthRank: Generated<number>;
-  tippedCountYearRank: Generated<number>;
-  tippedCountAllTimeRank: Generated<number>;
-  tippedAmountCountDayRank: Generated<number>;
-  tippedAmountCountWeekRank: Generated<number>;
-  tippedAmountCountMonthRank: Generated<number>;
-  tippedAmountCountYearRank: Generated<number>;
-  tippedAmountCountAllTimeRank: Generated<number>;
+  cryCountDayRank: Generated<number | null>;
+  cryCountWeekRank: Generated<number | null>;
+  cryCountMonthRank: Generated<number | null>;
+  cryCountYearRank: Generated<number | null>;
+  cryCountAllTimeRank: Generated<number | null>;
+  dislikeCountDayRank: Generated<number | null>;
+  dislikeCountWeekRank: Generated<number | null>;
+  dislikeCountMonthRank: Generated<number | null>;
+  dislikeCountYearRank: Generated<number | null>;
+  dislikeCountAllTimeRank: Generated<number | null>;
+  heartCountDayRank: Generated<number | null>;
+  heartCountWeekRank: Generated<number | null>;
+  heartCountMonthRank: Generated<number | null>;
+  heartCountYearRank: Generated<number | null>;
+  heartCountAllTimeRank: Generated<number | null>;
+  laughCountDayRank: Generated<number | null>;
+  laughCountWeekRank: Generated<number | null>;
+  laughCountMonthRank: Generated<number | null>;
+  laughCountYearRank: Generated<number | null>;
+  laughCountAllTimeRank: Generated<number | null>;
+  likeCountDayRank: Generated<number | null>;
+  likeCountWeekRank: Generated<number | null>;
+  likeCountMonthRank: Generated<number | null>;
+  likeCountYearRank: Generated<number | null>;
+  likeCountAllTimeRank: Generated<number | null>;
+  reactionCountDayRank: Generated<number | null>;
+  reactionCountWeekRank: Generated<number | null>;
+  reactionCountMonthRank: Generated<number | null>;
+  reactionCountYearRank: Generated<number | null>;
+  reactionCountAllTimeRank: Generated<number | null>;
+  unitAmountCountDayRank: Generated<number | null>;
+  unitAmountCountWeekRank: Generated<number | null>;
+  unitAmountCountMonthRank: Generated<number | null>;
+  unitAmountCountYearRank: Generated<number | null>;
+  unitAmountCountAllTimeRank: Generated<number | null>;
+  tippedCountDayRank: Generated<number | null>;
+  tippedCountWeekRank: Generated<number | null>;
+  tippedCountMonthRank: Generated<number | null>;
+  tippedCountYearRank: Generated<number | null>;
+  tippedCountAllTimeRank: Generated<number | null>;
+  tippedAmountCountDayRank: Generated<number | null>;
+  tippedAmountCountWeekRank: Generated<number | null>;
+  tippedAmountCountMonthRank: Generated<number | null>;
+  tippedAmountCountYearRank: Generated<number | null>;
+  tippedAmountCountAllTimeRank: Generated<number | null>;
 };
 export type BountyEntryReaction = {
   bountyEntryId: number;
@@ -1188,36 +1322,36 @@ export type BountyMetric = {
 };
 export type BountyRank = {
   bountyId: number;
-  favoriteCountDayRank: Generated<number>;
-  favoriteCountWeekRank: Generated<number>;
-  favoriteCountMonthRank: Generated<number>;
-  favoriteCountYearRank: Generated<number>;
-  favoriteCountAllTimeRank: Generated<number>;
-  trackCountDayRank: Generated<number>;
-  trackCountWeekRank: Generated<number>;
-  trackCountMonthRank: Generated<number>;
-  trackCountYearRank: Generated<number>;
-  trackCountAllTimeRank: Generated<number>;
-  entryCountDayRank: Generated<number>;
-  entryCountWeekRank: Generated<number>;
-  entryCountMonthRank: Generated<number>;
-  entryCountYearRank: Generated<number>;
-  entryCountAllTimeRank: Generated<number>;
-  benefactorCountDayRank: Generated<number>;
-  benefactorCountWeekRank: Generated<number>;
-  benefactorCountMonthRank: Generated<number>;
-  benefactorCountYearRank: Generated<number>;
-  benefactorCountAllTimeRank: Generated<number>;
-  unitAmountCountDayRank: Generated<number>;
-  unitAmountCountWeekRank: Generated<number>;
-  unitAmountCountMonthRank: Generated<number>;
-  unitAmountCountYearRank: Generated<number>;
-  unitAmountCountAllTimeRank: Generated<number>;
-  commentCountDayRank: Generated<number>;
-  commentCountWeekRank: Generated<number>;
-  commentCountMonthRank: Generated<number>;
-  commentCountYearRank: Generated<number>;
-  commentCountAllTimeRank: Generated<number>;
+  favoriteCountDayRank: Generated<number | null>;
+  favoriteCountWeekRank: Generated<number | null>;
+  favoriteCountMonthRank: Generated<number | null>;
+  favoriteCountYearRank: Generated<number | null>;
+  favoriteCountAllTimeRank: Generated<number | null>;
+  trackCountDayRank: Generated<number | null>;
+  trackCountWeekRank: Generated<number | null>;
+  trackCountMonthRank: Generated<number | null>;
+  trackCountYearRank: Generated<number | null>;
+  trackCountAllTimeRank: Generated<number | null>;
+  entryCountDayRank: Generated<number | null>;
+  entryCountWeekRank: Generated<number | null>;
+  entryCountMonthRank: Generated<number | null>;
+  entryCountYearRank: Generated<number | null>;
+  entryCountAllTimeRank: Generated<number | null>;
+  benefactorCountDayRank: Generated<number | null>;
+  benefactorCountWeekRank: Generated<number | null>;
+  benefactorCountMonthRank: Generated<number | null>;
+  benefactorCountYearRank: Generated<number | null>;
+  benefactorCountAllTimeRank: Generated<number | null>;
+  unitAmountCountDayRank: Generated<number | null>;
+  unitAmountCountWeekRank: Generated<number | null>;
+  unitAmountCountMonthRank: Generated<number | null>;
+  unitAmountCountYearRank: Generated<number | null>;
+  unitAmountCountAllTimeRank: Generated<number | null>;
+  commentCountDayRank: Generated<number | null>;
+  commentCountWeekRank: Generated<number | null>;
+  commentCountMonthRank: Generated<number | null>;
+  commentCountYearRank: Generated<number | null>;
+  commentCountAllTimeRank: Generated<number | null>;
 };
 export type BountyReport = {
   bountyId: number;
@@ -1359,6 +1493,7 @@ export type Challenge = {
   judgingCategories: unknown | null;
   reviewPercentage: Generated<number>;
   maxReviews: number | null;
+  judgingEngine: Generated<string>;
   collectionId: number | null;
   maxEntriesPerUser: Generated<number>;
   maxParticipants: number | null;
@@ -1407,6 +1542,32 @@ export type ChallengeEngagement = {
   type: ChallengeEngagementType;
   createdAt: Generated<Timestamp>;
 };
+export type ChallengeEntryComparison = {
+  id: Generated<number>;
+  challengeId: number;
+  phase: string;
+  imageIdA: number;
+  imageIdB: number;
+  firstSeatImageId: number;
+  winnerImageId: number | null;
+  margin: string | null;
+  model: string;
+  rerouted: Generated<boolean>;
+  perCategory: unknown | null;
+  reason: string | null;
+  buzzCost: Generated<number>;
+  createdAt: Generated<Timestamp>;
+};
+export type ChallengeEntryStanding = {
+  challengeId: number;
+  imageId: number;
+  userId: number;
+  rank: number;
+  comparisons: Generated<number>;
+  winRate: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
+};
 export type ChallengeEvent = {
   id: Generated<number>;
   title: string;
@@ -1435,6 +1596,7 @@ export type ChallengeJudge = {
   winnerSelectionPrompt: string | null;
   active: Generated<boolean>;
   userSelectable: Generated<boolean>;
+  judgingEngine: Generated<string>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -1472,8 +1634,10 @@ export type Changelog = {
 export type Chat = {
   id: Generated<number>;
   createdAt: Generated<Timestamp>;
-  hash: string;
+  hash: string | null;
   ownerId: number;
+  isGroup: Generated<boolean>;
+  name: string | null;
 };
 export type ChatMember = {
   id: Generated<number>;
@@ -1489,6 +1653,10 @@ export type ChatMember = {
   leftAt: Timestamp | null;
   kickedAt: Timestamp | null;
   unkickedAt: Timestamp | null;
+  filteredAt: Timestamp | null;
+  notifyLevel: Generated<ChatNotifyLevel>;
+  pinnedAt: Timestamp | null;
+  clearedAt: Timestamp | null;
 };
 export type ChatMessage = {
   id: Generated<number>;
@@ -1499,6 +1667,7 @@ export type ChatMessage = {
   contentType: Generated<ChatMessageType>;
   referenceMessageId: number | null;
   editedAt: Timestamp | null;
+  deletedAt: Timestamp | null;
 };
 export type ChatReport = {
   chatId: number;
@@ -1593,21 +1762,21 @@ export type ClubPostReaction = {
 };
 export type ClubRank = {
   clubId: number;
-  memberCountDayRank: Generated<number>;
-  memberCountWeekRank: Generated<number>;
-  memberCountMonthRank: Generated<number>;
-  memberCountYearRank: Generated<number>;
-  memberCountAllTimeRank: Generated<number>;
-  resourceCountDayRank: Generated<number>;
-  resourceCountWeekRank: Generated<number>;
-  resourceCountMonthRank: Generated<number>;
-  resourceCountYearRank: Generated<number>;
-  resourceCountAllTimeRank: Generated<number>;
-  clubPostCountDayRank: Generated<number>;
-  clubPostCountWeekRank: Generated<number>;
-  clubPostCountMonthRank: Generated<number>;
-  clubPostCountYearRank: Generated<number>;
-  clubPostCountAllTimeRank: Generated<number>;
+  memberCountDayRank: Generated<number | null>;
+  memberCountWeekRank: Generated<number | null>;
+  memberCountMonthRank: Generated<number | null>;
+  memberCountYearRank: Generated<number | null>;
+  memberCountAllTimeRank: Generated<number | null>;
+  resourceCountDayRank: Generated<number | null>;
+  resourceCountWeekRank: Generated<number | null>;
+  resourceCountMonthRank: Generated<number | null>;
+  resourceCountYearRank: Generated<number | null>;
+  resourceCountAllTimeRank: Generated<number | null>;
+  clubPostCountDayRank: Generated<number | null>;
+  clubPostCountWeekRank: Generated<number | null>;
+  clubPostCountMonthRank: Generated<number | null>;
+  clubPostCountYearRank: Generated<number | null>;
+  clubPostCountAllTimeRank: Generated<number | null>;
 };
 export type ClubStat = {
   clubId: number;
@@ -1658,6 +1827,7 @@ export type Collection = {
   metadata: Generated<unknown>;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  collaborationDisabledAt: Timestamp | null;
 };
 export type CollectionContributor = {
   createdAt: Generated<Timestamp | null>;
@@ -1665,6 +1835,16 @@ export type CollectionContributor = {
   userId: number;
   collectionId: number;
   permissions: CollectionContributorPermission[];
+};
+export type CollectionInvite = {
+  id: Generated<number>;
+  collectionId: number;
+  userId: number;
+  invitedById: number;
+  role: CollectionCollaboratorRole;
+  status: Generated<CollectionInviteStatus>;
+  createdAt: Generated<Timestamp>;
+  respondedAt: Timestamp | null;
 };
 export type CollectionItem = {
   id: Generated<number>;
@@ -1681,6 +1861,8 @@ export type CollectionItem = {
   reviewedAt: Timestamp | null;
   note: string | null;
   status: Generated<CollectionItemStatus>;
+  rejectionReason: CollectionItemRejectionReason | null;
+  rejectionDetail: string | null;
   tagId: number | null;
 };
 export type CollectionItemScore = {
@@ -1699,21 +1881,21 @@ export type CollectionMetric = {
 };
 export type CollectionRank = {
   collectionId: number;
-  followerCountDayRank: Generated<number>;
-  followerCountWeekRank: Generated<number>;
-  followerCountMonthRank: Generated<number>;
-  followerCountYearRank: Generated<number>;
-  followerCountAllTimeRank: Generated<number>;
-  itemCountDayRank: Generated<number>;
-  itemCountWeekRank: Generated<number>;
-  itemCountMonthRank: Generated<number>;
-  itemCountYearRank: Generated<number>;
-  itemCountAllTimeRank: Generated<number>;
-  contributorCountDayRank: Generated<number>;
-  contributorCountWeekRank: Generated<number>;
-  contributorCountMonthRank: Generated<number>;
-  contributorCountYearRank: Generated<number>;
-  contributorCountAllTimeRank: Generated<number>;
+  followerCountDayRank: Generated<number | null>;
+  followerCountWeekRank: Generated<number | null>;
+  followerCountMonthRank: Generated<number | null>;
+  followerCountYearRank: Generated<number | null>;
+  followerCountAllTimeRank: Generated<number | null>;
+  itemCountDayRank: Generated<number | null>;
+  itemCountWeekRank: Generated<number | null>;
+  itemCountMonthRank: Generated<number | null>;
+  itemCountYearRank: Generated<number | null>;
+  itemCountAllTimeRank: Generated<number | null>;
+  contributorCountDayRank: Generated<number | null>;
+  contributorCountWeekRank: Generated<number | null>;
+  contributorCountMonthRank: Generated<number | null>;
+  contributorCountYearRank: Generated<number | null>;
+  contributorCountAllTimeRank: Generated<number | null>;
 };
 export type CollectionReport = {
   collectionId: number;
@@ -1912,10 +2094,15 @@ export type Cosmetic = {
   leaderboardId: string | null;
   leaderboardPosition: number | null;
   createdById: number | null;
+  pHash: string | null;
+  pHashUrl: string | null;
+  pHashHex: string | null;
+  pHashVersion: string | null;
+  pHashFailedAt: Timestamp | null;
 };
 export type CosmeticShopItem = {
   id: Generated<number>;
-  cosmeticId: number;
+  cosmeticId: number | null;
   unitAmount: number;
   addedById: number | null;
   createdAt: Generated<Timestamp>;
@@ -1930,6 +2117,13 @@ export type CosmeticShopItem = {
   reviewedById: number | null;
   reviewedAt: Timestamp | null;
   rejectionReason: string | null;
+  listed: Generated<boolean>;
+};
+export type CosmeticShopItemCosmetic = {
+  shopItemId: number;
+  cosmeticId: number;
+  index: Generated<number>;
+  floorAmount: number;
 };
 export type CosmeticShopSection = {
   id: Generated<number>;
@@ -2106,6 +2300,15 @@ export type FeaturedModelVersion = {
   validFrom: Timestamp;
   validTo: Timestamp;
   position: number;
+};
+export type Feedback = {
+  id: Generated<number>;
+  area: string;
+  userId: number;
+  message: string;
+  context: Generated<unknown>;
+  status: Generated<string>;
+  createdAt: Generated<Timestamp>;
 };
 export type File = {
   id: Generated<number>;
@@ -2328,6 +2531,7 @@ export type Leaderboard = {
   query: string;
   active: boolean;
   public: boolean;
+  domain: Generated<DomainColor[]>;
 };
 export type LeaderboardResult = {
   leaderboardId: string;
@@ -2362,6 +2566,24 @@ export type Link = {
   type: LinkType;
   entityId: number;
   entityType: string;
+};
+export type MembershipGift = {
+  id: string;
+  gifterId: number;
+  recipientId: number;
+  tier: string;
+  months: number;
+  amountCents: number;
+  status: Generated<MembershipGiftStatus>;
+  message: string | null;
+  anonymous: Generated<boolean>;
+  stripeCheckoutSessionId: string | null;
+  stripePaymentIntentId: string | null;
+  stripeCouponId: string | null;
+  stripeSubscriptionId: string | null;
+  fulfilledAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type ModActivity = {
   id: Generated<number>;
@@ -2727,6 +2949,22 @@ export type ModelVersionMonetization = {
   currency: Generated<Currency>;
   unitAmount: number | null;
 };
+export type ModelVersionSale = {
+  id: Generated<number>;
+  userId: number;
+  name: string | null;
+  discountType: SaleDiscountType;
+  discountAmount: number;
+  startsAt: Timestamp;
+  endsAt: Timestamp;
+  canceledAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type ModelVersionSaleItem = {
+  saleId: number;
+  modelVersionId: number;
+};
 export type ModelVersionSponsorshipSettings = {
   id: Generated<number>;
   modelVersionMonetizationId: number;
@@ -2844,6 +3082,158 @@ export type Partner = {
   tier: Generated<number>;
   logo: string | null;
   disabled: Generated<boolean>;
+};
+export type Placement = {
+  id: Generated<number>;
+  surface: string;
+  targetType: string;
+  targetId: number;
+  ownerId: number;
+  placerId: number;
+  data: Generated<unknown>;
+  status: string;
+  /**
+   * 'owner' | 'moderator' | 'cosmeticTakedown', set with status 'removed'. The
+   * removals refund different amounts, so the status alone cannot settle the
+   * money. Constrained by "Placement_removedBy_check" — a new value needs a
+   * migration even though the column is TEXT.
+   */
+  removedBy: string | null;
+  /**
+   * What the placer paid into escrow, in Buzz. Kept per row rather than read back from
+   * the space, whose price may move between placement and release.
+   *
+   * Always 0 on a free placement, and nothing reads it there — the payout is
+   * derived from receipted holds, of which a free placement has none.
+   */
+  amount: number;
+  /**
+   * A placement made against the space's free capacity rather than paid for.
+   *
+   * Escrow is bypassed entirely: zero-amount Buzz transactions are a landmine,
+   * and the escrow's two-hold structure has neither a decline fee nor a
+   * principal to hold. Settlement moves no money at all for one of these.
+   *
+   * On the row rather than inferred from `amount = 0`, which is also what a paid
+   * placement into a zero-priced space looks like. It also has to be immutable
+   * and readable by a sweeper that never saw the request that made it.
+   */
+  free: Generated<boolean>;
+  /**
+   * Which Buzz the placer paid in, so the settlement pays the same kind back out.
+   * On the row for the same reason `amount` is: settlement is resumable, and the
+   * domain that decided the currency is not visible to a sweeper.
+   *
+   * NULL means a placement made before this column existed. Those were booked
+   * into escrow as yellow whatever was spent, and settle as yellow to match the
+   * ledger. Deliberately not backfilled — the bank is not balance-constrained,
+   * so it is a choice about legacy rows, not a limit. See `settledSpendType`.
+   */
+  spendType: string | null;
+  /**
+   * Who sold the thing being placed, when an approved placement owes them a cut.
+   * On the row rather than passed in, because the settlement is resumable and a
+   * sweeper that never saw the argument would strand the seller's share.
+   */
+  sellerId: number | null;
+  /**
+   * Set when a block declined this placement. A block is the owner refusing to
+   * give attention to anyone, and the decline fee is the price of that attention,
+   * so no fee is taken. Stored rather than inferred: settlement is resumable and
+   * must replay the same decision.
+   */
+  feeWaived: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+  expiresAt: Timestamp | null;
+  resolvedAt: Timestamp | null;
+  resolvedById: number | null;
+  /**
+   * A moderator takedown of an already-settled placement. Its own columns because
+   * `resolvedAt`/`resolvedById` record who approved it, and overwriting them on the
+   * one path whose purpose is a moderation record would destroy the approval trail.
+   */
+  takenDownAt: Timestamp | null;
+  takenDownById: number | null;
+  /**
+   * When this placement's Buzz reached the target's counter. The counter lives in
+   * ClickHouse, which has no per-placement key to ask, so the fact that it was
+   * counted is recorded here or nowhere. NULL on a placement that reached
+   * `approved` is the reconcile sweep's work queue.
+   */
+  metricCountedAt: Timestamp | null;
+  /**
+   * When a sweep took this row to count it. Two columns rather than one because
+   * the claim has to be atomic and the confirmation cannot be: two sweeps can
+   * overlap (the job lock fails open when Redis is down), and without a claim
+   * both read the same unstamped rows and both emit before either stamps. The
+   * counter never reverses, so that over-count is permanent. A claim older than
+   * the recovery window is retried, which is what stops a crash between the two
+   * writes turning into the loss this whole feature exists to end.
+   */
+  metricClaimedAt: Timestamp | null;
+  /**
+   * How many times a sweep has taken this row. A row the tracker rejects fails
+   * identically on every retry, and the claim orders by `resolvedAt`, so
+   * without a ceiling one poisoned row sits at the head of the queue being
+   * re-claimed forever and starves everything behind it.
+   */
+  metricAttempts: Generated<number>;
+};
+export type PlacementSpace = {
+  id: Generated<number>;
+  surface: string;
+  entityType: string;
+  entityId: number;
+  mode: string;
+  /**
+   * What the owner asks. The charged price is min(price, cap) computed at read; a
+   * stored effective price goes stale the moment a membership lapses.
+   */
+  price: number | null;
+  /**
+   * How many free placements this space accepts. NULL means the owner has never
+   * chosen, which resolves to the surface's default (1) rather than to zero —
+   * free capacity is opt-out. An explicit 0 is the owner taking none, which is
+   * why this replaces an on/off toggle instead of sitting beside one.
+   *
+   * Stored uncapped and ceilinged at read by the score/tier table, exactly like
+   * `price`: a stored effective value goes stale the moment a membership lapses.
+   *
+   * A column rather than a key in `settings`, because the foundation reads it
+   * and `settings` is surface-owned by construction.
+   */
+  freeSlots: number | null;
+  /**
+   * Surface-owned settings, read only by the surface that wrote them — a max
+   * sticker size means nothing to a remix gallery. Kept as JSON so this layer
+   * does not grow a column per surface idea.
+   */
+  settings: Generated<unknown>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type PlacementSuspension = {
+  userId: number;
+  reason: string | null;
+  createdAt: Generated<Timestamp>;
+  createdById: number | null;
+};
+export type PlacementTransaction = {
+  id: Generated<number>;
+  placementId: number;
+  kind: string;
+  transactionId: string | null;
+  amount: number;
+  /**
+   * Failure accounting. Without it a leg that can never succeed is
+   * indistinguishable from one that has not been tried yet, so it stays in the
+   * recovery sweep forever and — past the batch limit — starves it, while the
+   * sweep reports healthy numbers.
+   */
+  attempts: Generated<number>;
+  lastAttemptAt: Timestamp | null;
+  lastError: string | null;
+  createdAt: Generated<Timestamp>;
 };
 export type PlatformDefaultBlock = {
   app_block_id: string;
@@ -2996,6 +3386,12 @@ export type Price = {
   metadata: unknown;
   provider: Generated<PaymentProvider>;
 };
+export type PricingSlot = {
+  entityType: PaidAccessEntityType;
+  entityId: number;
+  ownerId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type Product = {
   id: string;
   active: boolean;
@@ -3004,15 +3400,6 @@ export type Product = {
   metadata: unknown;
   defaultPriceId: string | null;
   provider: Generated<PaymentProvider>;
-};
-export type PromptAllowlist = {
-  id: Generated<number>;
-  trigger: string;
-  category: string;
-  addedBy: number;
-  reason: string | null;
-  userRestrictionId: number | null;
-  createdAt: Generated<Timestamp>;
 };
 export type PurchasableReward = {
   id: Generated<number>;
@@ -3346,36 +3733,36 @@ export type TagMetric = {
 };
 export type TagRank = {
   tagId: number;
-  followerCountDayRank: Generated<number>;
-  followerCountWeekRank: Generated<number>;
-  followerCountMonthRank: Generated<number>;
-  followerCountYearRank: Generated<number>;
-  followerCountAllTimeRank: Generated<number>;
-  hiddenCountDayRank: Generated<number>;
-  hiddenCountWeekRank: Generated<number>;
-  hiddenCountMonthRank: Generated<number>;
-  hiddenCountYearRank: Generated<number>;
-  hiddenCountAllTimeRank: Generated<number>;
-  modelCountDayRank: Generated<number>;
-  modelCountWeekRank: Generated<number>;
-  modelCountMonthRank: Generated<number>;
-  modelCountYearRank: Generated<number>;
-  modelCountAllTimeRank: Generated<number>;
-  imageCountDayRank: Generated<number>;
-  imageCountWeekRank: Generated<number>;
-  imageCountMonthRank: Generated<number>;
-  imageCountYearRank: Generated<number>;
-  imageCountAllTimeRank: Generated<number>;
-  postCountDayRank: Generated<number>;
-  postCountWeekRank: Generated<number>;
-  postCountMonthRank: Generated<number>;
-  postCountYearRank: Generated<number>;
-  postCountAllTimeRank: Generated<number>;
-  articleCountDayRank: Generated<number>;
-  articleCountWeekRank: Generated<number>;
-  articleCountMonthRank: Generated<number>;
-  articleCountYearRank: Generated<number>;
-  articleCountAllTimeRank: Generated<number>;
+  followerCountDayRank: Generated<number | null>;
+  followerCountWeekRank: Generated<number | null>;
+  followerCountMonthRank: Generated<number | null>;
+  followerCountYearRank: Generated<number | null>;
+  followerCountAllTimeRank: Generated<number | null>;
+  hiddenCountDayRank: Generated<number | null>;
+  hiddenCountWeekRank: Generated<number | null>;
+  hiddenCountMonthRank: Generated<number | null>;
+  hiddenCountYearRank: Generated<number | null>;
+  hiddenCountAllTimeRank: Generated<number | null>;
+  modelCountDayRank: Generated<number | null>;
+  modelCountWeekRank: Generated<number | null>;
+  modelCountMonthRank: Generated<number | null>;
+  modelCountYearRank: Generated<number | null>;
+  modelCountAllTimeRank: Generated<number | null>;
+  imageCountDayRank: Generated<number | null>;
+  imageCountWeekRank: Generated<number | null>;
+  imageCountMonthRank: Generated<number | null>;
+  imageCountYearRank: Generated<number | null>;
+  imageCountAllTimeRank: Generated<number | null>;
+  postCountDayRank: Generated<number | null>;
+  postCountWeekRank: Generated<number | null>;
+  postCountMonthRank: Generated<number | null>;
+  postCountYearRank: Generated<number | null>;
+  postCountAllTimeRank: Generated<number | null>;
+  articleCountDayRank: Generated<number | null>;
+  articleCountWeekRank: Generated<number | null>;
+  articleCountMonthRank: Generated<number | null>;
+  articleCountYearRank: Generated<number | null>;
+  articleCountAllTimeRank: Generated<number | null>;
 };
 export type TagsOnArticle = {
   articleId: number;
@@ -3587,6 +3974,11 @@ export type User = {
   settings: Generated<unknown | null>;
   publicSettings: Generated<unknown | null>;
 };
+export type UserAnnouncementMute = {
+  userId: number;
+  creatorId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type UserCosmetic = {
   userId: number;
   cosmeticId: number;
@@ -3598,15 +3990,35 @@ export type UserCosmetic = {
   equippedToType: CosmeticEntity | null;
   forId: number | null;
   forType: CosmeticEntity | null;
+  remaining: number | null;
+};
+export type UserCosmeticShopItemResale = {
+  userId: number;
+  shopItemId: number;
+  sellerShare: number;
+  index: Generated<number>;
+  createdAt: Generated<Timestamp>;
+};
+export type UserCosmeticShopItemWishlist = {
+  userId: number;
+  shopItemId: number;
+  createdAt: Generated<Timestamp>;
+};
+export type UserCosmeticShopPurchaseCosmetic = {
+  buzzTransactionId: string;
+  cosmeticId: number;
+  unitAmount: number;
+  meta: unknown | null;
 };
 export type UserCosmeticShopPurchases = {
   userId: number;
-  cosmeticId: number;
+  cosmeticId: number | null;
   shopItemId: number;
   unitAmount: number;
   purchasedAt: Generated<Timestamp>;
   buzzTransactionId: string;
   refunded: boolean;
+  meta: unknown | null;
 };
 export type UserEngagement = {
   userId: number;
@@ -3614,11 +4026,47 @@ export type UserEngagement = {
   type: UserEngagementType;
   createdAt: Generated<Timestamp>;
 };
+export type UserHub = {
+  id: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  userId: number;
+  name: string;
+  index: Generated<number>;
+  sort: Generated<string>;
+  period: Generated<MetricTimeframe>;
+  mediaTypes: MediaType[];
+  metadata: Generated<unknown>;
+  availability: Generated<Availability>;
+  forcedBrowsingLevel: Generated<number>;
+};
+export type UserHubFollow = {
+  userId: number;
+  hubId: number;
+  createdAt: Generated<Timestamp>;
+};
+export type UserHubSource = {
+  id: Generated<number>;
+  hubId: number;
+  type: UserHubSourceType;
+  targetId: number;
+  alias: string | null;
+  enabled: Generated<boolean>;
+  index: Generated<number>;
+};
 export type UserLink = {
   id: Generated<number>;
   userId: number;
   url: string;
   type: LinkType;
+};
+export type UserMembershipOverride = {
+  userId: number;
+  tier: string;
+  note: string | null;
+  grantedById: number | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Generated<Timestamp>;
 };
 export type UserMetric = {
   userId: number;
@@ -3656,6 +4104,10 @@ export type UserProfile = {
   bio: string | null;
   message: string | null;
   messageAddedAt: Timestamp | null;
+  sfwCoverImageId: number | null;
+  sfwBio: string | null;
+  sfwMessage: string | null;
+  sfwMessageAddedAt: Timestamp | null;
   location: string | null;
   nsfw: Generated<boolean>;
   privacySettings: Generated<unknown>;
@@ -3672,51 +4124,6 @@ export type UserPurchasedRewards = {
 };
 export type UserRank = {
   userId: number;
-  downloadCountDayRank: Generated<number>;
-  downloadCountWeekRank: Generated<number>;
-  downloadCountMonthRank: Generated<number>;
-  downloadCountYearRank: Generated<number>;
-  downloadCountAllTimeRank: Generated<number>;
-  ratingCountDayRank: Generated<number>;
-  ratingCountWeekRank: Generated<number>;
-  ratingCountMonthRank: Generated<number>;
-  ratingCountYearRank: Generated<number>;
-  ratingCountAllTimeRank: Generated<number>;
-  followerCountDayRank: Generated<number>;
-  followerCountWeekRank: Generated<number>;
-  followerCountMonthRank: Generated<number>;
-  followerCountYearRank: Generated<number>;
-  followerCountAllTimeRank: Generated<number>;
-  ratingDayRank: Generated<number>;
-  ratingWeekRank: Generated<number>;
-  ratingMonthRank: Generated<number>;
-  ratingYearRank: Generated<number>;
-  ratingAllTimeRank: Generated<number>;
-  favoriteCountDayRank: Generated<number>;
-  favoriteCountWeekRank: Generated<number>;
-  favoriteCountMonthRank: Generated<number>;
-  favoriteCountYearRank: Generated<number>;
-  favoriteCountAllTimeRank: Generated<number>;
-  answerCountDayRank: Generated<number>;
-  answerCountWeekRank: Generated<number>;
-  answerCountMonthRank: Generated<number>;
-  answerCountYearRank: Generated<number>;
-  answerCountAllTimeRank: Generated<number>;
-  answerAcceptCountDayRank: Generated<number>;
-  answerAcceptCountWeekRank: Generated<number>;
-  answerAcceptCountMonthRank: Generated<number>;
-  answerAcceptCountYearRank: Generated<number>;
-  answerAcceptCountAllTimeRank: Generated<number>;
-  thumbsUpCountDayRank: Generated<number>;
-  thumbsUpCountWeekRank: Generated<number>;
-  thumbsUpCountMonthRank: Generated<number>;
-  thumbsUpCountYearRank: Generated<number>;
-  thumbsUpCountAllTimeRank: Generated<number>;
-  thumbsDownCountDayRank: Generated<number>;
-  thumbsDownCountWeekRank: Generated<number>;
-  thumbsDownCountMonthRank: Generated<number>;
-  thumbsDownCountYearRank: Generated<number>;
-  thumbsDownCountAllTimeRank: Generated<number>;
   leaderboardRank: number | null;
   leaderboardId: string | null;
   leaderboardTitle: string | null;
@@ -3884,6 +4291,8 @@ export type DB = {
   Account: Account;
   AdToken: AdToken;
   Announcement: Announcement;
+  AnnouncementSpend: AnnouncementSpend;
+  AnnouncementUser: AnnouncementUser;
   Answer: Answer;
   AnswerMetric: AnswerMetric;
   AnswerRank: AnswerRank;
@@ -3891,8 +4300,8 @@ export type DB = {
   AnswerVote: AnswerVote;
   ApiKey: ApiKey;
   app_block_publish_requests: AppBlockPublishRequest;
-  app_block_reviews: AppBlockReview;
   app_blocks: AppBlock;
+  app_collaborators: AppCollaborator;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
   app_listing_metrics: AppListingMetric;
   app_listing_moderation_events: AppListingModerationEvent;
@@ -3901,9 +4310,12 @@ export type DB = {
   app_listing_reviews: AppListingReview;
   app_listing_screenshots: AppListingScreenshot;
   app_listings: AppListing;
+  app_ownership_events: AppOwnershipEvent;
+  app_ownership_transfers: AppOwnershipTransfer;
   app_review_agent_reports: AppReviewAgentReport;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
+  AppPageAccess: AppPageAccess;
   Article: Article;
   ArticleEngagement: ArticleEngagement;
   ArticleMetric: ArticleMetric;
@@ -3925,6 +4337,8 @@ export type DB = {
   block_user_subscriptions: BlockUserSubscription;
   BlockedImage: BlockedImage;
   Blocklist: Blocklist;
+  Blurb: Blurb;
+  BlurbReference: BlurbReference;
   Bounty: Bounty;
   BountyBenefactor: BountyBenefactor;
   BountyEngagement: BountyEngagement;
@@ -3948,6 +4362,8 @@ export type DB = {
   Challenge: Challenge;
   ChallengeCategory: ChallengeCategory;
   ChallengeEngagement: ChallengeEngagement;
+  ChallengeEntryComparison: ChallengeEntryComparison;
+  ChallengeEntryStanding: ChallengeEntryStanding;
   ChallengeEvent: ChallengeEvent;
   ChallengeJudge: ChallengeJudge;
   ChallengeReport: ChallengeReport;
@@ -3971,6 +4387,7 @@ export type DB = {
   ClubTier: ClubTier;
   Collection: Collection;
   CollectionContributor: CollectionContributor;
+  CollectionInvite: CollectionInvite;
   CollectionItem: CollectionItem;
   CollectionItemScore: CollectionItemScore;
   CollectionMetric: CollectionMetric;
@@ -3996,6 +4413,7 @@ export type DB = {
   CommentV2Report: CommentV2Report;
   Cosmetic: Cosmetic;
   CosmeticShopItem: CosmeticShopItem;
+  CosmeticShopItemCosmetic: CosmeticShopItemCosmetic;
   CosmeticShopSection: CosmeticShopSection;
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
@@ -4014,6 +4432,7 @@ export type DB = {
   EntityMetricImage: EntityMetricImage;
   EntityModeration: EntityModeration;
   FeaturedModelVersion: FeaturedModelVersion;
+  Feedback: Feedback;
   File: File;
   GenerationBaseModel: GenerationBaseModel;
   GenerationCoverage: GenerationCoverage;
@@ -4043,6 +4462,7 @@ export type DB = {
   License: License;
   LicensingRoot: LicensingRoot;
   Link: Link;
+  MembershipGift: MembershipGift;
   ModActivity: ModActivity;
   Model: Model;
   Model3D: Model3D;
@@ -4071,6 +4491,8 @@ export type DB = {
   ModelVersionExploration: ModelVersionExploration;
   ModelVersionMetric: ModelVersionMetric;
   ModelVersionMonetization: ModelVersionMonetization;
+  ModelVersionSale: ModelVersionSale;
+  ModelVersionSaleItem: ModelVersionSaleItem;
   ModelVersionSponsorshipSettings: ModelVersionSponsorshipSettings;
   ModerationRule: ModerationRule;
   NewOrderPlayer: NewOrderPlayer;
@@ -4081,6 +4503,10 @@ export type DB = {
   Outbox: Outbox;
   PaidAccess: PaidAccess;
   Partner: Partner;
+  Placement: Placement;
+  PlacementSpace: PlacementSpace;
+  PlacementSuspension: PlacementSuspension;
+  PlacementTransaction: PlacementTransaction;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;
   PostHelper: PostHelper;
@@ -4093,8 +4519,8 @@ export type DB = {
   PostTag: PostTag;
   PressMention: PressMention;
   Price: Price;
+  PricingSlot: PricingSlot;
   Product: Product;
-  PromptAllowlist: PromptAllowlist;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;
   Question: Question;
@@ -4150,10 +4576,18 @@ export type DB = {
   Tool: Tool;
   TrustedSpokeDomain: TrustedSpokeDomain;
   User: User;
+  UserAnnouncementMute: UserAnnouncementMute;
   UserCosmetic: UserCosmetic;
+  UserCosmeticShopItemResale: UserCosmeticShopItemResale;
+  UserCosmeticShopItemWishlist: UserCosmeticShopItemWishlist;
+  UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserEngagement: UserEngagement;
+  UserHub: UserHub;
+  UserHubFollow: UserHubFollow;
+  UserHubSource: UserHubSource;
   UserLink: UserLink;
+  UserMembershipOverride: UserMembershipOverride;
   UserMetric: UserMetric;
   UserNotificationSettings: UserNotificationSettings;
   UserPaymentConfiguration: UserPaymentConfiguration;

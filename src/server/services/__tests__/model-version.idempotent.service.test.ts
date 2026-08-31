@@ -1,3 +1,4 @@
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Regression tests for three prod 500-floor bugs in model-version.service.ts:
@@ -17,46 +18,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findFirstOrThrow: vi.fn(),
-    findUnique: vi.fn(),
-    findUniqueOrThrow: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    delete: vi.fn(),
-    deleteMany: vi.fn(),
-    groupBy: vi.fn(),
-    count: vi.fn(),
-  });
-  const read = {
-    modelVersion: mk(),
-    donationGoal: mk(),
-    model: mk(),
-    $queryRaw: vi.fn(),
-  };
-  const write = {
-    modelVersion: mk(),
-    modelVersionEngagement: mk(),
-    model: mk(),
-    $queryRaw: vi.fn(),
-    $executeRaw: vi.fn(),
-    $transaction: vi.fn(),
-  };
-  return { mockDbRead: read, mockDbWrite: write };
-});
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
-const { mockGetOwnerDonationGoals, mockMaterialize, mockMaxDays, mockMaxModels } = vi.hoisted(() => ({
-  mockGetOwnerDonationGoals: vi.fn(),
-  mockMaterialize: vi.fn(),
-  mockMaxDays: vi.fn(),
-  mockMaxModels: vi.fn(),
-}));
+const { mockGetOwnerDonationGoals, mockMaterialize, mockMaxDays, mockMaxModels } = vi.hoisted(
+  () => ({
+    mockGetOwnerDonationGoals: vi.fn(),
+    mockMaterialize: vi.fn(),
+    mockMaxDays: vi.fn(),
+    mockMaxModels: vi.fn(),
+  })
+);
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/utils/early-access-helpers', () => ({
   getMaxEarlyAccessDays: mockMaxDays,
   getMaxEarlyAccessModels: mockMaxModels,
@@ -75,17 +48,6 @@ vi.mock('~/server/redis/caches', () => ({
   dataForModelsCache: { refresh: vi.fn() },
   modelVersionAccessCache: { refresh: vi.fn() },
 }));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
-  // The `redis`/`sysRedis` client instances live on the app shim, NOT the
-  // package (`...actual` only has the key consts + factory) — stub them so
-  // importers like db-lag-helpers resolve the named export.
-  return {
-    ...actual,
-    redis: { get: vi.fn(), set: vi.fn(), del: vi.fn().mockResolvedValue(undefined) },
-    sysRedis: { get: vi.fn() },
-  };
-});
 vi.mock('~/server/redis/resource-data.redis', () => ({ resourceDataCache: { bust: vi.fn() } }));
 vi.mock('~/server/search-index', () => ({
   modelsSearchIndex: { queueUpdate: vi.fn() },
@@ -96,6 +58,7 @@ vi.mock('~/server/services/paid-access.service', () => ({
   materializePaidAccessEndsAt: mockMaterialize,
   writePaidAccessForModelVersion: vi.fn(),
   getPaidAccess: vi.fn().mockResolvedValue({}),
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
 vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
@@ -114,11 +77,11 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
-  ingestModelById: vi.fn(),
   updateModelLastVersionAt: vi.fn(),
 }));
-vi.mock('~/server/services/model-file.service', () => ({ filesForModelVersionCache: {} }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
+vi.mock('~/server/services/model-file.service', () => ({
+  deleteFilesForModelVersionCache: vi.fn(),
+}));
 
 import {
   assertUserEarlyAccessLimits,
@@ -195,6 +158,50 @@ describe('toggleModelVersionEngagement', () => {
       toggleModelVersionEngagement({ userId: 1, versionId: 2, type: 'Notify' as any })
     ).rejects.toThrow('db down');
   });
+
+  // 868kurkc7. `ModelVersionEngagementType` has exactly ONE member today, so a
+  // PK-addressed write here is not a bug yet — it becomes one the day a second value
+  // is added, silently, because nothing in the code says so. Pinned as a shape.
+  it.each(['deleteMany', 'updateMany'] as const)(
+    'issues no PK-addressed write (%s branch)',
+    async (branch) => {
+      mockDbWrite.modelVersionEngagement.findUnique.mockResolvedValueOnce({
+        type: branch === 'deleteMany' ? 'Notify' : 'Something',
+      });
+      mockDbWrite.modelVersionEngagement.deleteMany.mockResolvedValue({ count: 1 });
+      mockDbWrite.modelVersionEngagement.updateMany.mockResolvedValue({ count: 1 });
+
+      await toggleModelVersionEngagement({ userId: 1, versionId: 2, type: 'Notify' as any });
+
+      // The EXACT where, not `objectContaining`: a loose matcher passes whether or
+      // not `type` is in the filter, which is the whole property under test.
+      expect(mockDbWrite.modelVersionEngagement[branch]).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            userId: 1,
+            modelVersionId: 2,
+            type: branch === 'deleteMany' ? 'Notify' : 'Something',
+          },
+        })
+      );
+      expect([
+        ...mockDbWrite.modelVersionEngagement.delete.mock.calls,
+        ...mockDbWrite.modelVersionEngagement.update.mock.calls,
+      ]).toEqual([]);
+    }
+  );
+
+  it('scopes each write by the type it READ', async () => {
+    mockDbWrite.modelVersionEngagement.findUnique.mockResolvedValueOnce({ type: 'Something' });
+    mockDbWrite.modelVersionEngagement.updateMany.mockResolvedValue({ count: 1 });
+
+    await toggleModelVersionEngagement({ userId: 1, versionId: 2, type: 'Notify' as any });
+
+    expect(mockDbWrite.modelVersionEngagement.updateMany).toHaveBeenCalledWith({
+      where: { userId: 1, modelVersionId: 2, type: 'Something' },
+      data: { type: 'Notify' },
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -204,7 +211,17 @@ describe('mergeVersions', () => {
   it('throws a 400 (not a join([]) 500) when sourceVersionIds is empty', async () => {
     mockDbRead.model.findUniqueOrThrow.mockResolvedValueOnce({
       userId: 7,
-      modelVersions: [{ id: 100, name: 'target', description: '', status: 'Published', earlyAccessEndsAt: null, monetization: null, meta: null }],
+      modelVersions: [
+        {
+          id: 100,
+          name: 'target',
+          description: '',
+          status: 'Published',
+          earlyAccessEndsAt: null,
+          monetization: null,
+          meta: null,
+        },
+      ],
     });
 
     let caught: unknown;

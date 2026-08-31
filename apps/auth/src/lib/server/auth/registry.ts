@@ -1,10 +1,12 @@
 import {
+  SESSION_REGISTRY_KEYS,
   createSessionRegistry,
   type SessionRegistry,
   type SessionRegistryRedis,
 } from '@civitai/auth';
-import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
+import { env } from '$env/dynamic/private';
 import { getSysRedis } from '../redis';
+import { logToAxiom } from '../axiom';
 
 // Cross-app session revocation. The redis CLIENT is built from @civitai/redis; the KEY STRINGS
 // come from @civitai/redis's registry — so a logout/ban here is seen by every app on the same
@@ -35,10 +37,21 @@ function registry(): SessionRegistry {
     // sysRedis's methods are typed to the known-key union; the registry is namespace-agnostic
     // (plain string keys), so cast at this boundary — the main app does the same on these calls.
     redis: sysRedis as unknown as SessionRegistryRedis,
-    keys: {
-      tokenState: REDIS_SYS_KEYS.SESSION.TOKEN_STATE,
-      all: REDIS_SYS_KEYS.SESSION.ALL,
-      userTokens: REDIS_KEYS.SESSION.USER_TOKENS,
+    keys: SESSION_REGISTRY_KEYS,
+    // Pass the deployment's real rolling-refresh interval so the registry can hold its eviction floor above
+    // it. Without this it falls back to the documented default, and a deployment that lengthened the interval
+    // would silently make live sessions evictable.
+    refreshIntervalSeconds: Number(env.AUTH_SESSION_UPDATE_AGE) || undefined,
+    // An eviction means an account crossed the per-user session ceiling — the signal that used to exist
+    // only as an api-primary event-loop wedge. Log it so the ceiling is observable without one.
+    onEvict: ({ userId, evicted, total }) => {
+      logToAxiom({
+        name: 'session-token-ceiling-evict',
+        type: 'info',
+        userId,
+        evicted,
+        total,
+      }).catch(() => undefined);
     },
   }));
 }

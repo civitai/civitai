@@ -1,12 +1,19 @@
-import { type ModelVersionTerms, grantsGeneration, isFreeGeneration, isPaidAccessActive } from '@civitai/buzz';
+import {
+  type ModelVersionTerms,
+  grantsGeneration,
+  isFreeGeneration,
+  isPaidAccessActive,
+} from '@civitai/buzz';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { getPaidAccess } from '~/server/services/paid-access.service';
+import { getViewerMonetization } from '~/server/services/paid-access.service';
 
 // The subset of a generation resource that paid-access gating reads/mutates. Kept structural so the
 // caller passes its full (much larger) resource type unchanged.
 export type PaidAccessGatingResource = {
   id: number;
+  /** Decides whether the gate prices on the image or video ceiling. */
+  baseModel?: string | null;
   covered?: boolean | null;
   hasAccess: boolean;
   canGenerate: boolean;
@@ -42,19 +49,20 @@ export async function applyPaidAccessGating<T extends PaidAccessGatingResource>(
   resources: T[],
   user: GenerationViewer
 ) {
-  const ids = [...new Set(resources.map((r) => r.id))];
-  if (!ids.length) return;
-  const paidAccess = await getPaidAccess('ModelVersion', ids);
-  const isOwnerOrMod = (ownerId: number) => (!!user.id && ownerId === user.id) || !!user.isModerator;
+  const byId = new Map(resources.map((r) => [r.id, { id: r.id }]));
+  if (!byId.size) return;
+  // Sale-aware, and viewer-aware with it: an owner is shown their stored price, a buyer the
+  // discounted one.
+  const monetization = await getViewerMonetization({ versions: [...byId.values()], viewer: user });
+  const isOwnerOrMod = (ownerId: number) =>
+    (!!user.id && ownerId === user.id) || !!user.isModerator;
 
-  // Collect the active gates + expose their terms on the wire DTO; ungated resources are untouched.
   const gated = new Map<number, { resource: T; ownerId: number; terms: ModelVersionTerms }>();
   for (const r of resources) {
-    const row = paidAccess[r.id];
+    const row = monetization[r.id]?.paidAccess;
     if (row && isPaidAccessActive(row)) {
-      const terms = row.terms as ModelVersionTerms;
-      gated.set(r.id, { resource: r, ownerId: row.ownerId, terms });
-      r.paidAccess = { endsAt: row.endsAt, terms };
+      gated.set(r.id, { resource: r, ownerId: row.ownerId, terms: row.terms as ModelVersionTerms });
+      r.paidAccess = { endsAt: row.endsAt, terms: row.terms as ModelVersionTerms };
     } else {
       r.paidAccess = null;
     }

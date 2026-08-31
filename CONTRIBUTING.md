@@ -70,16 +70,34 @@ every existing and future worktree of that clone inherits it until you sync.
 
 ## Verifying locally
 
+All of these need the repo's own toolchain — node `24.19.0` (the version in
+`.nvmrc`) and pnpm 10.x. **Nothing stops you running them on the wrong node**:
+`engines.node` is advisory, so `pnpm install` prints `WARN Unsupported engine`
+and continues. That is why this is worth stating rather than leaving to the
+tooling — the wrong major shows up as spurious test failures attributed to your
+branch, not as an error at install time. On NixOS there is a second, louder
+failure: outside the dev shell there are no `PRISMA_*_ENGINE_*` paths, so Prisma
+goes looking for a `linux-nixos` engine that has never been published.
+
+`nvm use` picks the right node up from `.nvmrc`; with Nix, prefix any of these
+with `nix develop -c`, or use direnv (`cp .envrc.example .envrc && direnv allow`).
+
 ```bash
 pnpm typecheck                 # full repo
 pnpm test:unit:run             # ~8,900 unit tests, node env
-pnpm test:component            # ~860 component tests in real Chromium, slower
+pnpm test:component            # ~1,300 component tests in real Chromium, slower
 pnpm exec prettier --check <files you added>
 pnpm exec eslint <files you added>
 ```
 
 Use `pnpm exec prettier --write <file>`, **not** `pnpm prettier:write -- <file>`.
 The latter ignores the argument and reformats the entire repository.
+
+Both suites use Vitest's own worker count (`cpus - 1`, or `min(12, cpus - 1)` for
+the browser one). To leave the machine usable while a suite runs, size it for that
+run with `--max-workers=8`, or with `VITEST_MAX_WORKERS=8` in the environment. The
+number applies to every project and is not clamped, so a value above 12 raises the
+Chromium instance count rather than lowering it.
 
 ### Compare against a baseline, not against zero
 

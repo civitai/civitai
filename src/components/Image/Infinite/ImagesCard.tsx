@@ -17,6 +17,8 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { CardStickerOverlay } from '~/components/Sticker/CardStickerOverlay';
+import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
@@ -24,12 +26,15 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
-import { generationGraphPanel } from '~/store/generation-graph.store';
+import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
+import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-demo';
+import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
+import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
+import { tourClickThroughZIndex } from '~/shared/constants/app-layout.constants';
 import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useTrackEvent } from '~/components/TrackView/track.utils';
 import clsx from 'clsx';
 import classes from './ImagesCard.module.scss';
 
@@ -49,7 +54,6 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
   const currentUser = useCurrentUser();
-  const { trackAction } = useTrackEvent();
 
   const image = useImageStore(data);
 
@@ -71,45 +75,30 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
   const isBlockedForAiVerification = image.blockedFor === BlockedReason.AiNotVerified;
 
-  const handleRemixClick = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
+  // Opening the menu must not follow the card's link to the image detail.
+  const handleRemixClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
 
-      // Top-of-funnel telemetry — joined to orchestration.jobs.remixOfId
-      // downstream to compute remix-conversion. The source modelVersionId
-      // for the remix is resolved server-side by getGenerationData, so it's
-      // not available on the card; leave null and join via remixStore /
-      // orchestration.jobs at funnel-analysis time.
-      trackAction({
-        type: 'Image_Remix_Click',
-        details: {
-          imageId: image.id,
-          imageType: image.type,
-          source: 'remix:image-card',
-        },
-      }).catch(() => undefined);
+  // The content-gen tour spends two steps here — one on the button, one on the
+  // options it opens — so both the open and the choice move it on by one.
+  const advanceTour = useCallback(() => {
+    if (running) helpers?.next();
+  }, [running, helpers]);
 
-      generationGraphPanel.open({
-        type: image.type,
-        id: image.id,
-      });
-
-      // Go to next step in tour when clicking
-      if (running) helpers?.next();
-    },
-    [image.type, image.id, running, helpers, trackAction]
-  );
+  // The owner's own cosmetic wins; the remix frame is only a fallback.
+  // The hook is called first and unconditionally — inside the `??` it sits after
+  // a short-circuit, which is a conditional hook call.
+  const remix = useRemixCardData(image.id);
+  const cosmetic = image.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined);
 
   const twCardStyle = useMemo(() => {
-    return !image.cosmetic?.data ? { height } : undefined;
-  }, [image.cosmetic, height]);
+    return !cosmetic ? { height } : undefined;
+  }, [cosmetic, height]);
 
   return (
-    <TwCosmeticWrapper
-      cosmetic={image.cosmetic?.data}
-      style={image.cosmetic?.data ? { height } : undefined}
-    >
+    <TwCosmeticWrapper cosmetic={cosmetic} style={cosmetic ? { height } : undefined}>
       <ElementInView component={TwCard} style={twCardStyle} className="border">
         <ImageGuard2 image={image}>
           {(safe) => (
@@ -147,6 +136,12 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     <MediaHash {...image} />
                   )}
                 </RoutedDialogLink>
+                {safe && features.stickerPlacement && (
+                  <CardStickerOverlay
+                    imageId={image.id}
+                    revealStickers={contextProps.revealStickers}
+                  />
+                )}
                 <div className="absolute left-2 top-2">
                   <div className="flex flex-nowrap items-center gap-1">
                     <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
@@ -161,6 +156,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                         score={image.judgeScore}
                         imageId={image.id}
                         judgeInfo={contextProps.judgeInfo}
+                        judgingCategories={contextProps.judgingCategories}
                       />
                     )}
                     {isModerator && image.poi && (
@@ -170,29 +166,43 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     )}
                     {(currentUser?.id === data.user.id || isModerator) &&
                       data.collectionItemStatus === CollectionItemStatus.REVIEW && (
-                      <Tooltip label="Still being reviewed — not yet eligible for judging" withinPortal>
-                        <Badge variant="filled" radius="xl" h={26} color="yellow">
-                          Pending review
-                        </Badge>
-                      </Tooltip>
-                    )}
+                        <Tooltip
+                          label="Still being reviewed — not yet eligible for judging"
+                          withinPortal
+                        >
+                          <Badge variant="filled" radius="xl" h={26} color="yellow">
+                            Pending review
+                          </Badge>
+                        </Tooltip>
+                      )}
                   </div>
                 </div>
                 {safe && (
                   <div className="absolute right-2 top-2 flex flex-col gap-2">
                     {!isBlocked && <ImageContextMenu image={image} />}
-                    {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
-                      <HoverActionButton
-                        label="Remix"
-                        size={30}
-                        color="white"
-                        variant="filled"
-                        data-activity="remix:image-card"
-                        data-tour={image.type === MediaType.image ? 'gen:remix' : undefined}
-                        onClick={handleRemixClick}
+                    {features.imageGeneration && isRemixMenuVisible(image) && (
+                      <RemixMenu
+                        image={image}
+                        source="remix:image-card"
+                        onAction={advanceTour}
+                        onOpen={advanceTour}
+                        tourTarget={image.type === MediaType.image ? 'gen:remix-menu' : undefined}
+                        // The first of those has no footer, so the menu has to
+                        // clear the layers Joyride draws over it.
+                        zIndex={running ? tourClickThroughZIndex : undefined}
                       >
-                        <IconBrush stroke={2.5} size={16} />
-                      </HoverActionButton>
+                        <HoverActionButton
+                          label="Remix"
+                          size={30}
+                          color="white"
+                          variant="filled"
+                          data-activity="remix:image-card"
+                          data-tour={image.type === MediaType.image ? 'gen:remix' : undefined}
+                          onClick={handleRemixClick}
+                        >
+                          <IconBrush stroke={2.5} size={16} />
+                        </HoverActionButton>
+                      </RemixMenu>
                     )}
                     {scheduled && (
                       <Tooltip label="Scheduled">
@@ -210,10 +220,16 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     )}
                   </div>
                 )}
+                {safe && <RemixedCardFlyout imageId={image.id} />}
 
                 {showVotes ? (
                   <div className={classes.footer}>
-                    <VotableTags entityType="image" entityId={image.id} tags={tags} />
+                    <VotableTags
+                      entityType="image"
+                      entityId={image.id}
+                      tags={tags}
+                      mediaType={image.type}
+                    />
                   </div>
                 ) : !isBlocked ? (
                   isPending ? (
@@ -235,7 +251,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     </div>
                   ) : (
                     <div className="absolute bottom-1 right-1">
-                      {data.hasMeta && (
+                      {features.imageCardInfoButton && data.hasMeta && (
                         <ImageMetaPopover2 imageId={data.id} type={data.type}>
                           <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
                             <IconInfoCircle
@@ -296,11 +312,25 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                 )}
                 {onSite && <OnsiteIndicator isRemix={isRemix} />}
               </div>
-              {!contextProps.hideReactions && (
-                <div>
-                  <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
-                </div>
-              )}
+              {!contextProps.hideReactions &&
+                // The row only becomes a flex container when there is something
+                // to put beside the reactions. `StickerPlacementCardBadge`
+                // returns null with the flag off, so wrapping unconditionally
+                // would still change this card's layout for everyone while
+                // adding nothing — a visual regression with no feature behind
+                // it, on the surface the flag exists to keep clear of.
+                (features.stickerPlacement && !contextProps.hideStickerBadge ? (
+                  <div className="flex items-center">
+                    <div className="min-w-0 flex-1">
+                      <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
+                    </div>
+                    <StickerPlacementCardBadge imageId={image.id} className="mr-2" />
+                  </div>
+                ) : (
+                  <div>
+                    <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
+                  </div>
+                ))}
             </>
           )}
         </ImageGuard2>

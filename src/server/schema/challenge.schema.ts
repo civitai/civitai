@@ -20,7 +20,9 @@ import {
   CHALLENGE_MIN_DURATION_HOURS,
   CHALLENGE_MIN_DURATION_MS,
   CHALLENGE_MIN_ENTRY_FEE,
+  RESOURCE_CONCEPT_MAX_LENGTH,
 } from '~/shared/constants/challenge.constants';
+import { JUDGING_ENGINES } from '~/server/games/daily-challenge/challenge-judging-engine';
 import { infiniteQuerySchema } from './base.schema';
 import { imageSchema } from './image.schema';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -115,13 +117,65 @@ const challengeCompletionSummarySchema = z.object({
 export type ChallengeCompletionSummary = z.infer<typeof challengeCompletionSummarySchema>;
 
 // Zod schema for Challenge.metadata (Json? column)
+//
+// Every key the column can hold must be declared here. `parseChallengeMetadata` uses this schema's
+// default strip behaviour, so an undeclared key is SILENTLY DROPPED — and several call sites parse
+// the metadata and then write the parsed object back wholesale, which deletes anything missing from
+// this list. Two fields written by raw SQL elsewhere were lost that way; see the notes below. When
+// adding a key to Challenge.metadata anywhere in the codebase, add it here in the same change.
+//
+// 🔴 DECLARING A KEY RAISES THE STAKES ON ITS TYPE. An undeclared key with a bad value is merely
+// stripped and its siblings survive; a DECLARED key with a bad value fails the whole `safeParse`,
+// and `parseChallengeMetadata` then returns `{}` — so the write-back sites above would wipe the
+// ENTIRE metadata column, including `reconciliation.paidUserIds`, which gates participation
+// back-pay. There is no live exposure today (every writer is type-safe by construction —
+// `Date.now()` for the numbers, `toISOString()` for the strings — and all production rows conform),
+// but a new key whose writer can emit a wrong type is a much bigger liability declared than
+// undeclared. Prefer a permissive type over an exact one when the writer is not provably narrow.
 export const challengeMetadataSchema = z.object({
   challengeType: z.string().optional(),
   resourceUserId: z.number().optional(),
   resourceModelId: z.number().optional(),
   articleId: z.number().optional(),
   themeElements: z.array(z.string()).optional(),
+  // Truncated rather than rejected: a `.max()` here would fail the whole safeParse and wipe the
+  // metadata column (see the note above). Cap rationale lives with RESOURCE_CONCEPT_MAX_LENGTH.
+  resourceConcept: z
+    .string()
+    .transform((s) => s.slice(0, RESOURCE_CONCEPT_MAX_LENGTH))
+    .optional(),
   completionSummary: challengeCompletionSummarySchema.optional(),
+  // Epoch millis of the last review pass, written as a bare JSON number by a raw jsonb merge in
+  // daily-challenge-processing. TWO readers, and the second is the one that matters:
+  //
+  //   1. getActiveChallengesFromDb's `ORDER BY cast(metadata->>'reviewedAt' as bigint) NULLS FIRST`
+  //      round-robin. Only decides anything once the Active set exceeds CHALLENGE_JOB_BATCH_SIZE
+  //      (200 vs ~31 today), so on its own this reader would make the key look inconsequential.
+  //   2. The INCREMENTAL-REVIEW WATERMARK in the review job: `lastReviewedAt` defaults to the
+  //      challenge's start date and is overwritten by this key, then gates the candidate pool with
+  //      `AND ci."reviewedAt" >= ${lastReviewedAt}`. Losing the key rewinds that watermark to the
+  //      START OF THE CHALLENGE, so every entry since then re-enters the pool. This has nothing to
+  //      do with batch size and is not bounded by the Active count.
+  //
+  // Reader 2 is why this is not cosmetic: for PAID user challenges `judgeAllEntries` skips the
+  // sampling cap entirely, so a rewound watermark means the whole accumulated backlog is judged in
+  // a single run — re-judging work already paid for, at LLM cost. Do not reason about this key from
+  // the ordering alone.
+  reviewedAt: z.number().optional(),
+  // ISO timestamp stamped by claimChallengeForCompletion when a run claims a challenge into
+  // Completing. Read back two ways: the time-based stuck-challenge reset, and the completion job's
+  // claim-ownership check that gates its telemetry. Both read the RAW jsonb, not a parsed object,
+  // so the strip never affected a read — what it cost was durability across a parse-then-write-back.
+  // The one concrete case: a slow run whose claim was reset would strip the stamp on its late write,
+  // so the run that re-claimed saw none, failed open, and both emitted. Declaring it makes that a
+  // single emit. NOTE this does NOT make a stampless Completing row impossible — that row is
+  // unrecoverable (the reset's comparison is NULL-propagating, so it is never selected), and it is
+  // still reachable via a stale full-column metadata replace that was never carrying the stamp to
+  // begin with. See the note on the completing-stuck gauge in challenge.metrics.ts.
+  completingClaimedAt: z.string().optional(),
+  // Written once by the admin/temp challenge migration endpoint. No reader today, so losing it is
+  // cosmetic — declared because the rule above is only worth anything if it is applied uniformly.
+  migratedAt: z.string().optional(),
   reconciliation: z
     .object({
       paidUserIds: z.array(z.number()).optional(),
@@ -373,7 +427,10 @@ export const challengeJudgingCategorySchema = challengeJudgingCategoryInputSchem
 });
 export type ChallengeJudgingCategory = z.infer<typeof challengeJudgingCategorySchema>;
 
-const judgingCategoryRefinements = (cats: { key: string; weight: number }[], ctx: z.RefinementCtx) => {
+const judgingCategoryRefinements = (
+  cats: { key: string; weight: number }[],
+  ctx: z.RefinementCtx
+) => {
   if (cats.filter((c) => c.key === 'theme').length !== 1)
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Theme is required exactly once' });
   const keys = cats.map((c) => c.key);
@@ -601,6 +658,7 @@ export type ChallengeWinnerSummary = {
 export type ChallengeWithWinnersListItem = ChallengeListItem & {
   winners: ChallengeWinnerSummary[];
   completionSummary: ChallengeCompletionSummary | null;
+  judgingCategories: ChallengeJudgingCategory[] | null;
 };
 
 // Input schema for completed challenges with winners
@@ -704,6 +762,7 @@ export const upsertJudgeSchema = z.object({
   winnerSelectionPrompt: z.string().optional().nullable(),
   active: z.boolean().optional(),
   userSelectable: z.boolean().optional(),
+  judgingEngine: z.enum(Object.values(JUDGING_ENGINES)).optional(),
 });
 
 // Playground: Generate content for a model version
@@ -738,6 +797,17 @@ export const playgroundReviewImageSchema = z.object({
   aiModel: z.string().min(1).optional(),
   judgingCategories: challengeJudgingCategoriesInputSchema.optional(),
   nsfw: z.boolean().optional(),
+});
+
+// Playground: dry-run a challenge's field through the pairwise ladder. Writes nothing — see
+// runLadderDryRun — but the comparisons are real LLM calls and really cost Buzz.
+export type PlaygroundRunLadderInput = z.infer<typeof playgroundRunLadderSchema>;
+export const playgroundRunLadderSchema = z.object({
+  challengeId: z.number(),
+  // Bounded well below the production K by default: a moderator experimenting should not be able
+  // to start a several-thousand-comparison run from a form field by accident.
+  topK: z.number().int().min(2).max(60).optional(),
+  includePodium: z.boolean().optional(),
 });
 
 // Playground: Pick winners from a challenge

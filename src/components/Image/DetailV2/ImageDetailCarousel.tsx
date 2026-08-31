@@ -1,6 +1,8 @@
 import { useLocalStorage } from '@mantine/hooks';
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
+import { ImageStickerOverlay } from '~/components/Sticker/ImageStickerOverlay';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
@@ -15,6 +17,7 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { allowNativeDragStart, watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
 
 type ImageDetailCarouselProps = {
   videoRef?: React.ForwardedRef<EdgeVideoRef>;
@@ -75,19 +78,6 @@ function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | nu
 // Comfortably longer than embla's scroll animation (duration 25), so it only
 // ever fires for a 'settle' that was genuinely dropped.
 const SETTLE_FALLBACK_MS = 800;
-
-// Touch and pen drags navigate; mouse drags don't, so click-dragging an image on
-// desktop still does nothing. At module scope so the body is identical every
-// render — embla compares function options by source string.
-function watchTouchDrag(
-  _emblaApi: EmblaCarouselType,
-  event: TouchEvent | MouseEvent | PointerEvent
-) {
-  // embla binds touchstart/mousedown today; the pointerType branch keeps this
-  // correct if it ever moves to pointer events
-  if ('pointerType' in event) return event.pointerType !== 'mouse';
-  return event.type.startsWith('touch');
-}
 
 export function ImageDetailCarousel({
   images,
@@ -273,10 +263,31 @@ function ImageContent({
 
   const isVideo = image?.type === 'video';
 
+  // dragstart carries no pointerType, and android chrome fires it for a long-press
+  // drag — leaving that one to embla keeps the touch swipe as `watchTouchDrag` has it
+  const pointerType = useRef('mouse');
+
+  const handleDragStart = (event: React.DragEvent) => {
+    if (pointerType.current !== 'mouse') return;
+    const media = event.target;
+    if (!(media instanceof HTMLImageElement) && !(media instanceof HTMLVideoElement)) return;
+    allowNativeDragStart(event);
+    setMediaDragData(event.dataTransfer, {
+      url: media.currentSrc || media.src,
+      mediaId: image.id,
+      type: isVideo ? 'video' : 'image',
+    });
+  };
+
   return (
     <ImageGuardContent image={image} {...connect}>
       {(safe) => (
-        <div ref={setRef} className="relative flex size-full items-center justify-center">
+        <div
+          ref={setRef}
+          onPointerDownCapture={(event) => (pointerType.current = event.pointerType)}
+          onDragStartCapture={handleDragStart}
+          className="relative flex size-full items-center justify-center"
+        >
           {!safe && width && height ? (
             <div
               className="relative flex max-h-full max-w-full flex-1"
@@ -334,6 +345,7 @@ function ImageContent({
               }}
             />
           )}
+          {safe && <ImageStickerOverlay imageId={image.id} width={width} height={height} />}
         </div>
       )}
     </ImageGuardContent>

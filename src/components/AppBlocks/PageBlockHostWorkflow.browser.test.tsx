@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { onReadyAttributeWrite } from '../../../test/commitWindow';
 
 /**
  * W10 money-path bridge gap regression (page surface).
@@ -83,6 +84,7 @@ vi.mock('~/utils/trpc', () => ({
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -95,6 +97,7 @@ vi.mock('~/utils/trpc', () => ({
           list: { fetch: vi.fn() },
           getCount: { fetch: vi.fn() },
           getCounts: { fetch: vi.fn() },
+          get: { fetch: vi.fn() },
         },
         storage: {
           get: { fetch: vi.fn() },
@@ -155,6 +158,8 @@ const baseProps = {
   blockInstanceId: 'page_apb_test',
   appName: 'Budgeted Generator',
   iframeSrc: SAME_ORIGIN_SRC,
+  // The public run surface. Required since the init-fragment gate keys on it.
+  surface: 'page-run' as const,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -178,6 +183,24 @@ async function driveToReady() {
     const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
     if (el.getAttribute('data-block-ready') !== 'true') throw new Error('not ready yet');
   });
+}
+
+/**
+ * Wait for the iframe to mount, then post BLOCK_READY on a CANCELLABLE interval.
+ *
+ * Cancellable is load-bearing: a drive left running past the end of a test posts
+ * BLOCK_READY into the NEXT test's freshly-mounted host — measured, that turned the
+ * "before BLOCK_READY is dropped" guard below red for a reason having nothing to do
+ * with the race under study. Callers stop it in a `finally`.
+ */
+async function startReadyDrive() {
+  await vi.waitFor(() => {
+    const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
+    if (!el.contentWindow) throw new Error('not mounted yet');
+  });
+  const timer = setInterval(() => postFromBlock('BLOCK_READY', {}), 10);
+  postFromBlock('BLOCK_READY', {});
+  return () => clearInterval(timer);
 }
 
 describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
@@ -410,7 +433,58 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
     expect(dialogProps.minBuzzAmount).toBe(50_000);
   });
 
-  test('OPEN_BUZZ_PURCHASE before BLOCK_READY is dropped (no pre-handshake spend modal)', async () => {
+  /**
+   * REGRESSION GUARD for the host-ready stale-closure race, on the money gate.
+   *
+   * OPEN_BUZZ_PURCHASE is request/response: the block awaits BUZZ_PURCHASE_RESULT on
+   * a promise that rejects only at the SDK's 30s default request timeout
+   * (`DEFAULT_REQUEST_TIMEOUT_MS`, @civitai/blocks-react 0.39.0) — so a drop here
+   * costs the user's click plus half a minute of nothing.
+   *
+   * 🔴 The post is driven from `onReadyAttributeWrite`, NOT a MutationObserver — see
+   * test/commitWindow.tsx. A MutationObserver callback is a microtask that runs at the
+   * END of the scheduler task, often after React has already flushed the passive
+   * effects, which made the first version of this guard survive the mutant about one
+   * run in three.
+   *
+   * Proven reachable by mutation: move `statusRef.current = status` out of the render
+   * body and back into an effect and this goes red on `expected [] to have a length
+   * of 1`.
+   */
+  test("OPEN_BUZZ_PURCHASE posted in React's commit→passive-effect gap still opens the modal", async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    const unpatch = onReadyAttributeWrite(() =>
+      postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: 'rq_gap', suggestedAmount: 1000 })
+    );
+    try {
+      const stopDrive = await startReadyDrive();
+      try {
+        await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+      } finally {
+        stopDrive();
+      }
+    } finally {
+      unpatch();
+    }
+    // Pin the per-request dialog id, so this proves THIS post opened the modal.
+    expect(useDialogStore.getState().dialogs[0].id).toBe('block-buy-buzz-rq_gap');
+  });
+
+  /**
+   * The gate's REFUSAL is unchanged — no pre-handshake spend modal, ever. What
+   * changed is that the refusal is now SPOKEN instead of silent.
+   *
+   * Previously this branch dropped the message with a bare `return`, leaving the
+   * block's promise to hang for the SDK's full 30s request timeout. The reviewMode
+   * branch a few
+   * lines above in the handler already replied for exactly this reason ("Reply the
+   * not-purchased result the block awaits (fail-fast, no hang)"); this branch simply
+   * did not, and that asymmetry was the bug.
+   *
+   * `purchased: false` is the same shape reviewMode sends and the same shape
+   * `useBuzzPurchase` reads as "no purchase happened". Nothing is charged.
+   */
+  test('OPEN_BUZZ_PURCHASE before BLOCK_READY opens no modal and NACKs (never hangs)', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     // Do NOT drive to ready — fire while status is still 'loading'.
     await vi.waitFor(() => {
@@ -421,9 +495,60 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
 
     postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: 'rq_buzz_early', suggestedAmount: 1000 });
 
+    await vi.waitFor(() => {
+      const r = replies.last('BUZZ_PURCHASE_RESULT');
+      if (!r) throw new Error('no NACK yet');
+    });
+    // THE security property, unchanged: the spend modal never opened.
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
+    // THE new property: the block was told, on its own requestId, so it fails fast.
+    expect(replies.last('BUZZ_PURCHASE_RESULT')!.payload).toEqual({
+      requestId: 'rq_buzz_early',
+      purchased: false,
+    });
+    replies.stop();
+  });
+
+  /**
+   * The OTHER reason `resolveBuzzPurchaseRequest` returns null: a malformed payload
+   * with no string requestId. That one is legitimately UNREPLIABLE — there is no id
+   * to thread a reply back on — so it must still be dropped in total silence, and
+   * the NACK above must not have widened into "reply to everything".
+   *
+   * POSITIVE CONTROL is load-bearing here: this asserts a ZERO (no modal, no reply),
+   * and a host whose listener was never live produces that same zero. The control
+   * proves the handler is live AND that a BUZZ_PURCHASE_RESULT is observable at all
+   * before the zero is read, so the zero is a measurement rather than an artefact.
+   *
+   * 🔴 COUNT ONLY `BUZZ_PURCHASE_RESULT`, never `received.length`. The host pushes
+   * unrelated messages of its own (BLOCK_INIT, TOKEN_REFRESH, ROUTE_CHANGED) from
+   * effects, on a schedule this test does not control — so a TOTAL message count
+   * drifts for reasons that have nothing to do with the assertion. Measured: an
+   * earlier draft counting `received.length` failed on `expected 1 to be +0`
+   * against a host that was behaving perfectly, once the drive handed back inside
+   * React's commit window.
+   */
+  test('OPEN_BUZZ_PURCHASE with NO requestId is dropped silently (nothing to reply to)', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+    const buzzReplies = () => replies.received.filter((m) => m.type === 'BUZZ_PURCHASE_RESULT');
+
+    // POSITIVE CONTROL: a well-formed request DOES get through and open the modal,
+    // and closing it DOES produce an observable BUZZ_PURCHASE_RESULT.
+    postFromBlock('OPEN_BUZZ_PURCHASE', { requestId: 'rq_control', suggestedAmount: 10 });
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    useDialogStore.getState().dialogs[0].options?.onClose?.();
+    await vi.waitFor(() => expect(buzzReplies()).toHaveLength(1));
+    useDialogStore.getState().closeAll();
+
+    // The real case: no requestId at all.
+    postFromBlock('OPEN_BUZZ_PURCHASE', { suggestedAmount: 1000 });
+
     await new Promise((r) => setTimeout(r, 150));
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
-    expect(replies.last('BUZZ_PURCHASE_RESULT')).toBeUndefined();
+    // Still exactly the control's reply — the malformed post added none.
+    expect(buzzReplies()).toHaveLength(1);
     replies.stop();
   });
 
@@ -827,9 +952,9 @@ describe('PageBlockHost workflow bridge (W10 money-path wiring)', () => {
       const r = replies.last('WORKFLOW_SUBMITTED');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_acct', snapshot });
-      expect((r.payload as { snapshot: { spentAccountType?: string } }).snapshot.spentAccountType).toBe(
-        'green'
-      );
+      expect(
+        (r.payload as { snapshot: { spentAccountType?: string } }).snapshot.spentAccountType
+      ).toBe('green');
     });
     replies.stop();
   });

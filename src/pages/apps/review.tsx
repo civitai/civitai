@@ -1,11 +1,5 @@
 import { Tabs } from '@mantine/core';
-import {
-  IconCheck,
-  IconClipboardList,
-  IconClock,
-  IconFlag,
-  IconX,
-} from '@tabler/icons-react';
+import { IconCheck, IconClipboardList, IconClock, IconFlag, IconX } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -39,6 +33,8 @@ import type {
 } from '~/components/Apps/unifiedReviewRow';
 import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
+import { APPS_PAGE_MEASURES } from '~/components/Apps/appsPageWidths';
+import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -94,11 +90,7 @@ type TabValue = 'pending' | 'approved' | 'rejected' | 'reports' | 'manage';
 
 function isTabValue(v: unknown): v is TabValue {
   return (
-    v === 'pending' ||
-    v === 'approved' ||
-    v === 'rejected' ||
-    v === 'reports' ||
-    v === 'manage'
+    v === 'pending' || v === 'approved' || v === 'rejected' || v === 'reports' || v === 'manage'
   );
 }
 
@@ -192,9 +184,9 @@ export default function ReviewQueuePage() {
     <>
       <Meta title="App publish-request queue — Civitai" deIndex />
       <AppsPageLayout
-        size="xl"
+        measure={APPS_PAGE_MEASURES['/apps/review']}
         title="App publish-request queue"
-        subtitle="Moderator review for Apps. On-site + external submissions share one queue per tab; Pending is oldest-first, history is newest-first."
+        subtitle={`Moderator review for Apps. ${EMBEDDED_KIND_LABEL} + ${STANDALONE_KIND_LABEL} submissions share one queue per tab; Pending is oldest-first, history is newest-first.`}
       >
         <ActivePreviewsPanel />
 

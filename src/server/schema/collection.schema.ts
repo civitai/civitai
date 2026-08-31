@@ -9,8 +9,10 @@ import {
 import { imageSchema } from '~/server/schema/image.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { baseModels } from '~/shared/constants/basemodel.constants';
+import { SELECTABLE_REJECTION_REASONS } from '~/shared/constants/collection-rejection.constants';
 import {
   CollectionContributorPermission,
+  CollectionItemRejectionReason,
   CollectionItemStatus,
   CollectionMode,
   CollectionReadConfiguration,
@@ -106,12 +108,45 @@ export const getAllUserCollectionsInputSchema = z
   })
   .partial();
 
+// Declared here, not in the service, so the client can render the picker without pulling in
+// server-only AI deps.
+export const AI_REVIEW_MODELS = ['xiaomi/mimo-v2.5'] as const;
+
+export type CollectionAiReviewSchema = z.infer<typeof collectionAiReviewSchema>;
+// Stored in KeyValue, not Collection.metadata: the `Collection_contests` covering index INCLUDEs
+// metadata, capping a Contest collection's metadata at the btree row limit (~2704 bytes).
+export const collectionAiReviewSchema = z.object({
+  enabled: z.boolean().default(false),
+  model: z.enum(AI_REVIEW_MODELS).default(AI_REVIEW_MODELS[0]),
+  prompt: z.string().trim().min(1).max(20000),
+  // Bitmask of NsfwLevel flags. An item outside the mask is rejected without a vision call.
+  allowedNsfwLevels: z
+    .number()
+    .int()
+    .min(1)
+    .default(NsfwLevel.PG | NsfwLevel.PG13),
+  escalationAction: z.enum(['reject', 'leaveForHuman']).default('reject'),
+  reasonCopy: z.record(z.string(), z.string()).optional(),
+  dryRun: z.boolean().default(true),
+});
+
+export type SetCollectionAiReviewInput = z.infer<typeof setCollectionAiReviewInput>;
+export const setCollectionAiReviewInput = z.object({
+  collectionId: z.number(),
+  aiReview: collectionAiReviewSchema,
+});
+
 export type CollectionMetadataSchema = z.infer<typeof collectionMetadataSchema>;
 export const collectionMetadataSchema = z
   .object({
     endsAt: z.coerce.date().nullish(),
     challengeDate: z.coerce.date().nullish(),
     maxItemsPerUser: z.coerce.number().optional(),
+    // Tag applied to every image submitted to this collection, whatever the
+    // submission's review status. Lets a collection's content be filtered out of
+    // feeds (the Beggars Board leaking into New & Upcoming is what prompted it)
+    // without hardcoding either the collection or the tag.
+    autoTagId: z.coerce.number().int().positive().optional(),
     // Empty/absent means every base model is allowed. Values must match ModelVersion.baseModel
     // exactly — an unrecognized one matches no version and locks the contest to zero entries.
     baseModels: z
@@ -215,9 +250,11 @@ export const getUserCollectionItemsByItemSchema = collectionItemSchema
 
 export type FollowCollectionInputSchema = z.infer<typeof followCollectionInputSchema>;
 
+// No target user: follow and unfollow act on the caller. Managing someone else's row belongs to
+// inviteCollaborator / updateCollaboratorRole / removeCollaborator, which carry the guards these
+// two services don't — the block check, the caps, and the owner-only rule over a Manager's seat.
 export const followCollectionInputSchema = z.object({
   collectionId: z.number(),
-  userId: z.number().optional(),
 });
 
 export type GetAllCollectionItemsSchema = z.infer<typeof getAllCollectionItemsSchema>;
@@ -228,16 +265,27 @@ export const getAllCollectionItemsSchema = baseQuerySchema.extend({
   collectionId: z.number(),
   statuses: z.array(z.enum(CollectionItemStatus)).optional(),
   forReview: z.boolean().optional(),
+  // Items AI review handed to a human: still REVIEW, but already stamped by the system user, so
+  // the job will not pick them up again.
+  awaitingHumanReview: z.boolean().optional(),
   reviewSort: z.enum(CollectionReviewSort).optional(),
   collectionTagId: z.number().optional(),
 });
 
 export type UpdateCollectionItemsStatusInput = z.infer<typeof updateCollectionItemsStatusInput>;
-export const updateCollectionItemsStatusInput = z.object({
-  collectionId: z.number(),
-  collectionItemIds: z.array(z.number()),
-  status: z.enum(CollectionItemStatus),
-});
+export const updateCollectionItemsStatusInput = z
+  .object({
+    collectionId: z.number(),
+    collectionItemIds: z.array(z.number()),
+    status: z.enum(CollectionItemStatus),
+    rejectionReason: z.enum(CollectionItemRejectionReason).optional(),
+  })
+  // Detail-backed reasons read their copy from `rejectionDetail`, which only in-process callers
+  // (the AI review job) can supply — so they are not reachable over the wire.
+  .refine(
+    ({ rejectionReason }) => !rejectionReason || SELECTABLE_REJECTION_REASONS.includes(rejectionReason),
+    { message: 'That reason is reserved for automated review.', path: ['rejectionReason'] }
+  );
 
 export type AddSimpleImagePostInput = z.infer<typeof addSimpleImagePostInput>;
 export const addSimpleImagePostInput = z.object({

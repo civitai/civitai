@@ -34,7 +34,7 @@ vi.mock('~/server/utils/public-api-rate-limit', () => ({
   checkPublicApiRateLimit: mockRateLimit,
 }));
 
-vi.mock('~/client-utils/cf-images-utils', () => ({
+vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (url: string) => `edge:${url}`,
 }));
 

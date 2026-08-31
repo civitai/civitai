@@ -39,7 +39,9 @@ export const collectionNotifications = createNotificationProcessor({
     displayName: "Your submission wasn't accepted",
     category: NotificationCategory.Update,
     prepareMessage: ({ details }) => ({
-      message: `Your submission to ${details.collectionName} wasn't accepted.`,
+      message: details.reason
+        ? `Your submission to ${details.collectionName} wasn't accepted. ${details.reason}`
+        : `Your submission to ${details.collectionName} wasn't accepted.`,
       url: details.imageId
         ? `/images/${details.imageId}`
         : details.modelId
@@ -51,6 +53,9 @@ export const collectionNotifications = createNotificationProcessor({
         : `/collections/${details.collectionId}`,
     }),
   },
+  // No longer sent — `collection-item-rejected` carries the reason instead. Kept because
+  // getNotificationMessage resolves at render time, so removing it would blank out notifications
+  // already delivered to users.
   'beggars-board-rejected': {
     displayName: 'Beggars board entry declined',
     category: NotificationCategory.Buzz,
@@ -75,6 +80,24 @@ export const collectionNotifications = createNotificationProcessor({
     toggleable: true,
     prepareMessage: ({ details }) => ({
       message: `New items have been added to the "${details.collectionName}" collection.`,
+      url: `/collections/${details.collectionId}`,
+    }),
+  },
+  'collection-submission-received': {
+    displayName: 'New entry submitted to your collection',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `A new entry was submitted to "${details.collectionName}" and is waiting for review.`,
+      url: `/collections/${details.collectionId}/review`,
+    }),
+  },
+  'collection-invite-received': {
+    displayName: 'You were invited to collaborate on a collection',
+    category: NotificationCategory.Update,
+    toggleable: true,
+    prepareMessage: ({ details }) => ({
+      message: `You've been invited to help run "${details.collectionName}".`,
       url: `/collections/${details.collectionId}`,
     }),
   },

@@ -1,6 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import requestIp from 'request-ip';
-import { sessionCookieName } from '@civitai/auth';
+import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 import {
   setSessionCookie,
   postLoginMarkerCookie,
@@ -13,8 +12,6 @@ import {
   completeFirstPartyCallback,
   clearBridgeCookie,
   OAUTH_BRIDGE_COOKIE,
-  BRIDGE_PROBE_COOKIE,
-  readBridgeProbe,
   HUB_BASE_URL,
 } from '~/server/auth/oauth-bridge';
 import { logToAxiom } from '~/server/logging/client';
@@ -62,35 +59,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       error: typeof req.query.error === 'string' ? req.query.error : null,
     },
     bridgeCookieValue: req.cookies[OAUTH_BRIDGE_COOKIE],
-    // The real end-user IP (request-ip resolver, same as createContext/tracker) — it reads x-forwarded-for
-    // FIRST (leftmost hop) then cf-connecting-ip. Forwarded to the hub as a single-value x-forwarded-for on the
-    // server-to-server exchange. On the INTERNAL path (no CF/proxy in front of the hub) this forwarded value is
-    // authoritative — it's what the hub's flood-guard keys on; on the PUBLIC path the hub's own cf-first
-    // getClientIp takes precedence (cf-connecting-ip = the spoke egress) and this is harmlessly shadowed. Coerce
-    // the resolver's null to undefined so the bridge omits the header when nothing resolves.
-    clientIp: requestIp.getClientIp(req) ?? undefined,
+    // The end-user address, forwarded to the hub on the server-to-server exchange
+    // (the bridge sends it as a single-value `x-forwarded-for`; see
+    // `packages/civitai-auth/src/first-party-bridge.ts`). Null is coerced to undefined
+    // so the bridge omits the header entirely when nothing resolves.
+    //
+    // DERIVATION: the shared attribution predicate, the same one `createContext` and
+    // the ClickHouse tracker bind. This site is on it for the same reason they are —
+    // one predicate per surface — and what leaves here is therefore a validated bare
+    // address, the same shape this repo records everywhere else.
+    //
+    // WHERE IT LANDS. Both halves of this seam are in THIS monorepo, so which
+    // derivation each side applies is checkable rather than assumed:
+    //   PUBLIC path   — the hub runs its own edge-first derivation, which resolves to
+    //                   this spoke's egress and takes precedence; the forwarded value
+    //                   is shadowed and does not decide anything.
+    //   INTERNAL path — the hub has no edge value to prefer, so it falls through to
+    //                   the address forwarded here and keys its per-IP session bucket
+    //                   on it (`apps/auth/src/lib/server/oauth/rate-limit.ts`).
+    //
+    // So on the internal path this is a per-end-user bucket key on the far side, and
+    // the seam is pinned from BOTH ends: the spoke half — that what is forwarded is
+    // this predicate's answer — by
+    // `src/__tests__/pages/api/auth/callback.client-ip.test.ts`; the hub half — that
+    // the hub derives that same value back out of the forwarded header — by
+    // `apps/auth/src/lib/server/auth/__tests__/request.client-ip.test.ts`, in the
+    // `app:auth` Vitest project. Neither half alone covers the seam.
+    clientIp: resolveClientIpOrNull(req) ?? undefined,
   });
 
   if ('error' in result) {
     // `detail` sub-classifies oauth_state (no_code / no_cookie / state_mismatch) + oauth_exchange (declined /
-    // network). For `no_cookie` we attach diagnostics to pin the cause: `userAgent` (Safari/ITP full-block vs
-    // bot vs modern browser), `cookieCount` (0 = every host cookie lost; >0 = only the bridge cookie dropped),
-    // and the Domain-scoped 1h PROBE — which the host-only bridge cookie's own before/after can't distinguish:
-    //   probe present, probeAuthHost ≠ this host → a host variation (www↔apex) the new Domain scope now covers;
-    //   probe present, probeAgeMs > 10min        → the login outran the bridge cookie's TTL (expiry);
-    //   probe absent                             → full cross-site block / bot (no cookies survived at all).
-    const probe = readBridgeProbe(req.cookies[BRIDGE_PROBE_COOKIE]);
+    // network). `cookieCount` separates a real failure (>0 = other cookies reached the callback) from a full
+    // cross-site block / bot (0 = no cookies at all) — the .red no_cookie residual was ~2/3 already-logged-in
+    // duplicate callbacks + ~1/3 bots, with a negligible genuine-failure slice (ClickUp 868k9gug8).
     logAuth(req, 'exchange-error', {
       error: result.error,
       detail: result.detail,
-      userAgent: req.headers['user-agent'],
       cookieCount: Object.keys(req.cookies ?? {}).length,
-      probePresent: !!probe,
-      probeAuthHost: probe?.authHost,
-      probeAgeMs: probe?.ageMs,
-      // Already-authenticated on a `no_cookie` callback ⇒ a prior callback in this flow already succeeded and
-      // cleared the (single-use) bridge cookie, so THIS is a duplicate/retried hit, not a real lockout.
-      hasSession: !!req.cookies[sessionCookieName()],
     });
     res.redirect(302, `/login?error=${encodeURIComponent(result.error)}`);
     return;

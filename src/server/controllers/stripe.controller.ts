@@ -145,7 +145,11 @@ export const getPaymentIntentHandler = async ({
 
     if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
 
-    const validCaptcha = await verifyCaptchaToken({ token: recaptchaToken, ip: ctx.ip });
+    const validCaptcha = await verifyCaptchaToken({
+      token: recaptchaToken,
+      ip: ctx.ip,
+      meta: { source: 'stripe-payment-intent', userId: id },
+    });
     if (!validCaptcha) throw throwAuthorizationError('Captcha Failed. Please try again.');
 
     const result = await getPaymentIntent({
@@ -155,6 +159,7 @@ export const getPaymentIntentHandler = async ({
         email,
       },
       customerId,
+      domain: ctx.domain,
     });
 
     return result;

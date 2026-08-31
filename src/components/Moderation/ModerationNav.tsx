@@ -1,17 +1,17 @@
 import { Menu } from '@mantine/core';
-import { IconBadge } from '@tabler/icons-react';
+import { IconBadge, IconExternalLink } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
+import { isMigratedModeratorHref } from '~/shared/constants/migrated-moderator-routes';
 
 export function ModerationNav() {
   const features = useFeatureFlags();
   const menuItems = useMemo(
     () =>
       [
-        { label: 'Reports', href: '/moderator/reports' },
         { label: 'Strikes', href: '/moderator/strikes', hidden: !features.strikes },
         { label: 'Images', href: '/moderator/images' },
         { label: 'Image Tags', href: '/moderator/image-tags' },
@@ -21,16 +21,10 @@ export function ModerationNav() {
           hidden: !features.comicCreator,
         },
         { label: 'Models', href: '/moderator/models' },
-        {
-          label: 'Training Models',
-          href: '/moderator/training-models',
-          hidden: !features.trainingModelsModeration,
-        },
-        {
-          label: 'Training Data Review',
-          href: '/moderator/review/training-data',
-          hidden: !features.reviewTrainingData,
-        },
+        { label: 'Training Models', href: '/moderator/training-models' },
+        { label: 'Training Data Review', href: '/moderator/review/training-data' },
+        // Migrated to the moderator app — the /moderator/* route redirects there (see the moderator
+        // catchall page). Kept in nav during the transition.
         { label: 'Articles', href: '/moderator/articles' },
         // { label: 'Tags', href: '/moderator/tags' },
         {
@@ -49,21 +43,27 @@ export function ModerationNav() {
         // { label: 'Sanity Images', href: '/moderator/research/rater-sanity' },
         { label: 'Metadata Tester', href: '/testing/metadata-test' },
         { label: 'Ratings Review', href: '/moderator/image-rating-review' },
+        // Migrated to the moderator app (redirects via the moderator catchall page).
         { label: 'Article Ratings Review', href: '/moderator/article-rating-review' },
         { label: 'Downleveled Review', href: '/moderator/downleveled-review' },
         { label: 'Ingestion Errors', href: '/moderator/ingestion-error-review' },
+        { label: 'Minor Hash Matches', href: '/moderator/minor-hash-matches' },
         { label: 'Cosmetic Shop', href: '/moderator/cosmetic-store' },
         {
           label: 'Creator Shop Review',
           href: '/moderator/creator-shop',
           hidden: !features.creatorShop,
         },
+        {
+          // Same page, pre-narrowed. Its own entry because the pending sticker
+          // queue was reachable only by opening the entry above and knowing to
+          // filter it by hand — "it just gets lost in the all". Someone
+          // scanning this nav for the word sticker now finds it.
+          label: 'Sticker Review',
+          href: '/moderator/creator-shop?type=sticker&status=pendingreview',
+          hidden: !features.creatorShop,
+        },
         { label: 'Grant Cosmetics', href: '/moderator/cosmetics/grant' },
-        // {
-        //   label: 'Paddle Adjustments',
-        //   href: '/moderator/paddle/adjustments',
-        //   hidden: !features.paddleAdjustments,
-        // },
         {
           label: 'Announcements',
           href: '/moderator/announcements',
@@ -74,7 +74,7 @@ export function ModerationNav() {
           href: '/moderator/home-blocks/featured-collections',
         },
         {
-          label: 'Rewards Bonus Events',
+          label: 'Rewards & Bonus Events',
           href: '/moderator/rewards-bonus-events',
         },
         {
@@ -116,11 +116,31 @@ export function ModerationNav() {
         },
       ]
         .filter((i) => !i.hidden)
-        .map((link) => (
-          <Menu.Item key={link.href} component={Link} href={link.href}>
-            {link.label}
-          </Menu.Item>
-        )),
+        .sort((a, b) => a.label.localeCompare(b.label))
+        .map((link) => {
+          // These no longer render here — the catchall bounces them to the moderator app. Marked from
+          // the SAME map that does the bouncing, so a page migrating cannot leave the nav lying.
+          const migrated = isMigratedModeratorHref(link.href);
+          return (
+            // Without break-inside-avoid an item can split across a column boundary,
+            // putting its label in one column and its padding in the next.
+            <Menu.Item
+              key={link.href}
+              component={Link}
+              href={link.href}
+              className="break-inside-avoid"
+              color={migrated ? 'blue' : undefined}
+              // Colour alone would carry this for nobody using a screen reader, and is easy to read as
+              // decoration; the title says what the colour means.
+              title={migrated ? 'Opens in the moderator app' : undefined}
+              rightSection={
+                migrated ? <IconExternalLink size={14} className="ml-2 opacity-70" /> : undefined
+              }
+            >
+              {link.label}
+            </Menu.Item>
+          );
+        }),
     [features]
   );
 
@@ -132,7 +152,7 @@ export function ModerationNav() {
         </LegacyActionIcon>
       </Menu.Target>
       <Menu.Dropdown
-        className="overflow-y-auto"
+        className="max-w-[calc(100vw-2rem)] columns-1 overflow-y-auto sm:columns-2 md:columns-3"
         style={{ maxHeight: 'calc(100dvh - 80px)' }}
       >
         {menuItems}

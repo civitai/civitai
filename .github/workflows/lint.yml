@@ -2,9 +2,30 @@ name: Lint
 
 # Regression guard for code quality.
 #
-# Typecheck is full-repo and BLOCKING on internal PRs, and is the only real gate
-# here. It is skipped on fork PRs (see the job comment), so a fork gets no gating
-# from this workflow at all.
+# Typecheck is full-repo, and as of talos-infra #855 it is now a NARROW job: it
+# runs only where the in-cluster Tekton `pr-check` pipeline does not reach. For
+# an internal PR targeting `main` — every PR merged here in living memory — the
+# authoritative typecheck is the `tekton / typecheck` commit status, and this job
+# skips. See the `typecheck` job comment for the two cases it still covers and
+# how each was measured.
+#
+# 🔴 Read this before treating the fork case as covered. The job carries no
+# secret and is not gated by us on the PR's origin — but GitHub gates it for us,
+# and the practical outcome is that FORK PRs GET NO TYPECHECK AT ALL TODAY.
+# Measured 2026-08-07 over all 16 fork-originated PRs among the ~500 most recent
+# PRs: 11 have a retained `Lint` run and ALL ELEVEN sit at
+# `conclusion=action_required` (awaiting maintainer approval, zero repository
+# code executed); the other 5 are closed PRs whose runs have aged out. `gh pr
+# checks` on the open ones reports "no checks reported". Not one fork PR has ever
+# produced a Typecheck result.
+#
+# Two earlier revisions of this comment got this wrong in opposite directions —
+# first "typecheck is skipped on fork PRs", then (correcting that) "it runs on
+# fork PRs TOO". Both were reasoning from the workflow's CONFIGURATION, which
+# says nothing about whether the job RUNS. The configuration genuinely does not
+# gate on origin; the approval policy does. Keep the job — it is where fork
+# coverage will land the moment a maintainer approves a run, and the sandbox is
+# GitHub's rather than ours — but do not cite it as active fork protection.
 #
 # ESLint and Prettier are split by how the PR touched the file:
 #
@@ -26,22 +47,102 @@ name: Lint
 #
 # The modified-file steps flip to blocking once the backlog is cleared, planned to
 # ride along with the Prettier 2->3 upgrade (which forces a reformat anyway).
+#
+# ── ALSO RUNS ON PUSH TO `main`, and that is not decoration ──────────────────
+#
+# Between 2026-06-14 and 2026-08-21 NO CI of any kind produced a verdict for a
+# commit on `main`. Two unrelated mechanisms happened to stop on the same day,
+# which is why the gap read as one thing and stayed unexplained for two months:
+#
+#   1. `.github/workflows/pr-check.yml` was deleted by #2547 ("runs in Tekton,
+#      removes GH Actions pr-check"). It carried the only live push-to-`main`
+#      trigger. Enumerated rather than assumed — every revision of every one of
+#      the 12 files that has ever existed under `.github/workflows/` was parsed,
+#      and exactly TWO have ever fired on a branch push to `main`:
+#      `docker-deploy.yml` (removed 2023-11) and `pr-check.yml`. Two near
+#      misses are worth naming so they are not re-counted: `auth-app.yml` has a
+#      `push:` block but filters on `tags:` only, which never fires on a branch
+#      push, and the last `docker-deploy.yml` had `main` commented out under
+#      `branches:`. Everything built after the deletion — this file (#3362,
+#      2026-07-24), submodule-pin-guard, schema-drift (#3643), windows-dev-env
+#      (#4162) — is `pull_request`-only, so the trigger was never rebuilt.
+#      Nobody decided that; it was lost in a move.
+#   2. CodeQL, whose runs carried the "Push on main" title in the run list,
+#      stopped the same afternoon (code-scanning default setup now reads
+#      `not-configured`). Unrelated cause, same date, no test coverage either
+#      way — it is named here only so the next reader does not "confirm" the
+#      workflow deletion by pointing at a CodeQL run and vice versa.
+#
+# And Tekton does NOT close it. The in-cluster `pr-check` pipeline is driven by
+# a resource that watches OPEN PULL REQUESTS targeting `main`; the only
+# main-branch trigger is a container image build for the staging deployment,
+# which runs no test suite and posts no commit status. So "Tekton covers main"
+# is false, and was the assumption that let the gap persist.
+#
+# What that cost, concretely: a3e790ff2e was pushed straight to `main` with no
+# PR, broke `model-file-scan.service.test.ts`, and sat undetected for ~7 hours.
+# It surfaced only when unrelated PRs inherited the failure through their merge
+# commits — every open PR going red at once, which reads as a CI outage rather
+# than as one bad commit.
+#
+# The push path deliberately does NOT run every job here. `eslint` is diff-vs-
+# base by construction and is skipped; so are the sibling workflows schema-drift
+# and submodule-pin-guard, which are base-relative gates with nothing to compare
+# against on a push. (`windows-dev-env` was in that list and did not belong in
+# it — it is not base-relative, it just never had a push trigger. It gained one
+# on 2026-08-25 to fix an Actions-cache leak; see its header.) The consequence
+# is worth stating rather than leaving implied: the added-file ESLint/Prettier
+# gate and the stray-migrations guard remain reachable only through a PR, so a
+# direct push to `main` still bypasses them. Closing that is a separate change,
+# and requires deciding what "the base" means for a push.
+#
+# A red run on `main` blocks nothing — the merge has already happened, and
+# `main` carries no required_status_checks in any case. Its whole value is that
+# it renders RED, on the commit that caused it, within minutes instead of
+# whenever the next PR happens to inherit it.
 
 on:
   pull_request:
     branches: [main, release]
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+# On a PR this is unchanged: `github.ref` is `refs/pull/N/merge`, so a new push
+# to the branch cancels the in-flight run.
+#
+# On a push to `main` it MUST NOT be `github.ref` — that is the same string for
+# every commit on the branch, so a busy `main` would cancel its own runs and the
+# only commit with a verdict would be whichever one happened to be last. Worse,
+# the losers would render as `cancelled`, a status this repo already has an open
+# complaint about being indistinguishable from a real failure. Grouping by
+# `github.sha` gives each commit its own group, so nothing cancels anything and
+# every commit on `main` gets its own answer.
 concurrency:
-  group: lint-${{ github.ref }}
+  group: lint-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 jobs:
   eslint:
     name: ESLint + Prettier (changed files)
     runs-on: ubuntu-latest
+    # PULL REQUESTS ONLY, and not as a matter of taste. Every step in this job
+    # is defined against `FETCH_HEAD...HEAD` where FETCH_HEAD is
+    # `origin/$BASE_REF`, and `github.base_ref` is EMPTY on a push event — so on
+    # `main` the first step would run `git fetch -q origin ""` and the job would
+    # fail for a reason that has nothing to do with the code. "Changed files" is
+    # a PR concept here; a push has no base to diff against.
+    #
+    # `scripts/__tests__/main-branch-ci-coverage.test.ts` pins this as a
+    # RELATIONSHIP rather than as this one job's setting: any job in this file
+    # that reads `github.base_ref` or `github.event.pull_request` must be gated
+    # to pull_request events. That is the guard that catches the NEXT
+    # base-relative job someone adds, which would otherwise be red on every
+    # commit to `main` from the day it lands.
+    if: github.event_name == 'pull_request'
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -67,9 +168,13 @@ jobs:
           git fetch -q origin "$BASE_REF"
           git diff --name-only --diff-filter=A FETCH_HEAD...HEAD -- '*.ts' '*.tsx' > added.txt
           git diff --name-only --diff-filter=CMR FETCH_HEAD...HEAD -- '*.ts' '*.tsx' > modified.txt
-          # eslint only has a config for src/ and packages/; skip anything else.
-          grep -E '^(src|packages)/' added.txt > added-lint.txt || true
-          grep -E '^(src|packages)/' modified.txt > modified-lint.txt || true
+          # Only paths an eslint config covers. apps/event-engine has its own `root: true`
+          # config, which eslint resolves per file, so linting it from here works; the other
+          # apps/ members have none and would fall through to the root Next config, whose
+          # typed rules crash outside src/.
+          LINTABLE='^(src|packages|apps/event-engine)/'
+          grep -E "$LINTABLE" added.txt > added-lint.txt || true
+          grep -E "$LINTABLE" modified.txt > modified-lint.txt || true
           echo "added ($(wc -l < added.txt)):"; cat added.txt
           echo "modified ($(wc -l < modified.txt)):"; cat modified.txt
 
@@ -149,12 +254,65 @@ jobs:
           echo "all modified files formatted"
 
   typecheck:
-    name: Typecheck
+    name: Typecheck (main pushes / fork PRs / non-main base)
     runs-on: ubuntu-latest
-    # Runs on forks now. event-engine-common is public and fetched over HTTPS, so
-    # this needs no secret — which is why the ssh-agent step is gone rather than
-    # merely unused. Leaving it in would have kept the fork case broken AND masked
-    # the HTTPS path: webfactory/ssh-agent rewrites
+    # 🔴 NARROWED, not retired (talos-infra #855, stage 1). The in-cluster Tekton
+    # `pr-check` pipeline runs `tsc --noEmit` on every PR and posts the result as
+    # the `tekton / typecheck` commit status. Running this job as well typechecks
+    # the same tree a second time on every internal PR. Tekton is the one that
+    # kept reporting through the 2026-08-06 Actions `major_outage` — it POLLS the
+    # PR API on a 1m interval rather than taking a webhook, and the incident
+    # degraded webhook delivery.
+    #
+    # This `if:` is the complement of what Tekton covers. Both disjuncts were
+    # measured on 2026-08-07, not assumed:
+    #
+    #   fork PR  — the Tekton side gates fork-authored PRs away by author
+    #     association, deliberately: it executes PR code on our own
+    #     infrastructure, and GitHub's untrusted-code sandbox is doing work we
+    #     would otherwise have to build. So this job is the only typecheck a fork
+    #     PR can get. ⚠️ In practice this arm is DORMANT — see the header.
+    #
+    #   base != main — the Tekton side only watches PRs targeting `main`, so a
+    #     PR targeting `release` gets no check from it at all. Rare but real: 4
+    #     PRs have ever targeted `release` (0 of the last 200 merged) — most
+    #     recent #2582, closed 2026-06-16; last merged #2248, 2026-05-09. Rare is
+    #     what makes this cheap, not a reason to drop it.
+    #
+    #   push to main — the THIRD disjunct, added 2026-08-21. Read this before
+    #     trimming it as redundant with the first: the Tekton `pr-check`
+    #     pipeline is driven by a resource that watches OPEN PULL REQUESTS
+    #     targeting `main`, so a COMMIT on `main` is outside its trigger
+    #     entirely. The only Tekton trigger on the main branch builds a
+    #     container image for the staging deployment; it runs no `tsc` and posts
+    #     no status. So on this path there is no second typecheck to be a
+    #     duplicate of — this job is the only one, exactly as in the fork case.
+    #
+    # Deleting any disjunct silently removes the only typecheck on that path.
+    # The honest way to retire this job entirely is to widen Tekton's coverage
+    # first and prove it on a real PR of each shape.
+    #
+    # ⚠️ `github.event.pull_request` is null on a push event, so BOTH PR
+    # disjuncts evaluate to `null != <string>` — which is TRUE. The push arm is
+    # therefore already implied and the explicit `github.event_name == 'push'`
+    # below is redundant *today*. It is written anyway because the redundancy is
+    # an accident of null-comparison semantics rather than a decision, and the
+    # next person to tighten these disjuncts (e.g. by pinning
+    # `github.event_name == 'pull_request' && ...`) would silently drop main
+    # coverage with no test naming it. The guard test asserts the push arm.
+    #
+    # The name changed with the gate so the checks list explains its own absence.
+    # Safe: neither `main` nor `release` has any required_status_checks (verified
+    # 2026-08-07 via the branch-protection API, re-verified 2026-08-21), so no
+    # merge gate keys on the old name.
+    if: >-
+      github.event_name == 'push'
+      || github.event.pull_request.head.repo.full_name != github.repository
+      || github.event.pull_request.base.ref != 'main'
+    # event-engine-common is public and fetched over HTTPS, so this needs no
+    # secret — which is why the ssh-agent step is gone rather than merely unused.
+    # Leaving it in would have kept the fork case broken AND masked the HTTPS
+    # path: webfactory/ssh-agent rewrites
     # url."git@key-<sha>.github.com:<owner>/<repo>".insteadOf "https://github.com/<owner>/<repo>"
     # for any loaded key whose comment names a github.com repo, silently sending
     # the new HTTPS URL back over SSH.
@@ -174,6 +332,11 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # Must stay `pnpm run typecheck`, not a bare `tsc --noEmit`. The script is
+      # a wrapper (scripts/typecheck.mjs) that sets the V8 heap cap AND
+      # classifies the outcome: a `tsc` that dies of heap exhaustion emits zero
+      # diagnostics, so a raw invocation produces an empty log that reads as a
+      # clean pass to anyone scanning it. The wrapper says CRASHED instead.
       - name: Typecheck
         run: pnpm run typecheck
 
@@ -182,8 +345,14 @@ jobs:
     runs-on: ubuntu-latest
     # ~8,000 tests that until now only ran on whoever remembered to run them.
     # Node env, no browser — component tests (`*.browser.test.tsx`) are not here
-    # on purpose: they need Chromium and carry the cold-optimizeDeps flake
-    # documented at vitest.config.mts:98-124.
+    # on purpose: they need Chromium, which this job does not install. That is
+    # the whole reason. This comment used to add "and carry the cold-optimizeDeps
+    # flake documented at vitest.config.mts:98-124", which was wrong: those lines
+    # document the FIX for that flake, not an open one. vitest.config.mts:109-127
+    # dedupes React and pre-bundles `vitest-browser-react` + the JSX runtimes so
+    # the optimize pass happens BEFORE the run instead of reloading mid-run, and
+    # calls itself the canonical fix; 98-102 is a separate hookTimeout fix.
+    # Don't cite a cold-cache flake as a reason to keep this job Chromium-free.
     #
     # REPORT-ONLY to start, deliberately. A full local run passed 8,937/8,943 but
     # timed out 5 tests under machine load; every one of them passed in isolation
@@ -195,8 +364,98 @@ jobs:
     #
     # FLIP TO BLOCKING once a couple of weeks of runs show a clean pass rate.
     # Remove `continue-on-error` and this comment together.
-    continue-on-error: true
-    timeout-minutes: 30
+    #
+    # WHERE THAT STANDS, measured 2026-08-20 so the next reader does not repeat the
+    # archaeology. Over the 39 most recent completed runs the `Unit tests` STEP was red
+    # in 8, across 8 DISTINCT branches — which reads as flake but was not: every one
+    # predates #4191, which fixed a ledger test that had been TRUNK red and therefore
+    # failed on every PR regardless of its contents. Of the runs started after that
+    # merge, 5 of 5 are green across 4 branches. Encouraging, and far too short a
+    # window to act on — 36 minutes is not "a couple of weeks".
+    #
+    # Two things to know before re-measuring. On a PULL REQUEST the run-level
+    # `conclusion` is USELESS here: `continue-on-error` makes it `success` while the
+    # step underneath is `failure`, so read `steps[].conclusion` from the jobs
+    # endpoint, not the run. That is not true of a push run — see below.
+    #
+    # The second used to read "this workflow is `pull_request`-only, so the suite
+    # never runs against `main` itself — a trunk-red test shows up as every PR going
+    # red at once". That was accurate when written and is now the thing this change
+    # fixes; the signature it describes is still worth recognising in runs from
+    # before 2026-08-21.
+    #
+    # ── REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` ────────────────────
+    #
+    # The soak above is a claim about PRs and it is left exactly as it is: flipping
+    # the PR side to blocking is a separate, deliberately-unmade decision with its own
+    # open ticket, and nothing here should be read as making it.
+    #
+    # `main` is a different question, because the reason for report-only does not
+    # exist there. Report-only buys "do not red an unrelated PR over a load-timeout";
+    # on a push the merge has already happened, so there is no unrelated work to red
+    # and nothing to block. What `continue-on-error: true` WOULD buy on `main` is the
+    # exact failure this repo just spent two months inside: a run whose conclusion is
+    # `success` while the suite underneath is broken. A green that has to be
+    # disbelieved is worse than no run at all — checking "is main green?" would go on
+    # returning success, and the staleness would merely have been replaced by a lie.
+    #
+    # So: the flake risk is accepted on `main` and the verdict is rendered honestly.
+    # If the suite proves too noisy there, the fix is to de-flake the tests or to
+    # narrow what runs on push — NOT to hide the result behind continue-on-error.
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    # ── SHARDED ACROSS 4 RUNNERS ────────────────────────────────────────────
+    #
+    # Measured before the change, n=12 runs of this job, from the Actions API:
+    #
+    #   Unit tests step   555.5s   <- variable, scales with 1/shards
+    #   Install            30.0s   |
+    #   checkout           21.0s   |  fixed overhead, paid by EVERY shard
+    #   setup-node         13.0s   |
+    #   set up job + pnpm   2.5s   |  = 66.5s
+    #   -------------------------
+    #   total             622.0s   = the 10.4m job median
+    #
+    # So T(N) = 66.5 + 555.5/N:  1 -> 10.4m, 2 -> 5.7m, 3 -> 4.2m, 4 -> 3.4m,
+    # 6 -> 2.7m, 8 -> 2.3m. Runner-minutes go 10.4 -> 13.7 at N=4 (+32%).
+    #
+    # 🔴 WHY 4 AND NOT MORE. `App unit tests + typecheck` is 2.9m. At N=4 this
+    # job lands at ~3.4m and at N=5 it reaches parity, so past N=5 sharding
+    # optimises something that is NO LONGER THE BOTTLENECK — the PR's critical
+    # path floors at ~2.9m however far you go. Raising this number without
+    # first making the other jobs faster buys wall-clock nothing and costs
+    # runner-minutes linearly.
+    #
+    # BALANCE: ASSUMED BEFOREHAND, NOW MEASURED. `--shard` is not cost-aware and
+    # this suite's cost is bimodal (p50 66 modules per file, p75 1088 — see
+    # claudedocs/test-perf-measurement-envelope-2026-08-15.md and
+    # scripts/test-perf/README.md), so uneven shards were the live risk. Measured
+    # on the first green sharded run, 2026-08-25:
+    #
+    #   shard   1        2        3        4
+    #   files   355      354      354      354     <- vitest splits by FILE COUNT
+    #   tests   5794     5142     5774     5447
+    #   wall    3.3m     3.6m     3.8m     3.4m    <- 1.14x spread
+    #
+    # The file split is near-exact; the 14% spread is the cost distribution
+    # showing through it. Adequate at N=4 — but the margin narrows as N rises and
+    # per-shard file counts fall, so READ THE FOUR DURATIONS after any change to
+    # this matrix. If one dominates, assign files by measured per-file cost
+    # (scripts/test-perf/reporter.mjs emits it) rather than raising N.
+    #
+    # ⚠️ Suite size moves fast: 1,065 files / 16,784 tests on 2026-08-15 became
+    # 1,417 files / 22,157 executed ten days later, +33%. Any figure here is a
+    # snapshot — re-derive before quoting one.
+    #
+    # `fail-fast: false` is load-bearing: the default cancels the sibling shards
+    # the moment one goes red, which throws away three quarters of the signal
+    # from a job whose entire purpose is to report.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    # Per-shard, not the whole suite: 555.5/4 + overhead is ~3.4m, so 15m is
+    # ~4x headroom. It is NOT 30/4 — the fixed 66.5s does not shard.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -212,5 +471,295 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # ── VITE PRE-BUNDLE CACHE ───────────────────────────────────────────
+      #
+      # A DIFFERENT cache from the one `setup-node` keeps. `cache: pnpm` above
+      # caches the pnpm STORE — the downloaded packages. This caches what Vite's
+      # dependency optimizer BUILDS out of them.
+      #
+      # What is in there, measured 2026-08-25 on a warm local checkout rather
+      # than assumed: `node_modules/.vite` is 302 MB, all of it under
+      # `.vite/vitest/<project-config-hash>/{deps,deps_ssr}` — esbuild pre-bundles
+      # — plus a few hundred KB of `results.json`. It is NOT per-test-file output,
+      # which is why the key below does not mention the shard's file list: the
+      # content is a function of the dependency set and the Vitest config, so
+      # `pnpm-lock.yaml` is the right thing to key on.
+      #
+      # Every one of the 4 shards rebuilds this from cold on every PR today, and
+      # nothing in the repo caches it. (Do not reach for the `optimizeDeps`
+      # pre-bundle list in vitest.config.mts as prior art here: that block belongs
+      # to the `component` project, which this job does not run. It moves WHEN the
+      # optimize pass happens within a run; it does not carry anything between
+      # runs.)
+      #
+      # 🔴 RESTORE ALWAYS, SAVE ONLY ON `main`, and that asymmetry is the whole
+      # design rather than a tuning choice. An Actions cache saved by a PR run is
+      # scoped to `refs/pull/N/merge`, readable by NOTHING else, and counts
+      # against the same 10 GB repo budget as everything useful. Saving from PRs
+      # would mint 4 dead entries per open PR — the exact leak this PR's sibling
+      # change exists to clean up (20 orphans, 9.65 GB, 95.3% of the budget).
+      # Saving only on `main` keeps this at FOUR entries total, restorable by
+      # every PR because a PR can read its base branch's scope.
+      #
+      # Budget: 4 x 302 MB = 1.21 GB worst case, and that is an over-estimate
+      # twice over — the 302 MB is the full local project set (this job runs
+      # `--project unit*`, a subset) and Actions compresses on upload.
+      #
+      # A PR that changes `pnpm-lock.yaml` misses the exact key and falls back to
+      # the prefix, restoring the previous lockfile's bundles; Vite validates its
+      # own optimizer metadata and re-optimizes what actually moved. It then
+      # saves nothing, so that PR pays cold-ish cost until it merges. That is the
+      # correct trade: lockfile changes are rare and per-PR entries are the bug.
+      - name: Restore Vite pre-bundle cache
+        id: vite-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: node_modules/.vite
+          key: vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-
+
+      # `scripts/test-unit-run.mjs` forwards process.argv.slice(2) straight into
+      # `vitest run --project unit* ...args`, and its queueDecision() returns
+      # early on CI, so the dev-server queue never sees this.
+      #
+      # 🔴 NO `--` SEPARATOR, and that is not a style choice. pnpm forwards `--`
+      # through LITERALLY rather than consuming it (measured on pnpm 10.28.1,
+      # the version `packageManager` pins and `pnpm/action-setup` installs; also
+      # reproduced on 9.0.0):
+      #
+      #   pnpm run x -- --shard=1/4   ->  ["--", "--shard=1/4"]
+      #   pnpm run x    --shard=1/4   ->  ["--shard=1/4"]
+      #
+      # vitest then DISCARDS every argument after the bare `--` — it does not
+      # treat them as filename filters, which an earlier revision of this comment
+      # claimed. Measured both ways:
+      #
+      #   vitest list --filesOnly --project 'unit*' -- assert-shard-ran  -> 1416 files
+      #   vitest list --filesOnly --project 'unit*'    assert-shard-ran  ->    1 file
+      #
+      # The distinction matters when you are debugging: as FILTERS the shard
+      # would run almost nothing, but what actually happens is the INVERSE — no
+      # `--shard`, no `--outputFile`, so every runner executes the WHOLE suite and
+      # writes no report, while the step still exits 0. On the run that shipped
+      # this bug the four `Unit tests` steps took 7m30s-9m54s each, which is the
+      # tell. The assert step below is what caught it, on its first live run.
+      #
+      # The sibling `packages` / `apps` jobs have always used this separator-less
+      # form; copy them, not the shell habit.
       - name: Unit tests
-        run: pnpm run test:unit:run
+        run: pnpm run test:unit:run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json
+
+      # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
+      # and reports a green check — the same silent-zero class this repo has been
+      # bitten by before (a suite that fails to IMPORT reports "no tests", not a
+      # failure). A per-shard test count is the cheapest thing that can tell
+      # "this shard passed" apart from "this shard ran nothing", and it must run
+      # even when the suite above went red, or a red shard hides a zero shard.
+      - name: Assert this shard actually ran tests
+        # `!cancelled()` rather than `always()`: the guard must still run after a RED
+        # suite (that is the case it exists for — a red shard must not hide a zero
+        # shard), but a CANCELLED run has no report to read and would render a
+        # confusing red assert step on top of the cancellation. Observed on shard 3
+        # of the run that shipped the `--` bug.
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/assert-shard-ran.mjs unit-report.json ${{ matrix.shard }} 4
+
+      # See the restore step for why this is `main`-only. Three further details:
+      #
+      #   `!cancelled()` rather than the default — a RED suite still produced a
+      #     valid set of pre-bundles, and refusing to save them would mean a
+      #     single red commit on `main` leaves every subsequent PR cold.
+      #   `cache-hit != 'true'` — an exact-key hit means this content is already
+      #     stored under this key, so re-uploading ~300 MB would buy nothing. A
+      #     PREFIX hit leaves this false, which is right: that content belongs to
+      #     a different lockfile and does want re-saving under the new key.
+      #   `continue-on-error` — a cache save is best-effort infrastructure. Two
+      #     shards can race the same key, and the loser reports "another job may
+      #     be creating this cache". That must not red a commit on `main`, where
+      #     this job is no longer report-only.
+      - name: Save Vite pre-bundle cache
+        if: ${{ !cancelled() && github.event_name == 'push' && steps.vite-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: node_modules/.vite
+          key: vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+  packages:
+    name: Package unit tests
+    runs-on: ubuntu-latest
+    # The nine `packages/*` suites — 616 tests that, until this job existed, NO CI job ran.
+    # The `unit` job above runs `vitest run --project unit`, whose `include` is root-relative
+    # (`src/**`, `scripts/**`), so nothing in this repo ever invoked a workspace package's
+    # suite. That is not a small gap: the schema-drift detector shipped 81 tests into it,
+    # and two of them had been RED on `main` since #3592 corrected the schema out from under
+    # their assertions, with nothing to say so.
+    #
+    # NOT `continue-on-error`, unlike `unit`. Be precise about what that does and does not
+    # buy: `main` has branch protection but NO required_status_checks, so a red check here
+    # does not prevent a merge. The difference from `unit` is that this renders RED rather
+    # than red-but-ignored — a signal someone has to look at and dismiss, not one the UI
+    # hides. Making it an actual interlock means adding "Package unit tests" to the required
+    # checks, which is a repo-settings change, not a workflow one.
+    #
+    # The reasoning that made `unit` report-only still does not transfer, which is why this
+    # one is not marked ignorable: `unit` is ~12,000 tests whose cost is a ~33s
+    # import/transform phase per file, and it timed out five tests under load. This is 616
+    # tests with no browser, no database and no Next module graph — ~15s locally.
+    #
+    # DB-backed tiers self-skip: `@civitai/db-queries` sources DATABASE_URL from the root
+    # `.env`, which does not exist on a runner, so its 8 DB-backed tests across three files
+    # (6 in tag.db.explain, 1 in model.db.explain, 1 in enum-array-parsers.explain) report
+    # as skipped. They are visible as skips in the summary rather than as a silent absence.
+    # Those EXPLAIN checks therefore have NEVER run in CI — they are laptop-only evidence.
+    # The same is true of the 16-case Kysely/Prisma parity suite, which lives in the app's
+    # `unit` project and self-skips without KYSELY_PARITY_DATABASE_URL.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Not a package suite, and deliberately parked in this job anyway: it needs a completed
+      # `pnpm install` and a job that FAILS the build, and this is the cheapest one that is
+      # both. Adding a fourth job would buy a tidier name for the price of a fourth full
+      # install; the step name is what GitHub shows on a failure, so blame stays readable.
+      #
+      # What it guards: `/api/og` returned 500 on every request for two days because Next
+      # 16.3.0 leaves the libvips SVG loader blocked and `next/og` rasterizes through it. We
+      # carry the upstream one-line fix as a pnpm patch. The behavioural regression test for
+      # that outage lives in the `unit` job above — which is `continue-on-error`, so it cannot
+      # stop the same breakage reaching production a second time. This runs the structural
+      # half of it, against the INSTALLED node_modules rather than the patch file, so a patch
+      # that exists but did not apply is caught. ~50ms, no test runner.
+      - name: Next SVG loader patch applied
+        run: node scripts/ci/assert-next-svg-patch-applied.mjs
+
+      # Parked here for the same two reasons as the step above: it needs a completed
+      # `pnpm install` and a job that FAILS the build, and this is the cheapest one that is
+      # both. `postinstall` has already run `db:generate`, so the re-run inside the script is
+      # idempotent and costs ~1s.
+      #
+      # What it guards: `packages/civitai-db-schema/src/*` is GENERATED but TRACKED, so a
+      # commit whose author's editor reformatted it lands a file that disagrees with its own
+      # generator, and every developer then gets a spurious dirty tree after `pnpm install`.
+      # `db:check-generated` has existed for exactly this and was wired to NOTHING — measured
+      # 2026-08-21, it appeared in no workflow. `enums.ts` flipped between the wrapped and
+      # unwrapped forms FOUR times in four days (470f0fd993 0, 4214ecb10b 30, 15c1408d3d 31,
+      # a5ed2dc83e 0, d0327f55ef 31), and TWICE AFTER `15c1408d3d` made the generator emit
+      # Prettier-formatted bytes specifically to end it. That fix is correct; it was a
+      # convention with nothing enforcing it, which is why it did not hold.
+      #
+      # 🔴 The `test -f` is not decoration. `git diff --exit-code -- <path>` exits 0 when the
+      # path exists on NEITHER side, so if these files are ever moved, renamed or untracked
+      # this gate goes silently and permanently GREEN instead of failing. Verified: an
+      # `--exit-code` diff against a nonexistent sibling path exits 0 here today.
+      #
+      # 🔴 Note for anyone re-testing this: a working-tree edit CANNOT exercise it. The script
+      # regenerates before it diffs, so it overwrites your mutation and passes. The regression
+      # being caught is a COMMITTED file that disagrees with the generator, so the mutant has
+      # to be committed too. Measured both ways: uncommitted edit -> exit 0 (proves nothing),
+      # same edit committed -> exit 1 with 62 changed alias lines (= 2 x 31 aliases).
+      - name: Generated DB schema files match their generator
+        run: |
+          test -f packages/civitai-db-schema/src/enums.ts
+          pnpm run db:check-generated
+
+      - name: Package unit tests
+        run: pnpm run test:packages:run --reporter=default --reporter=json --outputFile=packages-report.json
+
+      # A green vitest run is a claim, not evidence: `--project` matching nothing exits 0,
+      # and so does a config whose globs stopped resolving. This asserts the LEDGER — every
+      # workspace package with a vitest config and a test file on disk must appear in the
+      # results — so the job fails when the executed set shrinks, which is the regression the
+      # totals cannot see.
+      - name: Assert every package suite actually ran
+        if: always()
+        run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
+
+  apps:
+    # Named for BOTH things it runs. It used to be "App unit tests", and the typecheck steps
+    # were added under that name — so a type error in an app would have rendered in the checks
+    # list as a failing unit-test job, pointing the reader at the wrong suite. Safe to rename:
+    # neither `main` nor `release` has any required_status_checks (re-verified 2026-08-20 via
+    # the branch-protection API, not inherited from the earlier note), so no merge gate keys
+    # on the old string.
+    name: App unit tests + typecheck
+    runs-on: ubuntu-latest
+    # The `apps/*` suites — the same gap as `packages` above, in the sibling directory, and
+    # missed when that one was closed: the root config registered `packages/*/vitest.config.*`
+    # as projects and nothing for `apps/*`, so 369 tests across five apps had never once run
+    # in CI. They only ever ran for whoever remembered `pnpm --filter <app> test` by hand.
+    #
+    # A SEPARATE job rather than folding the apps into `packages`, because the two selectors
+    # have to stay disjoint anyway (see the `apps/*` note in vitest.config.mts) and separate
+    # jobs keep the blame attributable: a red app suite should not make the package suites
+    # look broken. Costs one more `pnpm install`; these suites run in seconds.
+    #
+    # Not `continue-on-error`, for the same reason as `packages`: no browser, no database, no
+    # Next module graph, ~7s locally. As there, RED here does not block a merge — `main` has
+    # no required_status_checks — it is a signal someone has to look at and dismiss.
+    #
+    # Selection is by vitest config, so an app without one is silently not covered here. Every app
+    # under `apps/` has one today; scripts/ci/assert-workspace-suites-ran.mjs is what notices if that
+    # stops being true.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: App unit tests
+        run: pnpm run test:apps:run --reporter=default --reporter=json --outputFile=apps-report.json
+
+      # Same positive control as the packages job, and it earns its keep harder here: these
+      # projects are named by hand (`app:auth`, ...), so an app that loses its `test.name`
+      # stops being selected while the other four keep the run green and exit 0. Measured,
+      # not assumed — see the script header.
+      - name: Assert every app suite actually ran
+        if: always()
+        run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps
+
+      # ── App typechecks ──────────────────────────────────────────────────
+      # No app under `apps/` was typechecked by anything before this. The root
+      # `pnpm run typecheck` is bounded by the root tsconfig `include` — `src`,
+      # `packages/*/src`, `scripts/local-dev/*.ts`, `tests`, `test`,
+      # `.next/types/**/*.ts` — with no `apps/*` entry, and BOTH tiers (this
+      # workflow's `typecheck` job and the `tekton / typecheck` status) run that
+      # same script, so the gap could not close on its own.
+      #
+      # Parked in this job rather than its own: `pnpm install` is the expensive
+      # part and this job has already paid for it. The tradeoff is that a type
+      # error renders under this job's name — hence the job rename above.
+      #
+      # Deliberately ONE step driving a script, not one `pnpm --filter` step per
+      # app. Per-app steps abort at the first red app, so a shared type change
+      # that breaks several of them reports one; and `pnpm --filter <name>` EXITS
+      # 0 WHEN THE NAME MATCHES NOTHING (measured, pnpm 10.28.1 — it prints "No
+      # projects matched the filters" and succeeds), so a hardcoded list of
+      # package names is one chance per app for a rename to turn this gate into a
+      # green no-op. The script derives the app set from disk, proves each filter
+      # selected a real package, and collects every failure. See its header.
+      - name: Typecheck apps
+        run: node scripts/ci/typecheck-apps.mjs

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AuditModule from '~/utils/metadata/audit';
 
 /**
  * The moderator-managed benign-phrase lists (PromptBenignPhrase /
@@ -22,7 +23,10 @@ const { mockStripBenignPhrases, mockAuditPromptEnriched, mockModeratePrompt, moc
 vi.mock('~/server/services/blocklist.service', () => ({
   stripBenignPhrases: mockStripBenignPhrases,
 }));
-vi.mock('~/utils/metadata/audit', () => ({ auditPromptEnriched: mockAuditPromptEnriched }));
+vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
+  ...(await importOriginal<typeof AuditModule>()),
+  auditPromptEnriched: mockAuditPromptEnriched,
+}));
 vi.mock('~/server/integrations/moderation', () => ({
   extModeration: { moderatePrompt: mockModeratePrompt },
 }));
@@ -48,7 +52,6 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ updateUserById: vi.fn() }));
@@ -56,10 +59,10 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
   bustFetchThroughCache: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
-
 import { BlocklistType } from '~/server/common/enums';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const PROMPT = 'raven from teen titans';
 const NEGATIVE = 'mature content, blurry';

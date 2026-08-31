@@ -94,6 +94,14 @@ const aiToolkitTrainingParams = z
       modelVariant: z.undefined().optional(),
     }),
     aiToolkitBaseParams.extend({
+      ecosystem: z.literal('ltx25'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('minimaxh3'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
       ecosystem: z.literal('ernie'),
       modelVariant: z.undefined().optional(),
     }),
@@ -111,6 +119,10 @@ const aiToolkitTrainingParams = z
     }),
     aiToolkitBaseParams.extend({
       ecosystem: z.literal('mageflow'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('ideogram4'),
       modelVariant: z.undefined().optional(),
     }),
     // SD3, Flux1, Flux2Klein, and Wan require modelVariant

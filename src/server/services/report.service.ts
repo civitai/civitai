@@ -15,9 +15,9 @@ import type {
   CreateEntityAppealInput,
   CreateReportInput,
   GetRecentAppealsInput,
-  GetReportsInput,
   ResolveAppealInput,
 } from '~/server/schema/report.schema';
+import { withAdditionalReport } from '~/server/services/report-details';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import {
@@ -29,6 +29,7 @@ import {
 import {
   bulkRemoveBlockedImages,
   queueImageSearchIndexUpdate,
+  dropBlockedImageDeleteQueue,
   resetBlockedNsfwLevel,
 } from '~/server/services/image.service';
 import {
@@ -44,6 +45,7 @@ import { addTagVotes } from '~/server/services/tag.service';
 import {
   isPrismaUniqueViolation,
   throwAuthorizationError,
+  throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -68,21 +70,87 @@ export const getReportById = <TSelect extends Prisma.ReportSelect>({
   return dbRead.report.findUnique({ where: { id }, select });
 };
 
+/**
+ * The `details.placementId` predicate, for reasons that carry one.
+ *
+ * Returned as a spreadable fragment rather than branching inside the query, so a
+ * reason without a placement produces no predicate at all and the generic dedupe
+ * behaves exactly as it did.
+ */
+const reportedPlacementFilter = ({
+  reason,
+  details,
+}: {
+  reason: ReportReason;
+  details?: MixedObject;
+}) => {
+  // No predicate applies to any other reason. This early-out is the honest kind.
+  if (reason !== ReportReason.StickerPlacement) return {};
+
+  const placementId = (details as { placementId?: number } | undefined)?.placementId;
+
+  // Refuses rather than degrading. Returning `{}` here would silently fold every
+  // sticker report on an image back into the first one — the exact defect this
+  // predicate exists to fix, wearing the fix's clothes. The number is guaranteed
+  // by `z.coerce.number()` in the report schema, which lives in another file and
+  // is connected to this one by nothing: loosen it, add a second reason carrying
+  // a placementId, or reach this from outside the router, and a silent fold is
+  // what a moderator acts on. A 500 is the better failure.
+  if (typeof placementId !== 'number' || !Number.isFinite(placementId))
+    throw throwBadRequestError('report: a sticker placement report must name a placement');
+
+  // A note is reported separately from the sticker it hangs off, and the
+  // discrimination has to run in BOTH directions. Matching on the placement
+  // alone for one of them is not a weaker filter, it is a fold: report the note
+  // on placement 5, then report the artwork on placement 5, and the second
+  // report is appended to the first as "also reported by" — its reason text
+  // discarded, and a moderator shown a complaint about a note while the
+  // complaint about the artwork is invisible.
+  //
+  // The cost is that reports filed before this field existed carry no `target`
+  // key, and `equals: 'sticker'` does not match a missing one, so a new sticker
+  // report will not dedupe against that history. That is a duplicate in the
+  // queue, on a fixed and shrinking set of rows — strictly better than dropping
+  // a complaint, which is what the asymmetric version did.
+  const target =
+    (details as { target?: string } | undefined)?.target === 'comment' ? 'comment' : 'sticker';
+
+  return {
+    AND: [
+      { details: { path: ['placementId'], equals: placementId } },
+      { details: { path: ['target'], equals: target } },
+    ],
+  };
+};
+
 const validateReportCreation = async ({
   userId,
   reportType,
   entityReportId,
   reason,
+  details,
 }: {
   userId: number;
   reportType: ReportEntity;
   entityReportId: number;
   reason: ReportReason;
+  details?: MixedObject;
 }): Promise<Report | null> => {
   // Look if there's already a report for this type with the same reason
   const entityIdField = reportType === ReportEntity.User ? 'userId' : `${reportType}Id`;
   const existingReport = await dbWrite.report.findFirst({
-    where: { reason, [reportType]: { [entityIdField]: entityReportId } },
+    where: {
+      reason,
+      [reportType]: { [entityIdField]: entityReportId },
+      // A sticker report names one placement, and an image can carry several.
+      // Deduping on (reason, image) alone folds a report about placement 2 into
+      // an existing one about placement 1 and drops the new details, so a
+      // moderator acting on it removes the wrong person's sticker and keeps
+      // their Buzz. Narrowed to the placement so the same one still dedupes and
+      // a different one does not. Every other reason is unaffected — the
+      // predicate is only added when there is a placement to add it for.
+      ...reportedPlacementFilter({ reason, details }),
+    },
     orderBy: { id: 'desc' },
   });
 
@@ -91,6 +159,8 @@ const validateReportCreation = async ({
   const { id, alsoReportedBy, previouslyReviewedCount } = existingReport;
   // if alsoReportedBy includes the userId, then do nothing
   if (alsoReportedBy.includes(userId)) return existingReport;
+
+  const mergedDetails = withAdditionalReport(existingReport.details, { userId, details });
 
   // if alsoReportedBy count is greater than previouslyReviewedCount * 2,
   // then set the status to pending and reset the previouslyReviewedCount
@@ -101,6 +171,7 @@ const validateReportCreation = async ({
         status: ReportStatus.Pending,
         previouslyReviewedCount: 0,
         alsoReportedBy: [...alsoReportedBy, userId],
+        ...(mergedDetails ? { details: mergedDetails } : {}),
       },
     });
 
@@ -111,6 +182,7 @@ const validateReportCreation = async ({
     where: { id },
     data: {
       alsoReportedBy: [...alsoReportedBy, userId],
+      ...(mergedDetails ? { details: mergedDetails } : {}),
     },
   });
 
@@ -160,6 +232,43 @@ const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
 };
 
 type CreateReportProps = CreateReportInput & { userId: number; isModerator?: boolean };
+/**
+ * A sticker report names the placement it is about, and the placement has to be
+ * on the thing being reported.
+ *
+ * Without this the id is whatever the client sent: a moderator opening the
+ * report would act on a placement from some other image, which removes an
+ * innocent person's sticker and takes their Buzz with it. The picker only ever
+ * offers placements on this image, so anything else is either a stale form or a
+ * hand-made request — and a listing that offers the right options is not a
+ * mutation that refuses the wrong ones.
+ */
+async function assertReportedPlacementIsOnEntity({
+  type,
+  entityId,
+  details,
+}: {
+  type: ReportEntity;
+  entityId: number;
+  details?: MixedObject;
+}) {
+  const placementId = (details as MixedObject | undefined)?.placementId;
+  if (placementId == null) return;
+
+  if (type !== ReportEntity.Image)
+    throw throwBadRequestError(
+      'report: a sticker placement can only be reported through its image'
+    );
+
+  const placement = await dbRead.placement.findFirst({
+    where: { id: Number(placementId), surface: 'sticker', targetType: 'image', targetId: entityId },
+    select: { id: true },
+  });
+
+  if (!placement)
+    throw throwBadRequestError('report: that sticker is not on the image being reported');
+}
+
 export const createReport = async ({
   userId,
   id,
@@ -174,6 +283,15 @@ export const createReport = async ({
   // only mods can create csam reports
   if (data.reason === ReportReason.CSAM && !isModerator) throw throwAuthorizationError();
 
+  // User-only on purpose: reporting your own content is how a creator contests a
+  // rating, so this must not widen to other entity types.
+  if (type === ReportEntity.User && id === userId)
+    throw throwBadRequestError(
+      'You cannot report your own profile. To reach a moderator about your own account, use the Support Portal at /support-portal.'
+    );
+
+  await assertReportedPlacementIsOnEntity({ type, entityId: id, details: data.details });
+
   const validReport =
     data.reason !== ReportReason.NSFW && data.reason !== ReportReason.Automated
       ? await validateReportCreation({
@@ -181,6 +299,7 @@ export const createReport = async ({
           reportType: type,
           entityReportId: id,
           reason: data.reason,
+          details: data.details as MixedObject,
         })
       : null;
   if (validReport) return validReport;
@@ -331,45 +450,6 @@ export const createReport = async ({
   return createdReport;
 };
 
-// TODO - add reports for questions/answers
-// get report by category (model, review, comment)
-export const getReports = async <TSelect extends Prisma.ReportSelect>({
-  page,
-  type,
-  limit = 20,
-  select,
-  filters,
-  sort,
-}: GetReportsInput & {
-  select: TSelect;
-}) => {
-  const { take, skip } = getPagination(limit, page);
-
-  const where: Prisma.ReportWhereInput = {
-    [type]: { isNot: null },
-  };
-
-  for (const { id, value } of filters ?? []) {
-    if (id === 'status') {
-      const statuses = value as ReportStatus[];
-      if (statuses.length > 0) where.status = { in: statuses };
-    } else if (id === 'reason') {
-      const reasons = value as ReportReason[];
-      if (reasons.length > 0) where.reason = { in: reasons };
-    } else if (id === 'reportedBy') where.user = { username: { startsWith: value as string } };
-  }
-
-  const items = await dbRead.report.findMany({
-    take,
-    skip,
-    select,
-    where,
-    orderBy: [{ id: 'desc' }],
-  });
-  const count = await dbRead.report.count({ where });
-  return getPagingData({ items, count }, take, page);
-};
-
 export const getReportByIds = <TSelect extends Prisma.ReportSelect>({
   ids,
   select,
@@ -378,13 +458,6 @@ export const getReportByIds = <TSelect extends Prisma.ReportSelect>({
   select: TSelect;
 }) => {
   return dbRead.report.findMany({ where: { id: { in: ids } }, select });
-};
-
-export const updateReportById = ({
-  id,
-  data,
-}: GetByIdInput & { data: Prisma.ReportUpdateArgs['data'] }) => {
-  return dbWrite.report.update({ where: { id }, data });
 };
 
 export async function bulkSetReportStatus({
@@ -465,6 +538,43 @@ export function getRecentAppealsByUserId({ userId }: GetRecentAppealsInput) {
   });
 }
 
+export function getLatestModelAppeal(modelId: number, userId: number) {
+  return dbRead.appeal.findFirst({
+    where: { entityType: EntityType.Model, entityId: modelId, userId },
+    orderBy: { createdAt: 'desc' },
+    select: { status: true, resolvedAt: true },
+  });
+}
+
+// `Appeal` is unique on (entityType, entityId, userId), so an owner asking for
+// review a second time can only ever be an update of the row they already have.
+export function reopenModelAppeal({
+  entityId,
+  userId,
+  message,
+}: {
+  entityId: number;
+  userId: number;
+  message: string;
+}) {
+  return dbWrite.appeal.update({
+    where: {
+      entityType_entityId_userId: { entityType: EntityType.Model, entityId, userId },
+    },
+    data: {
+      status: AppealStatus.Pending,
+      appealMessage: message,
+      // The moderator queue sorts and displays on createdAt, so leaving the
+      // original request's stamp puts a months-old row ahead of fresh ones under
+      // a date that describes a request nobody is being asked to review.
+      createdAt: new Date(),
+      resolvedAt: null,
+      resolvedBy: null,
+      resolvedMessage: null,
+    },
+  });
+}
+
 export function getAppealCount({
   userId,
   status,
@@ -496,6 +606,12 @@ export async function getAppealDetails({ id }: GetByIdInput) {
         select: { id: true, url: true, userId: true },
       });
       break;
+    case EntityType.Model:
+      entityDetails = await dbRead.model.findUnique({
+        where: { id: appeal.entityId },
+        select: { id: true, name: true, userId: true },
+      });
+      break;
     default:
       // Do nothing
       break;
@@ -513,35 +629,38 @@ export async function createEntityAppeal({
   message,
   userId,
   buzzType,
-}: CreateEntityAppealInput & { userId: number; buzzType: BuzzSpendType }) {
+  skipFee,
+}: CreateEntityAppealInput & { userId: number; buzzType: BuzzSpendType; skipFee?: boolean }) {
   let buzzTransactionId: string | null = null;
 
-  // check if user has more than 3 pending or rejected appeal in the last 30 days
-  const appealsCount = await getAppealCount({
-    userId,
-    startDate: dayjs().subtract(30, 'days').toDate(),
-    status: [AppealStatus.Pending, AppealStatus.Rejected],
-  });
+  if (!skipFee) {
+    // check if user has more than 3 pending or rejected appeal in the last 30 days
+    const appealsCount = await getAppealCount({
+      userId,
+      startDate: dayjs().subtract(30, 'days').toDate(),
+      status: [AppealStatus.Pending, AppealStatus.Rejected],
+    });
 
-  if (appealsCount >= 3) {
-    const prefix = getAppealPrefix(userId);
-    const data = await withRetries(() =>
-      createMultiAccountBuzzTransaction({
-        amount: 100,
-        fromAccountId: userId,
-        toAccountId: 0,
-        type: TransactionType.Appeal,
-        fromAccountTypes: [buzzType],
-        description: `Appeal fee for ${entityType} ${entityId}`,
-        externalTransactionIdPrefix: prefix,
-      })
-    );
+    if (appealsCount >= 3) {
+      const prefix = getAppealPrefix(userId);
+      const data = await withRetries(() =>
+        createMultiAccountBuzzTransaction({
+          amount: 100,
+          fromAccountId: userId,
+          toAccountId: 0,
+          type: TransactionType.Appeal,
+          fromAccountTypes: [buzzType],
+          description: `Appeal fee for ${entityType} ${entityId}`,
+          externalTransactionIdPrefix: prefix,
+        })
+      );
 
-    if (data.transactionCount === 0) {
-      throw new Error('There was an error creating the appeal transaction.');
+      if (data.transactionCount === 0) {
+        throw new Error('There was an error creating the appeal transaction.');
+      }
+
+      buzzTransactionId = prefix;
     }
-
-    buzzTransactionId = prefix;
   }
 
   try {
@@ -577,8 +696,8 @@ export async function createEntityAppeal({
 }
 
 // Display label + (when the entity is publicly reachable) a link for an
-// appealed item, surfaced in the resolution email. Only Image is linkable today;
-// other entity types fall back to a label-only reference.
+// appealed item, surfaced in the resolution email. Entity types with no public
+// URL fall back to a label-only reference.
 function appealEntityLink(
   entityType: EntityType,
   entityId: number
@@ -586,6 +705,8 @@ function appealEntityLink(
   switch (entityType) {
     case EntityType.Image:
       return { url: `${getBaseUrl()}/images/${entityId}`, label: `Image #${entityId}` };
+    case EntityType.Model:
+      return { url: `${getBaseUrl()}/models/${entityId}`, label: `Model #${entityId}` };
     default:
       return { label: `${entityType} #${entityId}` };
   }
@@ -646,6 +767,7 @@ export async function resolveEntityAppeal({
             // Shared restore path: reset+unlock a Blocked-locked row so the recompute isn't a
             // no-op, then recompute. Same helper handleUnblockImages uses. (ClickUp 868kfwdzq)
             await resetBlockedNsfwLevel(appeal.entityId);
+            await dropBlockedImageDeleteQueue([appeal.entityId]);
             // An approved appeal means the block was wrong — drop the pHash from the
             // blocked-hash set so re-uploads of the same image aren't auto-blocked (parity
             // with handleUnblockImages).
@@ -711,7 +833,6 @@ export async function resolveEntityAppeal({
         resolvedMessage,
       },
     });
-
   }
 
   // Email each affected user once, listing every item they appealed in this

@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -60,6 +60,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   const config = await getChallengeConfig();
   const metadata = parseChallengeMetadata(challenge.metadata);
   const themeElements = metadata.themeElements;
+  const resourceConcept = metadata.resourceConcept;
 
   // Resolve dynamic judging categories + nsfw once for all entries — mirrors the gate in
   // reviewEntriesForChallenge so re-review scores use the same rubric as the original review.
@@ -127,6 +128,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
             imageUrl: getEdgeUrl(entry.url, { width: 1200, optimized: true }),
             config: judgingConfig,
             themeElements,
+            resourceConcept,
             categories,
             nsfw,
           }),

@@ -28,9 +28,14 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { AppBlockReviews } from '~/components/Apps/AppBlockReviews';
+import { appListingDescriptionToPlainText } from '~/components/Apps/appListingDescriptionText';
+import { AppListingDescription } from '~/components/Apps/AppListingDescription';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
-import { resolveAppsPageAccess } from '~/components/Apps/resolveAppsPageAccess';
+import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
+import {
+  approvedListingSlugQuery,
+  resolveLegacyAppRoute,
+} from '~/components/Apps/resolveLegacyAppRedirect';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -45,20 +50,81 @@ import {
   SCOPE_DESCRIPTIONS,
   SLOT_DESCRIPTIONS,
 } from '~/server/services/blocks/scope-descriptions.constants';
+import { dbRead } from '~/server/db/client';
+import { resolveStoreVisibilityScope } from '~/server/services/app-blocks-flag';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import { trpc } from '~/utils/trpc';
 
 /**
- * F-E E2 — per-app marketplace detail page (`/apps/<appBlockId>`).
+ * 🔴 RETIRED (S8 / PR-2) — this route no longer renders. `getServerSideProps`
+ * redirects it to the unified store detail `/apps/store-preview/<slug>`.
  *
- * 🔒 GATING INVARIANT (E2 — same as E1, do not violate):
- *   - The SSR resolver runs `resolveAppsPageAccess` FIRST: the `features.appBlocks`
- *     flag gate is the ONLY access control. A real anon / non-mod viewer does not
- *     satisfy the mod-segmented Flipt `app-blocks-enabled` flag, so they get
+ * WHY: it was a second, diverging detail surface for the same app. It rendered
+ * `by <app name>` where the store correctly renders the owner's username, and its
+ * raw bridge-less `<iframe>` "Live preview" painted a permanent light-theme panel
+ * on a dark page (nothing ever posts `BLOCK_INIT` to that frame, so the block's
+ * shell never learns the host theme). The store detail already covers this page's
+ * whole action set — "Open app" → its `open` branch, "Open live" → its `visit`
+ * fallback, and "Edit manifest" is the SIBLING route `/apps/[appBlockId]/edit*`,
+ * untouched here and independently reachable from `/apps/my-submissions` and the
+ * store card's owner Edit.
+ *
+ * REDIRECT, NOT DELETE — deliberately. The page BODY below is retained for at
+ * least one release so a stale bookmark or an external link resolves through the
+ * hop. FOUR in-repo FILES link here and are all left untouched — five link sites,
+ * because `AppBlockCard.tsx` links twice (its title at ~:204 and its description
+ * at ~:257): `AppBlockCard.tsx` (×2), `ManifestEditForm.tsx` (post-save
+ * "Cancel"), `appListingDetailView.ts`'s `liveAppDetailHref`, and
+ * `[appBlockId]/edit.tsx`'s "Back". Deleting the body and cleaning those up is a
+ * tracked follow-up; keeping it out of this change is what makes this a one-file
+ * change that cannot collide with the parallel work on `appListingDetailView.ts`.
+ * The component is unreachable in the meantime (both SSR and client-side
+ * `/_next/data` navigations honour the redirect) — do not "fix" anything in it.
+ *
+ * ⚠️ The hop DROPS THE QUERY STRING. `getServerSideProps` returns a destination
+ * built from the slug alone, and this page only ever read `router.query.appBlockId`
+ * (a route param, preserved in the destination path), so nothing in-product breaks
+ * — but an external link carrying tracking params (`?utm_*`, `?ref=`) loses them
+ * at the hop. Named so it is a decision, not a surprise; forwarding them is a
+ * one-line change if anyone wants it.
+ *
+ * 🔴 THE ORPHANED 5-STAR REVIEW FORM IS GONE. This page and `AppDetailsModal`
+ * were the only two hosts of the legacy `AppBlockReview` (5-star) write form,
+ * and both were unreachable — `AppDetailsModal` is opened only from
+ * `AppBlockCard`, which renders only from `MarketplaceBody` /
+ * `RecentlyOpenedAppsView`, and `MarketplaceBody` has had no importer in app
+ * code since `/apps` swapped to `AppListingsMarketplaceBody`. The whole
+ * `AppBlockReview` system (service, tRPC procs, Buzz reward, Bayesian `rating`
+ * sort and the `app_block_reviews` table) has been removed; the store's review
+ * surface is the thumbs-based `AppListingReview`. The `<AppBlockReviews>`
+ * section that used to render here was deleted with it.
+ *
+ * ⚠️ Two consequences of leaving those callsites alone, known and accepted:
+ *   - An owner backing out of the editor on a PENDING app now lands on a real
+ *     404 rather than a not-found rendered inside the app shell. Same end state,
+ *     blunter presentation; the follow-up that retargets those links fixes it.
+ *   - `liveAppDetailHref` feeds the store detail's own `info`-mode CTA for a
+ *     MODEL-SLOT app, so on that page the primary button now hops back to the
+ *     page the viewer is already on. No live app is in that state today (every
+ *     approved on-site listing declares a page), but it is why the follow-up
+ *     should retarget that branch, not merely delete the route.
+ *
+ * 🔒 GATING INVARIANT (E2, + the external-only store scope):
+ *   - The SSR resolver runs `resolveAppsPageAccess` FIRST. A real anon / non-mod
+ *     viewer does not satisfy the mod-segmented Flipt flags behind it, so they get
  *     `notFound`. The page is anon-CAPABLE in code (no session→login redirect)
- *     but DARK until the segment is widened at launch — there is intentionally
+ *     but DARK until a segment is widened at launch — there is intentionally
  *     NO hardcoded isModerator belt (that would break the eventual public flip).
+ *   - 🔴 THE PAGE GATE IS NO LONGER THE ONLY ACCESS CONTROL, and the old wording
+ *     saying it was is retired rather than softened. A SECOND gate — the resolved
+ *     store scope — runs immediately after it and admits ONLY `full`. It exists
+ *     because the page gate now also grants the EXTERNAL-ONLY cohort (so they can
+ *     reach `/apps`), and this route resolves on-site listings: without the scope
+ *     check they would get a 302 disclosing an on-site listing's slug. Both gates
+ *     run before the route param is read and before any query — see
+ *     `resolveLegacyAppRoute`.
  *   - `deIndex` stays ON in the page <Meta> (per-app OG/title/description are
  *     added now, but the page is not crawlable pre-launch — drop `deIndex` only
  *     at launch).
@@ -68,9 +134,39 @@ import { trpc } from '~/utils/trpc';
  */
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  // Flag gate FIRST and ONLY (no session→login redirect): the detail page renders
-  // for a session-less request BEHIND the flag (dark today; lit at segment-widen).
-  resolver: async ({ features }) => resolveAppsPageAccess({ features }),
+  // The decision (gate ordering, param handling, the approved-listing
+  // precondition, the destination) lives in `resolveLegacyAppRoute` with the DB
+  // read injected, so all of it is asserted in the node unit project. This
+  // resolver is only the wiring.
+  //
+  // 🔴 Resolve `AppBlock.id` (the `apb_<ULID>` route param) → the store slug via
+  // `AppListing.slug`, NOT `AppBlock.blockId`. For an on-site app the two hold
+  // the same value today (`mapAppBlockToListing` mints the listing with
+  // `slug: ab.blockId`), so reading `blockId` would usually produce the same
+  // string — but it would answer the WRONG question. The destination
+  // (`appListings.getAppDetail`) resolves BY LISTING, approved-only; a pending,
+  // rejected or never-approved app has a `blockId` and no listing, so a
+  // `blockId`-keyed redirect would bounce that owner to a store URL that refuses
+  // to serve it instead of 404-ing here. Reading the listing row makes the
+  // existence of an approved listing the actual precondition of the redirect —
+  // the decided behaviour — and it stays correct if a slug ever diverges from
+  // its block id (off-site listings already choose their own slugs).
+  //
+  // 🔴 `storeScope` is resolved SERVER-SIDE here (`resolveStoreVisibilityScope`),
+  // not re-derived from `features`. It is a DISCLOSURE gate — it must key off the
+  // same value the DATA layer keys off (`getListingDetail`'s `scope`), and the two
+  // can disagree during a Flipt outage. Without it, once
+  // `app-listings-public-external` is enabled an external-only viewer would pass
+  // the (now-widened) page gate and get a 302 carrying an on-site listing's slug.
+  // See the block comment on `resolveLegacyAppRoute`.
+  resolver: async ({ ctx, features, session }) =>
+    resolveLegacyAppRoute({
+      features,
+      storeScope: await resolveStoreVisibilityScope({ user: session?.user }),
+      appBlockId: ctx.params?.appBlockId,
+      findApprovedListingSlug: async (appBlockId) =>
+        (await dbRead.appListing.findFirst(approvedListingSlugQuery(appBlockId)))?.slug ?? null,
+    }),
 });
 
 function slotLabel(slotId?: string): string {
@@ -125,18 +221,17 @@ export default function AppDetailPage() {
     { enabled: !!features.appBlocks && !!currentUser && !!appBlockId, retry: false }
   );
   const isOwner = !!ownerManifest;
-  // Subscriptions for THIS app — feeds the reviews write-form gate (an enabled
-  // install is required to review, mirroring the server gate).
-  const mySubsForApp = useMemo(
-    () => (mySubs ?? []).filter((sub) => sub.appBlockId === appBlockId),
-    [mySubs, appBlockId]
-  );
-
   if (!features.appBlocks) return <NotFound />;
 
   const detail = data as PublicAppDetail | undefined;
   const name = detail?.manifest.name ?? detail?.blockId ?? appBlockId;
   const description = detail?.manifest.description ?? '';
+  // 🔴 `<meta>` gets the PLAIN-TEXT PROJECTION, never the markdown source. The
+  // stored description is markdown (see `appListingDescriptionText.ts`), and a meta
+  // tag cannot render it — shipping the source put literal `**bold**` and
+  // backticks into og:description. The projection is built only from mdast text
+  // values, so it also cannot introduce markup into the tag.
+  const metaDescription = appListingDescriptionToPlainText(description);
   const slots = detail?.manifest.targets?.map((t) => t.slotId).filter(Boolean) ?? [];
   // Show Install ONLY for an app that installs into a model/in-context slot.
   // A page app (target slot `app.page`) is STATELESS (installModel `'none'`) — no
@@ -181,9 +276,6 @@ export default function AppDetailPage() {
       // external-link app shows no Install CTA — so carry the detail's value
       // (null here in practice).
       externalUrl: detail.externalUrl,
-      // Marketplace reviews — carry through from the detail (display-safe).
-      avgRating: detail.avgRating,
-      reviewCount: detail.reviewCount,
       // Card cover = the first public screenshot (the detail already carries the
       // projected gallery). Unused by the settings modal, but kept consistent.
       coverUrl: detail.screenshots[0]?.url ?? null,
@@ -204,7 +296,7 @@ export default function AppDetailPage() {
       */}
       <Meta
         title={`${name} — Civitai Apps`}
-        description={description || `${name} on the Civitai Apps marketplace.`}
+        description={metaDescription || `${name} on the Civitai Apps marketplace.`}
         deIndex
       />
       <Container size="md" py="md">
@@ -243,7 +335,7 @@ export default function AppDetailPage() {
                     )}
                     {detail.contentRating && (
                       <Badge variant="light" color="gray" size="sm">
-                        {detail.contentRating}
+                        {offsiteContentRatingLabel(detail.contentRating)}
                       </Badge>
                     )}
                   </Group>
@@ -333,11 +425,12 @@ export default function AppDetailPage() {
                 </Group>
               </Group>
 
-              {description && (
-                <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                  {description}
-                </Text>
-              )}
+              {/* Markdown, via the shared renderer — see `appListingDescriptionText.ts`
+                  for the one rule. This surface used to be `pre-wrap` plain text
+                  while the listing detail body rendered the SAME stored string as
+                  markdown, so a description written with backticks showed literal
+                  backtick characters here and a code span there. */}
+              {description && <AppListingDescription description={description} />}
 
               {/* F-E E5 — publisher screenshot gallery. Public display URLs
                   (the gated /api/blocks/screenshot/... route); the images were
@@ -385,7 +478,7 @@ export default function AppDetailPage() {
                   <Stack gap="xs">
                     <Title order={4}>External site</Title>
                     <Text size="sm" c="dimmed">
-                      This app opens an external, off-site link in a new tab:{' '}
+                      This {STANDALONE_KIND_LABEL} app opens an external link in a new tab:{' '}
                       <Anchor href={externalUrl!} target="_blank" rel="noopener noreferrer">
                         {externalUrl!.replace(/^https?:\/\//, '')}
                       </Anchor>
@@ -460,9 +553,7 @@ export default function AppDetailPage() {
                         }
                       >
                         {scopes.map((scope) => (
-                          <List.Item key={scope}>
-                            {SCOPE_DESCRIPTIONS[scope] ?? scope}
-                          </List.Item>
+                          <List.Item key={scope}>{SCOPE_DESCRIPTIONS[scope] ?? scope}</List.Item>
                         ))}
                       </List>
                     )}
@@ -497,21 +588,6 @@ export default function AppDetailPage() {
                   </Stack>
                 </>
               )}
-
-              <Divider />
-
-              {/* F-E marketplace REVIEWS — summary + (gated) write form + list.
-                  Rendered behind the same appBlocks flag as the rest of the page
-                  (the component also self-guards). The aggregate (avgRating /
-                  reviewCount) comes from getAppDetail; the write form shows only
-                  for a signed-in viewer with an enabled install (server-enforced
-                  gates mirrored client-side). */}
-              <AppBlockReviews
-                appBlockId={appBlockId}
-                avgRating={detail.avgRating}
-                reviewCount={detail.reviewCount}
-                subscriptions={mySubsForApp}
-              />
             </Stack>
           )}
         </Stack>

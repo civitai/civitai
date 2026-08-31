@@ -1,4 +1,5 @@
 import { Menu, useComputedColorScheme } from '@mantine/core';
+import { moderatorUserLookupPath } from '~/shared/constants/moderator-app';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification, updateNotification } from '@mantine/notifications';
@@ -9,7 +10,7 @@ import {
   IconCrystalBall,
   IconDotsVertical,
   IconFlag,
-  IconInfoCircle,
+  IconGift,
   IconGraphOff,
   IconGraph,
   IconMicrophone,
@@ -19,15 +20,16 @@ import {
 } from '@tabler/icons-react';
 import React from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
+import { openAddToHubModal } from '~/components/Dialog/triggers/add-to-hub';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
+import { SuspendPlacerMenuItem } from '~/components/Sticker/SuspendPlacerMenuItem';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 // import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 // import ProfileLayout from '~/components/Profile/ProfileLayout';
 import UserBanModal from '~/components/Profile/UserBanModal';
-import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
@@ -36,6 +38,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { AddToHubMenuItem } from '~/components/MenuItems/AddToHubMenuItem';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 
 export const UserContextMenu = ({ username }: { username: string }) => {
   const queryUtils = trpc.useUtils();
@@ -274,16 +279,9 @@ export const UserContextMenu = ({ username }: { username: string }) => {
         <>
           {isMod && (
             <>
-              {env.NEXT_PUBLIC_USER_LOOKUP_URL && (
-                <Menu.Item
-                  component="a"
-                  target="_blank"
-                  leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-                  href={`${env.NEXT_PUBLIC_USER_LOOKUP_URL}${user.id}`}
-                >
-                  Lookup User
-                </Menu.Item>
-              )}
+              <ModeratorLookupMenuItem path={moderatorUserLookupPath(user.id)}>
+                Lookup User
+              </ModeratorLookupMenuItem>
               {features.impersonation && user.id !== currentUser.id && (
                 <Menu.Item
                   color="yellow"
@@ -347,6 +345,7 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               >
                 {user.muted ? 'Unmute user' : 'Mute user'}
               </Menu.Item>
+              <SuspendPlacerMenuItem userId={user.id} />
               {canManageUserPayments && (
                 <>
                   <Menu.Item
@@ -367,6 +366,28 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               )}
             </>
           )}
+          {features.giftMemberships && currentUser && (
+            <Menu.Item
+              leftSection={<IconGift size={14} stroke={1.5} />}
+              component={Link}
+              href={`/pricing/gift?userId=${user.id}`}
+            >
+              Gift a membership
+            </Menu.Item>
+          )}
+          <AddToHubMenuItem
+            onClick={() =>
+              openAddToHubModal({
+                props: {
+                  source: {
+                    type: UserHubSourceType.User,
+                    targetId: user.id,
+                    alias: user.username,
+                  },
+                },
+              })
+            }
+          />
           {!isSameUser && <BlockUserButton userId={user.id} as="menu-item" />}
           {isSameUser && (
             <Menu.Item component={Link} href={`/user/${username}/manage-categories`}>
@@ -374,19 +395,21 @@ export const UserContextMenu = ({ username }: { username: string }) => {
             </Menu.Item>
           )}
           <HideUserButton as="menu-item" userId={user.id} />
-          <LoginRedirect reason="report-user">
-            <Menu.Item
-              leftSection={<IconFlag size={14} stroke={1.5} />}
-              onClick={() =>
-                openReportModal({
-                  entityType: ReportEntity.User,
-                  entityId: user.id,
-                })
-              }
-            >
-              Report
-            </Menu.Item>
-          </LoginRedirect>
+          {user.id !== currentUser?.id && (
+            <LoginRedirect reason="report-user">
+              <Menu.Item
+                leftSection={<IconFlag size={14} stroke={1.5} />}
+                onClick={() =>
+                  openReportModal({
+                    entityType: ReportEntity.User,
+                    entityId: user.id,
+                  })
+                }
+              >
+                Report
+              </Menu.Item>
+            </LoginRedirect>
+          )}
         </>
       </Menu.Dropdown>
     </Menu>

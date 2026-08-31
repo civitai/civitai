@@ -19,15 +19,20 @@ import { BlockTokenService } from '~/server/services/block-token.service';
  *                                            Uses `DEV_TOKEN_SCOPE_ALLOWLIST`
  *                                            (WITH apps:storage:*) and gates the
  *                                            spend scope on the bearer credential's
- *                                            AIServicesWrite bit (`keyCanSpend`).
+ *                                            AIServicesWrite bit (`spendEntitled`)
+ *                                            AND the body's `requestBudgetedSpend`
+ *                                            (`spendRequested`).
  *   2. `/api/v1/block-tokens` (Phase 2)   — COOKIE-authed author-own dev-tunnel
  *                                            branch, for the SSR dev host at
  *                                            `/apps/dev/<blockId>`. Uses
  *                                            `TUNNEL_HOST_MINT_SCOPE_ALLOWLIST`
  *                                            (WITHOUT apps:storage:* — Decision 1:
  *                                            App Storage stays 403 until approval)
- *                                            and passes `keyCanSpend: true` because
- *                                            there is no bearer ceiling; SPEND is
+ *                                            and passes `spendEntitled: true` +
+ *                                            `spendRequested: true` because there is
+ *                                            no bearer ceiling and no request body
+ *                                            (the declaring manifest IS the
+ *                                            request); SPEND is
  *                                            instead gated at RUNTIME by
  *                                            `assertViewerIsAppDeveloper(sub)` on
  *                                            the token subject (blocks.router
@@ -138,7 +143,7 @@ export const TUNNEL_HOST_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new Set<str
  *
  * WITHHELD (stripped regardless of what the pending manifest declares — the clamp
  * drops any scope not in this set, so none of these can EVER reach the review JWT):
- *   - `ai:write:budgeted`         real Buzz spend (ALSO stripped by keyCanSpend:false)
+ *   - `ai:write:budgeted`         real Buzz spend (ALSO stripped by spendEntitled:false)
  *   - `apps:storage:read|write`   per-user App Storage (synthetic appId → no namespace)
  *   - `apps:storage:shared:read|write` cross-user shared datastore (write = abuse)
  *   - `collections:read:private`  the caller's OWN private collections (consent-gated)
@@ -227,21 +232,46 @@ export const REVIEW_RUN_FOR_REAL_MINT_SCOPE_ALLOWLIST: ReadonlySet<string> = new
  *      Retained as the deterministic re-forbid hook; it is NOT the money-out gate
  *      for the review sandbox — that is the allowlist (b), which omits social:tip:self,
  *   e) if the body narrowed, intersect with the requested subset,
- *   f) BEARER-credential spend ceiling — strip `ai:write:budgeted` unless
- *      `keyCanSpend` (dev-token: the bearer's AIServicesWrite bit; host-mint:
- *      `true`, since spend is gated at runtime by the author-flag re-check),
+ *   f) SPEND ceiling — strip `ai:write:budgeted` unless BOTH `spendEntitled` AND
+ *      `spendRequested` (see the two-predicate note below),
  *   g) force-grant `user:read:self` (self-bound read of the caller's OWN identity).
  * Every step is a STRIP (no error). The belt is byte-identical across all callers
  * bar the allowlist + the OAuth-ceiling substitution.
+ *
+ * ─── Step (f): TWO independent predicates, never one (#3703 step 1) ───
+ * The spend ceiling used to be a single `keyCanSpend: boolean`, which meant three
+ * different things at its three call sites — ENTITLEMENT (bearer: the credential's
+ * AIServicesWrite bit), entitlement DEFERRED to a runtime gate (tunnel), and INTENT
+ * (mod review, via `runForReal`). Conflating "may this context spend?" with "did the
+ * caller ask to spend on THIS mint?" is what makes budgeted spend an implicit grant.
+ * They are now separate:
+ *
+ *   - `spendEntitled`  — MAY this context spend? (a credential bit, or a runtime gate)
+ *   - `spendRequested` — DID the caller ask to spend on THIS mint?
+ *
+ * BOTH are REQUIRED and NEITHER is DEFAULTED, deliberately. A default of `false`
+ * would silently strip spend from every dev tunnel — including already-PERSISTED
+ * tunnel sessions, whose `grantedScopes` are clamped once at write
+ * (`dev-tunnel.service.ts` `startDevTunnel`). A default of `true` would re-create the
+ * implicit grant for any future caller. Required parameters make the compiler force
+ * every present and future call site to answer both questions explicitly.
+ *
+ * Deny is a STRIP, never an error: a `spendRequested: true` from a context that is
+ * not entitled mints successfully WITHOUT the scope — erroring would add a new
+ * failure mode on the money path, and every other step in this belt is a strip.
  */
 export function clampDevScopes(opts: {
   scopeSource: string[];
   oauthAllowed: number | null;
   requestedScopes?: string[];
-  keyCanSpend: boolean;
+  /** MAY this context spend? (credential bit, or a runtime gate.) Required. */
+  spendEntitled: boolean;
+  /** DID the caller ask to spend on THIS mint? Required. */
+  spendRequested: boolean;
   allowlist: ReadonlySet<string>;
 }): string[] {
-  const { scopeSource, oauthAllowed, requestedScopes, keyCanSpend, allowlist } = opts;
+  const { scopeSource, oauthAllowed, requestedScopes, spendEntitled, spendRequested, allowlist } =
+    opts;
 
   const forbidden = new Set<string>(PAGE_FORBIDDEN_SCOPES);
 
@@ -265,9 +295,11 @@ export function clampDevScopes(opts: {
     granted = granted.filter((s: string) => want.has(s));
   }
 
-  // Bearer-credential (or runtime-author) spend ceiling: strip the budgeted-spend
-  // scope unless the caller can spend. Read/catalog scopes are unaffected.
-  if (!keyCanSpend) {
+  // SPEND ceiling: the budgeted-spend scope survives ONLY when the context is
+  // ENTITLED to spend AND the caller REQUESTED spend for this mint. Either alone is
+  // insufficient — `&&`, never `||`. Read/catalog scopes are unaffected, and a
+  // denied request is a silent strip (the mint still succeeds).
+  if (!(spendEntitled && spendRequested)) {
     granted = granted.filter((s: string) => s !== 'ai:write:budgeted');
   }
 
@@ -284,9 +316,9 @@ export function clampDevScopes(opts: {
 /**
  * App Dev Tunnel — the SINGLE clamp for a dev-tunnel session's self-declared
  * (`block.manifest.json`) scopes: the fixed TUNNEL belt (no OAuth ceiling — a
- * pre-approval app has no OauthClient; `keyCanSpend: true` — spend is gated at
- * RUNTIME by the author-flag re-check + the dev/session/day Buzz caps, not a bearer
- * here). Used by BOTH the SSR `declaredScopes` surface (block-registry) AND the
+ * pre-approval app has no OauthClient; `spendEntitled: true` / `spendRequested: true`
+ * — see the PERMANENT note on the call below). Used by BOTH the SSR
+ * `declaredScopes` surface (block-registry) AND the
  * on-site block-token mint, so the block's advertised `granted` set and the JWT's
  * actual scopes derive from ONE function and can NEVER drift apart. Idempotent —
  * safe to re-apply to an already-clamped stored set (defense-in-depth over the
@@ -298,7 +330,24 @@ export function clampTunnelDeclaredScopes(scopeSource: string[]): string[] {
   return clampDevScopes({
     scopeSource,
     oauthAllowed: null,
-    keyCanSpend: true,
+    // 🔴 PERMANENTLY true/true — do NOT wire either of these to a request field.
+    //
+    // `spendEntitled: true` — the tunnel has no bearer ceiling; spend is gated at
+    // RUNTIME by `assertViewerIsAppDeveloper(sub)` (the author-flag re-check) plus
+    // the per-call / per-session / per-day Buzz caps.
+    //
+    // `spendRequested: true` — this path has NO request body to carry a per-mint
+    // request. Starting a dev tunnel with a manifest that DECLARES
+    // `ai:write:budgeted` *is* the request; `scopeSource` already carries that
+    // declaration, so a manifest that does not declare the scope never reaches the
+    // spend ceiling at all.
+    //
+    // Getting this wrong is not merely a future-mint bug: `startDevTunnel`
+    // (dev-tunnel.service.ts) clamps ONCE at WRITE and PERSISTS the result as the
+    // session record's `grantedScopes`. A `false` here would silently strip spend
+    // from ALREADY-STORED live tunnel sessions, and no re-clamp could restore them.
+    spendEntitled: true,
+    spendRequested: true,
     allowlist: TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
   });
 }

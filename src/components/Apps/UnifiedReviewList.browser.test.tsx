@@ -24,7 +24,7 @@ const ONSITE: OnsiteReviewRequest = {
   submittedAt: '2026-01-01T00:00:00Z', // older → first under asc
   bundleSizeBytes: '10',
   bundleSha256: 'sha',
-  manifest: { name: 'My Onsite App' },
+  manifest: { name: 'Lighthouse' },
   fileSummary: {},
   manifestDiffSummary: {},
   reviewRepoUrl: 'https://forgejo.example/repo',
@@ -39,7 +39,12 @@ const OFFSITE: OffsiteReviewRequest = {
   submittedAt: '2026-02-01T00:00:00Z', // newer → second under asc
   changelog: null,
   appListing: {
-    name: 'My External App',
+    // 🔴 A NEUTRAL NAME, DELIBERATELY. This fixture used to be called 'My External App'
+    // — a listing NAME that spells a retired kind wording, which (a) makes it
+    // indistinguishable from a copy defect to any scanner and (b) is exactly the
+    // fixture shape that can satisfy a kind-badge assertion by accident. Fixture values
+    // must be distinct from every constant an assertion names.
+    name: 'Wayfarer',
     externalUrl: 'https://ex.com',
     category: 'utility',
     contentRating: 'g',
@@ -74,17 +79,17 @@ function renderList(overrides?: {
 }
 
 describe('UnifiedReviewList — renders both kinds with correct badges', () => {
-  test('both rows render with App / External kind badges', async () => {
+  test('both rows render with App / Standalone kind badges', async () => {
     renderList();
     await expect
       .element(page.getByTestId('apps-unified-review-kind-onsite:or1'))
       .toHaveTextContent('App');
     await expect
       .element(page.getByTestId('apps-unified-review-kind-offsite:fr1'))
-      .toHaveTextContent('External');
+      .toHaveTextContent('Standalone');
     // Both apps' names surface.
-    await expect.element(page.getByText('My Onsite App')).toBeInTheDocument();
-    await expect.element(page.getByText('My External App')).toBeInTheDocument();
+    await expect.element(page.getByText('Lighthouse')).toBeInTheDocument();
+    await expect.element(page.getByText('Wayfarer')).toBeInTheDocument();
   });
 
   test('oldest-first order under direction="asc" (on-site row precedes off-site)', async () => {

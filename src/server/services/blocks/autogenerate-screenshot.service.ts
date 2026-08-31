@@ -14,7 +14,7 @@
  * When ENABLED (historical behaviour): for an APPROVED App Block that ships NO
  * publisher screenshots, we render the running block at
  * `https://<slug>.<APPS_DOMAIN>` via the verify-runner screenshot service (a
- * warm headless Chromium in devpod-devops) and store the PNG through the
+ * warm headless Chromium in its own namespace) and store the PNG through the
  * EXISTING screenshots path (`storeScreenshots` → bundle MinIO →
  * `app_blocks.screenshots`). The marketplace card + detail page then render it
  * identically to a dev-uploaded image (served by the gated

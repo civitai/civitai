@@ -1,3 +1,5 @@
+import type { LaunchTimingsPayload } from './launchTimings';
+
 // App Blocks Analytics Phase 2 — block render/impression beacon (client side).
 //
 // Fire a block render/impression at the lightweight /api/track/block-render
@@ -23,10 +25,59 @@ export type BlockRenderBeaconInput = {
   // iframe never reaching BLOCK_READY within its timeout). Drives the
   // `civitai_app_block_renders_total{result}` prom counter server-side.
   status?: 'ok' | 'error';
-  // Optional low-cardinality failure discriminator (e.g. 'timeout', 'fatal',
-  // 'no_token', 'error_boundary'). Accepted + bounded server-side; reserved for a
-  // future ClickHouse column (NOT a prom label, NOT in the CH insert today).
+  // Optional low-cardinality failure discriminator: 'timeout' | 'fatal' |
+  // 'no_token' | 'error' | 'error_boundary' | 'token_lost_midsession'.
+  //
+  // This DRIVES the `error_class` label on the `civitai_app_block_renders_total`
+  // prom counter — it is the only thing that can say WHY a render failed, so an
+  // alert on that counter can name a cause instead of just "something broke".
+  // (The stale comment this replaces said "NOT a prom label"; the label landed in
+  // #3119 and the doc never caught up.)
+  //
+  // 🔴 It is CLAMPED server-side to a code-owned allowlist (KNOWN_ERROR_CLASSES in
+  // ~/server/metrics/app-block-runtime.metrics — anything else becomes 'other'),
+  // so a value added here is INERT for observability until it is added there too.
+  //
+  // It is STILL not a ClickHouse column, and that half of the old comment is
+  // verified rather than inherited: both writers (the /api/track/block-render
+  // beacon route and the track.blockRender tRPC procedure) destructure
+  // `status`/`errorClass` OUT before handing the rest to the tracker, and
+  // `Tracker.blockRender`'s parameter type has no field for either. So it drives
+  // the prom label only.
   errorClass?: string;
+  // Mark this as a FOLLOW-UP beacon for a mount that has already reported an
+  // outcome (today: the mid-session credential-loss report that follows an `ok`
+  // impression). It still drives the prom counter, but the server SKIPS the
+  // `blockRenders` ClickHouse insert for it — that table counts impressions, and
+  // a second row for one mount would be byte-identical to the first and so
+  // impossible to de-duplicate later. Omit (or false) for a mount's FIRST
+  // beacon, including a launch failure, which must still be recorded.
+  secondary?: boolean;
+  // 🔴 OPTIONAL LAUNCH TIMINGS — rides the EXISTING beacon, never a second one.
+  //
+  // There is exactly ONE beacon per host mount (`blockRenderEmittedRef`, with
+  // ok/error mutually exclusive). Adding a second beacon for timing would write
+  // a second `blockRenders` ClickHouse row for one mount — byte-identical to the
+  // first, therefore undedupable — inflating every impression figure. So these
+  // ride along as optional fields: same beacon count, same row count, same
+  // `renders_total` increments.
+  //
+  // Attach ONLY on the `ok` (BLOCK_READY) beacon. A failure beacon never reached
+  // BLOCK_READY and a `secondary` beacon is a teardown; the server enforces the
+  // same rule, but do not rely on that.
+  //
+  // Server-side these drive `civitai_app_block_launch_total_seconds{app_block_id}`
+  // and `civitai_app_block_launch_phase_seconds{phase}` — and, like
+  // status/errorClass/secondary, they are STRIPPED from the ClickHouse insert by
+  // BOTH writers (`blockRenderTrackerPayload`).
+  //
+  // 🔴 NUMBERS ONLY. The `phase` label is code-owned and mapped server-side from
+  // these field NAMES; nothing here is ever used as a label value, so a public
+  // beacon body cannot touch cardinality. (An earlier draft of this comment
+  // advertised `{phase,conn,tao}`. Those labels never shipped — they belonged to
+  // a TAO-gated frame-fetch phase that was designed and then dropped; see the
+  // DEFERRED note in launchTimings.ts.)
+  timings?: LaunchTimingsPayload;
 };
 
 export function sendBlockRender(input: BlockRenderBeaconInput) {

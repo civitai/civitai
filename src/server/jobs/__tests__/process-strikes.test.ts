@@ -17,10 +17,6 @@ vi.mock('~/utils/logging', () => ({
   createLogger: () => vi.fn(),
 }));
 
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(),
-}));
-
 // Mock createJob to return a testable object
 vi.mock('~/server/jobs/job', () => ({
   createJob: (_name: string, _cron: string, fn: any) => ({
@@ -36,6 +32,7 @@ vi.mock('~/server/jobs/job', () => ({
 
 // Import after mocks
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 describe('process-strikes jobs', () => {
   beforeEach(() => {

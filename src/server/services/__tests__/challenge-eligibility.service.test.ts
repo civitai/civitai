@@ -1,21 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
 
 // Real exercise of the standing/score branches — no wholesale mock of
 // assertUserInGoodStanding/assertUserAccountInGoodStanding. Only the DB layer they read from
 // (dbRead.user, dbRead.userStrike) is mocked, so the actual gating logic runs.
-const { mockDbRead } = vi.hoisted(() => ({
-  mockDbRead: {
-    user: { findUnique: vi.fn() },
-    userStrike: { count: vi.fn() },
-    challenge: { count: vi.fn() },
-  },
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: {},
-}));
-
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: vi.fn(),
 }));
@@ -42,8 +31,8 @@ function mockUser(overrides: Partial<typeof GOOD_USER> = {}) {
 
 describe('assertUserAccountInGoodStanding (standing-only, edit gate — no score check)', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mockDbRead.userStrike.count.mockResolvedValue(0);
+    vi.resetAllMocks();
+    mockDbRead.userStrike.aggregate.mockResolvedValue({ _sum: { points: 0 } });
   });
 
   it('does NOT throw when standing is good even though scoreTotal is far below the creator threshold', async () => {
@@ -76,20 +65,28 @@ describe('assertUserAccountInGoodStanding (standing-only, edit gate — no score
     );
   });
 
-  it('throws when the account has an active strike', async () => {
+  it('throws when the account is at the mute threshold', async () => {
     mockUser();
-    mockDbRead.userStrike.count.mockResolvedValueOnce(1);
+    mockDbRead.userStrike.aggregate.mockResolvedValueOnce({ _sum: { points: 2 } });
 
     await expect(assertUserAccountInGoodStanding(1)).rejects.toThrow(
-      'Resolve your active strikes before creating a challenge.'
+      'Your account has active strikes and cannot create challenges right now.'
     );
+  });
+
+  // One 1-point strike mutes nobody and must not lock the account out for the strike's whole lifetime.
+  it('does NOT throw for a single 1-point strike', async () => {
+    mockUser();
+    mockDbRead.userStrike.aggregate.mockResolvedValueOnce({ _sum: { points: 1 } });
+
+    await expect(assertUserAccountInGoodStanding(1)).resolves.toMatchObject({ activePoints: 1 });
   });
 });
 
 describe('assertUserInGoodStanding (create gate — standing AND score, unchanged)', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
-    mockDbRead.userStrike.count.mockResolvedValue(0);
+    vi.resetAllMocks();
+    mockDbRead.userStrike.aggregate.mockResolvedValue({ _sum: { points: 0 } });
   });
 
   it('throws when standing is good but scoreTotal is below the creator threshold (create gate intact)', async () => {
@@ -117,11 +114,11 @@ describe('assertUserInGoodStanding (create gate — standing AND score, unchange
 
 describe('getUserChallengeCreateEligibility (non-throwing requirements evaluator)', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
   });
 
   // Sets up the four data sources the evaluator (and the assert* gate) read, in the order they are
-  // consumed: user.findUnique -> userStrike.count -> challenge.count(recent) -> challenge.count(active)
+  // consumed: user.findUnique -> userStrike.aggregate -> challenge.count(recent) -> challenge.count(active)
   // -> getHighestTierSubscription.
   function setup(
     opts: {
@@ -133,7 +130,7 @@ describe('getUserChallengeCreateEligibility (non-throwing requirements evaluator
     } = {}
   ) {
     mockUser(opts.user);
-    mockDbRead.userStrike.count.mockResolvedValueOnce(opts.strikes ?? 0);
+    mockDbRead.userStrike.aggregate.mockResolvedValueOnce({ _sum: { points: opts.strikes ?? 0 } });
     mockDbRead.challenge.count
       .mockResolvedValueOnce(opts.recentCount ?? 0)
       .mockResolvedValueOnce(opts.activeCount ?? 0);
@@ -142,8 +139,10 @@ describe('getUserChallengeCreateEligibility (non-throwing requirements evaluator
     );
   }
 
-  const req = (result: Awaited<ReturnType<typeof getUserChallengeCreateEligibility>>, key: string) =>
-    result.requirements.find((r) => r.key === key)!;
+  const req = (
+    result: Awaited<ReturnType<typeof getUserChallengeCreateEligibility>>,
+    key: string
+  ) => result.requirements.find((r) => r.key === key)!;
 
   it('canCreate=true with every requirement met for an eligible user', async () => {
     setup({ tier: 'gold' });
@@ -180,7 +179,18 @@ describe('getUserChallengeCreateEligibility (non-throwing requirements evaluator
 
     const result = await getUserChallengeCreateEligibility(1);
 
-    expect(req(result, 'standing')).toMatchObject({ met: false, activeStrikes: 2 });
+    expect(req(result, 'standing')).toMatchObject({ met: false, activePoints: 2 });
+  });
+
+  // The evaluator holds its own copy of the threshold, so the boundary has to be pinned on BOTH sides:
+  // reverted here alone, the UI tells a 1-point account it cannot create challenges while the API
+  // lets it through.
+  it('leaves the standing row MET for a single 1-point strike', async () => {
+    setup({ strikes: 1, tier: 'gold' });
+
+    const result = await getUserChallengeCreateEligibility(1);
+
+    expect(req(result, 'standing')).toMatchObject({ met: true, activePoints: 1, muted: false });
   });
 
   it('marks the daily-limit row unmet when the 24h create limit is reached', async () => {

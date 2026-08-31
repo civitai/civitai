@@ -1,0 +1,499 @@
+import { describe, expect, it } from 'vitest';
+import {
+  FRESHDESK_QUERY_TABLES,
+  checkQueryScope,
+} from '~/server/freshdesk-agent/freshdesk-query-scope';
+
+/**
+ * `checkQueryScope` bounds which relations the model-authored `query_database`
+ * statement may read. Two properties matter and both are pinned below:
+ *   - an allowed table is confirmed and passes, and
+ *   - anything the check cannot positively confirm is refused, including the
+ *     shapes it is not built to read (CTEs, schema prefixes, table functions,
+ *     FROM-as-function-call). A refusal it did not intend is a false rejection
+ *     with a documented rewrite; a pass it did not intend is a hole.
+ *
+ * Expectations are literal. The allowed-table list in particular is written out
+ * by hand rather than derived from the export, so widening the export cannot
+ * quietly widen the test.
+ */
+describe('checkQueryScope — the allowed table list', () => {
+  it('is exactly the relations the agent already reads', () => {
+    expect([...FRESHDESK_QUERY_TABLES]).toEqual([
+      'BuzzWithdrawalRequest',
+      'Challenge',
+      'ChallengeWinner',
+      'Changelog',
+      'Cosmetic',
+      'CryptoDeposit',
+      'CryptoWallet',
+      'CustomerSubscription',
+      'Image',
+      'ImageReport',
+      'Model',
+      'ModelReport',
+      'Post',
+      'PostReport',
+      'Price',
+      'Product',
+      'Purchase',
+      'Report',
+      'User',
+      'UserCosmetic',
+      'UserCosmeticShopPurchases',
+      'UserProfile',
+      'UserReport',
+      'UserRestriction',
+      'UserStat',
+      'UserStrike',
+    ]);
+  });
+});
+
+describe('checkQueryScope — statements it confirms', () => {
+  it.each([
+    ['a plain single-table read', 'SELECT id, username, email FROM "User" WHERE id = 7 LIMIT 1'],
+    [
+      'an explicit join',
+      'SELECT c.name FROM "UserCosmetic" uc JOIN "Cosmetic" c ON c.id = uc."cosmeticId" LIMIT 5',
+    ],
+    ['a comma join', 'SELECT * FROM "User" u, "Model" m WHERE m."userId" = u.id LIMIT 5'],
+    [
+      'a comma join after an ON clause',
+      'SELECT * FROM "User" u JOIN "Model" m ON m."userId" = u.id, "Post" p LIMIT 5',
+    ],
+    ['a sub-select in the FROM list', 'SELECT * FROM (SELECT id FROM "User" LIMIT 5) x'],
+    [
+      'a parenthesized join of allowed tables',
+      'SELECT * FROM ("User" JOIN "Model" ON true) LIMIT 5',
+    ],
+    ['an inline VALUES list in the FROM list', 'SELECT x FROM (VALUES (1), (2)) AS t(x)'],
+    [
+      'a LATERAL sub-select, whose keyword sits between JOIN and the relation',
+      'SELECT * FROM "User" u, LATERAL (SELECT 1) s',
+    ],
+    ['a LATERAL inline VALUES list', 'SELECT * FROM "User" u, LATERAL (VALUES (1)) AS t(x)'],
+    [
+      'an inline VALUES list joined to an allowed table',
+      'SELECT * FROM (VALUES (1)) AS t(x) JOIN "User" u ON u.id = t.x',
+    ],
+    [
+      'a sub-select in the FROM list followed by another relation',
+      'SELECT * FROM (SELECT id FROM "User" LIMIT 5) x, "Model" m',
+    ],
+    [
+      'a sub-select in the target list',
+      'SELECT (SELECT count(*) FROM "Image" WHERE "userId" = u.id) FROM "User" u LIMIT 1',
+    ],
+    [
+      'a sub-select in an IN predicate',
+      'SELECT id FROM "Post" WHERE "userId" IN (SELECT id FROM "User")',
+    ],
+    ['both branches of a UNION', 'SELECT id FROM "Model" UNION SELECT id FROM "Image"'],
+    ['a trailing semicolon', 'SELECT id FROM "User" LIMIT 1;'],
+    ['no FROM clause at all', 'SELECT 1'],
+    ['a string literal containing SQL-looking text', `SELECT id FROM "User" WHERE email = 'a@b.c'`],
+    [
+      'a string literal containing a doubled quote',
+      `SELECT id FROM "User" WHERE username = 'O''Brien'`,
+    ],
+  ])('allows %s', (_label, sql) => {
+    expect(checkQueryScope(sql)).toEqual({ ok: true });
+  });
+});
+
+describe('checkQueryScope — relations outside the allowed set', () => {
+  it('refuses a table that is not on the list, and names it', () => {
+    const result = checkQueryScope('SELECT "key" FROM "KeyValue" LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toMatch(
+      /^Error: query_database cannot read "KeyValue"\. It is limited to these tables: /
+    );
+    expect(result.error).toContain('"User"');
+    expect(result.error).toContain('"UserStrike"');
+  });
+
+  it('refuses a disallowed table reached through a join', () => {
+    const result = checkQueryScope(
+      'SELECT * FROM "User" u JOIN "Session" s ON s."userId" = u.id LIMIT 1'
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  it('refuses a disallowed table reached through a comma join', () => {
+    const result = checkQueryScope('SELECT * FROM "User" u, "Account" a LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Account"');
+  });
+
+  it('refuses a disallowed table reached through a comma after an ON clause', () => {
+    const result = checkQueryScope(
+      'SELECT * FROM "User" u JOIN "Model" m ON m."userId" = u.id, "ApiKey" k LIMIT 1'
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "ApiKey"');
+  });
+
+  /**
+   * The negative counterpart to the ALLOWED sub-select-then-relation fixtures
+   * above. Those only pin that a legal statement of this shape is accepted, and
+   * "accepted" is also what a broken walk returns — so on their own they cannot
+   * tell a working FROM-list tracker from one that has stopped tracking.
+   *
+   * Concretely this pins the ORDER of `fromListAtDepth[depth] = false` and
+   * `depth -= 1` when a sub-select closes: the flag has to be cleared at the
+   * INNER depth, because the list that just ended is the sub-select's. Clearing
+   * it after the decrement wipes the OUTER list's flag instead, and the comma
+   * that follows stops being read as a relation position — so the relation after
+   * it is never audited at all.
+   *
+   * These are balanced, valid SQL, so the paren-balance guard cannot catch them;
+   * they have to assert on the RELATION name, not merely on rejection, or they
+   * would pass by dying to that guard for the wrong reason.
+   *
+   * Depths vary deliberately: the flag is stored per depth index, so a fix that
+   * happened to be right at one nesting level and wrong at another would slip a
+   * single-depth fixture.
+   */
+  it.each([
+    [
+      'a sub-select in the FROM list followed by an out-of-scope relation',
+      'SELECT * FROM (SELECT id FROM "User") x, "Session" s',
+    ],
+    [
+      'a relation, then a sub-select, then an out-of-scope relation',
+      'SELECT * FROM "User" u, (SELECT id FROM "Post") y, "Session" s',
+    ],
+    [
+      'a twice-nested sub-select followed by an out-of-scope relation',
+      'SELECT * FROM (SELECT id FROM (SELECT id FROM "Post") y) x, "Session" s',
+    ],
+  ])('refuses %s', (_label, sql) => {
+    const result = checkQueryScope(sql);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+    // Not rejected for being malformed — these are well-formed statements.
+    expect(result.error).not.toContain('unbalanced parentheses');
+  });
+
+  it('refuses a disallowed table inside a nested sub-select', () => {
+    const result = checkQueryScope(
+      'SELECT * FROM "User" WHERE id IN (SELECT "userId" FROM (SELECT "userId" FROM "Session") s)'
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  /**
+   * A parenthesized join expression is a relation position, not a sub-select:
+   * `FROM ("A" JOIN "B" ON ...)` is valid Postgres and its FIRST item is a
+   * relation. Every other `FROM (` case in this file is a sub-select, so these
+   * pin the other reading of the same two characters — the leading relation
+   * must still be checked, at any depth and for every join flavour.
+   */
+  it('refuses a disallowed table leading a parenthesized join', () => {
+    const result = checkQueryScope('SELECT * FROM ("Session" JOIN "User" ON true) LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  it('refuses a disallowed table leading a parenthesized CROSS JOIN', () => {
+    const result = checkQueryScope('SELECT * FROM ("ApiKey" CROSS JOIN "User") LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "ApiKey"');
+  });
+
+  it('refuses a disallowed table leading a doubly-parenthesized join', () => {
+    const result = checkQueryScope('SELECT * FROM (("Account" JOIN "User" ON true)) LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Account"');
+  });
+
+  it('still refuses a disallowed table in the trailing position of a parenthesized join', () => {
+    const result = checkQueryScope('SELECT * FROM ("User" JOIN "Session" ON true) LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  it('refuses a disallowed table reached from inside an inline VALUES list', () => {
+    const result = checkQueryScope('SELECT * FROM (VALUES ((SELECT id FROM "Session"))) AS t(x)');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  /**
+   * `VALUES` is UNRESERVED in Postgres (`pg_get_keywords.catcode = 'C'`), so
+   * `CREATE TABLE values (...)` is legal and a bare `values` in relation
+   * position is a real relation reference — unlike `SELECT`, which is reserved.
+   *
+   * What separates the two is the NEXT token, not the position: a `VALUES`
+   * clause is always immediately followed by `(`, and a relation named `values`
+   * never can be (`FROM values (id)` and `FROM values(1)` are both syntax
+   * errors). So each case below is a relation reference and must be refused —
+   * including the last one, where the next token is a quoted identifier whose
+   * TEXT is `(` and only its token KIND distinguishes it from a real clause.
+   */
+  it.each([
+    ['bare, as the only relation', 'SELECT * FROM values'],
+    ['bare, in a comma list', 'SELECT * FROM "User" u, values v'],
+    ['bare, inside a parenthesized join', 'SELECT * FROM ("User" u JOIN values v ON true)'],
+    ['bare, reached through a join', 'SELECT * FROM "User" u JOIN values v ON true'],
+    ['bare, case-folded', 'SELECT * FROM VaLuEs'],
+    ['bare, in a sub-select', 'SELECT * FROM "User" WHERE id IN (SELECT id FROM values)'],
+    // The head item of the outer paren is itself a parenthesized group, so a
+    // position-tracking gate can leave a stale "this is the head" state behind
+    // and wave the later join through. The discriminator is the next token, not
+    // the position, so these must refuse at any nesting depth.
+    ['bare, after a nested sub-query head', 'SELECT * FROM ((SELECT 1) s JOIN values v ON true)'],
+    [
+      'bare, after a nested join head',
+      'SELECT * FROM (("User" u JOIN "Image" i ON true) JOIN values v ON true)',
+    ],
+    [
+      'bare, after a LATERAL nested head',
+      'SELECT * FROM (LATERAL (SELECT 1) s JOIN values v ON true)',
+    ],
+    // `values` LEADING a parenthesized joined_table is a relation reference too:
+    // it is followed by an alias, never by `(`.
+    // The next token here is a QUOTED identifier whose text happens to be `(`
+    // (a legal, if perverse, alias). Only the token's kind separates it from a
+    // real `VALUES (` clause.
+    ['bare, aliased with a quoted paren', 'SELECT * FROM values "("'],
+    ['bare, leading a parenthesized CROSS JOIN', 'SELECT * FROM (values v CROSS JOIN "User" u)'],
+    ['bare, leading a parenthesized join', 'SELECT * FROM (values v JOIN "User" u ON true) x'],
+  ])('refuses `values` used as a relation name — %s', (_label, sql) => {
+    expect(checkQueryScope(sql).ok).toBe(false);
+  });
+
+  it('refuses the double-quoted relation "values", which is not on the list', () => {
+    const result = checkQueryScope('SELECT * FROM "values"');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "values"');
+  });
+
+  it('refuses a bare identifier that merely starts with a sub-query keyword', () => {
+    expect(checkQueryScope('SELECT * FROM selectfoo').ok).toBe(false);
+    expect(checkQueryScope('SELECT * FROM valuesbar').ok).toBe(false);
+  });
+
+  it('refuses a disallowed table following a sub-select in the FROM list', () => {
+    const result = checkQueryScope('SELECT * FROM (SELECT id FROM "User") x, "Session" m');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  it('refuses a disallowed table in the second branch of a UNION', () => {
+    const result = checkQueryScope('SELECT id FROM "User" UNION SELECT id FROM "Session"');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "Session"');
+  });
+
+  it('is case sensitive — the folded spelling is a different relation', () => {
+    const result = checkQueryScope('SELECT id FROM "user" LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "user"');
+  });
+});
+
+describe('checkQueryScope — shapes it cannot read, and therefore refuses', () => {
+  it('refuses a bare (unquoted) relation name', () => {
+    const result = checkQueryScope('SELECT id FROM users LIMIT 1');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toMatch(
+      /^Error: query_database expected a double-quoted table name after FROM\/JOIN and got users\./
+    );
+  });
+
+  it('refuses a schema-qualified name', () => {
+    expect(checkQueryScope('SELECT id FROM "public"."User" LIMIT 1').ok).toBe(false);
+  });
+
+  it('refuses the catalog', () => {
+    expect(checkQueryScope('SELECT * FROM pg_stat_activity LIMIT 1').ok).toBe(false);
+    expect(checkQueryScope('SELECT * FROM information_schema.tables LIMIT 1').ok).toBe(false);
+  });
+
+  it('refuses a bare pg_* identifier even with no FROM clause', () => {
+    const result = checkQueryScope('SELECT pg_sleep(60)');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toMatch(/^Error: query_database reads application tables only\./);
+  });
+
+  it('refuses a nested CTE, whose name is not a real relation', () => {
+    expect(
+      checkQueryScope('SELECT * FROM (WITH t AS (SELECT 1 AS id) SELECT id FROM t) x').ok
+    ).toBe(false);
+  });
+
+  it('refuses a table function in relation position', () => {
+    expect(checkQueryScope('SELECT * FROM generate_series(1, 10)').ok).toBe(false);
+  });
+
+  it('refuses FROM used as function-call syntax (a documented false rejection)', () => {
+    // `EXTRACT(EPOCH FROM col)` reads as a relation position. The rewrite is
+    // `date_part('epoch', col)`, which the tool description tells the model.
+    const result = checkQueryScope('SELECT EXTRACT(EPOCH FROM "createdAt") FROM "User"');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('cannot read "createdAt"');
+    expect(checkQueryScope(`SELECT date_part('epoch', "createdAt") FROM "User"`)).toEqual({
+      ok: true,
+    });
+  });
+
+  it('refuses comments rather than stripping them', () => {
+    expect(checkQueryScope('SELECT id FROM "User" -- WHERE id = 1')).toEqual({
+      ok: false,
+      error: 'Error: SQL comments are not supported by query_database. Remove them.',
+    });
+    expect(checkQueryScope('SELECT id /* note */ FROM "User"')).toEqual({
+      ok: false,
+      error: 'Error: SQL comments are not supported by query_database. Remove them.',
+    });
+  });
+
+  it('refuses a second statement after a semicolon', () => {
+    expect(checkQueryScope('SELECT 1; SELECT id FROM "Session"')).toEqual({
+      ok: false,
+      error: 'Error: query_database runs exactly one statement. Remove the extra ";".',
+    });
+  });
+
+  it('refuses dollar quoting and bind-parameter syntax', () => {
+    expect(checkQueryScope('SELECT $$x$$ FROM "User"')).toEqual({
+      ok: false,
+      error:
+        'Error: $ (dollar quoting / bind parameters) is not supported by query_database. Inline plain literals.',
+    });
+    expect(checkQueryScope('SELECT id FROM "User" WHERE username = $1').ok).toBe(false);
+  });
+
+  it('refuses backslashes', () => {
+    expect(checkQueryScope('SELECT 1 \\ FROM "User"')).toEqual({
+      ok: false,
+      error: 'Error: backslashes are not supported by query_database.',
+    });
+  });
+
+  it('refuses an unterminated string literal', () => {
+    expect(checkQueryScope(`SELECT id FROM "User" WHERE username = 'a`)).toEqual({
+      ok: false,
+      error: 'Error: unterminated string literal in query.',
+    });
+  });
+
+  it('refuses prefixed literal forms whose quoting rules differ', () => {
+    expect(checkQueryScope(`SELECT id FROM "User" WHERE username = E'a\\'' AND id = 1`).ok).toBe(
+      false
+    );
+  });
+
+  it('refuses a statement that ends where a table name was expected', () => {
+    expect(checkQueryScope('SELECT id FROM')).toEqual({
+      ok: false,
+      error: 'Error: query is incomplete — a table name was expected after FROM/JOIN.',
+    });
+  });
+
+  it('refuses a write verb even when the statement opens with SELECT', () => {
+    const result = checkQueryScope('SELECT id INTO "Report" FROM "User"');
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toBe(
+      'Error: query_database runs read-only SELECT statements. "INTO" is not available.'
+    );
+  });
+});
+
+/**
+ * Paren-unbalanced input — the fixture class every other case in this file
+ * lacks.
+ *
+ * Everything above is well-formed SQL, which is why the walk's depth bookkeeping
+ * was never exercised against text whose real nesting it could not model. The
+ * walk keys EVERY relation decision on `depth` — which `FROM` list a comma
+ * continues, and therefore which tokens sit in relation position — so text that
+ * desynchronises `depth` from the truth gets a verdict that is not about the SQL
+ * a database would parse.
+ *
+ * These used to be accepted. Standing alone they are syntax errors, so that was
+ * inert; it stopped being inert once a caller began WRAPPING the statement in a
+ * bounding subquery, because a wrapper supplies the parentheses the text is
+ * missing. A statement with a stray `)` early and an unclosed `(` late can be
+ * rejected by Postgres on its own and valid once wrapped — and the relation it
+ * reaches through the desynchronised comma was never audited.
+ *
+ * The mechanism is independent of which table is targeted; these fixtures use
+ * relations this file already exercises as out-of-scope.
+ */
+describe('checkQueryScope — paren-unbalanced input', () => {
+  it.each([
+    // The exploit shape: stray `)` at depth 0 leaves the later comma outside any
+    // FROM list the walk thinks is open, so the relation after it is not read as
+    // a relation at all. The trailing unclosed `(` is what makes the WRAPPED
+    // form balance, i.e. valid SQL.
+    [
+      'a stray ")" early and an unclosed "(" late — valid only once wrapped',
+      'SELECT 1) x, "Session" s WHERE s.id = 1 UNION SELECT 0, 0, 0 FROM (SELECT 1',
+    ],
+    ['a bare stray ")"', 'SELECT 1)'],
+    ['a stray ")" in the target list', 'SELECT (1)) FROM "User"'],
+    ['an extra ")" after a balanced sub-select', 'SELECT * FROM (SELECT id FROM "User")) x'],
+    ['an unclosed "(" around a sub-select', 'SELECT * FROM (SELECT id FROM "User"'],
+    ['two unclosed "("', 'SELECT * FROM (SELECT (id FROM "User"'],
+    ['a stray ")" that hides an out-of-scope relation behind a comma', 'SELECT 1) x, "Account" a'],
+  ])('refuses %s', (_label, sql) => {
+    const result = checkQueryScope(sql);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('unreachable');
+    expect(result.error).toContain('unbalanced parentheses');
+  });
+
+  // The two directions are separate guards and must be shown to be separately
+  // reachable — a single balance check that only caught one direction would
+  // leave the other half of the class open.
+  it('names the direction: a ")" that closes nothing', () => {
+    expect(checkQueryScope('SELECT 1)')).toEqual({
+      ok: false,
+      error:
+        'Error: unbalanced parentheses in query — a ")" here closes nothing. query_database only runs statements whose parentheses balance.',
+    });
+  });
+
+  it('names the direction: a "(" that was never closed', () => {
+    expect(checkQueryScope('SELECT * FROM (SELECT id FROM "User"')).toEqual({
+      ok: false,
+      error:
+        'Error: unbalanced parentheses in query — a "(" was never closed. query_database only runs statements whose parentheses balance.',
+    });
+  });
+
+  // Positive control for the fixture class: parentheses inside string literals
+  // and quoted identifiers are CONTENT, not structure. If the balance check
+  // counted those it would reject legitimate statements, and the corpus above
+  // would not catch it because none of those fixtures carry a quoted paren.
+  it('does not count parentheses inside string literals or quoted identifiers', () => {
+    expect(checkQueryScope(`SELECT id FROM "User" WHERE username = ')('`)).toEqual({ ok: true });
+    expect(checkQueryScope(`SELECT count(*) FROM "User" WHERE email = '(a@b.c)'`)).toEqual({
+      ok: true,
+    });
+  });
+});

@@ -3,31 +3,24 @@ import dayjs from '~/shared/utils/dayjs';
 
 import type { ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import type {
-  BulkUpdateReportStatusInput,
   CreateEntityAppealInput,
   CreateReportInput,
   GetRecentAppealsInput,
-  GetReportsInput,
-  ResolveAppealInput,
-  SetReportStatusInput,
-  UpdateReportSchema,
 } from '~/server/schema/report.schema';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getImageById } from '~/server/services/image.service';
-import { trackModActivity } from '~/server/services/moderator.service';
 import {
-  bulkSetReportStatus,
   createEntityAppeal,
   createReport,
   getAppealCount,
-  getReports,
-  resolveEntityAppeal,
-  updateReportById,
+  getLatestModelAppeal,
+  reopenModelAppeal,
 } from '~/server/services/report.service';
 import {
   isPrismaForeignKeyViolation,
   throwAuthorizationError,
+  throwBadRequestError,
   throwDbCustomError,
   throwDbError,
   throwNotFoundError,
@@ -71,263 +64,6 @@ export async function createReportHandler({
   }
 }
 
-export async function setReportStatusHandler({
-  input,
-  ctx,
-}: {
-  input: SetReportStatusInput;
-  ctx: ProtectedContext;
-}) {
-  try {
-    const { id, status } = input;
-    await bulkSetReportStatus({ ids: [id], status, userId: ctx.user.id, ip: ctx.ip });
-  } catch (e) {
-    if (e instanceof TRPCError) throw e;
-    else throw throwDbError(e);
-  }
-}
-
-export async function bulkUpdateReportStatusHandler({
-  input,
-  ctx,
-}: {
-  input: BulkUpdateReportStatusInput;
-  ctx: ProtectedContext;
-}) {
-  try {
-    const { ids, status } = input;
-    await bulkSetReportStatus({ ids, status, userId: ctx.user.id });
-  } catch (e) {
-    if (e instanceof TRPCError) throw e;
-    else throw throwDbError(e);
-  }
-}
-
-export type GetReportsProps = AsyncReturnType<typeof getReportsHandler>;
-
-export async function getReportsHandler({ input }: { input: GetReportsInput }) {
-  try {
-    const { items, ...result } = await getReports({
-      ...input,
-      select: {
-        id: true,
-        user: { select: { ...simpleUserSelect, email: true } },
-        reason: true,
-        createdAt: true,
-        details: true,
-        status: true,
-        internalNotes: true,
-        alsoReportedBy: true,
-        model: {
-          select: {
-            model: {
-              select: {
-                id: true,
-                user: { select: simpleUserSelect },
-                name: true,
-                nsfw: true,
-                tosViolation: true,
-              },
-            },
-          },
-        },
-        resourceReview: {
-          select: {
-            resourceReview: {
-              select: {
-                id: true,
-                user: { select: simpleUserSelect },
-                nsfw: true,
-                tosViolation: true,
-                modelId: true,
-                modelVersionId: true,
-              },
-            },
-          },
-        },
-        comment: {
-          select: {
-            comment: {
-              select: {
-                id: true,
-                user: { select: simpleUserSelect },
-                nsfw: true,
-                tosViolation: true,
-                modelId: true,
-                parentId: true,
-              },
-            },
-          },
-        },
-        image: {
-          select: {
-            image: {
-              select: {
-                id: true,
-                user: { select: simpleUserSelect },
-                nsfw: true,
-                tosViolation: true,
-              },
-            },
-          },
-        },
-        article: {
-          select: {
-            article: {
-              select: {
-                id: true,
-                nsfwLevel: true,
-                title: true,
-                publishedAt: true,
-                tosViolation: true,
-                user: { select: simpleUserSelect },
-              },
-            },
-          },
-        },
-        post: {
-          select: {
-            post: {
-              select: {
-                id: true,
-                nsfw: true,
-                title: true,
-                publishedAt: true,
-                tosViolation: true,
-                user: { select: simpleUserSelect },
-              },
-            },
-          },
-        },
-        reportedUser: {
-          select: {
-            user: { select: { ...simpleUserSelect, email: true } },
-          },
-        },
-        collection: {
-          select: {
-            collection: {
-              select: { id: true, name: true, nsfw: true, user: { select: simpleUserSelect } },
-            },
-          },
-        },
-        bounty: {
-          select: {
-            bounty: {
-              select: { id: true, name: true, nsfw: true, user: { select: simpleUserSelect } },
-            },
-          },
-        },
-        bountyEntry: {
-          select: {
-            bountyEntry: {
-              select: { id: true, bountyId: true, user: { select: simpleUserSelect } },
-            },
-          },
-        },
-        commentV2: {
-          select: {
-            commentV2: {
-              select: {
-                id: true,
-                user: { select: simpleUserSelect },
-                nsfw: true,
-                tosViolation: true,
-              },
-            },
-          },
-        },
-        chat: {
-          select: {
-            chat: {
-              select: { id: true },
-            },
-          },
-        },
-        comicProject: {
-          select: {
-            comicProject: {
-              select: { id: true, name: true, user: { select: simpleUserSelect } },
-            },
-          },
-        },
-        model3d: {
-          select: {
-            model3d: {
-              select: {
-                id: true,
-                name: true,
-                nsfw: true,
-                tosViolation: true,
-                thumbnailImage: { select: { id: true, url: true, name: true } },
-                user: { select: simpleUserSelect },
-              },
-            },
-          },
-        },
-        model3dReview: {
-          select: {
-            model3dReview: {
-              select: {
-                id: true,
-                model3dId: true,
-                nsfw: true,
-                tosViolation: true,
-                user: { select: simpleUserSelect },
-              },
-            },
-          },
-        },
-        challenge: {
-          select: {
-            challenge: {
-              select: { id: true, title: true, createdBy: { select: simpleUserSelect } },
-            },
-          },
-        },
-      },
-    });
-    return {
-      items: items.map((item) => {
-        return {
-          ...item,
-          model: item.model?.model,
-          comment: item.comment?.comment,
-          resourceReview: item.resourceReview?.resourceReview,
-          image: item.image?.image,
-          article: item.article?.article,
-          post: item.post?.post,
-          reportedUser: item.reportedUser?.user,
-          collection: item.collection?.collection,
-          bounty: item.bounty?.bounty,
-          bountyEntry: item.bountyEntry?.bountyEntry,
-          chat: item.chat?.chat,
-          comicProject: item.comicProject?.comicProject,
-          model3d: item.model3d?.model3d,
-          model3dReview: item.model3dReview?.model3dReview,
-          challenge: item.challenge?.challenge,
-        };
-      }),
-      ...result,
-    };
-  } catch (e) {
-    throw throwDbError(e);
-  }
-}
-
-export const updateReportHandler = async ({ input }: { input: UpdateReportSchema }) => {
-  try {
-    const { id, ...data } = input;
-    const report = await updateReportById({ id, data });
-    if (!report) throw throwNotFoundError(`No report with id ${id}`);
-
-    return report;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
-
 export async function createEntityAppealHandler({
   input,
   ctx,
@@ -336,6 +72,7 @@ export async function createEntityAppealHandler({
   ctx: ProtectedContext;
 }) {
   const { id: userId } = ctx.user;
+  let skipFee = false;
   try {
     // Check ownership before creating the appeal
     switch (input.entityType) {
@@ -353,6 +90,35 @@ export async function createEntityAppealHandler({
         if (!m3d) throw throwNotFoundError('3D model not found');
         if (m3d.userId !== userId) throw throwAuthorizationError();
         break;
+      case EntityType.Model: {
+        const model = await dbRead.model.findUnique({
+          where: { id: input.entityId },
+          select: { userId: true, minor: true, meta: true },
+        });
+        if (!model) throw throwNotFoundError('Model not found');
+        if (model.userId !== userId) throw throwAuthorizationError();
+
+        // Legacy flags carry no snapshot and are deliberately excluded.
+        const meta = model.meta as ModelMeta | null;
+        if (!model.minor || !meta?.minorFlagSnapshot)
+          throw throwBadRequestError('This model is not flagged as depicting a minor');
+
+        // `Appeal` is unique on (entityType, entityId, userId): creating a second
+        // row raises P2002, which is not a TRPCError and reaches the owner as a
+        // raw 500. Asking again after a denial is intended, so reuse the row.
+        const existing = await getLatestModelAppeal(input.entityId, userId);
+        if (existing?.status === AppealStatus.Pending)
+          throw throwBadRequestError('Your review request for this model is already under review');
+        if (existing)
+          return await reopenModelAppeal({
+            entityId: input.entityId,
+            userId,
+            message: input.message,
+          });
+
+        skipFee = true;
+        break;
+      }
       default:
         throw throwDbCustomError('Entity type not supported for appeals');
     }
@@ -361,6 +127,7 @@ export async function createEntityAppealHandler({
       ...input,
       userId,
       buzzType: getAllowedAccountTypes(ctx.features)[0],
+      skipFee,
     });
 
     return appeal;
@@ -387,30 +154,6 @@ export async function getRecentAppealsHandler({
     });
 
     return count;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-}
-
-export async function resolveEntityAppealHandler({
-  input,
-  ctx,
-}: {
-  input: ResolveAppealInput;
-  ctx: ProtectedContext;
-}) {
-  try {
-    const { id: userId } = ctx.user;
-    const appeals = await resolveEntityAppeal({ ...input, userId });
-
-    await trackModActivity(userId, {
-      entityType: 'image',
-      entityId: input.ids,
-      activity: 'resolveAppeal',
-    });
-
-    return appeals;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

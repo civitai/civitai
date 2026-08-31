@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 import { formatDate } from '~/utils/date-helpers';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * W13 P3a — /apps/review off-site (external-link) queue. Browser-mode render test
@@ -49,7 +51,15 @@ const mocks = vi.hoisted(() => ({
   assetsData: { current: null as unknown },
 }));
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+// 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
+// no-wholesale-module-mock). A hand-written factory silently breaks the day the
+// module graph reaches an export it omits — measured: once the listing detail
+// began importing `SmartCreatorCard` (→ ChatUserButton → useChatEnabled), a
+// factory listing only `useFeatureFlags` made this whole FILE fail to import with
+// `does not provide an export named 'useFeatureFlagsReady'`, reported as 0 tests
+// collected rather than as a failure.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
 // The modal body renders the listing preview (AppListingCard + AppListingDetailBody),
@@ -61,9 +71,16 @@ vi.mock('~/utils/notifications', () => ({
   showErrorNotification: vi.fn(),
 }));
 
-vi.mock('~/utils/trpc', () => {
-  const mutation = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
+// Only the `trpc` client itself is overridden — the rest of `~/utils/trpc`'s real exports
+// (setTrpcBatchingEnabled, trpcVanilla, queryClient, ...) are kept via importOriginal so any
+// transitively-imported consumer elsewhere in the tree (e.g. session/provider chains) still
+// gets a real binding instead of the whack-a-mole of hand-naming every export they touch.
+// Without the spread, a LATER PR adding an export to `~/utils/trpc` breaks this file's ESM
+// link ("does not provide an export named X") and the whole file collects 0 tests.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof TrpcModule>();
   return {
+    ...actual,
     trpc: {
       useUtils: () => ({
         appListings: {
@@ -135,9 +152,7 @@ describe('OffsiteReviewQueue — kind-aware review row', () => {
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
     // Content checklist items — the off-site (content-only) set.
-    await expect
-      .element(page.getByText('URL is https and opens externally'))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('URL is https and opens externally')).toBeInTheDocument();
     await expect.element(page.getByText('Icon present')).toBeInTheDocument();
     // NO on-site code items.
     expect(page.getByText('Code diff reviewed').elements()).toHaveLength(0);
@@ -169,9 +184,7 @@ describe('OffsiteReviewModal — scan-clean dimension (Item 1)', () => {
     };
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
-    await expect
-      .element(page.getByTestId('apps-offsite-assets-scan-pending'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-assets-scan-pending')).toBeInTheDocument();
     expect(page.getByTestId('apps-offsite-assets-scan-blocked').elements()).toHaveLength(0);
   });
 
@@ -192,9 +205,7 @@ describe('OffsiteReviewModal — scan-clean dimension (Item 1)', () => {
     };
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
-    await expect
-      .element(page.getByTestId('apps-offsite-approve-open'))
-      .toBeDisabled();
+    await expect.element(page.getByTestId('apps-offsite-approve-open')).toBeDisabled();
   });
 
   test('the Approve button is DISABLED while an asset is still scanning', async () => {
@@ -205,17 +216,13 @@ describe('OffsiteReviewModal — scan-clean dimension (Item 1)', () => {
     };
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
-    await expect
-      .element(page.getByTestId('apps-offsite-approve-open'))
-      .toBeDisabled();
+    await expect.element(page.getByTestId('apps-offsite-approve-open')).toBeDisabled();
   });
 
   test('the Approve button is ENABLED when every asset is scan-clean', async () => {
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
-    await expect
-      .element(page.getByTestId('apps-offsite-approve-open'))
-      .not.toBeDisabled();
+    await expect.element(page.getByTestId('apps-offsite-approve-open')).not.toBeDisabled();
   });
 });
 
@@ -320,11 +327,47 @@ describe('OffsiteReviewModal — approve-notes gating, friendly date, field labe
   test('the modal labels the Category and Content-rating fields', async () => {
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
-    await expect.element(page.getByText('Category', { exact: true })).toBeInTheDocument();
+    // 🔴 SCOPED AWAY FROM THE PREVIEW PANE, for the same reason the Content-rating
+    // assertion below already is. The listing-preview detail now carries a store-style
+    // "Details" accordion whose rows are ALSO labelled `Category` / `Rating`, so a
+    // page-wide exact query resolves to 2 elements and the strict locator throws. This
+    // test is about the review FORM's own field labels — say so in the selector, rather
+    // than loosening to `.first()`, which would be satisfied by whichever happened to
+    // render first.
+    const previewDetail = page.getByTestId('apps-listing-preview-detail');
+    await expect.element(previewDetail).toBeInTheDocument();
+    // Positive control: the preview pane really does hold a `Category` row, so the
+    // scoped count below is a discrimination and not an accident of there being one.
+    expect(previewDetail.getByText('Category', { exact: true }).elements()).toHaveLength(1);
+    const formCategoryLabels = page
+      .getByText('Category', { exact: true })
+      .elements()
+      .filter((el) => !el.closest('[data-testid="apps-listing-preview-detail"]'));
+    expect(formCategoryLabels).toHaveLength(1);
     await expect.element(page.getByText('Content rating', { exact: true })).toBeInTheDocument();
-    // The badge values they label are still rendered.
-    await expect.element(page.getByText('utility', { exact: true })).toBeInTheDocument();
-    await expect.element(page.getByText('g', { exact: true })).toBeInTheDocument();
+    // The badge value the Category field labels is still rendered — scoped out of the
+    // preview pane, which now also prints the category in its Details row.
+    // 🔴 The DISPLAY label: the fixture stores `utility`, the badge says `Utility` (the
+    // same word the store card and the store detail rail print).
+    const formCategoryValues = page
+      .getByText('Utility', { exact: true })
+      .elements()
+      .filter((el) => !el.closest('[data-testid="apps-listing-preview-detail"]'));
+    expect(formCategoryValues.length).toBeGreaterThan(0);
+    // …and the raw stored value is gone from this surface entirely. `.not.toBeInTheDocument()`
+    // is INERT in this repo (#4197), so query for null instead — controlled against the
+    // label assertion above, which has just proved this query CAN find a match.
+    expect(page.getByText('utility', { exact: true }).query()).toBeNull();
+    // #3412 added the listing-preview detail pane (`apps-listing-preview-detail`), which
+    // renders its OWN content-rating badge — so a bare exact 'g' now matches 2 elements and
+    // the strict query throws. Scope to the Content-rating FIELD GROUP this test is about,
+    // asserting its full text (label + badge value + qualifier). That still fails if the
+    // badge value is wrong or missing, rather than being satisfied by the preview's copy.
+    const ratingLabel = page.getByText('Content rating', { exact: true });
+    await expect.element(ratingLabel).toBeInTheDocument();
+    // 🔴 `G`, not the stored `g`. The whole normalised group text is pinned, so a
+    // reworded badge cannot be walked past by a looser substring check.
+    expect(ratingLabel.element().parentElement?.textContent).toBe('Content ratingGdeclared');
   });
 });
 
@@ -336,9 +379,7 @@ describe('OffsiteReviewModal — readOnly (history) posture hides the action but
   test('readOnly HIDES both entry action buttons but keeps the content detail view', async () => {
     renderWithProviders(<OffsiteReviewModal request={OFFSITE_ROW} onClose={vi.fn()} readOnly />);
     // Detail still renders — the external URL + the content checklist.
-    await expect
-      .element(page.getByText('URL is https and opens externally'))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('URL is https and opens externally')).toBeInTheDocument();
     await expect.element(page.getByText('Icon present')).toBeInTheDocument();
     // But NEITHER Approve… nor Reject… action button renders in read-only mode.
     expect(page.getByTestId('apps-offsite-approve-open').elements()).toHaveLength(0);
@@ -372,6 +413,12 @@ describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)',
       category: 'utility',
       contentRating: 'g',
       connectClientId: null,
+      // 🔴 A media revision request targets a SHADOW, so `revisionOfId` is always set.
+      // This fixture used to omit it, which made it indistinguishable from the OTHER
+      // on-site request shape (the republish re-review, `revisionOfId: null`) — the two
+      // are governed by opposite rating rules, so a fixture that cannot tell them apart
+      // was pinning the cap copy onto a request shape that may not be under a cap.
+      revisionOfId: 'listing-parent',
     },
     submittedBy: { id: 42, username: 'author-dev', image: null },
   };
@@ -379,9 +426,9 @@ describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)',
   test('renders the listing-media header, the asset checklist, and NO URL / connect panel', async () => {
     renderWithProviders(<OffsiteReviewModal request={ONSITE_MEDIA_ROW} onClose={vi.fn()} />);
     // Kind-aware header — the "listing media" badge, not "external".
-    await expect.element(page.getByTestId('apps-offsite-kind-badge')).toHaveTextContent(
-      'listing media'
-    );
+    await expect
+      .element(page.getByTestId('apps-offsite-kind-badge'))
+      .toHaveTextContent('listing media');
     expect(page.getByText('external', { exact: true }).elements()).toHaveLength(0);
     // The on-site explainer note renders.
     await expect.element(page.getByTestId('apps-offsite-onsite-note')).toBeInTheDocument();
@@ -409,18 +456,87 @@ describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)',
   });
 });
 
+// 🔴 The OTHER on-site request shape: an owner republish whose store imagery changed
+// since the last approval. Same `kind: 'onsite'`, same modal — and the server applies the
+// OPPOSITE rating rule (`resolveOnsiteApprovalContentRating` FLOORS the app's declared
+// rating at the media-derived value, raise-only). Every assertion here is the mirror of
+// one in the media-revision block above, and the ONLY fixture difference is
+// `revisionOfId: null`.
+describe('OffsiteReviewModal — on-site republish re-review (kind: onsite, NON-shadow)', () => {
+  const ONSITE_REPUBLISH_ROW = {
+    id: 'rpb-1',
+    kind: 'onsite' as const,
+    appListingId: 'listing-1',
+    slug: 'onsite-republish-app',
+    status: 'pending',
+    submittedAt: new Date('2026-02-01T00:00:00Z'),
+    changelog: null,
+    appListing: {
+      name: 'On-site Republish App',
+      externalUrl: null,
+      category: 'utility',
+      contentRating: 'g',
+      connectClientId: null,
+      // The whole discriminator: this request targets the LIVE listing, not a shadow.
+      revisionOfId: null,
+    },
+    submittedBy: { id: 42, username: 'author-dev', image: null },
+  };
+
+  test('🔴 the note describes a REPUBLISH review and says the rating is RAISED, not capped', async () => {
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_REPUBLISH_ROW} onClose={vi.fn()} />);
+    const note = page.getByTestId('apps-offsite-onsite-note');
+    await expect.element(note).toBeInTheDocument();
+    await expect.element(note).toHaveTextContent('Republish review');
+    await expect.element(note).toHaveTextContent('RAISES the app’s rating');
+    // The cap sentence — correct for a media revision — must NOT appear here.
+    expect(note.element().textContent).not.toContain('must not exceed');
+  });
+
+  test('🔴 the app rating is labelled a FLOOR, not a cap', async () => {
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_REPUBLISH_ROW} onClose={vi.fn()} />);
+    await expect.element(page.getByText('app rating (floor)', { exact: true })).toBeInTheDocument();
+    expect(page.getByText('app rating (cap)', { exact: true }).elements()).toHaveLength(0);
+  });
+
+  test('🔴 the mismatch callout says approving RAISES the app, not that it is a reject reason', async () => {
+    // Assets derive 'r' vs the app's declared 'g' → the callout renders. For a media
+    // revision that is "reject or trim"; here approving is what the server will do, and
+    // it will raise the app to 'r'. Telling the moderator the opposite is the finding.
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_REPUBLISH_ROW} onClose={vi.fn()} />);
+    const mismatch = page.getByTestId('apps-offsite-rating-mismatch');
+    await expect.element(mismatch).toBeInTheDocument();
+    await expect.element(mismatch).toHaveTextContent('it is a floor here, not a cap');
+    expect(mismatch.element().textContent).not.toContain('reject this revision');
+  });
+
+  test('🔴 the approve Select defaults to the DERIVED rating (the floor), not the app rating', async () => {
+    // The media-revision default is the app's own rating; offering that here offers a
+    // value the server would silently raise past. Fixture ratings are deliberately
+    // distinct — app 'g' vs derived 'R' — so a default that echoed either one is visible.
+    renderWithProviders(<OffsiteReviewModal request={ONSITE_REPUBLISH_ROW} onClose={vi.fn()} />);
+    await page.getByTestId('apps-offsite-approve-open').click();
+    const ratingInput = page
+      .getByTestId('apps-offsite-approve-rating')
+      .element() as HTMLInputElement;
+    expect(ratingInput.value).toBe('R');
+    expect(ratingInput.value).not.toBe('G');
+  });
+});
+
 describe('OffsiteReviewModal — content-rating derive + mod override', () => {
   test('surfaces the DERIVED rating and FLAGS it as higher than the declared rating', async () => {
     renderWithProviders(<OffsiteReviewQueue />);
     await page.getByRole('button', { name: 'Review' }).click();
-    // Derived from the assets (max R) → 'r', shown alongside the declared 'g'.
-    await expect
-      .element(page.getByTestId('apps-offsite-derived-rating'))
-      .toHaveTextContent('r');
+    // Derived from the assets (max R) → stored `r`, DISPLAYED as `R` alongside the
+    // declared `g`'s `G`. 🔴 Asserted as EXACT text content, not `toHaveTextContent`:
+    // that matcher is a substring match and 'r' is a substring of most words, so it
+    // could not tell the label from the raw value.
+    const derived = page.getByTestId('apps-offsite-derived-rating');
+    await expect.element(derived).toBeInTheDocument();
+    expect(derived.element().textContent).toBe('R');
     // Assets more mature than declared → the mismatch warning renders.
-    await expect
-      .element(page.getByTestId('apps-offsite-rating-mismatch'))
-      .toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-offsite-rating-mismatch')).toBeInTheDocument();
   });
 
   test('the approve rating Select defaults to the derived value and approve passes it', async () => {
@@ -430,7 +546,18 @@ describe('OffsiteReviewModal — content-rating derive + mod override', () => {
     // The Select is present (defaulting to the derived rating), and confirming approve
     // forwards the chosen rating to the mutation.
     await expect.element(page.getByTestId('apps-offsite-approve-rating')).toBeInTheDocument();
+    // 🔴 CALL-SITE ASSERTION for the option list's LABEL half. Mantine renders the
+    // selected option's label in the input, so this reads what the moderator reads.
+    // Was `label: r`, i.e. the raw key.
+    const ratingInput = page
+      .getByTestId('apps-offsite-approve-rating')
+      .element() as HTMLInputElement;
+    expect(ratingInput.value).toBe('R');
+    expect(ratingInput.value).not.toBe('r');
     await page.getByTestId('apps-offsite-approve-confirm').click();
+    // 🔴 …and the VALUE half is unchanged: the mutation still receives the stored
+    // key. The pair is the point — a mutant that mapped the value instead of the
+    // label would satisfy the assertion above and break this one.
     expect(mocks.approveMutate).toHaveBeenCalledWith(
       expect.objectContaining({ publishRequestId: 'req-1', contentRating: 'r' })
     );

@@ -10,6 +10,7 @@ import {
   periodModeSchema,
 } from '~/server/schema/base.schema';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { hubLimits, hubSourceExclusionSchema } from '~/server/schema/user-hub.schema';
 import {
   ImageGenerationProcess,
   MediaType,
@@ -94,6 +95,13 @@ export const imageMetadataResourceSchema = z.object({
   unmatched: z.boolean().optional(),
 });
 
+export type UnmatchedResource = z.infer<typeof unmatchedResourceSchema>;
+export const unmatchedResourceSchema = z.object({
+  type: z.string().optional(),
+  name: z.string(),
+  hash: z.string(),
+});
+
 export const additionalResourceSchema = z.object({
   name: z.string().optional(),
   type: z.string().optional(),
@@ -118,6 +126,7 @@ export const imageGenerationSchema = z.object({
   sampler: undefinedString,
   seed: stringToNumber,
   hashes: z.record(z.string(), z.string()).optional(),
+  unmatchedResources: z.array(unmatchedResourceSchema).optional(),
   clipSkip: z.coerce.number().optional(),
   'Clip skip': z.coerce.number().optional(),
   comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
@@ -134,6 +143,18 @@ export const imageGenerationSchema = z.object({
   extra: z
     .object({
       remixOfId: z.number().optional(),
+      /**
+       * Signed at submit, baked into the output file by the orchestrator, read
+       * back here. Declared so the parser keeps it; the upload path verifies it
+       * and then drops it in favour of `sourceImageIds`.
+       */
+      provenance: z.string().optional(),
+      /**
+       * Images this one was actually generated from. Server-written only — a
+       * client-supplied value is discarded on the way in. Absent means unknown,
+       * never "not a remix".
+       */
+      sourceImageIds: z.number().array().optional(),
     })
     .optional()
     .catch(undefined),
@@ -250,7 +271,6 @@ export const imageModerationSchema = z.object({
   reviewAction: z.enum(['unblock', 'block']),
   violationType: z.enum(ViolationType).optional(),
   violationDetails: z.string().optional(),
-  removeMinorFlag: z.boolean().optional(),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 export type ImageModerationUnblockSchema = {
@@ -315,6 +335,99 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 
 // TODO try using ".strict()", fix "authed" as unrecognized key
 
+// Params the search index physically can't serve — these must use the DB
+// (getAllImages). The decision is server-side: there is no client `useIndex`
+// flag, so a client can't force the expensive un-indexed path on a broad query.
+// Correctness-critical filters (wrong results if the index ignored them):
+// - postId/postIds: specific post lookups (~2ms covered-index in PG; also create
+//   unique cache keys in BitDex that hurt cache hit rate)
+// - collectionId: requires relational joins through CollectionItem
+// - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
+// - imageId: not a search-index filter
+// - bare modelId: the index keys on modelVersionId / postedToId, not modelId, so
+//   a modelId-only query would silently return the global feed (matches the
+//   /api/v1/images legacy-method logic)
+// Ordering-only:
+// - prioritizedUserIds: DB-level user prioritization (TODO in getAllImagesIndex).
+//   Only forces the DB when scoped to a model (its sole legit use — the model
+//   showcase carousel, which always pairs it with modelVersionId). Sent alone it
+//   degrades to index ordering rather than acting as a broad-feed DB escape hatch.
+// Freshness, not correctness:
+// - publishedOnly paired with userId: the "pick something of mine to submit"
+//   modals (remix gallery, challenge, add-to-collection). The index can serve
+//   this query, but not in time: measured on prod 2026-08-27, an image is
+//   missing from metrics_images_v1 for 10-30 minutes after it is published,
+//   while it is Scanned and carries an nsfwLevel within the first minute. So
+//   someone posts an image, opens the picker to submit it, and the one image
+//   they came to submit is the one that isn't there. No browse feed sends
+//   publishedOnly — it exists only because those mutations refuse an
+//   unpublished image — so this routes the three pickers and nothing else.
+//   Paired with userId for the same reason prioritizedUserIds is paired with a
+//   model: alone it would be a broad-feed DB escape hatch anyone could type
+//   into a URL. Both halves ARE URL params, so pairing narrows the hatch rather
+//   than closing it — getInfiniteImagesHandler additionally withdraws
+//   `publishedOnly` unless the userId is the caller's own, which is what closes
+//   it. Do not read the pairing here as the whole guard.
+//
+//   Three accepted differences, none of them silent once you have read this.
+//   The DB path is NARROWER than the index for own content in three places, and
+//   in each the submit mutations refuse the row anyway (remix-gallery.service
+//   re-checks publishedAt, ingestion and needsReview), so nothing submittable is
+//   lost: own unscanned (`nsfwLevel = 0`), own `acceptableMinor`, and own
+//   `needsReview`. The first is the one to know about — between publish and the
+//   level landing, the picker shows nothing where the index showed the row. That
+//   window is under a minute (over 99% of images are Scanned and levelled inside
+//   one), against the 10-30 minutes this change removes.
+//   And `getAllImages` orders `Newest` by `i."id" DESC`, i.e. by UPLOAD, while the
+//   index orders by `sortAt` = GREATEST(publishedAt, scannedAt, createdAt). For
+//   the case this exists for — post, then submit — they agree. For "publish a
+//   months-old draft, then submit it" they do not, and the draft lands at its
+//   upload rank rather than first.
+//
+//   🔴 One difference goes the OTHER way, and it is an accepted widening rather
+//   than an oversight. The index filters on `combinedNsfwLevel` whenever
+//   `useCombinedNsfwLevel` is set (i.e. for anyone without NSFW access), and that
+//   is `nsfwLevelLocked ? nsfwLevel : max(nsfwLevel, aiNsfwLevel)`. `getAllImages`
+//   has no equivalent — it filters bare `i."nsfwLevel"`. So an image the AI scored
+//   higher than its assigned level is hidden by the index and returned by the DB.
+//   In these pickers that is the caller's own image shown back to the caller, and
+//   the handler's caller check keeps it that way. Justin accepted it knowingly on
+//   2026-08-27 rather than widen this change into the shared feed query. Do not
+//   "fix" it here by reverting the routing: the fix is to teach `getAllImages`
+//   about `aiNsfwLevel`, which is a feed change and wants its own review.
+//
+//   Cost, measured on the prod replica 2026-08-27: 0.83-1.03 ms at a wide
+//   browsing level, 14-82 ms at browsingLevel=1, where the backward index walk
+//   discards thousands of rows before 51 survive. Plan is an index scan backward
+//   on image_userid_id_idx in every case.
+//
+// A hub can only be served from the index, so this list is also the set `hubId`
+// cannot be combined with. Both the dispatcher and that rejection read it here so
+// the two cannot drift.
+export function requiresImageDbPath(input: {
+  postId?: number | null;
+  postIds?: number[] | null;
+  collectionId?: number | null;
+  reactions?: unknown[] | null;
+  imageId?: number | null;
+  modelId?: number | null;
+  modelVersionId?: number | null;
+  prioritizedUserIds?: number[] | null;
+  publishedOnly?: boolean | null;
+  userId?: number | null;
+}) {
+  return (
+    !!input.postId ||
+    !!input.postIds?.length ||
+    !!input.collectionId ||
+    !!input.reactions?.length ||
+    !!input.imageId ||
+    (!!input.modelId && !input.modelVersionId) ||
+    (!!input.prioritizedUserIds?.length && (!!input.modelId || !!input.modelVersionId)) ||
+    (!!input.publishedOnly && !!input.userId)
+  );
+}
+
 // faux-extends imagesQueryParamSchema output type
 export const getInfiniteImagesSchema = baseQuerySchema
   .extend({
@@ -349,6 +462,21 @@ export const getInfiniteImagesSchema = baseQuerySchema
     types: z.array(z.enum(MediaType)).optional(),
     userId: z.number().optional(),
     username: usernameSchema.optional(),
+    // Serve a user-composed hub. The source ids are resolved server-side from
+    // this id — the client never sends them. An arbitrary client-supplied OR
+    // group would be an unbounded-cost query anyone could post.
+    hubId: z.number().optional(),
+    // Sources the VIEWER switched off for this session, on a hub they do not own.
+    // Read only as a subtraction from what `hubId` resolves to, so a forged entry
+    // narrows the forger's own feed and can widen nobody's.
+    hubExcludedSources: z.array(hubSourceExclusionSchema).max(hubLimits.sourcesPerHub).optional(),
+    // Restrict the feed to creators currently on the "new & upcoming" board. The
+    // board id is resolved server-side from this flag plus the request domain —
+    // the client never supplies a user list.
+    newCreators: z.boolean().optional(),
+    // Hide daily-challenge entries. The server resolves this to the challenge
+    // tag id and unions it into `excludedTagIds` — the client never sends tag ids.
+    hideChallenges: z.boolean().optional(),
     // view: z.enum(['categories', 'feed']),
     withMeta: z.boolean().default(false),
     requiringMeta: z.boolean().optional(),
@@ -391,6 +519,17 @@ export const getInfiniteImagesSchema = baseQuerySchema
     // not read it (browsing level is the authoritative cap).
     includePG13: z.boolean().optional(),
   })
+  .superRefine((value, ctx) => {
+    // A hub is only expressible on the index. Combined with an input that forces
+    // the DB path the request has no correct answer, so refuse it rather than
+    // serve one of the two filters and label it as the other.
+    if (value.hubId && requiresImageDbPath(value))
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['hubId'],
+        message: 'A hub feed cannot be combined with this filter',
+      });
+  })
   .transform((value) => {
     if (value.withTags) {
       if (!value.include) value.include = [];
@@ -417,26 +556,40 @@ export const removeImageResourceSchema = z.object({
   modelVersionId: z.number(),
 });
 
+/**
+ * Ceiling on the `entities` list `getEntitiesCoverImage` will accept.
+ *
+ * Sized off what the callers can actually produce, with room to spare. The two UI
+ * callers are a profile showcase and the notification panel; neither has a fixed
+ * ceiling of its own that this could narrow:
+ *
+ * - `addEntityToShowcase` truncates the showcase it writes to
+ *   `constants.profile.showcaseItemsLimit` (32). That is the only write path that
+ *   truncates — `userProfile.update` takes `showcaseItems` unbounded and the service
+ *   stores it as given, so a stored showcase is not guaranteed to be at or under 32.
+ * - The notification panel dedupes image ids out of a 30-per-page infinite list, so
+ *   500 is ~16 pages deep, and in practice more, since only notifications naming an
+ *   image contribute an id.
+ *
+ * Each caller clamps its own list to this before querying, so exceeding it is a caller
+ * bug rather than something a session can walk into — which matters because a refused
+ * query has no error branch in any of them.
+ *
+ * An empty array is deliberately still accepted: `getEntityCoverImage` returns [] for
+ * it, and this is a token-reachable read where that is a valid no-op.
+ */
+export const MAX_ENTITIES_COVER_IMAGE = 500;
+
 export type GetEntitiesCoverImage = z.infer<typeof getEntitiesCoverImage>;
 export const getEntitiesCoverImage = z.object({
-  entities: z.array(
-    z.object({
-      entityType: z.union([z.enum(SearchIndexEntityTypes), z.enum(['ModelVersion', 'Post'])]),
-      entityId: z.number(),
-    })
-  ),
-});
-
-export type ImageReviewQueueInput = z.infer<typeof imageReviewQueueInputSchema>;
-export const imageReviewQueueInputSchema = z.object({
-  limit: z.number().min(0).max(200).default(100),
-  cursor: z.union([z.bigint(), z.number()]).optional(),
-  needsReview: z.string().nullish(),
-  tagReview: z.boolean().optional(),
-  reportReview: z.boolean().optional(),
-  tagIds: z.array(z.number()).optional(),
-  excludedTagIds: z.array(z.number()).optional(),
-  browsingLevel: z.number().default(allBrowsingLevelsFlag),
+  entities: z
+    .array(
+      z.object({
+        entityType: z.union([z.enum(SearchIndexEntityTypes), z.enum(['ModelVersion', 'Post'])]),
+        entityId: z.number(),
+      })
+    )
+    .max(MAX_ENTITIES_COVER_IMAGE),
 });
 
 export type ScanJobsOutput = z.output<typeof scanJobsSchema>;
@@ -452,35 +605,6 @@ export const updateImageNsfwLevelSchema = z.object({
   nsfwLevel: z.enum(NsfwLevel),
   status: z.enum(ReportStatus).optional(),
   reason: z.string().optional(),
-});
-
-export const getImageRatingRequestsSchema = paginationSchema.extend({
-  status: z.enum(ReportStatus).array().optional(),
-});
-
-export type ImageRatingReviewOutput = z.infer<typeof imageRatingReviewInput>;
-export const imageRatingReviewInput = z.object({
-  limit: z.number(),
-  cursor: z.number().optional(),
-});
-
-export type DownleveledReviewOutput = z.infer<typeof downleveledReviewInput>;
-export const downleveledReviewInput = z.object({
-  limit: z.number(),
-  cursor: z.string().optional(),
-  originalLevel: z.nativeEnum(NsfwLevel).optional(),
-});
-
-export type IngestionErrorReviewInput = z.infer<typeof ingestionErrorReviewInput>;
-export const ingestionErrorReviewInput = z.object({
-  limit: z.number(),
-  cursor: z.number().optional(),
-});
-
-export type ResolveIngestionErrorInput = z.infer<typeof resolveIngestionErrorInput>;
-export const resolveIngestionErrorInput = z.object({
-  id: z.number(),
-  nsfwLevel: z.enum(NsfwLevel),
 });
 
 export type ReportCsamImagesInput = z.infer<typeof reportCsamImagesSchema>;

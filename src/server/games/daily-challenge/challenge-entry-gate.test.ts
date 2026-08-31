@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const { mockFindFirst } = vi.hoisted(() => ({ mockFindFirst: vi.fn() }));
-vi.mock('~/server/db/client', () => ({ dbRead: { challenge: { findFirst: mockFindFirst } } }));
-
+const mockFindFirst = dbMock.dbRead.challenge.findFirst;
 const { assertUserChallengeAcceptingEntries } = await import('./challenge-entry-gate');
 
 beforeEach(() => vi.clearAllMocks());

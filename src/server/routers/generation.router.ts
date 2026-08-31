@@ -2,7 +2,6 @@ import { gateRuleSchema } from '~/shared/data-graph/generation/gates';
 import { getByIdSchema } from './../schema/base.schema';
 import {
   checkResourcesCoverageSchema,
-  generationEcosystemConfigSchema,
   generationStatusModeSchema,
   getGenerationDataSchema,
   getResourceDataByIdsSchema,
@@ -13,14 +12,12 @@ import {
 import {
   checkResourcesCoverage,
   getGenerationData,
-  getGenerationEcosystemConfig,
   getGenerationStatus,
   getGateRules,
   getGenerationConfig,
   getResourceData,
   resolveImageMeta,
   setGateRules,
-  setGenerationEcosystemConfig,
   setGenerationStatus,
   setSelfHostedGenerationStatus,
   // textToImage,
@@ -116,15 +113,6 @@ export const generationRouter = router({
         tier: ctx.user?.tier,
       })
     ),
-  getEcosystemConfig: moderatorProcedure.query(async () => {
-    // Strip the runtime-only `hasTestingAccess` — the moderator UI edits the raw
-    // operator-set config (just `experimentalEcosystems`) persisted to Redis.
-    const { hasTestingAccess: _hasTestingAccess, ...config } = await getGenerationEcosystemConfig();
-    return config;
-  }),
-  setEcosystemConfig: moderatorProcedure
-    .input(generationEcosystemConfigSchema)
-    .mutation(({ input }) => setGenerationEcosystemConfig(input)),
   getGateRules: moderatorProcedure.query(() => getGateRules()),
   setGateRules: moderatorProcedure
     .input(z.array(gateRuleSchema))

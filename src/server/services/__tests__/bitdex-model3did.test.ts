@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
 import { mapBitdexDoc } from '~/server/services/image.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // mapBitdexDoc must emit model3dId only when the doc carries a number, and must
 // never coerce a missing value to null: downstream treats a number as a real

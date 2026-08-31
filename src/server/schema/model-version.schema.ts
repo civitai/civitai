@@ -1,17 +1,16 @@
 import { v4 as uuidv4 } from 'uuid';
-import type { ModelVersionTerms } from '@civitai/buzz';
+import type { ModelVersionTerms, RightsAffirmation } from '@civitai/buzz';
+import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
 import * as z from 'zod';
-import {
-  MAX_DONATION_GOAL,
-  MIN_DONATION_GOAL,
-} from '~/components/Model/ModelVersions/model-version.utils';
+import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donation-goal.constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
-import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { CSS_COLOR, DEFAULT_ALLOWED_ATTRIBUTES } from '~/utils/html-sanitize-helpers';
 import {
   LicensingFeeSettlementCurrency,
   LicensingFeeType,
@@ -31,12 +30,6 @@ import {
   optimizerTypes,
   trainingBaseModelType,
 } from '~/utils/training';
-
-export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
-export const queryModelVersionsSchema = infiniteQuerySchema.extend({
-  trainingStatus: z.enum(TrainingStatus).optional(),
-  // uploadType: z.enum(ModelUploadType).optional(),
-});
 
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
 export const recipeModelSchema = z.object({
@@ -78,12 +71,15 @@ export const trainingDetailsBaseModelsZImage = ['zimageturbo', 'zimagebase'] as 
 export const trainingDetailsBaseModelsFlux2Klein = ['flux2klein_4b', 'flux2klein_9b'] as const;
 export const trainingDetailsBaseModelsLtx2 = ['ltx2'] as const;
 export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
+export const trainingDetailsBaseModelsLtx25 = ['ltx25'] as const;
+export const trainingDetailsBaseModelsMiniMaxH3 = ['minimaxh3'] as const;
 export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
 export const trainingDetailsBaseModelsAnima = ['anima'] as const;
 export const trainingDetailsBaseModelsBoogu = ['boogu'] as const;
 export const trainingDetailsBaseModelsKrea2 = ['krea2'] as const;
 export const trainingDetailsBaseModelsMageFlow = ['mageflow'] as const;
+export const trainingDetailsBaseModelsIdeogram4 = ['ideogram4'] as const;
 export const trainingDetailsBaseModelsAcestep15 = ['acestep_15'] as const;
 export const trainingDetailsBaseModelsAcestep15Xl = [
   'acestep_15_xl_base',
@@ -106,12 +102,15 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsBoogu,
   ...trainingDetailsBaseModelsKrea2,
   ...trainingDetailsBaseModelsMageFlow,
+  ...trainingDetailsBaseModelsIdeogram4,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
   ...trainingDetailsBaseModelsWan,
   ...trainingDetailsBaseModelsLtx2,
   ...trainingDetailsBaseModelsLtx23,
+  ...trainingDetailsBaseModelsLtx25,
+  ...trainingDetailsBaseModelsMiniMaxH3,
 ] as const;
 const trainingDetailsBaseModelsAudio = [
   ...trainingDetailsBaseModelsAcestep15,
@@ -268,17 +267,27 @@ export const trainingDetailsObj = z.object({
   continueFromEpoch: z
     .object({
       air: z.string(),
-      epochNumber: z.number(),
+      // Not `.nonnegative()`: an epoch the orchestrator never numbered is stored as -1, and
+      // "Train Further" sends that value straight back. The service clamps it instead.
+      epochNumber: z.number().int(),
       sourceModelVersionId: z.number(),
       sourceVersionName: z.string().optional(),
     })
     .optional(),
 });
 
+const canonicalBaseModels = new Set(baseModels);
+
+// Every name, not `activeBaseModels`: deprecated models must stay editable, and hidden ones are
+// moderator-only in the UI but legitimate on the wire.
+const baseModelSchema = z.string().refine((value) => canonicalBaseModels.has(value), {
+  error: (issue) => `Unknown base model: ${issue.input}`,
+});
+
 export const modelVersionUpsertSchema = z.object({
   id: z.coerce.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
-  baseModel: z.string(),
+  baseModel: baseModelSchema,
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
@@ -334,7 +343,7 @@ export const setLinkedComponentsSchema = z.object({
 export type SetLinkedComponentsInput = z.infer<typeof setLinkedComponentsSchema>;
 
 export const addLinkedComponentSchema = z.object({
-  id: z.number(), // source model version ID (named `id` for isOwnerOrModerator middleware compat)
+  id: z.number(), // source model version ID (named `id` for the ownership middleware)
   targetVersionId: z.number(), // linked resource's version ID
   targetFileId: z.number().optional(), // explicit file to link; falls back to auto-picking the primary
   replaceFileId: z.number().optional(), // redundant file on the source version to delete after linking
@@ -361,7 +370,8 @@ const recommendedResourceSchema = z.object({
 
 export type ModelVersionUpsertInput = z.infer<typeof modelVersionUpsertSchema2>;
 
-export const MAX_LICENSING_FEE = 100;
+// Single-sourced in @civitai/buzz (the shared licensing-fee module); re-exported here for existing importers.
+export { MAX_LICENSING_FEE };
 
 // Paid-access write boundary — the zod contract the client sends (mirrors the @civitai/buzz domain
 // types). `terms` is bundle semantics: buying `download` grants generation too; `generation`
@@ -380,6 +390,7 @@ const generationGrantSchema = z.union([
 export const modelVersionTermsSchema = z.object({
   download: downloadGrantSchema.optional(),
   generation: generationGrantSchema.optional(),
+  acceptsBlueBuzz: z.boolean().optional(),
 });
 
 export type ModelVersionPaidAccessInputSchema = z.infer<typeof modelVersionPaidAccessInputSchema>;
@@ -400,28 +411,86 @@ export const donationGoalInputSchema = z.object({
 export type ModelVersionPaidAccessDto = {
   endsAt: Date | null;
   timeframeDays: number | null;
+  /** Already discounted when a sale is live — `sale.listTerms` carries what it was before. */
   terms: ModelVersionTerms;
+  /**
+   * Present only while a sale is actually discounting this viewer's price. `listTerms` is the
+   * pre-sale price so the UI can strike it through; `endsAt` is what a countdown reads.
+   */
+  sale: {
+    listTerms: ModelVersionTerms;
+    /** What a buyer is quoted, so an owner can be shown it without recomputing the discount. */
+    buyerTerms: ModelVersionTerms;
+    endsAt: Date;
+    discountType: 'Fixed' | 'Percent';
+    discountAmount: number;
+  } | null;
 };
 
 // Narrow input for editing only a version's paid access (e.g. from the creator studio) without
 // round-tripping the whole version. `id` is named for the `isOwnerOrModerator` middleware; a null
 // `paidAccess` clears the gate.
+/**
+ * The creator's affirmation that they hold the rights to monetize this version. Optional at the
+ * boundary because most writes don't monetize (publishing, moderation, metadata edits) and a version
+ * already carrying an affirmation never needs a second one — the service decides when it's required
+ * (see resolveRightsAffirmation) and records it on ModelVersion.meta.rightsAffirmation.
+ */
+const rightsAffirmedSchema = z.boolean().optional();
+
 export type UpdateModelVersionPaidAccessInput = z.infer<typeof updateModelVersionPaidAccessSchema>;
 export const updateModelVersionPaidAccessSchema = z.object({
   id: z.number(),
   paidAccess: modelVersionPaidAccessInputSchema.nullish(),
   donationGoal: donationGoalInputSchema.nullish(),
+  rightsAffirmed: rightsAffirmedSchema,
 });
 
 export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),
   id: z.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
-  baseModel: z.string(),
+  baseModel: baseModelSchema,
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
-    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
+    // `div` is the blurb wrapper and is already in this narrowed list; `data-id` on it comes from
+    // the app-wide attribute defaults. `span` is here for what goes INSIDE a blurb — the colour
+    // span, and mentions. `allowBlurbs` is an attribute STRIP toggle, not a tag admission, so it
+    // cannot admit either tag on its own: drop one and the markup is stripped at save,
+    // `expandBlurbs` sees plain text, and the control renders and silently does nothing on this
+    // surface alone.
+    allowedTags: [
+      'div',
+      'strong',
+      'p',
+      'em',
+      'u',
+      's',
+      'a',
+      'br',
+      'ul',
+      'ol',
+      'li',
+      'code',
+      'pre',
+      'span',
+    ],
+    // Admitting `span` re-opens what this surface used to strip outright, so its attributes are
+    // narrowed to the three a blurb needs. That closes `class` and `data-label`.
+    // `data-type` + `data-id` are exactly what a mention carries, so a mention span survives here
+    // and gets a real hover card. Parity with every other rich-text surface, not a new exposure.
+    // `style` is admitted for a blurb's text colour and bounded by `allowedStyles` below to the
+    // `color` property alone — STRICTER than the other blurb surfaces, which take the app-wide
+    // `span: [... 'style']` with no property allowlist at all. Without it a blurb's colour is
+    // stripped here and nowhere else, which is the silent per-surface divergence this whole
+    // paragraph exists to prevent.
+    allowedAttributes: {
+      ...DEFAULT_ALLOWED_ATTRIBUTES,
+      span: ['data-type', 'data-id', 'style'],
+    },
+    allowedStyles: { span: { color: CSS_COLOR } },
     stripEmpty: true,
+    allowBlurbs: true,
   }).nullish(),
   steps: z.number().min(0).nullish(),
   epochs: z.number().min(0).max(100000).nullish(),
@@ -450,6 +519,7 @@ export const modelVersionUpsertSchema2 = z.object({
   bountyId: z.number().optional(),
   paidAccess: modelVersionPaidAccessInputSchema.nullish(),
   donationGoal: donationGoalInputSchema.nullish(),
+  rightsAffirmed: rightsAffirmedSchema,
   earlyAccessGoalConfig: z
     .object({
       unitAmount: z.number(),
@@ -457,7 +527,9 @@ export const modelVersionUpsertSchema2 = z.object({
     .nullish(),
   uploadType: z.enum(ModelUploadType).optional(),
   usageControl: z.enum(ModelUsageControl).optional(),
-  licensingFee: z.number().min(0).max(MAX_LICENSING_FEE).nullish(),
+  // Ceiling only — the real limit is the creator's per-tier cap, asserted server-side against the
+  // version's media type. Video allows 5x, so the schema has to admit the highest of the two.
+  licensingFee: z.number().min(0).max(maxLicensingFeeCeiling('video')).multipleOf(0.01).nullish(),
   licensingFeeType: z.enum(LicensingFeeType).nullish(),
   licensingFeeSettlementCurrency: z.enum(LicensingFeeSettlementCurrency).nullish(),
   // Inherit another version's licensing fee (a LicensingRoot for this baseModel).
@@ -478,6 +550,17 @@ export const getModelVersionSchema = z.object({
   id: z.number(),
   withFiles: z.boolean().optional(),
 });
+
+/**
+ * Why the upsert handler cleared a submitted `licensingSourceVersionId`. A union rather than a string
+ * because it is written straight into the audit's `reason` column: a typo in a free-form string reaches
+ * a moderator's change history with nothing on the way to catch it.
+ */
+export type LicensingSourceRejection =
+  | 'not-a-root'
+  | 'base-model-mismatch'
+  | 'model-not-found'
+  | 'model-type-mismatch';
 
 export type GetLicensingRootsSchema = z.infer<typeof getLicensingRootsSchema>;
 export const getLicensingRootsSchema = z.object({
@@ -517,6 +600,8 @@ export type ModelVersionMeta = ModelMeta & {
    * the target is deleted/unpublished/uncovered (fail-closed).
    */
   generationAlias?: GenerationAlias;
+  /** Recorded the first time this version was monetized. See resolveRightsAffirmation. */
+  rightsAffirmation?: RightsAffirmation;
 };
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;
@@ -568,6 +653,9 @@ export type ModelVersionEarlyAccessPurchase = z.infer<typeof modelVersionEarlyAc
 export const modelVersionEarlyAccessPurchase = z.object({
   modelVersionId: z.number(),
   type: z.enum(['download', 'generation']),
+  // A boolean, not a currency: the buyer may only choose BETWEEN blue and their domain currency, and
+  // naming the currency outright would let a client ask a green-domain purchase to spend yellow.
+  payWithBlue: z.boolean().optional(),
 });
 
 export type GetModelVersionPopularityInput = z.infer<typeof getModelVersionPopularityInput>;

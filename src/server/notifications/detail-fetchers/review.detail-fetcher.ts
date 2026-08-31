@@ -23,6 +23,9 @@ export const reviewDetailFetcher = createDetailFetcher({
       FROM "ResourceReview" r
       JOIN "User" u ON r."userId" = u.id
       WHERE r.id IN (${Prisma.join(reviewIds)})
+        -- Same reason as the comment fetcher: this inlines the body at READ time, so a review a
+        -- moderator has taken down otherwise keeps serving it into the recipient's panel.
+        AND r."tosViolation" = false
     `;
     const userIds = reviews.map((u) => u.id);
     const profilePictures = await getProfilePicturesForUsers(userIds);

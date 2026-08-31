@@ -216,7 +216,7 @@ async function getCommentTasks(ctx: MetricContext) {
         tf.timeframe,
         ${snippets.timeframeSum('c."createdAt"')} "commentCount"
       FROM "Thread" t
-      JOIN "CommentV2" c ON c."threadId" = t.id
+      JOIN "CommentV2" c ON c."threadId" = t.id AND c."tosViolation" = false
       CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE t."postId" IN (${ids})
         AND t."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}

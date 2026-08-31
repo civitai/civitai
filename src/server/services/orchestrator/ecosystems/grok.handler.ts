@@ -4,29 +4,47 @@
  * Handles xAI Grok Imagine workflows for both image and video generation.
  * Image workflows use imageGen step type, video workflows use videoGen step type.
  *
- * Image operations:
+ * Image operations, v1.0:
  * - createImage: Text to image (GrokCreateImageGenInput)
  * - editImage: Edit with source images (GrokEditImageGenInput)
  *
- * Video operations:
+ * Image operations, v2.0 (Grok Imagine Image 2.0 — image-only version):
+ * - createImage: Text to image (GrokV2CreateImageGenInput)
+ * - editImage: Edit with 1-3 source images (GrokV2EditImageGenInput)
+ *
+ * Video operations, v1.0:
  * - text-to-video: Text to video (GrokTextToVideoInput)
  * - image-to-video: Image to video (GrokImageToVideoInput)
  * - edit-video: Edit video with AI (GrokEditVideoInput)
+ *
+ * Video operations, v1.5:
+ * - textToVideo: Text to video, up to 1080p (GrokV15TextToVideoInput)
+ * - imageToVideo: Single source image, ratio follows the image (GrokV15ImageToVideoInput)
+ * - referenceToVideo: 1-7 reference images (GrokV15ReferenceToVideoInput)
  */
 
 import type {
   GrokCreateImageGenInput,
   GrokEditImageGenInput,
+  GrokV2CreateImageGenInput,
+  GrokV2EditImageGenInput,
   GrokTextToVideoInput,
   GrokImageToVideoInput,
   GrokEditVideoInput,
+  GrokV15TextToVideoInput,
+  GrokV15ImageToVideoInput,
+  GrokV15ReferenceToVideoInput,
   ImageGenStepTemplate,
   VideoGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
-import { grokVideoAspectRatiosByResolution } from '~/shared/data-graph/generation/grok-graph';
+import {
+  grokVideoAspectRatiosByResolution,
+  isGrokV15,
+  isGrokV2,
+} from '~/shared/data-graph/generation/grok-graph';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
@@ -35,7 +53,7 @@ type GrokCtx = EcosystemGraphOutput & { ecosystem: 'Grok' };
 
 /**
  * Creates imageGen input for Grok image workflows.
- * Handles both createImage and editImage operations.
+ * Handles both createImage and editImage operations, on v1.0 and v2.0.
  */
 export const createGrokImageInput = defineHandler<GrokCtx, [ImageGenStepTemplate]>((data) => {
   const hasImages = !!data.images?.length;
@@ -47,12 +65,50 @@ export const createGrokImageInput = defineHandler<GrokCtx, [ImageGenStepTemplate
     aspectRatio: data.aspectRatio?.value,
   };
 
+  if (isGrokV2(data.model?.id)) {
+    const v2Base = {
+      ...baseData,
+      version: 'v2.0' as const,
+      resolution:
+        'resolution' in data
+          ? (data.resolution as GrokV2CreateImageGenInput['resolution'])
+          : undefined,
+      quality:
+        'quality' in data ? (data.quality as GrokV2CreateImageGenInput['quality']) : undefined,
+    };
+
+    if (hasImages) {
+      return [
+        {
+          $type: 'imageGen',
+          input: removeEmpty({
+            ...v2Base,
+            operation: 'editImage',
+            images: data.images!.map((x) => x.url),
+          }) as GrokV2EditImageGenInput,
+        },
+      ];
+    }
+
+    return [
+      {
+        $type: 'imageGen',
+        input: removeEmpty({
+          ...v2Base,
+          operation: 'createImage',
+        }) as GrokV2CreateImageGenInput,
+      },
+    ];
+  }
+
+  const v1Base = { ...baseData, version: 'v1.0' as const };
+
   if (hasImages) {
     return [
       {
         $type: 'imageGen',
         input: removeEmpty({
-          ...baseData,
+          ...v1Base,
           operation: 'editImage',
           images: data.images!.map((x) => x.url),
         }) as GrokEditImageGenInput,
@@ -64,7 +120,7 @@ export const createGrokImageInput = defineHandler<GrokCtx, [ImageGenStepTemplate
     {
       $type: 'imageGen',
       input: removeEmpty({
-        ...baseData,
+        ...v1Base,
         operation: 'createImage',
       }) as GrokCreateImageGenInput,
     },
@@ -73,7 +129,8 @@ export const createGrokImageInput = defineHandler<GrokCtx, [ImageGenStepTemplate
 
 /**
  * Creates videoGen input for Grok video workflows.
- * Handles text-to-video, image-to-video, and edit-video operations.
+ * The selected model version id selects the engine version, which in turn
+ * determines the available operations and their naming.
  */
 export const createGrokVideoInput = defineHandler<GrokCtx, [VideoGenStepTemplate]>((data) => {
   const hasImages = !!data.images?.length;
@@ -87,6 +144,53 @@ export const createGrokVideoInput = defineHandler<GrokCtx, [VideoGenStepTemplate
     resolution,
   };
 
+  if (isGrokV15(data.model?.id)) {
+    const v15Base = { ...baseData, version: 'v1.5' as const };
+
+    if (data.workflow === 'img2vid:ref2vid') {
+      const images = data.images?.map((x) => x.url) ?? [];
+      if (!images.length)
+        throw new Error('At least one reference image is required for img2vid:ref2vid');
+      return [
+        {
+          $type: 'videoGen',
+          input: removeEmpty({
+            ...v15Base,
+            operation: 'referenceToVideo',
+            images,
+            aspectRatio: data.aspectRatio?.value as GrokV15ReferenceToVideoInput['aspectRatio'],
+          }) as GrokV15ReferenceToVideoInput,
+        },
+      ];
+    }
+
+    if (hasImages) {
+      return [
+        {
+          $type: 'videoGen',
+          input: removeEmpty({
+            ...v15Base,
+            operation: 'imageToVideo',
+            images: [data.images![0].url] as [string],
+          }) as GrokV15ImageToVideoInput,
+        },
+      ];
+    }
+
+    return [
+      {
+        $type: 'videoGen',
+        input: removeEmpty({
+          ...v15Base,
+          operation: 'textToVideo',
+          aspectRatio: data.aspectRatio?.value as GrokV15TextToVideoInput['aspectRatio'],
+        }) as GrokV15TextToVideoInput,
+      },
+    ];
+  }
+
+  const v1Base = { ...baseData, version: 'v1.0' as const };
+
   // Edit video (vid2vid:edit)
   if (hasVideo) {
     const video = data.video as { url: string; metadata?: { duration?: number } };
@@ -94,7 +198,7 @@ export const createGrokVideoInput = defineHandler<GrokCtx, [VideoGenStepTemplate
       {
         $type: 'videoGen',
         input: removeEmpty({
-          ...baseData,
+          ...v1Base,
           operation: 'edit-video',
           videoUrl: video.url,
           analyzedDuration: video.metadata?.duration,
@@ -112,7 +216,7 @@ export const createGrokVideoInput = defineHandler<GrokCtx, [VideoGenStepTemplate
       {
         $type: 'videoGen',
         input: removeEmpty({
-          ...baseData,
+          ...v1Base,
           operation: 'image-to-video',
           aspectRatio: aspectRatio?.value as GrokImageToVideoInput['aspectRatio'],
           images: [data.images![0].url] as [string],
@@ -126,7 +230,7 @@ export const createGrokVideoInput = defineHandler<GrokCtx, [VideoGenStepTemplate
     {
       $type: 'videoGen',
       input: removeEmpty({
-        ...baseData,
+        ...v1Base,
         operation: 'text-to-video',
         aspectRatio: data.aspectRatio?.value as GrokTextToVideoInput['aspectRatio'],
       }) as GrokTextToVideoInput,

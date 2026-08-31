@@ -6,6 +6,14 @@ import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { pickBestTrainingFile } from '~/server/schema/model-file.schema';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { trainingEpochModelFileName } from '~/shared/utils/training-file-names';
+import {
+  isTrustedOrchestratorUrl,
+  logHostOf,
+} from '~/server/services/orchestrator/trusted-blob-url';
+import { logToAxiom } from '~/server/logging/client';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import { trainingArchitectureKey } from '~/utils/training/run-summary';
 
 // Disable body parser size limit and response size limit for large epoch files
 export const config = {
@@ -33,6 +41,7 @@ export default AuthedEndpoint(
       where: { id: modelVersionId },
       select: {
         id: true,
+        trainingDetails: true,
         model: { select: { id: true, userId: true, name: true } },
         files: {
           select: { metadata: true },
@@ -83,6 +92,20 @@ export default AuthedEndpoint(
       return res.status(404).json({ error: 'Epoch download URL not available' });
     }
 
+    // epochUrl is untrusted stored input — see isTrustedOrchestratorUrl.
+    if (!isTrustedOrchestratorUrl(epochUrl)) {
+      logToAxiom(
+        {
+          name: 'training-epoch-download',
+          type: 'warning',
+          message: 'Refused to fetch an epoch URL outside the orchestrator hosts',
+          data: { modelVersionId, epochNumber, userId: user.id, host: logHostOf(epochUrl) },
+        },
+        'webhooks'
+      ).catch();
+      return res.status(404).json({ error: 'Epoch download URL not available' });
+    }
+
     // Abort the upstream fetch + stream when the client disconnects.
     // Without this, a client hang or Traefik timeout leaves the pod streaming
     // into a dead socket for minutes, holding an event-loop slot.
@@ -112,8 +135,14 @@ export default AuthedEndpoint(
         .json({ error: 'Failed to fetch epoch from storage' });
     }
 
-    const modelName = modelVersion.model.name.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const fileName = `${modelName}_epoch_${epochNumber}.safetensors`;
+    const fileName = trainingEpochModelFileName({
+      modelName: modelVersion.model.name,
+      versionId: modelVersion.id,
+      architecture: trainingArchitectureKey(
+        modelVersion.trainingDetails as TrainingDetailsObj | null
+      ),
+      epochNumber,
+    });
 
     // Stream the response to the client
     res.setHeader('Content-Type', 'application/octet-stream');

@@ -1,6 +1,17 @@
 import { NotificationCategory } from '~/server/common/enums';
-import { createNotificationProcessor } from '~/server/notifications/base.notifications';
-import { threadUrlMap } from '~/server/notifications/comment.notifications';
+import {
+  createNotificationProcessor,
+  notBlockedBetween,
+} from '~/server/notifications/base.notifications';
+import {
+  CommentNotificationPriority,
+  appListingSlugJoin,
+  appListingSlugResolved,
+  commentDedupeKeyByVersion,
+  threadTypeLabel,
+  threadUrlMap,
+  withIndefiniteArticle,
+} from '~/server/notifications/comment.notifications';
 
 // Moveable (possibly)
 
@@ -8,14 +19,24 @@ export const mentionNotifications = createNotificationProcessor({
   'new-mention': {
     displayName: 'New @mentions',
     category: NotificationCategory.Comment,
+    priority: CommentNotificationPriority.Mention,
     prepareMessage: ({ details }) => {
       const isCommentV2 = details.mentionedIn === 'comment' && details.threadId !== undefined;
       if (isCommentV2) {
         const url = threadUrlMap(details);
+        // The shared `threadTypeLabel` names the ENTITY; `'comment thread'` is this sentence's
+        // own shaping of the unaddressable fallback ("…on a comment thread" reads, "…on a
+        // comment" does not) and stays local — folding it into the shared map would give the
+        // reply consumers "a comment thread comment you made".
+        //
+        // The article comes from `withIndefiniteArticle`, which is handed the noun and nothing
+        // else, so it cannot disagree with the word printed beside it. See its docstring.
+        const noun =
+          details.threadType === 'comment' ? 'comment thread' : threadTypeLabel(details.threadType);
         return {
-          message: `${details.username} mentioned you in a comment on a${
-            ['a', 'e', 'i', 'o', 'u'].includes(details.threadType[0]) ? 'n' : ''
-          } ${details.threadType === 'comment' ? 'comment thread' : details.threadType}`,
+          message: `${details.username} mentioned you in a comment on ${withIndefiniteArticle(
+            noun
+          )}`,
           url,
         };
       } else if (details.mentionedIn === 'comment') {
@@ -35,6 +56,10 @@ export const mentionNotifications = createNotificationProcessor({
       WITH new_mentions AS (
         SELECT DISTINCT
           CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
+          -- The recipient is produced by unnest() in this select list, so it can't be referenced
+          -- from these WHERE clauses. Each branch carries its author out instead, and the block
+          -- filter runs once on the outer query where both sides are finally in scope.
+          c."userId" "actorId",
           JSONB_BUILD_OBJECT(
             'version', 2,
             'mentionedIn', 'comment',
@@ -50,6 +75,8 @@ export const mentionNotifications = createNotificationProcessor({
                 root."articleId",
                 root."bountyId",
                 root."bountyEntryId",
+                root."challengeId",
+                root."model3dId",
                 t."imageId",
                 t."modelId",
                 t."postId",
@@ -58,7 +85,9 @@ export const mentionNotifications = createNotificationProcessor({
                 t."reviewId",
                 t."articleId",
                 t."bountyId",
-                t."bountyEntryId"
+                t."bountyEntryId",
+                t."challengeId",
+                t."model3dId"
              ),
             'threadType', CASE
               WHEN COALESCE(root."imageId", t."imageId") IS NOT NULL THEN 'image'
@@ -70,8 +99,14 @@ export const mentionNotifications = createNotificationProcessor({
               WHEN COALESCE(root."articleId", t."articleId") IS NOT NULL THEN 'article'
               WHEN COALESCE(root."bountyId", t."bountyId") IS NOT NULL THEN 'bounty'
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
+              WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
+              WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
+              -- App-store listings are SLUG-addressed, so this arm keys on the JOINED slug
+              -- rather than an id column — see appListingSlugJoin.
+              WHEN al.slug IS NOT NULL THEN 'appListing'
               ELSE 'comment'
             END,
+             'appListingSlug', al.slug,
              'commentParentId', COALESCE(
                 t."imageId",
                 t."modelId",
@@ -82,6 +117,8 @@ export const mentionNotifications = createNotificationProcessor({
                 t."articleId",
                 t."bountyId",
                 t."bountyEntryId",
+                t."challengeId",
+                t."model3dId",
                 t."commentId"
              ),
              'commentParentType', CASE
@@ -94,6 +131,8 @@ export const mentionNotifications = createNotificationProcessor({
                 WHEN t."articleId" IS NOT NULL THEN 'article'
                 WHEN t."bountyId" IS NOT NULL THEN 'bounty'
                 WHEN t."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
+                WHEN t."challengeId" IS NOT NULL THEN 'challenge'
+                WHEN t."model3dId" IS NOT NULL THEN 'model3d'
                 ELSE 'comment'
               END,
             'username', u.username
@@ -102,16 +141,21 @@ export const mentionNotifications = createNotificationProcessor({
         JOIN "User" u ON c."userId" = u.id
         JOIN "Thread" t ON t.id = c."threadId"
         LEFT JOIN "Thread" root ON root.id = t."rootThreadId"
+        ${appListingSlugJoin('COALESCE(root."appListingId", t."appListingId")')}
         WHERE (c."createdAt" > '${lastSent}')
           AND c.content LIKE '%"mention:%'
           -- Unhandled thread types...
           AND t."questionId" IS NULL
           AND t."answerId" IS NULL
+          -- Same slug-resolution guard the reply processors carry: those threads are addressed by
+          -- SLUG, the join above supplies it, and only a row the join failed on is dropped.
+          AND ${appListingSlugResolved('COALESCE(root."appListingId", t."appListingId")')}
 
         UNION
 
         SELECT DISTINCT
           CAST(unnest(regexp_matches(content, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
+          c."userId" "actorId",
           JSONB_BUILD_OBJECT(
             'mentionedIn', 'comment',
             'modelId', c."modelId",
@@ -132,6 +176,7 @@ export const mentionNotifications = createNotificationProcessor({
 
         SELECT DISTINCT
           CAST(unnest(regexp_matches(m.description, '"mention:(\\d+)"', 'g')) as INT) "ownerId",
+          m."userId" "actorId",
           JSONB_BUILD_OBJECT(
             'mentionedIn', 'model',
             'modelId', m.id,
@@ -147,12 +192,28 @@ export const mentionNotifications = createNotificationProcessor({
       )
       SELECT
         concat('new-mention:user:', case when details->>'mentionedIn' = 'model' then 'model:' when details->>'version' is not null then 'v2:' else 'v1:' end, coalesce(details->>'commentId', details->>'modelId')) "key",
+        -- Claiming the dedupe key SUPPRESSES every other notification for this comment, so only claim it
+        -- when this mention is a worthy replacement — i.e. prepareMessage above yields a message AND a
+        -- working URL. Three ways it doesn't:
+        --   * mentionedIn = 'model' — a model DESCRIPTION mention, no comment behind it at all
+        --   * v2 threadType 'comment' — the fallback for a thread entity threadUrlMap can't address
+        --     (comicProject, clubPost, ...), which renders a dead link
+        --   * v1 parentType 'review' — prepareMessage bails and returns undefined, so the row renders as
+        --     NOTHING. Left unguarded this silently swallows the new-comment the user should have got.
+        -- Anything excluded here still delivers as its own (lower-priority) notification, unchanged.
+        case
+          when details->>'mentionedIn' <> 'comment' then null
+          when details->>'version' is not null then
+            case when details->>'threadType' <> 'comment' then ${commentDedupeKeyByVersion} end
+          when details->>'parentType' = 'comment' then ${commentDedupeKeyByVersion}
+        end "dedupeKey",
         "ownerId"    "userId",
         'new-mention' "type",
         details
       FROM new_mentions r
       WHERE
         NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'new-mention')
+        AND ${notBlockedBetween('r."ownerId"', 'r."actorId"')}
     `,
   },
 });

@@ -1,10 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { challengeNotifications } from '~/server/notifications/challenge.notifications';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockLogToAxiom = loggingMock.logToAxiom;
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.updateMany.mockResolvedValue({ count: 1 });
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
 
 describe('challenge-cancelled notification definition', () => {
-  const def = (challengeNotifications as Record<string, (typeof challengeNotifications)['challenge-winner']>)[
-    'challenge-cancelled'
-  ];
+  const def = (
+    challengeNotifications as Record<string, (typeof challengeNotifications)['challenge-winner']>
+  )['challenge-cancelled'];
 
   it('is registered as a non-toggleable System notification', () => {
     expect(def).toBeTruthy();
@@ -26,37 +34,20 @@ describe('challenge-cancelled notification definition', () => {
 });
 
 const {
-  mockDbRead,
-  mockDbWrite,
   mockGetChallengeById,
   mockCloseChallengeCollection,
   mockRefundUserChallengeFunds,
   mockCreateNotification,
-  mockLogToAxiom,
   mockIsFlipt,
   mockGetJudgedEntries,
   mockGenerateWinners,
   mockGetJudgingConfig,
   mockGetChallengeConfig,
 } = vi.hoisted(() => ({
-  mockDbRead: { $queryRaw: vi.fn() },
-  mockDbWrite: {
-    challenge: {
-      update: vi.fn().mockResolvedValue(undefined),
-      // voidChallenge claims the row Active/Scheduled -> Cancelled via updateMany and
-      // requires claimed.count === 1 to proceed to the refund + entrant-notification path;
-      // default to a successful single-row claim so the tests exercise that path.
-      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
-      // Final-prize recompute (User source, endChallengeAndPickWinners only) — null distribution
-      // skips it so the zero-winner tests exercise the notification branch unchanged.
-      findUnique: vi.fn().mockResolvedValue({ prizePool: 0, prizeDistribution: null }),
-    },
-  },
   mockGetChallengeById: vi.fn(),
   mockCloseChallengeCollection: vi.fn().mockResolvedValue(undefined),
   mockRefundUserChallengeFunds: vi.fn(),
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
-  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
   mockIsFlipt: vi.fn().mockResolvedValue(false),
   mockGetJudgedEntries: vi.fn(),
   mockGenerateWinners: vi.fn(),
@@ -79,8 +70,6 @@ const {
   }),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
   getChallengeById: mockGetChallengeById,
   closeChallengeCollection: mockCloseChallengeCollection,
@@ -258,7 +247,9 @@ describe('endChallengeAndPickWinners — zero-winner entrant cancellation notifi
 
     const result = await endChallengeAndPickWinners(7);
 
-    expect(result).toEqual({ success: true, winnersCount: 0 });
+    // `queued` distinguishes "judging ran and found nobody" from "judging has not run yet" — this
+    // is the former, and the moderator UI branches on it.
+    expect(result).toEqual({ success: true, winnersCount: 0, queued: false });
     expect(mockCreateNotification).toHaveBeenCalledTimes(1);
     const call = mockCreateNotification.mock.calls[0][0];
     expect(call.type).toBe('challenge-cancelled');

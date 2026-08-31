@@ -6,22 +6,27 @@ Utilities for working with bitwise flags throughout the codebase.
 
 The codebase uses bitwise flags extensively for:
 - NSFW levels and content filtering
-- Permissions and access control
-- Feature flags
-- Multi-select options stored efficiently
+- Multi-select options stored efficiently (e.g. `OnboardingSteps`)
+
+Feature flags are **not** bitwise — those are string-keyed and Flipt-backed, see `src/server/services/feature-flags.service.ts`.
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `event-engine-common/utils/nsfw-utils.ts` | `Flags` utility class |
-| `src/shared/constants/browsingLevel.constants.ts` | NSFW level constants |
+| `src/shared/utils/flags.ts` | `Flags` utility class |
+| `src/server/common/enums.ts` | `NsfwLevel` enum (the bit values) |
+| `src/shared/constants/browsingLevel.constants.ts` | Derived browsing-level flags + predicates |
 
 ## The Flags Class
 
 ```typescript
-import { Flags } from '~/event-engine-common/utils/nsfw-utils';
+import { Flags } from '~/shared/utils/flags';
 ```
+
+Only the four methods below are covered here; `flags.ts` exports about a dozen more
+(`toggleFlag`, `intersection`, `instanceToArray`, `diff`, …). Read the file rather than
+assuming this list is complete.
 
 ### Check if Flag is Set
 
@@ -88,9 +93,11 @@ const hasAny = Flags.intersects(value, checkFlags);
 
 ### Database Queries with Flags
 
+The column is camelCase and must be quoted in raw SQL:
+
 ```sql
 -- Check if content matches user's browsing level
-WHERE (content.nsfw_level & :userBrowsingLevel) != 0
+WHERE (i."nsfwLevel" & :userBrowsingLevel) != 0
 
 -- Check if specific flag is set
 WHERE (flags & :specificFlag) = :specificFlag

@@ -6,47 +6,24 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // unit test rather than an integration test. Mirrors the mock scaffold used
 // for applyModelFlagSideEffects in model-flag-side-effects.service.test.ts.
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-  });
-  return {
-    mockDbRead: { model: mk(), modelVersion: mk(), $queryRaw: vi.fn() },
-    mockDbWrite: {
-      model: mk(),
-      modelVersion: mk(),
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-    },
-  };
-});
 
 const {
   mockModelTagRefresh,
   mockModelVotableBust,
-  mockRedisDel,
   mockModelsQueueUpdate,
   mockQueueImageSearchIndexUpdate,
   mockTrackModActivity,
   mockPreventReplicationLag,
-  mockLogToAxiom,
-} = vi.hoisted(() => ({
+  } = vi.hoisted(() => ({
   mockModelTagRefresh: vi.fn(),
   mockModelVotableBust: vi.fn(),
-  mockRedisDel: vi.fn(),
   mockModelsQueueUpdate: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
   mockTrackModActivity: vi.fn(),
   mockPreventReplicationLag: vi.fn(),
-  mockLogToAxiom: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
+
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: mockPreventReplicationLag,
   getDbWithoutLag: vi.fn(async () => mockDbRead),
@@ -63,10 +40,7 @@ vi.mock('~/server/redis/caches', () => ({
   userBasicCache: {},
   userModelCountCache: { refresh: vi.fn() },
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { del: mockRedisDel },
-  REDIS_KEYS: { MODEL: { GALLERY_SETTINGS: 'model:gallery-settings' } },
-}));
+
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
@@ -76,6 +50,11 @@ vi.mock('~/server/search-index', () => ({
 vi.mock('~/server/services/auction.service', () => ({
   deleteBidsForModel: vi.fn(),
   getLastAuctionReset: vi.fn(),
+}));
+vi.mock('~/server/services/buzz.service', () => ({
+  getMultiAccountTransactionsByPrefix: vi.fn(),
+  getUserBuzzAccountByAccountTypes: vi.fn(),
+  refundMultiAccountTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn(),
@@ -108,7 +87,7 @@ vi.mock('~/server/services/model-version.service', () => ({
 vi.mock('~/server/services/moderator.service', () => ({
   trackModActivity: mockTrackModActivity,
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
+
 vi.mock('~/server/services/subscriptions.service', () => ({ getHighestTierSubscription: vi.fn() }));
 vi.mock('~/server/services/system-cache', () => ({ getCategoryTags: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({
@@ -125,6 +104,13 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn
 
 import { MINOR_LOCKED_PROPERTIES, setModelMinor } from '~/server/services/model.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockRedisDel = redisMock.redis.del;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 const MODERATOR_ID = 7;
 const MODEL_ID = 42;
@@ -164,7 +150,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockDbWrite.modelVersion.findMany.mockResolvedValue([]);
   mockDbWrite.$queryRaw.mockResolvedValue([]);
+  mockDbWrite.$executeRaw.mockResolvedValue(undefined);
   mockTrackModActivity.mockResolvedValue(undefined);
+  // Callers chain .catch() on the result, so the mock must return a promise.
+  mockLogToAxiom.mockResolvedValue(undefined);
   mockUpdateReturns();
 });
 
@@ -357,5 +346,119 @@ describe('setModelMinor — not found', () => {
     ).rejects.toThrow();
 
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+});
+
+// The snapshot is what makes any minor flag reversible — without it nsfw/sfwOnly/
+// gallery level are overwritten with no record of the prior values.
+describe('setModelMinor — pre-state snapshot', () => {
+  const snapshotCall = () =>
+    mockDbWrite.$executeRaw.mock.calls.find((call) =>
+      Array.from(call[0] as TemplateStringsArray)
+        .join('?')
+        .includes('minorFlagSnapshot')
+    ) ??
+    mockDbWrite.$executeRaw.mock.calls.find((call) =>
+      call.slice(1).includes('minorFlagSnapshot')
+    );
+
+  it('snapshots before the update so it records pre-flag state', async () => {
+    mockBefore({});
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
+    expect(mockDbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.model.update.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('marks a moderator flag as manual so a bulk rollback leaves it alone', async () => {
+    mockBefore({});
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    const [, ...values] = snapshotCall()!;
+    expect(values).toContain('manual');
+    expect(values).not.toContain('auto');
+  });
+
+  it('marks an auto-hash flag as auto', async () => {
+    mockBefore({});
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: -1,
+      activity: 'setMinorAutoHash',
+    });
+
+    const [, ...values] = snapshotCall()!;
+    expect(values).toContain('auto');
+  });
+
+  it('guards against overwriting an existing snapshot', async () => {
+    mockBefore({});
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    const text = Array.from(snapshotCall()![0] as TemplateStringsArray).join('?');
+    expect(text).toContain(`NOT (COALESCE(m.meta, '{}'::jsonb) ?`);
+    expect(text).toContain('"ModelVersion" mv');
+    expect(text).toContain('i.minor');
+  });
+
+  it('does not snapshot when unsetting minor', async () => {
+    mockBefore({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(snapshotCall()).toBeUndefined();
+  });
+
+  it('still flags when the snapshot write fails — losing it must not block the flag', async () => {
+    mockBefore({});
+    mockDbWrite.$executeRaw.mockRejectedValueOnce(new Error('db exploded'));
+
+    await expect(
+      setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID })
+    ).resolves.toEqual(expect.objectContaining({ id: MODEL_ID }));
+    expect(mockDbWrite.model.update).toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'minor-flag-snapshot', modelId: MODEL_ID })
+    );
+  });
+});
+
+describe('setModelMinor — activity override', () => {
+  it('records the supplied activity instead of setMinor', async () => {
+    mockBefore({});
+    mockUpdateReturns({ minor: true });
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: -1,
+      activity: 'setMinorAutoHash',
+    });
+
+    expect(mockTrackModActivity).toHaveBeenCalledWith(-1, {
+      entityType: 'model',
+      entityId: MODEL_ID,
+      activity: 'setMinorAutoHash',
+    });
+  });
+
+  it('defaults to setMinor when no activity is supplied', async () => {
+    mockBefore({});
+    mockUpdateReturns({ minor: true });
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    expect(mockTrackModActivity).toHaveBeenCalledWith(MODERATOR_ID, {
+      entityType: 'model',
+      entityId: MODEL_ID,
+      activity: 'setMinor',
+    });
   });
 });

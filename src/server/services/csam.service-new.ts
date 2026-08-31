@@ -8,7 +8,7 @@ import type {
 } from '~/server/schema/csam.schema';
 import { csamCapabilitiesDictionary, csamContentsDictionary } from '~/server/schema/csam.schema';
 import { clickhouse } from '~/server/clickhouse/client';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
 import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -1098,7 +1098,20 @@ function uploadStream({
 
 export async function archiveCsamDataForReport(data: CsamReportProps) {
   const { userId } = data;
-  if (!userId) return;
+  if (!userId) {
+    // An internal report (userId === -1 is stored as NULL) has no user-scoped content to
+    // archive, and archiveBaseReportData bails on it too. Returning silently left report 236
+    // re-selected by getCsamsToArchive every hour since 2024. Stamp a terminal state, but
+    // record that nothing was stored — archivedAt alone would read as evidence-complete.
+    await dbWrite.csamReport.update({
+      where: { id: data.id },
+      data: {
+        archivedAt: new Date(),
+        details: { ...data.details, archiveSkipped: 'no reported user' },
+      },
+    });
+    return;
+  }
   const report = { ...data, userId };
 
   const reportDirs = {
@@ -1143,7 +1156,7 @@ export async function archiveCsamDataForReport(data: CsamReportProps) {
   } catch (e) {
     console.log(e);
     if (e instanceof Error) {
-      const shouldUpdate = (e.message = 'training data not found');
+      const shouldUpdate = e.message === 'training data not found';
       if (shouldUpdate) {
         await dbWrite.csamReport.update({
           where: { id: report.id },

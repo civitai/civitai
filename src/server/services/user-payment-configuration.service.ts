@@ -1,6 +1,11 @@
 import type Stripe from 'stripe';
 import { v4 as uuid } from 'uuid';
-import { NotificationCategory, StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
+import {
+  isBlockedTipaltiStatus,
+  NotificationCategory,
+  StripeConnectStatus,
+  type TipaltiStatus,
+} from '~/server/common/enums';
 import { env } from '../../env/server';
 import { dbRead, dbWrite } from '../db/client';
 import { logToAxiom } from '../logging/client';
@@ -321,8 +326,11 @@ export async function updateByTipaltiAccount({
     },
   });
 
+  // Both notifications are edge-triggered. Tipalti re-sends payeeDetailsChanged for a payee whose
+  // state has not moved, and the uuid `key` dedupes nothing, so testing the state rather than the
+  // transition re-notifies on every webhook for as long as the account sits in it.
   if (tipaltiPaymentsEnabled) {
-    if (userPaymentConfig.tipaltiAccountStatus !== TipaltiStatus.Active) {
+    if (!userPaymentConfig.tipaltiPaymentsEnabled) {
       await createNotification({
         userId: userPaymentConfig.userId,
         type: 'creators-program-payments-enabled',
@@ -331,19 +339,18 @@ export async function updateByTipaltiAccount({
         details: {},
       }).catch();
     }
-  } else if (
-    tipaltiAccountStatus === TipaltiStatus.BlockedByTipalti ||
-    tipaltiAccountStatus === TipaltiStatus.Blocked
-  ) {
-    await createNotification({
-      userId: userPaymentConfig.userId,
-      type: 'creators-program-rejected-tipalti',
-      category: NotificationCategory.System,
-      key: `creators-program-rejected-tipalti:${uuid()}`,
-      details: {},
-    }).catch(() => {
-      log({ method: 'createNotification', userId: userPaymentConfig.userId });
-    });
+  } else if (isBlockedTipaltiStatus(tipaltiAccountStatus)) {
+    if (!isBlockedTipaltiStatus(userPaymentConfig.tipaltiAccountStatus)) {
+      await createNotification({
+        userId: userPaymentConfig.userId,
+        type: 'creators-program-rejected-tipalti',
+        category: NotificationCategory.System,
+        key: `creators-program-rejected-tipalti:${uuid()}`,
+        details: {},
+      }).catch(() => {
+        log({ method: 'createNotification', userId: userPaymentConfig.userId });
+      });
+    }
   }
 
   // If the user just transitioned from payable -> not payable because of a Tax issue,

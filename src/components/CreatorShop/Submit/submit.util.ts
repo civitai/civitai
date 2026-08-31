@@ -15,8 +15,10 @@ export const buildData = (
   type: CosmeticType,
   imageId: string,
   animated: boolean,
-  offsets?: CosmeticOffsets | null
+  offsets?: CosmeticOffsets | null,
+  slug?: string
 ) => {
+  if (type === CosmeticType.Sticker) return { url: imageId, slug, animated };
   if (type === CosmeticType.ProfileDecoration)
     return { url: imageId, animated, ...(offsets ? { offsets } : {}) };
   if (type === CosmeticType.Badge) return { url: imageId, animated };
@@ -26,7 +28,7 @@ export const buildData = (
 };
 
 export const existingArtUrl = (item?: CreatorShopManageItem) =>
-  (item?.cosmetic.data as { url?: string } | null)?.url ?? null;
+  (item?.cosmetic?.data as { url?: string } | null)?.url ?? null;
 
 export const editNotice = (status?: CosmeticShopItemStatus) => {
   if (status === CosmeticShopItemStatus.Published)

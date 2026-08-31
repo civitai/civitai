@@ -237,6 +237,30 @@ Steps: 25, Sampler: Euler, CFG scale: 7`;
     expect(result.sampler).toBe('Euler');
   });
 
+  it('reads AddNet weights from the Weight A key and survives imageMetaSchema validation', async () => {
+    const { imageMetaSchema } = await import('~/server/schema/image.schema');
+    const rawMetadata = `a castle
+Negative prompt: blurry
+Steps: 20, Sampler: Euler, CFG scale: 7, Seed: 1, Model hash: aadddd3d75, Model: deliberate_v3, AddNet Enabled: True, AddNet Module 1: LoRA, AddNet Model 1: coolLora(a68c0549f355), AddNet Weight A 1: 0.8, AddNet Weight B 1: 0.8, AddNet Module 2: LoRA, AddNet Model 2: otherLora(bbbb0549f355)`;
+    const exif = { generationDetails: rawMetadata, parameters: rawMetadata };
+
+    expect(automaticMetadataProcessor.canParse(exif)).toBe(true);
+    const result = automaticMetadataProcessor.parse(exif);
+    const resources = result.resources as { type: string; name?: string; weight?: number }[];
+    expect(resources).toContainEqual({
+      type: 'lora',
+      name: 'coolLora',
+      hash: 'a68c0549f355',
+      weight: 0.8,
+    });
+    // entry 2 has no weight key at all — must be omitted, never NaN
+    expect(resources.find((r) => r.name === 'otherLora')?.weight).toBeUndefined();
+
+    // The historical failure mode: NaN weight → schema rejects → getMetadata() stored {},
+    // silently discarding ALL metadata for every AddNet-era image.
+    expect(imageMetaSchema.safeParse(result).success).toBe(true);
+  });
+
   it('normalizes a long delimiter run in linear time (no catastrophic backtracking)', () => {
     // The delimiter run must NOT terminate in the keyword the regex is scanning for —
     // otherwise the match succeeds immediately and even the old unbounded regex is fast.

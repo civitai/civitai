@@ -20,10 +20,17 @@ export const AI_MODELS = {
   CLAUDE_HAIKU: 'anthropic/claude-3-5-haiku',
 
   KIMI: 'moonshotai/kimi-k2.5',
-  // DEPRECATED 2026-05-15. Prefer QWEN_35B (via civitai-llm client) for new code.
+  // DEAD, not merely deprecated: this id 404s with "Grok 4.1 Fast is deprecated" on every call
+  // (verified 2026-08-26). Anything routed here fails outright — use GROK_4_3 or MIMO.
   GROK: 'x-ai/grok-4.1-fast',
+  GROK_4_3: 'x-ai/grok-4.3',
   GPT_5_NANO: 'openai/gpt-5-nano',
+  MIMO: 'xiaomi/mimo-v2.5',
   STEP_FUN: 'stepfun/step-3.5-flash',
+  // Pairwise challenge judging (see challenge-judge-routes.ts). QWEN_FLASH refuses adult pairs
+  // with data_inspection_failed; GPT_5_6_LUNA is the permissive route those fall back to.
+  QWEN_FLASH: 'qwen/qwen3.7-flash',
+  GPT_5_6_LUNA: 'openai/gpt-5.6-luna',
   QWEN_35B: 'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
 
   // Fallback chains

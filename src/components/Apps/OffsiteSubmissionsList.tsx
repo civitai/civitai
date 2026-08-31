@@ -35,6 +35,7 @@ import {
   OwnerModerationHistoryModal,
   OwnerUnpublishModal,
 } from '~/components/Apps/ownerListingModals';
+import { republishSuccessMessage } from '~/components/Apps/listingPublishingActions';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
 import { ReviewerNotesButton } from '~/components/Apps/MySubmissionsList';
 import {
@@ -47,6 +48,7 @@ import {
   groupSubmissionsByApp,
   OWNER_STATUS_BUCKETS,
   sortGroups,
+  SUBMISSIONS_TABLE_MIN_WIDTH,
   toDate,
   type SubmissionAccessors,
   type SubmissionGroup,
@@ -416,8 +418,11 @@ export function OffsiteSubmissionsList({
   const invalidateSubmissions = () => utils.appListings.listMySubmissions.invalidate();
 
   const republishMutation = trpc.appListings.republishOwnListing.useMutation({
-    onSuccess: async () => {
-      showSuccessNotification({ message: 'App republished — it is live in the store again.' });
+    // 🔴 The message is DERIVED from the server's answer, never assumed: a republish whose
+    // assets changed since the last approval lands in `pending`, not live. See
+    // {@link republishSuccessMessage}.
+    onSuccess: async (data) => {
+      showSuccessNotification({ message: republishSuccessMessage(data, 'offsite') });
       await invalidateSubmissions();
     },
     onError: (e) => showErrorNotification({ title: 'Republish failed', error: new Error(e.message) }),
@@ -479,55 +484,66 @@ export function OffsiteSubmissionsList({
 
   const renderTable = (groups: SubmissionGroup<OffsiteSubmission>[]) => (
     <Card withBorder p={0}>
-      <Table verticalSpacing="md" horizontalSpacing="md">
-        <Table.Thead>
-          <Table.Tr>
-            <Table.Th>App</Table.Th>
-            <Table.Th>Link</Table.Th>
-            <Table.Th>Status</Table.Th>
-            <Table.Th>Submitted</Table.Th>
-            <Table.Th>Reviewed</Table.Th>
-            <Table.Th />
-          </Table.Tr>
-        </Table.Thead>
-        <Table.Tbody>
-          {groups.map((g) => {
-            const isExpanded = expanded.has(g.identity);
-            return (
-              <Fragment key={g.identity}>
-                <OffsiteRow
-                  submission={g.latest}
-                  nested={false}
-                  onWithdraw={onWithdraw}
-                  withdrawing={withdrawing}
-                  owner={owner}
-                  toggle={
-                    g.older.length > 0 ? (
-                      <VersionToggle
-                        expanded={isExpanded}
-                        count={g.versionCount}
-                        onToggle={() => toggle(g.identity)}
-                        testId={`apps-offsite-versions-${g.identity}`}
+      {/*
+        Same scroll container + shared floor as the onsite list (see
+        SUBMISSIONS_TABLE_MIN_WIDTH): `.mantine-Card-root` is `overflow: hidden`, so an
+        action cell that outgrows the card is silently clipped rather than scrolled.
+      */}
+      <Table.ScrollContainer
+        minWidth={SUBMISSIONS_TABLE_MIN_WIDTH}
+        type="native"
+        data-testid="apps-offsite-submissions-table-scroll"
+      >
+        <Table verticalSpacing="md" horizontalSpacing="md">
+          <Table.Thead>
+            <Table.Tr>
+              <Table.Th>App</Table.Th>
+              <Table.Th>Link</Table.Th>
+              <Table.Th>Status</Table.Th>
+              <Table.Th>Submitted</Table.Th>
+              <Table.Th>Reviewed</Table.Th>
+              <Table.Th />
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {groups.map((g) => {
+              const isExpanded = expanded.has(g.identity);
+              return (
+                <Fragment key={g.identity}>
+                  <OffsiteRow
+                    submission={g.latest}
+                    nested={false}
+                    onWithdraw={onWithdraw}
+                    withdrawing={withdrawing}
+                    owner={owner}
+                    toggle={
+                      g.older.length > 0 ? (
+                        <VersionToggle
+                          expanded={isExpanded}
+                          count={g.versionCount}
+                          onToggle={() => toggle(g.identity)}
+                          testId={`apps-offsite-versions-${g.identity}`}
+                        />
+                      ) : undefined
+                    }
+                  />
+                  {isExpanded &&
+                    g.older.map((older) => (
+                      <OffsiteRow
+                        key={older.id}
+                        submission={older}
+                        nested
+                        onWithdraw={onWithdraw}
+                        withdrawing={withdrawing}
+                        owner={owner}
                       />
-                    ) : undefined
-                  }
-                />
-                {isExpanded &&
-                  g.older.map((older) => (
-                    <OffsiteRow
-                      key={older.id}
-                      submission={older}
-                      nested
-                      onWithdraw={onWithdraw}
-                      withdrawing={withdrawing}
-                      owner={owner}
-                    />
-                  ))}
-              </Fragment>
-            );
-          })}
-        </Table.Tbody>
-      </Table>
+                    ))}
+                </Fragment>
+              );
+            })}
+          </Table.Tbody>
+        </Table>
+      </Table.ScrollContainer>
     </Card>
   );
 

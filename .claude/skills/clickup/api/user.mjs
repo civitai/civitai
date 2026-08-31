@@ -2,12 +2,14 @@
  * ClickUp user and team API methods
  */
 
-import { apiRequest, appendToEnv } from './client.mjs';
+import { apiRequest, getActiveCredentials, getActiveAccountId } from './client.mjs';
+import { updateAccountField } from '../lib/accounts.mjs';
 
 // Get team ID (fetch and cache if not set)
 export async function getTeamId() {
-  if (process.env.CLICKUP_TEAM_ID) {
-    return process.env.CLICKUP_TEAM_ID;
+  const creds = getActiveCredentials();
+  if (creds.teamId) {
+    return creds.teamId;
   }
 
   console.error('Fetching team ID from ClickUp...');
@@ -21,8 +23,8 @@ export async function getTeamId() {
   const team = teams[0];
   const teamId = team.id;
 
-  if (appendToEnv('CLICKUP_TEAM_ID', teamId, `Team: ${team.name} (auto-detected)`)) {
-    console.error(`Cached team ID ${teamId} (${team.name}) to .env\n`);
+  if (updateAccountField(getActiveAccountId(), 'teamId', teamId)) {
+    console.error(`Cached team ID ${teamId} (${team.name}) to accounts.json\n`);
   }
 
   return teamId;
@@ -30,8 +32,9 @@ export async function getTeamId() {
 
 // Get current user ID (fetch and cache if not set)
 export async function getUserId() {
-  if (process.env.CLICKUP_USER_ID) {
-    return process.env.CLICKUP_USER_ID;
+  const creds = getActiveCredentials();
+  if (creds.userId) {
+    return creds.userId;
   }
 
   console.error('Fetching user info from ClickUp...');
@@ -44,8 +47,8 @@ export async function getUserId() {
 
   const userId = user.id.toString();
 
-  if (appendToEnv('CLICKUP_USER_ID', userId, `User: ${user.username} (auto-detected)`)) {
-    console.error(`Cached user ID ${userId} (${user.username}) to .env\n`);
+  if (updateAccountField(getActiveAccountId(), 'userId', userId)) {
+    console.error(`Cached user ID ${userId} (${user.username}) to accounts.json\n`);
   }
 
   return userId;

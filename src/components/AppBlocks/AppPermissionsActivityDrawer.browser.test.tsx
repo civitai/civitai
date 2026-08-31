@@ -94,8 +94,10 @@ describe('AppPermissionsActivityDrawer (Part B — per-app permissions & activit
         // badge is the sole node carrying that string (the Detail column would
         // otherwise echo a matching endpoint verbatim).
         scope: 'ai:write:budgeted',
-        endpoint: 'workflow:submit:wf-123',
+        // Bounded endpoint template; the workflow id is per-row `detail`.
+        endpoint: 'workflow:submit',
         statusCode: 200,
+        detail: { action: 'workflow.submit', outcome: 'ok', workflowId: 'wf-123' },
       },
     ];
     m.buzz = [

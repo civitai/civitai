@@ -5,27 +5,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // graph, so most of its transitive service/db/search dependencies are stubbed out below.
 // Mirrors the mock scaffold used in set-model-minor.service.test.ts.
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    count: vi.fn(),
-  });
-  return {
-    mockDbRead: { model: mk(), modelVersion: mk(), $queryRaw: vi.fn() },
-    mockDbWrite: {
-      model: mk(),
-      modelVersion: mk(),
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-    },
-  };
-});
-
 const { mockEvaluateContent, mockThrowOnBlockedLinkDomain, mockGetHighestTierSubscription } =
   vi.hoisted(() => ({
     mockEvaluateContent: vi.fn(),
@@ -36,7 +15,7 @@ const { mockEvaluateContent, mockThrowOnBlockedLinkDomain, mockGetHighestTierSub
 vi.mock('~/libs/profanity-simple', () => ({
   createProfanityFilter: () => ({ evaluateContent: mockEvaluateContent }),
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
+
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: vi.fn(),
   getDbWithoutLag: vi.fn(async () => mockDbRead),
@@ -53,10 +32,7 @@ vi.mock('~/server/redis/caches', () => ({
   userBasicCache: {},
   userModelCountCache: { refresh: vi.fn() },
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { del: vi.fn() },
-  REDIS_KEYS: { MODEL: { GALLERY_SETTINGS: 'model:gallery-settings' } },
-}));
+
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
@@ -66,6 +42,11 @@ vi.mock('~/server/search-index', () => ({
 vi.mock('~/server/services/auction.service', () => ({
   deleteBidsForModel: vi.fn(),
   getLastAuctionReset: vi.fn(),
+}));
+vi.mock('~/server/services/buzz.service', () => ({
+  getMultiAccountTransactionsByPrefix: vi.fn(),
+  getUserBuzzAccountByAccountTypes: vi.fn(),
+  refundMultiAccountTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn(),
@@ -121,6 +102,10 @@ import {
 } from '~/server/services/model.service';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 const OWNER_ID = 101;
 const MODERATOR_ID = 7;
@@ -164,8 +149,6 @@ const baseInput = {
   description: 'A description',
   type: ModelType.Checkpoint,
   uploadType: ModelUploadType.Created,
-  // Draft keeps applyModelFlagSideEffects out of the ingest path so the only
-  // dbWrite.model.update call in a test is the upsert itself.
   status: ModelStatus.Draft,
 } satisfies Partial<ModelUpsertInput>;
 

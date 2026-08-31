@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type GetAnswersInput = z.infer<typeof getAnswersSchema>;
 export const getAnswersSchema = z.object({
@@ -8,7 +9,7 @@ export const getAnswersSchema = z.object({
 export type UpsertAnswerInput = z.infer<typeof upsertAnswerSchema>;
 export const upsertAnswerSchema = z.object({
   id: z.number().optional(),
-  content: z.string(),
+  content: getSanitizedStringSchema(),
   questionId: z.number(),
 });
 

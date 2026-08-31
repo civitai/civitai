@@ -1,12 +1,12 @@
 # Handler Metric Output Report
 
-Generated: 2026-05-08T14:54:17.309Z
+Generated: 2026-08-17T02:44:44.056Z
 
 ## Summary
 
 - **Total Handlers**: 24
 - **Handlers with Debug Config**: 19
-- **Total Unique Metric Combinations**: 77
+- **Total Unique Metric Combinations**: 78
 
 ## Handler Details
 
@@ -125,6 +125,7 @@ Generated: 2026-05-08T14:54:17.309Z
 - `Bounty.commentCount`
 - `Image.commentCount`
 - `Post.commentCount`
+- `User.commentCount`
 
 ### imageResourceHandler
 
@@ -138,7 +139,7 @@ Generated: 2026-05-08T14:54:17.309Z
 ### buzzTipHandler
 
 **Tables**: BuzzTip
-**Operations**: create
+**Operations**: create, update
 
 **Metric Outputs**:
 - `Article.tippedAmount`
@@ -324,6 +325,7 @@ Generated: 2026-05-08T14:54:17.309Z
 - `Tag.hiddenCount`
 - `User.articleCount`
 - `User.bountyCount`
+- `User.commentCount`
 - `User.followerCount`
 - `User.followingCount`
 - `User.hiddenCount`

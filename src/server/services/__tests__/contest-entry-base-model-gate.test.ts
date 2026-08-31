@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Locks the `where` shape validateContestCollectionEntry builds for model entries. The
@@ -15,39 +16,11 @@ const USER_ID = 5;
 const MODEL_ID = 7001;
 const START_DATE = new Date('2026-07-24T00:00:00.000Z');
 
-const { mockChargeEntryFees, mockChallengeFindFirst, mockModelFindMany, mockDbRead } = vi.hoisted(
-  () => {
-    const mockChargeEntryFees = vi.fn();
-    const mockChallengeFindFirst = vi.fn(async () => null);
-    const mockModelFindMany = vi.fn();
-    const mockDbRead = {
-      user: { findUnique: vi.fn() },
-      challenge: { findFirst: mockChallengeFindFirst },
-      collectionItem: { count: vi.fn(), findFirst: vi.fn() },
-      collection: { findMany: vi.fn() },
-      image: { findMany: vi.fn() },
-      article: { findMany: vi.fn() },
-      model: { findMany: mockModelFindMany },
-      post: { findMany: vi.fn() },
-      imageResourceNew: { findMany: vi.fn() },
-      $queryRaw: vi.fn(),
-    };
-    return { mockChargeEntryFees, mockChallengeFindFirst, mockModelFindMany, mockDbRead };
-  }
-);
+const { mockChargeEntryFees } = vi.hoisted(() => ({ mockChargeEntryFees: vi.fn() }));
 
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { get: vi.fn(), set: vi.fn(), packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: { get: vi.fn(), set: vi.fn() },
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-    withSysReadDeadline: vi.fn((p) => p),
-  };
-});
+const mockDbRead = dbMock.dbRead;
+const mockChallengeFindFirst = mockDbRead.challenge.findFirst;
+const mockModelFindMany = mockDbRead.model.findMany;
 
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
@@ -58,8 +31,7 @@ vi.mock('@civitai/db', () => ({
   loadDbEnv: vi.fn(() => ({})),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {} }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   preventReplicationLag: vi.fn(),

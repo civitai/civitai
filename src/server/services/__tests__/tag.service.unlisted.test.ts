@@ -1,40 +1,64 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const {
   imageTagsFetch,
   imageTagsBust,
   tagCacheFetch,
   imageVotes,
-  modelTagFindMany,
   modelVotes,
   modelVotableTagsFetch,
   modelVotableTagsBust,
-  executeRaw,
-  dbWriteQueryRaw,
-  dbReadQueryRaw,
-  modelFindFirst,
-  redisDel,
-  redisPackedGet,
-  redisPackedSet,
   bustCacheTagSpy,
 } = vi.hoisted(() => ({
   imageTagsFetch: vi.fn(),
   imageTagsBust: vi.fn(),
   tagCacheFetch: vi.fn(),
   imageVotes: vi.fn().mockResolvedValue([]),
-  modelTagFindMany: vi.fn(),
   modelVotes: vi.fn().mockResolvedValue([]),
   modelVotableTagsFetch: vi.fn(),
   modelVotableTagsBust: vi.fn(),
-  executeRaw: vi.fn().mockResolvedValue(undefined),
-  dbWriteQueryRaw: vi.fn().mockResolvedValue([]),
-  dbReadQueryRaw: vi.fn().mockResolvedValue([{ count: 0 }]),
-  modelFindFirst: vi.fn().mockResolvedValue({ userId: 999 }),
-  redisDel: vi.fn().mockResolvedValue(1),
-  redisPackedGet: vi.fn().mockResolvedValue(null),
-  redisPackedSet: vi.fn().mockResolvedValue(undefined),
   bustCacheTagSpy: vi.fn().mockResolvedValue(undefined),
 }));
+
+// The db and redis clients come from the canonical shared mocks. The read/write
+// split the old direct mock declared is preserved node for node — `deleteTags`
+// reads on `dbWrite.$queryRaw` (tag.service.ts:919/:930/:942) while the
+// moderation-count check in `addTagVotes` reads on `dbRead.$queryRaw` (:711),
+// so the two must NOT collapse onto one spy.
+const executeRaw = dbMock.dbWrite.$executeRaw;
+const dbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+const dbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const modelFindFirst = dbMock.dbRead.model.findFirst;
+// Kept only to prove the vote reads NO LONGER go through the Prisma engine.
+const prismaImageVotes = dbMock.dbRead.tagsOnImageVote.findMany;
+const prismaModelVotes = dbMock.dbRead.tagsOnModelsVote.findMany;
+// Kept only to prove the model path no longer reads the ModelTag view directly.
+const modelTagFindMany = dbMock.dbRead.modelTag.findMany;
+const redisDel = redisMock.redis.del;
+const redisPackedGet = redisMock.redis.packed.get;
+const redisPackedSet = redisMock.redis.packed.set;
+
+// Behaviour the old fixtures supplied, restated on the canonical nodes. These
+// are set once, at module scope, so they survive the `vi.clearAllMocks()` in
+// each `beforeEach` exactly as the hoisted spies' own defaults did.
+executeRaw.mockResolvedValue(undefined);
+dbWriteQueryRaw.mockResolvedValue([]);
+dbReadQueryRaw.mockResolvedValue([{ count: 0 }]);
+modelFindFirst.mockResolvedValue({ userId: 999 });
+// `image.findFirst` shared the same spy — `addTagVotes` reads `creator?.userId`
+// from whichever of the two the entity type selects.
+dbMock.dbRead.image.findFirst.mockResolvedValue({ userId: 999 });
+redisDel.mockResolvedValue(1);
+redisPackedGet.mockResolvedValue(null);
+redisPackedSet.mockResolvedValue(undefined);
+prismaImageVotes.mockImplementation(async () => {
+  throw new Error('tagsOnImageVote.findMany must not be called — ported to Kysely');
+});
+prismaModelVotes.mockImplementation(async () => {
+  throw new Error('tagsOnModelsVote.findMany must not be called — ported to Kysely');
+});
 
 // deleteTags now also busts the static getTags listing cache via bustCacheTag('getTags').
 // Spy only that helper; keep the rest of cache-helpers real so no other read-through breaks.
@@ -50,33 +74,13 @@ vi.mock('~/server/redis/caches', () => ({
   modelVotableTagsCache: { fetch: modelVotableTagsFetch, bust: modelVotableTagsBust },
   tagCache: { fetch: tagCacheFetch },
 }));
-// deleteTags now busts the per-name getTagWithModelCount cache via redis.del; stub the
-// redis client so the mutation never reaches a real connection. Keep the real REDIS_KEYS
-// so the key assertions verify the actual constant.
-vi.mock('~/server/redis/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/redis/client')>();
-  return {
-    ...actual,
-    redis: {
-      del: redisDel,
-      packed: { get: redisPackedGet, set: redisPackedSet },
-    },
-  };
-});
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    tagsOnImageVote: { findMany: imageVotes },
-    tagsOnModelsVote: { findMany: modelVotes },
-    // Kept only to prove the model path NO LONGER reads the ModelTag view directly.
-    modelTag: { findMany: modelTagFindMany },
-    model: { findFirst: modelFindFirst },
-    image: { findFirst: modelFindFirst },
-    $queryRaw: dbReadQueryRaw,
-  },
-  dbWrite: {
-    $executeRaw: executeRaw,
-    $queryRaw: dbWriteQueryRaw,
-  },
+// The per-user vote reads run through @civitai/db-queries (Kysely over the app's own pg pool),
+// bypassing the Prisma query engine. Mocked at that seam; the Prisma spies below are kept only to
+// prove those reads no longer go through it.
+vi.mock('@civitai/db-queries/tag', () => ({
+  listImageTagVotes: imageVotes,
+  listImageTagVotesMany: imageVotes,
+  listModelTagVotes: modelVotes,
 }));
 // clearCache() fans out to the hidden-preferences caches — stub them so the vote
 // mutations don't reach real Redis/DB.
@@ -91,9 +95,19 @@ import {
   addTags,
   deleteTags,
   disableTags,
+  getVotableImageTags,
   getVotableTags,
   removeTagVotes,
 } from '~/server/services/tag.service';
+// NOT mocked: the real client the service passes to the ported query functions. Asserting it with
+// `toBe` is what keeps these reads pinned to the read tier — see the read-tier describe at the
+// bottom of this file for why `toBe` and not a structural matcher.
+import { kyselyRead, kyselyWrite } from '~/server/db/kyselyDb';
+import type { SessionUser } from '~/types/session';
+
+const WRONG_TIER =
+  'ported read was handed a client other than kyselyRead (kyselyWrite / kyselyReadLong routes it ' +
+  'at the wrong tier); note kyselyRead and kyselyWrite are deep-equal, so only toBe catches this';
 
 const LOLI = 114467;
 const NUDE = 304;
@@ -181,9 +195,9 @@ describe('getVotableTags — model tags', () => {
 
     it('merges each user OWN vote from their own tagsOnModelsVote read, uncached', async () => {
       // User A upvoted; user B downvoted the SAME tag on the SAME model.
-      modelVotes.mockImplementation(async ({ where }: { where: { userId: number } }) => {
-        if (where.userId === 111) return [{ tagId: NUDE, vote: 1 }];
-        if (where.userId === 222) return [{ tagId: NUDE, vote: -1 }];
+      modelVotes.mockImplementation(async (_db: unknown, { userId }: { userId: number }) => {
+        if (userId === 111) return [{ tagId: NUDE, vote: 1 }];
+        if (userId === 222) return [{ tagId: NUDE, vote: -1 }];
         return [];
       });
 
@@ -194,15 +208,16 @@ describe('getVotableTags — model tags', () => {
       expect(aTags.find((t) => t.id === NUDE)?.vote).toBe(1);
       expect(bTags.find((t) => t.id === NUDE)?.vote).toBe(-1);
 
-      // The per-user vote read is scoped to that user + this model (uncached path).
-      expect(modelVotes).toHaveBeenNthCalledWith(1, {
-        where: { modelId: 1, userId: 111 },
-        select: { tagId: true, vote: true },
-      });
-      expect(modelVotes).toHaveBeenNthCalledWith(2, {
-        where: { modelId: 1, userId: 222 },
-        select: { tagId: true, vote: true },
-      });
+      // The per-user vote read is scoped to that user + this model (uncached path), and runs on
+      // the READ tier. The client is asserted with `toBe` — see the read-tier describe at the
+      // bottom of this file for why matcher choice is load-bearing here.
+      expect(modelVotes.mock.calls[0][0], WRONG_TIER).toBe(kyselyRead);
+      expect(modelVotes.mock.calls[0][1]).toEqual({ modelId: 1, userId: 111 });
+      expect(modelVotes.mock.calls[1][0], WRONG_TIER).toBe(kyselyRead);
+      expect(modelVotes.mock.calls[1][1]).toEqual({ modelId: 1, userId: 222 });
+      expect(modelVotes).toHaveBeenCalledTimes(2);
+      // The vote read no longer touches the Prisma engine.
+      expect(prismaModelVotes).not.toHaveBeenCalled();
     });
 
     it('an anonymous request never reads per-user votes', async () => {
@@ -313,7 +328,12 @@ describe('getVotableTags — model votable-tags cache invalidation contract', ()
     await deleteTags({ tags: [304, 305] });
     expect(redisDel).toHaveBeenCalledWith('packed:caches:tag-with-model-count:anime');
     expect(redisDel).toHaveBeenCalledWith('packed:caches:tag-with-model-count:nude');
-    expect(redisDel).toHaveBeenCalledTimes(2);
+    // Plus the feed tag bar's chip list, which `deleteTags` also busts — a deleted tag
+    // must not keep serving as a chip. The count stays exact rather than becoming a
+    // `>=`: it is what catches a bust being dropped, and naming the third key here is
+    // what tells the next reader which one arrived.
+    expect(redisDel).toHaveBeenCalledWith('system:feed-tag-bar-tags');
+    expect(redisDel).toHaveBeenCalledTimes(3);
   });
 
   it('a vote on an IMAGE does not bust the model cache', async () => {
@@ -335,5 +355,65 @@ describe('getVotableTags — model votable-tags cache invalidation contract', ()
   it('a model vote does NOT bust the getTags listing cache (join-table only)', async () => {
     await addTagVotes({ userId: 111, type: 'model', id: 1, tags: [304], vote: 1 });
     expect(bustCacheTagSpy).not.toHaveBeenCalledWith('getTags');
+  });
+});
+
+/**
+ * Read-tier seam.
+ *
+ * Before the Kysely port these reads were `dbRead.tagsOn*Vote.findMany`, and the mock lived on
+ * `dbRead` SPECIFICALLY — so a read routed at the writer had no mock to hit and blew up. Mocking
+ * the query-function seam instead moves that property out of the suite unless the client argument
+ * is pinned: `expect.anything()` is satisfied by `kyselyWrite`, `kyselyReadLong` or anything else.
+ * That loss was measured, not assumed — routing every ported read at `kyselyWrite` failed 1 test
+ * on pre-port code and passed the whole suite after the port.
+ *
+ * 🔴 The matcher matters as much as the argument. `kyselyRead` and `kyselyWrite` are DISTINCT
+ * objects but they are `toEqual`-DEEP-EQUAL (same Kysely shape, and in a single-DB environment the
+ * same underlying pool), so `toHaveBeenCalledWith(kyselyRead, …)` — which compares structurally —
+ * still passes when the read is routed at the writer. Measured, again: the first cut of this fix
+ * used `toHaveBeenCalledWith` and the wrong-tier mutant survived it. Only `toBe` discriminates.
+ *
+ * These pin the tier for the two image-side ports; the model-side port is pinned inline in the
+ * per-user vote merge test above.
+ */
+describe('ported vote reads run on the kyselyRead tier, not the writer', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    imageVotes.mockResolvedValue([]);
+    modelVotes.mockResolvedValue([]);
+    imageTagsFetch.mockResolvedValue({ 1: { imageId: 1, tags: [] } });
+    primeModelCache(1, [modelTag(NUDE, 'nude')]);
+    tagCacheFetch.mockResolvedValue({ [NUDE]: { id: NUDE, name: 'nude' } });
+  });
+
+  it('getVotableTags(image) reads one image’s votes through kyselyRead', async () => {
+    await getVotableTags({ type: 'image', id: 1, userId: 111, isModerator: true });
+    expect(imageVotes).toHaveBeenCalledTimes(1);
+    expect(imageVotes.mock.calls[0][0], WRONG_TIER).toBe(kyselyRead);
+    expect(imageVotes.mock.calls[0][1]).toEqual({ imageId: 1, userId: 111 });
+  });
+
+  it('getVotableTags(model) reads one model’s votes through kyselyRead', async () => {
+    await getVotableTags({ type: 'model', id: 1, userId: 111, isModerator: true });
+    expect(modelVotes).toHaveBeenCalledTimes(1);
+    expect(modelVotes.mock.calls[0][0], WRONG_TIER).toBe(kyselyRead);
+    expect(modelVotes.mock.calls[0][1]).toEqual({ modelId: 1, userId: 111 });
+  });
+
+  it('getVotableImageTags reads the bulk vote overlay through kyselyRead', async () => {
+    await getVotableImageTags({ ids: [1], user: { id: 111 } as SessionUser });
+    expect(imageVotes).toHaveBeenCalledTimes(1);
+    expect(imageVotes.mock.calls[0][0], WRONG_TIER).toBe(kyselyRead);
+    expect(imageVotes.mock.calls[0][1]).toEqual({ imageIds: [1], userId: 111 });
+  });
+
+  // Negative control on the matcher above: `kyselyWrite` is a DIFFERENT object, so `toBe`
+  // separates the tiers — but it is deep-equal, so a structural matcher would not. This pins the
+  // reason `toBe` is used, and fails if the two clients ever become the same object (at which
+  // point the assertions above would be inert and this seam needs a different pin).
+  it('toBe separates the read and write clients even though toEqual does not', () => {
+    expect(kyselyRead).not.toBe(kyselyWrite);
+    expect(kyselyRead).toEqual(kyselyWrite);
   });
 });

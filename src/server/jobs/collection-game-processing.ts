@@ -15,16 +15,14 @@ const BEGGARS_BOARD_ID = 3870938;
 const BEGGARS_BOARD_DURATION = '3 days';
 async function buzzBeggarsBoard() {
   const processingTime = Date.now();
-  // Remove rejected items so that new items can be added
-  const rejected = await dbWrite.$queryRaw<Row[]>`
+  // Remove rejected items so that new items can be added. The submitter was already told why by
+  // `collection-item-rejected` when the status was set; notifying again here would double up.
+  await dbWrite.$executeRaw`
     DELETE
     FROM "CollectionItem" ci
     WHERE "collectionId" = ${BEGGARS_BOARD_ID}
-      AND status = 'REJECTED'
-    RETURNING id, "addedById";
+      AND status = 'REJECTED';
   `;
-  const rejectedUsers = new Set(rejected.map((r) => r.addedById));
-  console.log('rejectedUsers', rejectedUsers);
 
   // Remove things that have been on the board for too long
   const expired = await dbWrite.$queryRaw<Row[]>`
@@ -36,15 +34,7 @@ async function buzzBeggarsBoard() {
     RETURNING id, "addedById";
   `;
   const expiredUsers = new Set(expired.map((r) => r.addedById));
-  console.log('expiredUsers', expiredUsers);
 
-  await createNotification({
-    type: 'beggars-board-rejected',
-    category: NotificationCategory.Buzz,
-    key: `beggars-board-rejected:${processingTime}`,
-    userIds: [...rejectedUsers],
-    details: {},
-  });
   await createNotification({
     type: 'beggars-board-expired',
     category: NotificationCategory.Buzz,

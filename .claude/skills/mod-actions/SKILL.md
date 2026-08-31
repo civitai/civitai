@@ -61,7 +61,7 @@ node .claude/skills/mod-actions/query.mjs <command> [options]
 
 **Options:** `--json`, `--dry-run`, `--reason <code>`, `--message <text>`, `--internal <text>`
 
-**Ban Reason Codes:** SexualMinor, SexualMinorGenerator, SexualMinorTraining, SexualPOI, Bestiality, Scat, Nudify, Harassment, LeaderboardCheating, BuzzCheating, RRDViolation, Other
+**Ban Reason Codes:** SexualMinor, SexualMinorGenerator, SexualMinorTraining, SexualPOI, Bestiality, Scat, Nudify, Harassment, SpamBot, LeaderboardCheating, BuzzCheating, RRDViolation, Other
 
 ```bash
 node .claude/skills/mod-actions/query.mjs user 3879899

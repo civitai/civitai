@@ -1,11 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CivitaiAuth from '@civitai/auth';
 
 // Unit-test maybeUpgradeLegacySession's Set-Cookie assembly (the upgrade-on-read path). We stub ONLY the hub
 // session-token client so we can drive exchangeLegacy; setSessionCookie, clearLegacyCookies, and the
 // cookie-name helpers stay REAL, so we assert the actual headers a legacy user's response would carry.
-const h = vi.hoisted(() => ({ exchangeLegacy: vi.fn(), refresh: vi.fn(), revoke: vi.fn() }));
+const h = vi.hoisted(() => ({
+  exchangeLegacy: vi.fn(),
+  refresh: vi.fn(),
+  revoke: vi.fn(),
+  redisSet: vi.fn(),
+}));
+// Hand-listed rather than spread-from-original (matching session-invalidation.test.ts): importOriginal here
+// would construct the real redis clients at module load. Only the upgrade dedupe's SET NX is exercised.
+vi.mock('~/server/redis/client', () => ({
+  sysRedis: { set: h.redisSet },
+  REDIS_SYS_KEYS: { SESSION: { LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock' } },
+  withSysReadDeadline: (p: Promise<unknown>) => p,
+}));
 vi.mock('@civitai/auth', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@civitai/auth')>();
+  const actual = await importOriginal<typeof CivitaiAuth>();
   return {
     ...actual,
     createSessionTokenClient: () => ({
@@ -36,6 +49,7 @@ describe('maybeUpgradeLegacySession — upgrade-on-read Set-Cookie assembly', ()
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    h.redisSet.mockResolvedValue('OK'); // SET NX succeeded — this request owns the upgrade window
     process.env.AUTH_JWT_ISSUER = 'https://auth.civitai.com'; // HUB_ORIGIN truthy + secure cookie naming
     delete process.env.AUTH_COOKIE_DOMAIN;
     delete process.env.NEXTAUTH_COOKIE_DOMAIN;
@@ -105,6 +119,47 @@ describe('maybeUpgradeLegacySession — upgrade-on-read Set-Cookie assembly', ()
 
     await maybeUpgradeLegacySession('legacy.jwe', undefined, res, 'civitai.com');
     expect(h.exchangeLegacy).not.toHaveBeenCalled();
+  });
+
+  // The growth driver: upgrading mints a NEW jti, and the only thing that stopped it repeating was the client
+  // persisting the cookie we set. A client that ignores Set-Cookie re-minted on every request forever.
+  describe('per-cookie dedupe window', () => {
+    it('skips the hub entirely when another request already claimed the window', async () => {
+      h.redisSet.mockResolvedValue(null); // SET NX lost the race — someone already upgraded this cookie
+      const { maybeUpgradeLegacySession } = await import('../session-client');
+      const res = fakeRes();
+
+      await maybeUpgradeLegacySession('legacy.jwe', undefined, res, 'civitai.com');
+
+      expect(h.exchangeLegacy).not.toHaveBeenCalled();
+      expect(res.cookies()).toEqual([]);
+    });
+
+    it('claims the window with SET NX + a TTL, keyed on a HASH of the cookie (never the cookie itself)', async () => {
+      const { maybeUpgradeLegacySession } = await import('../session-client');
+      h.exchangeLegacy.mockResolvedValue({ token: 'fresh.civ.jwt', deviceId: 'd' });
+
+      await maybeUpgradeLegacySession('legacy.jwe', undefined, fakeRes(), 'civitai.com');
+
+      const [key, value, opts] = h.redisSet.mock.calls[0];
+      expect(key).toMatch(/^session:legacy-upgrade-lock:/);
+      expect(key).not.toContain('legacy.jwe');
+      expect(value).toBe('1'); // no credential stored under the marker
+      expect(opts).toMatchObject({ NX: true });
+      expect(opts.EX).toBeGreaterThan(0);
+    });
+
+    it('fails OPEN when sysRedis is unreachable — a blip must not block migration', async () => {
+      h.redisSet.mockRejectedValue(new Error('sysredis down'));
+      h.exchangeLegacy.mockResolvedValue({ token: 'fresh.civ.jwt', deviceId: 'd' });
+      const { maybeUpgradeLegacySession } = await import('../session-client');
+      const res = fakeRes();
+
+      await maybeUpgradeLegacySession('legacy.jwe', undefined, res, 'civitai.com');
+
+      expect(h.exchangeLegacy).toHaveBeenCalled();
+      expect(res.cookies().some((c) => c.includes('fresh.civ.jwt'))).toBe(true);
+    });
   });
 
   it('is fire-safe: a rejecting exchange never throws and sets nothing', async () => {

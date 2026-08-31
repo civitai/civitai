@@ -34,7 +34,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
@@ -83,18 +83,24 @@ import {
   getEcosystemsForWorkflow,
   isWorkflowAvailable,
 } from '~/shared/data-graph/generation/config/workflows';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import {
+  ecosystemByKey,
+  getBaseModelLicense,
+  getBaseModelsByEcosystemId,
+} from '~/shared/constants/basemodel.constants';
 import {
   pickStrongerGate,
   rulesToStates,
   type GateResolution,
 } from '~/shared/data-graph/generation/gates';
 import {
-  LTXV23_MAX_QUANTITY,
+  VID_MAX_QUANTITY,
+  VID_QUANTITY_ECOSYSTEMS,
   SDCPP_EXCLUDED_MODEL_IDS,
   SDCPP_SUPPORTED_ECOSYSTEMS,
 } from '~/shared/constants/generation.constants';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { ExperimentalAlerts } from '~/components/generation_v2/Experimental';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
   openCompatibilityConfirmModal,
@@ -630,9 +636,16 @@ function PriorityAlertSpace({
     );
   }
 
+  // Experimental warnings sit alongside the priority alert rather than inside the
+  // chain above, for the same reason QueueSnackbar does: the chain is exclusive
+  // and ordered by urgency of the moment, and its first branch (`missingFieldMessage`)
+  // fires whenever a required field is blank. Joining it would hide the warning
+  // for anyone who hasn't written a prompt yet — the moment it's most worth
+  // reading, since nothing has been invested in the selection yet.
   return (
     <>
       <QueueSnackbar right={snackbarRight} />
+      <ExperimentalWarnings />
       {priorityAlert}
     </>
   );
@@ -714,9 +727,10 @@ function CostBreakdown() {
 
 /**
  * Quantity input. The graph's quantity node sets `meta.max` to the user's
- * tier-gated cap (`ext.limits.vidQuantity` for LTXV23, `maxQuantity` elsewhere).
+ * tier-gated cap (`ext.limits.vidQuantity` for the video-batching ecosystems in
+ * VID_QUANTITY_ECOSYSTEMS, `maxQuantity` elsewhere).
  *
- * For LTXV23 non-gold users (tier cap below 4), the default Mantine controls
+ * For those ecosystems' non-gold users (tier cap below 4), the default Mantine controls
  * are replaced with custom chevrons so the up-arrow stays interactive at the
  * cap and opens a membership upsell popover instead of being silently
  * disabled. Typing is unrestricted during input; on blur the value snaps to
@@ -729,7 +743,7 @@ function QuantityField() {
   const { ecosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
     ecosystem?: string;
   };
-  const isLtxv23 = ecosystem === 'LTXV23';
+  const batchesVideos = !!ecosystem && VID_QUANTITY_ECOSYSTEMS.has(ecosystem);
 
   const [upsellOpened, setUpsellOpened] = useState(false);
 
@@ -742,7 +756,7 @@ function QuantityField() {
           value={value}
           meta={meta}
           onChange={onChange}
-          isLtxv23={isLtxv23}
+          batchesVideos={batchesVideos}
           upsellOpened={upsellOpened}
           setUpsellOpened={setUpsellOpened}
         />
@@ -755,7 +769,7 @@ interface QuantityFieldInnerProps {
   value: number | undefined;
   meta: { min: number; max: number; step: number };
   onChange: (next: number) => void;
-  isLtxv23: boolean;
+  batchesVideos: boolean;
   upsellOpened: boolean;
   setUpsellOpened: (open: boolean) => void;
 }
@@ -764,14 +778,14 @@ function QuantityFieldInner({
   value,
   meta,
   onChange,
-  isLtxv23,
+  batchesVideos,
   upsellOpened,
   setUpsellOpened,
 }: QuantityFieldInnerProps) {
   const tierMax = meta.max;
   const min = meta.min;
   const step = meta.step ?? 1;
-  const showUpsell = isLtxv23 && tierMax < LTXV23_MAX_QUANTITY;
+  const showUpsell = batchesVideos && tierMax < VID_MAX_QUANTITY;
 
   // Local input state — lets the user freely type any value (including
   // out-of-range) without Mantine pre-clamping or the graph schema snapping
@@ -917,7 +931,7 @@ function QuantityFieldInner({
         </Text>
         <Text size="xs" c="dimmed" mb="sm">
           Your current tier allows {tierMax} {tierMax === 1 ? 'video' : 'videos'} per request.
-          Upgrade your membership to generate up to {LTXV23_MAX_QUANTITY} at a time.
+          Upgrade your membership to generate up to {VID_MAX_QUANTITY} at a time.
         </Text>
         <Button
           component="a"
@@ -969,8 +983,73 @@ function BlueBuzzMatureReminder() {
 }
 
 // =============================================================================
+// Experimental Warnings
+// =============================================================================
+
+/**
+ * The experimental warnings for the current selection, rendered in the footer's
+ * alert region above the submit row — the last thing read before Buzz is
+ * committed. Several can show at once (an ecosystem and a version can both be
+ * experimental), which is the other reason these stay out of the priority chain:
+ * it resolves to a single node.
+ */
+function ExperimentalWarnings() {
+  const graph = useGraph<GenerationGraphTypes>();
+
+  return (
+    <MultiController
+      graph={graph}
+      names={['ecosystem', 'workflow', 'model', 'resources', 'vae'] as const}
+      render={({ values }) => <ExperimentalAlerts selection={values} />}
+    />
+  );
+}
+
+// =============================================================================
 // FormFooter Component
 // =============================================================================
+
+/**
+ * Names the selected model under the submit button, for licences that oblige us
+ * to do it in the product's own UI rather than only on the model page.
+ */
+function EcosystemAttribution() {
+  const graph = useGraph<GenerationGraphTypes>();
+  const { ecosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
+    ecosystem?: string;
+  };
+
+  const license = useMemo(() => {
+    const ecosystemId = ecosystem ? ecosystemByKey.get(ecosystem)?.id : undefined;
+    if (ecosystemId == null) return undefined;
+    return getBaseModelsByEcosystemId(ecosystemId)
+      .map((baseModel) => getBaseModelLicense(baseModel.id))
+      .find((found) => !!found?.attribution);
+  }, [ecosystem]);
+
+  if (!license?.attribution) return null;
+
+  return (
+    <Text size="xs" ta="center">
+      {license.attribution}
+      {license.url && (
+        <>
+          {' · '}
+          <Text
+            component="a"
+            href={license.url}
+            target="_blank"
+            rel="noreferrer"
+            td="underline"
+            inherit
+          >
+            License
+          </Text>
+        </>
+      )}
+    </Text>
+  );
+}
 
 export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void } = {}) {
   const graph = useGraph<GenerationGraphTypes>();
@@ -995,7 +1074,9 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const [insufficientBuzzError, setInsufficientBuzzError] = useState(false);
   const [isMinLoading, setIsMinLoading] = useState(false);
   const minLoadingTimer = useRef<ReturnType<typeof setTimeout>>();
-  const [promptWarning, setPromptWarning] = useState<string | null>(null);
+  const [promptWarning, setPromptWarning] = useState<{ message: string; soft: boolean } | null>(
+    null
+  );
 
   // Get whatIf data for buzz transaction checking
   const { data: whatIfData } = useWhatIfContext();
@@ -1018,10 +1099,12 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
 
   const generateMutation = useGenerateFromGraph({
     onError: (error) => {
-      const isPOI =
-        error.message?.startsWith('Your prompt was flagged') || error.message?.includes('POI');
-      if (isPOI) {
-        setPromptWarning(error.message);
+      const soft = (error.data as { softBlock?: boolean } | undefined)?.softBlock === true;
+      const message = error.message;
+      const isPromptBlock =
+        message?.startsWith('Your prompt was flagged') || message?.includes('POI');
+      if (isPromptBlock) {
+        setPromptWarning({ message, soft });
         currentUser?.refresh();
       } else if (error.message === 'insufficientBuzz') {
         // Route through the insufficient-buzz alert (with switch-buzz-type prompt)
@@ -1035,7 +1118,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
 
   const clearWarning = () => setPromptWarning(null);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (acknowledgedSoftBlock = false) => {
     // Generation funnel telemetry — ordering matches legacy GenForm semantics.
     //
     // Legacy: RHF's `onError` fires BEFORE GenForm's `canGenerate` short-
@@ -1221,6 +1304,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
         externalId,
+        acknowledgedSoftBlock,
       });
 
       if (hasPaidAccess) {
@@ -1286,17 +1370,29 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   if (promptWarning) {
     return (
       <>
-        <Alert color="red" title="Prohibited Prompt">
-          <Text className="whitespace-pre-wrap">{promptWarning}</Text>
+        <Alert
+          color={promptWarning.soft ? 'yellow' : 'red'}
+          title={promptWarning.soft ? 'Prompt Flagged' : 'Prohibited Prompt'}
+        >
+          <Text className="whitespace-pre-wrap">{promptWarning.message}</Text>
+          {promptWarning.soft && (
+            <Text size="sm" mt={4}>
+              Our filter can misread ordinary wording. If you know your prompt follows our content
+              policy, you can generate it anyway.
+            </Text>
+          )}
           <Button
-            color="red"
+            color={promptWarning.soft ? 'yellow' : 'red'}
             variant="light"
-            onClick={clearWarning}
+            onClick={() => {
+              clearWarning();
+              if (promptWarning.soft) handleSubmit(true);
+            }}
             style={{ marginTop: 10 }}
             leftSection={<IconCheck />}
             fullWidth
           >
-            I Understand, Continue Generating
+            {promptWarning.soft ? 'Generate Anyway' : 'I Understand, Continue Generating'}
           </Button>
         </Alert>
         {currentUser?.username && (
@@ -1347,6 +1443,8 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
           </Tooltip>
         </div>
       )}
+
+      <EcosystemAttribution />
     </>
   );
 }

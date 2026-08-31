@@ -1,5 +1,7 @@
 # App Blocks host↔SDK handler parity audit (2026-06-29)
 
+**Status (added 2026-08-21):** Historical audit snapshot. Coverage matrix verified at the `@civitai/app-sdk@0.6.0` dist. PR #2799 (merged 2026-06-29) fixed `OPEN_CHECKPOINT_PICKER` on pages. The handler parity gap for remaining REQUEST-style messages remains open.
+
 ## The bug class (gotcha-#73 — "spins forever, no network call, no console error")
 
 App Blocks has multiple host components that bridge block→host `postMessage`s, each
@@ -43,28 +45,28 @@ This exact gap bit `OPEN_CHECKPOINT_PICKER` on pages (a page block's `useCheckpo
 `BlockToParentMessage` union? `pub` = yes (covered by the compile-time gate); **`ahead`** = NOT
 yet published, forward-looking INVENTORY entry (runtime grep coverage only, not the type gate).
 
-| # | Message (block→host) | Pub? | Style | Reply awaited | IframeHost | PageBlockHost | InlineHost |
-|---|---|---|---|---|---|---|---|
-| 1 | `BLOCK_READY` | pub | fire-forget | — | ✅ | ✅ | N/A (v1 stub) |
-| 2 | `BLOCK_ERROR` | pub | fire-forget | — | ✅ | ✅ | N/A (v1 stub) |
-| 3 | `RESIZE_IFRAME` | pub | fire-forget | — | ✅ | **N/A** (page iframe is full-viewport `height:100%` — no size-to-content; fire-forget so no hang) | N/A (v1 stub) |
-| 4 | `NAVIGATE` | pub | fire-forget | — | **N/A** (model slot is an embedded panel; host-navigation out of remit) | ✅ | N/A (v1 stub) |
-| 5 | `TRACK_EVENT` | pub | fire-forget | — | **N/A** (analytics; no host-side sink wired in EITHER host today — dropped, never hangs) | **N/A** (same) | N/A (v1 stub) |
-| 6 | `REQUEST_SIGN_IN` | **ahead** | fire-forget | — | ✅ | ✅ | N/A (v1 stub) |
-| 7 | `REQUEST_CONSENT` | **ahead** | fire-forget | — | ✅ | ✅ | N/A (v1 stub) |
-| 8 | `REQUEST_TOKEN` | pub | **REQUEST** | `TOKEN_REFRESH_RESPONSE` | ✅ | ✅ | N/A (v1 stub) |
-| 9 | `SUBMIT_WORKFLOW` | pub | **REQUEST** | `WORKFLOW_SUBMITTED` | ✅ | ✅ | N/A (v1 stub) |
-| 10 | `ESTIMATE_WORKFLOW` | pub | **REQUEST** | `ESTIMATE_RESULT` | ✅ | ✅ | N/A (v1 stub) |
-| 11 | `POLL_WORKFLOW` | pub | **REQUEST** | `WORKFLOW_STATUS` | ✅ | ✅ | N/A (v1 stub) |
-| 12 | `CANCEL_WORKFLOW` | **ahead** | **REQUEST** | `WORKFLOW_CANCELED` | ✅ | ✅ | N/A (v1 stub) |
-| 13 | `OPEN_BUZZ_PURCHASE` | pub | **REQUEST** | `BUZZ_PURCHASE_RESULT` | ✅ | ✅ | N/A (v1 stub) |
-| 14 | `OPEN_CHECKPOINT_PICKER` | pub | **REQUEST** | `CHECKPOINT_PICKER_RESULT` | ✅ | ✅ (ported #2799) | N/A (v1 stub) |
-| 15 | `SET_USER_CHECKPOINT` | pub | **REQUEST** | `USER_CHECKPOINT_SET` | ✅ | ❌→**fail-fast NACK (this PR)** — see OPEN DECISION | N/A (v1 stub) |
-| 16 | `APP_STORAGE_GET` | pub | **REQUEST** | `APP_STORAGE_GET_RESULT` | ✅ | ✅ | N/A (v1 stub) |
-| 17 | `APP_STORAGE_SET` | pub | **REQUEST** | `APP_STORAGE_SET_RESULT` | ✅ | ✅ | N/A (v1 stub) |
-| 18 | `APP_STORAGE_DELETE` | pub | **REQUEST** | `APP_STORAGE_DELETE_RESULT` | ✅ | ✅ | N/A (v1 stub) |
-| 19 | `APP_STORAGE_LIST` | pub | **REQUEST** | `APP_STORAGE_LIST_RESULT` | ✅ | ✅ | N/A (v1 stub) |
-| 20 | `APP_STORAGE_QUOTA` | pub | **REQUEST** | `APP_STORAGE_QUOTA_RESULT` | ✅ | ✅ | N/A (v1 stub) |
+| #   | Message (block→host)     | Pub?      | Style       | Reply awaited               | IframeHost                                                                               | PageBlockHost                                                                                     | InlineHost    |
+| --- | ------------------------ | --------- | ----------- | --------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------- |
+| 1   | `BLOCK_READY`            | pub       | fire-forget | —                           | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 2   | `BLOCK_ERROR`            | pub       | fire-forget | —                           | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 3   | `RESIZE_IFRAME`          | pub       | fire-forget | —                           | ✅                                                                                       | **N/A** (page iframe is full-viewport `height:100%` — no size-to-content; fire-forget so no hang) | N/A (v1 stub) |
+| 4   | `NAVIGATE`               | pub       | fire-forget | —                           | **N/A** (model slot is an embedded panel; host-navigation out of remit)                  | ✅                                                                                                | N/A (v1 stub) |
+| 5   | `TRACK_EVENT`            | pub       | fire-forget | —                           | **N/A** (analytics; no host-side sink wired in EITHER host today — dropped, never hangs) | **N/A** (same)                                                                                    | N/A (v1 stub) |
+| 6   | `REQUEST_SIGN_IN`        | **ahead** | fire-forget | —                           | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 7   | `REQUEST_CONSENT`        | **ahead** | fire-forget | —                           | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 8   | `REQUEST_TOKEN`          | pub       | **REQUEST** | `TOKEN_REFRESH_RESPONSE`    | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 9   | `SUBMIT_WORKFLOW`        | pub       | **REQUEST** | `WORKFLOW_SUBMITTED`        | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 10  | `ESTIMATE_WORKFLOW`      | pub       | **REQUEST** | `ESTIMATE_RESULT`           | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 11  | `POLL_WORKFLOW`          | pub       | **REQUEST** | `WORKFLOW_STATUS`           | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 12  | `CANCEL_WORKFLOW`        | **ahead** | **REQUEST** | `WORKFLOW_CANCELED`         | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 13  | `OPEN_BUZZ_PURCHASE`     | pub       | **REQUEST** | `BUZZ_PURCHASE_RESULT`      | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 14  | `OPEN_CHECKPOINT_PICKER` | pub       | **REQUEST** | `CHECKPOINT_PICKER_RESULT`  | ✅                                                                                       | ✅ (ported #2799)                                                                                 | N/A (v1 stub) |
+| 15  | `SET_USER_CHECKPOINT`    | pub       | **REQUEST** | `USER_CHECKPOINT_SET`       | ✅                                                                                       | ❌→**fail-fast NACK (this PR)** — see OPEN DECISION                                               | N/A (v1 stub) |
+| 16  | `APP_STORAGE_GET`        | pub       | **REQUEST** | `APP_STORAGE_GET_RESULT`    | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 17  | `APP_STORAGE_SET`        | pub       | **REQUEST** | `APP_STORAGE_SET_RESULT`    | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 18  | `APP_STORAGE_DELETE`     | pub       | **REQUEST** | `APP_STORAGE_DELETE_RESULT` | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 19  | `APP_STORAGE_LIST`       | pub       | **REQUEST** | `APP_STORAGE_LIST_RESULT`   | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
+| 20  | `APP_STORAGE_QUOTA`      | pub       | **REQUEST** | `APP_STORAGE_QUOTA_RESULT`  | ✅                                                                                       | ✅                                                                                                | N/A (v1 stub) |
 
 > The three **ahead** rows (#6, #7, #12) are NOT in the published `@civitai/app-sdk@0.6.0` dist
 > union, so they are NOT enforced by the compile-time coverage gate — only by the runtime grep.

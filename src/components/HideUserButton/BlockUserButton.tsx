@@ -93,7 +93,7 @@ export function BlockUserButton({
           )
         }
       >
-        {isBlocked ? 'Unblock' : 'Block'} this user
+        {isBlocked ? unblockLabel ?? 'Unblock this user' : label ?? 'Block this user'}
       </Menu.Item>
     </LoginRedirect>
   );

@@ -11,13 +11,14 @@ import { trpcMutation, trpcQuery } from './preview-trpc';
  * approve-success → store-render → delist/claim round-trip:
  *
  *   The full "approve an off-site listing, see it in the store, delist/claim it,
- *   purge to self-clean" round-trip requires a SUCCESSFUL approve, which the dark P1
- *   asset gate (`assertListingAssetsComplete`) blocks unless the draft has an
- *   icon+cover+≥1 screenshot whose backing Image is `ingestion = Scanned`. In a PR
- *   preview the external image scanner is UNREACHABLE, so uploaded images stay
+ *   purge to self-clean" round-trip requires a SUCCESSFUL approve, which two approve
+ *   gates block: the publish FLOOR (`assertListingMeetsFloor` — icon+cover required,
+ *   screenshots optional since #3392) and the go-live SCAN-CLEAN gate, which requires
+ *   every attached asset's backing Image to be `ingestion = Scanned`. In a PR preview
+ *   the external image scanner is UNREACHABLE, so uploaded images stay
  *   `Pending` forever (see `tests/preview-post-images.spec.ts`: "image ingestion …
- *   is unreachable in preview so the row stays Pending"). An attach of a Pending
- *   image is rejected ("scan is not complete"), so an off-site listing can NOT reach
+ *   is unreachable in preview so the row stays Pending"). A Pending asset therefore
+ *   never clears the scan-clean gate, so an off-site listing can NOT reach
  *   `approved`/`removed` in preview — i.e. a CLAIMABLE-state listing is not
  *   constructible here. So the claim HAPPY-PATH (approved/removed → reassigned +
  *   audit event) is covered EXHAUSTIVELY in the unit tests instead

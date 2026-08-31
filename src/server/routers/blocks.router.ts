@@ -30,6 +30,15 @@ import {
   checkBlockPublishRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import {
+  BLOCK_IDEMPOTENCY_KEY_REGEX,
+  claimGenIdempotency,
+  composeBlockExternalId,
+  finalizeGenIdempotency,
+  mintServerBlockExternalId,
+  releaseGenIdempotency,
+  type BlockGenIdempotencyClaim,
+} from '~/server/utils/block-gen-idempotency';
+import {
   blockBuzzAccountTypes,
   getMyBuzzAccountsInput,
   getMyBuzzTransactionsInput,
@@ -39,23 +48,15 @@ import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import {
   getAppDetailSchema,
+  getAppSpendCapConfigSchema,
   getFeaturedBlocksSchema,
   getMarketplaceMetaSchema,
-  listAppBlockReviewsSchema,
   listAvailableSchema,
-  setAppReviewExcludedSchema,
+  setAppSpendCapConfigSchema,
   setMarketplaceMetaSchema,
   subscriptionScopeSchema,
   toPublicBlockManifest,
-  upsertAppBlockReviewSchema,
 } from '~/server/schema/blocks/subscription.schema';
-import {
-  getMyAppBlockReview,
-  listAppBlockReviews,
-  setAppReviewExcluded,
-  upsertAppBlockReview,
-} from '~/server/services/appBlockReview.service';
-import { appBlockReviewReward } from '~/server/rewards/active/appBlockReview.reward';
 import {
   approveRequestSchema,
   backfillPublishRequestSchema,
@@ -103,7 +104,13 @@ import {
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
 import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
-import { computeListingProblems } from '~/server/services/blocks/listing-problems';
+import {
+  computeListingProblems,
+  type ListingProblemKind,
+} from '~/server/services/blocks/listing-problems';
+// The ONE spelling of "which moderation actions can explain a removal". Value import:
+// it is spread into a Prisma `where` below. See `app-listing-owner-unpublish`.
+import { LISTING_STATUS_CHANGING_MODERATION_ACTIONS } from '~/server/services/blocks/app-listing-owner-unpublish';
 import { getRequestDomainColor, isHostForColor } from '~/server/utils/server-domain';
 // Type-only: the runtime `resolveCanGenerateForVersions` is loaded via a
 // dynamic import() inside assertViewerCanGeneratePageResources so the heavy
@@ -116,16 +123,54 @@ import {
   buildCustomComfyWorkflowInput,
   buildTextToImageInput,
   createBlockCustomComfyStep,
+  formatStepTimeout,
   isPageLoraResource,
   projectAppWorkflow,
+  resolveBlockPollWaitSeconds,
   resolveBlockVersionContext,
   resolvePageResourceContext,
   snapshotFromWorkflow,
+  WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
+import { projectModelSubstitutions } from '~/shared/data-graph/generation/model-substitution';
+import {
+  assertInlineGraphAirsDeclared,
+  assertViewerEntitledToInlineResources,
+  collectInlineAuditText,
+} from '~/server/services/blocks/inline-comfy.service';
 // App Blocks customComfy bridge (v1). The recipe registry is the code-reviewed
 // trust root; the schema already gated `recipe` to a registered id, so `getRecipe`
 // never returns undefined for a schema-valid body (defensively re-checked).
 import { getRecipe, recipeCivitaiVersionIds } from '~/server/services/blocks/recipes';
+// App Blocks STEP-TYPE bridge (`kind: 'step'`) — RFC #3515 migration step 1.
+// The step registry is the code-reviewed trust root, exactly as the recipe
+// registry is. `estimateStepBuzz` / `planStepSpend` dispatch on the entry's
+// declared `billingMode` — this router contains NO per-step and NO per-mode
+// branch, which is what makes adding a capability additive.
+// `containsAirReference` is the SAME deep scan the registry's load-time clause 7
+// runs; imported (not re-implemented) so the request-time re-assertion below can
+// never drift from the load-time one — one rule, one place.
+import {
+  AIR_URN_PREFIX,
+  containsAirReference,
+  estimateStepBuzz,
+  getStep,
+  planStepSpend,
+  resolveStepVariant,
+} from '~/server/services/blocks/steps';
+// Moderation dispatch for the same registry. A SEPARATE module because it pulls
+// `auditPromptServer` (Redis + ClickHouse + DB + notifications) and the registry
+// itself is imported by `workflow.schema` for the wire enum, which must stay
+// import-light. Dispatches on the entry's declared `moderationPosture`, so this
+// router keeps no per-posture branch either.
+import {
+  attachModeratedStepTextOutputs,
+  runStepModeration,
+} from '~/server/services/blocks/steps/moderation';
+// Instrument-only: records EVERY prepaidFixed step price check at submit —
+// `exact` / `over` / `absent` — so a flat "no divergence" line can be told apart
+// from a detector that never ran. Never throws.
+import { recordStepPriceCheck } from '~/server/metrics/app-block-runtime.metrics';
 // Post-paid SETTLE-TO-ACTUAL for customComfy (plan §5.3). `persist*` is awaited in
 // submit (after reserving the ceiling); `settle*` is a best-effort call on the
 // terminal poll/cancel hook. Static import (both are light) — the heavy
@@ -170,7 +215,6 @@ import { getUserById } from '~/server/services/user.service';
 import { sessionClient } from '~/server/auth/session-client';
 import {
   appDeveloperProcedure,
-  guardedProcedure,
   moderatorProcedure,
   protectedProcedure,
   middleware,
@@ -250,6 +294,28 @@ async function assertViewerIsAppDeveloper(userId: number): Promise<void> {
       message: 'Apps authoring is not enabled for this account',
     });
   }
+}
+
+/**
+ * THE app-authoring access gate for this router's four owner-scoped procs
+ * (`getMyAppRepo`, `getMyAppManifest`, `updateManifest`, `getMyForgejoCloneInfo`).
+ *
+ * A thin re-export of `app-access.service::assertAppEditAccess`, which replaced four
+ * byte-identical open-codings of `block.app?.userId !== ctx.user!.id`. The guard itself
+ * lives in the service so it has one home and can be unit-tested without importing this
+ * 7.9k-line router; this wrapper only keeps the import dynamic, matching the rest of
+ * the file's discipline for cross-service reach.
+ */
+async function assertAppEditAccess(
+  block: { id: string; app: { userId: number } | null },
+  userId: number
+): Promise<void> {
+  const { assertAppEditAccess: assertAccess } = await import(
+    '~/server/services/blocks/app-access.service'
+  );
+  // The owner is already in hand from the proc's own AppBlock select — passed through
+  // so the gate costs ZERO extra queries on the owner path.
+  await assertAccess({ appBlockId: block.id, ownerUserId: block.app?.userId, userId });
 }
 
 /**
@@ -415,12 +481,30 @@ function resolveBlockMaturity(claims: { maxBrowsingLevel?: number }): {
 //
 // SCOPE — what this gate does NOT cover: early-access `hasAccess` and the
 // availability=Private subscription requirement are NOT checked here.
-// `resolveCanGenerateForVersions` deliberately omits both. They are enforced
-// downstream by the orchestrator resource belt in `getGenerationResourceData`
-// (server/services/orchestrator/common.ts): `getResourceData` folds
-// `canGenerate = hasAccess && canGenerate` and the Private-resource path
-// throws without an active subscription — and BOTH the whatIf (estimate) and
-// the real (submit) steps run through that belt BEFORE any Buzz reservation.
+// `resolveCanGenerateForVersions` deliberately omits both.
+//
+// 🔴 NAMES CORRECTED. This paragraph used to point at "the orchestrator resource
+// belt in `getGenerationResourceData` (server/services/orchestrator/common.ts)".
+// MEASURED: that file does not exist and that function does not exist anywhere
+// in `src` — the name appeared only in this comment and two copies of it. The
+// belt IS real, so the instruction below still stands; only the address was
+// wrong, and a wrong address on a "DO NOT remove that belt" note is how a
+// maintainer concludes there is no belt to preserve.
+//
+// The belt, by its real names: `validateAndEnrichResources`
+// (server/services/orchestrator/orchestration-new.service) calls
+// `getResourceData` (server/services/generation/generation.service), which folds
+// `applyPaidAccessGating` internally — and that sets
+// `canGenerate = hasAccess && canGenerate` — then throws without an active
+// subscription for a Private/epoch resource. BOTH the whatIf (estimate) and the
+// real (submit) steps run through it BEFORE any Buzz reservation.
+//
+// 🔴 THAT BELT IS ON THE GENERATION-GRAPH PATH ONLY. It runs for `textToImage`,
+// which is what this gate serves. It does NOT run for a raw `customComfy` step,
+// whose `resources` AIR array goes to the orchestrator directly — see
+// `services/blocks/inline-comfy.service`, which is the equivalent belt for the
+// inline arm, and `services/blocks/recipes/index.ts` for the recipe arm.
+//
 // DO NOT remove that belt assuming this pre-spend gate already covers
 // early-access / Private — it does not.
 //
@@ -528,15 +612,23 @@ function buildGateVersion(gate: {
 // the page body model — for a non-Checkpoint page body those differ.
 //
 // Returns the per-LoRA gate bags so the caller can pass checkpoint + every LoRA
-// through the entitlement gate in ONE call. Throws BAD_REQUEST (non-LoRA /
-// not platform-compatible incl. unknown baseModel), NOT_FOUND
+// through the entitlement gate in ONE call, AND the resolved `modelVersionId →
+// ModelType` map. The map is not a second lookup: it is the `model.type` this
+// function has already read off each version, handed to `buildTextToImageInput`
+// so the graph input satisfies the resources node's OUTPUT schema
+// (`resourceSchema` requires `model:{type}` — issue #4159). Throws BAD_REQUEST
+// (non-LoRA / not platform-compatible incl. unknown baseModel), NOT_FOUND
 // (missing/unpublished version) — all BEFORE any cost/spend.
 async function resolvePageLoraGates(opts: {
   additionalResources: { modelVersionId: number; strength: number }[] | undefined;
   checkpointBaseModel: string;
-}): Promise<ReturnType<typeof buildGateVersion>[]> {
+}): Promise<{
+  gates: ReturnType<typeof buildGateVersion>[];
+  resourceTypes: ReadonlyMap<number, string>;
+}> {
   const { additionalResources, checkpointBaseModel } = opts;
-  if (!additionalResources?.length) return [];
+  const resourceTypes = new Map<number, string>();
+  if (!additionalResources?.length) return { gates: [], resourceTypes };
   // FAIL-CLOSED on the 'Other' ecosystem group. getResourceGenerationSupport's
   // null check does NOT catch the platform's recognized 'Other' baseModel
   // record (it resolves to a real ECO.Other ecosystem and short-circuits to
@@ -591,8 +683,13 @@ async function resolvePageLoraGates(opts: {
       });
     }
     gates.push(buildGateVersion(lora.gate));
+    // ORDERING, not a guard — do not read this as one. Every reject above
+    // THROWS, so the builder never runs on a refused resource whatever order
+    // this line sits in (moving it above the rejects survives the suite). It is
+    // placed here because that is where the value is unambiguously final.
+    resourceTypes.set(lora.modelVersionId, lora.modelType);
   }
-  return gates;
+  return { gates, resourceTypes };
 }
 
 // ---- Cumulative Buzz-spend cap (audit A7 / design-gaps H1) -----------------
@@ -896,12 +993,35 @@ function isRedCapableRequest(ctx: { req?: { headers?: { host?: string } } }): bo
 /**
  * Manifest-level variant of {@link assertLaunchSlotForCaller} for the
  * subscription path, where the slot isn't an input — it's implied by the app's
- * manifest targets. A model-slot app (the only kind that takes a subscription;
- * page apps are stateless and never subscribed) is non-launch, so a non-mod is
- * rejected. A moderator is grandfathered. An app is launch-eligible iff it
- * declares a page AND `app.page` is a launch slot (mirrors the service's
- * isAppLaunchEligible / the public-read filter, keeping the allowlist the single
- * source of truth).
+ * manifest. A moderator is grandfathered. Everyone else passes iff the app is
+ * launch-eligible: it declares a page AND `app.page` is a launch slot (mirrors
+ * the service's isAppLaunchEligible / the public-read filter, keeping the
+ * allowlist the single source of truth).
+ *
+ * 🔴 WHAT THIS DOES NOT DO — read before relying on it. An earlier version of
+ * this comment claimed a non-mod is "always rejected" here, on the reasoning
+ * that only a MODEL-slot app takes a subscription and model slots are
+ * non-launch. That is not what the code does. `app.page` IS in
+ * `LAUNCH_SLOT_IDS`, so `isLaunchSlot(PAGE_SLOT_ID)` is a compile-time-constant
+ * `true` and the predicate below reduces to `if (declaresPage) return`. Every
+ * approved app in production declares `page.path`, so this gate ADMITS all of
+ * them for a non-mod caller.
+ *
+ * That is currently harmless only because `enforceAppBlocksFlag` is mod-only —
+ * the flag, not this function, is what keeps non-mods off the path. Neither
+ * this gate nor `BlockRegistry.upsertSubscription` (which applies no slot check
+ * at all) stops a `block_user_subscriptions` row being written against a PAGE
+ * app, which is stateless by decision (`src/pages/apps/run/[slug]/
+ * [[...path]].tsx` — "STATELESS (Decision 2): no `block_user_subscriptions`
+ * row, no migration") and has no UI for managing one. So widening
+ * `app-blocks-enabled` past moderators would start writing invisible
+ * subscription rows for stateless apps unless a slot check is added first.
+ *
+ * Behaviour is deliberately UNCHANGED here — this is a comment correction plus
+ * the test that pins what actually happens (`blocks.router.subscriptions.test.
+ * ts`, "non-mod + PAGE app → ADMITTED"). If you intend to close the hole, the
+ * fix is a `hasInstallSlot(manifest)` check on the subscription path, not an
+ * edit to this doc block.
  */
 function assertLaunchAppForCaller(
   ctx: { user?: { id: number; isModerator?: boolean } },
@@ -959,10 +1079,16 @@ async function createBlockTextToImageStep(opts: {
   whatIf?: boolean;
   isGreen?: boolean;
 }) {
-  const { externalCtx } = await buildGenerationContext(opts.user.tier ?? 'free', undefined, {
-    id: opts.user.id,
-    isModerator: opts.user.isModerator,
-  });
+  const { externalCtx } = await buildGenerationContext(
+    opts.user.tier ?? 'free',
+    undefined,
+    { id: opts.user.id, isModerator: opts.user.isModerator },
+    // #3520: the App Blocks bridge — the surface the issue is actually about.
+    // Here the checkpoint version id was written by an app author (deliberate),
+    // and until this PR the correction was undetectable by the caller. This is
+    // the population phase 3's reject/degrade decision has to be measured on.
+    'block'
+  );
   const { steps, workflowMetadata } = await createWorkflowStepsFromGraphInput({
     input: opts.input,
     externalCtx,
@@ -988,7 +1114,38 @@ async function createBlockTextToImageStep(opts: {
   // resources). It is `undefined` on whatIf calls (the graph omits it then), so
   // callers can attach it to the REAL submit body only — mirroring the normal
   // path's `isWhatIf ? undefined : metadata` semantics — without a separate flag.
-  return { step, workflowMetadata };
+  //
+  // `modelSubstitutions` (issue #3520): checkpoint versions the graph SILENTLY
+  // replaced during the validation just performed. Read from the per-request
+  // collector on the `externalCtx` built two lines above — never a shared/cached
+  // object — so it describes THIS submit and no one else's. Behaviour is
+  // unchanged; the caller folds this into the snapshot so the block can detect
+  // that it was billed for a model it did not ask for.
+  const modelSubstitutions = projectModelSubstitutions(externalCtx.modelSubstitutions);
+
+  // 🔴 PERSIST it on the workflow's own metadata, not only on the submit reply.
+  // A block renders from the TERMINAL POLL (the only snapshot carrying
+  // `imageUrls`), and `pollWorkflow` rebuilds its snapshot from a freshly
+  // fetched Workflow with none of this request's context — so a reply-only field
+  // is gone before there is anything to show beside it, and `block_workflows`
+  // does not retain the submitted body to recover it from. Riding on the
+  // orchestrator metadata the submit body already carries makes it readable on
+  // EVERY later read, with no schema/DB change. See
+  // `WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY`.
+  //
+  // Byte-identical when nothing was substituted (the overwhelmingly common
+  // case): the key is only added when there is something to add, and
+  // `workflowMetadata` is `undefined` on whatIf — where there is no persisted
+  // workflow to read back from anyway, so the estimate reply carries the record
+  // directly instead.
+  return {
+    step,
+    workflowMetadata:
+      workflowMetadata && modelSubstitutions?.length
+        ? { ...workflowMetadata, [WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY]: modelSubstitutions }
+        : workflowMetadata,
+    modelSubstitutions,
+  };
 }
 
 export const blocksRouter = router({
@@ -1151,9 +1308,7 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(withdrawRequestSchema)
     .mutation(async ({ ctx, input }) => {
-      const { withdrawRequest } = await import(
-        '~/server/services/blocks/publish-request.service'
-      );
+      const { withdrawRequest } = await import('~/server/services/blocks/publish-request.service');
       if (!ctx.user) throw throwAuthorizationError('Not authenticated');
       try {
         await withdrawRequest({
@@ -1164,6 +1319,7 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: (err as Error).message,
+          cause: err,
         });
       }
       return { ok: true };
@@ -1283,7 +1439,11 @@ export const blocksRouter = router({
           declaredScopes: input.declaredScopes,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1499,9 +1659,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Review previews are restricted to civitai team');
       }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
@@ -1512,7 +1670,11 @@ export const blocksRouter = router({
           modUserId: ctx.user.id,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1528,9 +1690,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Review previews are restricted to civitai team');
       }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
@@ -1544,7 +1704,11 @@ export const blocksRouter = router({
           modUserId: ctx.user.id,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1568,9 +1732,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Review previews are restricted to civitai team');
       }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
@@ -1600,7 +1762,11 @@ export const blocksRouter = router({
           runForReal: input.runForReal,
         });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1626,9 +1792,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Agentic review is restricted to civitai team');
       }
-      const { isAppBlocksAgenticReviewEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('Agentic review is not enabled');
       }
@@ -1643,7 +1807,11 @@ export const blocksRouter = router({
         // review is already running" — which the P2 panel keys on to fall into
         // the running state); only opaque errors collapse to BAD_REQUEST.
         if (err instanceof TRPCError) throw err;
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1664,15 +1832,11 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Agentic review is restricted to civitai team');
       }
-      const { isAppBlocksAgenticReviewEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('Agentic review is not enabled');
       }
-      const { getAgentReport } = await import(
-        '~/server/services/blocks/app-review-report.service'
-      );
+      const { getAgentReport } = await import('~/server/services/blocks/app-review-report.service');
       return getAgentReport(input.publishRequestId);
     }),
 
@@ -1697,9 +1861,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Agentic review is restricted to civitai team');
       }
-      const { isAppBlocksAgenticReviewEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksAgenticReviewEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksAgenticReviewEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('Agentic review is not enabled');
       }
@@ -1715,7 +1877,11 @@ export const blocksRouter = router({
         // render the right inline message; only opaque errors collapse to
         // BAD_REQUEST. NEVER a 500 leak.
         if (err instanceof TRPCError) throw err;
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1733,9 +1899,7 @@ export const blocksRouter = router({
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Review previews are restricted to civitai team');
       }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
+      const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
       if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
         throw throwAuthorizationError('The review sandbox is not enabled');
       }
@@ -1743,7 +1907,11 @@ export const blocksRouter = router({
       try {
         return await teardownPreview({ publishRequestId: input.publishRequestId });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 
@@ -1752,27 +1920,27 @@ export const blocksRouter = router({
    * all mods) + the cap, for the "Active previews (N / cap)" panel. Same mod-only
    * flag gate as previewRequest; no input.
    */
-  listActivePreviews: moderatorProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('Review previews are restricted to civitai team');
-      }
-      const { isAppBlocksReviewSandboxEnabled } = await import(
-        '~/server/services/app-blocks-flag'
-      );
-      if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
-        throw throwAuthorizationError('The review sandbox is not enabled');
-      }
-      const { listActiveReviewPreviews } = await import(
-        '~/server/services/blocks/publish-request.service'
-      );
-      try {
-        return await listActiveReviewPreviews();
-      } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
-      }
-    }),
+  listActivePreviews: moderatorProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if (!ctx.user?.isModerator) {
+      throw throwAuthorizationError('Review previews are restricted to civitai team');
+    }
+    const { isAppBlocksReviewSandboxEnabled } = await import('~/server/services/app-blocks-flag');
+    if (!(await isAppBlocksReviewSandboxEnabled({ user: ctx.user }))) {
+      throw throwAuthorizationError('The review sandbox is not enabled');
+    }
+    const { listActiveReviewPreviews } = await import(
+      '~/server/services/blocks/publish-request.service'
+    );
+    try {
+      return await listActiveReviewPreviews();
+    } catch (err) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: (err as Error).message,
+        cause: err,
+      });
+    }
+  }),
 
   /**
    * Approve a pending publish request: pre-creates the OauthClient +
@@ -1784,9 +1952,7 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(approveRequestSchema)
     .mutation(async ({ ctx, input }) => {
-      const { approveRequest } = await import(
-        '~/server/services/blocks/publish-request.service'
-      );
+      const { approveRequest } = await import('~/server/services/blocks/publish-request.service');
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Approving publish requests is restricted to civitai team');
       }
@@ -1800,6 +1966,7 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: (err as Error).message,
+          cause: err,
         });
       }
     }),
@@ -1831,6 +1998,7 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: (err as Error).message,
+          cause: err,
         });
       }
     }),
@@ -1891,6 +2059,37 @@ export const blocksRouter = router({
     }),
 
   /**
+   * ONE-OFF moderator-only backfill — flip every EXISTING in-review snapshot
+   * repo to private (#3498). New snapshots are created private, but the create
+   * call is idempotent on an existing repo, so pre-change snapshots keep their
+   * original visibility until this walks the org and patches them.
+   *
+   * 🔴 A human must run this ONCE for the privacy fix to be complete. Safe to
+   * re-run: already-private repos are skipped, a vanished repo counts `missing`,
+   * and per-repo failures are collected rather than thrown. `dryRun` reports
+   * exactly which slugs a real run would touch without changing anything.
+   */
+  backfillReviewRepoPrivacy: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(1000).optional(),
+        dryRun: z.boolean().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError(
+          'Review snapshot privacy backfill is restricted to civitai team'
+        );
+      }
+      const { backfillReviewRepoPrivacy } = await import(
+        '~/server/services/blocks/review-repo-privacy.service'
+      );
+      return backfillReviewRepoPrivacy({ limit: input.limit, dryRun: input.dryRun });
+    }),
+
+  /**
    * Reject a pending publish request. Reason is required
    * (≥`PUBLISH_REJECTION_REASON_MIN` — the shared `OFFSITE_MOD_REASON_MIN`, 3 —
    * chars) and shown to the dev inline on /apps/my-submissions.
@@ -1899,9 +2098,7 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(rejectRequestSchema)
     .mutation(async ({ ctx, input }) => {
-      const { rejectRequest } = await import(
-        '~/server/services/blocks/publish-request.service'
-      );
+      const { rejectRequest } = await import('~/server/services/blocks/publish-request.service');
       if (!ctx.user?.isModerator) {
         throw throwAuthorizationError('Rejecting publish requests is restricted to civitai team');
       }
@@ -1915,6 +2112,7 @@ export const blocksRouter = router({
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: (err as Error).message,
+          cause: err,
         });
       }
       return { ok: true };
@@ -1959,12 +2157,12 @@ export const blocksRouter = router({
             : serviceCode === 'RATE_LIMITED'
             ? 'TOO_MANY_REQUESTS'
             : // A build-service outage is OUR fault, not a malformed request —
-              // reporting it as a 400 mislabels an incident as user error (and
-              // keeps it off the server-fault error board).
+            // reporting it as a 400 mislabels an incident as user error (and
+            // keeps it off the server-fault error board).
             serviceCode === 'TRIGGER_FAILED'
             ? 'INTERNAL_SERVER_ERROR'
             : 'BAD_REQUEST';
-        throw new TRPCError({ code, message: (err as Error).message });
+        throw new TRPCError({ code, message: (err as Error).message, cause: err });
       }
     }),
 
@@ -1974,195 +2172,221 @@ export const blocksRouter = router({
    * Returns the rejection reason inline so the dev sees mod feedback
    * without a second round-trip.
    */
-  listMyPublishRequests: appDeveloperProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      if (!ctx.user) return [];
-      const rows = await dbRead.appBlockPublishRequest.findMany({
-        where: { submittedByUserId: ctx.user.id },
-        orderBy: { submittedAt: 'desc' },
-        take: 100,
+  listMyPublishRequests: appDeveloperProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if (!ctx.user) return [];
+    const rows = await dbRead.appBlockPublishRequest.findMany({
+      where: { submittedByUserId: ctx.user.id },
+      orderBy: { submittedAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        appBlockId: true,
+        slug: true,
+        version: true,
+        status: true,
+        submittedAt: true,
+        reviewedAt: true,
+        rejectionReason: true,
+        approvalNotes: true,
+        // Phase 2 build/deploy lifecycle, surfaced on /apps/my-submissions.
+        deployState: true,
+        deployDetail: true,
+        deployUpdatedAt: true,
+        fileSummary: true,
+        manifestDiffSummary: true,
+        appBlock: {
+          select: {
+            id: true,
+            // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
+            // declare a launchable page). PUBLIC subset only — never the raw manifest.
+            manifest: true,
+            _count: { select: { userSubscriptions: true } },
+          },
+        },
+      },
+    });
+    // Flatten _count onto each row so the UI doesn't have to dig through
+    // the relation. Pending-first-version + withdrawn-first-version rows
+    // have no appBlock (FK is set on approve) — surface null so the UI
+    // can render "—".
+    //
+    // Post kill_per_model_installs: model installs are subscription rows
+    // with target_model_ids populated. Compute the pinned-install count
+    // via a second targeted query rather than over-fetching subs.
+    type RawRow = (typeof rows)[number];
+    const appBlockIds = rows
+      .map((r: RawRow) => r.appBlock?.id)
+      .filter((id: string | undefined): id is string => !!id);
+    const pinnedCounts = appBlockIds.length
+      ? (
+          (await dbRead.blockUserSubscription.groupBy({
+            by: ['appBlockId'],
+            where: {
+              appBlockId: { in: appBlockIds },
+              scope: 'publisher_all_my_models',
+              slotId: { not: null },
+            },
+            _count: { _all: true },
+          })) as unknown as Array<{ appBlockId: string; _count: { _all: number } }>
+        ).reduce<Record<string, number>>((acc, row) => {
+          acc[row.appBlockId] = row._count._all;
+          return acc;
+        }, {})
+      : {};
+
+    // W13 P4 (owner controls): resolve the backing on-site `AppListing` (1:1 with
+    // the AppBlock — `AppListing.appBlockId`) for each row so the UI reads the TRUE
+    // live/removed listing state. A publish request stays `approved` after an owner
+    // unpublish, so the request status alone can't tell live from owner-hidden. One
+    // batched findMany (NOT per-row) keyed by appBlockId.
+    // Additive projection (advisory listing-completeness warning on
+    // /apps/my-submissions): the asset ids + key text fields + a screenshot
+    // COUNT (via `_count`, not the rows) feed the pure `computeListingProblems`
+    // helper below. Purely additive — the owner-controls fields are unchanged.
+    const listingByBlockId = new Map<
+      string,
+      {
+        id: string;
+        status: string;
+        iconId: number | null;
+        coverId: number | null;
+        description: string | null;
+        tagline: string | null;
+        category: string | null;
+        screenshotCount: number;
+        /**
+         * The listing's kind, threaded into `computeListingProblems` so the three
+         * empty-text problems name the right remedy.
+         *
+         * 🔴 PROJECTED, NOT ASSUMED, even though the `where` below filters
+         * `kind: 'onsite'`. A literal `'onsite'` at the call site would be a SECOND
+         * place that has to stay in step with that filter, and it would go wrong
+         * SILENTLY (wrong advice, no error) if the filter is ever widened. Reading
+         * the column costs nothing and cannot drift.
+         */
+        kind: string;
+      }
+    >();
+    if (appBlockIds.length) {
+      const listings = await dbRead.appListing.findMany({
+        where: { appBlockId: { in: appBlockIds }, kind: 'onsite' },
         select: {
           id: true,
           appBlockId: true,
-          slug: true,
-          version: true,
           status: true,
-          submittedAt: true,
-          reviewedAt: true,
-          rejectionReason: true,
-          approvalNotes: true,
-          // Phase 2 build/deploy lifecycle, surfaced on /apps/my-submissions.
-          deployState: true,
-          deployDetail: true,
-          deployUpdatedAt: true,
-          fileSummary: true,
-          manifestDiffSummary: true,
-          appBlock: {
-            select: {
-              id: true,
-              // W13 P4: `hasPage` for the Open-live run-page link (does the manifest
-              // declare a launchable page). PUBLIC subset only — never the raw manifest.
-              manifest: true,
-              _count: { select: { userSubscriptions: true } },
-            },
-          },
+          kind: true,
+          iconId: true,
+          coverId: true,
+          description: true,
+          tagline: true,
+          category: true,
+          // Filtered COUNT — only screenshots whose Image is still live. A row
+          // whose Image was deleted (imageId → null via onDelete: SetNull) has
+          // no displayable asset, so it must not inflate the count, else the
+          // `no-screenshots` warning is a false-negative. Matches the
+          // authoritative asset gate: `screenshots.filter(s => s.imageId != null)`
+          // in app-listing-assets.service.ts (buildAssetStatus).
+          _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
         },
       });
-      // Flatten _count onto each row so the UI doesn't have to dig through
-      // the relation. Pending-first-version + withdrawn-first-version rows
-      // have no appBlock (FK is set on approve) — surface null so the UI
-      // can render "—".
-      //
-      // Post kill_per_model_installs: model installs are subscription rows
-      // with target_model_ids populated. Compute the pinned-install count
-      // via a second targeted query rather than over-fetching subs.
-      type RawRow = (typeof rows)[number];
-      const appBlockIds = rows
-        .map((r: RawRow) => r.appBlock?.id)
-        .filter((id: string | undefined): id is string => !!id);
-      const pinnedCounts = appBlockIds.length
-        ? (
-            (await dbRead.blockUserSubscription.groupBy({
-              by: ['appBlockId'],
-              where: {
-                appBlockId: { in: appBlockIds },
-                scope: 'publisher_all_my_models',
-                slotId: { not: null },
-              },
-              _count: { _all: true },
-            })) as unknown as Array<{ appBlockId: string; _count: { _all: number } }>
-          ).reduce<Record<string, number>>((acc, row) => {
-            acc[row.appBlockId] = row._count._all;
-            return acc;
-          }, {})
-        : {};
-
-      // W13 P4 (owner controls): resolve the backing on-site `AppListing` (1:1 with
-      // the AppBlock — `AppListing.appBlockId`) for each row so the UI reads the TRUE
-      // live/removed listing state. A publish request stays `approved` after an owner
-      // unpublish, so the request status alone can't tell live from owner-hidden. One
-      // batched findMany (NOT per-row) keyed by appBlockId.
-      // Additive projection (advisory listing-completeness warning on
-      // /apps/my-submissions): the asset ids + key text fields + a screenshot
-      // COUNT (via `_count`, not the rows) feed the pure `computeListingProblems`
-      // helper below. Purely additive — the owner-controls fields are unchanged.
-      const listingByBlockId = new Map<
-        string,
-        {
-          id: string;
-          status: string;
-          iconId: number | null;
-          coverId: number | null;
-          description: string | null;
-          tagline: string | null;
-          category: string | null;
-          screenshotCount: number;
-        }
-      >();
-      if (appBlockIds.length) {
-        const listings = await dbRead.appListing.findMany({
-          where: { appBlockId: { in: appBlockIds }, kind: 'onsite' },
-          select: {
-            id: true,
-            appBlockId: true,
-            status: true,
-            iconId: true,
-            coverId: true,
-            description: true,
-            tagline: true,
-            category: true,
-            // Filtered COUNT — only screenshots whose Image is still live. A row
-            // whose Image was deleted (imageId → null via onDelete: SetNull) has
-            // no displayable asset, so it must not inflate the count, else the
-            // `no-screenshots` warning is a false-negative. Matches the
-            // authoritative asset gate: `screenshots.filter(s => s.imageId != null)`
-            // in app-listing-assets.service.ts (buildAssetStatus).
-            _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
-          },
-        });
-        for (const l of listings) {
-          if (l.appBlockId)
-            listingByBlockId.set(l.appBlockId, {
-              id: l.id,
-              status: l.status,
-              iconId: l.iconId,
-              coverId: l.coverId,
-              description: l.description,
-              tagline: l.tagline,
-              category: l.category,
-              screenshotCount: l._count.screenshots,
-            });
-        }
+      for (const l of listings) {
+        if (l.appBlockId)
+          listingByBlockId.set(l.appBlockId, {
+            id: l.id,
+            status: l.status,
+            // A narrow test fake that ignores `select` yields `undefined`; the `where`
+            // clause above admits only on-site rows, so that is the honest fallback.
+            kind: l.kind ?? 'onsite',
+            iconId: l.iconId,
+            coverId: l.coverId,
+            description: l.description,
+            tagline: l.tagline,
+            category: l.category,
+            screenshotCount: l._count.screenshots,
+          });
       }
+    }
 
-      // For every REMOVED backing listing, its MOST-RECENT moderation-event action —
-      // so the UI distinguishes an owner-hidden listing (last event `owner-unpublish`
-      // → Republish-eligible) from a moderator takedown (last event `delist`/`purge` →
-      // Republish FORBIDDEN, shown as "removed by a moderator"). Batched `distinct` +
-      // `orderBy desc` (ONE query, latest per listing), only over removed listings —
-      // mirrors the off-site `listMySubmissions` approach.
-      const removedListingIds = [...listingByBlockId.values()]
-        .filter((l) => l.status === 'removed')
-        .map((l) => l.id);
-      const lastEvents = removedListingIds.length
-        ? await dbRead.appListingModerationEvent.findMany({
-            where: { appListingId: { in: removedListingIds } },
-            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-            distinct: ['appListingId'],
-            select: { appListingId: true, action: true },
-          })
-        : [];
-      const lastActionByListingId = new Map(
-        lastEvents
-          .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
-          .map((e) => [e.appListingId, e.action])
-      );
+    // For every REMOVED backing listing, its MOST-RECENT STATUS-CHANGING moderation-event
+    // action — so the UI distinguishes an owner-hidden listing (last event
+    // `owner-unpublish` → Republish-eligible) from a moderator takedown (last event
+    // `delist`/`purge` → Republish FORBIDDEN, shown as "removed by a moderator"). Batched
+    // `distinct` + `orderBy desc` (ONE query, latest per listing), only over removed
+    // listings — mirrors the off-site `listMySubmissions` approach.
+    //
+    // 🔴 FILTERED TO THE STATUS-CHANGING SET, FROM THE SHARED CONSTANT. An unfiltered read
+    // here answers a DIFFERENT question from the server gate (`republishOwnListing` and the
+    // author edit paths, which all route through `readLastModerationAction`), and the two
+    // disagree the moment a state-neutral event lands on top: a moderator's `message-owner`
+    // ("fix X and republish") is newest, the client maps "not owner-unpublish" to
+    // `mod-removed`, and /apps/mine tells the owner a moderator removed a listing the server
+    // would happily republish — killing the repair loop this feature exists for. `claim`,
+    // `report-resolve` and `report-dismiss` do the same. One spelling of the set.
+    const removedListingIds = [...listingByBlockId.values()]
+      .filter((l) => l.status === 'removed')
+      .map((l) => l.id);
+    const lastEvents = removedListingIds.length
+      ? await dbRead.appListingModerationEvent.findMany({
+          where: {
+            appListingId: { in: removedListingIds },
+            action: { in: [...LISTING_STATUS_CHANGING_MODERATION_ACTIONS] },
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          distinct: ['appListingId'],
+          select: { appListingId: true, action: true },
+        })
+      : [];
+    const lastActionByListingId = new Map(
+      lastEvents
+        .filter((e): e is { appListingId: string; action: string } => e.appListingId != null)
+        .map((e) => [e.appListingId, e.action])
+    );
 
-      type RowWithCount = (typeof rows)[number];
-      return rows.map((r: RowWithCount) => {
-        const counts = r.appBlock?._count;
-        const appBlockId = r.appBlock?.id;
-        const manifest = r.appBlock?.manifest;
-        const { appBlock: _drop, ...rest } = r;
-        // userSubscriptionCount keeps the historical meaning ("blanket +
-        // pinned subscriptions for this app"); modelInstallCount is the
-        // pinned-subscription subset, mirroring what the pre-migration
-        // model_block_installs row count meant.
-        const totalSubs = counts?.userSubscriptions ?? null;
-        const pinnedCount = appBlockId ? pinnedCounts[appBlockId] ?? 0 : null;
-        const listing = appBlockId ? listingByBlockId.get(appBlockId) : undefined;
-        return {
-          ...rest,
-          modelInstallCount: pinnedCount,
-          userSubscriptionCount: totalSubs,
-          // The backing on-site listing id (owner unpublish/republish/history target)
-          // + its TRUE lifecycle status, and — for a removed listing — the last mod
-          // action (owner-hidden vs mod-removed). Null when no backing listing exists
-          // (e.g. a pending first-version request, or a pre-W13 backfill gap).
-          appListingId: listing?.id ?? null,
-          listingStatus: listing?.status ?? null,
-          lastModerationAction: listing ? lastActionByListingId.get(listing.id) ?? null : null,
-          // Advisory listing-completeness problems (missing assets + empty key
-          // fields). Empty when there's no backing listing yet (a pending first
-          // version) — nothing to flag until a listing row exists.
-          problems: listing
-            ? computeListingProblems({
-                iconId: listing.iconId,
-                coverId: listing.coverId,
-                screenshotCount: listing.screenshotCount,
-                description: listing.description,
-                tagline: listing.tagline,
-                category: listing.category,
-              }).problems
-            : [],
-          // Whether the manifest declares a launchable page (drives the Open-live →
-          // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
-          // subset only.
-          hasPage: !!toPublicBlockManifest(manifest).hasPage,
-        };
-      });
-    }),
+    type RowWithCount = (typeof rows)[number];
+    return rows.map((r: RowWithCount) => {
+      const counts = r.appBlock?._count;
+      const appBlockId = r.appBlock?.id;
+      const manifest = r.appBlock?.manifest;
+      const { appBlock: _drop, ...rest } = r;
+      // userSubscriptionCount keeps the historical meaning ("blanket +
+      // pinned subscriptions for this app"); modelInstallCount is the
+      // pinned-subscription subset, mirroring what the pre-migration
+      // model_block_installs row count meant.
+      const totalSubs = counts?.userSubscriptions ?? null;
+      const pinnedCount = appBlockId ? pinnedCounts[appBlockId] ?? 0 : null;
+      const listing = appBlockId ? listingByBlockId.get(appBlockId) : undefined;
+      return {
+        ...rest,
+        modelInstallCount: pinnedCount,
+        userSubscriptionCount: totalSubs,
+        // The backing on-site listing id (owner unpublish/republish/history target)
+        // + its TRUE lifecycle status, and — for a removed listing — the last mod
+        // action (owner-hidden vs mod-removed). Null when no backing listing exists
+        // (e.g. a pending first-version request, or a pre-W13 backfill gap).
+        appListingId: listing?.id ?? null,
+        listingStatus: listing?.status ?? null,
+        lastModerationAction: listing ? lastActionByListingId.get(listing.id) ?? null : null,
+        // Advisory listing-completeness problems (missing assets + empty key
+        // fields). Empty when there's no backing listing yet (a pending first
+        // version) — nothing to flag until a listing row exists.
+        problems: listing
+          ? computeListingProblems({
+              kind: listing.kind as ListingProblemKind,
+              iconId: listing.iconId,
+              coverId: listing.coverId,
+              screenshotCount: listing.screenshotCount,
+              description: listing.description,
+              tagline: listing.tagline,
+              category: listing.category,
+            }).problems
+          : [],
+        // Whether the manifest declares a launchable page (drives the Open-live →
+        // /apps/run/<slug> vs standalone-origin vs model-slot branching). PUBLIC
+        // subset only.
+        hasPage: !!toPublicBlockManifest(manifest).hasPage,
+      };
+    });
+  }),
 
   /**
    * W5 v0 — reflection surface for /apps/installed. One row per app the
@@ -2174,16 +2398,12 @@ export const blocksRouter = router({
   // to ctx.user.id. moderator→protected + the appBlocks flag below. The
   // /apps/installed page already gates per-user on features.appBlocks, so the
   // old moderator gate just broke this tab for non-mods on flag-public surfaces.
-  listMyScopeGrants: protectedProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
-      if (!ctx.user) return [];
-      const { listMyScopeGrants } = await import(
-        '~/server/services/blocks/user-app-surface.service'
-      );
-      return listMyScopeGrants(ctx.user.id);
-    }),
+  listMyScopeGrants: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
+    if (!ctx.user) return [];
+    const { listMyScopeGrants } = await import('~/server/services/blocks/user-app-surface.service');
+    return listMyScopeGrants(ctx.user.id);
+  }),
 
   /**
    * W5 v0 — chronological feed of `block_buzz_attribution` rows where the
@@ -2302,9 +2522,9 @@ export const blocksRouter = router({
       // Ceiling = manifest.scopes ∩ approvedScopes. The user may only consent
       // to scopes inside that ceiling; anything else is dropped.
       const manifestScopes = Array.isArray((block.manifest as { scopes?: unknown }).scopes)
-        ? ((block.manifest as { scopes: unknown[] }).scopes.filter(
+        ? (block.manifest as { scopes: unknown[] }).scopes.filter(
             (s): s is string => typeof s === 'string'
-          ))
+          )
         : [];
       const approved = new Set(block.approvedScopes ?? []);
       const ceiling = new Set(manifestScopes.filter((s) => approved.has(s)));
@@ -2365,12 +2585,10 @@ export const blocksRouter = router({
    */
   // GA-relax (gotcha #66): returns only the caller's own subscriptions
   // (listUserSubscriptions(ctx.user.id)). moderator→protected + flag below.
-  listMySubscriptions: protectedProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
-      return BlockRegistry.listUserSubscriptions(ctx.user!.id);
-    }),
+  listMySubscriptions: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
+    return BlockRegistry.listUserSubscriptions(ctx.user!.id);
+  }),
 
   /**
    * Lightweight booleans that drive the conditional links in the apps
@@ -2388,41 +2606,56 @@ export const blocksRouter = router({
    * `ctx.user.id`; returns the all-false shape when the flag is dark so
    * the sub-nav degrades to just the always-on tabs.
    */
-  getNavSummary: protectedProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      const allFalse = {
-        hasInstalls: false,
-        hasSubmissions: false,
-        hasApprovedApps: false,
-        isReviewer: false,
-      };
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return allFalse;
-      const user = ctx.user;
-      if (!user) return allFalse;
+  getNavSummary: protectedProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    const allFalse = {
+      hasInstalls: false,
+      hasSubmissions: false,
+      hasApprovedApps: false,
+      isReviewer: false,
+      hasEditableApps: false,
+      hasPendingInvites: false,
+    };
+    if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return allFalse;
+    const user = ctx.user;
+    if (!user) return allFalse;
 
-      const [install, submission, approvedApp] = await Promise.all([
-        dbRead.blockUserSubscription.findFirst({
-          where: { userId: user.id },
-          select: { id: true },
-        }),
-        dbRead.appBlockPublishRequest.findFirst({
-          where: { submittedByUserId: user.id },
-          select: { id: true },
-        }),
-        dbRead.appBlock.findFirst({
-          where: { app: { userId: user.id }, status: 'approved' },
-          select: { id: true },
-        }),
-      ]);
+    // 🔴 The two COLLABORATOR-AWARE flags are resolved by `resolveAppsNavAccess`, NOT
+    // open-coded here. Writing the seat probes inline put a third copy of the
+    // `status: 'accepted'` consent filter in the codebase and failed
+    // `app-access.call-site-ledger.test.ts` on the growth — one home, one filter.
+    const { resolveAppsNavAccess } = await import('~/server/services/blocks/app-access.service');
+    const [install, submission, approvedApp, navAccess] = await Promise.all([
+      dbRead.blockUserSubscription.findFirst({
+        where: { userId: user.id },
+        select: { id: true },
+      }),
+      dbRead.appBlockPublishRequest.findFirst({
+        where: { submittedByUserId: user.id },
+        select: { id: true },
+      }),
+      dbRead.appBlock.findFirst({
+        where: { app: { userId: user.id }, status: 'approved' },
+        select: { id: true },
+      }),
+      resolveAppsNavAccess(user.id),
+    ]);
 
-      return {
-        hasInstalls: install !== null,
-        hasSubmissions: submission !== null,
-        hasApprovedApps: approvedApp !== null,
-        isReviewer: isAppReviewer(user),
-      };
-    }),
+    return {
+      hasInstalls: install !== null,
+      hasSubmissions: submission !== null,
+      hasApprovedApps: approvedApp !== null,
+      isReviewer: isAppReviewer(user),
+      /**
+       * 🔴 The seat disjunct inside `hasEditableApps` is the load-bearing half, and is
+       * why this cannot reuse `hasSubmissions`: a collaborator has submitted nothing, so
+       * every pre-existing flag on this summary is `false` for them and there would be no
+       * nav entry to any app they can actually edit. `hasPendingInvites` is
+       * owner-independent for the same reason.
+       */
+      hasEditableApps: navAccess.hasEditableApps,
+      hasPendingInvites: navAccess.hasPendingInvites,
+    };
+  }),
 
   /**
    * Marketplace listing — approved app blocks, optionally filtered by slot
@@ -2597,117 +2830,6 @@ export const blocksRouter = router({
       return { items };
     }),
 
-  // -------------------------------------------------------------------------
-  // F-E marketplace REVIEWS (5-star) — all DARK behind enforceAppBlocksFlag.
-  // -------------------------------------------------------------------------
-
-  /**
-   * Create-or-update the viewer's review for an app block (5-star).
-   *
-   * GATING / ANTI-ABUSE (all enforced, see appBlockReview.service):
-   *   - enforceAppBlocksFlag (dark today: mutation throws UNAUTHORIZED when off).
-   *   - guardedProcedure: authenticated, email-verified, NOT muted.
-   *   - rating ∈ [1,5]; NO self-review (owner rejected); MUST have an enabled
-   *     install; ONE per (user, app) via the DB unique (upsert, not a 2nd row).
-   *
-   * REWARD (money-touching): a blue-buzz reward fires ONCE per (user, app), only
-   * on the CREATE branch (isFirstReview), AFTER the insert succeeds. It is
-   * FAIL-SOFT — a reward/ClickHouse outage must never 500 the review. We wrap
-   * it in try/catch as defense-in-depth on top of createBuzzEvent's own
-   * fail-soft inline path.
-   */
-  upsertReview: guardedProcedure
-    .use(enforceAppBlocksFlag)
-    .use(
-      rateLimit({
-        limit: 30,
-        period: 60,
-        errorMessage: 'Too many review submissions — slow down.',
-      })
-    )
-    .input(upsertAppBlockReviewSchema)
-    .mutation(async ({ ctx, input }) => {
-      const { review, isFirstReview } = await upsertAppBlockReview({
-        userId: ctx.user.id,
-        appBlockId: input.appBlockId,
-        rating: input.rating,
-        recommended: input.recommended,
-        details: input.details ?? null,
-      });
-
-      // Blue-buzz reward — first review only, fail-soft. The reward must never
-      // fail the review write (it's an audit/analytics + non-cashable grant).
-      if (isFirstReview) {
-        try {
-          await appBlockReviewReward.apply(
-            { appBlockId: input.appBlockId, userId: ctx.user.id, isFirstReview: true },
-            { ip: ctx.ip }
-          );
-        } catch (error) {
-          logToAxiom(
-            {
-              name: 'app-block-review-reward',
-              type: 'error',
-              message: 'Failed to apply appBlockReview reward (non-fatal)',
-              appBlockId: input.appBlockId,
-              userId: ctx.user.id,
-              error: (error as Error)?.message,
-            },
-            'app-blocks'
-          ).catch(() => undefined);
-        }
-      }
-
-      return { review, isFirstReview };
-    }),
-
-  /**
-   * Keyset-paginated list of an app's reviews (newest first), excluding
-   * mod-excluded rows. Public/anon-CAPABLE but DARK behind the flag (returns an
-   * empty page when the flag is off, same posture as listAvailable).
-   */
-  listReviews: publicProcedure
-    .use(enforceAppBlocksFlag)
-    .use(
-      rateLimit({
-        limit: 60,
-        period: 60,
-        errorMessage: 'Too many review requests — slow down.',
-      })
-    )
-    .input(listAppBlockReviewsSchema)
-    .query(async ({ ctx, input }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
-        return { items: [], nextCursor: undefined };
-      }
-      return listAppBlockReviews(input);
-    }),
-
-  /**
-   * The viewer's own review for an app block (or null) — backs the
-   * "you rated this N★" state on the detail page. protectedProcedure (per-user
-   * data), DARK behind the flag.
-   */
-  getMyReview: protectedProcedure
-    .use(enforceAppBlocksFlag)
-    .input(getAppDetailSchema)
-    .query(async ({ ctx, input }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return null;
-      return getMyAppBlockReview(input.appBlockId, ctx.user.id);
-    }),
-
-  /**
-   * MOD-ONLY: flip `exclude` on a review so it drops out of the rating aggregate
-   * + the Bayesian sort. moderatorProcedure + the flag gate. Mirrors
-   * toggleExcludeResourceReview.
-   */
-  setReviewExcluded: moderatorProcedure
-    .use(enforceAppBlocksFlag)
-    .input(setAppReviewExcludedSchema)
-    .mutation(async ({ input }) => {
-      return setAppReviewExcluded(input);
-    }),
-
   /**
    * MOD-ONLY: read the current marketplace metadata (category/featured/order)
    * for one app_block — seeds the review-page curation form (F-E E4).
@@ -2751,6 +2873,61 @@ export const blocksRouter = router({
         throw throwAuthorizationError('Apps curation is restricted to the Civitai team');
       }
       return BlockRegistry.setMarketplaceMeta(input);
+    }),
+
+  /**
+   * MOD-ONLY read of one app's generation-cap configuration — its SPEND tier,
+   * any per-app override, and the RESOLVED ceilings the submit path enforces.
+   * Seeds the moderator form and lets an operator confirm the effective number
+   * after a write (including when a deploy-time BLOCK_APP_SPEND_* clamp binds
+   * below what they set).
+   *
+   * 🔴 MOD-ONLY ON PURPOSE. The exact ceiling is withheld from apps themselves
+   * (the submit rejection above is deliberately number-free) so a hostile app
+   * cannot probe where its limit sits and tune a Sybil ring just under it.
+   */
+  getAppSpendCapConfig: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getAppSpendCapConfigSchema)
+    .query(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('App cap configuration is restricted to the Civitai team');
+      }
+      const config = await BlockRegistry.getAppSpendCapConfig(input.appBlockId);
+      if (!config) throw throwNotFoundError('App block not found');
+      return config;
+    }),
+
+  /**
+   * MOD-ONLY write of the per-app generation SPEND TIER and the cap OVERRIDE on
+   * top of it.
+   *
+   * 🔴 SPEND IS A SEPARATE AXIS FROM `trustTier`. This procedure never touches
+   * `trustTier`, and the tier-setting mod surfaces never touch these fields.
+   * `trustTier` decides iframe-sandbox / renderMode privileges (browser
+   * isolation); `spendTier` decides money. Granting one must not grant the
+   * other — an earlier revision derived the ceilings from `trustTier`, which
+   * would have silently handed a 5x money ceiling to every app a moderator had
+   * tiered `internal` for RENDERING.
+   *
+   * GATING / SECURITY (mirrors setMarketplaceMeta):
+   *   - `moderatorProcedure` + a re-asserted `ctx.user?.isModerator` belt. There
+   *     is intentionally NO publisher path: an app must never be able to raise
+   *     its own abuse ceiling, which is also why none of these fields exist in
+   *     the manifest or in any developer-reachable input.
+   *   - `enforceAppBlocksFlag` keeps it behind the dark mod segment.
+   *   - Bounds/normalisation live in the schema AND are re-applied in the
+   *     service with the reader's own rules, so a stored value can never mean
+   *     something different from what the reserve path will enforce.
+   */
+  setAppSpendCapConfig: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(setAppSpendCapConfigSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('App cap configuration is restricted to the Civitai team');
+      }
+      return BlockRegistry.setAppSpendCapConfig(input);
     }),
 
   /**
@@ -2856,11 +3033,14 @@ export const blocksRouter = router({
       if (block.status !== 'approved') {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
       }
-      // PAGE-ONLY LAUNCH GATE: a subscription only ever attaches a MODEL-slot
-      // app (page apps are stateless — Decision 2 — and never subscribed), so
-      // for the public (non-mod) audience this is always a non-launch app and is
-      // rejected. Moderators are grandfathered. Resolves launch-eligibility from
-      // the app's manifest (declares a page) since the slot isn't an input here.
+      // PAGE-ONLY LAUNCH GATE: resolves launch-eligibility from the app's
+      // manifest (declares a page) since the slot isn't an input here.
+      // Moderators are grandfathered; a non-mod is rejected for a MODEL-slot
+      // app. It does NOT reject a non-mod for a page app — see the 🔴 note on
+      // assertLaunchAppForCaller, and note that nothing below applies a slot
+      // check either, so a page app CAN take a subscription row today. What
+      // keeps non-mods off this path is `enforceAppBlocksFlag` (mod-only), not
+      // this call.
       assertLaunchAppForCaller(ctx, block.manifest);
       // Manifest-driven settings validation. The 4KB cap from the router-
       // level settingsSchema has already fired; this pass enforces the
@@ -2915,6 +3095,33 @@ export const blocksRouter = router({
    * Ownership: we fetch with the user's orchestrator token (`getOrchestratorToken`),
    * so the orchestrator returns 404/403 for workflows the user doesn't own.
    * That's the gate — we don't need a second client-side ownership check.
+   *
+   * OPTIONALLY A LONG POLL. With `waitSeconds`, the orchestrator holds the read
+   * open until the workflow reaches a terminal status instead of answering with
+   * whatever it is right now (its `?wait=` parameter; see
+   * `resolveBlockPollWaitSeconds` for the bound and why the DEFAULT is no hold).
+   * Omitted → byte-identical to the pre-existing request.
+   *
+   * 🔴 A 202 IS A NORMAL OUTCOME, NOT AN ERROR. When the hold elapses first the
+   * orchestrator answers 202 with the current, still-running workflow — which
+   * the generated client surfaces as an ordinary `data` result, so it flows
+   * through the exact same mapping below and reaches the block as a
+   * non-terminal snapshot. The caller re-arms. Nothing here needs to branch on
+   * the status code, and adding a branch that treated 202 as a failure would
+   * turn the normal timeout into a broken generation.
+   *
+   * 🔴 WHAT THIS DOES TO SCAN COST — the direction is FAVOURABLE, and it is
+   * worth stating because the moderation wrapper below runs on EVERY poll.
+   * `screenGeneratedText` memoizes a decided CONTENT verdict for 5 minutes but
+   * deliberately does NOT memoize an operational fault (scanner error, timeout,
+   * label drift, per-label error), so during such a fault the same text is
+   * re-scanned once per poll. A long poll REDUCES the poll rate — ~1 per 15s
+   * instead of ~1 per 2s — so it shrinks that blast radius by the same factor
+   * rather than enlarging it. The trade it makes is the other way round: a held
+   * request occupies an in-flight request slot for its whole duration, so
+   * concurrent in-flight polls rise even as total polls fall. That is why the
+   * hold is opt-in and capped, and why the SDK only requests it from a
+   * sequential, non-overlapping loop.
    */
   pollWorkflow: publicProcedure
     // No `enforceAppBlocksFlag` middleware here: block-token procs are
@@ -2924,6 +3131,14 @@ export const blocksRouter = router({
       z.object({
         blockToken: z.string().min(1),
         workflowId: z.string().min(1).max(64),
+        /**
+         * Orchestrator-side hold, in SECONDS. Untrusted (it comes from a block
+         * via the host) — bounded here by the wire schema AND clamped again by
+         * `resolveBlockPollWaitSeconds`, which owns the real ceiling. The zod
+         * `.max()` is deliberately the LOOSER of the two: it rejects nonsense,
+         * the resolver decides policy, and the policy lives in one place.
+         */
+        waitSeconds: z.number().int().min(0).max(60).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -2943,8 +3158,53 @@ export const blocksRouter = router({
       await assertAppBlocksEnabledForTokenUser(userId);
       await assertViewerIsAppDeveloper(userId);
       const token = await getOrchestratorToken(userId, ctx);
-      const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
-      const snapshot = snapshotFromWorkflow(workflow);
+      const waitSeconds = resolveBlockPollWaitSeconds(input.waitSeconds);
+      const workflow = await getWorkflow({
+        token,
+        path: { workflowId: input.workflowId },
+        // `undefined` when there is no hold, so the request is byte-identical
+        // to the pre-long-poll one rather than carrying a `?wait=0`.
+        ...(waitSeconds !== undefined ? { query: { wait: waitSeconds } } : {}),
+      });
+      // 🔴 THE OUTPUT-MODERATION BOUNDARY. `snapshotFromWorkflow` cannot emit
+      // generated text: it publishes `imageUrls` off `extractOutput`, which a
+      // text-posture entry may not declare (`TextOutputSurface.extractOutput?:
+      // never`, registry clause 8-ii, and the posture gate on the extractor call
+      // itself). So this wrapper is the only producer of `textOutputs`, and it
+      // scans before it produces.
+      //
+      // 🔴 IT IS NOT THE ONLY BLOCK-REACHABLE READ OF A WORKFLOW, and an earlier
+      // revision of this comment said "the poll is the surface that matters",
+      // which is an overclaim a reviewer would stop checking at. THREE other
+      // procedures reach `projectAppWorkflow` unwrapped:
+      //   - `queryAppWorkflows` — returns up to 50 projections per call.
+      //   - `cancelAppWorkflow` — returns one.
+      //   - `publishGenerationOutputs` — the SHARPEST of the three, and the one
+      //     an enumeration is most likely to miss because it returns no
+      //     projection to the block at all: it reads `projectAppWorkflow(...)
+      //     .images`, then FETCHES each selected `url` server-side and uploads
+      //     it into a public civitai `Image` row. A smuggled url would not just
+      //     be displayed, it would be ingested.
+      // What makes all three safe is stated at each of them (`AppWorkflow`
+      // carries no text field and its `images` are posture-gated, so a text step
+      // contributes nothing — not even a url), not this sentence.
+      const snapshot = await attachModeratedStepTextOutputs(
+        snapshotFromWorkflow(workflow),
+        workflow,
+        {
+          userId,
+          // 🔴 The token's server-minted maturity ceiling — same source the
+          // submit-phase prompt audit uses. Never a request-body field.
+          isGreen: resolveBlockMaturity(claims).isGreen,
+          appId: claims.appId,
+          // 🔴 `claims.appBlockId` (`AppBlock.id`, `apb_<ulid>`), NOT
+          // `claims.blockId` — which is `AppBlock.blockId`, the publish request's
+          // SLUG, and joins to nothing. The value is telemetry-only (no column, no
+          // FK), so the wrong claim fails silently. See the field's doc on
+          // `StepOutputModerationRequest`.
+          appBlockId: claims.appBlockId,
+        }
+      );
       // G6 — mirror an observed TERMINAL status into the durable read-model.
       // The orchestrator completion callback (`workflow-completed.ts`) is not
       // wired to fire, so `block_workflows` rows otherwise stay `pending`
@@ -3076,12 +3336,38 @@ export const blocksRouter = router({
       const token = await getOrchestratorToken(userId, ctx);
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
-      const snapshot = snapshotFromWorkflow(workflow);
+      // Same output-moderation boundary as `pollWorkflow`. A CANCEL still
+      // returns a snapshot of whatever the orchestrator had produced, so it is a
+      // real text-publishing surface and not a formality.
+      const snapshot = await attachModeratedStepTextOutputs(
+        snapshotFromWorkflow(workflow),
+        workflow,
+        {
+          userId,
+          isGreen: resolveBlockMaturity(claims).isGreen,
+          appId: claims.appId,
+          // Same as `pollWorkflow`: the `apb_<ulid>` PK, never the slug.
+          appBlockId: claims.appBlockId,
+        }
+      );
       // customComfy post-paid SETTLE (plan §5.3): a mid-run cancel BILLS the
-      // accrued cost (orchestrator-side, non-refundable), so settle refunds the
-      // reserved CEILING down to that accrued `cost.total` on BOTH reservation
-      // keys. Self-scoping + idempotent + best-effort — a txt2img / non-customComfy
-      // cancel has no settle record and no-ops.
+      // accrued cost, and that accrued portion is non-refundable — post-billing
+      // handlers recompute the authoritative cost from measured RUNTIME, so the
+      // orchestrator exempts them from the blob-delivery proration below
+      // (WorkflowStepManager.GetUndeliveredFractionAsync) to avoid double-refunding.
+      // Settle therefore refunds the reserved CEILING down to that accrued
+      // `cost.total` on BOTH reservation keys. Self-scoping + idempotent +
+      // best-effort — a txt2img / non-customComfy cancel has no settle record and
+      // no-ops here.
+      //
+      // 🔴 DO NOT QUOTE THE "non-refundable" CLAUSE AS A GENERAL CANCEL RULE.
+      // It scopes to customComfy post-paid only. A NON-customComfy cancel IS
+      // prorated by the orchestrator: the workflow is re-priced by the share of
+      // each job's output blobs that never landed and the difference is refunded
+      // (a job that delivered nothing refunds in full). civitai/cli read this
+      // comment as universal and shipped "cancel does not undo the charge" to
+      // users for months — wrong, and wrong in the direction that costs them.
+      // Retracted in civitai/cli#336; see civitai/cli#307 for the trace.
       await settleCustomComfySpend({
         workflowId: input.workflowId,
         actualCost: snapshot.cost?.total ?? 0,
@@ -3168,6 +3454,26 @@ export const blocksRouter = router({
         cursor: input.cursor ?? undefined,
         hideMatureContent: false,
       });
+      // 🔴 DELIBERATELY *NOT* WRAPPED IN `attachModeratedStepTextOutputs`, and
+      // here is exactly what makes that safe — stated as what it is, so nobody
+      // reads a structural guarantee where there is a narrower one.
+      //
+      //   1. `AppWorkflow` HAS NO TEXT FIELD. The projection's return type is
+      //      `{ workflowId, status, images, cost, createdAt }` — there is no
+      //      `textOutputs`/`textOutputWithheld` to populate, so wrapping would
+      //      have nowhere to put a verdict. A block that wants a text step's
+      //      output polls `pollWorkflow`, which is wrapped.
+      //   2. `images` IS POSTURE-GATED. `projectAppWorkflow` calls a registered
+      //      entry's `extractOutput` only when `postureProducesMedia(...)`, and a
+      //      text-posture entry cannot declare one at all
+      //      (`TextOutputSurface.extractOutput?: never`, registry clause 8-ii).
+      //      So a text step contributes NOTHING here — not even a url.
+      //
+      // 🔴 AND THE COST ARGUMENT, because it is the reason not to "just wrap it
+      // for symmetry": this returns up to 50 workflows per call, so wrapping
+      // would mean up to 50 inline xGuard scans on a rate-limited read path.
+      // If `AppWorkflow` ever GAINS a text field, wrapping stops being optional
+      // and the per-page fan-out has to be solved, not skipped.
       return {
         workflows: items.map(projectAppWorkflow),
         cursor: nextCursor ?? null,
@@ -3262,6 +3568,13 @@ export const blocksRouter = router({
       // Both guards passed — cancel, then re-read + project the terminal state.
       await cancelWorkflow({ workflowId: input.workflowId, token });
       const canceled = await getWorkflow({ token, path: { workflowId: input.workflowId } });
+      // 🔴 UNWRAPPED, for the SAME two reasons `queryAppWorkflows` is (see the
+      // note there): `AppWorkflow` carries no text field, and its `images` are
+      // posture-gated so a text step contributes nothing. The cost argument does
+      // NOT apply here — this is one workflow, not a page — so if `AppWorkflow`
+      // ever gains a text field, THIS is the cheap one to wrap first. (The
+      // sibling `blocks.cancelWorkflow`, which returns a full snapshot rather
+      // than this projection, IS wrapped.)
       return { workflow: projectAppWorkflow(canceled) };
     }),
 
@@ -3350,6 +3663,19 @@ export const blocksRouter = router({
       // The SAME ordered projection queryAppWorkflows hands the block — so the
       // block's `imageIndexes` line up exactly with what it saw. Only `available`
       // outputs with a non-null url are present (dead/pending blobs are dropped).
+      //
+      // 🔴 UNWRAPPED BY `attachModeratedStepTextOutputs`, and this is the
+      // HIGHEST-CONSEQUENCE of the three unwrapped `projectAppWorkflow`
+      // consumers (see the enumeration at `pollWorkflow`): the urls below are
+      // not merely returned, they are FETCHED and re-uploaded into public
+      // civitai `Image` rows. What makes it safe is the same posture gate the
+      // others rely on — `projectAppWorkflow` calls a registered entry's
+      // `extractOutput` only when `postureProducesMedia(...)`, and a
+      // text-posture entry may not declare one at all
+      // (`TextOutputSurface.extractOutput?: never`, registry clause 8-ii) — so a
+      // `'textOutput'` step contributes NO url here to be ingested. If that gate
+      // ever loosens, THIS is the call site that turns a smuggled string into
+      // published content.
       const outputs = projectAppWorkflow(workflow).images;
       if (outputs.length === 0) {
         throw new TRPCError({
@@ -3507,6 +3833,14 @@ export const blocksRouter = router({
       if (input.body.kind === 'customComfy') {
         return await estimateCustomComfyWorkflow({ claims, body: input.body });
       }
+      // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1). A registered
+      // step's cost now comes from a real `whatif` quote, with the declared
+      // billing mode as the FLOOR and the fallback — this used to read "not a
+      // whatIf", which was the defect, not the design. The textToImage path
+      // below stays byte-identical (we only ADD a branch).
+      if (input.body.kind === 'step') {
+        return await estimateStepWorkflow({ ctx, claims, body: input.body });
+      }
       // Context binding. A MODEL token pins `ctx.modelId`; the body must match
       // it. A PAGE token (ctx.entityType==='none') has NO model binding — it
       // lets the viewer pick a model, so the modelId match is SKIPPED and
@@ -3536,11 +3870,15 @@ export const blocksRouter = router({
             message: 'additionalResources are not supported for model-bound blocks',
           });
         }
-        // IMAGE bridge (Phase-2a): img2img via `sourceImage` is a PAGE-ONLY
+        // IMAGE bridge (Phase-2a): img2img via source images is a PAGE-ONLY
         // feature. Custom Generators is a page app; model-bound img2img is out
         // of scope and unvetted for 2a, so reject it fail-closed on the model
         // path (mirrors the additionalResources guard above).
-        if (input.body.sourceImage) {
+        //
+        // BOTH wire shapes are gated identically — the deprecated singular
+        // `sourceImage` AND the array `sourceImages`. Gating only one would
+        // leave a model-bound token a way in through the other.
+        if (input.body.sourceImage || input.body.sourceImages?.length) {
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: 'source image (img2img) is not supported for model-bound blocks',
@@ -3606,14 +3944,20 @@ export const blocksRouter = router({
       // the domain currency, derived from the SAME authoritative ceiling as the
       // output clamp. SFW → blue/green; mature → blue/yellow.
       const currencies = resolveBlockCurrencies(isGreen);
+      // #4159: the resolved `modelVersionId → ModelType` for the LoRA stack.
+      // Declared out here because `buildTextToImageInput` below needs it to emit
+      // graph-valid `resources` entries; on the MODEL path `additionalResources`
+      // is rejected outright, so an empty map is the correct value there.
+      let additionalResourceTypes: ReadonlyMap<number, string> = new Map();
       if (isPage) {
         // Resolve + validate the LoRA stack first (LoRA-only + family-match)
         // so a bad resource fails BEFORE the entitlement gate / any cost.
         // Family-match anchors on the RESOLVED checkpoint's baseModel.
-        const loraGates = await resolvePageLoraGates({
+        const { gates: loraGates, resourceTypes } = await resolvePageLoraGates({
           additionalResources: input.body.additionalResources,
           checkpointBaseModel: checkpoint.baseModel,
         });
+        additionalResourceTypes = resourceTypes;
         await assertViewerCanGeneratePageResources({
           gates: [buildGateVersion(resolved.gate), ...loraGates],
           viewer: { id: userId, isModerator: !!user.isModerator },
@@ -3629,11 +3973,16 @@ export const blocksRouter = router({
         ...resolved,
         checkpointVersionId: checkpoint.versionId,
         checkpointBaseModel: checkpoint.baseModel,
+        additionalResourceTypes,
       });
       // whatIf: no `metadata` on the body — matches the normal path
       // (`generateFromGraph` builds workflowMetadata only for real submits) and
       // `createBlockTextToImageStep` returns `workflowMetadata: undefined` here.
-      const { step } = await createBlockTextToImageStep({ input: generateInput, user, whatIf: true });
+      const { step, modelSubstitutions } = await createBlockTextToImageStep({
+        input: generateInput,
+        user,
+        whatIf: true,
+      });
       const workflow = await submitWorkflow({
         token,
         body: {
@@ -3644,7 +3993,10 @@ export const blocksRouter = router({
         },
         query: { whatif: true },
       });
-      return { snapshot: snapshotFromWorkflow(workflow) };
+      // #3520: the ESTIMATE reports the substitution too — a block that quotes a
+      // cost for model A and is silently priced for model B has the same
+      // detectability problem as the submit, one step earlier.
+      return { snapshot: snapshotFromWorkflow(workflow, { modelSubstitutions }) };
     }),
 
   /**
@@ -3657,7 +4009,28 @@ export const blocksRouter = router({
   submitWorkflow: publicProcedure
     // Block-JWT-authed (no session for dev:live) — flag evaluated against the
     // TOKEN subject below, not the `enforceAppBlocksFlag` middleware's ctx.user.
-    .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        body: blockWorkflowBodySchema,
+        // OPTIONAL client idempotency key (item 2, gen half). Threaded to
+        // `body.externalId` (namespaced `block:<appBlockId>:<key>`) so a
+        // lost-response / timeout RETRY that re-submits with the SAME key collapses
+        // to the existing workflow instead of a second orchestrator submit — the
+        // orchestrator dedupes on `(userId, externalId)` and returns the ORIGINAL
+        // transactions (no second Buzz charge). Absent → the server MINTS a
+        // per-request `bls<uuid>` externalId instead (audit 🔴-1), which dedupes
+        // `submitWorkflow`'s own 3× internal retry of THIS call but — being unique
+        // per request — does NOT dedupe a CLIENT-level retry; that still needs a
+        // client key. NOTE: the civitai-side Redis
+        // spend-CAP counters (per-user daily / per-app) still INCR on a replay —
+        // they are keyed on `(userId, day)`, not externalId — which over-counts the
+        // ABUSE cap (stricter direction), never a real double-debit.
+        // Charset-restricted (audit 🟢): a UUID-ish alphabet so no control chars /
+        // newlines / colons flow into the orchestrator `externalId`.
+        idempotencyKey: z.string().regex(BLOCK_IDEMPOTENCY_KEY_REGEX).optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
       const claims = await verifyBlockToken(input.blockToken);
       if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
@@ -3673,8 +4046,49 @@ export const blocksRouter = router({
       // below stays byte-identical (we only ADD a branch); after this early
       // return `input.body` narrows to the textToImage member for the rest.
       if (input.body.kind === 'customComfy') {
-        return await submitCustomComfyWorkflow({ ctx, claims, body: input.body });
+        return await submitCustomComfyWorkflow({
+          ctx,
+          claims,
+          body: input.body,
+          idempotencyKey: input.idempotencyKey,
+        });
       }
+      // App Blocks STEP-TYPE bridge (RFC #3515 migration step 1) — a SPEND
+      // path. Branch to the registry-backed handler, which runs the same
+      // developer/page gates and the SAME cap belt (per-user daily +
+      // `reserveAppSpend` per-app aggregate + dev-session) the other kinds use.
+      // The textToImage path below stays byte-identical (we only ADD a branch).
+      if (input.body.kind === 'step') {
+        return await submitStepWorkflow({
+          ctx,
+          claims,
+          body: input.body,
+          idempotencyKey: input.idempotencyKey,
+        });
+      }
+      // Namespaced idempotency externalId for the orchestrator dedupe (item 2, gen
+      // half). Per-app + per-user-scoped (the orchestrator additionally prefixes
+      // `userId-`), so a key can never collide across apps or users.
+      //
+      // 🔴 ALWAYS SET (audit 🔴-1). When the block sends no key we MINT one
+      // server-side instead of leaving `externalId` undefined. The double-charge
+      // this closes is server-side and unconditional: `submitWorkflow` retries the
+      // real submit up to 3× with no per-attempt timeout, and a 502/504 AFTER the
+      // orchestrator created + charged the workflow makes each retry create another
+      // one. Gating `externalId` on a client key closed nothing in practice — NO
+      // shipped client sends one. Minted ONCE here (not per attempt): the body built
+      // below is the same object `submitWorkflowWithRetry` reuses on every attempt,
+      // so all attempts of THIS request present the same id while a genuinely
+      // different submit gets a different UUID. The `bls` origin tag keeps the
+      // minted namespace disjoint from the client-key `blk` namespace.
+      //
+      // NOTE the civitai-side redis SET-NX claim below stays gated on the CLIENT key
+      // — a server-minted id is unique per request, so claiming on it could never
+      // dedupe anything (it would only add two redis round-trips and a stuck-sentinel
+      // failure mode). Keyed clients therefore behave EXACTLY as before.
+      const blockExternalId = input.idempotencyKey
+        ? composeBlockExternalId(claims.appBlockId, input.idempotencyKey)
+        : mintServerBlockExternalId();
       // `input.body` is now the textToImage member. Capture it so the narrowing
       // survives into the fire-and-forget spend-attribution CLOSURE below (TS
       // drops discriminated-union property narrowing at nested-function
@@ -3707,10 +4121,12 @@ export const blocksRouter = router({
             message: 'additionalResources are not supported for model-bound blocks',
           });
         }
-        // IMAGE bridge (Phase-2a): img2img via `sourceImage` is PAGE-ONLY.
+        // IMAGE bridge (Phase-2a): img2img via source images is PAGE-ONLY.
         // Reject it fail-closed on the model path (see estimateWorkflow for the
-        // same guard). Custom Generators is a page app.
-        if (input.body.sourceImage) {
+        // same guard). Custom Generators is a page app. BOTH wire shapes — the
+        // deprecated singular `sourceImage` and the array `sourceImages` — are
+        // gated identically; gating only one would leave a way in.
+        if (input.body.sourceImage || input.body.sourceImages?.length) {
           throw new TRPCError({
             code: 'FORBIDDEN',
             message: 'source image (img2img) is not supported for model-bound blocks',
@@ -3786,11 +4202,16 @@ export const blocksRouter = router({
       // rejected; absent → Auto (unchanged). See resolveBlockCurrenciesForAccount.
       const currencies = resolveBlockCurrenciesForAccount(isGreen, input.body.accountType);
 
+      // #4159 — see estimateWorkflow above. submitWorkflow builds the SAME graph
+      // input through the SAME builder, so it carried the identical defect and
+      // takes the identical fix; keeping the two in step is the point.
+      let additionalResourceTypes: ReadonlyMap<number, string> = new Map();
       if (isPage) {
-        const loraGates = await resolvePageLoraGates({
+        const { gates: loraGates, resourceTypes } = await resolvePageLoraGates({
           additionalResources: input.body.additionalResources,
           checkpointBaseModel: checkpoint.baseModel,
         });
+        additionalResourceTypes = resourceTypes;
         await assertViewerCanGeneratePageResources({
           gates: [buildGateVersion(resolved.gate), ...loraGates],
           viewer: { id: userId, isModerator: !!user.isModerator },
@@ -3819,6 +4240,7 @@ export const blocksRouter = router({
         ...resolved,
         checkpointVersionId: checkpoint.versionId,
         checkpointBaseModel: checkpoint.baseModel,
+        additionalResourceTypes,
       });
 
       // Cost preflight. Build a whatIf step for the cost estimate, then a
@@ -3828,11 +4250,36 @@ export const blocksRouter = router({
       // resources/params the real submit uses.
       // whatIf cost preflight: `workflowMetadata` is undefined here (graph omits
       // it on whatIf), and the whatif body never carries `metadata` anyway.
-      const { step: stepForCostCheck } = await createBlockTextToImageStep({
-        input: generateInput,
-        user,
-        whatIf: true,
-      });
+      //
+      // #3520 — the preflight's OWN substitutions. This validation is what
+      // produces the cost the budget check below is made against, so if the graph
+      // swapped the checkpoint here, the quote the block is judged on is priced
+      // for a model it did not ask for. On the SUCCESS path the real submit
+      // re-validates the same input and its record is what the snapshot carries
+      // (identical by construction, and tied to a real workflow id), so a second
+      // copy there would be redundant.
+      //
+      // THE RULE: every exit that quotes a cost WITHOUT submitting carries this
+      // record. There are FOUR below, all returning this same whatIf `cost` and
+      // no workflow id the caller could poll to learn the answer later:
+      //
+      //   1. insufficient per-call budget            (`cost > claims.buzzBudget`)
+      //   2. per-user daily / review-session Buzz cap (`total > buzzCap`)
+      //   3. per-app aggregate spend + velocity cap   (G8, `!appSpend.allowed`)
+      //   4. dev-tunnel per-session spend backstop    (F4, `!reserved.allowed`)
+      //
+      // 2–4 sit after the idempotency claim, but every one of them RELEASEs it
+      // rather than finalizing, so none of these snapshots is ever cached and
+      // replayed — each is produced fresh from this request's own preflight.
+      // Adding the field leaks nothing the caller does not already own: it is
+      // the caller's own requested id and the id that would have run, never any
+      // cap value (exit 3's message stays deliberately number-free).
+      const { step: stepForCostCheck, modelSubstitutions: preflightSubstitutions } =
+        await createBlockTextToImageStep({
+          input: generateInput,
+          user,
+          whatIf: true,
+        });
       const tags = buildWorkflowTags(claims, resolved.baseModel);
       const whatIfResult = await submitWorkflow({
         token,
@@ -3856,6 +4303,12 @@ export const blocksRouter = router({
             status: 'failed' as const,
             cost: { total: cost },
             error: `insufficient buzz budget: estimate ${cost} exceeds budget ${claims.buzzBudget}`,
+            // Additive + omitted when empty, exactly like every other snapshot
+            // site, so this reply is byte-identical whenever nothing was
+            // substituted.
+            ...(preflightSubstitutions?.length
+              ? { modelSubstitutions: preflightSubstitutions }
+              : {}),
           },
         };
       }
@@ -3877,25 +4330,83 @@ export const blocksRouter = router({
       // publishRequestId) cumulative ceiling (rolling ~25h window) instead of the
       // per-user daily cap (reserveBlockBuzzSpendForClaims picks the right one;
       // every refund site below keys off the returned `buzzCapKey`, unchanged).
-      const {
-        total,
-        key: buzzCapKey,
-        cap: buzzCap,
-      } = await reserveBlockBuzzSpendForClaims(claims, userId, cost);
+      //
+      // ── GEN IDEMPOTENCY CLAIM (audit 🔴-1). Taken BEFORE the cap reservation +
+      //    orchestrator submit, so two CONCURRENT same-key submits (a double-click /
+      //    SDK auto-retry) can't BOTH reserve + BOTH charge before the orchestrator's
+      //    own (userId, externalId) dedupe engages. Placing it before the reservation
+      //    ALSO stops a replay from double-INCRing the daily/per-app cap counters
+      //    (audit 🟡-2 — they key on (userId|app, day), not externalId). Absent key →
+      //    no claim → byte-identical to today. Fail-CLOSED on a redis error (matches
+      //    the fail-closed reservation it fronts). A resolved submit FINALIZEs the
+      //    cached snapshot; every non-committed exit (cap reject / throw) RELEASEs so
+      //    a genuine retry can re-run. The orchestrator externalId dedupe stays as a
+      //    SECOND defense layer for the cross-process / post-TTL case this can't cover.
+      let genClaimKey: string | null = null;
+      if (input.idempotencyKey) {
+        let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
+        try {
+          claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
+            userId,
+            claims.appBlockId,
+            input.idempotencyKey
+          );
+        } catch {
+          // Fail-CLOSED — a money path must not dedupe blind; surface a retryable
+          // error (mirrors the fail-closed cap reservation below).
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'generation idempotency unavailable; please retry',
+          });
+        }
+        if (claim.state === 'replay') {
+          // A prior attempt already resolved — replay its cached snapshot VERBATIM.
+          // No second reservation, no second orchestrator submit.
+          return claim.result;
+        }
+        if (claim.state === 'in_progress') {
+          // The first attempt is still in flight (or a lost/garbage record) — never
+          // race a live first attempt into a 2nd reservation + charge.
+          throw new TRPCError({
+            code: 'CONFLICT',
+            message: 'a generation with this idempotency key is already in progress',
+          });
+        }
+        genClaimKey = claim.key; // state === 'acquired' — we own the first attempt.
+      }
+
+      // The reservation THROWS fail-closed on a redis error; release the claim first
+      // (no money moved → a genuine retry must be allowed to re-run) then re-throw.
+      let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
+      try {
+        reservation = await reserveBlockBuzzSpendForClaims(claims, userId, cost);
+      } catch (e) {
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+        throw e;
+      }
+      const { total, key: buzzCapKey, cap: buzzCap } = reservation;
       if (total > buzzCap) {
         await refundBlockBuzzSpend(buzzCapKey, cost);
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
         return {
           snapshot: {
             workflowId: 'failed',
             status: 'failed' as const,
             cost: { total: cost },
-            error: claims.reviewRunForReal === true
-              ? `review run-for-real Buzz cap reached: ${total - Math.ceil(cost)} already ` +
-                `spent this review session, this generation costs ${cost}, ` +
-                `session cap is ${buzzCap}`
-              : `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
-                `across your installed apps, this generation costs ${cost}, ` +
-                `daily cap is ${buzzCap}`,
+            error:
+              claims.reviewRunForReal === true
+                ? `review run-for-real Buzz cap reached: ${total - Math.ceil(cost)} already ` +
+                  `spent this review session, this generation costs ${cost}, ` +
+                  `session cap is ${buzzCap}`
+                : `daily Buzz cap reached: ${total - Math.ceil(cost)} already spent today ` +
+                  `across your installed apps, this generation costs ${cost}, ` +
+                  `daily cap is ${buzzCap}`,
+            // #3520 exit 2 — quotes `cost` with no workflow. Additive + omitted
+            // when empty, so this reply is byte-identical whenever nothing was
+            // substituted.
+            ...(preflightSubstitutions?.length
+              ? { modelSubstitutions: preflightSubstitutions }
+              : {}),
           },
         };
       }
@@ -3931,6 +4442,9 @@ export const blocksRouter = router({
           // doesn't burn the viewer's own daily ceiling for a spend that never
           // happened.
           await refundBlockBuzzSpend(buzzCapKey, cost);
+          // No money moved → release the idempotency claim so a genuine retry can
+          // re-run (the app cap may clear; the "retry shortly" messages are transient).
+          if (genClaimKey) await releaseGenIdempotency(genClaimKey);
           return {
             snapshot: {
               workflowId: 'failed',
@@ -3943,7 +4457,13 @@ export const blocksRouter = router({
                   ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
                   : appSpend.reason === 'unavailable'
                   ? 'generation temporarily unavailable — please retry shortly'
-                  : "app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later",
+                  : 'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later',
+              // #3520 exit 3 — quotes `cost` with no workflow. Carries only the
+              // caller's own requested/applied version ids, so it does NOT
+              // weaken the deliberately number-free message above.
+              ...(preflightSubstitutions?.length
+                ? { modelSubstitutions: preflightSubstitutions }
+                : {}),
             },
           };
         }
@@ -3994,6 +4514,8 @@ export const blocksRouter = router({
               );
               await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
             }
+            // No money moved → release the idempotency claim so a genuine retry runs.
+            if (genClaimKey) await releaseGenIdempotency(genClaimKey);
             return {
               snapshot: {
                 workflowId: 'failed',
@@ -4003,6 +4525,12 @@ export const blocksRouter = router({
                   `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
                   `this dev session, this generation costs ${Math.ceil(cost)}, ` +
                   `session cap is ${devTunnel.spendCapBuzz}`,
+                // #3520 exit 4 — quotes `cost` with no workflow. This is the
+                // path an app AUTHOR iterating locally hits, i.e. exactly the
+                // audience that needs to see a substituted checkpoint.
+                ...(preflightSubstitutions?.length
+                  ? { modelSubstitutions: preflightSubstitutions }
+                  : {}),
               },
             };
           }
@@ -4047,7 +4575,7 @@ export const blocksRouter = router({
         // `createBlockTextToImageStep` returns it. Mirrors the normal form path
         // (`generateFromGraph` passes `metadata: workflowMetadata`). `removeEmpty`
         // already stripped fields the block context lacks (e.g. remixOfId).
-        const { step, workflowMetadata } = await createBlockTextToImageStep({
+        const { step, workflowMetadata, modelSubstitutions } = await createBlockTextToImageStep({
           input: generateInput,
           user,
           isGreen,
@@ -4062,9 +4590,18 @@ export const blocksRouter = router({
             // Authoritative maturity clamp on the REAL submit — the orchestrator
             // rejects mature output when this is false. Token-claim derived.
             ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+            // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s
+            // OWN internal 3× retry of THIS call — collapses to the existing
+            // workflow on the orchestrator (dedupe on (userId, externalId)) → no
+            // second Buzz charge. Always present (client-keyed or server-minted).
+            // Only set on the REAL submit — the whatIf preflight stays keyless (it
+            // never creates a workflow, and must never occupy a dedupe slot).
+            externalId: blockExternalId,
           },
         });
-        snapshot = snapshotFromWorkflow(submitted);
+        // #3520: fold in any checkpoint the graph silently swapped during the
+        // validation inside `createBlockTextToImageStep` above.
+        snapshot = snapshotFromWorkflow(submitted, { modelSubstitutions });
         realizedTransactions = submitted.transactions;
       } catch (e) {
         // No resolved submit → undo the reservation (net-equivalent to the old
@@ -4075,9 +4612,7 @@ export const blocksRouter = router({
         // failed submit doesn't permanently burn the app's daily ceiling.
         // Best-effort; present only for non-dev tokens.
         if (appSpendReserve) {
-          const { refundAppSpend } = await import(
-            '~/server/services/blocks/app-spend-cap.service'
-          );
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
           await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
         }
         // F4 — mirror the daily refund for the dev-session reservation so a failed
@@ -4088,8 +4623,22 @@ export const blocksRouter = router({
           );
           await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
         }
+        // No resolved submit → NO money moved and NO reservation stands; release the
+        // idempotency claim so a genuine retry with the same key can re-run (the
+        // orchestrator externalId dedupe still protects a retry that DID create a
+        // workflow server-side despite a lost response).
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
         throw e;
       }
+
+      // A resolved submit is money-COMMITTED (the reservation is kept regardless of
+      // snapshot status). Cache the terminal result under the idempotency key so a
+      // lost-response retry replays it WITHOUT re-reserving or re-submitting. Done
+      // immediately (before the best-effort attribution closures below) so even a
+      // later throw on this path leaves a correct cached success. Best-effort — a
+      // failed finalize just falls back to the orchestrator externalId dedupe.
+      const genResult = { snapshot: autoClaim ? { ...snapshot, autoClaim } : snapshot };
+      if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
 
       // Log the workflow submission to the per-user activity feed so
       // /apps/installed → Activity shows "this app ran a workflow on
@@ -4103,6 +4652,13 @@ export const blocksRouter = router({
       // workflow:submit is a synthetic endpoint string (this path is
       // tRPC, not REST) — the UI's Activity panel humanises it via the
       // 'ai:write:budgeted' scope to "Generated an image".
+      //
+      // 🔴 The endpoint is a TEMPLATE, never `workflow:submit:<workflowId>`.
+      // `endpoint` is the GROUP BY key of the `topEndpoints` rollup
+      // (app-analytics.service), so a per-submit id makes the column unbounded
+      // and every bucket count 1 — the rollup becomes pure noise. Same
+      // cardinality reasoning as `boundAppBlockIdLabel`. The workflow id is the
+      // per-ROW payload and goes in `detail.workflowId` instead.
       void (async () => {
         const { recordScopeInvocation } = await import(
           '~/server/services/blocks/user-app-surface.service'
@@ -4112,17 +4668,20 @@ export const blocksRouter = router({
           appBlockId: claims.appBlockId,
           blockInstanceId: claims.blockInstanceId,
           scope: 'ai:write:budgeted',
-          endpoint: `workflow:submit:${snapshot.workflowId || 'pending'}`,
+          endpoint: 'workflow:submit',
           // Snapshot status is 'pending' / 'failed' / etc — map to an HTTP-
           // ish code so the existing UI badge colors are coherent.
           statusCode: snapshot.status === 'failed' ? 500 : 200,
           // W13 richer detail — the buzz SPEND (negative) + terminal outcome so
           // the activity row reads "Generated an image (spent N Buzz)". `cost`
-          // is the reserved/charged budget for this submit.
+          // is the reserved/charged budget for this submit. `workflowId` is the
+          // per-row id the Activity panel's Detail column renders (it used to be
+          // parsed back out of the endpoint string).
           detail: {
             action: 'workflow.submit',
             amount: typeof cost === 'number' ? -Math.abs(cost) : undefined,
             outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+            ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
           },
           // Phase 2 — App Dev Tunnel: a PRE-APPROVAL dev-tunnel spend carries a
           // synthetic, non-FK appBlockId (`ephemeral-<slug>`). This is the durable
@@ -4269,9 +4828,7 @@ export const blocksRouter = router({
           const hasPaidDebit = distinctPaidTypes.size === 1 && netPaidAmount > 0;
           // `isPayoutEligibleBuzz` already narrowed accountType to green|yellow,
           // both valid `BuzzSpendType`s; size===1 ⇒ every paid entry shares it.
-          const paidType = hasPaidDebit
-            ? (paidEntries[0].accountType as BuzzSpendType)
-            : undefined;
+          const paidType = hasPaidDebit ? (paidEntries[0].accountType as BuzzSpendType) : undefined;
 
           // paidType is set iff hasPaidDebit; otherwise fall to the conservative
           // free floor (getBlockAllowedAccountTypes[0] === 'blue' in both branches).
@@ -4301,7 +4858,8 @@ export const blocksRouter = router({
         });
       }
 
-      return { snapshot: autoClaim ? { ...snapshot, autoClaim } : snapshot };
+      // Same object already cached under the idempotency key (see genResult above).
+      return genResult;
     }),
 
   /**
@@ -4401,16 +4959,14 @@ export const blocksRouter = router({
    * spendable types PLUS the creator payout pools the spendable-only
    * getMyBuzzBalance omits). MUTATION + `buzz:read:self` consent, self-bound.
    */
-  getMyBuzzAccounts: publicProcedure
-    .input(getMyBuzzAccountsInput)
-    .mutation(async ({ input }) => {
-      const { userId } = await authorizeBlockBuzzRead(input.blockToken);
-      const accounts = await getUserBuzzAccount({
-        accountId: userId, // SELF-BOUND — never client input.
-        accountTypes: [...blockBuzzAccountTypes],
-      });
-      return { accounts: accounts.map(({ accountType, balance }) => ({ accountType, balance })) };
-    }),
+  getMyBuzzAccounts: publicProcedure.input(getMyBuzzAccountsInput).mutation(async ({ input }) => {
+    const { userId } = await authorizeBlockBuzzRead(input.blockToken);
+    const accounts = await getUserBuzzAccount({
+      accountId: userId, // SELF-BOUND — never client input.
+      accountTypes: [...blockBuzzAccountTypes],
+    });
+    return { accounts: accounts.map(({ accountType, balance }) => ({ accountType, balance })) };
+  }),
 
   /**
    * HOST-MEDIATED per-modelVersion generation-compensation read for the
@@ -4762,6 +5318,31 @@ export const blocksRouter = router({
    * Auth is enforced by appDeveloperProcedure (the `appBlocksAuthor`
    * capability); no need to also assert ownership of the requested appBlockId
    * (the join filter does it).
+   *
+   * NO `.meta({ requiredScope })` — deliberate, and NOT an oversight left behind by
+   * the getMyAppAnalytics annotation below. No CLI command calls this proc (nor
+   * `getMyApps`), so it is reached only by the web panel, which is session-authed and
+   * therefore takes enforceTokenScope's Full early-return regardless. Annotate it the
+   * day something token-authed needs it — at which point AppBlocksSubmit is the
+   * consistent choice, for the reasons spelled out on getMyAppAnalytics.
+   *
+   * 🔴 DELIBERATELY **NOT** WIDENED FOR COLLABORATORS. This proc answers "what have
+   * *I* accrued", keyed on the snapshotted `BlockBuzzAttribution.appOwnerUserId`, and
+   * that is exactly the right question for it to keep answering:
+   *   - an editor calling it sees THEIR OWN portfolio, and nothing of the owner's —
+   *     no leak, no change;
+   *   - an owner who TRANSFERRED an app away still sees the rows they accrued before
+   *     the cut, which is required: those rows are still theirs to be paid for
+   *     (`app-ownership-transfer.service` deliberately does not rewrite the column).
+   * Widening it — or app-scoping it — would break that second property.
+   *
+   * The collaborator surface is the SEPARATE app-scoped `getAppEarnings` below. Note
+   * the one rough edge left alone on purpose: an editor who calls THIS proc with the
+   * shared `appBlockId` gets zeros, because none of those rows are attributed to them.
+   * Making that case throw would create the ownership oracle this proc deliberately
+   * does not have (see `RevenueUnavailableReason`'s note on why there is no `notOwned`
+   * value). The client routes editors to `getAppEarnings`, which answers the question
+   * they actually mean and returns an explicit `notPermitted` rather than a zero.
    */
   getMyRevenue: appDeveloperProcedure
     .use(enforceAppBlocksFlag)
@@ -4776,6 +5357,15 @@ export const blocksRouter = router({
       // Dark-flag fail-closed: while the appBlocks flag is off the middleware
       // marks the ctx → return the zeroed revenue shape WITHOUT running any
       // aggregate, so a flag-off moderator gets no live revenue data.
+      //
+      // `emptyRevenue()` carries `unavailable: 'notEntitled'`. It MUST, or the
+      // all-zero buckets are indistinguishable from a publisher who has simply
+      // earned nothing yet, and the dashboard renders fabricated zeros as
+      // earnings. This is reachable even though both revenue pages also guard on
+      // `features.appBlocks` client-side: that is a SEPARATE evaluation of the
+      // flag from this middleware's, and the page-level author gate is a
+      // DIFFERENT flag again (`appBlocksAuthor`) — so a caller can be entitled
+      // to render the page while this proc short-circuits.
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
         return emptyRevenue();
       }
@@ -4805,6 +5395,77 @@ export const blocksRouter = router({
    * non-owned id, so an author can never read another author's metrics.
    */
   getMyAppAnalytics: appDeveloperProcedure
+    // 🔴 AppBlocksSubmit, NOT DevTunnel and NOT UserRead. With no `.meta` this proc
+    // implicitly required `TokenScope.Full` (enforceTokenScope defaults to it), so a
+    // personal API key worked but the `civitai login` OAuth token — the CLI's DEFAULT
+    // auth path — 403'd, which made `civitai app metrics` unusable for most users.
+    // Why this bit specifically:
+    //   - It is the same bit `GET /api/v1/blocks/submissions` already requires, and
+    //     `civitai app metrics <slug>` calls BOTH (submissions to resolve slug →
+    //     appBlockId, then this proc). Any other choice would leave one hop of one
+    //     command needing a scope the other does not.
+    //   - It keeps that route's established rule: the same credential that could
+    //     submit can read its own app data, and nothing weaker.
+    //   - NOT UserRead: UserRead is inside `Full`, i.e. what every third-party
+    //     "log in with Civitai" client asks for. This proc exposes install counts,
+    //     Buzz spend, endpoint names and active-user counts, so gating it on UserRead
+    //     would hand a developer's app economics to any such client. AppBlocksSubmit
+    //     is opt-in and deliberately EXCLUDED from `Full`.
+    //   - NOT AppBlocksDevTunnel: that bit means "open an on-site dev tunnel" (its
+    //     consent label is literally "Open on-site dev tunnels"). Reusing it would
+    //     force analytics readers to grant tunnel-opening, and vice versa.
+    // A Full personal API key still passes — enforceTokenScope early-returns on
+    // `ctx.tokenScope === TokenScope.Full` — and createContext defaults a session (the
+    // web /apps/revenue panel) to Full.
+    //
+    // 🔴 That early return is EXACT EQUALITY, so the no-regression claim is CONDITIONAL,
+    // not universal: a mask that is a strict SUPERSET of Full but lacks bit 25 (e.g.
+    // `Full|AppBlocksDevTunnel` = 100663295) passed before and is FORBIDDEN now.
+    //
+    // The invariant that makes this unreachable is: NO issuable credential holds a
+    // superset of Full that omits bit 25. Be precise about what enforces it, because
+    // it is NOT one uniform cap:
+    //   - Personal API keys: `api-key.schema.ts` caps `tokenScope` at `.max(Full)`.
+    //   - OAuth clients via tRPC: `oauth-client.schema.ts` caps `allowedScopes` at
+    //     `.max(Full)` on create AND update. Both of these are pinned by a test in
+    //     `blocks.router.getMyAppAnalytics.test.ts`.
+    //   - OAuth ACCESS TOKENS are NOT bounded by Full at all — the hub decodes the
+    //     requested scope against `ALL_SCOPES` on purpose (clamping to Full would drop
+    //     a legitimately-requested opt-in bit), so a token's ceiling is its client's
+    //     `allowedScopes | UserRead`, not Full.
+    //   - The one client exceeding Full (civitai-cli, now 100777985) was written by RAW SQL
+    //     MIGRATIONS, which no zod schema governs.
+    //   - `appblk-*` clients get `allowedScopes` written directly by
+    //     publish-request.service (also bypassing zod). Safe by construction, not by cap:
+    //     `deriveOauthBitmaskFromBlockScopes` maps only bits below 25, and those clients
+    //     carry `grants: []` so they cannot mint an account bearer token at all.
+    // 100777985 is not a superset of Full: it carries bits 0, 14, 15, 16, 25 and 26 —
+    // UserRead, AIServicesRead, AIServicesWrite, BuzzRead, AppBlocksSubmit,
+    // AppBlocksDevTunnel — and NONE of 1..13 or 17..24, so it does not contain Full
+    // (33554431) and the flip stays unreachable for it. (Bits 14/15/16 were added by
+    // `20260806140000_widen_civitai_cli_oauth_client_ai_services_scopes` so the
+    // `civitai login` token can run `civitai generate` — issue #3681.)
+    // 🔴 That last part NO LONGER rests on inspection alone. The migration surface is
+    // now pinned by `src/server/services/oauth/__tests__/oauth-client-scope-grants.test.ts`,
+    // which enumerates every migration whose LIVE SQL writes `"OauthClient"."allowedScopes"`
+    // off the tree, reconciles the set against a declared table, pins each grant's whole
+    // statement verbatim, folds the grants per client — SEEDED FROM THE COLUMN DEFAULT
+    // (Full), not from 0 — and fails if any client would hold a STRICT superset of Full.
+    // The seed is what makes the claim real: the likely way this gate flips is a migration
+    // that ORs one opt-in bit onto a row created with the column default, landing on
+    // `Full | <bit>`; folding from 0 read that same migration as granting just `<bit>` and
+    // passed clean. Verified by planting exactly that migration and watching the guard go
+    // red on `allowedScopes=100663295`.
+    // What that guard still cannot see is a grant written OUTSIDE a migration (a hand-run
+    // UPDATE against a database), and it cannot prove what any environment's row actually
+    // holds — these migrations are manual-apply.
+    //
+    // Scope provisioning: the civitai-cli client's allowedScopes migration sets bit 25
+    // and the login token requests it, so no NEW migration is needed here. Note the
+    // repo cannot prove prod state — those migrations are manual-apply and the device
+    // flow lives on the auth hub. If bit 25 were somehow absent in prod the failure
+    // mode is "this fix does not take effect", never "a working path breaks".
+    .meta({ requiredScope: TokenScope.AppBlocksSubmit })
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
@@ -4817,10 +5478,12 @@ export const blocksRouter = router({
       const from = input.from ? new Date(input.from) : undefined;
       const to = input.to ? new Date(input.to) : undefined;
       // Dark-flag fail-closed: while the appBlocks flag is off the middleware
-      // marks the ctx → return the zeroed analytics shape (with the resolved
-      // range, so the UI still has a window) WITHOUT running any aggregate.
+      // marks the ctx → return the zeroed shape WITHOUT running any aggregate.
+      // It MUST carry `unavailable` (and the fail-closed `notOwned`) or the
+      // all-zero counters are indistinguishable from a real app with no
+      // activity, and clients render fabricated zeros as a measurement.
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
-        return emptyAnalytics(resolveRange({ from, to }), false);
+        return emptyAnalytics(resolveRange({ from, to }), true, 'notEntitled');
       }
       const user = ctx.user as SessionUser;
       return getMyAppAnalytics({
@@ -4832,72 +5495,72 @@ export const blocksRouter = router({
     }),
 
   /**
-   * The current user's owned apps + lifetime revenue per app. Drives
-   * the per-app dropdown on /apps/revenue. OauthClient.userId is the
-   * single source of truth for app ownership in v1.
+   * The apps the caller can act on (OWNED + apps they hold an ACCEPTED collaborator
+   * seat on) + lifetime revenue per app. Drives the per-app dropdown on /apps/revenue.
+   *
+   * 🔴 THE LIFETIME GROUPBY IS THE PORTFOLIO-LEAK SITE, so read this before editing it.
+   * It used to be `where: { appOwnerUserId: user.id }` with NO app filter — a
+   * USER-WIDE query, bucketed by app in JS afterwards. That is safe only while the
+   * caller owns everything they can see. The moment an editor is in scope, the
+   * "obvious" widening (pass the OWNER's id, since the editor has no attribution rows
+   * of their own) returns the OWNER'S ENTIRE PORTFOLIO — every app they ever published,
+   * including ones this editor was never invited to.
+   *
+   * It is now served by `getMyAppsEarnings`, which resolves the permitted app-id SET
+   * first and filters `appBlockId IN thatSet`. Never reintroduce an
+   * `appOwnerUserId`-only filter on a collaborator-reachable read.
+   *
+   * `role` is surfaced so the client can distinguish an owned app from a seat (only an
+   * owner sees the manage-collaborators / transfer controls).
    */
-  getMyApps: appDeveloperProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      const user = ctx.user as SessionUser;
-      const apps = await dbRead.appBlock.findMany({
-        where: { app: { userId: user.id } },
-        select: {
-          id: true,
-          blockId: true,
-          appId: true,
-          status: true,
-          manifest: true,
-          app: { select: { name: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-      });
+  getMyApps: appDeveloperProcedure.use(enforceAppBlocksFlag).query(async ({ ctx }) => {
+    const user = ctx.user as SessionUser;
+    const { getMyAppsEarnings } = await import(
+      '~/server/services/blocks/app-collaborator-earnings.service'
+    );
+    const earnings = await getMyAppsEarnings({ userId: user.id });
+    if (earnings.length === 0) return [];
+    const roleByApp = new Map(earnings.map((e) => [e.appBlockId, e.role] as const));
+    const lifetimeMap = new Map(
+      earnings.map(
+        (e) => [e.appBlockId, { shareCents: e.lifetimeShareCents, count: e.lifetimeCount }] as const
+      )
+    );
 
-      // One groupBy across all of the user's apps so the request
-      // doesn't N+1 against the attribution table. Skip when there
-      // are no apps — pointless query.
-      const lifetimeByApp = apps.length
-        ? await dbRead.blockBuzzAttribution.groupBy({
-            by: ['appBlockId'],
-            where: {
-              appOwnerUserId: user.id,
-              status: { in: ['confirmed', 'paid_out'] },
-            },
-            _sum: { appOwnerShareCents: true },
-            _count: true,
-          })
-        : [];
-      type LifetimeRow = {
-        appBlockId: string;
-        _sum: { appOwnerShareCents: number | null };
-        _count: number;
-      };
-      const lifetimeMap = new Map<string, { shareCents: number; count: number }>(
-        (lifetimeByApp as LifetimeRow[]).map((r) => [
-          r.appBlockId,
-          { shareCents: r._sum.appOwnerShareCents ?? 0, count: r._count },
-        ])
-      );
+    const apps = await dbRead.appBlock.findMany({
+      // The permitted set, not `app: { userId }` — that would drop every seated app.
+      where: { id: { in: earnings.map((e) => e.appBlockId) } },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        status: true,
+        manifest: true,
+        app: { select: { name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
-      type AppRow = {
-        id: string;
-        blockId: string;
-        appId: string;
-        status: string;
-        manifest: unknown;
-        app: { name: string } | null;
-      };
-      return (apps as AppRow[]).map((a) => ({
-        id: a.id,
-        blockId: a.blockId,
-        appId: a.appId,
-        status: a.status,
-        appName: a.app?.name ?? null,
-        manifest: a.manifest as Record<string, unknown>,
-        lifetimeShareCents: lifetimeMap.get(a.id)?.shareCents ?? 0,
-        lifetimeCount: lifetimeMap.get(a.id)?.count ?? 0,
-      }));
-    }),
+    type AppRow = {
+      id: string;
+      blockId: string;
+      appId: string;
+      status: string;
+      manifest: unknown;
+      app: { name: string } | null;
+    };
+    return (apps as AppRow[]).map((a) => ({
+      id: a.id,
+      blockId: a.blockId,
+      appId: a.appId,
+      status: a.status,
+      appName: a.app?.name ?? null,
+      manifest: a.manifest as Record<string, unknown>,
+      role: roleByApp.get(a.id) ?? ('owner' as const),
+      lifetimeShareCents: lifetimeMap.get(a.id)?.shareCents ?? 0,
+      lifetimeCount: lifetimeMap.get(a.id)?.count ?? 0,
+    }));
+  }),
 
   /**
    * Phase 3 (git-push self-service) — return the developer's clone URL +
@@ -4932,19 +5595,18 @@ export const blocksRouter = router({
       const block = await dbRead.appBlock.findUnique({
         where: { id: input.appBlockId },
         select: {
+          id: true,
           blockId: true,
           status: true,
           app: { select: { userId: true } },
         },
       });
       if (!block) throw throwNotFoundError('App block not found');
-      // Owner gate — OauthClient.userId is the v1 app-ownership source of truth.
-      // FORBIDDEN (authenticated but not permitted) rather than UNAUTHORIZED, to
-      // distinguish a logged-in non-owner from an anon caller; mirrors the
-      // grantScopes ceiling gate above.
-      if (block.app?.userId !== ctx.user!.id) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
-      }
+      // Access gate — the OWNER (OauthClient.userId, the v1 source of truth) or an
+      // ACCEPTED collaborator. A pending/rejected invitee is refused. FORBIDDEN
+      // (authenticated but not permitted) rather than UNAUTHORIZED, to distinguish a
+      // logged-in non-owner from an anon caller; mirrors the grantScopes ceiling gate.
+      await assertAppEditAccess(block, ctx.user!.id);
       // A banned/suspended account must not be issued (or re-issued) a live push
       // credential. They still can't deploy (the mod gate holds), but we don't
       // hand out a fresh Forgejo token. Full revoke-on-ban is a follow-up.
@@ -4976,15 +5638,24 @@ export const blocksRouter = router({
       const { addCollaborator } = await import('~/server/services/blocks/forgejo.service');
 
       const { forgejoUsername, token } = await ensureForgejoIdentity(ctx.user!.id);
-      // Idempotent: grants write on this slug's repo (no-op if already a
-      // collaborator). The repo lives under civitai-apps/<slug>.
+      // Grants AT LEAST write on this slug's repo — `addCollaborator` reads the
+      // current level first and does not lower it, so an existing admin/owner is
+      // left untouched. This is NOT "idempotent" in the Forgejo sense the old
+      // comment claimed: the underlying PUT is a SET that applies DOWNGRADES
+      // too (measured on 15.0.6), which is precisely why the read-before-write
+      // lives in the service. That read-then-write is NOT atomic — see the
+      // TOCTOU note on `addCollaborator` — so "does not lower it" describes the
+      // sequential case, not this proc racing the CLI one.
+      // The repo lives under civitai-apps/<slug>.
       await addCollaborator({ slug, username: forgejoUsername, permission: 'write' });
 
       // Browser-facing host (clone via Cloudflare → oauth2-proxy is bypassed by
       // the embedded basic-auth credential, which Forgejo accepts for git).
       const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
       const httpUrl = `https://${publicHost}/${FORGEJO_ORG}/${slug}.git`;
-      const cloneUrl = `https://${encodeURIComponent(forgejoUsername)}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
+      const cloneUrl = `https://${encodeURIComponent(
+        forgejoUsername
+      )}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
 
       const instructions = [
         `# Clone your app repo (credential is embedded in the URL):`,
@@ -5043,8 +5714,19 @@ export const blocksRouter = router({
         },
       });
       if (!block) throw throwNotFoundError('App block not found');
-      if (block.app?.userId !== ctx.user!.id) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
+      // Owner OR accepted collaborator (see `assertAppEditAccess`).
+      await assertAppEditAccess(block, ctx.user!.id);
+      // 🔴 BAN PARITY. The three sibling owner-scoped procs (getMyAppRepo,
+      // updateManifest, getMyForgejoCloneInfo) each carry an explicit `bannedAt`
+      // re-check; this read did NOT, which was a real inconsistency surfaced by
+      // consolidating these four gates. `protectedProcedure`'s `isAuthed` already
+      // refuses a banned session, so this is defence-in-depth exactly like its
+      // siblings rather than a new restriction.
+      if (ctx.user!.bannedAt) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Account is not eligible to manage apps',
+        });
       }
       return {
         appBlockId: block.id,
@@ -5109,20 +5791,28 @@ export const blocksRouter = router({
             // surface — the /apps/[appBlockId]/edit Listing tab is media-only),
             // so the editor writes them here and they flow to the store listing
             // on approve. The BlockManifestValidator re-checks both below
-            // (tagline ≤140 trimmed, category ∈ MARKETPLACE_CATEGORIES); these
+            // (tagline ≤140 trimmed, repository host-allowlisted + repo-root,
+            // category ∈ MARKETPLACE_CATEGORIES); these
             // bounds are just coarse request-size guards. `.nullable()` so the
             // client can explicitly CLEAR a previously-set value (an `undefined`
             // may be dropped in transit, and the server merge is
             // `{...stored, ...patch}` — so a dropped key would retain the old
             // value; see the same reasoning for scopeJustifications).
             tagline: z.string().max(500).nullable().optional(),
+            // Public source-repository link — same manifest-governed / nullable-clear
+            // contract as `tagline`. The BlockManifestValidator re-checks the real rule
+            // (https, host allowlist, `/<owner>/<repo>` root, ≤200 chars) below; this
+            // bound is only a coarse request-size guard.
+            repository: z.string().max(2048).nullable().optional(),
             category: z.string().max(64).nullable().optional(),
             scopes: z.array(z.string().min(1).max(128)).max(64).optional(),
             // Optional per-scope justification map (scope-id → rationale). The
             // BlockManifestValidator re-checks it below (keys must be declared
             // scopes, values non-empty ≤500 chars) — this bound is just a coarse
             // request-size guard.
-            scopeJustifications: z.record(z.string().min(1).max(128), z.string().max(500)).optional(),
+            scopeJustifications: z
+              .record(z.string().min(1).max(128), z.string().max(500))
+              .optional(),
             publicSettingsKeys: z.array(z.string().min(1).max(64)).max(32).optional(),
             targets: z
               .array(z.object({ slotId: z.string().min(1).max(64) }).passthrough())
@@ -5177,10 +5867,10 @@ export const blocksRouter = router({
         },
       });
       if (!block) throw throwNotFoundError('App block not found');
-      // Owner gate — OauthClient.userId is the v1 ownership source of truth.
-      if (block.app?.userId !== ctx.user!.id) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
-      }
+      // Access gate — owner OR accepted collaborator. Shipping a new version is an
+      // explicit editor capability; the no-trust review gate downstream is unchanged
+      // (the commit still parks a `pending` request a moderator must approve).
+      await assertAppEditAccess(block, ctx.user!.id);
       // A banned/suspended account must not be able to mutate a live app.
       if (ctx.user!.bannedAt) {
         throw new TRPCError({
@@ -5227,7 +5917,7 @@ export const blocksRouter = router({
       // then retain the stored value. Both fields are OPTIONAL in the manifest,
       // and the validator rejects a non-string/blank value, so "cleared" must
       // mean the KEY IS ABSENT — not `null`.
-      for (const key of ['tagline', 'category'] as const) {
+      for (const key of ['tagline', 'repository', 'category'] as const) {
         if (patch[key] === null) delete merged[key];
       }
 
@@ -5327,17 +6017,66 @@ export const blocksRouter = router({
 
   /**
    * App management (Phase 2) — return the caller's per-user Forgejo clone info
-   * for one of THEIR apps, for the read-only `civitai app pull` CLI command.
-   * Owner-gated identically to getMyAppRepo; lazily provisions the scoped,
-   * restricted per-user Forgejo identity (ensureForgejoIdentity) and grants it
-   * read on the app's own civitai-apps/<slug> repo.
+   * for an app they may EDIT, for the read-only `civitai app pull` CLI command.
+   * Access-gated identically to getMyAppRepo — which, since App Listing Collaborators,
+   * means OWNER **or** ACCEPTED collaborator (`assertAppEditAccess`), not owner-only.
+   * Lazily provisions the scoped, restricted per-user Forgejo identity
+   * (ensureForgejoIdentity) and grants it read on the app's own civitai-apps/<slug> repo.
    *
-   * Distinct from getMyAppRepo only in intent (pull/sync vs push instructions);
-   * it returns the raw { forgejoUsername, token, cloneUrl } the CLI assembles
-   * its git command from. The token is embedded in the returned cloneUrl exactly
-   * as getMyAppRepo does (the CLI documents the token-in-URL leakage caveat).
+   * Close to getMyAppRepo but no longer identical to it — three differences, and the
+   * first is easy to miss now that only one of them carries a scope annotation:
+   *   - TOKEN SCOPE: this proc is `.meta({ requiredScope: AppBlocksSubmit })` (below),
+   *     because the CLI drives it. getMyAppRepo is deliberately NOT annotated — it is
+   *     web-only (AuthorViaGit / git-access.ts), so it is session-authed and takes
+   *     enforceTokenScope's Full early-return regardless.
+   *   - INTENT: pull/sync here vs push instructions there.
+   *   - COLLABORATOR PERMISSION: `read` here vs `write` there (see the note at the
+   *     addCollaborator call below).
+   * Access gating IS identical (assertAppEditAccess + bannedAt + `approved`). It returns the
+   * raw { forgejoUsername, token, cloneUrl } the CLI assembles its git command from; the
+   * token is embedded in the returned cloneUrl exactly as getMyAppRepo does (the CLI
+   * documents the token-in-URL leakage caveat).
    */
   getMyForgejoCloneInfo: protectedProcedure
+    // Same SCOPE gate and same bit as getMyAppAnalytics above — but note the base
+    // procedures differ: that one is `appDeveloperProcedure` (author cohort), this one is
+    // `protectedProcedure` plus an inline appBlocks-feature check below, so its audience
+    // is any Apps-enabled logged-in owner. Relevant to the "who can trigger the mint"
+    // reasoning further down. Un-annotated meant an implicit
+    // `TokenScope.Full`, so `civitai app pull` 403'd the OAuth login token — and the CLI
+    // reports that failure as "not permitted (are you the app owner, and is Apps enabled
+    // for your account?)", which sends the developer looking for an ownership problem
+    // they do not have. A Full personal API key is unaffected (enforceTokenScope
+    // early-returns on Full).
+    //
+    // 🔴 But NOT the same STAKE, so the bit choice is argued separately here rather than
+    // inherited. Analytics is a pure read; this proc MINTS A CREDENTIAL — it lazily
+    // provisions a per-user Forgejo identity whose token carries `write:repository`
+    // (dev-git-access.service) and returns it embedded in `cloneUrl`. So annotating
+    // widens who can trigger that mint from {session, Full personal key} to also
+    // include the civitai-cli OAuth login token.
+    //
+    // Accepted, deliberately: AppBlocksSubmit is opt-in, excluded from `Full`, and
+    // carried only by the first-party civitai-cli client; the caller must still hold EDIT
+    // ACCESS to the app — owner OR an ACCEPTED collaborator seat, per assertAppEditAccess
+    // (a pending or rejected invitee is refused, and there is no moderator bypass) — must
+    // not be banned, and the app must be `approved`; the collaborator grant is
+    // `read` on that one repo; and this is already the established meaning of the bit
+    // for CLI-facing procs, several of which are outright mutations (see
+    // `listingMediaCliScope` in app-listings.router.ts). A dedicated bit would be
+    // stricter but would recreate the "one command needs two different scopes" problem
+    // the analytics note above argues against.
+    //
+    // 🟡 Consequence worth knowing: the consent string for this bit is "Submit Apps for
+    // review", which does not mention minting a git credential. That copy lives in
+    // @civitai/auth and is a product decision, not a drive-by edit.
+    //
+    // If an `AppBlocksRead` bit is ever introduced, THIS proc must not move to it — it is
+    // not a read. getMyAppAnalytics could, but only TOGETHER WITH the REST route
+    // `GET /api/v1/blocks/submissions`: `civitai app metrics` calls both hops, so moving
+    // one alone recreates the very "two scopes for one command" problem the note on that
+    // proc argues against.
+    .meta({ requiredScope: TokenScope.AppBlocksSubmit })
     .use(enforceAppBlocksFlag)
     // Accept EITHER the appBlockId (ab_…) OR the slug (blockId / repo name) — the
     // CLI `civitai app pull --app <slug|appBlockId>` lets a developer pass the
@@ -5362,16 +6101,15 @@ export const blocksRouter = router({
       const block = input.appBlockId
         ? await dbRead.appBlock.findUnique({
             where: { id: input.appBlockId },
-            select: { blockId: true, status: true, app: { select: { userId: true } } },
+            select: { id: true, blockId: true, status: true, app: { select: { userId: true } } },
           })
         : await dbRead.appBlock.findFirst({
             where: { blockId: input.slug },
-            select: { blockId: true, status: true, app: { select: { userId: true } } },
+            select: { id: true, blockId: true, status: true, app: { select: { userId: true } } },
           });
       if (!block) throw throwNotFoundError('App block not found');
-      if (block.app?.userId !== ctx.user!.id) {
-        throw new TRPCError({ code: 'FORBIDDEN', message: 'Not the app owner' });
-      }
+      // Owner OR accepted collaborator (see `assertAppEditAccess`).
+      await assertAppEditAccess(block, ctx.user!.id);
       if (ctx.user!.bannedAt) {
         throw new TRPCError({
           code: 'FORBIDDEN',
@@ -5393,13 +6131,26 @@ export const blocksRouter = router({
       );
       const { addCollaborator } = await import('~/server/services/blocks/forgejo.service');
       const { forgejoUsername, token } = await ensureForgejoIdentity(ctx.user!.id);
-      // Read is enough to pull/sync; grant `read` (idempotent). getMyAppRepo
-      // grants `write` for the push flow — the CLI `pull` only needs read.
+      // Read is enough to pull/sync, so `read` is what this asks for. It is a
+      // grant-AT-LEAST, not a set: `addCollaborator` reads the current level and
+      // skips the PUT when it is already higher, so an author who got `write`
+      // from getMyAppRepo's push flow keeps it. That is load-bearing rather than
+      // defensive — the raw PUT this replaced answered 204 for a DOWNGRADE just
+      // as it does for a grant (measured on Forgejo 15.0.6), so `civitai app
+      // pull` silently stripped push access from the author's own repo and no
+      // status code distinguished it from success. Measured with the
+      // `write:repository` PAT this flow mints: at `read` a clone succeeds but a
+      // push is rejected, so the downgrade genuinely broke authors' pushes.
+      // The old comment called that "idempotent"; the API has no such property.
+      // The read-then-write is not atomic, so a call racing getMyAppRepo can
+      // still land on `read` — see the TOCTOU note on `addCollaborator`.
       await addCollaborator({ slug, username: forgejoUsername, permission: 'read' });
 
       const publicHost = env.FORGEJO_PUBLIC_URL.replace(/^https?:\/\//, '').replace(/\/$/, '');
       const httpUrl = `https://${publicHost}/${FORGEJO_ORG}/${slug}.git`;
-      const cloneUrl = `https://${encodeURIComponent(forgejoUsername)}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
+      const cloneUrl = `https://${encodeURIComponent(
+        forgejoUsername
+      )}:${token}@${publicHost}/${FORGEJO_ORG}/${slug}.git`;
 
       return {
         notYetAvailable: false as const,
@@ -5527,6 +6278,46 @@ async function getBlockSessionUser(userId: number): Promise<SessionUser> {
 
 type BlockClaims = NonNullable<Awaited<ReturnType<typeof verifyBlockToken>>>;
 type CustomComfyBody = Extract<BlockWorkflowBody, { kind: 'customComfy' }>;
+/** The INLINE arm (`mode:'inline'`) — carries the ComfyUI graph itself. */
+type CustomComfyInlineBody = Extract<CustomComfyBody, { mode: 'inline' }>;
+/** The RECIPE arm — names a server-authored graph. Unchanged from v1. */
+type CustomComfyRecipeBody = Exclude<CustomComfyBody, CustomComfyInlineBody>;
+
+/**
+ * Narrow a `customComfy` body to its INLINE arm, or `null` for the recipe arm.
+ *
+ * 🔴 KEYED ON THE VALUE, NOT ON PRESENCE — `'mode' in body` IS WRONG HERE, AND
+ * THE DIFFERENCE IS A 500. The recipe arm declares `mode: z.literal('recipe')
+ * .optional()` (see `blockCustomComfyBodySchema`), so it is NOT a mode-less arm:
+ * `mode` is a legal read across the union, and THREE bodies parse as recipes —
+ * `{kind,recipe,params}` (no key), `{…, mode:'recipe', …}` and
+ * `{…, mode:undefined, …}`. The latter two set `mode` as an OWN key, so a
+ * presence test routes a valid RECIPE body down the inline path: submit then
+ * dies in the graph walk (the inline body's `workflow` is absent) and estimate
+ * silently quotes `cost.total: undefined` instead of the recipe's estimate.
+ * `undefined` survives the wire (superjson), so an SDK spreading an optional
+ * `mode` variable reaches this. Pinned by the `mode:'recipe'` / `mode:undefined`
+ * routing tests in `blocks.router.workflow.test.ts`.
+ *
+ * The `.optional()` on the recipe arm is itself load-bearing and cannot be
+ * dropped — see the union comment in `schema/blocks/workflow.schema.ts` for why
+ * `.default('recipe')` rejects every deployed body.
+ */
+function isInlineComfyBody(body: CustomComfyBody): body is CustomComfyInlineBody {
+  return body.mode === 'inline';
+}
+
+/**
+ * The settle-time observability labels for an inline submit.
+ *
+ * Constant, NOT derived from the app or the block — `civitai_app_block_customcomfy_*`
+ * is labelled by these, and labelling by `appBlockId` would make the metric's
+ * cardinality grow with the app catalogue. An inline graph has no engine and no
+ * recipe, so both read as the same constant and every inline job aggregates
+ * together, which is the only honest grouping available.
+ */
+const INLINE_RECIPE_LABEL = '__inline__';
+const INLINE_ENGINE_LABEL = 'inline';
 
 /**
  * Resolve the recipe from the (schema-gated) `recipe` id. The wire schema's
@@ -5534,7 +6325,7 @@ type CustomComfyBody = Extract<BlockWorkflowBody, { kind: 'customComfy' }>;
  * union, so this never returns undefined for a schema-valid body — the guard is
  * defense-in-depth against a registry/schema desync. Fail closed.
  */
-function resolveCustomComfyRecipe(body: CustomComfyBody) {
+function resolveCustomComfyRecipe(body: CustomComfyRecipeBody) {
   const recipe = getRecipe(body.recipe);
   if (!recipe) {
     throw new TRPCError({ code: 'BAD_REQUEST', message: 'unknown recipe' });
@@ -5558,10 +6349,37 @@ async function estimateCustomComfyWorkflow(opts: { claims: BlockClaims; body: Cu
   }
   const userId = parseSubjectUserId(claims.sub);
   if (userId == null) {
-    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'estimate requires authenticated viewer' });
+    throw new TRPCError({
+      code: 'UNAUTHORIZED',
+      message: 'estimate requires authenticated viewer',
+    });
   }
   await assertAppBlocksEnabledForTokenUser(userId);
   await assertViewerIsAppDeveloper(userId);
+
+  // ── INLINE arm. There is NO honest per-graph number to quote and no way to
+  // derive one: the orchestrator forwards the graph opaquely and cannot price
+  // it, and a real whatIf returns 0 for customComfy anyway. The declared
+  // `maxBuzz` ceiling IS the honest answer, because it is PHYSICALLY enforced —
+  // the server stamps `stepTimeoutSeconds = maxBuzz` as the step timeout, the
+  // job is cancelled there, and settle-to-actual refunds the difference. The
+  // user is quoted a true upper bound and charged the real cost.
+  //
+  // 🔴 SURFACE THIS AS "UP TO N BUZZ", NOT AS A PRICE. `cost.total` is the same
+  // field the txt2img path fills with a whatIf estimate, so a UI that renders it
+  // as a definite price will overstate an inline job's cost. That is a copy
+  // change in `@civitai/app-sdk` / the block, tracked separately — nothing here
+  // edits another repo.
+  if (isInlineComfyBody(body)) {
+    return {
+      snapshot: {
+        workflowId: 'wf_estimate',
+        status: 'pending' as const,
+        cost: { total: body.maxBuzz },
+      },
+    };
+  }
+
   const recipe = resolveCustomComfyRecipe(body);
   // Parse through the recipe's OWN `.strict()` schema so the engine (which drives
   // the per-engine display estimate) is validated/bounded; an invalid param
@@ -5591,8 +6409,19 @@ async function submitCustomComfyWorkflow(opts: {
   ctx: Context;
   claims: BlockClaims;
   body: CustomComfyBody;
+  /** OPTIONAL client idempotency key (item 2, gen half) → orchestrator externalId. */
+  idempotencyKey?: string;
 }) {
-  const { ctx, claims, body } = opts;
+  const { ctx, claims, body, idempotencyKey } = opts;
+  // Namespaced idempotency externalId — same shape as the txt2img branch, and like
+  // it ALWAYS SET (audit 🔴-1): a server-minted `bls<uuid>` when the block sends no
+  // key, so `submitWorkflow`'s own 3× retry of the real submit can never create (and
+  // charge for) a second workflow after a 502/504. Minted ONCE here — the body built
+  // below is the object the retry wrapper reuses across attempts. See the txt2img
+  // branch for the full rationale + the client-vs-server namespace split.
+  const blockExternalId = idempotencyKey
+    ? composeBlockExternalId(claims.appBlockId, idempotencyKey)
+    : mintServerBlockExternalId();
 
   // ── Page-only guard (mirror the model-token sourceImage rejection ~:3294).
   if (!isPageToken(claims)) {
@@ -5613,16 +6442,49 @@ async function submitCustomComfyWorkflow(opts: {
   await assertAppBlocksEnabledForTokenUser(userId);
   await assertViewerIsAppDeveloper(userId);
 
-  const recipe = resolveCustomComfyRecipe(body);
+  // Narrow ONCE, into two mutually-exclusive locals. Exactly one is non-null for
+  // any schema-valid body, which is what lets the shared belt below stay a single
+  // code path instead of two forked copies of the spend logic.
+  const inlineBody = isInlineComfyBody(body) ? body : null;
+  const recipeBody = isInlineComfyBody(body) ? null : body;
+  const recipe = recipeBody ? resolveCustomComfyRecipe(recipeBody) : null;
   // The recipe's OWN `.strict()` schema is the real param contract (the wire
   // schema only gated `recipe`); an invalid param throws → fail-closed.
-  const params = recipe.paramSchema.parse(body.params);
+  const params = recipe && recipeBody ? recipe.paramSchema.parse(recipeBody.params) : null;
 
   const user = await getBlockSessionUser(userId);
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   // Honor a money-page account pick (preferred-first, domain-clamped) as txt2img;
-  // absent → Auto.
-  const currencies = resolveBlockCurrenciesForAccount(isGreen, params.accountType);
+  // absent → Auto. An inline body carries no account pick (its `.strict()` wire
+  // schema has no `accountType`), so it always resolves to Auto.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, params?.accountType);
+
+  // ── INLINE arm: replace CODE REVIEW with three mechanical gates, in the same
+  // slots the recipe arm uses. Order matters and matches the recipe arm exactly:
+  // every one of these runs BEFORE the orchestrator token, before any spend
+  // reservation and before the submit, so a rejection costs nothing and has
+  // nothing to refund. All three THROW; none returns a verdict a caller can
+  // forget to read. Full reasoning in `services/blocks/inline-comfy.service`.
+  let inlineAuditText = '';
+  if (inlineBody) {
+    // (a) CONTAINMENT — every AIR in the graph must be declared in `resources`,
+    //     which is what makes gating that flat array sufficient.
+    assertInlineGraphAirsDeclared(inlineBody.workflow, inlineBody.resources);
+    // (b) ENTITLEMENT — the real belt (early-access `hasAccess` + Private
+    //     subscription + anti-drop + anti-substitute) over the declared AIRs.
+    await assertViewerEntitledToInlineResources({
+      airs: inlineBody.resources,
+      user: { id: userId, isModerator: !!user.isModerator },
+    });
+    // (c) The MODERATION SWEEP — collected here, audited in the shared audit call
+    //     below. An inline graph carries its prompts inside `CLIPTextEncode`
+    //     nodes, so auditing a declared field alone would make moderation a
+    //     silent no-op.
+    inlineAuditText = collectInlineAuditText({
+      prompt: inlineBody.prompt,
+      graph: inlineBody.workflow,
+    });
+  }
 
   // ── Entitlement gate (plan §6). A raw customComfy step submits its `resources`
   // AIR array DIRECTLY, bypassing the generation-graph path's automatic
@@ -5632,8 +6494,8 @@ async function submitCustomComfyWorkflow(opts: {
   // point at a gated / early-access / Private / unpublished version without the
   // belt catching it. The huggingface staticAirs carry no civitai entitlement
   // (exempt-by-construction). checkpointPolicy:'pinned' → no user checkpoint in v1.
-  const versionIds = recipeCivitaiVersionIds(recipe);
-  if (versionIds.length > 0) {
+  const versionIds = recipe ? recipeCivitaiVersionIds(recipe) : [];
+  if (recipe && versionIds.length > 0) {
     const gates: ReturnType<typeof buildGateVersion>[] = [];
     for (const versionId of versionIds) {
       const resolvedVersion = await resolvePageResourceContext(versionId);
@@ -5654,9 +6516,19 @@ async function submitCustomComfyWorkflow(opts: {
   // quality suffix only INSIDE the builder, AFTER this read) with the
   // domain-derived isGreen strictness, exactly like txt2img, before any
   // orchestrator call.
+  //
+  // 🔴 ON THE INLINE ARM `prompt` IS THE SWEPT GRAPH TEXT, NOT A DECLARED FIELD.
+  // `auditPromptServer` reads exactly one string, and on the recipe arm that
+  // string is guaranteed to be what generates because the recipe's `.strict()`
+  // schema owns the prompt. An inline graph carries its prompts as leaf strings
+  // inside `CLIPTextEncode` nodes, so a declared-field-only audit would scan a
+  // value the generation never uses and moderation would silently become a
+  // no-op — with every gate green. `collectInlineAuditText` (above) joins the
+  // declared prompt AND every distinct string leaf in the graph, so a clean
+  // declared prompt cannot launder a graph prompt.
   await auditPromptServer({
-    prompt: params.prompt,
-    negativePrompt: recipe.negativePrompt,
+    prompt: inlineBody ? inlineAuditText : params!.prompt,
+    negativePrompt: inlineBody ? inlineBody.negativePrompt : recipe!.negativePrompt,
     userId,
     isGreen,
     isModerator: !!user.isModerator,
@@ -5668,7 +6540,17 @@ async function submitCustomComfyWorkflow(opts: {
   // stepTimeoutSeconds)` (enforced per-engine at registry load): the step
   // `timeout` physically caps the job at this many Buzz, so the reservation below
   // and the timeout stamped on the step MUST come from the same budget.
-  const { maxBuzz: ceiling, stepTimeoutSeconds } = recipe.budgetFor(params);
+  //
+  // 🔴 THE INLINE ARM PRESERVES THAT INVARIANT BY CONSTRUCTION. There is no
+  // recipe to declare a per-engine budget, so the app declares ONE number and
+  // the server derives the timeout from it: `stepTimeoutSeconds = maxBuzz`.
+  // `maxBuzz === ceil(stepTimeoutSeconds)` therefore cannot be violated — not
+  // "is asserted at load", but "there is only one number". Everything downstream
+  // (static gate, both reservations, dev-session backstop, settle-to-actual) only
+  // ever consumed `ceiling`, so the entire spend belt is reused UNTOUCHED.
+  const { maxBuzz: ceiling, stepTimeoutSeconds } = inlineBody
+    ? { maxBuzz: inlineBody.maxBuzz, stepTimeoutSeconds: inlineBody.maxBuzz }
+    : recipe!.budgetFor(params);
 
   // Resolve the engine + recipe id purely for per-engine settle-time
   // OBSERVABILITY (persisted in the settle record, read at terminal to emit
@@ -5680,8 +6562,13 @@ async function submitCustomComfyWorkflow(opts: {
   // (engine ∈ 3, recipe ∈ 1) → cardinality-safe. Never affects spend. The
   // `?? 'unknown'` stays as truly-unreachable defense (resolveEngine always
   // returns a bounded engine id).
-  const engine: string = recipe.resolveEngine(params) ?? 'unknown';
-  const recipeId: string = recipe.id;
+  // An inline graph has no engine and no recipe, so both labels are the same
+  // CONSTANT for every inline job — never derived from the app or the block, so
+  // the metric's cardinality cannot grow with the app catalogue.
+  const engine: string = inlineBody
+    ? INLINE_ENGINE_LABEL
+    : recipe!.resolveEngine(params) ?? 'unknown';
+  const recipeId: string = inlineBody ? INLINE_RECIPE_LABEL : recipe!.id;
 
   // (1) STATIC pre-submit gate — the post-paid analog of the txt2img whatIf
   // `cost > buzzBudget` gate. Because the timeout caps the job at `maxBuzz` and we
@@ -5698,29 +6585,66 @@ async function submitCustomComfyWorkflow(opts: {
     };
   }
 
+  // ── GEN IDEMPOTENCY CLAIM (audit 🔴-1) — same guard as the txt2img path. Taken
+  //    BEFORE the cap reservation + orchestrator submit so two CONCURRENT same-key
+  //    submits can't BOTH reserve + BOTH charge, and a replay can't double-INCR the
+  //    cap counters (🟡-2). Absent key → no claim → byte-identical to today. Fail-
+  //    CLOSED on a redis error; a resolved submit FINALIZEs, every non-committed
+  //    exit RELEASEs. The orchestrator externalId dedupe stays as a 2nd layer.
+  let genClaimKey: string | null = null;
+  if (idempotencyKey) {
+    let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
+    try {
+      claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
+        userId,
+        claims.appBlockId,
+        idempotencyKey
+      );
+    } catch {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'generation idempotency unavailable; please retry',
+      });
+    }
+    if (claim.state === 'replay') return claim.result;
+    if (claim.state === 'in_progress') {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'a generation with this idempotency key is already in progress',
+      });
+    }
+    genClaimKey = claim.key;
+  }
+
   // (2) Reserve the CEILING (not the 0 estimate) against the cumulative cap so
   // post-paid spend can't slip past it counted at ~0. A RUN-FOR-REAL review token
   // reserves against the tight per-(mod, publishRequestId) session ceiling; every
   // other token keeps the per-user 50k/day cap (byte-identical).
-  const {
-    total,
-    key: buzzCapKey,
-    cap: buzzCap,
-  } = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling);
+  // The reservation THROWS fail-closed on a redis error; release the claim first.
+  let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
+  try {
+    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, ceiling);
+  } catch (e) {
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+  const { total, key: buzzCapKey, cap: buzzCap } = reservation;
   if (total > buzzCap) {
     await refundBlockBuzzSpend(buzzCapKey, ceiling);
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
     return {
       snapshot: {
         workflowId: 'failed',
         status: 'failed' as const,
         cost: { total: ceiling },
-        error: claims.reviewRunForReal === true
-          ? `review run-for-real Buzz cap reached: ${total - Math.ceil(ceiling)} already ` +
-            `spent this review session, this generation may cost up to ${ceiling}, ` +
-            `session cap is ${buzzCap}`
-          : `daily Buzz cap reached: ${total - Math.ceil(ceiling)} already spent today ` +
-            `across your installed apps, this generation may cost up to ${ceiling}, ` +
-            `daily cap is ${buzzCap}`,
+        error:
+          claims.reviewRunForReal === true
+            ? `review run-for-real Buzz cap reached: ${total - Math.ceil(ceiling)} already ` +
+              `spent this review session, this generation may cost up to ${ceiling}, ` +
+              `session cap is ${buzzCap}`
+            : `daily Buzz cap reached: ${total - Math.ceil(ceiling)} already spent today ` +
+              `across your installed apps, this generation may cost up to ${ceiling}, ` +
+              `daily cap is ${buzzCap}`,
       },
     };
   }
@@ -5735,6 +6659,8 @@ async function submitCustomComfyWorkflow(opts: {
       // Roll back the per-user reservation so a rejected submit doesn't burn the
       // viewer's own daily ceiling for a spend that never happened.
       await refundBlockBuzzSpend(buzzCapKey, ceiling);
+      // No money moved → release the idempotency claim so a genuine retry runs.
+      if (genClaimKey) await releaseGenIdempotency(genClaimKey);
       return {
         snapshot: {
           workflowId: 'failed',
@@ -5786,11 +6712,11 @@ async function submitCustomComfyWorkflow(opts: {
         // `dev !== true` can still have an active dev tunnel). Then fail-snapshot.
         await refundBlockBuzzSpend(buzzCapKey, ceiling);
         if (appSpendReserve) {
-          const { refundAppSpend } = await import(
-            '~/server/services/blocks/app-spend-cap.service'
-          );
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
           await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
         }
+        // No money moved → release the idempotency claim so a genuine retry runs.
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
         return {
           snapshot: {
             workflowId: 'failed',
@@ -5822,13 +6748,29 @@ async function submitCustomComfyWorkflow(opts: {
   // submit→terminal-observation (incl. GPU queue-wait). Observability-only.
   const submittedAt = Date.now();
   try {
-    const stepInput = buildCustomComfyWorkflowInput(recipe, body.params, {});
+    // 🔴 THE STEP INPUT IS CONSTRUCTED SERVER-SIDE FROM AN ALLOWLISTED SET OF
+    // FIELDS — the app's body is NEVER spread into it. `CustomComfyInput` also
+    // carries `sessionOwnerApiToken` (a Civitai API token forwarded to the
+    // claiming worker), `comfyImage` (an arbitrary OCI container), `minVramGb`
+    // (changes the worker tier, and therefore the Buzz/second rate the whole
+    // ceiling argument rests on), `sessionId`, `useSageAttention` and
+    // `minimumDurationSeconds`. A spread would hand every one of those to the
+    // app. Only these three keys are ever emitted; the wire schema's `.strict()`
+    // is the second belt, rejecting a body that names any of them at all.
+    const stepInput = inlineBody
+      ? {
+          resources: inlineBody.resources,
+          trace: 'binary' as const,
+          workflow: inlineBody.workflow,
+        }
+      : buildCustomComfyWorkflowInput(recipe!, recipeBody!.params, {});
     // Stamp the SAME per-engine timeout the ceiling above was reserved against —
-    // the timeout is the physical cap for that reservation (v1.1).
+    // the timeout is the physical cap for that reservation (v1.1). For an inline
+    // body that timeout IS the declared `maxBuzz`.
     const step = createBlockCustomComfyStep(stepInput, stepTimeoutSeconds);
     // Parameterized tags: emit the recipe id + 'customComfy' (NOT 'txt2img'),
     // preserving the `app-block:*` provenance tags the subqueue read depends on.
-    const tags = buildWorkflowTags(claims, recipe.id, 'customComfy');
+    const tags = buildWorkflowTags(claims, recipeId, 'customComfy');
     const submitted = await submitWorkflow({
       token,
       body: {
@@ -5837,6 +6779,10 @@ async function submitCustomComfyWorkflow(opts: {
         currencies,
         // Authoritative maturity clamp on the real submit — token-claim derived.
         ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        // Idempotency: a retry — the CLIENT's (same key) or `submitWorkflow`'s OWN
+        // internal 3× retry of THIS call — collapses to the existing workflow on the
+        // orchestrator → no second Buzz charge. Always present.
+        externalId: blockExternalId,
       },
     });
     snapshot = snapshotFromWorkflow(submitted);
@@ -5851,13 +6797,21 @@ async function submitCustomComfyWorkflow(opts: {
     // submit doesn't permanently burn the session ceiling. Best-effort; present
     // only when an active dev tunnel was reserved above.
     if (devSessionReserve) {
-      const { refundDevSessionBuzz } = await import(
-        '~/server/services/blocks/dev-tunnel.service'
-      );
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
       await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
     }
+    // No resolved submit → no money moved; release the idempotency claim so a
+    // genuine retry can re-run (orchestrator externalId dedupe still covers a retry
+    // that DID create a workflow server-side despite a lost response).
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
     throw e;
   }
+
+  // A resolved submit is money-COMMITTED. Cache the terminal result under the
+  // idempotency key BEFORE the (awaited) settle-record persist below, so a lost-
+  // response retry replays it even if that persist throws. Best-effort.
+  const genResult = { snapshot };
+  if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
 
   // ── Persist the settle record (AWAITED — see custom-comfy-settle.service). The
   // terminal poll/cancel hook reads it and refunds `ceiling - actual` on the
@@ -5865,11 +6819,7 @@ async function submitCustomComfyWorkflow(opts: {
   // orchestrator id (never the failed/whatif sentinels). The dev-session id is
   // included ONLY when a dev tunnel was reserved above (spread) — so a non-dev
   // submit persists the SAME record shape it did before (settle no-ops that leg).
-  if (
-    snapshot.workflowId &&
-    snapshot.workflowId !== 'failed' &&
-    snapshot.workflowId !== 'whatif'
-  ) {
+  if (snapshot.workflowId && snapshot.workflowId !== 'failed' && snapshot.workflowId !== 'whatif') {
     await persistCustomComfySettle({
       workflowId: snapshot.workflowId,
       buzzCapKey,
@@ -5929,13 +6879,16 @@ async function submitCustomComfyWorkflow(opts: {
         appBlockId: claims.appBlockId,
         blockInstanceId: claims.blockInstanceId,
         scope: 'ai:write:budgeted',
-        endpoint: `workflow:submit:${snapshot.workflowId || 'pending'}`,
+        // Templated, NOT `workflow:submit:<workflowId>` — `endpoint` is the
+        // topEndpoints GROUP BY key and must stay bounded (see the txt2img call
+        // site's note). The id moves to `detail.workflowId`.
+        endpoint: 'workflow:submit',
         statusCode: snapshot.status === 'failed' ? 500 : 200,
         detail: {
           action: 'workflow.submit',
-          amount:
-            typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
+          amount: typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
           outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+          ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
         },
         // Dev token → route a synthetic non-FK appBlockId to the nullable-appBlockId
         // + synthetic_app_id path so the pre-approval audit row persists.
@@ -5995,7 +6948,1070 @@ async function submitCustomComfyWorkflow(opts: {
     });
   }
 
-  return { snapshot };
+  // Same object already cached under the idempotency key (see genResult above).
+  return genResult;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// App Blocks STEP-TYPE bridge (`kind: 'step'`) — estimate + submit handlers.
+// RFC #3515 migration step 1.
+//
+// A `step` body carries `{ kind, step, params }` — NO model binding. Everything
+// the capability needs lives in its REGISTRY ENTRY
+// (`~/server/services/blocks/steps`): a bounded `.strict()` param schema, a pure
+// builder, a declared BILLING MODE, and a declared MODERATION POSTURE.
+//
+// 🔴 THE DISPATCH RULE. These two handlers contain NO per-step branch and NO
+// per-billing-mode branch. Estimate reads `estimateStepBuzz(entry, params)` and
+// submit reads `planStepSpend(entry, params)`; both dispatch on the entry's
+// declared `billingMode` inside the registry module. Registering a capability
+// touches one new file plus one registry line — never this router. If you find
+// yourself adding `if (step.id === …)` or `if (billingMode === …)` here, the
+// abstraction has been defeated and the RFC's whole premise with it.
+//
+// 🔴 THE MONEY RULE. A step submit runs the SAME cap belt every other spending
+// kind runs — the per-user daily cap, the per-app aggregate `reserveAppSpend`
+// (daily Buzz + velocity), and the dev-session backstop — reserved BEFORE the
+// orchestrator submit and refunded on every non-committed exit. `kind: 'step'`
+// must not be a money surface the guardrail cannot see; if it were, the
+// `civitai_app_block_spend_cap_rejections_total` counter would not fire for it
+// either, so the gap would also be invisible.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type StepBody = Extract<BlockWorkflowBody, { kind: 'step' }>;
+
+/** Orchestrator step name stamped on a block step submission. */
+const BLOCK_STEP_NAME = 'block-step';
+
+/**
+ * Resolve the registry entry from the (schema-gated) `step` id. The wire
+ * schema's `z.enum(REGISTERED_STEP_IDS)` already rejected any unregistered id at
+ * the union, so this never returns undefined for a schema-valid body — the
+ * guard is defense-in-depth against a registry/schema desync. Fail closed.
+ */
+function resolveBlockStep(body: StepBody) {
+  const step = getStep(body.step);
+  if (!step) {
+    throw new TRPCError({ code: 'BAD_REQUEST', message: 'unknown step type' });
+  }
+  return step;
+}
+
+/**
+ * Parse a step's params against its own `.strict()` schema, as a CALLER error.
+ *
+ * 🔴 `paramSchema.parse()` throws a raw `ZodError` from inside the resolver, and
+ * tRPC's `getTRPCErrorFromUnknown` maps an unrecognized throw to
+ * INTERNAL_SERVER_ERROR — verified by execution, not assumed. So an app author
+ * sending an out-of-range `targetWidth` got a 500. This surface is entirely
+ * app-author-driven: routine iteration against the param contract would have
+ * registered as a server-error rate, burying real 5xx in developer typos.
+ *
+ * `safeParse` + an explicit BAD_REQUEST makes the caller error a caller error.
+ * The zod message is included because the app author is the one who has to fix
+ * it, and the params are the app's OWN input — nothing server-side is disclosed.
+ */
+function parseStepParams(step: ReturnType<typeof resolveBlockStep>, raw: unknown) {
+  const parsed = step.paramSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: `invalid params for step '${step.id}': ${parsed.error.message}`,
+    });
+  }
+  return parsed.data;
+}
+
+/**
+ * The gates every step request passes before anything else happens, in the same
+ * order and with the same fail-closed posture as the customComfy handlers.
+ * Shared by estimate and submit so the two can never drift — a gate that holds
+ * on submit but not on estimate lets a caller probe what it may not run.
+ *
+ * PAGE-ONLY in v1, mirroring `customComfy`. A registry step carries no model
+ * binding, so a MODEL token has nothing to bind it to; rejecting it is the
+ * conservative direction and widening later is not a wire change.
+ */
+async function assertStepRequestAllowed(claims: BlockClaims): Promise<number> {
+  if (!isPageToken(claims)) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'registry steps are page-only' });
+  }
+  const userId = parseSubjectUserId(claims.sub);
+  if (userId == null) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'step requires authenticated viewer' });
+  }
+  await assertAppBlocksEnabledForTokenUser(userId);
+  await assertViewerIsAppDeveloper(userId);
+  return userId;
+}
+
+/**
+ * Build the orchestrator step this registry entry will actually submit, and
+ * re-assert on the BUILT value the two properties the registry could only check
+ * at load time.
+ *
+ * 🔴 SHARED BY THE QUOTE AND THE SUBMIT ON PURPOSE. Both the estimate's
+ * `whatif:true` quote and the real submit go through here, so the two can never
+ * price different things and neither can be given a step the other would have
+ * refused. Extracting it is what makes "estimate quotes what submit bills" a
+ * property of the code rather than of two call sites staying in step.
+ */
+function buildStepOrchestratorStep(
+  step: ReturnType<typeof resolveBlockStep>,
+  params: unknown,
+  plan: Pick<ReturnType<typeof planStepSpend>, 'stepTimeoutSeconds'>
+) {
+  const built = step.buildStep(params);
+
+  // ── STEP IDENTITY, re-asserted at REQUEST time on the value actually
+  // submitted. Same shape and same reason as the entitlement re-assert below,
+  // on the axis every `$type`-keyed guard depends on.
+  //
+  // 🔴 WHY IT IS NEEDED DESPITE CLAUSE 7a. The registry's load-time check
+  // asserts `buildStep(canonicalParamsFor(v)).$type === orchestratorType` for
+  // each variant — the CANONICAL params. A `buildStep` that switches its
+  // `$type` ON PARAMS therefore registers cleanly and diverges only at request
+  // time, when the untrusted iframe supplies the params that flip it. That is
+  // not hypothetical: it was demonstrated by execution in review against the
+  // load-time check alone.
+  //
+  // What that buys an attacker without this clause is the whole point:
+  // `runStepModeration` (above) dispatches on the DECLARED posture, so a step
+  // declaring `'none'` that builds a text-producing `$type` reaches the
+  // orchestrator with no audit — the exact shape the registry's posture gate
+  // exists to prevent. Load time proved a property of one fixed input; this
+  // proves it of THIS input.
+  //
+  // Placed before the quote and before every reservation, so a rejection costs
+  // no orchestrator call and has nothing to refund.
+  if (built.$type !== step.orchestratorType) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        `step '${step.id}' declares orchestratorType '${step.orchestratorType}' but the ` +
+        `submitted step is '${built.$type}' — every $type-keyed guard, including the ` +
+        'moderation-posture constraint, was evaluated against a type this step does not submit',
+    });
+  }
+
+  // ── ENTITLEMENT posture, re-asserted at REQUEST time on the value actually
+  // submitted. Mirrors the `moderationPosture` re-assertion above, on the axis
+  // this PR's own triage named as the real risk (`imageUpscaler` was
+  // disqualified precisely because its `model` field takes an arbitrary AIR
+  // URN).
+  //
+  // 🔴 WHY IT IS NEEDED DESPITE CLAUSE 7. The registry's load-time AIR probe
+  // (clause 7) scans `buildStep(canonicalParamsFor(v))` — the CANONICAL params.
+  // An entry whose AIR-bearing field is OPTIONAL and absent from its canonical
+  // params therefore registers cleanly, and at request time `buildStep` forwards
+  // whatever the untrusted iframe sent straight into the submitted input. Load
+  // time proved a property of one fixed input; this proves it of THIS input.
+  // Without it, `resourcePolicy` was enforced at registry load only — a
+  // review-process guard, not a runtime one — while `moderationPosture` was
+  // enforced at both.
+  //
+  // Placed before the quote and before every reservation, so a rejection here
+  // costs no orchestrator call and has nothing to refund.
+  //
+  // FAIL-CLOSED DIRECTION, stated honestly: the scan is a substring test for
+  // `urn:air:` anywhere in the built input, so a param that merely EMBEDS that
+  // literal (e.g. a Civitai-hosted image URL whose path contains it) is rejected
+  // too. That is a false positive, and it is the direction we want — refusing a
+  // pathological url costs a caller one bounced request; forwarding an
+  // unentitled AIR costs the entitlement belt.
+  //
+  // 🔴 THAT COST SENTENCE WAS WRITTEN WHEN EVERY SCANNED STRING WAS A URL THE
+  // APP CONSTRUCTS, AND IT NO LONGER DESCRIBES EVERY ENTRY. `chat-completion`
+  // (registered later) submits `messages[].content` — free prose an END USER
+  // typed — and that prose is the ONLY attacker-controlled string in its built
+  // input; `model` is `z.enum`-bounded and every key is a fixed literal. So for
+  // that entry this guard reduces exactly to "reject any chat message
+  // containing the literal `urn:air:`", and the bounced request is the user's
+  // message rather than the app's own url. The guard is KEPT anyway — see the
+  // FALSE-POSITIVE SURFACE section in `chat-completion.step.ts` for the
+  // orchestrator-side evidence that such prose is inert today, why that
+  // evidence is not sufficient to scope the scan, and the app-side workaround.
+  // What changed here is only the MESSAGE: it used to assert the submitted step
+  // "carries an AIR reference", which is FALSE for prose — the caller typed a
+  // fragment, not a reference — so the rejection read as a platform bug rather
+  // than as something the app can fix in its own payload.
+  //
+  // "Anywhere" covers object KEYS as well as values — the orchestrator's own
+  // `additionalNetworks` / `WorkflowCost.fees` shapes are AIR-KEYED maps, and
+  // the scan used to recurse over `Object.values` only. See
+  // `containsAirReference` for the mechanism and the depth cap that keeps the
+  // scan total.
+  if (step.resourcePolicy.kind === 'none' && containsAirReference(built.input)) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message:
+        `step '${step.id}' declares resourcePolicy 'none' but the submitted step contains the ` +
+        `literal text '${AIR_URN_PREFIX}' — a step that reaches an AIR resource bypasses the ` +
+        'generation-graph entitlement belt. The check is a case-insensitive SUBSTRING scan ' +
+        'over every string, array element, object value AND object key in the step input; it ' +
+        'does not parse, so a value that merely EMBEDS that literal — a url whose path ' +
+        'contains it, or free text a user typed — is rejected too. That is the deliberate ' +
+        'fail-closed direction: strip or escape the literal in the params you submit.',
+    });
+  }
+
+  return {
+    $type: built.$type,
+    name: BLOCK_STEP_NAME,
+    ...(plan.stepTimeoutSeconds !== null
+      ? { timeout: formatStepTimeout(plan.stepTimeoutSeconds) }
+      : {}),
+    input: built.input,
+  };
+}
+
+/**
+ * STEP ESTIMATE. Quotes the ORCHESTRATOR, and falls back to the registry's
+ * declared estimate only when no quote can be had.
+ *
+ * 🔴 THIS USED TO RETURN THE DECLARED CONSTANT AND NEVER ASK ANYONE, AND THAT
+ * WAS THE BUG. `kind: 'step'` was the only branch of `estimateWorkflow` that did
+ * not whatif — `customComfy` returns a server-authored display estimate because
+ * a fixed recipe has no whatif-able cost, and `textToImage` quotes. The step
+ * branch quoted a number the platform had merely asserted, so a block was SHOWN
+ * one price and CHARGED another, with nothing anywhere that re-measured the
+ * assertion.
+ *
+ * MEASURED 2026-08-27. `chat-completion` declares
+ * `CHAT_COMPLETION_PRICE_BUZZ = 1`, and its header claimed `cost.total = 1` had
+ * been measured "for every model in `CHAT_COMPLETION_MODELS` and for `maxTokens`
+ * from 1 to 200,000". `whatif` quotes against the live orchestrator refuted
+ * that: the real price is several times the constant for an ordinary
+ * conversation, differs per model, and rises with `maxTokens`. The orchestrator
+ * prices a third-party chat model per token and floors it at 1 — so the declared
+ * constant is that floor, not a price, and NO constant could have been right.
+ * Real sends were being charged the live price while a published store listing
+ * quoted the constant. Figures and derivation: the internal tracker.
+ *
+ * 🔴 THE FALLBACK IS THE DECLARED ESTIMATE, NOT A THROW, and that is deliberate.
+ * An unquotable step is exactly today's behaviour, so this can only ever be more
+ * accurate than what it replaces — it never turns a working estimate into an
+ * error. The SUBMIT still fails closed on a missing quote (`recordStepPriceCheck
+ * (step.id, 'absent')` + a recoverable failed snapshot), because that is the path
+ * where the number bounds real money; an estimate binds nothing.
+ *
+ * Fail-closed on an out-of-bounds param (BAD_REQUEST via `parseStepParams`),
+ * exactly as submit does — the same `.strict()` schema runs on both paths.
+ *
+ * 🔴 AND fail-closed on an out-of-set VARIANT, which it previously was not.
+ * `estimateStepBuzz` resolves through `resolveStepVariant` before dispatching, so
+ * a resolution outside the entry's declared `variants` throws here exactly as it
+ * does on submit. Before that bound existed the two paths disagreed: for an entry
+ * whose variant is its model, an out-of-set model returned HTTP 200 with
+ * `cost: { total: undefined }` here while the submit threw — estimate/submit
+ * drift on the surface whose entire job is to predict the submit.
+ *
+ * 🔴 THE QUOTE IS BUILT BY THE SAME HELPER THE SUBMIT USES
+ * (`buildStepOrchestratorStep`), so the `$type` and entitlement re-asserts run on
+ * this path too, they REFUSE here exactly as they refuse on submit, and the two
+ * can never price different steps. It is one extra orchestrator round-trip per
+ * estimate, on a surface already restricted to app developers by
+ * `assertStepRequestAllowed`; that call is bounded by the orchestrator client's
+ * own whatIf attempt timeout and retry budget.
+ */
+async function estimateStepWorkflow(opts: { ctx: Context; claims: BlockClaims; body: StepBody }) {
+  const { ctx, claims, body } = opts;
+  const userId = await assertStepRequestAllowed(claims);
+  const step = resolveBlockStep(body);
+  const params = parseStepParams(step, body.params);
+  const variant = resolveStepVariant(step, params);
+  const declaredBuzz = estimateStepBuzz(step, params, variant);
+
+  // ── BUILT HERE, OUTSIDE THE QUOTE'S CATCH, SO ITS REFUSALS PROPAGATE. ───────
+  //
+  // 🔴 THIS WAS A REAL DEFECT WHEN THE BUILD SAT INSIDE `quoteStepBuzz`'s `try`.
+  // `buildStepOrchestratorStep` throws FORBIDDEN on a `$type` divergence and on
+  // an AIR reference in the built input — the two request-time re-asserts — and
+  // a blanket catch turned both into "no quote", so the estimate answered
+  // HTTP 200 with the declared price for a body the submit refuses outright.
+  // Measured: `content: "what does urn:air: mean?"` → estimate 200 `{total: 1}`,
+  // submit FORBIDDEN. That is estimate/submit drift on the surface whose entire
+  // job is to predict the submit, and the number it fell back to was exactly the
+  // misleading `1` this change exists to stop showing.
+  //
+  // These throws are DETERMINISTIC — the same params refuse identically on both
+  // paths — so surfacing them is what makes the estimate honest. Only the
+  // orchestrator ROUND-TRIP, which is transient, is allowed to degrade.
+  const plan = planStepSpend(step, params, variant);
+  const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
+
+  const quotedBuzz = await quoteStepBuzz({ ctx, claims, step, orchestratorStep, userId });
+
+  // 🔴 NEVER SHOW LESS THAN THE SUBMIT WILL RESERVE. The submit gates and
+  // reserves `max(Math.ceil(plan.reserveBuzz), quotedBuzz)`, so an estimate that
+  // merely preferred the quote would under-display whenever the quote falls
+  // below the floor — the one direction a block cannot defend against.
+  //
+  // 🔴 THE FLOOR IS THE SUBMIT'S OWN, NOT `estimateStepBuzz`'s — they are
+  // DIFFERENT DERIVATIONS and only one of them binds. `estimateStepBuzz` is
+  // params-driven and un-ceiled (`step.estimateBuzz(params)`); the submit
+  // reserves `Math.ceil(plan.reserveBuzz)`, i.e. variant-driven and ceiled.
+  // Registry load asserts the two agree only at CANONICAL params
+  // (`steps/index.ts` — `estimateBuzz(canonicalParamsFor(v)) === priceForVariant(v)`)
+  // and nothing re-checks it at request time, so an entry whose `estimateBuzz`
+  // varies with params — the interface permits it — can answer 1 where
+  // `priceForVariant` is 5. Flooring on the estimate's value would then
+  // under-display by 4: the exact hazard this line exists to close,
+  // reintroduced through the other operand.
+  //
+  // So this computes the SAME expression the submit does. "The estimate is never
+  // below what the submit reserves" is then a property of the code, not of an
+  // invariant that holds only at canonical params.
+  //
+  // 🔴 `declaredBuzz` IS DELIBERATELY NOT A THIRD OPERAND — because it would
+  // OVER-display, not because it is inert.
+  //
+  // ⚠️ AN EARLIER VERSION OF THIS COMMENT SAID IT "can only differ upward from
+  // the submit floor" AND THAT NO MUTATION COULD KILL IT. Both were wrong, and
+  // the counterexample to the first ships in this repo: `fixture-split-floor-step`
+  // answers `estimateBuzz` 1 against a `priceForVariant` of 5, i.e. DOWNWARD.
+  // The direction is not fixed at all — `estimateBuzz` takes params and
+  // `priceForVariant` does not, so the two can diverge either way for a
+  // request, and only the canonical-params case is pinned by registry load.
+  //
+  // What is true, and is the actual reason: taking the max of all three would
+  // show `max(9, 5, 2) = 9` for an entry whose `estimateBuzz` answers 9 where
+  // `priceForVariant` is 5 — an 80% OVER-display against a submit that reserves
+  // 5. Over-display is the safe direction for a spend gate but it is still a
+  // wrong number quoted to a block, and the whole point of this change is that
+  // the estimate tells the truth. Flooring on the submit's own value alone is
+  // both necessary and sufficient for "never below what the submit reserves".
+  //
+  // It stays as the no-quote FALLBACK, where it is the entry's own declared
+  // display estimate and is what the block was shown before this change.
+  const submitFloorBuzz = Math.ceil(plan.reserveBuzz);
+  const shownBuzz = Math.max(submitFloorBuzz, quotedBuzz ?? declaredBuzz);
+
+  return {
+    snapshot: {
+      // Non-empty sentinel: the SDK's inbound validator drops empty-workflowId
+      // snapshots. The block treats estimate as a cost quote and never polls it.
+      workflowId: 'wf_estimate',
+      status: 'pending' as const,
+      cost: { total: shownBuzz },
+    },
+  };
+}
+
+/**
+ * The orchestrator's live price for an ALREADY-BUILT step, or `null` if it could
+ * not be had.
+ *
+ * Takes the built step rather than building it, so the caller's deterministic
+ * refusals stay outside this catch — see the note at the build site. What IS
+ * swallowed here is the transient half: token mint and the orchestrator
+ * round-trip. A quote failure must degrade an estimate to the pre-existing
+ * declared number, never turn it into an error the block has no way to act on.
+ * The SUBMIT path runs its own quote and does NOT swallow.
+ *
+ * 🔴 EVERY OUTCOME IS COUNTED, INCLUDING THE DEGRADED ONE. A silent fallback
+ * would make "the block saw a live quote" and "the orchestrator was down and the
+ * block saw the floor again" indistinguishable in production — which is the same
+ * shape of unmeasured assertion this whole change exists to remove. The pair is
+ * deliberate: `estimate_absent` alone is unreadable, because a flat zero cannot
+ * be told apart from an estimate path that never runs. Read the ratio.
+ *
+ * No `externalId` on the quote, mirroring the submit's whatIf preflight and the
+ * txt2img one: the idempotency key belongs to a real submit only.
+ *
+ * 🔴 MODERATION IS DELIBERATELY *NOT* RUN HERE, and that is not an oversight of
+ * the shared build. `runStepModeration` is a submit-path gate: it exists to keep
+ * unaudited content off the EXECUTION path, and a `whatif` executes nothing and
+ * publishes nothing. Every registered entry today is `'none'` (`convert-image`)
+ * or `'textOutput'` (`chat-completion`, output-phase only), so nothing is skipped
+ * in practice. 🔴 A future `'promptAudit'` entry changes that — its prompt would
+ * reach the orchestrator unaudited on this path — so an entry declaring an
+ * INPUT-phase posture must either audit here or be excluded from quoting.
+ */
+async function quoteStepBuzz(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  step: ReturnType<typeof resolveBlockStep>;
+  orchestratorStep: ReturnType<typeof buildStepOrchestratorStep>;
+  userId: number;
+}): Promise<number | null> {
+  const { ctx, claims, step, orchestratorStep, userId } = opts;
+  try {
+    const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+    const token = await getOrchestratorToken(userId, ctx);
+    const quote = await submitWorkflow({
+      token,
+      body: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        steps: [orchestratorStep as any],
+        tags: buildWorkflowTags(claims, step.id, 'step'),
+        currencies: resolveBlockCurrenciesForAccount(isGreen, undefined),
+        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+      },
+      query: { whatif: true },
+    });
+    const total = quote.cost?.total;
+    if (typeof total !== 'number' || !Number.isFinite(total)) {
+      recordStepPriceCheck(step.id, 'estimate_absent');
+      return null;
+    }
+    recordStepPriceCheck(step.id, 'estimate_quoted');
+    return Math.ceil(total);
+  } catch {
+    recordStepPriceCheck(step.id, 'estimate_absent');
+    return null;
+  }
+}
+
+/**
+ * STEP SUBMIT. Order: gates → per-step `.strict()` param parse → moderation
+ * posture → spend plan (dispatched on billing mode) → static budget gate →
+ * idempotency claim → reserve on the per-user cap → reserve on the PER-APP cap
+ * → reserve on the dev-session cap → build + submit → settle bookkeeping →
+ * durable audit + attribution.
+ *
+ * Over-cap / rejections return a failed-shape snapshot (recoverable by the
+ * block); a throw AFTER reserving refunds every reservation.
+ */
+async function submitStepWorkflow(opts: {
+  ctx: Context;
+  claims: BlockClaims;
+  body: StepBody;
+  /** OPTIONAL client idempotency key → orchestrator externalId. */
+  idempotencyKey?: string;
+}) {
+  const { ctx, claims, body, idempotencyKey } = opts;
+
+  // Namespaced idempotency externalId — ALWAYS SET, same as the other kinds: a
+  // server-minted `bls<uuid>` when the block sends no key, so `submitWorkflow`'s
+  // own 3× retry of the real submit can never create (and charge for) a second
+  // workflow after a 502/504. Minted ONCE here — the body built below is the
+  // object the retry wrapper reuses across attempts.
+  const blockExternalId = idempotencyKey
+    ? composeBlockExternalId(claims.appBlockId, idempotencyKey)
+    : mintServerBlockExternalId();
+
+  const userId = await assertStepRequestAllowed(claims);
+  // The outer proc already gated this, but re-narrow here (defense-in-depth) so
+  // `buzzBudget` is a positive number the static gate can compare against.
+  if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
+  }
+
+  const step = resolveBlockStep(body);
+  // The registry entry's OWN `.strict()` schema is the real param contract (the
+  // wire schema only gated the `step` id). An unknown param is REJECTED here,
+  // never silently dropped — enforced for every registered entry at registry
+  // load. An invalid param is a BAD_REQUEST → fail-closed.
+  const params = parseStepParams(step, body.params);
+
+  // NOTE: no UNCONDITIONAL `getBlockSessionUser` call here. A registry step
+  // carries no model binding, no checkpoint resolution and no entitlement belt,
+  // so a `'none'`-posture step reads nothing about the session user — fetching
+  // one cost a `getUserById` per submit for a value that was never used. A
+  // posture that DOES audit needs `isModerator`, so it is passed below as a
+  // THUNK: only a handler that reads it pays for the round-trip, and this
+  // function keeps no per-posture branch.
+  const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+  // A registry step has no `accountType` field on its wire body (params are the
+  // step's own bounded contract), so currency selection is Auto — the
+  // domain-allowed set, drained blue-first.
+  const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
+
+  // ── MODERATION POSTURE — dispatched on the entry's DECLARED posture, the same
+  // way spend dispatches on its declared billing mode. No per-step and no
+  // per-posture branch here; `runStepModeration` owns the table.
+  //
+  // 🔴 HOST-SIDE, AND BEFORE SUBMISSION. The audit cannot live on the block
+  // side: a block is untrusted sandboxed code that can decline to call it or
+  // ignore its verdict, and `extModeration` being fail-soft does not make the
+  // call optional. Placed here it runs before the orchestrator quote and before
+  // every spend reservation — so a rejection costs no orchestrator call and has
+  // nothing to refund, matching where `textToImage` and `customComfy` put theirs.
+  //
+  // 🔴 `isGreen` IS THE TOKEN'S MATURITY CLAIM, not a request field and not a
+  // constant. It comes from `resolveBlockMaturity(claims)` above — the same
+  // server-minted `maxBrowsingLevel` ceiling `allowMatureContent` is derived
+  // from — so a SFW-domain (green/blue) block gets the stricter SFW audit even
+  // if its own code is wrong or malicious. Byte-identical derivation to the two
+  // existing kinds.
+  await runStepModeration({
+    step,
+    params,
+    userId,
+    isGreen,
+    loadIsModerator: async () => !!(await getBlockSessionUser(userId)).isModerator,
+  });
+
+  const token = await getOrchestratorToken(userId, ctx);
+
+  // ── THE RESOLVED VARIANT — derived ONCE, HERE, before any reservation exists.
+  //
+  // 🔴 WHY IT IS HOISTED RATHER THAN CALLED AT EACH USE. Three consumers key off
+  // this value (the price lookup below, the settle `engine`, and the usage audit
+  // row), and it used to be re-derived at each of them — against the registry's
+  // own stated invariant that there is a SINGLE source of truth for "which
+  // variant did this submit resolve to?". Re-deriving is not merely wasteful: a
+  // resolver that is not a pure function of `params` could answer differently at
+  // each site, so the row would record a variant the caller was not charged for.
+  //
+  // 🔴 AND WHY THE POSITION MATTERS. `resolveStepVariant` THROWS on an out-of-set
+  // resolution. Resolved here, that throw lands before the orchestrator quote and
+  // before every reservation — nothing to refund. The audit-row derivation it
+  // replaces sits inside a `void (async () => …)().catch(() => {})` AFTER the
+  // submit is billed, where the same throw would have been silently swallowed
+  // with the money already committed.
+  //
+  // Order-preserving: `planStepSpend` resolved this internally, as its first act,
+  // at exactly this point in the sequence.
+  const variant = resolveStepVariant(step, params);
+
+  // ── SPEND PLAN — dispatched on the entry's declared BILLING MODE. This is the
+  // single place the money shape is decided; the rest of this function is
+  // mode-agnostic and never re-inspects `billingMode`.
+  const plan = planStepSpend(step, params, variant);
+  const declaredBuzz = Math.ceil(plan.reserveBuzz);
+
+  // Built ONCE by the shared helper, so the quote and the real submit can never
+  // price different things — and so the $type / entitlement re-asserts run on
+  // BOTH paths. Both throws land before the orchestrator call and before every
+  // reservation, so a rejection costs nothing and has nothing to refund.
+  // (`timeout` is stamped ONLY for a billing mode whose cap IS a timeout; see
+  // the helper.)
+  const orchestratorStep = buildStepOrchestratorStep(step, params, plan);
+  // Parameterized tags: emit the step id as both the workflow-type tag and the
+  // `baseModel` slot (a registry step has no base model), preserving the
+  // `app-block:*` provenance tags the per-app subqueue read depends on.
+  const tags = buildWorkflowTags(claims, step.id, 'step');
+
+  // ── (0) ORCHESTRATOR QUOTE — a real `whatif:true` submit, BEFORE the per-call
+  // budget gate.
+  //
+  // 🔴 WHY THE DECLARED PRICE CANNOT BE THE CEILING. Before this, the per-call
+  // `buzzBudget` gate compared the token's budget against a number Civitai had
+  // simply asserted in the registry. That made this the FIRST block spend path
+  // whose per-call ceiling rested on nothing the platform enforces:
+  // `textToImage` submit gates on a real `whatif` quote from the orchestrator,
+  // and `customComfy` stamps a step `timeout` the orchestrator physically
+  // enforces as the Buzz ceiling. A `prepaidFixed` step does neither —
+  // `stepTimeoutSeconds` is deliberately `null` — so if the declared price were
+  // ever below the real one, EVERY submit would exceed `buzzBudget` by the
+  // overage, forever, until a human read a counter and shipped code. The
+  // downstream divergence correction adjusts the CAP COUNTERS; it never touched
+  // the declared price or this gate, so it was never a backstop for it.
+  //
+  // 🔴 `prepaidFixed` means "cost knowable before execution" — which is exactly
+  // what `whatif:true` returns. Asking the orchestrator is therefore not a
+  // workaround for the mode, it is the mode's own premise made enforceable.
+  //
+  // No `externalId` on the quote (mirrors the txt2img whatIf preflight): the
+  // idempotency key belongs to the REAL submit only.
+  //
+  // Cost of this: one extra orchestrator round-trip per step submit — the same
+  // one the txt2img path already pays. A throw here propagates BEFORE any
+  // reservation exists, so there is nothing to refund.
+  const whatIfResult = await submitWorkflow({
+    token,
+    body: {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      steps: [orchestratorStep as any],
+      tags,
+      currencies,
+      ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+    },
+    query: { whatif: true },
+  });
+  const quotedTotal = whatIfResult.cost?.total;
+  const quotedBuzz =
+    typeof quotedTotal === 'number' && Number.isFinite(quotedTotal) ? Math.ceil(quotedTotal) : null;
+
+  // Fail CLOSED on an unquotable step. A missing quote means the mode's premise
+  // ("cost knowable before execution") did not hold for this submit, which puts
+  // the ceiling back on the unenforced declared constant — the exact state this
+  // gate exists to remove. Reported as a recoverable failed-shape snapshot (the
+  // same shape every other cap rejection returns) rather than a throw, and
+  // counted as `outcome: 'absent'` so it is visible rather than silent.
+  if (quotedBuzz === null) {
+    recordStepPriceCheck(step.id, 'absent');
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: declaredBuzz },
+        error:
+          'generation temporarily unavailable: the orchestrator returned no price quote for ' +
+          'this step, so its cost could not be bounded before execution — please retry shortly',
+      },
+    };
+  }
+
+  // 🔴 The reservation is the LARGER of the two. The quote is what makes the
+  // ceiling real (a quote above the declared price must be gated and reserved at
+  // the real number, not the asserted one); the declared price is the floor
+  // because the registry asserts it and the load-time invariant ties it to
+  // `estimateBuzz`. Over-reserving only makes a cap stricter.
+  //
+  // ⚠️ IT IS NO LONGER "what `estimateBuzz` SHOWED the block" — that clause was
+  // true only while the estimate returned the declared constant. The estimate
+  // now quotes the orchestrator and computes this SAME expression —
+  // `max(Math.ceil(plan.reserveBuzz), quoted)` — so the two paths agree by
+  // construction rather than by the block having been shown this number. See
+  // `estimateStepWorkflow`.
+  const reserveBuzz = Math.max(declaredBuzz, quotedBuzz);
+
+  // (1) Pre-submit gate against the token's per-call budget — now enforced
+  // against the ORCHESTRATOR'S OWN NUMBER, not a declared constant.
+  if (reserveBuzz > claims.buzzBudget) {
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: reserveBuzz },
+        error: `insufficient buzz budget: step price ${reserveBuzz} exceeds budget ${claims.buzzBudget}`,
+      },
+    };
+  }
+
+  // ── GEN IDEMPOTENCY CLAIM — taken BEFORE the cap reservations + orchestrator
+  //    submit so two CONCURRENT same-key submits can't BOTH reserve + BOTH
+  //    charge, and a replay can't double-INCR the cap counters. Absent key → no
+  //    claim. Fail-CLOSED on a redis error; a resolved submit FINALIZEs, every
+  //    non-committed exit RELEASEs. The orchestrator externalId dedupe stays as
+  //    a 2nd layer.
+  let genClaimKey: string | null = null;
+  if (idempotencyKey) {
+    let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
+    try {
+      claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
+        userId,
+        claims.appBlockId,
+        idempotencyKey
+      );
+    } catch {
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'generation idempotency unavailable; please retry',
+      });
+    }
+    if (claim.state === 'replay') return claim.result;
+    if (claim.state === 'in_progress') {
+      throw new TRPCError({
+        code: 'CONFLICT',
+        message: 'a generation with this idempotency key is already in progress',
+      });
+    }
+    genClaimKey = claim.key;
+  }
+
+  // (2) Reserve against the per-user cumulative cap. THROWS fail-closed on a
+  // redis error; release the claim first.
+  let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
+  try {
+    reservation = await reserveBlockBuzzSpendForClaims(claims, userId, reserveBuzz);
+  } catch (e) {
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+  const { total, key: buzzCapKey, cap: buzzCap } = reservation;
+  if (total > buzzCap) {
+    await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: reserveBuzz },
+        error:
+          claims.reviewRunForReal === true
+            ? `review run-for-real Buzz cap reached: ${total - reserveBuzz} already ` +
+              `spent this review session, this step costs ${reserveBuzz}, ` +
+              `session cap is ${buzzCap}`
+            : `daily Buzz cap reached: ${total - reserveBuzz} already spent today ` +
+              `across your installed apps, this step costs ${reserveBuzz}, ` +
+              `daily cap is ${buzzCap}`,
+      },
+    };
+  }
+
+  // 🔴 (3) Reserve against the PER-APP aggregate cap (daily Buzz + velocity).
+  // This is the guardrail the per-user cap structurally cannot provide — it is
+  // keyed on `appBlockId` with the spender deliberately absent from the key, so
+  // a Sybil ring funnelling many accounts' spend through ONE app is bounded.
+  // Skipped ONLY for DEV tokens (synthetic non-FK appBlockId), matching every
+  // other kind.
+  let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
+  if (claims.dev !== true) {
+    const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+    const appSpend = await reserveAppSpend(claims.appBlockId, reserveBuzz);
+    if (!appSpend.allowed) {
+      // Roll back the per-user reservation so a rejected submit doesn't burn the
+      // viewer's own daily ceiling for a spend that never happened.
+      await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+      // No money moved → release the idempotency claim so a genuine retry runs.
+      if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+      return {
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed' as const,
+          cost: { total: reserveBuzz },
+          error:
+            appSpend.reason === 'velocity'
+              ? 'app generation rate limit reached: this app has run too many generations in a short window — please retry shortly'
+              : appSpend.reason === 'unavailable'
+              ? 'generation temporarily unavailable — please retry shortly'
+              : 'app daily spend cap reached: this app has hit its aggregate daily generation-spend ceiling — please try again later',
+        },
+      };
+    }
+    if (appSpend.dailyKey) appSpendReserve = { key: appSpend.dailyKey, cost: reserveBuzz };
+  }
+
+  // (4) APP DEV TUNNEL per-session spend backstop — mirror every other kind.
+  // Bounds cumulative spend within ONE dev session so a runaway LOCAL submit
+  // loop can't drain Buzz.
+  let devSessionReserve: { sessionId: string; cost: number } | null = null;
+  {
+    const { getActiveDevTunnel, reserveDevSessionBuzz } = await import(
+      '~/server/services/blocks/dev-tunnel.service'
+    );
+    const devTunnel = await getActiveDevTunnel(userId, claims.blockId).catch(() => null);
+    if (devTunnel) {
+      const reserved = await reserveDevSessionBuzz(
+        devTunnel.sessionId,
+        reserveBuzz,
+        devTunnel.spendCapBuzz
+      );
+      if (!reserved.allowed) {
+        await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+        if (appSpendReserve) {
+          const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+          await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+        }
+        if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+        return {
+          snapshot: {
+            workflowId: 'failed',
+            status: 'failed' as const,
+            cost: { total: reserveBuzz },
+            error:
+              `dev tunnel session Buzz cap reached: ${reserved.total} already spent ` +
+              `this dev session, this step costs ${reserveBuzz}, ` +
+              `session cap is ${devTunnel.spendCapBuzz}`,
+          },
+        };
+      }
+      devSessionReserve = { sessionId: devTunnel.sessionId, cost: reserveBuzz };
+    }
+  }
+
+  // ── Build + submit. On ANY throw AFTER reserving, refund on ALL reservation
+  // keys and re-throw (refund-on-throw).
+  let snapshot: ReturnType<typeof snapshotFromWorkflow>;
+  // Hoisted out of the try so the post-submit spend-attribution closure can read
+  // the REALIZED per-account debit.
+  let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
+  const submittedAt = Date.now();
+  try {
+    // `orchestratorStep` + `tags` were built above the quote — the SAME objects
+    // the whatif priced, so the quote and the charge can never describe
+    // different work.
+    const submitted = await submitWorkflow({
+      token,
+      body: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        steps: [orchestratorStep as any],
+        tags,
+        currencies,
+        // Authoritative maturity clamp on the real submit — token-claim derived.
+        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+        externalId: blockExternalId,
+      },
+    });
+    snapshot = snapshotFromWorkflow(submitted);
+    realizedTransactions = submitted.transactions;
+  } catch (e) {
+    await refundBlockBuzzSpend(buzzCapKey, reserveBuzz);
+    if (appSpendReserve) {
+      const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
+      await refundAppSpend(appSpendReserve.key, appSpendReserve.cost);
+    }
+    if (devSessionReserve) {
+      const { refundDevSessionBuzz } = await import('~/server/services/blocks/dev-tunnel.service');
+      await refundDevSessionBuzz(devSessionReserve.sessionId, devSessionReserve.cost);
+    }
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    throw e;
+  }
+
+  // A resolved submit is money-COMMITTED. Cache the terminal result under the
+  // idempotency key so a lost-response retry replays it. Best-effort.
+  const genResult = { snapshot };
+  if (genClaimKey) await finalizeGenIdempotency(genClaimKey, genResult);
+
+  // ── PRICE CHECK + RESERVATION-OVERAGE CORRECTION.
+  //
+  // We reserved an EXACT amount on every cap. If the orchestrator billed MORE,
+  // those counters are short by the difference and the per-app abuse cap would
+  // be that much looser for every subsequent submit — the one direction a spend
+  // cap must never drift. Correct ALL THREE reservations for the overage (an
+  // accounting correction for money already spent, NOT a gate: every `charge*`
+  // helper deliberately has no deny path) and record the outcome.
+  //
+  // 🔴 GATED ON THE PLAN, NOT RUN UNCONDITIONALLY. This correction is
+  // `prepaidFixed`-shaped: it is only right when the reservation was an exact
+  // price. A future `timeBounded` entry reserves a CEILING, and a submit-time
+  // cost above it would be topped up here AND then settled ceiling→actual by the
+  // post-paid machinery off the un-topped-up ceiling. `plan.correctReservationOverage`
+  // is how the MODE decides, keeping this function mode-agnostic — the property
+  // the registry exists to guarantee.
+  //
+  // Under-billing needs no correction: over-reserving only makes the cap
+  // stricter, and an exact reservation is final by definition (there is no
+  // post-paid settle to refund it down).
+  if (plan.correctReservationOverage) {
+    const realizedCost = snapshot.cost?.total;
+    if (typeof realizedCost === 'number' && Number.isFinite(realizedCost)) {
+      const billed = Math.ceil(realizedCost);
+      // ── TWO COMPARISONS, BECAUSE THEY ANSWER TWO DIFFERENT QUESTIONS. ───────
+      //
+      // 🔴 THE PRICE CHECK USED TO SHARE THE CAP'S COMPARISON, AND THAT MADE IT
+      // STRUCTURALLY BLIND TO THE ONE THING ITS OWN DESCRIPTION CLAIMS TO
+      // DETECT. `reserveBuzz` is `max(declaredBuzz, quotedBuzz)` — it has
+      // ALREADY absorbed the orchestrator's live quote — so a call declared at
+      // 1 and billed at 4 computed `4 - 4 = 0` and was recorded `exact`, while
+      // `app-block-runtime.metrics.ts` documents `over` as meaning "the declared
+      // price is wrong". A guard whose description is wider than its
+      // implementation, and it read as coverage while providing none.
+      //
+      // Measured 2026-08-27: `chat-completion` billed several times its
+      // declared price on consecutive real sends, and this counter reported
+      // `exact` every time. Nothing else in the system compares the declared
+      // number against reality.
+      //
+      // - `capOverage` vs `reserveBuzz` drives the RESERVATION CORRECTION. That
+      //   comparison was and remains right: the three counters were reserved at
+      //   `reserveBuzz`, so that is what they are short against.
+      // - `priceOverage` vs `declaredBuzz` drives the PRICE-CHECK SIGNAL. That
+      //   is the number the REGISTRY ASSERTS. 🔴 It is no longer the number the
+      //   block is SHOWN — the estimate quotes the orchestrator and shows
+      //   `max(submitFloor, quoted ?? declared)`, so for a usage-priced entry
+      //   the viewer sees the quote. `over` therefore means "the registry constant
+      //   does not describe reality", NOT "a user was shown the wrong price";
+      //   triaging it as a display bug hunts something that does not exist.
+      //
+      // 🔴 AND THEY ARE SEPARATE OUTCOME VALUES, NOT ONE. Collapsing both into
+      // `over` would trade one blindness for another: for a usage-priced entry
+      // the declared constant is a FLOOR, so `over` sits at ~100% forever by
+      // design — and a genuinely expensive event (billed above the RESERVATION,
+      // which shorts every cap counter) would then be invisible inside a
+      // saturated line, exactly as declared-price drift used to be invisible
+      // inside `exact`. `over_reserved` is the one to alert on; `over` is a
+      // report that a declared constant does not describe reality.
+      const capOverage = billed - reserveBuzz;
+      const priceOverage = billed - declaredBuzz;
+      recordStepPriceCheck(
+        step.id,
+        capOverage > 0 ? 'over_reserved' : priceOverage > 0 ? 'over' : 'exact'
+      );
+      if (capOverage > 0) {
+        // Best-effort on ALL THREE keys; each guarded independently so one
+        // failing cannot skip the others, and none can break an already-billed
+        // submit.
+        //
+        // 🔴 THE DEV-SESSION KEY IS ONE OF THE THREE. The earlier version
+        // corrected the per-user and per-app counters only, while its own
+        // comment claimed "both cap counters" — there are three reservations, and
+        // a divergent submit inside a dev tunnel left that counter under-reading
+        // by the overage: precisely the drift direction the same comment forbids.
+        try {
+          await reserveBlockBuzzSpendForClaims(claims, userId, capOverage);
+        } catch {
+          /* best-effort correction — a lost one under-counts by the overage only */
+        }
+        if (appSpendReserve) {
+          try {
+            const { chargeAppSpendOverage } = await import(
+              '~/server/services/blocks/app-spend-cap.service'
+            );
+            await chargeAppSpendOverage(appSpendReserve.key, capOverage);
+          } catch {
+            /* best-effort correction */
+          }
+        }
+        if (devSessionReserve) {
+          try {
+            const { chargeDevSessionOverage } = await import(
+              '~/server/services/blocks/dev-tunnel.service'
+            );
+            await chargeDevSessionOverage(devSessionReserve.sessionId, capOverage);
+          } catch {
+            /* best-effort correction */
+          }
+        }
+      }
+      // NOTE: the `exact` emit is now UNCONDITIONAL above rather than an `else`
+      // on the cap branch. It still serves its original purpose — proving the
+      // detector executed at all, so a flat `over` line can be told apart from a
+      // check that never ran — but it now reports on the DECLARED price, which
+      // is what the metric's description has always claimed it reports on.
+    } else {
+      // No numeric cost on the snapshot → nothing to compare. Distinguished from
+      // `exact` on purpose: this is the state in which the correction is inert.
+      recordStepPriceCheck(step.id, 'absent');
+    }
+  }
+
+  // ── Post-paid settle bookkeeping, driven by the PLAN — not by the kind and not
+  // by the step id. `prepaidFixed` sets `postPaidSettle: false`: the price is
+  // exact, the reservation is final, and the post-paid ceiling→actual settle
+  // machinery is never touched (no settle record is persisted, so the terminal
+  // poll/cancel hook has nothing to read and no refund is owed). A future
+  // `timeBounded` entry sets it true and reuses the same machinery customComfy
+  // does, with no change to this function's shape.
+  if (
+    plan.postPaidSettle &&
+    snapshot.workflowId &&
+    snapshot.workflowId !== 'failed' &&
+    snapshot.workflowId !== 'whatif'
+  ) {
+    await persistCustomComfySettle({
+      workflowId: snapshot.workflowId,
+      buzzCapKey,
+      appSpendKey: appSpendReserve?.key ?? null,
+      ...(devSessionReserve ? { devSessionId: devSessionReserve.sessionId } : {}),
+      ceiling: reserveBuzz,
+      // The ONE derivation hoisted to the top of this function — bounded to the
+      // entry's declared `variants` by `resolveStepVariant`, and the same value
+      // the reservation was priced from.
+      engine: variant,
+      recipe: step.id,
+      submittedAt,
+    });
+  }
+
+  // G6 — persistent output queue (best-effort, non-dev), so a step gen rebuilds
+  // in listMyWorkflows on reload. Same posture as every other kind.
+  if (
+    snapshot.workflowId &&
+    snapshot.workflowId !== 'failed' &&
+    snapshot.workflowId !== 'whatif' &&
+    claims.dev !== true
+  ) {
+    const realWorkflowId = snapshot.workflowId;
+    void (async () => {
+      const { upsertBlockWorkflowOnSubmit } = await import(
+        '~/server/services/blocks/block-workflows.service'
+      );
+      await upsertBlockWorkflowOnSubmit({
+        workflowId: realWorkflowId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        userId,
+        status: snapshot.status,
+      });
+    })().catch(() => {
+      /* best-effort: a failed queue write never breaks (or slows) submit */
+    });
+  }
+
+  // ── Durable audit + attribution (parity with the txt2img + customComfy paths).
+  // A step generation bills real Buzz, so it must leave the same durable trail:
+  // a per-user activity row and an author-bounty spend basis. Both are
+  // server-derived from the VERIFIED token claims (never client input), and both
+  // are fire-and-forget with their OWN try/catch so an audit failure can never
+  // add latency to — or break — the already-billed submit response.
+  {
+    const invocationCost = snapshot.cost?.total ?? reserveBuzz;
+    void (async () => {
+      const { recordScopeInvocation } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      await recordScopeInvocation({
+        userId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        scope: 'ai:write:budgeted',
+        // Templated, NOT `workflow:submit:<workflowId>` — `endpoint` is the
+        // topEndpoints GROUP BY key and must stay bounded (see the txt2img call
+        // site's note). The id moves to `detail.workflowId`.
+        endpoint: 'workflow:submit',
+        statusCode: snapshot.status === 'failed' ? 500 : 200,
+        // 🔴 THE TWO STEP DIMENSIONS. Everything else on this row is identical
+        // to what the txt2img path writes — same `scope`, and now the same
+        // BOUNDED `workflow:submit` endpoint (this PR templated it; the id moved
+        // to `detail.workflowId`, so the endpoint discriminates even less than
+        // it used to) — so WITHOUT these a step submit
+        // and a txt2img submit are indistinguishable in `block_scope_invocations`,
+        // and two different step types are indistinguishable from each other.
+        // That is the gap: per-(user, app, capability) usage was not answerable
+        // from the table that exists to answer it.
+        //
+        // 🔴 NO SCHEMA CHANGE. `detail` is a nullable JSON column, so these are
+        // additive keys on new rows; existing rows and every other writer are
+        // untouched, and `describeBlockAction` ignores keys it does not read.
+        //
+        // 🔴 NOT A PER-STEP BRANCH — this stays inside the dispatch rule at the
+        // top of this section. Both values are read off the registry entry
+        // generically (`step.id`, and the entry's own variant resolver); nothing
+        // here tests WHICH step it is.
+        detail: {
+          action: 'workflow.submit',
+          amount: typeof invocationCost === 'number' ? -Math.abs(invocationCost) : undefined,
+          outcome: snapshot.status === 'failed' ? 'failed' : 'ok',
+          step: step.id,
+          // 🔴 THE HOISTED VALUE, not a fresh resolution. Bounded to the entry's
+          // declared `variants` by `resolveStepVariant` — that wrapper, not the
+          // entry's promise, is what makes it safe to persist — and identical by
+          // construction to the one the reservation was priced from, which is the
+          // only thing that makes this row a usable billing dimension. Resolving
+          // it HERE would also put a throwing call inside this swallowed
+          // fire-and-forget block, after the submit is already billed. For an
+          // entry that makes its model its variant this IS the model; for
+          // `convert-image` it is always `'default'`.
+          variant,
+          // The per-ROW workflow id, moved here from the endpoint string by this
+          // PR (see the `endpoint` note above). Additive alongside the two step
+          // dimensions — same nullable JSON column, no schema change.
+          ...(snapshot.workflowId ? { workflowId: snapshot.workflowId } : {}),
+        },
+        dev: claims.dev === true,
+      });
+    })().catch(() => {
+      /* swallowed inside helper */
+    });
+  }
+
+  const spendWorkflowId = snapshot.workflowId;
+  if (spendWorkflowId && spendWorkflowId !== 'failed' && snapshot.status !== 'failed') {
+    void (async () => {
+      const { recordSpendAttribution } = await import(
+        '~/server/services/blocks/buzz-attribution.service'
+      );
+      const { buzzType, buzzAmount } = deriveBlockSpendBasis(
+        realizedTransactions,
+        isGreen,
+        snapshot.cost?.total ?? reserveBuzz
+      );
+      await recordSpendAttribution({
+        userId,
+        buzzAmount,
+        buzzType,
+        workflowId: spendWorkflowId,
+        appId: claims.appId,
+        appBlockId: claims.appBlockId,
+        blockInstanceId: claims.blockInstanceId,
+        // A registry step is not model-based (no user-picked model to attribute).
+        modelId: null,
+        // A step body is `{ kind, step, params }` `.strict()` — no sharedContentKey.
+        sharedContentKey: null,
+      });
+    })().catch(() => {
+      /* best-effort: a failed attribution write never breaks submit */
+    });
+  }
+
+  // Same object already cached under the idempotency key (see genResult above).
+  return genResult;
 }
 
 /**
@@ -6138,9 +8154,15 @@ async function maybeAutoClaimDailyBoost({
     return undefined;
   }
 
-  // Already claimed today, or the reward has no payout (e.g. user is
-  // rewardsIneligible — multiplier zeroed the amount).
-  if (boostDetails.awarded > 0 || boostDetails.awardAmount <= 0) return undefined;
+  // Disabled at runtime, already claimed today, or the reward has no payout
+  // (e.g. user is rewardsIneligible — multiplier zeroed the amount).
+  //
+  // Gated on the claim COUNT, not on `awarded > 0`: a claim the cap trimmed to
+  // zero still consumed the day's dedup entry, so an amount-based check would
+  // pass, `apply` would no-op against the dedup guard, and the iframe would be
+  // told Buzz was claimed on every submit for the rest of the day.
+  if (!boostDetails || boostDetails.awardedCount > 0 || boostDetails.awardAmount <= 0)
+    return undefined;
 
   // Balance already covers the cost — boost would just sit unused today.
   if (balanceSum >= cost) return undefined;

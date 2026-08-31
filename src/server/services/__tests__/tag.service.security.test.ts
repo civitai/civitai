@@ -1,24 +1,27 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const { executeRaw, queryRaw } = vi.hoisted(() => ({
-  executeRaw: vi.fn(),
-  queryRaw: vi.fn().mockResolvedValue([{ count: 0 }]),
-}));
+// The db and redis clients come from the canonical shared mocks.
+//
+// The old direct db mock aliased ONE `$queryRaw` spy onto both clients, which
+// hid which tier each statement runs on. Resolved by reading the entry points
+// instead: every statement these tests assert about is `dbWrite.$executeRaw`
+// (`removeTagVotes` tag.service.ts:649, `addTagVotes` :696, `deleteTags` :946),
+// and the moderation-tag check `addTagVotes` makes afterwards is
+// `dbRead.$queryRaw` (:711). So the two are bound to the client that actually
+// runs them, and a statement moving tiers now shows up as a missing call rather
+// than passing on the alias.
+const executeRaw = dbMock.dbWrite.$executeRaw;
+const queryRaw = dbMock.dbRead.$queryRaw;
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: { $executeRaw: executeRaw, $queryRaw: queryRaw },
-  dbRead: {
-    $queryRaw: queryRaw,
-    model: { findFirst: vi.fn().mockResolvedValue({ userId: 1 }) },
-    image: { findFirst: vi.fn().mockResolvedValue({ userId: 1 }) },
-  },
-}));
-vi.mock('~/server/redis/client', () => ({
-  redis: { del: vi.fn(), packed: {} },
-  sysRedis: { del: vi.fn() },
-  REDIS_KEYS: { SYSTEM: { TAG_RULES: 't', CATEGORIES: 'c' } },
-  REDIS_SYS_KEYS: { SYSTEM: {} },
-}));
+// `addTagVotes` destructures the first row of the moderation-count read, so the
+// fixture the old mock supplied has to be carried over rather than inherited —
+// the canonical `$queryRaw` default is an empty array, which would throw there.
+queryRaw.mockResolvedValue([{ count: 0 }]);
+// The creator-weight lookups; `addTagVotes` reads `creator?.userId` from each.
+dbMock.dbRead.model.findFirst.mockResolvedValue({ userId: 1 });
+dbMock.dbRead.image.findFirst.mockResolvedValue({ userId: 1 });
+
 vi.mock('~/server/redis/caches', () => ({
   imageTagsCache: { bust: vi.fn() },
   // tag.service now reads/busts the votable-tags cache (#3223) from add/remove/delete
@@ -30,6 +33,7 @@ vi.mock('~/server/services/system-cache', () => ({
   getCategoryTags: vi.fn(),
   getReplacedTagIds: vi.fn(),
   getSystemTags: vi.fn().mockResolvedValue([]),
+  clearFeedTagBarTagsCache: vi.fn(),
 }));
 vi.mock('~/server/services/tagsOnImageNew.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('~/server/services/user-preferences.service', () => ({

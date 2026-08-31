@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   deriveContentRatingFromAssets,
@@ -16,6 +17,21 @@ import {
   type ListingAssetKind,
 } from '~/server/schema/blocks/app-listing.schema';
 import type { SessionUser } from '~/types/session';
+// TYPE-ONLY (erased at compile time) — the runtime reach into `app-access.service` stays
+// a dynamic import (it imports this module back). See `resolveListingRole`.
+import type { AppRole } from '~/server/services/blocks/app-access.service';
+import {
+  classifyStoredObjectIntegrity,
+  readRecordedEtag,
+} from '~/server/services/blocks/stored-object-integrity';
+import {
+  appInitial,
+  categoryGlyph,
+  listingPlaceholderSeed,
+  placeholderHues,
+  placeholderStop,
+  seededHue,
+} from '~/shared/constants/app-listing-placeholder.constants';
 
 /**
  * App Store Listings (W13) — P1 asset pipeline service.
@@ -171,39 +187,15 @@ export function pickLogoPrefillUrl(logoUrl: string | null | undefined): string |
 // by the impure default deps below via sharp).
 // ---------------------------------------------------------------------------
 
-/** Category → glyph letter/emoji-free monogram seed (kept ASCII for the SVG). */
-const CATEGORY_GLYPH: Record<string, string> = {
-  generation: '✦',
-  games: '◆',
-  utility: '⚙',
-  discovery: '◈',
-  moderation: '⛨',
-  analytics: '▤',
-  other: '●',
-};
-
-/** FNV-1a → a stable 0..359 hue from a seed string (deterministic per slug). */
-export function seededHue(seed: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return Math.abs(h) % 360;
-}
-
-/** The app's display initial (first alphanumeric of name, else slug), uppercased. */
-export function appInitial(name: string, slug: string): string {
-  // A whitespace-only name must fall through to the slug (not resolve to '?').
-  const src = (name?.trim() || slug?.trim() || '?').trim();
-  const m = src.match(/[A-Za-z0-9]/);
-  return (m ? m[0] : '?').toUpperCase();
-}
+// The placeholder PRIMITIVES (glyphs / seeded hue / initial / gradient stops)
+// now live in `~/shared/constants/app-listing-placeholder.constants` so the
+// CLIENT render-time fallback (AppListingCard / AppListingDetailBody) can derive
+// its colours from the SAME seed as these generated assets. They are re-exported
+// below to keep this module's public API (and its existing tests) unchanged.
+export { seededHue, appInitial };
 
 function gradientDefs(seed: string): { hue: number; hue2: number } {
-  const hue = seededHue(seed);
-  const hue2 = (hue + 40) % 360;
-  return { hue, hue2 };
+  return placeholderHues(seed);
 }
 
 /** Escape the few chars that are unsafe inside SVG text content. */
@@ -228,17 +220,19 @@ export function buildPlaceholderIconSvg(args: {
   size?: number;
 }): string {
   const size = args.size ?? 512;
-  const seed = `${args.category ?? 'other'}:${args.slug}`;
+  const seed = listingPlaceholderSeed(args.slug, args.category);
   const { hue, hue2 } = gradientDefs(seed);
   const initial = svgEscape(appInitial(args.name, args.slug));
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`,
     `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">`,
-    `<stop offset="0%" stop-color="hsl(${hue} 55% 42%)"/>`,
-    `<stop offset="100%" stop-color="hsl(${hue2} 60% 22%)"/>`,
+    `<stop offset="0%" stop-color="${placeholderStop('icon', 'from', hue)}"/>`,
+    `<stop offset="100%" stop-color="${placeholderStop('icon', 'to', hue2)}"/>`,
     `</linearGradient></defs>`,
     `<rect width="${size}" height="${size}" rx="${Math.round(size * 0.18)}" fill="url(#g)"/>`,
-    `<text x="50%" y="50%" dy="0.35em" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="${Math.round(size * 0.5)}" fill="#ffffff" fill-opacity="0.92">${initial}</text>`,
+    `<text x="50%" y="50%" dy="0.35em" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-weight="700" font-size="${Math.round(
+      size * 0.5
+    )}" fill="#ffffff" fill-opacity="0.92">${initial}</text>`,
     `</svg>`,
   ].join('');
 }
@@ -257,19 +251,23 @@ export function buildPlaceholderCoverSvg(args: {
 }): string {
   const width = args.width ?? 1280;
   const height = args.height ?? 720;
-  const seed = `${args.category ?? 'other'}:${args.slug}`;
+  const seed = listingPlaceholderSeed(args.slug, args.category);
   const { hue, hue2 } = gradientDefs(seed);
-  const glyph = svgEscape(CATEGORY_GLYPH[args.category ?? 'other'] ?? CATEGORY_GLYPH.other);
+  const glyph = svgEscape(categoryGlyph(args.category));
   const name = svgEscape((args.name || args.slug).slice(0, 48));
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
     `<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">`,
-    `<stop offset="0%" stop-color="hsl(${hue} 45% 32%)"/>`,
-    `<stop offset="100%" stop-color="hsl(${hue2} 50% 16%)"/>`,
+    `<stop offset="0%" stop-color="${placeholderStop('cover', 'from', hue)}"/>`,
+    `<stop offset="100%" stop-color="${placeholderStop('cover', 'to', hue2)}"/>`,
     `</linearGradient></defs>`,
     `<rect width="${width}" height="${height}" fill="url(#g)"/>`,
-    `<text x="50%" y="44%" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="${Math.round(height * 0.22)}" fill="#ffffff" fill-opacity="0.85">${glyph}</text>`,
-    `<text x="50%" y="66%" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-weight="600" font-size="${Math.round(height * 0.07)}" fill="#ffffff" fill-opacity="0.9">${name}</text>`,
+    `<text x="50%" y="44%" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="${Math.round(
+      height * 0.22
+    )}" fill="#ffffff" fill-opacity="0.85">${glyph}</text>`,
+    `<text x="50%" y="66%" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-weight="600" font-size="${Math.round(
+      height * 0.07
+    )}" fill="#ffffff" fill-opacity="0.9">${name}</text>`,
     `</svg>`,
   ].join('');
 }
@@ -325,11 +323,42 @@ function assertOwnerAssetEditable(
 export { nsfwLevelFromContentRating };
 
 /**
- * Load a listing and assert the caller owns it (or is a moderator). Throws
- * NOT_FOUND for a missing listing, FORBIDDEN for a non-owner non-mod.
+ * Load a listing and assert the caller may edit it. Throws NOT_FOUND for a missing
+ * listing, FORBIDDEN otherwise.
+ *
+ * PERMITTED: the listing owner, an ACCEPTED collaborator ON THE LISTING (seats are
+ * listing-keyed since the re-key — the backing AppBlock is not the seat key and an
+ * off-site listing has none), or a moderator. The mod bypass is UNCHANGED from before
+ * collaborators existed — this
+ * file's gate always had one, unlike `offsite-listing.service`'s
+ * `loadOwnedEditableListing`, which deliberately has none. That divergence is
+ * pre-existing and is recorded in `app-access.call-site-ledger.test.ts` rather than
+ * silently normalised here.
+ *
+ * 🔴 BOTH halves route through `resolveListingAccess` — the owner one too, not just the
+ * collaborator fallback. It is SHADOW-AWARE (a shadow revision carries `appBlockId: null`, so both the seat and
+ * the canonical owner are resolved via its parent; without that an editor would lose
+ * access to their own in-flight revision the moment their first media edit minted it)
+ * and it is KIND-AWARE about ownership: `OauthClient.userId` via the block for `onsite`,
+ * the listing's own column for `offsite` — where the block, if one is attached, must NOT
+ * override it (issue #3844).
+ *
+ * 🔴 THIS IS THE ONLY OWNERSHIP GATE ON THE ASSET PATH. `resolveOwnerScreenshotTarget`
+ * used to run a second, denormalized-column copy of it one line before calling this;
+ * that copy is gone.
  */
-async function loadOwnedListing(listingId: string, user: SessionUser): Promise<OwnedListing> {
-  const listing = await dbRead.appListing.findUnique({
+async function loadOwnedListing(
+  listingId: string,
+  user: SessionUser,
+  /**
+   * Pool override. Defaults to the replica. Pass `dbWrite` when the row may have
+   * been INSERTed milliseconds ago — i.e. a shadow this request just minted
+   * ({@link resolveOwnerAssetEditTarget}); the replica would miss it and the load
+   * would 404 the owner's very first edit.
+   */
+  db: typeof dbRead = dbRead
+): Promise<OwnedListing> {
+  const listing = await db.appListing.findUnique({
     where: { id: listingId },
     select: {
       id: true,
@@ -346,10 +375,321 @@ async function loadOwnedListing(listingId: string, user: SessionUser): Promise<O
     },
   });
   if (!listing) throw new TRPCError({ code: 'NOT_FOUND', message: 'Listing not found' });
-  if (listing.userId !== user.id && !user.isModerator) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
+  if (!user.isModerator) {
+    // Not a mod — the way in is an owner or an ACCEPTED collaborator ROLE, resolved
+    // canonically. Mods short-circuit first, so their path still costs no extra query.
+    //
+    // 🔴 THE OWNER HALF IS RESOLVED, NOT COMPARED. `listing.userId` (selected above) is
+    // a DENORMALIZED copy of the owner for an ON-SITE listing — the canonical owner is
+    // `AppBlock.app.userId`. Comparing against the copy inverts this gate in BOTH
+    // directions on a drifted row: the real owner is refused FORBIDDEN on their own
+    // listing, and whoever the stale row names is let in. `resolveListingAccess` is the
+    // one place that resolution lives.
+    //
+    // 🔴 THE DRIFT COMES FROM A SHADOW REVISION, not from the transfer's listing write —
+    // an earlier version of this comment blamed the latter and was wrong.
+    // `beginListingRevision` clones the parent with `userId: parent.userId` and nothing
+    // ever revisits the clone (`acceptTransfer` step 3 updates only `{ id: <parent> }`;
+    // the revision-apply copies assets back, never `userId`), so a shadow that outlives a
+    // transfer names the OLD owner forever. That matters HERE specifically: this gate is
+    // handed a shadow id on the whole approved-listing edit flow — see
+    // `resolveOwnerAssetEditTarget`, which calls `loadOwnedListing(shadowId, user,
+    // dbWrite)` directly. The transfer's own write to the parent is unconditional and in
+    // the same transaction as the OauthClient move, so it HEALS the parent rather than
+    // drifting it.
+    //
+    // 🔴 `db` IS THREADED THROUGH, not dropped. An EDITOR never resolves as the owner —
+    // a shadow's canonical owner is the PARENT's — so this is the ONLY branch an editor
+    // ever reaches. Resolving it off the replica while the caller handed us `dbWrite`
+    // would re-open, as a 403, the very read-after-write hole the override exists to
+    // close for the owner's 404.
+    const role = await resolveListingRole(listingId, user.id, db);
+    if (role === null) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
+    }
   }
   return listing;
+}
+
+/**
+ * The caller's role on this listing — `'owner'`, `'editor'`, or `null` for no access.
+ *
+ * Extracted so every gate in this file asks the question the SAME way
+ * (`resolveListingAccess` is the single predicate; this is a thin read of it) and so the
+ * seam has one name to mock in tests. It answers BOTH halves: the canonical owner
+ * (kind-aware — the BLOCK's `OauthClient.userId` for an onsite listing, the listing's own
+ * column for an offsite one even when it carries a block) and the ACCEPTED seat, in one
+ * call.
+ *
+ * `db` defaults to the replica and MUST be passed on by any caller that itself received
+ * a pool override — see the note at the `loadOwnedListing` call site.
+ */
+async function resolveListingRole(
+  listingId: string,
+  userId: number,
+  db: typeof dbRead = dbRead
+): Promise<AppRole | null> {
+  const { resolveListingAccess } = await import('~/server/services/blocks/app-access.service');
+  const access = await resolveListingAccess(listingId, userId, db);
+  return access?.role ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// LAZY shadow-revision minting — "a shadow exists once you EDIT, not once you LOOK".
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the EFFECTIVE target of an OWNER asset mutation, minting the shadow
+ * revision on the FIRST edit.
+ *
+ * `getMyListingForApp` no longer creates a shadow just to render the media editor
+ * (a `.query` that writes; measured on prod as 78% of approved onsite parents
+ * carrying a never-edited shadow, self-refilling on every page view). So the id the
+ * client hands an asset proc is the LIVE PARENT until the first mutation. This is
+ * where that mutation becomes a revision:
+ *
+ *   - moderator → returns the listing UNCHANGED. Mods deliberately curate the live
+ *     row ({@link assertOwnerAssetEditable}'s bypass + {@link
+ *     reDeriveContentRatingForModLiveEdit}); auto-staging their edit on a shadow
+ *     would silently change what "mod edits a live listing" means.
+ *   - not `approved`, or already a shadow → UNCHANGED (edited in place, as before).
+ *   - owner + `approved` + not a shadow → `beginListingRevision` (idempotent: reuses
+ *     an in-flight shadow) and the shadow becomes the target.
+ *
+ * Read back from the PRIMARY — the shadow may have been INSERTed microseconds ago.
+ *
+ * 🔴 Callers MUST still run {@link assertOwnerAssetEditable} on the RESOLVED target.
+ * That is the defence-in-depth that makes this fail CLOSED: if this ever returns the
+ * live parent for an owner (a bug here, a `beginListingRevision` that resolved to the
+ * wrong row), the guard throws BAD_REQUEST instead of mutating the served listing.
+ */
+async function resolveOwnerAssetEditTarget(
+  listing: OwnedListing,
+  user: SessionUser
+): Promise<OwnedListing> {
+  if (user.isModerator) return listing;
+  if (listing.status !== 'approved' || listing.revisionOfId != null) return listing;
+  // Dynamic import: `offsite-listing.service` imports THIS module (the floor gates),
+  // so a static import would close a cycle at module-eval time.
+  const { beginListingRevision } = await import('~/server/services/blocks/offsite-listing.service');
+  const { shadowId } = await beginListingRevision({ listingId: listing.id, userId: user.id });
+  return loadOwnedListing(shadowId, user, dbWrite);
+}
+
+/**
+ * Match ONE screenshot row against the clone-set of another listing — the pure core
+ * of the parent-row-id re-map.
+ *
+ * 🔴 WHY THIS EXISTS. `removeListingScreenshot` / `updateListingScreenshotCaption` /
+ * `reorderListingScreenshots` take `AppListingScreenshot` ROW ids. Before a shadow
+ * exists the ids the client holds are the LIVE PARENT's rows — so a "remove
+ * screenshot" issued against them would delete a row from the listing that is
+ * currently being served, bypassing moderator review entirely. That is the exact
+ * data-loss hazard the 🔴 SECURITY note on `GetMyListingForAppResult.assets` warns
+ * about. Under lazy creation the write path therefore re-keys the row id onto the
+ * freshly-cloned shadow row before mutating anything.
+ *
+ * `beginListingRevision` clones each parent screenshot with the SAME `imageId`,
+ * `order` and `caption`, so immediately after a mint the mapping is exact. Matching
+ * is deliberately conservative and FAILS CLOSED (`null` → the caller throws and asks
+ * the client to refresh) rather than guessing:
+ *
+ *   1. exactly one candidate with the same `(imageId, order)` — the fresh-clone case;
+ *   2. else exactly one candidate with the same non-null `imageId` — survives a
+ *      reorder on the shadow (a second tab) that moved the row;
+ *   3. else `null` — ambiguous (the same image attached twice) or gone.
+ *
+ * Re-keying on `imageId` rather than changing the procs' signatures keeps the wire
+ * contract (and the `civitai` CLI's `AppBlocksSubmit`-scoped calls) unchanged.
+ */
+export function matchClonedScreenshotRow(
+  source: { imageId: number | null; order: number },
+  candidates: { id: string; imageId: number | null; order: number }[]
+): string | null {
+  const exact = candidates.filter((c) => c.imageId === source.imageId && c.order === source.order);
+  if (exact.length === 1) return exact[0].id;
+  if (source.imageId != null) {
+    const byImage = candidates.filter((c) => c.imageId === source.imageId);
+    if (byImage.length === 1) return byImage[0].id;
+  }
+  return null;
+}
+
+/**
+ * Re-map screenshot ROW ids from `sourceListingId` onto `targetListingId` (the shadow
+ * that {@link resolveOwnerAssetEditTarget} just minted). Reads BOTH sides from the
+ * PRIMARY — the target's rows were created in the mint transaction. Throws
+ * BAD_REQUEST if any id can't be matched, so an unmappable request is refused rather
+ * than applied to the wrong row (and never to the parent's).
+ */
+/**
+ * 🔴 A row-id-keyed write matched NOTHING under the listing it was RESOLVED against.
+ *
+ * Every screenshot write below is scoped `{ id, appListingId: <resolved listing> }`
+ * rather than `{ id }`, because the resolved id can stop belonging to that listing
+ * between the resolve and the write: `applyApprovedRevision` REPARENTS the shadow's
+ * rows onto the live parent (`updateMany({ where: { appListingId: shadowId } }, {
+ * appListingId: parentId })`). A moderator approving in that window would turn a
+ * resolved SHADOW row id into a PARENT row id — and an unscoped
+ * `delete({ where: { id } })` would then delete a screenshot off the LIVE served
+ * listing, which is the exact hazard the whole re-map exists to prevent. Scoping the
+ * write makes it structurally impossible: the write matches 0 rows and this throws,
+ * instead of hitting the parent.
+ *
+ * Same client-facing copy as the fail-closed re-map — from the owner's side it is the
+ * same situation (their revision moved under them; refresh and retry).
+ */
+function throwScreenshotNoLongerOnRevision(): never {
+  throw new TRPCError({
+    code: 'BAD_REQUEST',
+    message:
+      'This screenshot is no longer available on your revision. Refresh the page and try again.',
+  });
+}
+
+/**
+ * Aborts the post-delete re-pack transaction WITHOUT surfacing an error.
+ *
+ * The re-pack is the one screenshot write on this path where `count !== 1` must NOT
+ * become a refusal — see the note at its call site in {@link removeListingScreenshot}.
+ * Rolling back needs a throw, but the caller's delete already succeeded, so the throw
+ * is caught and swallowed one frame up. Never escapes this module.
+ */
+class ListingScreenshotRepackAborted extends Error {}
+
+async function remapScreenshotRowIds(args: {
+  screenshotIds: string[];
+  sourceListingId: string;
+  targetListingId: string;
+}): Promise<string[]> {
+  const [sourceRows, targetRows] = await Promise.all([
+    dbWrite.appListingScreenshot.findMany({
+      where: { appListingId: args.sourceListingId },
+      select: { id: true, imageId: true, order: true },
+    }),
+    dbWrite.appListingScreenshot.findMany({
+      where: { appListingId: args.targetListingId },
+      select: { id: true, imageId: true, order: true },
+    }),
+  ]);
+  const sourceById = new Map(sourceRows.map((r) => [r.id, r]));
+  return args.screenshotIds.map((id) => {
+    const source = sourceById.get(id);
+    const mapped = source ? matchClonedScreenshotRow(source, targetRows) : null;
+    if (!mapped) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message:
+          'This screenshot is no longer available on your revision. Refresh the page and try again.',
+      });
+    }
+    return mapped;
+  });
+}
+
+/**
+ * Re-check that the stored object an `Image` row was MEASURED from is still the
+ * object at that key, and refuse the attach if it demonstrably is not.
+ *
+ * WHY THIS EXISTS. Every rule {@link loadValidatedImage} applies — the per-kind
+ * dimension bounds, the aspect ratio, the MIME allowlist, the byte cap — reads the
+ * `Image` row's own columns. Those columns are trustworthy at the moment they are
+ * written, because the persist procs derive them from the stored bytes rather than
+ * from anything the client said. They are not automatically trustworthy LATER: the
+ * upload grant for a key outlives the measurement, so an object can be replaced
+ * after its row was written, leaving the row describing bytes that are no longer
+ * there. Validating the columns then validates a description, not the media.
+ *
+ * Persist records the store's entity tag next to the measurement; this compares it
+ * to the live one at the point the measurement is relied upon, which is the only
+ * place the guarantee actually has to hold.
+ *
+ * 🔴 FAILS CLOSED ON DISAGREEMENT ONLY. A row with no recorded tag (written before
+ * this existed, or by a path that never measures an uploaded object), an object the
+ * store says is gone, or a store that cannot be consulted all classify as
+ * `unverifiable` — and are ALLOWED through, because none of them is evidence that
+ * anything changed, and rejecting on them would turn a store hiccup into a blocked
+ * attach for images that are perfectly fine. See
+ * {@link classifyStoredObjectIntegrity}, which owns that distinction, and the same
+ * three-state posture on `headObject` in `~/utils/s3-utils`.
+ *
+ * The head request is issued ONLY when the row actually carries a tag, so rows that
+ * cannot be checked cost no extra round trip — and `stored-image-probe` (and the
+ * S3 client graph behind it) stays out of this module's static import graph.
+ *
+ * 🔴 EVERY OUTCOME THAT IS NOT `match` IS LOGGED, and the three `unverifiable`
+ * reasons reachable from here are kept apart on the way out. (Three, not the
+ * classifier's four: `no-recorded-etag` is short-circuited above and can never be
+ * emitted from this consumer — see the note at the end of this block.) Without that,
+ * a guard that is firing and a guard that is inert produce exactly the same
+ * observable — nothing — and the reasons are operationally different signals rather
+ * than one blob: a rising `store-unreachable` is an infrastructure incident, a rising
+ * `no-current-etag` is a backend that stopped returning tags (which quietly disarms
+ * this check for every row), and `mismatch` is the case the guard exists for. A
+ * steady trickle of any of them is the only way to notice that the fail-open branch
+ * has become the ONLY branch.
+ *
+ * 🔴 The event carries NO storage key, bucket, URL or caller identity — the reason
+ * plus the asset kind plus the row id is everything an operator needs to tell these
+ * classes apart, and an object key in a log is an upload location in a log.
+ *
+ * `no-recorded-etag` is deliberately unreachable from here: the early return above
+ * skips the head entirely for a row that has nothing recorded, which is the expected
+ * steady state for every row written before this existed and is not worth an event
+ * each. It stays in the classifier's vocabulary for callers that do not short-circuit.
+ */
+async function assertStoredObjectUnchanged(
+  image: { id: number; url: string; metadata: unknown },
+  kind: ListingAssetKind
+) {
+  const recordedEtag = readRecordedEtag(image.metadata);
+  if (recordedEtag === null) return;
+
+  const { headStoredImage } = await import('~/server/utils/stored-image-probe');
+  const verdict = classifyStoredObjectIntegrity(recordedEtag, await headStoredImage(image.url));
+  if (verdict.status === 'match') return;
+
+  logToAxiom({
+    name: 'listing-asset-integrity',
+    /**
+     * 🔴 `warning`, INCLUDING for `mismatch`, and deliberately so.
+     *
+     * `type` is what the Alloy→Loki pipeline reads as the log level (see the
+     * SEVERITY FIELD note in `~/server/logging/client`), and that same file states
+     * the rule this obeys: a BAD_REQUEST-class fault is normal user feedback and
+     * "must never be logged at error severity, or they drown out the real
+     * server-side failures on the error board". A `mismatch` ends in exactly such a
+     * rejection, and any author can produce one at will simply by replacing the
+     * object behind a key they own — so at `error` this is an author-controlled tap
+     * on the error board, which is the failure mode that rule exists to prevent.
+     *
+     * The severity was never the discriminator anyway: `status` and `reason` are
+     * emitted as their own fields precisely so these outcomes are separable, and a
+     * query or alert on `status="mismatch"` is both narrower and more stable than
+     * one on a level shared with every other error in the app. Nothing is lost by
+     * dropping to `warning` except the flooding.
+     */
+    type: 'warning',
+    status: verdict.status,
+    reason: verdict.status === 'unverifiable' ? verdict.reason : null,
+    kind,
+    imageId: image.id,
+  }).catch(() => null);
+  // 🔴 That `.catch(() => null)` is LOAD-BEARING, not tidiness. Nothing awaits the
+  // call above, so a rejecting sink — `logToAxiom` awaits an ingest that rejects
+  // when Axiom itself is degraded — has nowhere to go but `unhandledRejection`, and
+  // the attach it is merely OBSERVING would be taken down by the observation. Same
+  // reasoning as `~/server/redis/fail-open-log`, `~/server/meilisearch/client` and
+  // `~/server/signals/wrapper`. Pinned by
+  // `./__tests__/listing-asset-integrity-logging.test.ts`, which needs a file of its
+  // own to be falsifiable at all — a `vi.fn()` sink marks the rejection handled.
+
+  if (verdict.status !== 'mismatch') return;
+
+  throw new TRPCError({
+    code: 'BAD_REQUEST',
+    message: 'that image has changed since it was uploaded — upload it again',
+  });
 }
 
 /**
@@ -386,10 +726,15 @@ type LoadValidatedImageResult =
  *
  * TERMINAL failures ALWAYS THROW regardless of `allowPending` (real errors the
  * client surfaces + stops polling on): missing → NOT_FOUND; not owned → FORBIDDEN;
- * bad format → BAD_REQUEST; `ImageIngestionStatus.NotFound` (scanner couldn't fetch
- * the bytes) → BAD_REQUEST; `Blocked` (prohibited content) → BAD_REQUEST. A
- * `Blocked` / `NotFound` image is terminal-bad and is NEVER written, even under
- * `allowPending`.
+ * the stored object no longer being the one the row was measured from
+ * ({@link assertStoredObjectUnchanged}) → BAD_REQUEST; bad format → BAD_REQUEST;
+ * `ImageIngestionStatus.NotFound` (scanner couldn't fetch the bytes) → BAD_REQUEST;
+ * `Blocked` (prohibited content) → BAD_REQUEST. A `Blocked` / `NotFound` image is
+ * terminal-bad and is NEVER written, even under `allowPending`.
+ *
+ * 🔴 The integrity re-check runs BEFORE the column validation deliberately: the
+ * validation's inputs are the persisted measurements, so confirming they still
+ * describe the stored object is a precondition for the bounds meaning anything.
  *
  * Content RATING is deliberately NOT gated here (W13): the scanner's per-image
  * level is imprecise, every off-site listing is mod-reviewed before it is visible,
@@ -408,6 +753,9 @@ async function loadValidatedImage(
     select: {
       id: true,
       userId: true,
+      // The storage key the row's measurements were taken from — the integrity
+      // re-check below needs it; nothing else here reads it.
+      url: true,
       type: true,
       width: true,
       height: true,
@@ -421,6 +769,7 @@ async function loadValidatedImage(
   if (image.userId !== user.id && !user.isModerator) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this image' });
   }
+  await assertStoredObjectUnchanged(image, kind);
   const size = (image.metadata as { size?: unknown } | null)?.size;
   const result = validateListingImage(
     {
@@ -525,9 +874,14 @@ export async function assertAssetsScanClean(
   const blocked = new Set<string>();
   const pending = new Set<string>();
   for (const { kind, id } of tagged) {
-    const ingestion = ingestionById.get(id) ?? null;
-    if (ingestion === ImageIngestionStatus.Scanned) continue;
-    if (ingestion === ImageIngestionStatus.Blocked) blocked.add(kind);
+    // A MISSING Image row is `pending` on THIS path (the strictest reading — an asset we
+    // cannot see the scan state of has not been shown to be clean, and this gate guards
+    // go-live). That is this site's answer to the absence question; the shared predicate
+    // reports absence as `null` and leaves the decision here. See
+    // {@link assetScanStatusFromIngestion}.
+    const status = assetScanStatusFromIngestion(ingestionById.get(id)) ?? 'pending';
+    if (status === 'scanned') continue;
+    if (status === 'blocked') blocked.add(kind);
     else pending.add(kind);
   }
   if (blocked.size === 0 && pending.size === 0) return;
@@ -579,6 +933,58 @@ export async function assertListingAssetsScanCleanInTx(
   );
 }
 
+/**
+ * Go-live RATING FLOOR for a listing whose media was attached while it was directly
+ * asset-editable (a pre-approval `draft` / reset `pending` listing). Re-derives the
+ * rating from the current assets' max `nsfwLevel` and returns `declaredRating` RAISED
+ * to the derived value when the media is more mature — never lowered.
+ *
+ * 🔴 The on-site counterpart of the off-site approve's `resolveApprovalContentRating`
+ * floor. It upholds the invariant stated at {@link reDeriveContentRatingForModLiveEdit}:
+ * *draft/pending/shadow listings are rated at approve*. Without it a manifest-declared
+ * `contentRating` (author-controlled) is stamped verbatim over media the author attached
+ * while pending — and nothing else catches it, because the attach path
+ * ({@link loadValidatedImage}) rejects only `Blocked`/`NotFound` images, never a
+ * `Scanned` mature one. An under-rated listing then passes
+ * `listingMatureFilter(redCapable=false)` (`content_rating NOT IN ('r','x')`) and shows
+ * mature store art to SFW-only users.
+ *
+ * RAISE-ONLY, so it can only ever tighten: a deliberately higher rating is never
+ * auto-lowered by tamer media, and a listing with no attached assets (or a missing row)
+ * returns `declaredRating` unchanged. `db` is typed `Prisma.TransactionClient` so an
+ * in-tx caller passes its `tx`; a non-transactional caller may pass `dbWrite` (a
+ * `PrismaClient` is structurally a `TransactionClient` for these reads).
+ */
+export async function resolveListingRatingFloorInTx(
+  db: Prisma.TransactionClient,
+  appListingId: string,
+  declaredRating: string | null
+): Promise<string | null> {
+  const listing = await db.appListing.findUnique({
+    where: { id: appListingId },
+    select: { iconId: true, coverId: true },
+  });
+  if (!listing) return declaredRating;
+  const shots = await db.appListingScreenshot.findMany({
+    where: { appListingId, imageId: { not: null } },
+    select: { imageId: true },
+  });
+  const imageIds = [listing.iconId, listing.coverId, ...shots.map((s) => s.imageId)].filter(
+    (v): v is number => v != null
+  );
+  if (imageIds.length === 0) return declaredRating;
+  const images = await db.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { nsfwLevel: true },
+  });
+  const derived = deriveContentRatingFromAssets(images.map((i) => ({ nsfwLevel: i.nsfwLevel })));
+  // Floor: only raise. `nsfwLevelFromContentRating` maps null → the SFW floor, so a null
+  // declared rating is raised by any mature asset.
+  return nsfwLevelFromContentRating(derived) > nsfwLevelFromContentRating(declaredRating)
+    ? derived
+    : declaredRating;
+}
+
 // ---------------------------------------------------------------------------
 // Per-asset scan-status poll (owner/mod-gated). The client attaches an in-flight
 // image IMMEDIATELY (the server stores the pending id), then polls THIS to flip a
@@ -587,6 +993,32 @@ export async function assertListingAssetsScanCleanInTx(
 // ---------------------------------------------------------------------------
 
 export type AssetScanStatus = 'scanned' | 'pending' | 'blocked';
+
+/**
+ * THE `Image.ingestion` → {@link AssetScanStatus} MAPPING, in one place.
+ *
+ * 🔴 IT IS A FUNCTION RATHER THAN THREE INLINE TERNARIES BECAUSE THERE WERE THREE.
+ * `getListingAssets`'s `scanOf`, `getAssetScanStatuses`'s ternary and
+ * `assertAssetsScanClean`'s branch each open-coded "Scanned ⇒ clean, Blocked ⇒ blocked,
+ * everything else ⇒ still resolving", and a fourth was about to be written for the
+ * `/apps/mine` list read. A predicate at N sites is the shape that ends up wrong at N−1
+ * of them; consolidating is what makes a disagreement audible.
+ *
+ * ABSENCE IS THE CALLER'S QUESTION, NOT THIS ONE'S. A null/undefined `ingestion` means
+ * "no Image row" (deleted, or not selected), and the three call sites genuinely disagree
+ * about what that means — `getListingAssets` reports `null` (nothing to show a badge
+ * for), `getAssetScanStatuses` reports `pending` (still resolving), `assertAssetsScanClean`
+ * refuses as `pending`. So this returns `null` for absent and each caller states its own
+ * rule at its own site, in one visible `??`.
+ */
+export function assetScanStatusFromIngestion(
+  ingestion: string | null | undefined
+): AssetScanStatus | null {
+  if (ingestion == null) return null;
+  if (ingestion === ImageIngestionStatus.Scanned) return 'scanned';
+  if (ingestion === ImageIngestionStatus.Blocked) return 'blocked';
+  return 'pending';
+}
 
 /**
  * Read the scan status of a set of Image ids the caller owns (mods: any), from the
@@ -607,14 +1039,118 @@ export async function getAssetScanStatuses(
   });
   const statuses = rows.map((r) => ({
     imageId: r.id,
-    status:
-      r.ingestion === ImageIngestionStatus.Scanned
-        ? ('scanned' as const)
-        : r.ingestion === ImageIngestionStatus.Blocked
-        ? ('blocked' as const)
-        : ('pending' as const),
+    // A row with a NULL `ingestion` column reads as `pending` here — the pre-existing
+    // behaviour of the ternary this replaces, restated as the explicit `??` the shared
+    // predicate's contract asks each caller for.
+    status: assetScanStatusFromIngestion(r.ingestion) ?? ('pending' as const),
   }));
   return { statuses };
+}
+
+/**
+ * One attached asset's scan state, tagged with the slot it occupies.
+ *
+ * 🔴 STRUCTURALLY IDENTICAL TO `listing-problems::ListingAssetScan`, and deliberately
+ * declared HERE rather than imported from there: `listing-problems` already imports
+ * `checkListingAssetsComplete` from this module, so importing back would close a cycle.
+ * The two are pinned mutually-assignable by
+ * `app-listing-assets.scan-batch.test.ts` — a compile-time seam guard, because a
+ * structural match is exactly the kind of agreement that decays silently.
+ *
+ * `kind` reuses the SCHEMA's `ListingAssetKind` (already imported above for the per-kind
+ * size caps) rather than restating the union — one slot vocabulary, one declaration.
+ */
+export type ListingAssetScanEntry = { kind: ListingAssetKind; status: AssetScanStatus };
+
+/** The per-listing asset ids a batched scan read starts from. */
+export type ListingScanSubject = { id: string; iconId: number | null; coverId: number | null };
+
+/** A minimal reader satisfying the two batched queries below (`dbRead` / `dbWrite` / a `tx`). */
+type ListingScanBatchReader = {
+  appListingScreenshot: {
+    findMany: (args: {
+      where: { appListingId: { in: string[] }; imageId: { not: null } };
+      select: { appListingId: true; imageId: true };
+    }) => Promise<{ appListingId: string; imageId: number | null }[]>;
+  };
+  image: {
+    findMany: (args: {
+      where: { id: { in: number[] } };
+      select: { id: true; ingestion: true };
+    }) => Promise<{ id: number; ingestion: string | null }[]>;
+  };
+};
+
+/**
+ * Resolve every listing's attached-asset scan states for a WHOLE PAGE of listings, in
+ * TWO batched queries — regardless of how many listings the page holds.
+ *
+ * 🔴 THE BATCHING IS THE ENTIRE POINT, and it is why this exists instead of calling
+ * {@link getListingAssets} per row. That function is the single-listing read: it does two
+ * queries PER LISTING, so driving `/apps/mine` through it would be a per-row fan-out —
+ * exactly the cost `hydrateMyAppListings` refused to pay when it left `assetScans`
+ * unwired. Here the screenshot ids for all N listings come back in ONE
+ * `appListingScreenshot.findMany`, every asset Image id across the page is collected into
+ * ONE `image.findMany`, and the grouping is done in memory. N listings ⇒ 2 queries, not
+ * 2N.
+ *
+ * 🔴 READS THE REPLICA BY DEFAULT, unlike {@link getAssetScanStatuses} (which reads the
+ * PRIMARY because it backs a poll the author is watching tick over in real time). This
+ * backs a LIST read whose whole purpose is to be cheap; a few seconds of replica lag on
+ * "is this icon still scanning" is the correct trade, and sending a page-sized `IN (…)`
+ * to the primary is not.
+ *
+ * The `imageId: { not: null }` screenshot filter matches the authoritative asset gate
+ * (`buildAssetStatus`) and the `_count` the completeness advisory uses: a screenshot row
+ * whose Image was deleted has nothing to scan and nothing to display.
+ *
+ * A `null` icon/cover id contributes NO entry — presence is the completeness gate's job
+ * ({@link checkListingAssetsComplete}), not this one's; and an Image row that has gone
+ * missing likewise contributes none, so a deleted asset cannot masquerade as a scan
+ * problem. Every listing in `subjects` gets a key in the returned Map (possibly an empty
+ * array), so a caller can tell "no problems" from "not looked at".
+ */
+export async function loadListingAssetScansBatch(
+  subjects: ListingScanSubject[],
+  db: ListingScanBatchReader = dbRead
+): Promise<Map<string, ListingAssetScanEntry[]>> {
+  const byListing = new Map<string, ListingAssetScanEntry[]>(subjects.map((s) => [s.id, []]));
+  if (subjects.length === 0) return byListing;
+
+  const shots = await db.appListingScreenshot.findMany({
+    where: { appListingId: { in: subjects.map((s) => s.id) }, imageId: { not: null } },
+    select: { appListingId: true, imageId: true },
+  });
+
+  // (listingId, kind, imageId) for every attached asset on the page.
+  const tagged: { listingId: string; kind: ListingAssetKind; imageId: number }[] = [];
+  for (const s of subjects) {
+    if (s.iconId != null) tagged.push({ listingId: s.id, kind: 'icon', imageId: s.iconId });
+    if (s.coverId != null) tagged.push({ listingId: s.id, kind: 'cover', imageId: s.coverId });
+  }
+  for (const s of shots) {
+    // Defensive: the query already filters `imageId: { not: null }`, but the filter lives
+    // in the DB and this narrowing lives in the type system — they are different claims.
+    if (s.imageId == null) continue;
+    if (!byListing.has(s.appListingId)) continue;
+    tagged.push({ listingId: s.appListingId, kind: 'screenshot', imageId: s.imageId });
+  }
+  if (tagged.length === 0) return byListing;
+
+  const images = await db.image.findMany({
+    where: { id: { in: [...new Set(tagged.map((t) => t.imageId))] } },
+    select: { id: true, ingestion: true },
+  });
+  const ingestionById = new Map(images.map((i) => [i.id, i.ingestion]));
+
+  for (const { listingId, kind, imageId } of tagged) {
+    // Absent Image row ⇒ no entry (see the doc above), NOT a `pending` invented out of a
+    // deleted row — that would make `scanning-media` latch forever on a dead FK.
+    const status = assetScanStatusFromIngestion(ingestionById.get(imageId));
+    if (status == null) continue;
+    byListing.get(listingId)?.push({ kind, status });
+  }
+  return byListing;
 }
 
 /**
@@ -628,9 +1164,20 @@ export async function getAssetScanStatuses(
  * never auto-lowered — mirrors `resolveApprovalContentRating`'s floor-at-derived.
  *
  * No-op for everyone else: owner edits on a live listing are blocked by the guard and
- * go through a shadow revision (re-derived at approve); draft/pending/shadow listings
- * are rated at approve. So it fires ONLY for `isModerator` on an `approved` non-shadow
- * (`revisionOfId == null`) listing. Runs INSIDE the caller's `dbWrite.$transaction`
+ * go through a shadow revision (re-derived at approve). So it fires ONLY for
+ * `isModerator` on an `approved` non-shadow (`revisionOfId == null`) listing.
+ *
+ * 🔴 "DRAFT/PENDING/SHADOW LISTINGS ARE RATED AT APPROVE" USED TO BE THE THIRD CLAUSE OF
+ * THAT SENTENCE, AND IT WAS NOT TRUE OF EVERY APPROVE. It reads as a blanket guarantee —
+ * "whatever an owner does to a non-live listing, the approve re-rates it" — and one
+ * approve did not: `approveRequest`'s `(3b-reset)` branch restored a `pending` ON-SITE
+ * listing by writing `{ status: 'approved' }` and nothing else, while its sibling
+ * `(3b-transition)` floored. A `pending` listing IS freely owner-asset-editable (this
+ * function's own guard skips it, and `assertOwnerAssetEditable` refuses only `approved`),
+ * so the two facts composed into a live mature card under a stale rating. The floor is
+ * now applied there too — but the lesson is the wording: state which approves rate, or
+ * a reader will trust the sentence instead of checking. Runs INSIDE the caller's
+ * `dbWrite.$transaction`
  * (the `tx` param) so the derive+floor is ATOMIC with the asset write that triggered
  * it — parity with approve's `resolveApprovalContentRating`. The guard short-circuits
  * BEFORE any query, so a non-mod / draft / pending / shadow edit adds ZERO queries to
@@ -639,7 +1186,12 @@ export async function getAssetScanStatuses(
  */
 async function reDeriveContentRatingForModLiveEdit(
   tx: Prisma.TransactionClient,
-  listing: { id: string; status: string; revisionOfId: string | null; contentRating: string | null },
+  listing: {
+    id: string;
+    status: string;
+    revisionOfId: string | null;
+    contentRating: string | null;
+  },
   user: SessionUser
 ): Promise<void> {
   if (!user.isModerator) return;
@@ -664,7 +1216,8 @@ async function reDeriveContentRatingForModLiveEdit(
   // RAISE-ONLY floor: bump the stored rating up to `derived` only if derived's
   // ceiling is strictly higher (never auto-lower). `nsfwLevelFromContentRating`
   // maps null → the SFW floor, so a null stored rating is raised by any mature asset.
-  if (nsfwLevelFromContentRating(derived) <= nsfwLevelFromContentRating(current.contentRating)) return;
+  if (nsfwLevelFromContentRating(derived) <= nsfwLevelFromContentRating(current.contentRating))
+    return;
   await tx.appListing.update({ where: { id: listing.id }, data: { contentRating: derived } });
 }
 
@@ -698,13 +1251,17 @@ export async function setListingIcon(
   args: { listingId: string; imageId: number },
   user: SessionUser
 ): Promise<SetListingIconResult> {
-  const listing = await loadOwnedListing(args.listingId, user);
+  // LAZY MINT: an owner's first edit of a live listing opens the shadow revision here.
+  const listing = await resolveOwnerAssetEditTarget(
+    await loadOwnedListing(args.listingId, user),
+    user
+  );
   assertOwnerAssetEditable(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'icon', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
   await dbWrite.$transaction(async (tx) => {
     await tx.appListing.update({
-      where: { id: args.listingId },
+      where: { id: listing.id },
       data: { iconId: validated.imageId },
     });
     await reDeriveContentRatingForModLiveEdit(tx, listing, user);
@@ -716,13 +1273,17 @@ export async function setListingCover(
   args: { listingId: string; imageId: number },
   user: SessionUser
 ): Promise<SetListingCoverResult> {
-  const listing = await loadOwnedListing(args.listingId, user);
+  // LAZY MINT: an owner's first edit of a live listing opens the shadow revision here.
+  const listing = await resolveOwnerAssetEditTarget(
+    await loadOwnedListing(args.listingId, user),
+    user
+  );
   assertOwnerAssetEditable(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'cover', user, { allowPending: true });
   if (validated.pending) return { status: 'pending' };
   await dbWrite.$transaction(async (tx) => {
     await tx.appListing.update({
-      where: { id: args.listingId },
+      where: { id: listing.id },
       data: { coverId: validated.imageId },
     });
     await reDeriveContentRatingForModLiveEdit(tx, listing, user);
@@ -734,7 +1295,11 @@ export async function addListingScreenshot(
   args: { listingId: string; imageId: number; caption?: string | null },
   user: SessionUser
 ): Promise<AddListingScreenshotResult> {
-  const listing = await loadOwnedListing(args.listingId, user);
+  // LAZY MINT: an owner's first edit of a live listing opens the shadow revision here.
+  const listing = await resolveOwnerAssetEditTarget(
+    await loadOwnedListing(args.listingId, user),
+    user
+  );
   assertOwnerAssetEditable(listing, user);
   const validated = await loadValidatedImage(args.imageId, 'screenshot', user, {
     allowPending: true,
@@ -748,13 +1313,13 @@ export async function addListingScreenshot(
   // replica lag two concurrent adds could both pass `count < 8` (a 9th row) or
   // compute the same `order`.
   const existing = await dbWrite.appListingScreenshot.findMany({
-    where: { appListingId: args.listingId },
+    where: { appListingId: listing.id },
     select: { order: true },
     orderBy: { order: 'desc' },
     take: 1,
   });
   const count = await dbWrite.appListingScreenshot.count({
-    where: { appListingId: args.listingId },
+    where: { appListingId: listing.id },
   });
   if (count >= MAX_LISTING_SCREENSHOTS) {
     throw new TRPCError({
@@ -768,7 +1333,7 @@ export async function addListingScreenshot(
     await tx.appListingScreenshot.create({
       data: {
         id,
-        appListingId: args.listingId,
+        appListingId: listing.id,
         imageId,
         order: nextOrder,
         caption: args.caption ?? null,
@@ -788,100 +1353,232 @@ export async function reorderListingScreenshots(
   args: { listingId: string; orderedIds: string[] },
   user: SessionUser
 ): Promise<{ reordered: number }> {
-  assertOwnerAssetEditable(await loadOwnedListing(args.listingId, user), user);
+  // LAZY MINT: an owner's first edit of a live listing opens the shadow revision here.
+  const listing = await resolveOwnerAssetEditTarget(
+    await loadOwnedListing(args.listingId, user),
+    user
+  );
+  assertOwnerAssetEditable(listing, user);
+  // 🔴 `orderedIds` are PARENT row ids whenever the mint above just happened. Re-key
+  // them onto the shadow's clones BEFORE the permutation check — otherwise the check
+  // fails (parent ids aren't in the shadow's set) or, worse without the retarget,
+  // reorders the LIVE listing's rows.
+  const orderedIds =
+    listing.id === args.listingId
+      ? args.orderedIds
+      : await remapScreenshotRowIds({
+          screenshotIds: args.orderedIds,
+          sourceListingId: args.listingId,
+          targetListingId: listing.id,
+        });
   // Read the current set from dbWrite (primary): under replica lag the reorder
   // could target a just-deleted id (P2025 → 500 after the delete committed) or
   // miss a just-added row.
   const current = await dbWrite.appListingScreenshot.findMany({
-    where: { appListingId: args.listingId },
+    where: { appListingId: listing.id },
     select: { id: true },
   });
   const currentIds = new Set(current.map((s) => s.id));
-  const nextIds = new Set(args.orderedIds);
+  const nextIds = new Set(orderedIds);
   const samePermutation =
     currentIds.size === nextIds.size &&
-    args.orderedIds.length === current.length &&
-    args.orderedIds.every((id) => currentIds.has(id));
+    orderedIds.length === current.length &&
+    orderedIds.every((id) => currentIds.has(id));
   if (!samePermutation) {
     throw new TRPCError({
       code: 'BAD_REQUEST',
       message: 'orderedIds must be exactly the listing’s current screenshot ids',
     });
   }
-  await dbWrite.$transaction(
-    args.orderedIds.map((id, index) =>
-      dbWrite.appListingScreenshot.update({ where: { id }, data: { order: index } })
-    )
-  );
-  return { reordered: args.orderedIds.length };
+  // 🔴 LISTING-SCOPED writes (see `throwScreenshotNoLongerOnRevision`): if an approve
+  // reparents the shadow's rows onto the live parent between the check above and here,
+  // every `updateMany` matches 0 rows — the live listing's ordering is left alone and
+  // the owner is told to refresh, instead of the reorder silently landing on it.
+  //
+  // 🔴 …and the refusal is raised INSIDE an INTERACTIVE transaction so it actually
+  // ROLLS BACK. The array form (`$transaction([...])`) COMMITS before its results are
+  // inspected, so a reparent landing mid-flight under READ COMMITTED left some orders
+  // written AND threw — the worst of both. All-or-nothing is the property this guard
+  // claims, so it has to be the property it has.
+  await dbWrite.$transaction(async (tx) => {
+    for (let index = 0; index < orderedIds.length; index++) {
+      const { count } = await tx.appListingScreenshot.updateMany({
+        where: { id: orderedIds[index], appListingId: listing.id },
+        data: { order: index },
+      });
+      if (count !== 1) throwScreenshotNoLongerOnRevision();
+    }
+  });
+  return { reordered: orderedIds.length };
 }
 
+/**
+ * Resolve a ROW-ID-keyed screenshot mutation onto its EFFECTIVE row.
+ *
+ * 🔴 THE data-loss guard for lazy shadow creation. `screenshotId` is an
+ * `AppListingScreenshot` row id, and before a shadow exists the client holds the
+ * LIVE PARENT's row ids — so this is the one place where a stale id could delete /
+ * reorder / re-caption a row off the listing that is currently being served, with no
+ * moderator review. It loads the row, enforces ownership, mints the shadow via
+ * {@link resolveOwnerAssetEditTarget}, and RE-KEYS the row id onto the shadow's clone
+ * ({@link matchClonedScreenshotRow}) — failing closed if it can't.
+ *
+ * Returns the row id + listing id the caller must use. Callers MUST run
+ * {@link assertOwnerAssetEditable} on the returned `listing` (defence in depth: it
+ * throws if the resolution ever yields the live parent for an owner).
+ */
+async function resolveOwnerScreenshotTarget(
+  screenshotId: string,
+  user: SessionUser
+): Promise<{ screenshotId: string; listing: OwnedListing }> {
+  // 🔴 The listing's `userId` is deliberately NOT selected any more — see the note on
+  // the removed early gate below.
+  const select = { id: true, appListingId: true } as const;
+  // 🔴 READ-AFTER-WRITE. The replica answers first, but a MISS off the replica is NOT
+  // authoritative here: once the first mutation mints the shadow, `getMyListingForApp`
+  // re-projects the SHADOW's row ids from the PRIMARY, so the very next call arrives
+  // holding ids for rows INSERTed milliseconds ago. Trusting a lagging replica turns
+  // the owner's second edit into a spurious `NOT_FOUND: Screenshot not found` — the
+  // same class of bug #3476 fixed for `loadListingEditView`, whose window this PR
+  // widened by moving the mint onto the write path. A hit on the replica means the row
+  // is old, and its listing (created in the SAME clone transaction) is old too, so the
+  // pool that answered is also the right pool for the listing load.
+  let db: typeof dbRead = dbRead;
+  let shot = await dbRead.appListingScreenshot.findUnique({ where: { id: screenshotId }, select });
+  if (!shot) {
+    db = dbWrite;
+    shot = await dbWrite.appListingScreenshot.findUnique({ where: { id: screenshotId }, select });
+  }
+  if (!shot) throw new TRPCError({ code: 'NOT_FOUND', message: 'Screenshot not found' });
+  // 🔴 THE EARLY OWNER CHECK THAT USED TO SIT HERE IS GONE, and its removal is the point
+  // rather than a shortcut. It read `shot.appListing.userId` — the DENORMALIZED owner
+  // column — and then asked `loadOwnedListing(shot.appListingId, user, db)` the SAME
+  // question about the SAME listing on the very next line. Two spellings of one
+  // predicate is how they drift: this copy was the stale-column spelling, so on a
+  // drifted onsite listing it refused the real owner (and admitted the stale name)
+  // BEFORE the correct gate below ever ran. A redundant guard also makes a mutation
+  // kill unattributable — whichever copy you break, the other one throws the same
+  // FORBIDDEN with the same message. One gate, one line: `loadOwnedListing`.
+  //
+  // Pool discipline is unchanged: `db` is whichever pool actually answered for this
+  // screenshot, and it is handed straight to the gate that now owns the decision.
+  const sourceListing = await loadOwnedListing(shot.appListingId, user, db);
+  const listing = await resolveOwnerAssetEditTarget(sourceListing, user);
+  if (listing.id === shot.appListingId) return { screenshotId, listing };
+  const [mapped] = await remapScreenshotRowIds({
+    screenshotIds: [screenshotId],
+    sourceListingId: shot.appListingId,
+    targetListingId: listing.id,
+  });
+  return { screenshotId: mapped, listing };
+}
+
+/**
+ * Set/clear a screenshot's caption.
+ *
+ * 🔴 RETURN-SHAPE NOTE — `id` is the row that was actually written, which is NOT
+ * necessarily `args.screenshotId`. When this call is the owner's FIRST edit of a live
+ * approved listing it mints the shadow revision and re-keys the caller's PARENT row id
+ * onto the shadow's clone ({@link resolveOwnerScreenshotTarget}); the returned id is
+ * that clone's. Reporting the caller's own id back would name a row this call did not
+ * touch — on the live listing — so the resolved id is the honest answer. Any caller
+ * that echoes or compares it (the `civitai` CLI is wire-reachable here under
+ * `AppBlocksSubmit`) must treat it as the NEW id, not a round-trip of its input. The
+ * INPUT schema is unchanged, so no released client breaks.
+ */
 export async function updateListingScreenshotCaption(
   args: { screenshotId: string; caption?: string | null },
   user: SessionUser
 ): Promise<{ id: string }> {
-  const shot = await dbRead.appListingScreenshot.findUnique({
-    where: { id: args.screenshotId },
-    select: {
-      id: true,
-      appListing: { select: { userId: true, status: true, revisionOfId: true } },
-    },
-  });
-  if (!shot) throw new TRPCError({ code: 'NOT_FOUND', message: 'Screenshot not found' });
-  if (shot.appListing.userId !== user.id && !user.isModerator) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
-  }
-  assertOwnerAssetEditable(shot.appListing, user);
-  await dbWrite.appListingScreenshot.update({
-    where: { id: args.screenshotId },
+  const { screenshotId, listing } = await resolveOwnerScreenshotTarget(args.screenshotId, user);
+  assertOwnerAssetEditable(listing, user);
+  // 🔴 LISTING-SCOPED write — see `throwScreenshotNoLongerOnRevision`.
+  const { count } = await dbWrite.appListingScreenshot.updateMany({
+    where: { id: screenshotId, appListingId: listing.id },
     data: { caption: args.caption ?? null },
   });
-  return { id: args.screenshotId };
+  if (count !== 1) throwScreenshotNoLongerOnRevision();
+  // NB: `id` is the RESOLVED row id, which differs from `args.screenshotId` whenever
+  // this call minted the shadow (the parent row id was re-keyed onto its clone).
+  return { id: screenshotId };
 }
 
 /**
  * Remove a screenshot, then RE-PACK the remaining orders to a contiguous 0..n-1
  * so no gaps accumulate (the read path can rely on dense ordering).
+ *
+ * 🔴 RETURN-SHAPE NOTE — `removed` is the row that was actually deleted, which is NOT
+ * necessarily `args.screenshotId`: a first edit of a live listing mints the shadow and
+ * re-keys the caller's PARENT row id onto the clone, and it is the CLONE that is
+ * deleted (deleting the parent's row is the data-loss hazard this whole path exists to
+ * prevent). Echoing the caller's id back would therefore report a deletion that did not
+ * happen. Same wire-contract note as {@link updateListingScreenshotCaption}: input
+ * schema unchanged, only the returned id can differ from the one passed in.
  */
 export async function removeListingScreenshot(
   args: { screenshotId: string },
   user: SessionUser
 ): Promise<{ removed: string }> {
-  const shot = await dbRead.appListingScreenshot.findUnique({
-    where: { id: args.screenshotId },
-    select: {
-      id: true,
-      appListingId: true,
-      appListing: { select: { userId: true, status: true, revisionOfId: true } },
-    },
-  });
-  if (!shot) throw new TRPCError({ code: 'NOT_FOUND', message: 'Screenshot not found' });
-  if (shot.appListing.userId !== user.id && !user.isModerator) {
-    throw new TRPCError({ code: 'FORBIDDEN', message: 'You do not own this listing' });
-  }
+  // 🔴 Re-key a PARENT row id onto the (lazily minted) shadow's clone BEFORE deleting
+  // anything — a delete against a parent row id would destroy a screenshot off the
+  // LIVE served listing with no moderator review. Fails closed if unmappable.
+  const { screenshotId, listing } = await resolveOwnerScreenshotTarget(args.screenshotId, user);
   // 🔴 Never delete a screenshot from a LIVE approved listing directly (bypasses
-  // review) — edits go through a shadow revision. Mods bypass (curation).
-  assertOwnerAssetEditable(shot.appListing, user);
-  await dbWrite.appListingScreenshot.delete({ where: { id: args.screenshotId } });
+  // review) — edits go through a shadow revision. Mods bypass (curation). Evaluated
+  // on the RESOLVED target, so a re-map that failed to leave the parent throws here.
+  assertOwnerAssetEditable(listing, user);
+  // 🔴 LISTING-SCOPED delete — see `throwScreenshotNoLongerOnRevision`. This is the
+  // one write where the reparent race is destructive: an unscoped
+  // `delete({ where: { id } })` would remove the row from the LIVE listing it had just
+  // been moved onto.
+  const { count } = await dbWrite.appListingScreenshot.deleteMany({
+    where: { id: screenshotId, appListingId: listing.id },
+  });
+  if (count !== 1) throwScreenshotNoLongerOnRevision();
   // (no re-derive: removal/reorder/caption can never RAISE the derived rating)
 
   // Re-pack: contiguous orders over the survivors (ordered by their old order).
-  // Read the survivor set from dbWrite (primary): under replica lag the replica
-  // may still return the just-deleted row → an `update` on it would P2025/500
-  // after the delete already committed.
+  // Read the survivor set from dbWrite (primary): under replica lag the replica may
+  // still return the just-deleted row, and the scoped write below would then match 0
+  // rows on it and abandon the whole re-pack (before the write was scoped, the same
+  // stale row was a P2025/500 after the delete had already committed).
   const remaining = await dbWrite.appListingScreenshot.findMany({
-    where: { appListingId: shot.appListingId },
+    where: { appListingId: listing.id },
     select: { id: true },
     orderBy: { order: 'asc' },
   });
   if (remaining.length > 0) {
-    await dbWrite.$transaction(
-      remaining.map((s, index) =>
-        dbWrite.appListingScreenshot.update({ where: { id: s.id }, data: { order: index } })
-      )
-    );
+    // 🔴 LISTING-SCOPED, like every other screenshot write on this path. The unscoped
+    // `update({ where: { id } })` this replaces was the last hole in the invariant:
+    // an approve reparenting the shadow's rows onto the live parent between the
+    // `findMany` above and these writes would have written `order` onto rows that now
+    // belong to the LIVE served listing.
+    //
+    // 🔴 `count !== 1` here is a deliberate NO-OP, NOT the refusal the other three
+    // writes raise — this is the one place where refusing is the worse answer. The
+    // delete has ALREADY committed and is exactly what the owner asked for; a reparent
+    // landing afterwards is a moderator's approve, not user error, so reporting a
+    // failure would name a removal that in fact succeeded. And there is no state left
+    // to protect: the re-pack only densifies `order`, and the reparented rows keep the
+    // orders `applyApprovedRevision` moved them with. The abort is still raised INSIDE
+    // the interactive transaction so the rows re-packed before the race are rolled
+    // back — abandoning it half-done would leave exactly the `order` gaps the re-pack
+    // exists to remove.
+    await dbWrite
+      .$transaction(async (tx) => {
+        for (let index = 0; index < remaining.length; index++) {
+          const { count } = await tx.appListingScreenshot.updateMany({
+            where: { id: remaining[index].id, appListingId: listing.id },
+            data: { order: index },
+          });
+          if (count !== 1) throw new ListingScreenshotRepackAborted();
+        }
+      })
+      .catch((e) => {
+        if (!(e instanceof ListingScreenshotRepackAborted)) throw e;
+      });
   }
-  return { removed: args.screenshotId };
+  return { removed: screenshotId };
 }
 
 export type ListingAssetsView = {
@@ -931,33 +1628,26 @@ export async function getListingAssets(
   });
 
   // Resolve the detected nsfwLevel of every backing Image in ONE query.
-  const imageIds = [
-    listing.iconId,
-    listing.coverId,
-    ...screenshots.map((s) => s.imageId),
-  ].filter((v): v is number => v != null);
+  const imageIds = [listing.iconId, listing.coverId, ...screenshots.map((s) => s.imageId)].filter(
+    (v): v is number => v != null
+  );
   const images = imageIds.length
     ? await dbRead.image.findMany({
         where: { id: { in: imageIds } },
         select: { id: true, nsfwLevel: true, ingestion: true },
       })
     : [];
-  const levelById = new Map<number, number | null>(
-    images.map((i) => [i.id, i.nsfwLevel ?? null])
-  );
+  const levelById = new Map<number, number | null>(images.map((i) => [i.id, i.nsfwLevel ?? null]));
   const ingestionById = new Map<number, string | null>(
     images.map((i) => [i.id, i.ingestion ?? null])
   );
   const levelOf = (id: number | null): number | null =>
     id == null ? null : levelById.get(id) ?? null;
-  const scanOf = (id: number | null): AssetScanStatus | null => {
-    if (id == null) return null;
-    const ingestion = ingestionById.get(id);
-    if (ingestion == null) return null; // Image deleted / not found.
-    if (ingestion === ImageIngestionStatus.Scanned) return 'scanned';
-    if (ingestion === ImageIngestionStatus.Blocked) return 'blocked';
-    return 'pending';
-  };
+  // `null` id ⇒ nothing attached; absent `ingestion` ⇒ Image deleted / not found. Both
+  // report `null` here (no badge), which is this site's own answer to the absence
+  // question the shared predicate deliberately leaves to its callers.
+  const scanOf = (id: number | null): AssetScanStatus | null =>
+    id == null ? null : assetScanStatusFromIngestion(ingestionById.get(id));
 
   const iconScanStatus = scanOf(listing.iconId);
   const coverScanStatus = scanOf(listing.coverId);
@@ -1196,8 +1886,7 @@ export async function backfillListingAssets(
     // A screenshot row whose Image was deleted (imageId → null) does NOT count
     // as a present screenshot — it must be re-filled, not treated as complete.
     const hasScreenshots = candidate.screenshots.some((s) => s.imageId != null);
-    const complete =
-      candidate.iconId != null && candidate.coverId != null && hasScreenshots;
+    const complete = candidate.iconId != null && candidate.coverId != null && hasScreenshots;
     if (complete) {
       result.skippedComplete += 1;
       continue;

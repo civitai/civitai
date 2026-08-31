@@ -12,6 +12,7 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import {
   ModelFileVisibility,
   ModelModifier,
+  ModelStatus,
   ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
@@ -159,6 +160,7 @@ export const getFileForModelVersion = async ({
   user,
   noAuth,
   fileId,
+  direct,
 }: {
   modelVersionId: number;
   type?: ModelFileType;
@@ -174,6 +176,12 @@ export const getFileForModelVersion = async ({
   };
   noAuth?: boolean;
   fileId?: number;
+  /**
+   * Resolve to an origin-direct URL rather than the CDN-fronted one. Affects only
+   * which host serves the bytes — every access decision above is unchanged, and
+   * this flag is read after all of them.
+   */
+  direct?: boolean;
 }): Promise<ModelVersionFileResult> => {
   const modelVersion = await dbRead.modelVersion.findFirst({
     // `model: { is: {} }` requires the (required) `model` relation to exist.
@@ -262,18 +270,23 @@ export const getFileForModelVersion = async ({
   const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
   if (requireAuth && !userId) return { status: 'unauthorized' };
 
-  if (!(versionAccess?.hasAccess ?? true)) {
-    return { status: 'unauthorized' };
+  // The paid gate is checked BEFORE the generic access check so a gated version routes the user to
+  // the purchase flow; the other order collapses it into a bare denial and loses the reason.
+  // `permissions` only carries grant bits when there IS a grant — hasEntityAccess reports "no grant"
+  // as -1 (every bit set), so testing the bit alone reads a buyer-less user as already owning the
+  // download and skips the purchase route.
+  const boughtDownload =
+    !!versionAccess?.hasAccess &&
+    (versionAccess.permissions & EntityAccessPermission.EarlyAccessDownload) !== 0;
+  if (inEarlyAccess && !boughtDownload && !isMod && !isOwner) {
+    return { status: 'early-access', details: { deadline } };
   }
 
-  // Check the early access scenario:
-  if (
-    inEarlyAccess &&
-    (versionAccess.permissions & EntityAccessPermission.EarlyAccessDownload) == 0 &&
-    !isMod &&
-    !isOwner
-  ) {
-    return { status: 'early-access', details: { deadline } };
+  // `unauthorized` means "no session" and callers answer it with a login redirect. A signed-in user
+  // who lacks a grant must NOT get that — they bounce off /login straight back to the page they came
+  // from, which reads as the download button doing nothing at all.
+  if (!(versionAccess?.hasAccess ?? true)) {
+    return { status: userId ? 'no-access' : 'unauthorized' };
   }
 
   // Get the correct file
@@ -340,7 +353,7 @@ export const getFileForModelVersion = async ({
     file,
   });
   try {
-    const { url } = await resolveDownloadUrl(file.id, file.url, filename);
+    const { url } = await resolveDownloadUrl(file.id, file.url, filename, { direct });
     return {
       status: 'success',
       url,
@@ -351,6 +364,11 @@ export const getFileForModelVersion = async ({
       inEarlyAccess,
       metadata: file.metadata as FileMetadata,
       isDownloadable,
+      // The download endpoint excludes unpublished versions from the download metric — a draft is only
+      // reachable by its owner and by internal services, so anything fetching one isn't a download.
+      published:
+        modelVersion.status === ModelStatus.Published &&
+        modelVersion.model.status === ModelStatus.Published,
     };
   } catch (err) {
     // Both storage-resolver and delivery-worker fallback rejected this file —
@@ -442,6 +460,7 @@ type ModelVersionFileResult =
         | 'not-found'
         | 'resolve-failed'
         | 'unauthorized'
+        | 'no-access'
         | 'archived'
         | 'downloads-disabled'
         | 'error';
@@ -462,6 +481,7 @@ type ModelVersionFileResult =
       inEarlyAccess: boolean;
       metadata: FileMetadata;
       isDownloadable?: boolean;
+      published: boolean;
     };
 
 type FileResult = {

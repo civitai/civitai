@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import type {
@@ -10,64 +11,24 @@ import type {
 dayjs.extend(utc);
 
 // Use vi.hoisted to define mocks that will be available in vi.mock factories
-const { mockDbWrite, mockDbRead, mockCreateBuzzTransaction, mockDeliverMonthlyCosmetics } =
-  vi.hoisted(() => {
-    const mockRedeemableCode = {
-      findUnique: vi.fn(),
-      update: vi.fn(),
-      createMany: vi.fn(),
-      delete: vi.fn(),
-    };
+const { mockCreateBuzzTransaction, mockDeliverMonthlyCosmetics, mockSupersedeBuzzMembership } =
+  vi.hoisted(() => ({
+    mockCreateBuzzTransaction: vi.fn().mockResolvedValue({ success: true }),
+    mockDeliverMonthlyCosmetics: vi.fn().mockResolvedValue(undefined),
+    mockSupersedeBuzzMembership: vi.fn().mockResolvedValue({ superseded: 0 }),
+  }));
 
-    const mockCustomerSubscription = {
-      findFirst: vi.fn(),
-      findMany: vi.fn(),
-      create: vi.fn(),
-      update: vi.fn(),
-      delete: vi.fn(),
-      updateManyAndReturn: vi.fn(),
-    };
-
-    const mockPrice = {
-      findUnique: vi.fn(),
-    };
-
-    const mockProduct = {
-      findMany: vi.fn(),
-    };
-
-    const mockKeyValue = {
-      findUnique: vi.fn(),
-    };
-
-    return {
-      mockDbWrite: {
-        redeemableCode: mockRedeemableCode,
-        customerSubscription: mockCustomerSubscription,
-        price: mockPrice,
-        product: mockProduct,
-        keyValue: mockKeyValue,
-        $transaction: vi.fn(async (callback: (tx: any) => Promise<any>) => {
-          return callback({
-            redeemableCode: mockRedeemableCode,
-            customerSubscription: mockCustomerSubscription,
-            price: mockPrice,
-            product: mockProduct,
-            keyValue: mockKeyValue,
-          });
-        }),
-        $queryRaw: vi.fn(),
-        $executeRaw: vi.fn(),
-      },
-      mockDbRead: {
-        keyValue: {
-          findUnique: vi.fn(),
-        },
-      },
-      mockCreateBuzzTransaction: vi.fn().mockResolvedValue({ success: true }),
-      mockDeliverMonthlyCosmetics: vi.fn().mockResolvedValue(undefined),
-    };
-  });
+// The clients stay split, as the fixture they replace had them.
+//
+// `$transaction` inherits the canonical default, which runs the callback against `dbWrite`.
+// The old fixture handed it an object whose five members were the write client's own model
+// objects, so the default reaches the same nodes — and every `consumeRedeemableCode` case
+// below replaces the implementation with its own `tx` anyway, which is where the interesting
+// behaviour lives. Note that those replacements OUTLIVE their test: `vi.clearAllMocks()`
+// clears call history, not implementations. That was true of the fixture too, and is left
+// alone here so the conversion changes no ordering.
+const mockDbWrite = dbMock.dbWrite;
+const mockDbRead = dbMock.dbRead;
 
 // Mock modules
 vi.mock('~/env/server', () => ({
@@ -75,10 +36,6 @@ vi.mock('~/env/server', () => ({
     TIER_METADATA_KEY: 'tier',
     BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
   },
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/auth/session-invalidation', () => ({
@@ -111,18 +68,16 @@ vi.mock('~/server/utils/subscription.utils', () => {
   };
 });
 
-vi.mock('~/server/db/client', () => ({
-  dbWrite: mockDbWrite,
-  dbRead: mockDbRead,
-}));
-
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mockCreateBuzzTransaction,
 }));
 
+// Hand-listed rather than importOriginal on purpose: the real module pulls the
+// clickhouse/redis/buzz graph in at load. Add exports here as the edge grows.
 vi.mock('~/server/services/subscriptions.service', () => ({
   deliverMonthlyCosmetics: mockDeliverMonthlyCosmetics,
   syncFreshdeskMembership: vi.fn().mockResolvedValue(undefined),
+  supersedeBuzzMembershipForPaidSubscription: mockSupersedeBuzzMembership,
 }));
 
 vi.mock('~/server/utils/errorHandling', () => ({
@@ -498,6 +453,35 @@ describe('redeemableCode.service', () => {
         );
       });
 
+      // A membership code writes the yellow slot, so a Buzz-purchased membership would stay
+      // live in its own slot and keep granting its (possibly higher) tier on top.
+      it('ends any Buzz-purchased membership when a membership code is redeemed', async () => {
+        const mockCode = createMockRedeemableCode({
+          unitValue: 1,
+          price: createMockPrice({
+            product: createMockProduct({ metadata: { tier: 'bronze', monthlyBuzz: 5000 } }),
+          }),
+        });
+
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        mockDbWrite.$transaction.mockImplementation(async (callback: any) => {
+          const tx = {
+            redeemableCode: {
+              update: vi.fn().mockResolvedValue({ ...mockCode, redeemedAt: new Date(), userId: 1 }),
+            },
+            customerSubscription: {
+              findFirst: vi.fn().mockResolvedValue(null),
+              create: vi.fn().mockResolvedValue({ id: 'sub_new' }),
+            },
+          };
+          return callback(tx);
+        });
+
+        await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
+
+        expect(mockSupersedeBuzzMembership).toHaveBeenCalledWith({ userId: 1 });
+      });
+
       it('should store tokens with unique IDs matching tok_ prefix pattern', async () => {
         const mockCode = createMockRedeemableCode({ unitValue: 5 });
         let createdSubscription: any = null;
@@ -662,7 +646,12 @@ describe('redeemableCode.service', () => {
           }),
           metadata: {
             tokens: [
-              createMockToken({ id: 'tok_prev_1', tier: 'gold', status: 'locked', buzzAmount: 50000 }),
+              createMockToken({
+                id: 'tok_prev_1',
+                tier: 'gold',
+                status: 'locked',
+                buzzAmount: 50000,
+              }),
             ],
           },
         });
@@ -766,7 +755,12 @@ describe('redeemableCode.service', () => {
           }),
           metadata: {
             tokens: [
-              createMockToken({ id: 'tok_gold_1', tier: 'gold', status: 'claimed', buzzAmount: 50000 }),
+              createMockToken({
+                id: 'tok_gold_1',
+                tier: 'gold',
+                status: 'claimed',
+                buzzAmount: 50000,
+              }),
             ],
           },
         });
@@ -886,8 +880,18 @@ describe('redeemableCode.service', () => {
         });
 
         const existingSilverTokens: PrepaidToken[] = [
-          createMockToken({ id: 'tok_silver_1', tier: 'silver', status: 'claimed', buzzAmount: 25000 }),
-          createMockToken({ id: 'tok_silver_2', tier: 'silver', status: 'locked', buzzAmount: 25000 }),
+          createMockToken({
+            id: 'tok_silver_1',
+            tier: 'silver',
+            status: 'claimed',
+            buzzAmount: 25000,
+          }),
+          createMockToken({
+            id: 'tok_silver_2',
+            tier: 'silver',
+            status: 'locked',
+            buzzAmount: 25000,
+          }),
         ];
 
         const existingSub = createMockSubscription({
@@ -943,7 +947,12 @@ describe('redeemableCode.service', () => {
           }),
           metadata: {
             tokens: [
-              createMockToken({ id: 'tok_silver_1', tier: 'silver', status: 'claimed', buzzAmount: 25000 }),
+              createMockToken({
+                id: 'tok_silver_1',
+                tier: 'silver',
+                status: 'claimed',
+                buzzAmount: 25000,
+              }),
             ],
           },
         });
@@ -989,8 +998,18 @@ describe('redeemableCode.service', () => {
         });
 
         const existingSilverTokens: PrepaidToken[] = [
-          createMockToken({ id: 'tok_silver_1', tier: 'silver', status: 'claimed', buzzAmount: 25000 }),
-          createMockToken({ id: 'tok_silver_2', tier: 'silver', status: 'locked', buzzAmount: 25000 }),
+          createMockToken({
+            id: 'tok_silver_1',
+            tier: 'silver',
+            status: 'claimed',
+            buzzAmount: 25000,
+          }),
+          createMockToken({
+            id: 'tok_silver_2',
+            tier: 'silver',
+            status: 'locked',
+            buzzAmount: 25000,
+          }),
         ];
 
         const existingSub = createMockSubscription({
@@ -1076,7 +1095,12 @@ describe('redeemableCode.service', () => {
           }),
           metadata: {
             tokens: [
-              createMockToken({ id: 'tok_silver_1', tier: 'silver', status: 'claimed', buzzAmount: 25000 }),
+              createMockToken({
+                id: 'tok_silver_1',
+                tier: 'silver',
+                status: 'claimed',
+                buzzAmount: 25000,
+              }),
             ],
           },
         });

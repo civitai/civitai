@@ -24,13 +24,28 @@ import { apiRequestV3 } from './client.mjs';
  */
 export async function searchDocs(workspaceId, options = {}) {
   const params = new URLSearchParams();
-  if (options.query) {
-    params.set('query', options.query);
-  }
+  if (options.query) params.set('query', options.query);
+  if (options.includeArchived) params.set('include_archived', 'true');
+  if (options.limit) params.set('limit', String(options.limit));
+  if (options.cursor) params.set('cursor', options.cursor);
+
   const queryString = params.toString();
   const endpoint = `/workspaces/${workspaceId}/docs${queryString ? `?${queryString}` : ''}`;
   const response = await apiRequestV3(endpoint);
-  return response.docs || [];
+
+  let docs = response.docs || [];
+
+  // Client-side parent filtering (API doesn't support parent_type/parent_id natively)
+  if (options.parentType !== undefined && options.parentId) {
+    docs = docs.filter(d =>
+      d.parent && d.parent.type === options.parentType && d.parent.id === options.parentId
+    );
+  }
+
+  return {
+    docs,
+    nextCursor: response.next_cursor || null,
+  };
 }
 
 /**
@@ -50,26 +65,23 @@ export async function getDoc(workspaceId, docId) {
  * @param {string} name - The doc name
  * @param {object} options - Additional options
  * @param {string} options.content - Initial content for the first page (markdown)
- * @param {string} options.parent - Parent object (e.g., { id: "folderId", type: 6 })
- * @param {string} options.visibility - Doc visibility
- * @returns {Promise<object>} - Created doc (with firstPageId if content was set)
+ * @param {object} options.parent - Parent: { id: string, type: number }
+ *   type values: 4=Space, 5=Folder, 6=List, 7/12=Workspace level
+ * @param {string} options.visibility - "PUBLIC", "PRIVATE", "PERSONAL", or "HIDDEN"
+ * @param {boolean} options.createPage - Auto-create first page (default: true)
  */
 export async function createDoc(workspaceId, name, options = {}) {
   const body = { name };
-  if (options.parent) {
-    body.parent = options.parent;
-  }
-  if (options.visibility) {
-    body.visibility = options.visibility;
-  }
+  if (options.parent) body.parent = options.parent;
+  if (options.visibility) body.visibility = options.visibility;
+  if (options.createPage !== undefined) body.create_page = options.createPage;
 
   const response = await apiRequestV3(`/workspaces/${workspaceId}/docs`, {
     method: 'POST',
     body: JSON.stringify(body),
   });
 
-  // If content was provided, we need to edit the first page that ClickUp auto-creates
-  // (Creating a new page would add a second page, not populate the first one)
+  // If content was provided, edit the first page that ClickUp auto-creates
   if (options.content && response.id) {
     const pages = await getDocPageListing(workspaceId, response.id);
     if (pages.length > 0) {
@@ -89,8 +101,9 @@ export async function createDoc(workspaceId, name, options = {}) {
  * @returns {Promise<object[]>} - Array of page metadata
  */
 export async function getDocPageListing(workspaceId, docId) {
-  const response = await apiRequestV3(`/workspaces/${workspaceId}/docs/${docId}/pageListing`);
-  return response.pages || [];
+  const response = await apiRequestV3(`/workspaces/${workspaceId}/docs/${docId}/page_listing`);
+  // API returns flat array directly, not wrapped in { pages: [...] }
+  return Array.isArray(response) ? response : (response.pages || []);
 }
 
 /**
@@ -102,11 +115,11 @@ export async function getDocPageListing(workspaceId, docId) {
  * @returns {Promise<object>} - Page with content
  */
 export async function getPage(workspaceId, docId, pageId, contentFormat = 'text/md') {
-  const response = await apiRequestV3(`/workspaces/${workspaceId}/docs/${docId}/pages/${pageId}`, {
-    headers: {
-      'Accept': contentFormat,
-    },
-  });
+  const params = new URLSearchParams();
+  params.set('content_format', contentFormat);
+  const response = await apiRequestV3(
+    `/workspaces/${workspaceId}/docs/${docId}/pages/${pageId}?${params.toString()}`
+  );
   return response;
 }
 
@@ -123,15 +136,11 @@ export async function getPage(workspaceId, docId, pageId, contentFormat = 'text/
  */
 export async function createPage(workspaceId, docId, name, options = {}) {
   const body = { name };
-  if (options.content) {
-    body.content = options.content;
-  }
-  if (options.parentPageId) {
-    body.parent_page_id = options.parentPageId;
-  }
-  if (options.subTitle) {
-    body.sub_title = options.subTitle;
-  }
+  if (options.content) body.content = options.content;
+  if (options.parentPageId) body.parent_page_id = options.parentPageId;
+  if (options.subTitle) body.sub_title = options.subTitle;
+  if (options.contentFormat) body.content_format = options.contentFormat;
+  if (options.orderindex !== undefined) body.orderindex = options.orderindex;
 
   const response = await apiRequestV3(`/workspaces/${workspaceId}/docs/${docId}/pages`, {
     method: 'POST',
@@ -153,15 +162,12 @@ export async function createPage(workspaceId, docId, name, options = {}) {
  */
 export async function editPage(workspaceId, docId, pageId, updates) {
   const body = {};
-  if (updates.name !== undefined) {
-    body.name = updates.name;
-  }
-  if (updates.content !== undefined) {
-    body.content = updates.content;
-  }
-  if (updates.subTitle !== undefined) {
-    body.sub_title = updates.subTitle;
-  }
+  if (updates.name !== undefined) body.name = updates.name;
+  if (updates.content !== undefined) body.content = updates.content;
+  if (updates.subTitle !== undefined) body.sub_title = updates.subTitle;
+  if (updates.contentEditMode !== undefined) body.content_edit_mode = updates.contentEditMode;
+  if (updates.contentFormat !== undefined) body.content_format = updates.contentFormat;
+  if (updates.archived !== undefined) body.archived = updates.archived;
 
   const response = await apiRequestV3(`/workspaces/${workspaceId}/docs/${docId}/pages/${pageId}`, {
     method: 'PUT',

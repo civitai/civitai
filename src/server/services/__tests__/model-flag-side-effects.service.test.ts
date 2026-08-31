@@ -2,48 +2,25 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Unit tests for applyModelFlagSideEffects — the post-update flag fan-out
 // extracted from upsertModel (model tag/search-index refresh, gallery cache
-// bust, ingestModel, and minor/poi propagation onto the model's images).
+// bust, and minor/poi propagation onto the model's images).
 // model.service.ts has a very large import graph, so most of its transitive
 // service/db/search dependencies are stubbed out below to keep this a real
 // unit test rather than an integration test.
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-  });
-  return {
-    mockDbRead: { model: mk(), modelVersion: mk(), $queryRaw: vi.fn() },
-    mockDbWrite: {
-      model: mk(),
-      modelVersion: mk(),
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-    },
-  };
-});
-
 const {
   mockModelTagRefresh,
   mockModelVotableBust,
-  mockRedisDel,
   mockModelsQueueUpdate,
   mockQueueImageSearchIndexUpdate,
   mockBustMvCache,
 } = vi.hoisted(() => ({
   mockModelTagRefresh: vi.fn(),
   mockModelVotableBust: vi.fn(),
-  mockRedisDel: vi.fn(),
   mockModelsQueueUpdate: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
   mockBustMvCache: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   preventReplicationLag: vi.fn(),
   getDbWithoutLag: vi.fn(async () => mockDbRead),
@@ -60,10 +37,7 @@ vi.mock('~/server/redis/caches', () => ({
   userBasicCache: {},
   userModelCountCache: { refresh: vi.fn() },
 }));
-vi.mock('~/server/redis/client', () => ({
-  redis: { del: mockRedisDel },
-  REDIS_KEYS: { MODEL: { GALLERY_SETTINGS: 'model:gallery-settings' } },
-}));
+
 vi.mock('~/server/search-index', () => ({
   collectionsSearchIndex: { queueUpdate: vi.fn() },
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
@@ -73,6 +47,11 @@ vi.mock('~/server/search-index', () => ({
 vi.mock('~/server/services/auction.service', () => ({
   deleteBidsForModel: vi.fn(),
   getLastAuctionReset: vi.fn(),
+}));
+vi.mock('~/server/services/buzz.service', () => ({
+  getMultiAccountTransactionsByPrefix: vi.fn(),
+  getUserBuzzAccountByAccountTypes: vi.fn(),
+  refundMultiAccountTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTagsForModels: vi.fn(),
@@ -118,6 +97,11 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn
 
 import { applyModelFlagSideEffects } from '~/server/services/model.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+const mockRedisDel = redisMock.redis.del;
 
 const baseBefore = {
   poi: false,
@@ -149,7 +133,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockDbWrite.modelVersion.findMany.mockResolvedValue([{ id: 100 }]);
   mockDbWrite.$queryRaw.mockResolvedValue([{ id: 900 }]);
-  mockDbWrite.model.update.mockResolvedValue({});
 });
 
 describe('applyModelFlagSideEffects — image propagation', () => {
@@ -338,71 +321,5 @@ describe('applyModelFlagSideEffects — gallery browsing-level cache bust', () =
     await applyModelFlagSideEffects({ before: baseBefore, after: { ...baseAfter } });
 
     expect(mockRedisDel).not.toHaveBeenCalled();
-  });
-});
-
-describe('applyModelFlagSideEffects — ingestModel gating', () => {
-  // ingestModel is a same-module function (not separately mockable); with
-  // CONTENT_SCAN_ENDPOINT unset (the test-env default) it short-circuits to
-  // stamping scannedAt via dbWrite.model.update — the observable proof it ran.
-  const ranIngest = () =>
-    mockDbWrite.model.update.mock.calls.some(
-      (call) => call[0]?.where?.id === 42 && 'scannedAt' in (call[0]?.data ?? {})
-    );
-
-  it('fires for a Published model when a flag changed', async () => {
-    await applyModelFlagSideEffects({
-      before: baseBefore,
-      after: { ...baseAfter, status: 'Published', minor: true },
-    });
-
-    expect(ranIngest()).toBe(true);
-  });
-
-  it('fires for a Scheduled model when a flag changed', async () => {
-    await applyModelFlagSideEffects({
-      before: baseBefore,
-      after: { ...baseAfter, status: 'Scheduled', poi: true },
-    });
-
-    expect(ranIngest()).toBe(true);
-  });
-
-  it('does not fire for a Draft model even when a flag changed', async () => {
-    await applyModelFlagSideEffects({
-      before: baseBefore,
-      after: { ...baseAfter, status: 'Draft', minor: true },
-    });
-
-    expect(ranIngest()).toBe(false);
-  });
-
-  it('does not fire for a Published model when nothing relevant changed', async () => {
-    await applyModelFlagSideEffects({
-      before: baseBefore,
-      after: { ...baseAfter, status: 'Published' },
-    });
-
-    expect(ranIngest()).toBe(false);
-  });
-
-  it('fires for a Published model on a name-only change', async () => {
-    await applyModelFlagSideEffects({
-      before: baseBefore,
-      after: { ...baseAfter, status: 'Published' },
-      nameChanged: true,
-    });
-
-    expect(ranIngest()).toBe(true);
-  });
-
-  it('fires for a Published model on a description-only change', async () => {
-    await applyModelFlagSideEffects({
-      before: baseBefore,
-      after: { ...baseAfter, status: 'Published' },
-      descriptionChanged: true,
-    });
-
-    expect(ranIngest()).toBe(true);
   });
 });

@@ -295,7 +295,7 @@ describe('fetchDocumentsAbortable timeout safety net', () => {
 //
 // The 5s local timer in #2370 caught the slow-fetch path, but post-deploy
 // telemetry showed the dominant failure mode is upstream returning 503
-// (civitai-feeds-proxy shed) or 408 (Meilisearch backend timeout). These
+// (feeds proxy shed) or 408 (Meilisearch backend timeout). These
 // were re-throwing as bare Error from fetchDocumentsAbortable, so the
 // post-filter catch in image.service.ts didn't recognise them and the
 // 500 bubbled to clients → retry storm → cascade sustained.

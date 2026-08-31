@@ -1,0 +1,10 @@
+{
+  "name": "clickup-skill",
+  "private": true,
+  "version": "1.0.0",
+  "description": "ClickUp CLI skill — tasks, docs, comments, watchers",
+  "dependencies": {
+    "remark-parse": "^11.0.0",
+    "unified": "^11.0.5"
+  }
+}

@@ -1,5 +1,54 @@
+import promClient from 'prom-client';
 import { vi } from 'vitest';
-import { generateKeyPairSync } from 'crypto';
+import { getTestRsaKeyPair } from './rsa-test-key';
+import { dbMock } from './mocks/db.mock';
+import { redisMock } from './mocks/redis.mock';
+import { loggingMock } from './mocks/logging.mock';
+import { env, setEnvDefaults } from './mocks/env.mock';
+import { resetSharedMocks } from './mocks';
+
+// Canonical shared-module mocks. Registered here, for every test file, rather than per
+// file — see docs/testing/shared-module-mocks.md. Under `isolate: false` a source module
+// that imports one of these is evaluated ONCE per worker and captures its bindings then,
+// so a per-file mock object freezes that file's shape for every later file in the worker.
+// One registration with one stable object removes the question.
+//
+// Runs before the test module is imported, which is what makes it the reset point for
+// implementations AND call counts.
+resetSharedMocks();
+
+// 🔴 Spread the underlying PACKAGE, never `importOriginal` of the app shim.
+//
+// `~/server/db/client` and `~/server/redis/client` are shims: they re-export their package
+// wholesale AND construct real clients at module scope. `importOriginal` evaluates that
+// module, so a global registration using it forces real Prisma/Redis construction into
+// EVERY test file — including files whose own mocks make that construction impossible.
+// `process-vault-items.test.ts` mocks `@prisma/client` without `PrismaClient`, which used to
+// be fine because its own db mock replaced the shim; under an `importOriginal` registration
+// it died at module scope with `PrismaClient is not a constructor` and collected ZERO tests
+// while the failure count stayed at 0. (Found by arabella on her control run, before
+// converting anything — which is exactly why she took a control run.)
+//
+// The package re-exports are all the spread was ever protecting, and importing the package
+// directly gets them without evaluating the shim.
+vi.mock('~/server/db/client', async () => ({
+  ...(await import('@civitai/db/client')),
+  dbRead: dbMock.dbRead,
+  dbWrite: dbMock.dbWrite,
+}));
+
+// The `sys-read-deadline` spread stays for anything else that module exports; the seam is
+// overridden after it, so a test can inject a sysRedis read timeout the way it injects a
+// `sysRedis.get`. Its default IS that real implementation, so this adds a lever and changes
+// no behaviour — see redis.mock.ts. Without it a converted test keeps the real wall-clock
+// race, which the mocked client can never lose, and its timeout leg passes asserting nothing.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
+  ...(await import('~/server/redis/sys-read-deadline')),
+  redis: redisMock.redis,
+  sysRedis: redisMock.sysRedis,
+  withSysReadDeadline: redisMock.withSysReadDeadline,
+}));
 
 // Mock @civitai/client to avoid ESM resolution issues
 vi.mock('@civitai/client', () => ({
@@ -57,71 +106,22 @@ vi.mock('@civitai/client', () => ({
 }));
 
 // App Blocks: provision a real RSA keypair so BlockTokenService can sign and
-// tests can verify against the matching public key. Generated once per test
-// process. The public PEM is re-exported so the block-token round-trip test
-// verifies against the exact key the service signed with. (The block-tokens
-// API "503 when keys not configured" test overrides ~/env/server per-test, so
-// these defaults don't interfere with that negative case.)
-const { publicKey: _btPublicKey, privateKey: _btPrivateKey } = generateKeyPairSync('rsa', {
-  modulusLength: 2048,
-});
-export const TEST_BLOCK_TOKEN_PUBLIC_PEM = _btPublicKey.export({
-  type: 'spki',
-  format: 'pem',
-}) as string;
-const TEST_BLOCK_TOKEN_PRIVATE_PEM = _btPrivateKey.export({
-  type: 'pkcs8',
-  format: 'pem',
-}) as string;
+// tests can verify against the matching public key. The public PEM is
+// re-exported so the block-token round-trip test verifies against the exact key
+// the service signed with. (The block-tokens API "503 when keys not configured"
+// test overrides ~/env/server per-test, so these defaults don't interfere with
+// that negative case.) See rsa-test-key.ts for why it is cached on disk.
+const { publicPem: TEST_BLOCK_TOKEN_PUBLIC_PEM_, privatePem: TEST_BLOCK_TOKEN_PRIVATE_PEM } =
+  getTestRsaKeyPair();
+export const TEST_BLOCK_TOKEN_PUBLIC_PEM = TEST_BLOCK_TOKEN_PUBLIC_PEM_;
 
-// Mock environment variables. Use a Proxy so any env.X access returns a
-// reasonable default — saves us from enumerating every URL/endpoint var that
-// production code happens to read at module load.
-const TEST_ENV_DEFAULTS: Record<string, unknown> = {
-  TIER_METADATA_KEY: 'tier',
-  BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
-  // meilisearch/client.ts feeds this straight into pLimit() at module load —
-  // an undefined value makes p-limit throw "Expected concurrency to be a number".
-  // Mirror the production default (server-schema.ts: .default(50)).
-  MEILI_CALL_CONCURRENCY: 50,
-  // Same module-load pLimit() trap for the resource-select limiter (server-schema.ts: .default(500)).
-  MEILI_RESOURCE_SELECT_CONCURRENCY: 500,
-  // Same module-load pLimit() trap in signals/wrapper.ts (default 30).
-  SIGNALS_CALL_CONCURRENCY: 30,
-  LOGGING: '',
-  // App-blocks (git-push / forgejo / manifest) surfaces read these at module
-  // load. Live here so blocks-router tests don't each override the whole env
-  // mock (which drops the S3/MEILI defaults and crashes at import).
-  FORGEJO_PUBLIC_URL: 'https://forgejo.civitai.com',
-  APPS_DOMAIN: 'civit.ai',
+// The block-token keypair is generated here, per worker, so it has to be pushed into the
+// canonical env defaults rather than declared beside them. Worker-level, not per-file:
+// BlockTokenService reads it when its module is evaluated.
+setEnvDefaults({
   BLOCK_TOKEN_PRIVATE_KEY: TEST_BLOCK_TOKEN_PRIVATE_PEM,
   BLOCK_TOKEN_PUBLIC_KEY: TEST_BLOCK_TOKEN_PUBLIC_PEM,
-  DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
-  NOTIFICATION_DB_URL: 'postgres://user:pass@localhost:5432/notif',
-  DATABASE_SSL: false,
-  DATABASE_POOL_MAX: 10,
-  DATABASE_POOL_IDLE_TIMEOUT: 30000,
-  DATABASE_CONNECTION_TIMEOUT: 5000,
-  DATABASE_WRITE_TIMEOUT: 10000,
-  DATABASE_READ_TIMEOUT: 10000,
-  REDIS_URL: 'redis://localhost:6379',
-  REDIS_SYS_URL: 'redis://localhost:6379',
-  REDIS_SYS_SOCKET_TIMEOUT_MS: 0,
-  REDIS_SYS_READ_TIMEOUT_MS: 2000,
-  REDIS_SYS_COMMANDS_QUEUE_MAX_LENGTH: 10000,
-  NEXTAUTH_URL: 'http://localhost:3000',
-  NEXTAUTH_SECRET: 'test-secret',
-  S3_UPLOAD_ENDPOINT: 'http://localhost:9000',
-  S3_IMAGE_UPLOAD_ENDPOINT: 'http://localhost:9000',
-  ORCHESTRATOR_ENDPOINT: 'http://localhost:8080',
-  SIGNALS_ENDPOINT: 'http://localhost:8081',
-  FLIPT_URL: 'http://localhost:8082',
-  EMAIL_HOST: 'smtp.localhost',
-  S3_UPLOAD_KEY: 'test-key',
-  S3_UPLOAD_SECRET: 'test-secret',
-  S3_IMAGE_UPLOAD_KEY: 'test-key',
-  S3_IMAGE_UPLOAD_SECRET: 'test-secret',
-};
+});
 
 // The @civitai/redis package validates its own env from `process.env` directly (its own schema),
 // NOT `~/env/server`, so the mock below doesn't reach it. Set the two required vars (the rest have
@@ -145,15 +145,10 @@ process.env.DATABASE_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/db';
 process.env.NOTIFICATION_DB_URL ??= 'postgres://user:pass@localhost:5432/notif';
 process.env.NOTIFICATION_DB_REPLICA_URL ??= 'postgres://user:pass@localhost:5432/notif';
 
-vi.mock('~/env/server', () => ({
-  env: new Proxy(TEST_ENV_DEFAULTS, {
-    get(target, prop: string) {
-      if (prop in target) return target[prop];
-      // Anything else: return undefined (matches missing optional env vars).
-      return undefined;
-    },
-  }),
-}));
+// One `env` object for the worker, reads layered defaults-then-per-file-overrides. A test
+// declares what it needs with `setEnv({ … })` instead of replacing the whole module — which
+// is what made 109 files each re-enumerate the defaults and drop the ones they forgot.
+vi.mock('~/env/server', () => ({ env }));
 
 // Prevent prom/client from initializing real DB pools at module load.
 // A metric-shaped stub covering every prom-client surface our code touches
@@ -167,12 +162,21 @@ const promMetricStub = () => {
     dec: vi.fn(),
     set: vi.fn(),
     observe: vi.fn(),
+    // `Histogram.zero(labels)` — used by seedJobMetrics to publish a job's series before
+    // its first observation. Stubbed here for the same reason as its neighbours: the stub
+    // has to cover every prom-client surface our code touches, or a caller dies on
+    // `zero is not a function` far from whatever the test was written to check.
+    zero: vi.fn(),
     startTimer: vi.fn(() => vi.fn()),
     labels: vi.fn(() => child),
   };
 };
 
 vi.mock('~/server/prom/client', () => ({
+  // The real value. Modules that build their own prom-client metrics name them
+  // `PROM_PREFIX + '...'`, and a stubbed prefix would make every such test assert
+  // against a metric name production never emits.
+  PROM_PREFIX: 'civitai_app_',
   // Factory functions — modules call these at import time to build their metrics
   // (e.g. meilisearch/client.ts, eventloop-longtask.ts). Each returns a stub.
   registerCounter: vi.fn(promMetricStub),
@@ -181,6 +185,12 @@ vi.mock('~/server/prom/client', () => ({
   registerHistogram: vi.fn(promMetricStub),
   registerInstrumentationMetric: vi.fn(promMetricStub),
   // Named metric exports the real module ships.
+  placementExhaustedLegsGauge: promMetricStub(),
+  placementUnfundedSettlementsGauge: promMetricStub(),
+  restrictedImageDriftGauge: promMetricStub(),
+  restrictedImageReconcileLastSuccessGauge: promMetricStub(),
+  restrictedBaseModelDivergenceGauge: promMetricStub(),
+  restrictedImageOverhiddenGauge: promMetricStub(),
   missingSignedAtCounter: promMetricStub(),
   newUserCounter: promMetricStub(),
   loginCounter: promMetricStub(),
@@ -191,6 +201,25 @@ vi.mock('~/server/prom/client', () => ({
   vaultItemFailedCounter: promMetricStub(),
   rewardGivenCounter: promMetricStub(),
   rewardFailedCounter: promMetricStub(),
+  // Also re-exported rather than declared here, and NOT a metric — it is the real cross-graph
+  // Registry that `src/pages/api/metrics.ts` scrapes and now also registers its own failure counter
+  // on, at MODULE scope. Omitting it means any suite that merely IMPORTS that page throws
+  // `No "instrumentationRegistry" export is defined on the "~/server/prom/client" mock` during
+  // module evaluation — which is not a failure of the thing under test, and is invisible until some
+  // unrelated suite happens to import the page (two seed suites did, and went red in CI while every
+  // metrics-specific suite stayed green, because those mock the module themselves).
+  //
+  // A REAL throwaway Registry rather than a stub: consumers call `.metrics()`, `.getSingleMetric()`
+  // and register into it, and a stub that answered those with vi.fn() would let a suite assert
+  // against a registry that never held anything.
+  instrumentationRegistry: new promClient.Registry(),
+  // Re-exported from '@civitai/telemetry/client' rather than declared in
+  // prom/client, so this module-replacing mock drops it. `base.reward` and
+  // `image.service` both call `.inc()` on it WITHOUT the `?.inc?.()` guard their
+  // neighbours use, so the first test to drive either fail-soft path dies here
+  // rather than on whatever it was written to check.
+  clickhouseFailSoftCounter: promMetricStub(),
+  rewardConfigReadFailedCounter: promMetricStub(),
   clavataCounter: promMetricStub(),
   cacheHitCounter: promMetricStub(),
   cacheMissCounter: promMetricStub(),
@@ -214,19 +243,46 @@ vi.mock('~/server/prom/client', () => ({
   // Cron runner + image-ingestion cron metrics (job.ts / image-ingestion.ts).
   jobDurationHistogram: promMetricStub(),
   jobErrorsCounter: promMetricStub(),
+  // Not a metric — the helper `createJob` calls at module scope to publish each job's
+  // series at zero. Re-exported from '@civitai/telemetry/client', so this
+  // module-replacing mock drops it, and EVERY suite that reaches a job module would die
+  // during evaluation with `No "seedJobMetrics" export is defined on the mock`.
+  seedJobMetrics: vi.fn(),
   imageIngestCronCounter: promMetricStub(),
   imageIngestCronQueueDepth: promMetricStub(),
   imageScanWebhookCounter: promMetricStub(),
 }));
 
-// Mock logging
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
+// Mock logging.
+//
+// 🔴 Spreads the ORIGINAL rather than replacing the module with a one-key object.
+// `~/server/logging/client` has 7 exports; the previous wholesale mock provided
+// exactly one, so ANY code path reaching a second one died with
+// `[vitest] No "<name>" export is defined on the mock` — an error that surfaces
+// far from its cause. It bit when the REST routes were consolidated onto
+// `handleEndpointError` (civitai#3845/4): the helper needs `buildCentralErrorLog`
+// and `wasServerFaultLogged`, so nine previously-green route tests broke for a
+// reason that had nothing to do with what they assert. Only `logToAxiom` is
+// stubbed, because that is the one with an I/O side effect a test must not do.
+// The spy comes from the canonical mock rather than being built inline: under
+// `isolate: false` this factory runs once per WORKER, so an inline `vi.fn()` pooled its
+// call counts across every file sharing that worker.
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  logToAxiom: loggingMock.logToAxiom,
 }));
 
 // Mock session invalidation
+// `invalidateSession` is here rather than mocked per-file on purpose. The module was
+// already globally mocked with `refreshSession` alone, so every path reaching
+// `invalidateSession` — deleteUser, banUser, the moderation paths — died on
+// `No "invalidateSession" export is defined on the mock` rather than by anyone's
+// choice. The two alternatives are worse: `importOriginal` here pulls redis/client and
+// signal-client into every suite's graph (the CI-only failure mode CLAUDE.md warns
+// about), and a local hand-listed mock trips `no-wholesale-module-mock`.
 vi.mock('~/server/auth/session-invalidation', () => ({
   refreshSession: vi.fn().mockResolvedValue(undefined),
+  invalidateSession: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock Freshdesk integration

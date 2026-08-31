@@ -1,0 +1,33 @@
+# Example direnv config. Copy to `.envrc` (which is gitignored) and run
+# `direnv allow`. With nix-direnv installed, entering the repo then gives you the
+# flake's toolchain automatically -- the same node and pnpm `nix run .#dev` uses.
+#
+#   cp .envrc.example .envrc && direnv allow
+#
+# ADDING to an existing .envrc? Keep the lines you already have. This file is a
+# starting point to copy, not something to overwrite a working .envrc with:
+# personal direnv lines (extra `use` directives, machine-local exports) are yours
+# and nothing here replaces them.
+#
+# Application configuration does NOT belong here -- it goes in `.env.development`,
+# which `nix run .#dev` creates for you from `.env-example`. The only reason to
+# export anything in this file is if you want it in your interactive shell too.
+#
+# NEVER commit a real .envrc. It is gitignored on purpose, and the secrets below
+# are placeholders.
+
+use flake
+
+# Optional: makes flake.lock changes reload the shell instead of serving a stale
+# cached one.
+watch_file flake.lock
+
+# Optional overrides. Everything here has a working default in .env.development,
+# so you only need these if you want them visible outside the app as well --
+# e.g. to run a one-off script or psql against the same database.
+#
+# export DATABASE_URL=postgresql://postgres:postgres@localhost:15432/civitai
+#
+# Mint these at http://localhost:9001 (minioadmin / minioadmin) -> Access Keys.
+# export S3_UPLOAD_KEY=<your-minio-access-key>
+# export S3_UPLOAD_SECRET=<your-minio-secret-key>

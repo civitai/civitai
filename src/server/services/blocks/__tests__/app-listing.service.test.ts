@@ -14,6 +14,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockDbRead } = vi.hoisted(() => ({
   mockDbRead: {
+    // App Listing COLLABORATORS: `getAppListingDetail` now hydrates the PUBLIC BYLINE
+    // (accepted + displayed collaborators) alongside the listing. Both reads go through
+    // `safeCollaboratorQuery`, which swallows ONLY the missing-TABLE error — so an
+    // absent mock surfaces as a TypeError instead of being silently absorbed. Empty
+    // here: these suites assert the pre-collaborator projection, which must be
+    // byte-identical when an app has no seats.
+    appCollaborator: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
+    user: { findMany: vi.fn(async () => []) },
     $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
     appListing: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
@@ -25,7 +33,7 @@ const { mockDbRead } = vi.hoisted(() => ({
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
 // getEdgeUrl → identity so URL fields assert against the stored key.
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (src: string) => src }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
 vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
 // queryCache → passthrough to the mocked $queryRaw (no Redis in unit tests).
@@ -46,7 +54,6 @@ import {
   projectListingCard,
   projectListingDetail,
   recommendRollup,
-  resolveOffsiteSubKind,
 } from '../app-listing.service';
 import { listAppListingsSchema } from '~/server/schema/blocks/app-listing-read.schema';
 
@@ -86,6 +93,10 @@ function hydratedRow(over: Record<string, unknown> = {}) {
     cover: { url: 'cover-key' },
     user: { id: 7, username: 'dev', image: 'avatar-key' },
     metric: { thumbsUpCount: 9, thumbsDownCount: 1 },
+    // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
+    // projection reads it for the header's "Updated:" meta line. Fixed value so
+    // the projection's ISO output is deterministic.
+    updatedAt: new Date('2026-03-04T05:06:07.000Z'),
     appBlock: {
       // DEPLOY-GATE: a deployed onsite block (non-null timestamp) so the detail
       // read returns its projection. The dedicated deploy-gate suite covers the
@@ -133,13 +144,13 @@ describe('recommendRollup', () => {
   });
 });
 
-describe('resolveOffsiteSubKind', () => {
-  it('connect when a connect client is set, external-link otherwise', () => {
-    expect(resolveOffsiteSubKind('oauth_123')).toBe('connect');
-    expect(resolveOffsiteSubKind(null)).toBe('external-link');
-    expect(resolveOffsiteSubKind(undefined)).toBe('external-link');
-  });
-});
+/**
+ * 🔴 `resolveOffsiteSubKind` is DELETED. It returned `connectClientId ? 'connect'
+ * : 'external-link'`, and that derived value was the whole off-site display
+ * taxonomy. Its coverage moves to the two projections below, which now assert
+ * the ABSENCE of a `subKind` key rather than its value (the "key set is exactly
+ * …" cases), plus the truthiness case its deletion could have silently changed.
+ */
 
 describe('cursor encode/decode', () => {
   it('round-trips a 2-field cursor (non-top-rated sorts)', () => {
@@ -261,7 +272,10 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
   it('onsite card liveUrl is `https://<slug>.<APPS_DOMAIN>` for the seeded slug', () => {
     const row = hydratedRow({ slug: 'my-neat-app' });
     const card = projectListingCard(row as never);
-    expect(card.kindData).toMatchObject({ kind: 'onsite', liveUrl: 'https://my-neat-app.civit.ai' });
+    expect(card.kindData).toMatchObject({
+      kind: 'onsite',
+      liveUrl: 'https://my-neat-app.civit.ai',
+    });
   });
 
   it('PARITY GUARD: onsite card liveUrl === detail liveUrl for the same listing (anti-drift)', () => {
@@ -297,7 +311,7 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
     expect(card.reviewCount).toBe(0);
   });
 
-  it('offsite connect card: subKind=connect + externalUrl passthrough', () => {
+  it('offsite card with an OAuth client and no URL: NO subKind, externalUrl passthrough', () => {
     const row = hydratedRow({
       kind: 'offsite',
       appBlockId: null,
@@ -307,41 +321,84 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
     });
     const card = projectListingCard(row as never);
     expect(card.kind).toBe('offsite');
-    expect(card.kindData).toEqual({ kind: 'offsite', subKind: 'connect', externalUrl: null });
+    expect(card.kindData).toEqual({ kind: 'offsite', externalUrl: null });
   });
 
-  it('offsite external-link card (LEGACY URL-only, connectClientId null): subKind=external-link + externalUrl, grandfathered', () => {
+  /**
+   * 🔴 THE GRANDFATHERED LISTING — the load-bearing case for this change.
+   *
+   * Measured in production 2026-08-19: of five off-site listings, exactly ONE
+   * approved row has `connect_client_id IS NULL`. Every listing minted since
+   * then goes through `ExternalSubmitForm`, whose create flow REQUIRES a
+   * `connectClientId` — so this row is the only live inhabitant of what used to
+   * be the `external-link` sub-kind, and it is the shape most at risk of
+   * rendering blank / "unknown" / falling through a deleted branch.
+   *
+   * It must project to the SAME `kindData` shape as an OAuth-connected row: one
+   * kind, no sub-kind key, its URL intact.
+   */
+  it('🔴 GRANDFATHERED offsite card (connectClientId null): same shape, no subKind, URL intact', () => {
     const row = hydratedRow({
       kind: 'offsite',
       appBlockId: null,
       appBlock: null,
       connectClientId: null,
-      externalUrl: 'https://ext.example/app',
+      externalUrl: 'https://grandfathered.example/app',
     });
     const card = projectListingCard(row as never);
     expect(card.kindData).toEqual({
       kind: 'offsite',
-      subKind: 'external-link',
-      externalUrl: 'https://ext.example/app',
+      externalUrl: 'https://grandfathered.example/app',
     });
   });
 
-  it('MERGED offsite card (connect client + a homepage URL): subKind=connect AND the Visit URL both surface', () => {
-    // The merged model — a new external listing links an OAuth client AND may carry an
-    // optional homepage link. Both must be present on the card DTO.
-    const row = hydratedRow({
-      kind: 'offsite',
+  /**
+   * 🔴 The collapse, stated as an EQUALITY rather than as two labels. Two rows
+   * differing ONLY in `connectClientId` — the exact field the deleted sub-kind
+   * was derived from — must produce byte-identical card kindData. A revert
+   * reintroducing `subKind` fails HERE, on this assertion, because the two
+   * objects would then differ by `'connect'` vs `'external-link'`.
+   *
+   * The URL is deliberately shared and non-default so the equality cannot be
+   * satisfied by two empty objects.
+   */
+  it('🔴 the grandfathered row and an OAuth-connected row produce IDENTICAL card kindData', () => {
+    const shared = {
+      kind: 'offsite' as const,
       appBlockId: null,
       appBlock: null,
-      connectClientId: 'oauth_abc',
-      externalUrl: 'https://ext.example/app',
-    });
-    const card = projectListingCard(row as never);
-    expect(card.kindData).toEqual({
+      externalUrl: 'https://same-target.example/app',
+    };
+    const connected = projectListingCard(
+      hydratedRow({ ...shared, connectClientId: 'oauth_abc' }) as never
+    );
+    const grandfathered = projectListingCard(
+      hydratedRow({ ...shared, connectClientId: null }) as never
+    );
+    expect(connected.kindData).toEqual(grandfathered.kindData);
+    // …and it is the collapsed shape, not merely "equal to each other".
+    expect(connected.kindData).toEqual({
       kind: 'offsite',
-      subKind: 'connect',
-      externalUrl: 'https://ext.example/app',
+      externalUrl: 'https://same-target.example/app',
     });
+  });
+
+  it('🔴 the offsite card kindData has NO subKind key at all (not merely a falsy one)', () => {
+    for (const connectClientId of ['oauth_abc', null]) {
+      const card = projectListingCard(
+        hydratedRow({
+          kind: 'offsite',
+          appBlockId: null,
+          appBlock: null,
+          connectClientId,
+          externalUrl: 'https://keys.example/app',
+        }) as never
+      );
+      expect(Object.keys(card.kindData).sort(), String(connectClientId)).toEqual([
+        'externalUrl',
+        'kind',
+      ]);
+    }
   });
 
   it('a vanished owner yields a null creator chip (no crash)', () => {
@@ -356,12 +413,23 @@ describe('projectListingDetail — public allowlist + gallery', () => {
     expect(Object.keys(detail).sort()).toEqual(
       [
         'category',
+        // App Listing COLLABORATORS: the PUBLIC BYLINE (accepted + displayed seats),
+        // projected through the SAME {id, username, image} allowlist as `creator`.
+        // Empty here — this row has no seats — but the KEY must be present, so a
+        // consumer never has to write `?? []`.
+        'collaborators',
         'contentRating',
         'coverUrl',
         'creator',
         'description',
         'iconUrl',
         'id',
+        // 🔴 The two fields added for the store-detail header. Both are in the
+        // ALLOWLIST deliberately (see their docstrings on `ListingDetail`):
+        // `installCount` is the very column the public `popular` sort already orders
+        // every approved listing by, and `updatedAt` is the direct analogue of the
+        // model page's public `Updated: <date>` line.
+        'installCount',
         'kind',
         'kindData',
         'name',
@@ -370,13 +438,40 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         'screenshots',
         'serialId',
         'slug',
+        // 🔴 DETAIL-ONLY BY DECISION — the card allowlist above asserts its ABSENCE.
+        // The public source-repo link is an outbound link, and a store grid tile has
+        // no room for the context that makes clicking one safe. See its docstring on
+        // `ListingDetail`.
+        'sourceRepoUrl',
         'tagline',
+        'updatedAt',
       ].sort()
     );
     expect(detail).not.toHaveProperty('status');
     expect(detail.description).toBe('# Cool app\n\nbody');
     // The integer surrogate is surfaced for the CommentsV2 thread key.
     expect(detail.serialId).toBe(101);
+    // 🔴 ISO-8601 STRING, not a Date. This DTO also crosses the transformer-less
+    // public REST boundary, where a Date would serialise inconsistently. Pinned as a
+    // literal so a "just pass the Date through" change fails here.
+    expect(detail.updatedAt).toBe('2026-03-04T05:06:07.000Z');
+    expect(typeof detail.updatedAt).toBe('string');
+    // `hydratedRow()`'s metric carries no installCount → the COALESCE-to-0 branch.
+    expect(detail.installCount).toBe(0);
+  });
+
+  it('installCount is read from the metric rollup, and 0 when there is no metric row', () => {
+    // Positive control FIRST: the field CAN carry a non-zero value, so the zero
+    // asserted below is a real zero and not a projection wired to a constant.
+    // 4213 is pairwise-distinct from every other count in this file and from the
+    // `0` the null branch returns.
+    const withInstalls = projectListingDetail(
+      hydratedRow({ metric: { thumbsUpCount: 9, thumbsDownCount: 1, installCount: 4213 } }) as never
+    );
+    expect(withInstalls.installCount).toBe(4213);
+
+    const noMetric = projectListingDetail(hydratedRow({ metric: null }) as never);
+    expect(noMetric.installCount).toBe(0);
   });
 
   it('onsite detail kindData carries appBlockId, hasPage + the computed liveUrl', () => {
@@ -389,7 +484,7 @@ describe('projectListingDetail — public allowlist + gallery', () => {
     });
   });
 
-  it('offsite connect detail exposes the PUBLIC connectClientId (never a secret)', () => {
+  it('offsite detail exposes the PUBLIC connectClientId (never a secret), and NO subKind', () => {
     const row = hydratedRow({
       kind: 'offsite',
       appBlockId: null,
@@ -400,24 +495,73 @@ describe('projectListingDetail — public allowlist + gallery', () => {
     const detail = projectListingDetail(row as never);
     expect(detail.kindData).toEqual({
       kind: 'offsite',
-      subKind: 'connect',
       externalUrl: null,
       connectClientId: 'oauth_abc',
     });
   });
 
-  it('offsite external-link detail has a null connectClientId', () => {
+  /**
+   * 🔴 The grandfathered listing at the DETAIL projection. `connectClientId`
+   * stays on the wire as a CAPABILITY (two surfaces still read it — the
+   * account-access disclosure and the no-destination CTA fallback); what is gone
+   * is the derived `subKind`.
+   */
+  it('🔴 GRANDFATHERED offsite detail (connectClientId null): null client, URL intact, no subKind', () => {
     const row = hydratedRow({
       kind: 'offsite',
       appBlockId: null,
       appBlock: null,
       connectClientId: null,
-      externalUrl: 'https://ext.example/app',
+      externalUrl: 'https://grandfathered.example/app',
     });
     const detail = projectListingDetail(row as never);
-    expect(detail.kindData).toMatchObject({
+    expect(detail.kindData).toEqual({
       kind: 'offsite',
-      subKind: 'external-link',
+      externalUrl: 'https://grandfathered.example/app',
+      connectClientId: null,
+    });
+  });
+
+  it('🔴 the offsite detail kindData key set is exactly kind/externalUrl/connectClientId', () => {
+    for (const connectClientId of ['oauth_abc', null]) {
+      const detail = projectListingDetail(
+        hydratedRow({
+          kind: 'offsite',
+          appBlockId: null,
+          appBlock: null,
+          connectClientId,
+          externalUrl: 'https://keys.example/app',
+        }) as never
+      );
+      expect(Object.keys(detail.kindData).sort(), String(connectClientId)).toEqual([
+        'connectClientId',
+        'externalUrl',
+        'kind',
+      ]);
+    }
+  });
+
+  /**
+   * 🔴 `|| null`, NOT `?? null`. The deleted `resolveOffsiteSubKind` used a
+   * TRUTHINESS test, and the old projection wrote
+   * `subKind === 'connect' ? connectClientId ?? null : null` — so an
+   * empty-string client id reached the wire as `null`. Preserving that is what
+   * makes this collapse behaviour-neutral rather than merely type-clean; `??`
+   * would newly emit `''`, and every consumer of this field is a
+   * "does this app connect to your account?" truthiness check.
+   */
+  it('🔴 an empty-string connectClientId still projects as null (truthiness, not nullish)', () => {
+    const row = hydratedRow({
+      kind: 'offsite',
+      appBlockId: null,
+      appBlock: null,
+      connectClientId: '',
+      externalUrl: 'https://empty-client.example/app',
+    });
+    const detail = projectListingDetail(row as never);
+    expect(detail.kindData).toEqual({
+      kind: 'offsite',
+      externalUrl: 'https://empty-client.example/app',
       connectClientId: null,
     });
   });
@@ -533,7 +677,14 @@ describe('listAvailableListings — query building + pagination', () => {
     ]);
     // findMany returns the rows OUT OF ORDER — the service must re-apply the id order.
     mockDbRead.appListing.findMany.mockResolvedValueOnce([
-      hydratedRow({ id: 'apl_b', kind: 'offsite', appBlockId: null, appBlock: null, connectClientId: 'oc_1', slug: 'b-app' }),
+      hydratedRow({
+        id: 'apl_b',
+        kind: 'offsite',
+        appBlockId: null,
+        appBlock: null,
+        connectClientId: 'oc_1',
+        slug: 'b-app',
+      }),
       hydratedRow({ id: 'apl_a', kind: 'onsite', slug: 'a-app' }),
     ]);
     const { items } = await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 });
@@ -584,7 +735,11 @@ describe('listAvailableListings — query building + pagination', () => {
       hydratedRow({ id: 'apl_0' }),
       hydratedRow({ id: 'apl_1' }),
     ]);
-    const { nextCursor } = await listAvailableListings({ kind: 'all', sort: 'top-rated', limit: 2 });
+    const { nextCursor } = await listAvailableListings({
+      kind: 'all',
+      sort: 'top-rated',
+      limit: 2,
+    });
     const decoded = Buffer.from(nextCursor as string, 'base64url').toString('utf8');
     expect(decoded).toBe(`000000790${SEP}apl_1${SEP}0.8`);
   });
@@ -700,7 +855,7 @@ describe('getListingDetail — approved-only + maturity gate', () => {
 
   it('returns the projected detail for an approved listing (by slug)', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
-    const detail = await getListingDetail({ slug: 'cool-app' });
+    const detail = await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
     expect(detail?.id).toBe('apl_1');
     // Looked up by slug.
     const where = (mockDbRead.appListing.findFirst.mock.calls.at(-1)?.[0] as { where?: unknown })
@@ -711,7 +866,7 @@ describe('getListingDetail — approved-only + maturity gate', () => {
 
   it('looks up by id when id is provided', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
-    await getListingDetail({ id: 'apl_1' });
+    await getListingDetail({ id: 'apl_1' }, { scope: 'full' });
     const where = (mockDbRead.appListing.findFirst.mock.calls.at(-1)?.[0] as { where?: unknown })
       ?.where;
     expect(where).toEqual({ id: 'apl_1', revisionOfId: null });
@@ -719,31 +874,37 @@ describe('getListingDetail — approved-only + maturity gate', () => {
 
   it('the WHERE excludes SHADOW revision drafts (revisionOfId: null) for BOTH selectors', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status: 'approved' });
-    await getListingDetail({ slug: 'cool-app' });
-    const bySlug = (mockDbRead.appListing.findFirst.mock.calls.at(-1)?.[0] as { where?: { revisionOfId?: unknown } })?.where;
+    await getListingDetail({ slug: 'cool-app' }, { scope: 'full' });
+    const bySlug = (
+      mockDbRead.appListing.findFirst.mock.calls.at(-1)?.[0] as {
+        where?: { revisionOfId?: unknown };
+      }
+    )?.where;
     expect(bySlug?.revisionOfId).toBeNull();
   });
 
   it('returns null for a missing listing', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce(null);
-    expect(await getListingDetail({ slug: 'nope' })).toBeNull();
+    expect(await getListingDetail({ slug: 'nope' }, { scope: 'full' })).toBeNull();
   });
 
   it('returns null (no query) when NEITHER slug nor id is provided (enumeration guard)', async () => {
     // The zod .refine guards the tRPC boundary, but the service is exported —
     // `findFirst({ slug: undefined })` would return an arbitrary approved row.
-    expect(await getListingDetail({} as never)).toBeNull();
+    expect(await getListingDetail({} as never, { scope: 'full' })).toBeNull();
     expect(mockDbRead.appListing.findFirst).not.toHaveBeenCalled();
   });
 
   it('returns null (no query) when BOTH slug and id are provided (ambiguous)', async () => {
-    expect(await getListingDetail({ slug: 'cool-app', id: 'apl_1' } as never)).toBeNull();
+    expect(
+      await getListingDetail({ slug: 'cool-app', id: 'apl_1' } as never, { scope: 'full' })
+    ).toBeNull();
     expect(mockDbRead.appListing.findFirst).not.toHaveBeenCalled();
   });
 
   it.each(['draft', 'pending', 'rejected'])('returns null for a %s listing', async (status) => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...hydratedRow(), status });
-    expect(await getListingDetail({ slug: 'cool-app' })).toBeNull();
+    expect(await getListingDetail({ slug: 'cool-app' }, { scope: 'full' })).toBeNull();
   });
 
   it('hides a mature (x) listing off a non-red host', async () => {
@@ -751,7 +912,9 @@ describe('getListingDetail — approved-only + maturity gate', () => {
       ...hydratedRow({ contentRating: 'x' }),
       status: 'approved',
     });
-    expect(await getListingDetail({ slug: 'cool-app' }, { redCapable: false })).toBeNull();
+    expect(
+      await getListingDetail({ slug: 'cool-app' }, { redCapable: false, scope: 'full' })
+    ).toBeNull();
   });
 
   it('shows a mature (x) listing on a red-capable host', async () => {
@@ -759,7 +922,10 @@ describe('getListingDetail — approved-only + maturity gate', () => {
       ...hydratedRow({ contentRating: 'x' }),
       status: 'approved',
     });
-    const detail = await getListingDetail({ slug: 'cool-app' }, { redCapable: true });
+    const detail = await getListingDetail(
+      { slug: 'cool-app' },
+      { redCapable: true, scope: 'full' }
+    );
     expect(detail?.contentRating).toBe('x');
   });
 });
@@ -840,5 +1006,66 @@ describe('getListingPreviewForReview', () => {
     expect(res!.detail.screenshots).toEqual([]);
     // Cover still resolves from the cover image (not the absent first screenshot).
     expect(res!.detail.coverUrl).toBe('cover-key');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SOURCE REPOSITORY — the DETAIL/CARD asymmetry, and the manual-apply posture
+// ---------------------------------------------------------------------------
+
+describe('🔴 sourceRepoUrl is a DETAIL field and is NEVER on the card', () => {
+  it('the detail carries the value the caller resolved', () => {
+    const detail = projectListingDetail(hydratedRow() as never, [], 'https://github.com/o/r');
+    expect(detail.sourceRepoUrl).toBe('https://github.com/o/r');
+  });
+
+  it('the detail defaults to null when no value is passed (the pre-migration path)', () => {
+    expect(projectListingDetail(hydratedRow() as never).sourceRepoUrl).toBeNull();
+    expect(projectListingDetail(hydratedRow() as never, []).sourceRepoUrl).toBeNull();
+  });
+
+  it('🔴 the CARD has no such key even when the input ROW carries the column', () => {
+    // THE ACTUAL RISK: `listingHydrateSelect` is SHARED by the card and detail
+    // projections, so the day the column joins that select every card row starts
+    // carrying it. The card DTO is a deliberate public allowlist; a repo link on a
+    // grid tile is an un-contextualised outbound link on a phishing-relevant surface.
+    // Feeding the row the column is what makes this assertion non-vacuous — asserting
+    // absence on a row that never had it proves nothing.
+    const row = hydratedRow({ sourceRepoUrl: 'https://github.com/o/r' });
+    const card = projectListingCard(row as never);
+    expect(card).not.toHaveProperty('sourceRepoUrl');
+    expect(JSON.stringify(card)).not.toContain('github.com');
+    // …while the detail built from the SAME row still gets it, via the parameter.
+    const detail = projectListingDetail(row as never, [], 'https://github.com/o/r');
+    expect(detail.sourceRepoUrl).toBe('https://github.com/o/r');
+  });
+
+  it('🔴 the row column is IGNORED — the value comes from the guarded parameter only', () => {
+    // The projection must never read `row.sourceRepoUrl`: that column is only present
+    // if something put it in a `select`, which is exactly what the manual-apply guard
+    // forbids. A projection that quietly preferred the row would make the guard
+    // pointless AND would disagree with the guarded read.
+    const row = hydratedRow({ sourceRepoUrl: 'https://github.com/from-the-row/x' });
+    expect(projectListingDetail(row as never, [], null).sourceRepoUrl).toBeNull();
+    expect(
+      projectListingDetail(row as never, [], 'https://gitlab.com/from-the-param/y').sourceRepoUrl
+    ).toBe('https://gitlab.com/from-the-param/y');
+  });
+
+  it('the detail DTO stays JSON-safe (the transformer-less public REST boundary)', () => {
+    // `GET /api/v1/apps/{slug}` serialises this DTO with no tRPC transformer, so every
+    // field must survive a plain JSON round trip. A string and a null both do; an
+    // object or a Date would not.
+    const detail = projectListingDetail(hydratedRow() as never, [], 'https://github.com/o/r');
+    const wire = JSON.parse(JSON.stringify(detail)) as Record<string, unknown>;
+    expect(wire.sourceRepoUrl).toBe('https://github.com/o/r');
+    expect(typeof wire.sourceRepoUrl).toBe('string');
+
+    const empty = JSON.parse(
+      JSON.stringify(projectListingDetail(hydratedRow() as never))
+    ) as Record<string, unknown>;
+    // Explicitly NULL on the wire, not dropped — a client must not have to write `?? null`.
+    expect('sourceRepoUrl' in empty).toBe(true);
+    expect(empty.sourceRepoUrl).toBeNull();
   });
 });

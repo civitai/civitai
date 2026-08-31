@@ -1030,6 +1030,29 @@ export async function refundDevSessionBuzz(sessionId: string, costBuzz: number):
   });
 }
 
+/**
+ * Top up a dev session's spend counter by an overage the orchestrator billed
+ * ABOVE what was reserved. A plain INCRBY with NO deny path — the exact mirror
+ * of `chargeAppSpendOverage`, and deliberately not `reserveDevSessionBuzz`:
+ * money that has already moved is an accounting fact, not a request to approve,
+ * and rolling it back on a cap breach would leave the counter UNDER-reading real
+ * spend — the one direction a backstop must never drift.
+ *
+ * 🔴 There are THREE reservations on a step submit (per-user daily, per-app
+ * aggregate, dev session), and the divergence correction originally touched only
+ * the first two while its own comment claimed "both". A divergent submit inside
+ * a dev tunnel left this counter short by the overage.
+ *
+ * Best-effort and total: never throws into an already-billed submit.
+ */
+export async function chargeDevSessionOverage(sessionId: string, costBuzz: number): Promise<void> {
+  const cost = Math.max(0, Math.ceil(costBuzz));
+  if (cost === 0) return;
+  await sysRedis.incrBy(spendKey(sessionId), cost).catch(() => {
+    /* best-effort — a lost correction under-counts by the overage only */
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Reaper (server-authoritative — NOT CLI-dependent)
 // ---------------------------------------------------------------------------

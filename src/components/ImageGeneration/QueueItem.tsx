@@ -32,10 +32,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
-import {
-  useGenerationConfig,
-  useGenerationStatus,
-} from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import {
   matchesMarkerTags,
@@ -122,7 +119,6 @@ export function QueueItem({
   const features = useFeatureFlags();
   const [ref, inView] = useInViewDynamic({ id });
 
-  const generationStatus = useGenerationStatus();
   const { unstableResources } = useGenerationConfig();
 
   const { copied, copy } = useClipboard();
@@ -131,6 +127,7 @@ export function QueueItem({
   const { status } = request;
   const params = request.params;
   const resources = request.resources;
+  const sourceLineageStep = request.sourceLineageStep;
 
   const allImages = request.steps.flatMap((s) => s.output);
 
@@ -189,9 +186,10 @@ export function QueueItem({
   };
 
   const handleGenerate = () => {
-    // Workflow-level replay: read directly from workflow.metadata (the form input
-    // snapshot). Per-image remix lives on the GeneratedOutput menu and uses step
-    // metadata for source-lineage cases.
+    // Workflow-level replay: the enhancement's own form input, so remixing an
+    // upscale/interpolate card re-opens that enhancement. Remixing the source
+    // generation it ran on is the per-image action on GeneratedOutput, which
+    // reads step params.
     const replayParams = request.params;
     const isTxt2Img = replayParams?.workflow === 'txt2img';
     // 3D Models: pin the ecosystem so the form's discriminator activates the
@@ -209,9 +207,14 @@ export function QueueItem({
             (replayParams?.workflow as string | undefined) ??
             // Tripo/Hunyuan3D are image-to-3D only; only PolyGen (Meshy) has a
             // text-to-3D branch, so consult its `process` for those items.
+            // `multiImageTo3D` is Meshy v7's multi-view operation — also
+            // image-driven, so it must not fall through to txt2model3d.
             (replayEcosystem !== 'PolyGen' ||
             request.steps.some(
-              (s) => s.$type === 'polyGen' && (s.params as any)?.process === 'imageTo3D'
+              (s) =>
+                s.$type === 'polyGen' &&
+                ((s.params as any)?.process === 'imageTo3D' ||
+                  (s.params as any)?.process === 'multiImageTo3D')
             )
               ? 'img2model3d'
               : 'txt2model3d'),
@@ -257,7 +260,8 @@ export function QueueItem({
     (params.workflow &&
       !['img2img-upscale', 'img2img-background-removal'].includes(params.workflow as string)) ||
     (!!params.engine && allImages.length > 0) ||
-    isPolyGen;
+    isPolyGen ||
+    !!sourceLineageStep;
 
   const workflowDefinition = workflowConfigs[params.workflow as keyof typeof workflowConfigs];
 
@@ -271,6 +275,8 @@ export function QueueItem({
   const polyGenChipLabel =
     polyGenProcess === 'imageTo3D'
       ? 'Image to 3D'
+      : polyGenProcess === 'multiImageTo3D'
+      ? 'Images to 3D'
       : polyGenProcess === 'textTo3D'
       ? 'Text to 3D'
       : polyGenStep
@@ -387,7 +393,7 @@ export function QueueItem({
                   {copied ? <IconCheck /> : <IconInfoHexagon />}
                 </LegacyActionIcon>
               </ButtonTooltip>
-              {generationStatus.available && canRemix && (
+              {canRemix && (
                 <ButtonTooltip {...tooltipProps} label="Remix">
                   <LegacyActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>
                     <IconArrowsShuffle />
@@ -672,7 +678,6 @@ function WorkflowStatusAlert({
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
   withArrow: true,
-  color: 'dark',
   zIndex: imageGenerationDrawerZIndex + 1,
 };
 

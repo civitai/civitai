@@ -1,0 +1,287 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.cosmeticShopItem.findFirst.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindFirst as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.cosmeticShopItemCosmetic.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.packMemberFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.userCosmeticShopPurchases.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.purchaseFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.userCosmetic.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.userCosmeticFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.userCosmeticShopItemResale.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.resaleFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.user.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.userFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemUpdate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.updateMany.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemUpdateMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopSectionItem.deleteMany.mockImplementation((...args: unknown[]) =>
+  (mocks.sectionItemDeleteMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopItemResale.deleteMany.mockImplementation((...args: unknown[]) =>
+  (mocks.resaleDeleteMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopPurchases.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.purchaseFindMany as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation((...args: unknown[]) =>
+  (mocks.purchaseUpdate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmetic.findMany.mockImplementation((...args: unknown[]) =>
+  (mocks.userCosmeticFindMany as (...a: unknown[]) => unknown)(...args)
+);
+loggingMock.logToAxiom.mockImplementation((...args: unknown[]) =>
+  (mocks.logToAxiom as (...a: unknown[]) => unknown)(...args)
+);
+
+/**
+ * The takedown call site that decides *which* holdings a pack takedown revokes.
+ *
+ * This is where the worst defect in the whole review lived: an empty claim-key
+ * list read as "no scope" and revoked every member cosmetic from every owner.
+ * Nothing covered it, in either direction — `revokeCosmeticsFromUsers` has its
+ * own unit test, but the caller that computes the scope had none.
+ */
+
+const { mocks } = vi.hoisted(() => ({
+  mocks: {
+    shopItemFindUnique: vi.fn(),
+    shopItemUpdate: vi.fn(),
+    shopItemUpdateMany: vi.fn(),
+    shopItemFindFirst: vi.fn(),
+    sectionItemDeleteMany: vi.fn(),
+    packMemberFindMany: vi.fn(),
+    purchaseFindMany: vi.fn(),
+    purchaseUpdate: vi.fn(),
+    userCosmeticFindMany: vi.fn(),
+    resaleFindMany: vi.fn(),
+    resaleDeleteMany: vi.fn(),
+    userFindUnique: vi.fn(),
+    revokeCosmeticsFromUsers: vi.fn(),
+    removePlacementsByCosmetic: vi.fn(),
+    refundMultiAccountTransaction: vi.fn(),
+    createBuzzTransaction: vi.fn(),
+    refundTransaction: vi.fn(),
+    createNotification: vi.fn(),
+    logToAxiom: vi.fn(),
+  },
+}));
+
+vi.mock('sharp', () => ({ default: vi.fn() }));
+vi.mock('~/server/services/buzz.service', () => ({
+  createBuzzTransaction: mocks.createBuzzTransaction,
+  refundMultiAccountTransaction: mocks.refundMultiAccountTransaction,
+  refundTransaction: mocks.refundTransaction,
+}));
+vi.mock('~/server/services/cosmetic.service', () => ({
+  revokeCosmeticsFromUsers: mocks.revokeCosmeticsFromUsers,
+  validateStickerCosmetic: vi.fn(),
+  isStickerSlugAvailable: vi.fn(),
+}));
+vi.mock('~/server/services/placement-moderation.service', () => ({
+  removePlacementsByCosmetic: mocks.removePlacementsByCosmetic,
+}));
+vi.mock('~/server/services/notification.service', () => ({
+  createNotification: mocks.createNotification,
+}));
+vi.mock('~/server/services/user-preferences.service', () => ({
+  getBlockedPairIds: vi.fn().mockResolvedValue([]),
+}));
+vi.mock('~/server/redis/caches', () => ({ refreshOwnedStickerCache: vi.fn() }));
+
+const { takedownCosmeticShopItem } = await import('~/server/services/creator-shop.service');
+
+const PACK_ID = 8001;
+const MEMBER_A = 2001;
+const MEMBER_B = 2002;
+const PACK_BUYER = 3001;
+const OTHER_OWNER = 3002;
+const MODERATOR = 9;
+
+const packRow = {
+  id: PACK_ID,
+  cosmeticId: null,
+  title: 'Starter pack',
+  meta: {},
+  addedById: 4001,
+  cosmetic: null,
+};
+
+const purchase = (id: string, userId = PACK_BUYER, unitAmount = 5000) => ({
+  userId,
+  buzzTransactionId: id,
+  unitAmount,
+  meta: { payouts: [{ userId: 4001, amount: 3500, color: 'yellow', transactionId: 'p1' }] },
+});
+
+const revokeArgs = () => mocks.revokeCosmeticsFromUsers.mock.calls[0]?.[0];
+
+beforeEach(() => {
+  Object.values(mocks).forEach((m) => m.mockReset());
+  mocks.shopItemFindUnique.mockResolvedValue(packRow);
+  mocks.shopItemUpdate.mockImplementation(({ data }: { data: Record<string, unknown> }) => ({
+    id: PACK_ID,
+    ...data,
+  }));
+  mocks.packMemberFindMany.mockResolvedValue([{ cosmeticId: MEMBER_A }, { cosmeticId: MEMBER_B }]);
+  mocks.purchaseFindMany.mockResolvedValue([]);
+  mocks.userCosmeticFindMany.mockResolvedValue([]);
+  mocks.userFindUnique.mockResolvedValue({ settings: {} });
+  mocks.resaleFindMany.mockResolvedValue([]);
+  mocks.shopItemFindFirst.mockResolvedValue(null);
+  mocks.shopItemUpdateMany.mockResolvedValue({ count: 0 });
+  mocks.revokeCosmeticsFromUsers.mockResolvedValue({ revoked: 0 });
+  mocks.removePlacementsByCosmetic.mockResolvedValue({
+    considered: 0,
+    settled: 0,
+    failed: [],
+    takenDown: 0,
+    hasMore: false,
+  });
+  mocks.refundMultiAccountTransaction.mockResolvedValue({
+    refundedTransactions: [{ accountType: 'yellow', amount: 5000 }],
+  });
+  mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx' });
+  mocks.logToAxiom.mockResolvedValue(undefined);
+});
+
+describe('takedownCosmeticShopItem — pack scoping', () => {
+  // The critical bug: an empty claim list is not an absent one. These owners
+  // exist and hold the members by other routes — bought individually, granted on
+  // approval, or via another pack. A fixture with no owners cannot fail here,
+  // which is exactly how the bug survived: the danger is that they get stripped.
+  const ownersByOtherRoutes = [{ userId: PACK_BUYER }, { userId: OTHER_OWNER }];
+
+  it('revokes NOTHING when the pack never sold, even though the members have owners', async () => {
+    mocks.userCosmeticFindMany.mockResolvedValue(ownersByOtherRoutes);
+    await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
+    const args = revokeArgs();
+    // Either not called at all, or called with a scope that can match nothing.
+    expect(args === undefined || args.claimKeys?.length === 0).toBe(true);
+  });
+
+  it('revokes NOTHING when every purchase was already refunded', async () => {
+    // Driven through the service's own `refunded: false` filter rather than by
+    // handing it an empty array — otherwise this asserts the mock, not the code.
+    mocks.purchaseFindMany.mockImplementation(({ where }: { where: { refunded: boolean } }) =>
+      where.refunded === false ? [] : [purchase('already-refunded')]
+    );
+    mocks.userCosmeticFindMany.mockResolvedValue(ownersByOtherRoutes);
+    await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
+    const args = revokeArgs();
+    expect(args === undefined || args.claimKeys?.length === 0).toBe(true);
+  });
+
+  // Not tidiness: unscoped, this query pulls every holder of every member
+  // cosmetic into memory, which for a popular member is a production hazard in
+  // its own right.
+  it('does not scan every holder of every member when the pack never sold', async () => {
+    mocks.userCosmeticFindMany.mockResolvedValue(ownersByOtherRoutes);
+    await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
+    const ownerQueries = mocks.userCosmeticFindMany.mock.calls.filter(
+      (call) => call[0]?.where?.cosmeticId
+    );
+    // Pinned both ways: today the guard skips the query entirely, so the loop
+    // below runs zero times. Without this, a future change that always runs it
+    // would silently turn this test into a no-op.
+    expect(ownerQueries).toHaveLength(0);
+    for (const [query] of ownerQueries) expect(query.where.claimKey).toBeDefined();
+  });
+
+  it('scopes the revoke to this pack purchases claim keys', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([
+      purchase('pack-tx-1'),
+      purchase('pack-tx-2', OTHER_OWNER),
+    ]);
+    mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }, { userId: OTHER_OWNER }]);
+    await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
+    expect(revokeArgs()?.claimKeys).toEqual(['pack-tx-1', 'pack-tx-2']);
+    expect(revokeArgs()?.cosmeticIds).toEqual([MEMBER_A, MEMBER_B]);
+  });
+
+  it('looks up owners with the same claim scope it revokes with', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([purchase('pack-tx-1')]);
+    mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }]);
+    await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
+    // A wider lookup than the revoke would report owners who keep their items.
+    const ownerQuery = mocks.userCosmeticFindMany.mock.calls.at(-1)?.[0];
+    expect(ownerQuery?.where?.claimKey).toEqual({ in: ['pack-tx-1'] });
+  });
+
+  // Taking a pack down takes down the bundle, not the artwork in it (Justin,
+  // 2026-08-09) — its members stay on sale, so sweeping their placements would
+  // judge artwork nobody judged, and leave it purchasable and immediately
+  // re-placeable. Abusive artwork is taken down per member, and that sweeps.
+  const sweepArgs = () => mocks.removePlacementsByCosmetic.mock.calls[0]?.[0];
+
+  it('does not sweep placements for a pack takedown', async () => {
+    mocks.purchaseFindMany.mockResolvedValue([
+      purchase('pack-tx-1'),
+      purchase('pack-tx-2', OTHER_OWNER),
+    ]);
+    mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }, { userId: OTHER_OWNER }]);
+    const result = await takedownCosmeticShopItem({
+      id: PACK_ID,
+      reason: 'test',
+      moderatorId: MODERATOR,
+    });
+
+    expect(mocks.removePlacementsByCosmetic).not.toHaveBeenCalled();
+    // Reported, not just logged. The whole justification for skipping is that a
+    // moderator must not be left believing the artwork came down, so the flag
+    // regressing to false silently would take the safety property with it.
+    expect(result.placementsRemoved.skippedForPack).toBe(true);
+  });
+
+  // A single item DOES sweep, and unscoped — the member cosmetic is delisted
+  // everywhere by `delistPacksContaining`, so removing its placements is
+  // consistent with it no longer being for sale. Pinned so the pack guard
+  // cannot widen into the path that has to keep working.
+  it('sweeps every placement of a single-item takedown, unscoped by placer', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...packRow,
+      cosmeticId: MEMBER_A,
+      cosmetic: { createdById: 4001, creator: { username: 'someone' } },
+    });
+    mocks.purchaseFindMany.mockResolvedValue([purchase('single-tx')]);
+    mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }]);
+    const result = await takedownCosmeticShopItem({
+      id: PACK_ID,
+      reason: 'test',
+      moderatorId: MODERATOR,
+    });
+
+    expect(sweepArgs()?.cosmeticIds).toEqual([MEMBER_A]);
+    expect(sweepArgs()).not.toHaveProperty('placerIds');
+    expect(result.placementsRemoved.skippedForPack).toBe(false);
+  });
+
+  it('a single-item takedown is still unscoped', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      ...packRow,
+      cosmeticId: MEMBER_A,
+      cosmetic: { createdById: 4001, creator: { username: 'someone' } },
+    });
+    mocks.purchaseFindMany.mockResolvedValue([purchase('single-tx')]);
+    mocks.userCosmeticFindMany.mockResolvedValue([{ userId: PACK_BUYER }]);
+    await takedownCosmeticShopItem({ id: PACK_ID, reason: 'test', moderatorId: MODERATOR });
+    expect(revokeArgs()?.claimKeys).toBeUndefined();
+    expect(revokeArgs()?.cosmeticIds).toEqual([MEMBER_A]);
+  });
+});

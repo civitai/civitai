@@ -89,15 +89,6 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: any) => handler,
 }));
 
-// Assert on the Axiom log. Re-mocked here (over the global setup mock) so this
-// file owns the vi.fn it asserts against.
-const { mockLogToAxiom } = vi.hoisted(() => ({
-  mockLogToAxiom: vi.fn(() => Promise.resolve()),
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: mockLogToAxiom,
-}));
-
 // Notification side-effects that only fire on statusChanged — kept out of the
 // way so the branches under test stay isolated.
 vi.mock('~/server/email/templates', () => ({
@@ -110,9 +101,10 @@ vi.mock('~/server/signals/wrapper', () => ({
 vi.mock('~/server/webhooks/training-moderation.webhooks', () => ({
   queueNewTrainingModerationWebhook: vi.fn(() => Promise.resolve()),
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-
 import handler from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 function createMocks({
   method = 'POST',

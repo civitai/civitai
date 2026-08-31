@@ -19,6 +19,7 @@ const baseNotificationConfig: Record<BuzzSpendType, { color: string }> = {
 export function BonusBadge({ multiplier }: { multiplier: number }) {
   return (
     <Badge
+      component="span"
       size="sm"
       radius="xl"
       variant="light"

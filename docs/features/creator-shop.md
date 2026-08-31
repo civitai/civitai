@@ -17,6 +17,52 @@ These override the original HackMD plan where they differ:
 - **Owned / Sold-out** states reuse the existing `CosmeticShop` styling (the `Owned` overlay + out-of-stock disabling the CTA), not bespoke overlays.
 - The shop lives in the **real profile shell** (left sidebar + top tab-nav), as a new **Shop** tab — not a standalone page.
 
+## Rights affirmation
+
+Submitting a cosmetic requires the creator to confirm they own — or otherwise hold — the rights to sell the artwork. It is not just a client-side checkbox: the service records `meta.rightsAffirmation` on the `CosmeticShopItem` (`userId`, `affirmedAt`, `version`, and the `statement` verbatim), so a later takedown challenge can show who agreed to what, and when.
+
+- The wording and version live in `creator-shop.schema.ts` (`RIGHTS_AFFIRMATION_STATEMENT` / `RIGHTS_AFFIRMATION_VERSION`) — bump the version whenever the wording changes; existing records keep the text that was actually agreed to.
+- Replacing artwork on an unpublished item re-affirms (and overwrites the record), because the stored affirmation describes the art it was made against. A moderator swapping artwork does not affirm and does not overwrite the creator's record.
+- The moderator review queue shows the affirmation alongside the automated checks.
+
+## Cross-creator resale (`UserCosmeticShopItemResale`)
+
+A creator marks an item `meta.sellableByOthers` with a `meta.sellerShare` (0–70, the reseller's cut of the creator's 70% pool). Other creators then list it — by reference, one inventory — in their own shops. Because the original creator still owns those two settings, they could advertise a 50% share, wait for others to build a storefront around it, then drop it to 0 or switch resale off entirely.
+
+**Each listing is a row**, `UserCosmeticShopItemResale (userId, shopItemId, sellerShare, index, createdAt)`, and `sellerShare` is captured when the row is created and never rewritten. The row is the record of *both* halves of the deal:
+
+- **It is the terms.** `purchaseCosmeticShopItem` pays the reseller `listing.sellerShare`, never the item's current one. A single PK lookup (`userId_shopItemId`), no settings blob.
+- **It is the permission.** The storefront selects the Resold section straight from the reseller's rows, so it no longer re-checks `sellableByOthers` at read time — an existing listing survives the creator withdrawing resale. `sellableByOthers` still gates `addResoldItem`, i.e. *new* listings.
+- `index` is the creator's storefront order (`reorderResoldItems`); `createdAt` is when they listed.
+
+### Withdrawing an item ends its resale listings
+
+Grandfathering covers the **terms**, not the item's continued existence. Delisting, archiving or taking down an item runs `endResaleListings`: the rows are deleted and every affected creator gets a `creator-shop-resale-ended` notification. Nobody is left with a card that can't sell, and nobody holds a claim to a share on something that isn't for sale.
+
+**Coming back requires a new review.** Re-listing (`setCreatorShopItemListed({ listed: true })`) and restoring from the archive (`unarchiveCreatorShopItem`) both set `PendingReview` and clear the previous verdict, rather than returning the item straight to sale. That is what keeps ending the listings fair: without it, *withdraw → re-list* would be a one-click way to clear every reseller and re-offer the item at a worse share — the exact bait-and-switch this ticket exists to prevent. Delisting itself doesn't touch the status; only the return trip does.
+
+`addResoldItem` correspondingly refuses an item that is currently off sale, so a row can only ever be created while the item was live. The resale picker still shows off-sale items (so the reseller doesn't have to hunt for them later), badged and with Add disabled.
+
+Both directions are indexed, which is why this is a table and not JSON on `User.settings`:
+
+- **"What do I resell?"** — PK prefix on `userId` (`getResoldItemsForManage`, the storefront).
+- **"Who resells my item?"** — `UserCosmeticShopItemResale_shopItemId_idx` (`getShopItemResellers`, plus a `_count` on the manage list). Answering this from the old `settings.creatorShop.resoldItemIds` array meant scanning every user's JSON.
+
+Manage-view stats (`getCreatorShopResaleStats`, one aggregate over both directions) show **Resellers** — *distinct* creators reselling your items, with the number of your items involved — and **You resell**, how many of other creators' items you list. Per-item, the manage table shows the reseller count and opens a popover of who they are and on what terms, which is what a creator wants in front of them before touching the item's resale settings.
+
+The original creator can change `sellableByOthers` / `sellerShare` at any time from the item's edit modal — they are payment terms like price and `acceptsBlueBuzz`, so the edit stays live rather than re-entering review, and a cross-lister is refused them the same way they're refused the artwork. Grandfathering is what makes that safe: the change is an offer to *future* resellers only. When the item already has resellers the modal says so, with the share they keep.
+
+Withdrawal is disclosed at the point of action: delisting or archiving asks for confirmation first, naming how many creators' listings it will end and warning that the item needs a new review to come back.
+
+Bounds of the guarantee:
+
+- **It covers the terms, not the item.** Switching resale off leaves existing resellers alone; delisting or archiving the item ends their listings (with notice, and at the cost of a re-review to undo).
+- **Withdrawing resale still works** — for everyone who had not listed the item yet. Only rows that already exist survive it.
+- **Switching resale off zeroes the item's `sellerShare`** (mirroring submit), so toggling it back on can't quietly restore a share the creator had retired.
+- **Terms are literally the ones agreed to.** A creator *raising* the share does not raise it for existing resellers either — they keep what they listed under until they relist.
+- **Removing a listing deletes the row**, so relisting later is a fresh agreement to whatever the item offers then. Deleting the shop item cascades the rows away.
+- `sellerShare` is never part of a tRPC input — `addResoldItem` reads it off the item, and `reorderResoldItems` only writes `index`, so a client can't grant itself terms.
+
 ## Screens (mockups in `designs/creator-shop.pen`)
 
 | Screen | Purpose |
@@ -51,7 +97,21 @@ These override the original HackMD plan where they differ:
 3. **Per-creator shop settings** → appended to `User.settings` (Json) as `settings.creatorShop` — **no new table** (`{ showModels, featuredItemIds[], description?, coverImageId? }`).
    - **Featured** = `featuredItemIds` (ordered array, app-enforced cap 6) — matches the picker (pick a set; order matters; keep it out of the hot item table).
    - **Models toggle** = `showModels`; when on, the storefront *unions in* the creator's existing early-access / paid-access models — **no item rows created**.
-4. **Submission fee, price-change re-review** → live in `CosmeticShopItem.meta` for MVP (`submissionTxId`, `lastApprovedAmount`); no columns needed. Editing `unitAmount` beyond ±25% of `lastApprovedAmount` flips `status → PendingReview` (application logic).
+4. **Submission fee, price-change re-review** → live in `CosmeticShopItem.meta` for MVP (`submissionTxId`, `submissionFee`, `lastApprovedAmount`); no columns needed. Editing `unitAmount` beyond ±25% of `lastApprovedAmount` flips `status → PendingReview` (application logic).
+
+### Submission fees are per type and set in the database
+
+The fee is **per `CosmeticType`**, plus one figure for packs, stored in `KeyValue` under `creatorShopFees`
+(`{ submission: { Badge: 10000, … }, pack: 1000 }`). A missing or malformed value falls back **per value** to
+the compiled default in `creator-shop.schema.ts` (10,000 per type, 1,000 for a pack), so an absent row keeps
+today's pricing. Read and set it through `/api/admin/creator-shop-fees`.
+
+One read serves both the charge (`creator-shop.service.ts`) and the quote the submit form shows
+(`creatorShop.getFees` → `useCreatorShopFees`); the client never mirrors a constant, because the number a
+creator agrees to and the number charged are the same non-refundable Buzz. The submit mutation carries the
+quoted fee and the server refuses the submission if it no longer matches, so a form left open across a fee
+change is never charged silently. The amount actually charged is recorded on the item as `meta.submissionFee`;
+items submitted before that existed show no amount rather than today's configured one.
 
 ### Why NOT reuse `CosmeticShopSection` for the storefront
 
@@ -69,6 +129,44 @@ The official shop's sections are a **curated CMS** (banner image, `placement`, `
 - HackMD plan: 3 new tables (`CreatorShopItem`, `CreatorShop`, `CreatorShopListing`).
 - This proposal: **2 additive columns/enum on existing tables (`Cosmetic.createdById`, `CosmeticShopItem.status`+review fields) + shop settings as JSON on `User` (no new tables).** Fewer moving parts, shared purchase/payout path.
 
+## Takedown (IP / TOS)
+
+`creatorShop.takedownItem` (moderator-only, not flag-gated — it covers official shop items too) is the one-shot undo for a cosmetic that has to be pulled. `takedownCosmeticShopItem` in `creator-shop.service.ts`:
+
+1. **Stops sales first** — `status → Archived`, `listed = false`, `meta.takedown = { reason, moderatorId, at }`, official-shop section links deleted, featured slot freed. A taken-down item can never be unarchived back to sale.
+2. **Refunds every buyer** — `refundMultiAccountTransaction` per unrefunded `UserCosmeticShopPurchases` row (returns each color the buyer paid with) and flips `refunded = true`. Buyers are only ever refunded — nothing is charged back to them.
+3. **Takes back what the seller was paid** — `purchaseCosmeticShopItem` records each sale's payouts on `UserCosmeticShopPurchases.meta` (`{ payouts: [{ userId, amount, color, transactionId }], platformCut }`), so the takedown **refunds each payout transaction by id** — reseller cut included. Recorded payouts missing an id (the Buzz service returned none) fall back to a reversing charge from the recipient, one per recipient per color. The result reports `owedBack` / `clawedBack` plus `clawedBackPct`, the share of those sales it represents.
+   - **Legacy sales** (rows written before the payout column existed) have `meta = NULL` and fall back to re-deriving the split from the item: the creator's guaranteed slice only, with a resellable item's seller share reported as `unrecoveredResellerShare` for manual follow-up, since who took it was never recorded.
+4. **Strips ownership** — `revokeCosmeticsFromUsers` for every `UserCosmetic` row of that cosmetic (buyers, gifts, and the creator's own approval grant), which also unequips and refreshes entity caches / search indexes.
+
+The creator's **submission fee is never refunded** — a takedown is a terms violation.
+
+Money moves are best-effort per buyer: each is retried 3× (1s apart) before it's written off, and failures are collected in `failures` (stage + user + amount) instead of aborting the run. Everything lands in Axiom under `name: 'cosmetic-takedown'` — a start record, one `error` per written-off refund/clawback carrying the ids needed to finish it by hand, and a finish record with the run totals (`error` level if anything failed).
+
+## Review history
+
+An edit-triggered re-review clears `rejectionReason` / `reviewedById` / `reviewedAt`, so without a log a moderator opening a re-queued item can't tell what the creator changed or what was decided last time. `CosmeticShopItemMeta.history` is that log — a capped (25, oldest dropped first) append-only array on the existing JSON column, no migration:
+
+```ts
+{ at, userId, kind: 'submitted' | 'edited' | 'reviewed' | 'takedown', status?, action?, note?, changes?: [{ field, from?, to? }] }
+```
+
+Every writer appends inside the `cosmeticShopItem.update` it was already making (`appendItemHistory` in `creator-shop.data.ts`) — recording history never costs an extra round trip:
+
+- `submitCreatorShopItem` seeds a `submitted` entry.
+- `updateCreatorShopItem` appends `edited` with one `changes` row per moved field (name, description, artwork — carrying the **pre-swap `data.url`** — fit offsets, slug, uses, price-per-use, price, quantity), plus a `note` when the edit forced the item back into review and why. An edit that moves nothing appends nothing.
+- `reviewCreatorShopItem` appends `reviewed` with the action, the reviewer and the note — which is how the note **survives the next edit clearing `rejectionReason`**.
+- `takedownCosmeticShopItem` appends `takedown` alongside the `meta.takedown` record it already writes.
+
+`getCreatorShopReviewQueue` already selects `meta`, so the moderator detail pane renders it (`HistoryCard`, newest-first, previous-vs-current artwork thumbnails on a swap) with no query change. Items predating the feature show an explicit empty state. Moderator-only for now — the creator-facing manage view still shows only the current status + rejection reason.
+
 ## Changelog
+
+- **2026-08-05** — Resale listings moved from `User.settings.creatorShop.resoldItemIds` to the `UserCosmeticShopItemResale` table (migration `20260805120000_add_cosmetic_shop_item_resale` — **apply manually**, then run `pnpm tsscript scripts/oneoffs/backfill-cosmetic-resale-listings.ts` to migrate existing resellers off the blob). Each row carries the `sellerShare` it was listed under, so lowering the item's share or turning `sellableByOthers` off no longer changes what an existing reseller is paid or removes the item from their shop; and "who resells my item?" is now an indexed lookup instead of a scan of every user's settings JSON. Creators can now also **edit** `sellableByOthers` / `sellerShare` after publishing without it reaching creators who already list the item. Withdrawing the item itself (delist / archive / takedown) *does* end their listings, with a notification, and bringing it back re-enters review so the cycle can't be used to reset resale terms.
+- **2026-08-05** — Per-item review history recorded on `CosmeticShopItem.meta.history` (submissions, creator edits with before → after per field, verdicts, takedowns) and surfaced in the moderator review queue.
+- **2026-08-03** — Purchases now record their payout split **and each payout's transaction id** (`UserCosmeticShopPurchases.meta`, migration `20260803220000_add_cosmetic_purchase_payout_meta` — **apply manually**), so takedowns refund those payouts directly.
+- **2026-08-03** — Takedown + refund + clawback path added (`creatorShop.takedownItem`, moderator review-queue "Take down" action).
+- **2026-08-03** — Cosmetic submissions now require (and record) a creator affirmation of the rights to sell the artwork.
+
 
 - **2026-07-01** — Design phase complete; mockups committed (`da5ff8f1d9`). Data-model assessment done: **extend existing cosmetic-shop tables** (additive `Cosmetic.createdById` + `CosmeticShopItem` status/review fields + shop settings as JSON on `User`) rather than the plan's 3 new tables.

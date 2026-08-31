@@ -4,6 +4,7 @@ import {
   trackShareSchema,
   addViewSchema,
   blockRenderSchema,
+  blockRenderTrackerPayload,
 } from '~/server/schema/track.schema';
 import { publicProcedure, router } from '~/server/trpc';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -26,12 +27,31 @@ export const trackRouter = router({
   // for any bearer/API-key (non-cookie) caller, consistent with `addView`.
   blockRender: publicProcedure
     .input(blockRenderSchema)
-    // `status`/`errorClass` are consumed only by the /api/track/block-render
-    // beacon (prom render counter); this legacy tRPC path keeps the CH insert
-    // byte-identical by stripping them before dispatch.
+    // `status`/`errorClass`/`secondary`/`timings` are consumed only by the
+    // /api/track/block-render beacon (prom render counter + launch histograms);
+    // this legacy tRPC path keeps the CH insert byte-identical by stripping them
+    // before dispatch.
+    //
+    // 🔴 THIS IS A SECOND *CLICKHOUSE* WRITER, NOT A SECOND METRICS WRITER — the
+    // asymmetry a designer trips on. This procedure increments no prom counter
+    // and observes no histogram; only the REST beacon does. So the half-fix
+    // hazard runs the OTHER way: a prom-only field stripped in block-render.ts
+    // but not here falls through into the ClickHouse insert, and TypeScript will
+    // NOT catch it — `ctx.track.blockRender({ ...renderData, isAnon })` spreads,
+    // and spread properties are exempt from excess-property checking.
+    //
+    // `blockRenderTrackerPayload` is the shared ALLOWLIST that makes this
+    // impossible to get wrong in one place and not the other.
+    //
+    // 🔴 `secondary` additionally SUPPRESSES the insert, matching the beacon route
+    // exactly. `blockRenders` counts IMPRESSIONS (one row per host mount) and its
+    // rows carry no status, so a follow-up beacon for an already-reported mount
+    // would write an undedupable duplicate. Both writers must agree on this or a
+    // bearer/API-key caller could reintroduce the double-count the beacon route
+    // prevents.
     .mutation(({ input, ctx }) => {
-      const { status: _status, errorClass: _errorClass, ...renderData } = input;
-      return ctx.track.blockRender({ ...renderData, isAnon: !ctx.user });
+      if (input.secondary) return;
+      return ctx.track.blockRender({ ...blockRenderTrackerPayload(input), isAnon: !ctx.user });
     }),
   trackShare: publicProcedure
     .meta({ requiredScope: TokenScope.UserWrite })

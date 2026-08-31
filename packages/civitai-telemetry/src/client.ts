@@ -21,6 +21,14 @@ export const PROM_PREFIX = 'civitai_app_';
 // globalThis (the real V8 global, shared across all webpack bundles in one Node process — the same
 // mechanism the pgGaugeInitialized guards rely on). Any metric created in either graph registers
 // here, and /metrics merges it into the scrape. (See the eventloop-longtask metrics bug, PR #2451.)
+//
+// An earlier version of this comment cited "the pgGaugeInitialized guards" as the precedent for
+// pinning on globalThis. Those guards did pin a FLAG on globalThis — but the registry they guarded
+// was still per-graph, so the flag let the first graph claim the registration and silently deny it
+// to the graph that is actually scraped. Every metric behind them emitted 0 series in production
+// for months. A globalThis flag is only safe when what it guards is ALSO globalThis-shared;
+// registerInstrumentationMetric below is safe because it dedupes against the shared registry
+// itself, rather than against a flag standing in for it.
 declare global {
   // eslint-disable-next-line no-var
   var __civitaiInstrumentationRegistry: Registry | undefined;
@@ -180,6 +188,10 @@ export const rewardFailedCounter = registerCounter({
   name: 'reward_failed_total',
   help: 'Reward failed',
 });
+export const rewardConfigReadFailedCounter = registerCounter({
+  name: 'reward_config_read_failed_total',
+  help: 'Runtime reward-config read failed; rewards ran on the last good config',
+});
 
 export const clavataCounter = registerCounter({
   name: 'clavata_req_total',
@@ -278,6 +290,47 @@ export const reemitRunDurationHistogram = registerHistogram({
 export const reemitSkippedRateLimitCounter = registerCounter({
   name: 'reemit_skipped_rate_limit_total',
   help: 'BitDex publish re-emitter fires skipped by the self rate-limit because too little time has passed since the last successful emit (external scheduler over-firing)',
+});
+
+// The re-emitter's second scope: future-scheduled posts, which no trailing-past-window
+// scan can reach. Kept as separate series from the reemit_posts_scanned/images_emitted
+// pair above because this scan's volume is ~100x larger and steady — summing the two
+// would swamp the published-window emission signal.
+export const reemitScheduledPostsScannedCounter = registerCounter({
+  name: 'reemit_scheduled_posts_scanned_total',
+  help: 'Distinct future-scheduled posts (publishedAt > now()) scanned by the BitDex publish re-emitter across all runs',
+});
+export const reemitScheduledImagesEmittedCounter = registerCounter({
+  name: 'reemit_scheduled_images_emitted_total',
+  help: 'BitdexOps rows written by the BitDex publish re-emitter for images of future-scheduled posts across all runs',
+});
+
+// Metrics for the standing PG<->BitDex consistency audit (audit-bitdex-consistency).
+// checked_total is the liveness signal and the denominator; mismatch_total is the
+// alerting series. `stratum` is the sampled population, `kind` the failure mode —
+// both fixed low-cardinality enums (see MISMATCH_KINDS in the job).
+export const bitdexAuditCheckedCounter = registerCounterWithLabels({
+  name: 'bitdex_audit_checked_total',
+  help: 'Images compared between PG and BitDex by the consistency audit, by sample stratum',
+  labelNames: ['stratum'] as const,
+});
+export const bitdexAuditMismatchCounter = registerCounterWithLabels({
+  name: 'bitdex_audit_mismatch_total',
+  help: 'PG<->BitDex disagreements found by the consistency audit, by sample stratum and failure kind',
+  labelNames: ['stratum', 'kind'] as const,
+});
+export const bitdexAuditRunsCounter = registerCounter({
+  name: 'bitdex_audit_runs_total',
+  help: 'BitDex consistency audit runs that completed SUCCESSFULLY (success-only; the liveness signal behind a mismatch alert being trustworthy)',
+});
+export const bitdexAuditErrorsCounter = registerCounter({
+  name: 'bitdex_audit_errors_total',
+  help: 'BitDex consistency audit runs that threw (PG sample or BitDex fetch failed) before rethrowing',
+});
+export const bitdexAuditRunDurationHistogram = registerHistogram({
+  name: 'bitdex_audit_run_duration_seconds',
+  help: 'Wall-clock duration of a BitDex consistency audit run (both strata: PG sample + BitDex fetch + compare)',
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
 });
 
 // Creator compensation metrics
@@ -509,6 +562,40 @@ export const jobErrorsCounter = registerCounterWithLabels({
   help: 'Cron job runs that threw, by job name',
   labelNames: ['job'] as const,
 });
+
+// Job names already seeded in THIS module instance. `Histogram.zero()` overwrites the
+// series rather than merging into it, so a second call for a name that has since been
+// observed would silently wipe that job's buckets. Seeding is once-per-name by
+// construction today (createJob runs at each job module's top level), but the failure
+// mode is invisible in the data, so it is closed here rather than assumed away.
+const seededJobs = new Set<string>();
+
+/**
+ * Seed both cron metrics' series for `job` at zero.
+ *
+ * 🔴 WHY THIS EXISTS: a prom-client metric declared with `labelNames` emits NO series at
+ * all for a label value it has never observed. So before a job's first completed run —
+ * and, for the error counter, before its first FAILURE — neither series appears in the
+ * /metrics response, and the two metrics above cannot answer the question they were added
+ * to answer. Their own help text promises that a dead cron shows up as a flatlined
+ * duration histogram next to a live `job_errors_total`; without seeding, a cron that is
+ * dead, a cron that has not run since this pod started, and a cron that was deleted from
+ * the codebase are all the SAME observation — an absent series. `absent()` and `rate()`
+ * alerts written against them are unreliable for the same reason, and a healthy zero is
+ * indistinguishable from an instrument that was never wired up.
+ *
+ * Seeding at job-construction time makes every `createJob` job an observable zero from the
+ * moment its module is loaded, so absence once again means "no such job".
+ *
+ * This mirrors the seeding the /metrics route already does for its own counters, and the
+ * same reasoning is written out at each of those call sites.
+ */
+export function seedJobMetrics(job: string) {
+  if (seededJobs.has(job)) return;
+  seededJobs.add(job);
+  jobDurationHistogram.zero({ job });
+  jobErrorsCounter.inc({ job }, 0);
+}
 
 // NOTE: the DB pool-depth gauges live in the app (src/server/prom/client.ts) — they
 // compose the db pools + these prom helpers, which is app-level glue, not infra.

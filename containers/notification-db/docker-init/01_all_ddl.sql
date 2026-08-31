@@ -134,6 +134,15 @@ CREATE INDEX "UserNotification_viewed_idx" ON public."UserNotification" USING bt
 ALTER TABLE ONLY public."UserNotification"
     ADD CONSTRAINT "UserNotification_notificationId_fkey" FOREIGN KEY ("notificationId") REFERENCES public."Notification"(id) ON DELETE CASCADE;
 
+-- Everything below this line is hand-written DDL appended after the pg_dump body.
+-- The dump's preamble (line 10) does `set_config('search_path', '', false)`, so an
+-- UNQUALIFIED name here resolves against an EMPTY search path and the statement
+-- fails with `relation "X" does not exist`. The dump's own statements are all
+-- schema-qualified and so are unaffected; hand-appended ones have not been.
+-- Restore the default search path once, here, so this block and anything appended
+-- after it behave the way they read.
+SET search_path = public;
+
 CREATE INDEX CONCURRENTLY "UserNotification_userId_createdAt_idx" ON "UserNotification" ("userId", "createdAt" DESC) INCLUDE ("viewed", "notificationId");
 CREATE INDEX CONCURRENTLY "Notification_id_with_category_idx" ON "Notification" (id) INCLUDE (category);
 
@@ -141,3 +150,13 @@ DROP INDEX "UserNotification_viewed_idx";
 DROP INDEX "UserNotification_userId_idx";
 DROP INDEX "UserNotification_createdAt_idx";
 DROP INDEX "UserNotification_userId_viewed_createdAt_idx";
+
+-- Cross-type notification dedup: one source event (e.g. a single comment) can match several
+-- notification types at once; each carries the same "dedupeKey" so a recipient only ever gets the
+-- first one to land. NULL opts a row out of dedup entirely (every non-comment type today).
+ALTER TABLE "PendingNotification" ADD COLUMN "dedupeKey" TEXT;
+ALTER TABLE "UserNotification" ADD COLUMN "dedupeKey" TEXT;
+
+CREATE UNIQUE INDEX CONCURRENTLY "UserNotification_userId_dedupeKey_uniq"
+    ON "UserNotification" ("userId", "dedupeKey")
+    WHERE "dedupeKey" IS NOT NULL;

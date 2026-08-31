@@ -19,10 +19,9 @@ export const processingEngingEarlyAccess = createJob(
     // `mv.publishedAt < pa.endsAt` no longer matches. Permanent/pending gates have endsAt NULL → excluded.
     const [lastRun, setLastRun] = await getJobDate('process-ending-early-access');
 
-    const republished = await dbWrite.$queryRaw<{ id: number; modelId: number }[]>`
+    const updated = await dbWrite.$queryRaw<{ id: number; modelId: number }[]>`
       UPDATE "ModelVersion" mv
-      SET "publishedAt" = NOW(),
-          "availability" = 'Public'
+      SET "publishedAt" = NOW()
       FROM "PaidAccess" pa
       WHERE pa."entityType" = 'ModelVersion'
         AND pa."entityId" = mv.id
@@ -33,9 +32,9 @@ export const processingEngingEarlyAccess = createJob(
       RETURNING mv.id, mv."modelId"
     `;
 
-    if (republished.length > 0) {
-      const updatedIds = republished.map((v) => v.id);
-      const modelIds = uniq(republished.map((v) => v.modelId));
+    if (updated.length > 0) {
+      const updatedIds = uniq(updated.map((v) => v.id));
+      const modelIds = uniq(updated.map((v) => v.modelId));
       await bustMvCache(updatedIds, modelIds);
       await dataForModelsCache.refresh(modelIds);
       await modelsSearchIndex.queueUpdate(

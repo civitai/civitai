@@ -12,7 +12,11 @@ import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import type { BuzzCreatorProgramType, BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
+import {
+  TransactionType,
+  buzzBankTypes,
+  buzzBankTypesSql,
+} from '~/shared/constants/buzz.constants';
 import type {
   CashWithdrawalMetadataSchema,
   CompensationPoolInput,
@@ -28,7 +32,7 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
-import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
+import { getHighestPaidTierSubscription } from '~/server/services/subscriptions.service';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { payToTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import {
@@ -44,7 +48,7 @@ import {
   getWithdrawalFee,
   getWithdrawalRefCode,
 } from '~/server/utils/creator-program.utils';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { handleLogError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import type { CapDefinition } from '~/shared/constants/creator-program.constants';
 import {
@@ -71,8 +75,6 @@ type UserCapCacheItem = {
   cap: number;
 };
 
-const BANKABLE_BUZZ_TYPES_STRING = `'yellow', 'green'`;
-
 const getBankAccountType = (_buzzType?: BuzzSpendType): BuzzCreatorProgramType => {
   return 'creatorProgramBank';
 };
@@ -88,7 +90,9 @@ const createUserCapCache = () => {
     lookupFn: async (ids) => {
       if (ids.length === 0 || !clickhouse) return {};
 
-      // Get the highest tier for each user across all active subscriptions (regardless of buzzType)
+      // Get the highest tier for each user across all active subscriptions (regardless of
+      // buzzType). Buzz-purchased memberships are excluded: they confer no Creator Program
+      // benefit, so they must not raise a banking cap either.
       const subscriptions = await dbWrite.$queryRawUnsafe<{ userId: number; tier: UserTier }[]>(`
         SELECT DISTINCT ON (cs."userId")
           cs."userId",
@@ -96,6 +100,7 @@ const createUserCapCache = () => {
         FROM "CustomerSubscription" cs
         JOIN "Product" p ON p.id = cs."productId"
         WHERE cs."userId" IN (${ids.join(',')})
+          AND (p.metadata->>'buzzPurchase') IS DISTINCT FROM 'true'
         ORDER BY cs."userId",
           CASE (p.metadata->>'tier')
             WHEN 'gold' THEN 4
@@ -106,6 +111,10 @@ const createUserCapCache = () => {
           END DESC;
       `);
 
+      // Generation tips reach creators inside the daily `compensation` payout (deliver-creator-compensation
+      // mints a separate transaction only for licenseFee), so a system-minted `tip` row is not an earning —
+      // it is a manual support credit (remediation, goodwill refund, delivery fix) and must not raise a cap.
+      // Matches the earnedCache predicate in buzz.service.ts, which these two queries had drifted apart on.
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
         SELECT
           toAccountId as id,
@@ -114,10 +123,9 @@ const createUserCapCache = () => {
         FROM buzzTransactions
         WHERE (
           (type IN ('compensation')) -- Generation Comp
-          OR (type = 'tip' AND fromAccountId = 0) -- Generation Tip
           OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
         )
-        AND toAccountType IN (${BANKABLE_BUZZ_TYPES_STRING})
+        AND toAccountType IN (${buzzBankTypesSql})
         AND toAccountId IN (${ids})
         AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
         AND toStartOfMonth(date) < toStartOfMonth(now())
@@ -253,13 +261,14 @@ export async function getCreatorRequirements(userId: number) {
 }
 
 // Whether a user currently holds a valid Creator Program membership — an active,
-// good-standing subscription on a supported tier. Uses getHighestTierSubscription
+// good-standing PAID subscription on a supported tier. Uses getHighestPaidTierSubscription
 // so it honors membership on ANY buzzType (yellow/green/blue paid + referral
 // grants), matching how session-user resolves tier. Checking a single buzzType
 // here would lock out .green/.red members and referral-granted members whose paid
 // sub isn't yellow.
 export async function hasValidCreatorMembership(userId: number) {
-  const subscription = await getHighestTierSubscription(userId);
+  // Paid-only: a Buzz-purchased perks membership does not grant Creator Program access.
+  const subscription = await getHighestPaidTierSubscription(userId);
   const tier = subscription?.tier;
   return !!tier && tier !== 'free' && tier !== 'founder';
 }
@@ -304,7 +313,11 @@ export async function joinCreatorsProgram(userId: number) {
 
   userUpdateCounter?.inc({ location: 'creator-program.service:completeOnboarding' });
 
-  await refreshSession(userId);
+  // Best-effort — the `onboarding` bitmask write above has already committed, and it is the SAME
+  // column `completeOnboardingHandler` writes, so an unguarded bust here fails a joined-and-recorded
+  // membership with a 500 and invites the client to re-join. Staleness is bounded by the session
+  // entry's own TTL. Logged, never swallowed silently.
+  await refreshSession(userId, { caller: 'membership' }).catch(handleLogError);
 }
 
 async function getPoolValue(month?: Date) {
@@ -314,7 +327,7 @@ async function getPoolValue(month?: Date) {
     SELECT
         SUM(amount) / 1000 AS balance
     FROM buzzTransactions
-    WHERE toAccountType IN (${BANKABLE_BUZZ_TYPES_STRING})
+    WHERE toAccountType IN (${buzzBankTypesSql})
     AND (
       type = 'purchase'
       OR (type = 'redeemable' AND description LIKE 'Redeemed code SH-%')
@@ -351,7 +364,7 @@ async function getPoolForecast(month?: Date) {
     SELECT
       SUM(amount) AS balance
     FROM buzzTransactions
-    WHERE toAccountType IN (${BANKABLE_BUZZ_TYPES_STRING})
+    WHERE toAccountType IN (${buzzBankTypesSql})
     AND (
       (type IN ('compensation','tip')) -- Generation
       OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
@@ -446,7 +459,12 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
     ? subscriptionProductMetadataSchema.safeParse(activeMembership.product.metadata)
     : undefined;
   const membershipTier = parsedMeta?.success ? parsedMeta.data[env.TIER_METADATA_KEY] : undefined;
-  if (!membershipTier || membershipTier === 'free' || membershipTier === 'founder')
+  if (
+    !membershipTier ||
+    membershipTier === 'free' ||
+    membershipTier === 'founder' ||
+    parsedMeta?.data?.buzzPurchase
+  )
     throw throwBadRequestError('An active Creator Program membership is required to bank Buzz.');
 
   // TODO: Remove flip when we're ready to go live
@@ -886,12 +904,12 @@ export async function getPoolParticipants(month?: Date, includeNegativeAmounts =
       -- Banks
       toAccountType = '${bankAccountType}'
       AND toAccountId = ${monthAccount}
-      AND fromAccountType IN (${BANKABLE_BUZZ_TYPES_STRING})
+      AND fromAccountType IN (${buzzBankTypesSql})
     ) OR (
       -- Extracts
       fromAccountType = '${bankAccountType}'
       AND fromAccountId = ${monthAccount}
-      AND toAccountType IN (${BANKABLE_BUZZ_TYPES_STRING})
+      AND toAccountType IN (${buzzBankTypesSql})
     )
     GROUP BY userId
     ${includeNegativeAmounts ? '' : 'HAVING amount > 0'};

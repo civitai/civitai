@@ -47,6 +47,7 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import clsx from 'clsx';
 import { Fragment, useMemo, useState } from 'react';
+import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import { ReferralTimelineProgress } from '~/components/Referrals/ReferralTimelineProgress';
 import { useSpotlight } from '~/hooks/useSpotlight';
 import type { BenefitItem } from '~/components/Subscriptions/PlanBenefitList';
@@ -81,9 +82,11 @@ const rankAccent: Record<string, string> = {
 };
 
 const INITIAL_ACTIVITY_COUNT = 10;
-const ALERT_HOW_IT_WORKS = 'referral-how-it-works';
-const ALERT_KICKBACK = 'referral-kickback-info';
-const ALERT_TOKEN_SHOP = 'referral-token-shop-info';
+// Declared in the notice registry so the persisted-id set stays enumerable, and
+// so the kickback id is literally the SAME value the lite dashboard dismisses.
+const ALERT_HOW_IT_WORKS = FEATURE_NOTICES.referralHowItWorks.id;
+const ALERT_KICKBACK = FEATURE_NOTICES.referralKickback.id;
+const ALERT_TOKEN_SHOP = FEATURE_NOTICES.referralTokenShop.id;
 
 const premiumCardStyle: React.CSSProperties = {
   background: 'light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',
@@ -655,7 +658,7 @@ function ReferralCodeBlock({ code, shareLink }: { code: string; shareLink: strin
               </div>
               <CopyButton value={code}>
                 {({ copied, copy }) => (
-                  <Tooltip label={copied ? 'Copied' : 'Copy code'} color="dark" withArrow>
+                  <Tooltip label={copied ? 'Copied' : 'Copy code'} withArrow>
                     <ActionIcon
                       size="lg"
                       variant="subtle"
@@ -787,7 +790,7 @@ function StatBlock({
             </Text>
             {infoSlot ??
               (tooltip && (
-                <Tooltip label={tooltip} color="dark" multiline maw={260} withArrow>
+                <Tooltip label={tooltip} multiline maw={260} withArrow>
                   <IconInfoCircle
                     size={12}
                     style={{ color: 'var(--mantine-color-dimmed)', cursor: 'help' }}
@@ -1014,7 +1017,7 @@ function TierPerksPopover({ tier }: { tier: string }) {
   return (
     <Popover width={320} position="bottom-end" shadow="lg" withArrow withinPortal>
       <Popover.Target>
-        <Tooltip label="See tier perks" color="dark" withArrow>
+        <Tooltip label="See tier perks" withArrow>
           <ActionIcon variant="subtle" size="sm" aria-label="View tier perks">
             <IconInfoCircle size={16} />
           </ActionIcon>
@@ -1283,7 +1286,7 @@ function ExpiringTokensIndicator({
   return (
     <Popover width={260} position="bottom-start" shadow="lg" withArrow withinPortal>
       <Popover.Target>
-        <Tooltip label="Tokens expiring soon" color="dark" withArrow>
+        <Tooltip label="Tokens expiring soon" withArrow>
           <ActionIcon variant="subtle" color="yellow" size="sm" aria-label="View expiring tokens">
             <IconAlertTriangle size={16} />
           </ActionIcon>

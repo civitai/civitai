@@ -10,7 +10,7 @@ export { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscri
 
 export const invalidateSubscriptionCaches = async (userId: number) => {
   const steps = [
-    ['refreshSession', () => refreshSession(userId)],
+    ['refreshSession', () => refreshSession(userId, { caller: 'subscription' })],
     ['getMultipliersForUser', () => getMultipliersForUser(userId, true)],
     ['setVaultFromSubscription', () => setVaultFromSubscription({ userId })],
     ['getUserCapCache.bust', () => getUserCapCache().bust(userId)],

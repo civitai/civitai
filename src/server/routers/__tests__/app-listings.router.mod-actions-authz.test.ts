@@ -27,6 +27,7 @@ const {
   mockListReports,
   mockResetOnsite,
   mockPreviewForReview,
+  mockSetReviewExclude,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
 } = vi.hoisted(() => ({
@@ -45,6 +46,12 @@ const {
   mockReport: vi.fn(async () => ({ reportId: 'alrp_1' })),
   mockListReports: vi.fn(async () => ({ items: [], nextCursor: null })),
   mockPreviewForReview: vi.fn(async () => ({ card: {}, detail: {} })),
+  mockSetReviewExclude: vi.fn(async () => ({
+    id: 7,
+    appListingId: 'apl_1',
+    exclude: true,
+    changed: true,
+  })),
   mockIsAppBlocksEnabled: vi.fn(),
   mockIsAppBlocksAuthorEnabled: vi.fn(),
 }));
@@ -65,6 +72,12 @@ vi.mock('~/server/services/blocks/offsite-moderation.service', () => ({
 // mock just that export so the mod-gate authz can be exercised without a DB.
 vi.mock('~/server/services/blocks/app-listing.service', () => ({
   getListingPreviewForReview: mockPreviewForReview,
+}));
+// The per-review mod hide/un-hide control is dynamically imported by
+// `setReviewExclude`; mock just that export so the mod gate can be exercised
+// without a DB. (The user-facing review procs in this router are not called here.)
+vi.mock('~/server/services/blocks/app-listing-review.service', () => ({
+  setAppListingReviewExclude: mockSetReviewExclude,
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
@@ -158,6 +171,14 @@ const MOD_ACTIONS: Array<{
     mock: mockResetOnsite,
     call: (c) => c.resetOnsiteListingToPending({ appListingId: 'apl_1', reason: REASON }),
   },
+  {
+    // W13 per-REVIEW mod control — hide/un-hide one `AppListingReview` and move the
+    // denormalized recommend counters. Same `moderatorProcedure` + `isModerator`
+    // recheck boundary as every action above, so it belongs in this ledger.
+    name: 'setReviewExclude',
+    mock: mockSetReviewExclude,
+    call: (c) => c.setReviewExclude({ reviewId: 7, exclude: true }),
+  },
 ];
 
 describe('mod actions — every one is moderator-only', () => {
@@ -219,24 +240,32 @@ describe('mod actions — reviewer id is bound to ctx (never client-supplied)', 
 
 describe('mod actions — error mapping via mapOffsiteError', () => {
   it('a typed NOT_TRANSITIONABLE maps to BAD_REQUEST', async () => {
-    mockDelist.mockRejectedValueOnce(offsiteModErr('NOT_TRANSITIONABLE', 'This listing can no longer be delisted.'));
+    mockDelist.mockRejectedValueOnce(
+      offsiteModErr('NOT_TRANSITIONABLE', 'This listing can no longer be delisted.')
+    );
     const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
-    await expect(caller.delistListing({ appListingId: 'apl_1', reason: REASON })).rejects.toMatchObject({
+    await expect(
+      caller.delistListing({ appListingId: 'apl_1', reason: REASON })
+    ).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: expect.stringContaining('no longer be delisted'),
     });
   });
 
   it('a typed NOT_FOUND maps to NOT_FOUND', async () => {
-    mockRelist.mockRejectedValueOnce(offsiteModErr('NOT_FOUND', 'Off-site listing not found.'));
+    mockRelist.mockRejectedValueOnce(offsiteModErr('NOT_FOUND', 'Standalone listing not found.'));
     const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
-    await expect(caller.relistListing({ appListingId: 'apl_x', reason: REASON })).rejects.toMatchObject({
+    await expect(
+      caller.relistListing({ appListingId: 'apl_x', reason: REASON })
+    ).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });
   });
 
   it('a typed REPORT_NOT_PENDING maps to BAD_REQUEST', async () => {
-    mockResolve.mockRejectedValueOnce(offsiteModErr('REPORT_NOT_PENDING', 'This report has already been handled.'));
+    mockResolve.mockRejectedValueOnce(
+      offsiteModErr('REPORT_NOT_PENDING', 'This report has already been handled.')
+    );
     const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
     await expect(caller.resolveReport({ reportId: 'alrp_1' })).rejects.toMatchObject({
       code: 'BAD_REQUEST',
@@ -326,6 +355,79 @@ describe('getListingPreviewForReview — moderator-only read', () => {
   });
 });
 
+describe('setReviewExclude — the per-review mod hide control', () => {
+  // 🔴 These two assert the SPECIFIC code, not merely `instanceof TRPCError`. A
+  // caller invoking a proc that does not exist also rejects with a TRPCError
+  // (`NOT_FOUND`, "No procedure found on path"), so the loose assertion is GREEN on
+  // a branch where `setReviewExclude` was never added — it would prove the gate
+  // without the gate existing. Pinning FORBIDDEN / UNAUTHORIZED is what makes these
+  // fail at the base commit.
+  //
+  // 🟡 …but only the TESTER case tests the MOD gate. `moderatorProcedure` is
+  // `protectedProcedure.use(isMod)`, so an ANONYMOUS caller is rejected by `isAuthed`
+  // with UNAUTHORIZED before `isMod` is ever reached — and that is equally true if the
+  // gate is downgraded to `protectedProcedure`. The anonymous case is therefore
+  // STRUCTURALLY incapable of discriminating mod-gated from merely-authenticated, and
+  // is measured to survive that mutation. It is an AUTH guard; the tester case below
+  // is the mod guard. Labelled rather than deleted because "anon cannot reach this"
+  // is still worth pinning — just not as evidence of moderator-only.
+  it('a tester is FORBIDDEN and the service is NOT called (a user cannot hide a review)', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(tester) as never);
+    await expect(caller.setReviewExclude({ reviewId: 7, exclude: true })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    expect(mockSetReviewExclude).not.toHaveBeenCalled();
+  });
+
+  it('anonymous is UNAUTHORIZED and the service is NOT called', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(undefined) as never);
+    await expect(caller.setReviewExclude({ reviewId: 7, exclude: true })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
+    expect(mockSetReviewExclude).not.toHaveBeenCalled();
+  });
+
+  it('a moderator passes, and the target state is forwarded verbatim (hide AND un-hide)', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    await expect(caller.setReviewExclude({ reviewId: 7, exclude: true })).resolves.toMatchObject({
+      changed: true,
+    });
+    await caller.setReviewExclude({ reviewId: 9, exclude: false });
+    // An EXPLICIT target state, never a toggle — that is what makes a retry safe, so
+    // the router must not translate it into anything else on the way through.
+    expect(mockSetReviewExclude.mock.calls[0][0]).toEqual({ reviewId: 7, exclude: true });
+    expect(mockSetReviewExclude.mock.calls[1][0]).toEqual({ reviewId: 9, exclude: false });
+  });
+
+  it('rejects a non-positive / non-integer reviewId and a missing target at the SCHEMA boundary', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
+    for (const bad of [
+      { reviewId: 0, exclude: true },
+      { reviewId: -1, exclude: true },
+      { reviewId: 1.5, exclude: true },
+      { reviewId: 7 } as unknown as { reviewId: number; exclude: boolean },
+    ]) {
+      // BAD_REQUEST specifically — a missing proc would reject with NOT_FOUND, so a
+      // bare `instanceof TRPCError` here would be green with no schema at all.
+      await expect(caller.setReviewExclude(bad)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    }
+    expect(mockSetReviewExclude).not.toHaveBeenCalled();
+  });
+
+  it('there is EXACTLY ONE review-exclude endpoint (no protectedProcedure self-hide)', () => {
+    const procs = Object.keys(
+      (appListingsRouter as unknown as { _def: { procedures: Record<string, unknown> } })._def
+        .procedures
+    );
+    expect(procs).toContain('setReviewExclude');
+    // Assert by absence: a review author must not be able to hide their own (or
+    // anyone's) review — the mod gate is the whole boundary, as with claimListing.
+    expect(procs.filter((p) => /exclude/i.test(p))).toEqual(['setReviewExclude']);
+    // And no delete path was introduced alongside it — the soft-hide IS the control.
+    expect(procs.filter((p) => /^delete.*review|review.*delete/i.test(p))).toEqual([]);
+  });
+});
+
 describe('claimListing (PR4) is exposed as moderator-only — NO self-service endpoint', () => {
   it('the router exposes claimListing alongside the other mod actions', () => {
     // The tRPC caller proxy fabricates a function for ANY path, so probe the router
@@ -342,6 +444,11 @@ describe('claimListing (PR4) is exposed as moderator-only — NO self-service en
       'resolveReport',
       'dismissReport',
       'listModerationEvents',
+      // The message proc shares this boundary exactly — moderatorProcedure + the inner
+      // isModerator recheck, actor bound to ctx.user.id, one AppListingModerationEvent
+      // per call — so it belongs in the same enumeration. Its own matrix, bounds and
+      // error mapping live in `app-listings.router.messageAppOwner.test.ts`.
+      'messageAppOwner',
     ]) {
       expect(procs).toContain(p);
     }

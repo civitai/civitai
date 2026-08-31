@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 /**
  * Handler-level coverage for POST /api/v1/blocks/dev-token — the dev/preview
@@ -61,8 +61,6 @@ const {
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockSign,
-  mockAppBlockFindUnique,
-  mockPublishRequestFindFirst,
   mockSysRedis,
   mockMultiIncr,
   mockWithSysReadDeadline,
@@ -106,8 +104,6 @@ const {
     mockIsAppBlocksEnabled: vi.fn(),
     mockIsAppBlocksAuthorEnabled: vi.fn(),
     mockSign: vi.fn(),
-    mockAppBlockFindUnique: vi.fn(),
-    mockPublishRequestFindFirst: vi.fn(),
     mockSysRedis: {
       multi: vi.fn(multiFactory),
       ttl: vi.fn().mockResolvedValue(60),
@@ -128,12 +124,6 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 vi.mock('~/server/services/block-token.service', () => ({
   BlockTokenService: { sign: mockSign },
 }));
-vi.mock('~/server/db/client', () => ({
-  dbWrite: {
-    appBlock: { findUnique: mockAppBlockFindUnique },
-    appBlockPublishRequest: { findFirst: mockPublishRequestFindFirst },
-  },
-}));
 vi.mock('~/server/redis/client', () => ({
   sysRedis: mockSysRedis,
   REDIS_SYS_KEYS: { BLOCKS: { DEV_TOKEN_RATE_LIMIT: 'system:blocks:dev-token-rate-limit' } },
@@ -146,6 +136,9 @@ vi.mock('~/env/server', () => ({
 import handler from '~/pages/api/v1/blocks/dev-token';
 import { domainBrowsingCeiling } from '~/shared/constants/browsingLevel.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockAppBlockFindUnique = dbMock.dbWrite.appBlock.findUnique;
+const mockPublishRequestFindFirst = dbMock.dbWrite.appBlockPublishRequest.findFirst;
 
 const SFW = domainBrowsingCeiling(null);
 
@@ -208,7 +201,12 @@ function pageApp(over: Partial<Record<string, unknown>> = {}) {
     appId: 'appblk-my-page-app',
     status: 'approved',
     manifest: { page: { title: 'My Page' } },
-    approvedScopes: ['models:read:self', 'user:read:self', 'ai:write:budgeted', 'apps:storage:read'],
+    approvedScopes: [
+      'models:read:self',
+      'user:read:self',
+      'ai:write:budgeted',
+      'apps:storage:read',
+    ],
     // 0x1FFFFFF = all 25 bits → no OAuth-ceiling stripping in these tests.
     app: { allowedScopes: 0x1ffffff, userId: OWNER_ID },
     ...over,
@@ -241,9 +239,7 @@ beforeEach(() => {
   mockSysRedis.ttl.mockResolvedValue(60);
   mockSysRedis.expire.mockResolvedValue(1);
   mockIsAppBlocksEnabled.mockResolvedValue(true);
-  mockIsAppBlocksAuthorEnabled.mockImplementation(
-    async (opts) => !!opts?.user?.isModerator
-  );
+  mockIsAppBlocksAuthorEnabled.mockImplementation(async (opts) => !!opts?.user?.isModerator);
   mockAppBlockFindUnique.mockResolvedValue(pageApp());
   // Default: no pending request. The local-manifest path tests set this per-case.
   mockPublishRequestFindFirst.mockResolvedValue(null);
@@ -551,9 +547,12 @@ describe('POST /api/v1/blocks/dev-token', () => {
     // Revocable synthetic page instance id.
     expect(arg.blockInstanceId).toBe('page_apb_abc');
     // All of the app's approved + dev-allowed scopes, sorted.
-    expect(arg.scopes).toEqual(
-      ['ai:write:budgeted', 'apps:storage:read', 'models:read:self', 'user:read:self']
-    );
+    expect(arg.scopes).toEqual([
+      'ai:write:budgeted',
+      'apps:storage:read',
+      'models:read:self',
+      'user:read:self',
+    ]);
     // Budget defaulted + capped.
     expect(arg.buzzBudget).toBe(50);
 
@@ -601,9 +600,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
     // (which is NOT approved → stripped). user:read:self is force-granted post-
     // clamp regardless of approval, so it is present even though the app did not
     // approve it.
-    mockAppBlockFindUnique.mockResolvedValueOnce(
-      pageApp({ approvedScopes: ['models:read:self'] })
-    );
+    mockAppBlockFindUnique.mockResolvedValueOnce(pageApp({ approvedScopes: ['models:read:self'] }));
     const { req, res } = authPost({
       appBlockId: 'apb_abc',
       scopes: ['models:read:self', 'ai:write:budgeted'],
@@ -702,9 +699,7 @@ describe('POST /api/v1/blocks/dev-token', () => {
 
   it('omits buzzBudget when ai:write:budgeted is not granted', async () => {
     mockGetSession.mockResolvedValueOnce(MOD_SESSION);
-    mockAppBlockFindUnique.mockResolvedValueOnce(
-      pageApp({ approvedScopes: ['models:read:self'] })
-    );
+    mockAppBlockFindUnique.mockResolvedValueOnce(pageApp({ approvedScopes: ['models:read:self'] }));
     const { req, res } = authPost({ appBlockId: 'apb_abc', buzzBudget: 200 });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
@@ -1330,17 +1325,11 @@ describe('POST /api/v1/blocks/dev-token', () => {
         })
       );
       const call = log.info.mock.calls.find((c) => c[0] === 'blocks.dev-token.local-mint');
-      expect(call?.[1].scopes).toEqual([
-        'ai:write:budgeted',
-        'models:read:self',
-        'user:read:self',
-      ]);
+      expect(call?.[1].scopes).toEqual(['ai:write:budgeted', 'models:read:self', 'user:read:self']);
       // The token/secret is NEVER logged.
       expect(JSON.stringify(call?.[1])).not.toContain('jwt.signed.value');
       // The pending-mint event must NOT fire on the no-row path.
-      const pendingCall = log.info.mock.calls.find(
-        (c) => c[0] === 'blocks.dev-token.pending-mint'
-      );
+      const pendingCall = log.info.mock.calls.find((c) => c[0] === 'blocks.dev-token.pending-mint');
       expect(pendingCall).toBeUndefined();
     });
 
@@ -1415,6 +1404,529 @@ describe('POST /api/v1/blocks/dev-token', () => {
       expect(mockAppBlockFindUnique).not.toHaveBeenCalled();
       expect(mockPublishRequestFindFirst).not.toHaveBeenCalled();
       expect(mockSign).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * #3703 step 1 — `requestBudgetedSpend`: budgeted spend becomes an EXPLICITLY
+   * REQUESTABLE grant, with the default deliberately left at "infer".
+   *
+   * The clamp now ANDs two independent predicates: `spendEntitled` (the bearer's
+   * AIServicesWrite bit — unchanged) and `spendRequested` (this new body field,
+   * defaulted `?? true` so step 1 changes NO behaviour for existing clients).
+   *
+   * Every assertion below pins an ENUMERATED granted set. A `toContain('spend')`-
+   * style check would pass while the hazard existed in a different shape.
+   */
+  describe('requestBudgetedSpend — explicit budgeted-spend request (#3703 step 1)', () => {
+    // The approved app's snapshot minus the spend scope, in clamp output order.
+    // The bearer allowlist KEEPS apps:storage:read (unlike the tunnel allowlist).
+    const WITHOUT_SPEND = ['apps:storage:read', 'models:read:self', 'user:read:self'];
+    const WITH_SPEND = [
+      'ai:write:budgeted',
+      'apps:storage:read',
+      'models:read:self',
+      'user:read:self',
+    ];
+
+    const logOf = (req: unknown) =>
+      (req as { log: { info: ReturnType<typeof vi.fn> } }).log.info.mock.calls;
+    const eventOf = (req: unknown, name: string) =>
+      logOf(req).find((c) => c[0] === name)?.[1] as Record<string, unknown> | undefined;
+
+    it('1. entitled bearer + requestBudgetedSpend:false → the spend scope is EXCLUDED', async () => {
+      // RED at base: before step 1 the field was ignored entirely, so the granted
+      // set came back WITH_SPEND.
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION); // Full → AIServicesWrite
+      const { req, res } = authPost({ appBlockId: 'apb_abc', requestBudgetedSpend: false });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign.mock.calls[0][0].scopes).toEqual(WITHOUT_SPEND);
+      // No spend scope → no budget claim, on the token AND in the response body.
+      expect(mockSign.mock.calls[0][0].buzzBudget).toBeUndefined();
+      expect((res._getJSONData() as Record<string, unknown>).scopes).toEqual(WITHOUT_SPEND);
+    });
+
+    it('2. entitled bearer + requestBudgetedSpend:true → the spend scope is INCLUDED (not a blanket deny)', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      const { req, res } = authPost({ appBlockId: 'apb_abc', requestBudgetedSpend: true });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign.mock.calls[0][0].scopes).toEqual(WITH_SPEND);
+      expect(mockSign.mock.calls[0][0].buzzBudget).toBe(50);
+    });
+
+    it('3. NOT-entitled bearer + requestBudgetedSpend:true → EXCLUDED, and the mint SUCCEEDS (strip, never error)', async () => {
+      // Two things at once, both load-bearing:
+      //  - entitlement still binds even when the caller explicitly asks. This is the
+      //    case that catches an `&&` → `||` mutation of the ceiling.
+      //  - a denied request is a SILENT STRIP. Erroring here would be a brand-new
+      //    failure mode on the money path; every other step in the belt is a strip.
+      mockGetSession.mockResolvedValueOnce(READONLY_MOD_SESSION); // no AIServicesWrite
+      const { req, res } = authPost({ appBlockId: 'apb_abc', requestBudgetedSpend: true });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200); // NOT 400/403 — the mint succeeds
+      expect(mockSign).toHaveBeenCalledTimes(1);
+      expect(mockSign.mock.calls[0][0].scopes).toEqual(WITHOUT_SPEND);
+      expect(mockSign.mock.calls[0][0].buzzBudget).toBeUndefined();
+    });
+
+    it('4. INVARIANT GUARD (not regression coverage): the field ABSENT → the spend scope is INCLUDED', async () => {
+      // This pins the DELIBERATE step-1 default `?? true` — the "no behaviour change"
+      // half of this PR. It is an invariant guard, not a red-before-green regression
+      // test: it is green at base too, because base has no field to omit.
+      //
+      // At step 3 this expectation FLIPS to WITHOUT_SPEND. Edit it then; never delete
+      // it — the diff is the audit trail of the breaking change.
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      const { req, res } = authPost({ appBlockId: 'apb_abc' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign.mock.calls[0][0].scopes).toEqual(WITH_SPEND);
+    });
+
+    it('the field is OPTIONAL and boolean-typed — a non-boolean is a 400 before any lookup', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      const { req, res } = authPost({
+        appBlockId: 'apb_abc',
+        requestBudgetedSpend: 'yes' as unknown as boolean,
+      });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(400);
+      expect(mockAppBlockFindUnique).not.toHaveBeenCalled();
+      expect(mockSign).not.toHaveBeenCalled();
+    });
+
+    it('applies on the PENDING path too (entitled + false → excluded)', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockAppBlockFindUnique.mockResolvedValueOnce(null);
+      mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+      const { req, res } = authPost({ slug: 'my-pending-app', requestBudgetedSpend: false });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign.mock.calls[0][0].scopes).toEqual(WITHOUT_SPEND);
+    });
+
+    it('applies on the NO-ROW path too (entitled + false → excluded)', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockAppBlockFindUnique.mockResolvedValueOnce(null);
+      mockPublishRequestFindFirst.mockResolvedValueOnce(null);
+      const { req, res } = authPost({
+        slug: 'brand-new-app',
+        scopes: ['ai:write:budgeted', 'models:read:self'],
+        requestBudgetedSpend: false,
+      });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      expect(mockSign.mock.calls[0][0].scopes).toEqual(['models:read:self', 'user:read:self']);
+    });
+
+    /**
+     * 7. OBSERVABILITY — every bearer mint path emits a mint-audit event carrying
+     * BOTH the field as-received AND the derived `spendGrantBasis`.
+     *
+     * Recording both is the whole point: `spendGrantBasis:'none'` alone cannot tell
+     * "the client asked and was denied" from "the client never asked", and those
+     * mean opposite things about client adoption. The step-3 gate reads exactly this
+     * distinction, so one value cannot express it.
+     */
+    describe('mint-audit events carry requestBudgetedSpend AND spendGrantBasis', () => {
+      it('APPROVED path — emits blocks.dev-token.approved-mint, which previously emitted NOTHING', async () => {
+        // RED at base: the approved path was structurally invisible — it writes rows
+        // byte-identical to a production page mint and logged no mint event at all.
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        const { req, res } = authPost({ appBlockId: 'apb_abc', requestBudgetedSpend: true });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        const ev = eventOf(req, 'blocks.dev-token.approved-mint');
+        expect(ev).toBeDefined();
+        expect(ev).toEqual({
+          mode: 'approved',
+          userId: OWNER_ID,
+          slug: 'my-page-app',
+          appBlockId: 'apb_abc',
+          scopes: WITH_SPEND,
+          requestBudgetedSpend: true,
+          spendGranted: true,
+          spendGrantBasis: 'explicit',
+        });
+        // 🔴 No token, no secret in the audit event.
+        expect(JSON.stringify(ev)).not.toContain('jwt.signed.value');
+        // Sibling events stay path-scoped.
+        expect(eventOf(req, 'blocks.dev-token.pending-mint')).toBeUndefined();
+        expect(eventOf(req, 'blocks.dev-token.local-mint')).toBeUndefined();
+      });
+
+      it("APPROVED path — field ABSENT is recorded as ABSENT, and the basis is 'inferred'", async () => {
+        // 'inferred' is the signal the step-3 evidence gate counts: spend granted
+        // ONLY because the `?? true` default filled in for a client that never asked.
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        const { req, res } = authPost({ appBlockId: 'apb_abc' });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        const ev = eventOf(req, 'blocks.dev-token.approved-mint')!;
+        expect(ev.spendGrantBasis).toBe('inferred');
+        expect(ev.spendGranted).toBe(true);
+        // ABSENT, not an invented false/null — the three-valued signal is preserved.
+        expect('requestBudgetedSpend' in ev).toBe(false);
+      });
+
+      it("APPROVED path — asked-and-DENIED is distinguishable from never-asked (requestBudgetedSpend:true + basis 'none')", async () => {
+        // The pair that one value cannot express. Same basis as the case below,
+        // opposite meaning for adoption.
+        mockGetSession.mockResolvedValueOnce(READONLY_MOD_SESSION); // not entitled
+        const { req, res } = authPost({ appBlockId: 'apb_abc', requestBudgetedSpend: true });
+        await handler(req as never, res as never);
+        const ev = eventOf(req, 'blocks.dev-token.approved-mint')!;
+        expect(ev.requestBudgetedSpend).toBe(true); // the client DID ask
+        expect(ev.spendGranted).toBe(false); // …and was denied
+        expect(ev.spendGrantBasis).toBe('none');
+      });
+
+      it("APPROVED path — declined-spend is recorded as requestBudgetedSpend:false + basis 'none'", async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION); // entitled
+        const { req, res } = authPost({ appBlockId: 'apb_abc', requestBudgetedSpend: false });
+        await handler(req as never, res as never);
+        const ev = eventOf(req, 'blocks.dev-token.approved-mint')!;
+        expect(ev.requestBudgetedSpend).toBe(false); // the client explicitly declined
+        expect(ev.spendGranted).toBe(false);
+        expect(ev.spendGrantBasis).toBe('none');
+      });
+
+      it('PENDING path — the pre-existing event now also carries both fields', async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockAppBlockFindUnique.mockResolvedValueOnce(null);
+        mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+        const { req, res } = authPost({ slug: 'my-pending-app', requestBudgetedSpend: true });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        const ev = eventOf(req, 'blocks.dev-token.pending-mint')!;
+        expect(ev.requestBudgetedSpend).toBe(true);
+        expect(ev.spendGrantBasis).toBe('explicit');
+        expect(ev.spendGranted).toBe(true);
+        // The approved-mint event must NOT fire on the pending path.
+        expect(eventOf(req, 'blocks.dev-token.approved-mint')).toBeUndefined();
+      });
+
+      it('NO-ROW path — the pre-existing event now also carries both fields', async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockAppBlockFindUnique.mockResolvedValueOnce(null);
+        mockPublishRequestFindFirst.mockResolvedValueOnce(null);
+        const { req, res } = authPost({
+          slug: 'brand-new-app',
+          scopes: ['ai:write:budgeted', 'models:read:self'],
+          requestBudgetedSpend: false,
+        });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        const ev = eventOf(req, 'blocks.dev-token.local-mint')!;
+        expect(ev.requestBudgetedSpend).toBe(false);
+        expect(ev.spendGranted).toBe(false);
+        expect(ev.spendGrantBasis).toBe('none');
+        expect(eventOf(req, 'blocks.dev-token.approved-mint')).toBeUndefined();
+      });
+
+      // The three events are mutually exclusive: exactly ONE fires per mint. Asserted
+      // per path as an enumerated list (not "the other two are undefined"), so an
+      // accidental double-emit fails too.
+      const MINT_EVENTS = [
+        'blocks.dev-token.approved-mint',
+        'blocks.dev-token.pending-mint',
+        'blocks.dev-token.local-mint',
+      ];
+      const fired = (req: unknown) =>
+        (req as { log: { info: ReturnType<typeof vi.fn> } }).log.info.mock.calls
+          .map((c) => c[0] as string)
+          .filter((n) => MINT_EVENTS.includes(n));
+
+      it('exactly ONE mint-audit event fires on the APPROVED path', async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        const { req, res } = authPost({ appBlockId: 'apb_abc' });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        expect(fired(req)).toEqual(['blocks.dev-token.approved-mint']);
+      });
+
+      it('exactly ONE mint-audit event fires on the PENDING path', async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockAppBlockFindUnique.mockResolvedValueOnce(null);
+        mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+        const { req, res } = authPost({ slug: 'my-pending-app' });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        expect(fired(req)).toEqual(['blocks.dev-token.pending-mint']);
+      });
+
+      it('exactly ONE mint-audit event fires on the NO-ROW path', async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockAppBlockFindUnique.mockResolvedValueOnce(null);
+        mockPublishRequestFindFirst.mockResolvedValueOnce(null);
+        const { req, res } = authPost({
+          slug: 'brand-new-app',
+          scopes: ['models:read:self'],
+        });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        expect(fired(req)).toEqual(['blocks.dev-token.local-mint']);
+      });
+    });
+
+    /**
+     * 7b. THE STDOUT MIRROR (#3715) — the events above are DUAL-SINKED.
+     *
+     * `req.log?.info` alone writes nothing to stdout in production: next-axiom's
+     * `Logger.sendLogs()` prints to the console ONLY when the AXIOM_* env vars are
+     * unset (dist/logger.js:198-202), so with them set the batch is POSTed to Axiom
+     * and NOTHING reaches stdout. A log store that scrapes container stdout therefore
+     * cannot see these events at all.
+     *
+     * 🔴 WHAT THE MIRROR IS FOR — it is a SHORT-WINDOW (~72h measured) forensic copy,
+     * for incident-time reads, plus a second sink that does not depend on one vendor
+     * being reachable. It is NOT the surface the #3715 adoption gate is read from: that
+     * gate asks a ROLLING 30-DAY question and is answered from Axiom (~96d retention).
+     * At ~0.8 bearer mints/day a 72h window holds ~2.4 mints, so a "30-day" query
+     * against stdout returns a near-unconditional 0. Full reasoning and the measured
+     * numbers live in `src/server/logging/mint-audit-stdout.ts`.
+     *
+     * These tests assert the stdout half. The `req.log` assertions above stay green:
+     * both sinks are required, and losing either loses a distinct capability.
+     */
+    describe('mint-audit events are ALSO mirrored to stdout (#3715)', () => {
+      // Re-declared locally (the sibling describe's copy is not in scope). The three
+      // bearer mint events, same enumerated set.
+      const MIRRORED_EVENTS = [
+        'blocks.dev-token.approved-mint',
+        'blocks.dev-token.pending-mint',
+        'blocks.dev-token.local-mint',
+      ];
+      let logSpy: ReturnType<typeof vi.spyOn>;
+
+      // Runs AFTER the file-level beforeEach (and its vi.clearAllMocks), so the spy
+      // survives into the test body.
+      beforeEach(() => {
+        logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+      });
+      afterEach(() => {
+        logSpy.mockRestore();
+      });
+
+      /**
+       * Every stdout line the handler wrote, parsed back from JSON. Parsing (rather
+       * than substring-matching the raw string) is deliberate: the assertions below
+       * are about the SHAPE of the emitted object — above all whether a key is
+       * PRESENT — and a word can be present in a string for unrelated reasons.
+       */
+      const stdoutEvents = (): Record<string, unknown>[] =>
+        logSpy.mock.calls
+          .map((c: unknown[]) => c[0])
+          .filter((line: unknown): line is string => typeof line === 'string')
+          .flatMap((line: string) => {
+            try {
+              return [JSON.parse(line) as Record<string, unknown>];
+            } catch {
+              return [];
+            }
+          });
+      const mirrorOf = (name: string) => stdoutEvents().find((e) => e.event === name);
+      const mirroredNames = () =>
+        stdoutEvents()
+          .map((e) => e.event as string)
+          .filter((n) => MIRRORED_EVENTS.includes(n));
+
+      it('POSITIVE CONTROL: the stdout spy observes a real emit (a zero here would make every assertion below vacuous)', async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        const { req, res } = authPost({ appBlockId: 'apb_abc' });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        // Non-zero: the spy is wired to the channel the mirror actually writes to.
+        expect(stdoutEvents().length).toBeGreaterThan(0);
+        // …and it can report an ABSENCE too: a name nothing emits must not be found.
+        expect(mirrorOf('blocks.dev-token.no-such-mint')).toBeUndefined();
+      });
+
+      it('APPROVED path — the mirror carries the SAME event name and the SAME payload as the Axiom sink', async () => {
+        // RED at base: the mirror did not exist, so nothing was written to stdout.
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        const { req, res } = authPost({ appBlockId: 'apb_abc', requestBudgetedSpend: true });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        const mirror = mirrorOf('blocks.dev-token.approved-mint');
+        expect(mirror).toEqual({
+          event: 'blocks.dev-token.approved-mint',
+          mode: 'approved',
+          userId: OWNER_ID,
+          slug: 'my-page-app',
+          appBlockId: 'apb_abc',
+          scopes: WITH_SPEND,
+          requestBudgetedSpend: true,
+          spendGranted: true,
+          spendGrantBasis: 'explicit',
+        });
+        // DUAL-SINK RELATIONSHIP: the two sinks must not drift apart. The mirror is
+        // the Axiom payload plus the `event` name — nothing added, nothing dropped.
+        const ev = eventOf(req, 'blocks.dev-token.approved-mint')!;
+        expect(mirror).toEqual({ event: 'blocks.dev-token.approved-mint', ...ev });
+        // 🔴 No token, no secret on the stdout sink either.
+        expect(JSON.stringify(mirror)).not.toContain('jwt.signed.value');
+      });
+
+      it('PENDING path — the mirror fires with the same payload as the Axiom sink', async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockAppBlockFindUnique.mockResolvedValueOnce(null);
+        mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+        const { req, res } = authPost({ slug: 'my-pending-app', requestBudgetedSpend: true });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        const mirror = mirrorOf('blocks.dev-token.pending-mint');
+        expect(mirror).toEqual({
+          event: 'blocks.dev-token.pending-mint',
+          mode: 'pending',
+          userId: OWNER_ID,
+          slug: 'my-pending-app',
+          publishRequestId: 'pubreq_01HXYZ',
+          scopes: WITH_SPEND,
+          requestBudgetedSpend: true,
+          spendGranted: true,
+          spendGrantBasis: 'explicit',
+        });
+        const ev = eventOf(req, 'blocks.dev-token.pending-mint')!;
+        expect(mirror).toEqual({ event: 'blocks.dev-token.pending-mint', ...ev });
+        expect(JSON.stringify(mirror)).not.toContain('jwt.signed.value');
+      });
+
+      it('NO-ROW path — the mirror fires with the same payload as the Axiom sink', async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockAppBlockFindUnique.mockResolvedValueOnce(null);
+        mockPublishRequestFindFirst.mockResolvedValueOnce(null);
+        const { req, res } = authPost({
+          slug: 'brand-new-app',
+          scopes: ['ai:write:budgeted', 'models:read:self'],
+          requestBudgetedSpend: false,
+        });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        const mirror = mirrorOf('blocks.dev-token.local-mint');
+        expect(mirror).toEqual({
+          event: 'blocks.dev-token.local-mint',
+          mode: 'local',
+          userId: OWNER_ID,
+          slug: 'brand-new-app',
+          scopes: ['models:read:self', 'user:read:self'],
+          requestBudgetedSpend: false,
+          spendGranted: false,
+          spendGrantBasis: 'none',
+        });
+        const ev = eventOf(req, 'blocks.dev-token.local-mint')!;
+        expect(mirror).toEqual({ event: 'blocks.dev-token.local-mint', ...ev });
+        expect(JSON.stringify(mirror)).not.toContain('jwt.signed.value');
+      });
+
+      it('exactly ONE mint-audit event is mirrored on the APPROVED path', async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        const { req, res } = authPost({ appBlockId: 'apb_abc' });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        expect(mirroredNames()).toEqual(['blocks.dev-token.approved-mint']);
+      });
+
+      it('exactly ONE mint-audit event is mirrored on the PENDING path', async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockAppBlockFindUnique.mockResolvedValueOnce(null);
+        mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+        const { req, res } = authPost({ slug: 'my-pending-app' });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        expect(mirroredNames()).toEqual(['blocks.dev-token.pending-mint']);
+      });
+
+      it('exactly ONE mint-audit event is mirrored on the NO-ROW path', async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockAppBlockFindUnique.mockResolvedValueOnce(null);
+        mockPublishRequestFindFirst.mockResolvedValueOnce(null);
+        const { req, res } = authPost({ slug: 'brand-new-app', scopes: ['models:read:self'] });
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        expect(mirroredNames()).toEqual(['blocks.dev-token.local-mint']);
+      });
+
+      /**
+       * THE THREE-VALUED SIGNAL, PINNED THROUGH THE MIRROR SPECIFICALLY.
+       *
+       * The step-3 gate distinguishes `true` (the client asked), `false` (the client
+       * explicitly declined) and KEY-OMITTED (the client never asked, so the grant was
+       * only 'inferred'). Serialising the third case as `false` or `null` would silently
+       * merge it into the second and make the gate unreadable — and JSON is exactly where
+       * an `undefined` can get coerced. Each case asserts the ENUMERATED value, and the
+       * absent case asserts key PRESENCE (`'k' in obj`), never truthiness: `false` and
+       * absent are both falsy, which is the confusion this guard exists to catch.
+       */
+      it("three-valued signal — ABSENT stays ABSENT in the mirrored JSON (basis 'inferred')", async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        const { req, res } = authPost({ appBlockId: 'apb_abc' }); // field omitted
+        await handler(req as never, res as never);
+        expect(res._getStatusCode()).toBe(200);
+        const mirror = mirrorOf('blocks.dev-token.approved-mint')!;
+        expect(mirror).toBeDefined();
+        // The KEY must not exist — not merely be falsy.
+        expect('requestBudgetedSpend' in mirror).toBe(false);
+        // The rest of the signal still arrived, so this is not an empty-payload pass.
+        expect(mirror.spendGranted).toBe(true);
+        expect(mirror.spendGrantBasis).toBe('inferred');
+        // The raw line must not smuggle it in as null either.
+        expect(JSON.stringify(mirror)).not.toContain('requestBudgetedSpend');
+      });
+
+      it("three-valued signal — FALSE serialises as false (basis 'none')", async () => {
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION); // entitled, explicitly declines
+        const { req, res } = authPost({ appBlockId: 'apb_abc', requestBudgetedSpend: false });
+        await handler(req as never, res as never);
+        const mirror = mirrorOf('blocks.dev-token.approved-mint')!;
+        expect('requestBudgetedSpend' in mirror).toBe(true);
+        expect(mirror.requestBudgetedSpend).toBe(false);
+        expect(mirror.spendGranted).toBe(false);
+        expect(mirror.spendGrantBasis).toBe('none');
+      });
+
+      it('three-valued signal — TRUE serialises as true, and asked-and-DENIED stays distinguishable from never-asked', async () => {
+        // The pair the gate must separate: basis 'none' here AND above, opposite
+        // meanings for adoption, told apart only by the as-received field.
+        mockGetSession.mockResolvedValueOnce(READONLY_MOD_SESSION); // not entitled
+        const { req, res } = authPost({ appBlockId: 'apb_abc', requestBudgetedSpend: true });
+        await handler(req as never, res as never);
+        const mirror = mirrorOf('blocks.dev-token.approved-mint')!;
+        expect('requestBudgetedSpend' in mirror).toBe(true);
+        expect(mirror.requestBudgetedSpend).toBe(true);
+        expect(mirror.spendGranted).toBe(false);
+        expect(mirror.spendGrantBasis).toBe('none');
+      });
+
+      it('three-valued signal — the mirror preserves it on the PENDING and NO-ROW paths too', async () => {
+        // Absent on the pending path…
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockAppBlockFindUnique.mockResolvedValueOnce(null);
+        mockPublishRequestFindFirst.mockResolvedValueOnce(pendingRequest());
+        const a = authPost({ slug: 'my-pending-app' });
+        await handler(a.req as never, a.res as never);
+        const pending = mirrorOf('blocks.dev-token.pending-mint')!;
+        expect('requestBudgetedSpend' in pending).toBe(false);
+        expect(pending.spendGrantBasis).toBe('inferred');
+
+        // …and explicit `true` on the no-row path.
+        logSpy.mockClear();
+        mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+        mockAppBlockFindUnique.mockResolvedValueOnce(null);
+        mockPublishRequestFindFirst.mockResolvedValueOnce(null);
+        const b = authPost({
+          slug: 'brand-new-app',
+          scopes: ['ai:write:budgeted', 'models:read:self'],
+          requestBudgetedSpend: true,
+        });
+        await handler(b.req as never, b.res as never);
+        const local = mirrorOf('blocks.dev-token.local-mint')!;
+        expect('requestBudgetedSpend' in local).toBe(true);
+        expect(local.requestBudgetedSpend).toBe(true);
+        expect(local.spendGrantBasis).toBe('explicit');
+      });
     });
   });
 });

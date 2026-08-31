@@ -1,0 +1,570 @@
+<script lang="ts">
+  import { page } from "$app/state";
+  import { untrack } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
+  import { denied } from '$lib/permissions';
+  import { enhance } from '$app/forms';
+  import { goto } from '$app/navigation';
+  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
+  import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
+  import type { ActionData, PageData } from './$types';
+  import { FormState } from '$lib/form-state.svelte';
+  import { LINK_CLASS, dateTime, num } from '$lib/format';
+  import { userLookupUrl } from '$lib/entity-url';
+  import { BAN_REASONS, BAN_REASONS_REMOVING_CONTENT, type BanReasonCode } from '$lib/enforcement';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+
+  let { data, form }: { data: PageData; form: ActionData } = $props();
+
+  let ids = $state(untrack(() => data.ids));
+  let names = $state(untrack(() => data.names));
+  let ips = $state(untrack(() => data.ips));
+  let domainTerms = $state(untrack(() => data.domainTerms));
+  let tippedTo = $state(untrack(() => data.tippedTo));
+  let minTip = $state(untrack(() => data.minTip));
+  let minAccountId = $state(untrack(() => data.minAccountId));
+  let tipDays = $state(untrack(() => data.tipDays));
+  // Keyed on the URL, not on `data`: this page's enhancer reloads, so banning a list re-ran `load` and
+  // overwrote whatever the moderator had pasted into these boxes since the last check.
+  const subject = $derived(page.url.search);
+  $effect(() => {
+    subject;
+    untrack(() => {
+      ids = data.ids;
+      names = data.names;
+      ips = data.ips;
+      domainTerms = data.domainTerms;
+      tippedTo = data.tippedTo;
+      minTip = data.minTip;
+      minAccountId = data.minAccountId;
+      tipDays = data.tipDays;
+    });
+  });
+
+  // Retool's picker opened on "Select an option". Preselecting the least informative code on the
+  // highest-blast-radius action makes an unconsidered `Other` the permanent record of why.
+  let reasonCode = $state('');
+  let removeMedia = $state(false);
+  let removeComments = $state(false);
+
+  // Only presets a toggle the moderator has not touched, and undoes its own preset when they switch to
+  // a reason that does not remove content — these are page-level state that outlives a completed run,
+  // so a latched tick would arm the NEXT, unrelated cohort.
+  let mediaTouched = $state(false);
+  let commentsTouched = $state(false);
+
+  const pickReason = (value: string) => {
+    reasonCode = value;
+    const removesContent = BAN_REASONS_REMOVING_CONTENT.includes(value as BanReasonCode);
+    if (!mediaTouched) removeMedia = removesContent;
+    if (!commentsTouched) removeComments = removesContent;
+  };
+
+  let confirming = $state(false);
+  const onSubmit = new FormState({ reload: true, onSuccess: () => (confirming = false) });
+
+  const load = () =>
+    goto(
+      `?ids=${encodeURIComponent(ids)}&names=${encodeURIComponent(names)}&ips=${encodeURIComponent(ips)}` +
+        `&domains=${encodeURIComponent(domainTerms)}&tippedTo=${encodeURIComponent(tippedTo)}` +
+        `&minTip=${minTip}&minAccountId=${minAccountId}&tipDays=${tipDays}`,
+      { keepFocus: true }
+    );
+
+  // Only accounts that are neither already banned nor deleted are actually actionable — the rest are
+  // shown so the moderator can see why the number they pasted and the number banned differ.
+  // Dropping one id used to mean editing the paste box and re-running the check, which on a bot chain
+  // is a scan you pay for again to remove a single row. The motivating case is precise: a bot IP that a
+  // genuine user logged in from once or twice. Held client-side, so it costs nothing and resets when
+  // the checked list itself changes.
+  let excluded = $state(new SvelteSet<number>());
+  $effect(() => {
+    subject;
+    untrack(() => excluded.clear());
+  });
+
+  const kept = $derived(data.candidates.filter((c) => !excluded.has(c.id)));
+  const bannable = $derived(kept.filter((c) => !c.bannedAt && !c.deletedAt));
+  const bannableIds = $derived(bannable.map((c) => c.id).join(','));
+
+  // "Note on all matched accounts" covered the already-banned rows too, which is right when you are
+  // annotating a ring and wrong when you are annotating who is left to deal with.
+  let noteUnbannedOnly = $state(false);
+  const noteTargets = $derived(noteUnbannedOnly ? bannable : kept);
+
+  // The count beside a capped list has to be the search’s own, never the page size: an IP carrying
+  // 908 registrations rendered "(500)", which reads as the answer rather than as the cap.
+  const shownOf = (r: { accounts: unknown[]; total: number }) =>
+    r.total > r.accounts.length
+      ? `${num(r.accounts.length)} of ${num(r.total)}`
+      : num(r.total);
+
+  // `IpAccount['status']` is the app's only string spelling of this; every other consumer of
+  // `usersByIds` carries the timestamps. Both lists on THIS page now render through one derivation.
+  const accountStatus = (a: { bannedAt: Date | null; deletedAt: Date | null }) =>
+    a.bannedAt ? 'banned' : a.deletedAt ? 'deleted' : 'active';
+
+  const ipShown = $derived(data.ipAccounts.accounts.length);
+  const remainingIps = $derived(data.ipAccounts.total - data.ipAccounts.offset - ipShown);
+  const hasMoreIps = $derived(remainingIps > 0);
+  // Rows, not pages: the question is whether the whole ring has been seen.
+  const ipRange = $derived(
+    data.ipAccounts.total > ipShown
+      ? `${num(data.ipAccounts.offset + 1)}–${num(data.ipAccounts.offset + ipShown)} of ${num(data.ipAccounts.total)}`
+      : num(data.ipAccounts.total)
+  );
+  // Every other input on this page lives in the URL so a moderator can hand a colleague the exact
+  // search; the offset travels the same way or Previous lands on a different set.
+  const ipPageUrl = (offset: number) => {
+    const next = new URL(page.url);
+    if (offset > 0) next.searchParams.set('ipOffset', String(offset));
+    else next.searchParams.delete('ipOffset');
+    return `${next.pathname}${next.search}`;
+  };
+
+  // Only `active` can be banned. The other three stay VISIBLE — a ring that has been actioned before
+  // is what a moderator reads this panel for — but adding them would only earn an already-banned error.
+  const bannableIps = $derived(
+    data.ipAccounts.accounts.filter((a) => a.status === 'active').map((a) => a.userId)
+  );
+
+  const idList = (rows: { id: number }[]) => rows.map((r) => r.id).join('\n');
+  const addToList = (newIds: number[]) => {
+    const existing = new Set(
+      ids
+        .split(/[\s,]+/)
+        .map((v) => Number(v.trim()))
+        .filter(Boolean)
+    );
+    const merged = [...existing, ...newIds.filter((id) => !existing.has(id))];
+    ids = merged.join('\n');
+    load();
+  };
+</script>
+
+<header class="page-header">
+  <h1>Bulk Ban</h1>
+  <p>
+    Paste a list of accounts, check what it actually contains, then ban them together. The clustering
+    below is how a list of one becomes a list of a ring.
+  </p>
+</header>
+
+{#if !data.canAct}
+  <div class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
+    You can investigate here but not ban. {denied('bulk-ban.execute')}
+  </div>
+{/if}
+
+<section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <div class="grid gap-3 lg:grid-cols-3">
+    <label class="flex flex-col gap-1 text-xs text-dark-2">
+      User IDs
+      <Textarea bind:value={ids} rows={4} class="max-h-40 overflow-y-auto" placeholder="One per line, or comma separated" />
+    </label>
+    <label class="flex flex-col gap-1 text-xs text-dark-2">
+      Usernames
+      <Textarea bind:value={names} rows={4} class="max-h-40 overflow-y-auto" placeholder="One per line" />
+    </label>
+    <label class="flex flex-col gap-1 text-xs text-dark-2">
+      IPs — find accounts registered on these
+      <Textarea bind:value={ips} rows={4} class="max-h-40 overflow-y-auto" placeholder="One per line" />
+    </label>
+    <label class="flex flex-col gap-1 text-xs text-dark-2">
+      Email domains — find accounts using these
+      <Textarea bind:value={domainTerms} rows={4} class="max-h-40 overflow-y-auto" placeholder="mail.example one per line" />
+    </label>
+  </div>
+  <Button class="mt-3" onclick={load}>Check list</Button>
+</section>
+
+<!-- Retool's GetUsers. Every other panel describes a list you already have; this one BUILDS one, so it
+     is its own section rather than a fifth box above. -->
+<section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <h2 class="mb-1 text-sm font-semibold text-white">Find tippers</h2>
+  <p class="mb-3 text-xs text-dark-2">
+    Who paid these accounts. A buzz farm is a wall of young accounts tipping the same few recipients —
+    the account-id floor is what separates that from a creator's genuine supporters. Unbounded by
+    default and slow; set a window if you know one.
+  </p>
+  <div class="grid gap-3 lg:grid-cols-4">
+    <label class="flex flex-col gap-1 text-xs text-dark-2 lg:col-span-2">
+      Tipped these account IDs
+      <Textarea bind:value={tippedTo} rows={2} class="max-h-40 overflow-y-auto" placeholder="One per line, or comma separated" />
+    </label>
+    <label class="flex flex-col gap-1 text-xs text-dark-2">
+      Minimum tip
+      <Input type="number" bind:value={minTip} min="0" />
+    </label>
+    <label class="flex flex-col gap-1 text-xs text-dark-2">
+      Account ID above
+      <Input type="number" bind:value={minAccountId} min="0" />
+    </label>
+    <label class="flex flex-col gap-1 text-xs text-dark-2">
+      Days back (0 = all time)
+      <Input type="number" bind:value={tipDays} min="0" />
+    </label>
+  </div>
+  <Button class="mt-3" onclick={load}>Find tippers</Button>
+
+  {#if data.tippers.length}
+    <h3 class="mt-4 text-xs tracking-wide text-dark-2 uppercase">
+      {num(data.tippers.length)} tippers
+    </h3>
+    <ul class="mt-1 space-y-0.5 text-sm">
+      {#each data.tippers as t (t.userId)}
+        <li class="flex flex-wrap items-baseline gap-x-3">
+          <a href={userLookupUrl(t.userId)} class={LINK_CLASS}>#{t.userId}</a>
+          <span class="text-xs text-dark-2">{num(t.tips)} tips</span>
+          <span class="text-xs text-dark-2">{num(t.total)} buzz</span>
+        </li>
+      {/each}
+    </ul>
+    <!-- The point of finding them is banning them, and retyping 200 ids is how the step gets skipped. -->
+    <Button
+      class="mt-3"
+      variant="outline"
+      onclick={() => {
+        ids = data.tippers.map((t) => t.userId).join('\n');
+        // Drop the finder input: it has done its job, and left in the URL every later navigation
+        // re-runs a scan over 1.5B rows.
+        tippedTo = '';
+        load();
+      }}
+    >
+      Load these {num(data.tippers.length)} into the list
+    </Button>
+  {:else if data.tippedTo}
+    <p class="mt-3 text-sm text-dark-2">No tippers match those filters.</p>
+  {/if}
+</section>
+
+<!-- Absence must not read as "this account is clean": an empty IP panel because ClickHouse is down
+     looks exactly like an account that shares nothing with anyone. -->
+{#if data.sourcesDown.length}
+  <div class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200" role="status">
+    Could not read {data.sourcesDown.join(' or ')} — those panels are empty because the source is
+    unavailable, not because there is nothing there. The list and the ban path below are unaffected.
+  </div>
+{/if}
+
+{#if form?.error}
+  <ErrorAlert class="mb-4" message={form.error} />
+{:else}
+  <!-- Success and warning render TOGETHER, not either/or. A partial run sets both, and testing the
+       warning first meant "180 banned" was never shown — only "20 could not be banned", on the action
+       where that line is the moderator's whole record of what happened. -->
+  {#if form?.success}
+    <div class="mb-4 rounded-md border border-green-500/30 bg-green-500/10 p-2 text-sm text-green-200" role="status">
+      {#if 'noted' in form && typeof form.noted === 'number'}
+        Noted {num(form.noted)} accounts.
+      {:else if 'banned' in form && typeof form.banned === 'number'}
+        Banned {num(form.banned)} accounts.
+      {/if}
+    </div>
+  {/if}
+  {#if form && 'warning' in form && form.warning}
+    <div class="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200" role="status">
+      {form.warning}
+    </div>
+  {/if}
+{/if}
+
+{#snippet statusBadge(status: "active" | "banned" | "deleted" | "gone")}
+  {#if status === 'banned'}<Badge variant="destructive">already banned</Badge>{/if}
+  {#if status === 'deleted'}<Badge variant="secondary">deleted</Badge>{/if}
+  {#if status === 'gone'}<Badge variant="secondary">no account</Badge>{/if}
+{/snippet}
+
+<!-- IP and domain expansion START a list, so they must render with no pasted ids at all. -->
+{#if data.candidates.length || data.unmatched.length || data.ipAccounts.accounts.length || data.domainAccounts.accounts.length}
+  <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
+    <section class="min-w-0 flex-1 rounded-xl border border-dark-4 bg-dark-6 p-5">
+      <h2 class="mb-1 text-sm font-semibold text-white">
+        {num(bannable.length)} bannable of {num(kept.length)} matched
+      </h2>
+      <p class="mb-3 text-xs text-dark-2">
+        Already-banned and deleted accounts are listed but will be skipped.
+        {#if data.unmatched.length}
+          <span class="text-amber-300">
+            {num(data.unmatched.length)} id(s) matched no account: {data.unmatched.slice(0, 10).join(', ')}
+          </span>
+        {/if}
+      </p>
+
+      <ul class="max-h-96 space-y-1 overflow-y-auto text-sm">
+        {#each kept as c (c.id)}
+          <li class="flex flex-wrap items-baseline gap-x-2">
+            <a href={userLookupUrl(c.id)} class={LINK_CLASS}>{c.username ?? `#${c.id}`}</a>
+            <code class="text-xs text-dark-2">#{c.id}</code>
+            <span class="text-xs text-dark-2">{c.email ?? '—'}</span>
+            {@render statusBadge(accountStatus(c))}
+            <button
+              type="button"
+              class="text-xs text-dark-2 hover:text-red-300"
+              title="Drop from this run"
+              aria-label="Drop {c.username ?? `#${c.id}`} from this run"
+              onclick={() => excluded.add(c.id)}
+            >
+              ✕
+            </button>
+          </li>
+        {/each}
+      </ul>
+
+      {#if excluded.size}
+        <p class="mt-2 text-xs text-amber-300">
+          {num(excluded.size)} dropped from this run.
+          <button type="button" class="underline" onclick={() => excluded.clear()}>Undo</button>
+        </p>
+      {/if}
+
+      <!-- Retool's textArea2: the filtered id list, selectable, so the set can be handed to the next
+           tool. Without it the only copies of this list are per-row links and a hidden input. -->
+      {#if bannable.length}
+        <details class="mt-3">
+          <summary class="cursor-pointer text-xs text-dark-2">
+            Copy the {num(bannable.length)} bannable IDs
+          </summary>
+          <Textarea
+            readonly
+            rows={4}
+            class="mt-2 font-mono text-xs"
+            value={bannable.map((c) => c.id).join('\n')}
+          />
+        </details>
+      {/if}
+
+      <!-- Retool's standalone "Add Notes". Annotating a cohort you have identified but not yet
+           decided on is a separate gesture from banning it — and it covers the already-banned rows
+           the ban loop skips. Every matched candidate, not just the bannable ones. -->
+      {#if data.candidates.length}
+        <form method="POST" action="?/addNotes" use:enhance={onSubmit.enhance} class="mt-4">
+          <input type="hidden" name="userIds" value={noteTargets.map((c) => c.id).join(',')} />
+          <div class="flex gap-2">
+            <Input
+              name="note"
+              placeholder="Note on {num(noteTargets.length)} account{noteTargets.length === 1 ? '' : 's'}"
+              class="min-w-48 flex-1"
+              required
+            />
+            <Button type="submit" variant="outline" disabled={onSubmit.submitting || noteTargets.length === 0}>
+              Add notes
+            </Button>
+          </div>
+          <label class="mt-2 flex items-center gap-2 text-xs text-dark-2">
+            <input type="checkbox" bind:checked={noteUnbannedOnly} />
+            Skip accounts that are already banned or deleted
+          </label>
+        </form>
+      {/if}
+
+      {#if data.canAct && bannable.length}
+        {#if !confirming}
+          <Button class="mt-4" variant="destructive" onclick={() => (confirming = true)}>
+            Ban {num(bannable.length)} accounts
+          </Button>
+        {:else}
+          <form method="POST" action="?/banAll" use:enhance={onSubmit.enhance} class="mt-4">
+            <input type="hidden" name="userIds" value={bannableIds} />
+            <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
+              <p class="mb-2 text-sm text-white">
+                Ban <strong>{num(bannable.length)}</strong> accounts? Each is banned individually, with
+                its own notification. The run stops after 5 consecutive failures.
+              </p>
+              <!-- The endpoint blocks media only for `SexualMinor` unless this is set, so without it a
+                   Nudify or Harassment ban leaves every image up. MODELS are not covered by this box:
+                   `banAll` sends no `removeModels`, and the endpoint treats absent as ON. -->
+              <label class="mb-2 flex items-center gap-2 text-xs text-dark-2">
+                <input type="checkbox" name="removeMedia" value="true" bind:checked={() => removeMedia, (v) => ((mediaTouched = true), (removeMedia = v))} />
+                Also remove their images
+              </label>
+              <label class="mb-2 flex items-center gap-2 text-xs text-dark-2">
+                <input type="checkbox" name="removeComments" value="true" bind:checked={() => removeComments, (v) => ((commentsTouched = true), (removeComments = v))} />
+                Also remove their comments
+              </label>
+              <div class="flex flex-wrap items-end gap-2">
+                <label class="flex flex-col gap-1 text-xs text-dark-2">
+                  Reason
+                  <Select.Root type="single" bind:value={() => reasonCode, pickReason}>
+                    <Select.Trigger class="w-56">{reasonCode || 'Select a reason'}</Select.Trigger>
+                    <Select.Content>
+                      {#each BAN_REASONS as r (r)}
+                        <Select.Item value={r}>{r}</Select.Item>
+                      {/each}
+                    </Select.Content>
+                  </Select.Root>
+                </label>
+                <input type="hidden" name="reasonCode" value={reasonCode} />
+                <p class="mb-2 w-full rounded border border-red-500/50 bg-red-500/15 p-2 text-xs text-white">
+                  <strong>Confirming unpublishes every model on all {num(bannable.length)} accounts</strong>
+                  — that happens on every bulk ban and there is no opt-out here.{#if removeMedia || removeComments}
+                    Their {[removeMedia ? 'images' : null, removeComments ? 'comments' : null]
+                      .filter(Boolean)
+                      .join(' and ')} go too; untick above to leave those up.{/if}
+                </p>
+                <!-- Retool had a second free-text box here for a per-account note. It wrote the same
+                     string to every account in the run, which is what `detailsInternal` beside it
+                     already does, and the mod team called it redundant. Notes on a cohort you have not
+                     decided on yet are the Add notes form above. -->
+                <Input name="detailsInternal" placeholder="Internal details (optional)" class="min-w-48 flex-1" />
+                <Button
+                  type="submit"
+                  variant="destructive"
+                  size="sm"
+                  disabled={onSubmit.submitting || !reasonCode}
+                >
+                  {onSubmit.submitting ? 'Banning…' : `Ban ${num(bannable.length)}`}
+                </Button>
+                <Button type="button" size="sm" variant="outline" onclick={() => (confirming = false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </form>
+        {/if}
+      {/if}
+    </section>
+
+    <section class="min-w-0 rounded-xl border border-dark-4 bg-dark-6 p-5 xl:w-96 xl:shrink-0">
+      <h2 class="mb-3 text-sm font-semibold text-white">What they have in common</h2>
+
+      <h3 class="text-xs tracking-wide text-dark-2 uppercase">Registration IPs</h3>
+      {#if data.registrationIps.length === 0}
+        <p class="mb-3 text-sm text-dark-2">None recorded.</p>
+      {:else}
+        <ul class="mb-3 space-y-0.5 text-sm">
+          {#each data.registrationIps as ip (ip.ip)}
+            <li class="flex justify-between gap-2">
+              <code class="text-dark-0">{ip.ip}</code>
+              <span class="tabular-nums text-dark-2">{num(ip.registrations)}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
+      <h3 class="text-xs tracking-wide text-dark-2 uppercase">Email domains</h3>
+      {#if data.domains.length === 0}
+        <p class="mb-3 text-sm text-dark-2">None.</p>
+      {:else}
+        <ul class="mb-3 space-y-0.5 text-sm">
+          {#each data.domains as d (d.domain)}
+            <li class="flex justify-between gap-2">
+              <span class="text-dark-0">{d.domain}</span>
+              <span class="tabular-nums text-dark-2">{num(d.accounts)}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
+      {#if data.ipAccounts.accounts.length}
+        <h3 class="text-xs tracking-wide text-dark-2 uppercase">
+          Accounts on those IPs ({ipRange})
+        </h3>
+        <p class="mb-1 text-xs text-dark-2">
+          Registration only, newest first. A carrier or office IP will list unrelated accounts —
+          confirm before adding.
+        </p>
+        <ul class="max-h-72 space-y-0.5 overflow-y-auto text-sm">
+          {#each data.ipAccounts.accounts as a (a.userId)}
+            <li class="flex flex-wrap items-baseline justify-between gap-x-2">
+              <a href={userLookupUrl(a.userId)} class={LINK_CLASS}>{a.username ?? `#${a.userId}`}</a>
+              <span class="flex items-baseline gap-2">
+                {@render statusBadge(a.status)}
+                <span class="text-xs text-dark-2">{dateTime(a.registeredAt)}</span>
+              </span>
+            </li>
+          {/each}
+        </ul>
+        <!-- This panel is where a list of one becomes a list of a ring, and the ids were reachable only
+             one row link at a time. -->
+        <div class="mt-2 flex flex-wrap items-center gap-2">
+          <Button size="xs" variant="outline" onclick={() => addToList(bannableIps)}>
+            Add {num(bannableIps.length)} to the list
+          </Button>
+          {#if bannableIps.length < data.ipAccounts.accounts.length}
+            <span class="text-xs text-dark-2">
+              {num(data.ipAccounts.accounts.length - bannableIps.length)} already banned, deleted or gone
+            </span>
+          {/if}
+        </div>
+        <!-- Already-banned rows are marked rather than removed, so working the list does not shrink it.
+             Without these the other 408 accounts on a reported IP were unreachable by any action. -->
+        {#if data.ipAccounts.total > data.ipAccounts.limit}
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={data.ipAccounts.offset === 0}
+              href={ipPageUrl(data.ipAccounts.offset - data.ipAccounts.limit)}
+            >
+              Previous
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={!hasMoreIps}
+              href={ipPageUrl(data.ipAccounts.offset + data.ipAccounts.limit)}
+            >
+              Next {num(Math.min(data.ipAccounts.limit, remainingIps))}
+            </Button>
+          </div>
+        {/if}
+        <details class="mt-2">
+          <summary class="cursor-pointer text-xs text-dark-2">
+            Copy the {num(bannableIps.length)} bannable IDs
+          </summary>
+          <Textarea
+            readonly
+            rows={4}
+            class="mt-2 max-h-40 overflow-y-auto font-mono text-xs"
+            value={bannableIps.join('\n')}
+          />
+        </details>
+      {/if}
+
+      {#if data.domainAccounts.accounts.length}
+        <h3 class="mt-3 text-xs tracking-wide text-dark-2 uppercase">
+          Accounts on those domains ({shownOf(data.domainAccounts)})
+        </h3>
+        <p class="mb-1 text-xs text-dark-2">
+          Not already banned or deleted, newest first. A mainstream provider will list unrelated
+          accounts — this is for disposable domains.
+          {#if data.domainAccounts.total > data.domainAccounts.accounts.length}
+            Showing the {num(data.domainAccounts.accounts.length)} most recent of
+            {num(data.domainAccounts.total)}.
+          {/if}
+        </p>
+        <ul class="max-h-72 space-y-0.5 overflow-y-auto text-sm">
+          {#each data.domainAccounts.accounts as a (a.id)}
+            <li class="flex flex-wrap items-baseline justify-between gap-x-2">
+              <a href={userLookupUrl(a.id)} class={LINK_CLASS}>{a.username ?? `#${a.id}`}</a>
+              <span class="text-xs text-dark-2">{a.email ?? '—'}</span>
+            </li>
+          {/each}
+        </ul>
+        <div class="mt-2 flex flex-wrap items-center gap-2">
+          <Button
+            size="xs"
+            variant="outline"
+            onclick={() => addToList(data.domainAccounts.accounts.map((a) => a.id))}
+          >
+            Add {num(data.domainAccounts.accounts.length)} to the list
+          </Button>
+        </div>
+        <details class="mt-2">
+          <summary class="cursor-pointer text-xs text-dark-2">Copy these IDs</summary>
+          <Textarea
+            readonly
+            rows={4}
+            class="mt-2 max-h-40 overflow-y-auto font-mono text-xs"
+            value={idList(data.domainAccounts.accounts)}
+          />
+        </details>
+      {/if}
+    </section>
+  </div>
+{/if}

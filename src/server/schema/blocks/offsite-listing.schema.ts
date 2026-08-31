@@ -2,8 +2,10 @@ import * as z from 'zod';
 
 import {
   MAX_EXTERNAL_URL_LENGTH,
+  MAX_REPOSITORY_URL_LENGTH,
   assertNoOnPlatformSurface,
   validateExternalUrl,
+  validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
 import {
@@ -117,6 +119,12 @@ export const submitExternalListingSchema = z
     // OPTIONAL homepage / Visit link. Validated for the https-only shape only when present.
     externalUrl: z.string().min(1).max(MAX_EXTERNAL_URL_LENGTH).optional(),
     tagline: z.string().max(OFFSITE_TAGLINE_MAX).optional(),
+    // OPTIONAL public SOURCE-REPOSITORY link ("this app is open source"). Bound loose
+    // here (length only) and validated for the https / host-allowlist / repo-root shape
+    // by the shared `validateRepositoryUrl` in the superRefine below — the SAME function
+    // the on-site manifest path uses, so the two store kinds cannot disagree about what
+    // a valid source link is. Omitted ⇒ no Source row on the detail page.
+    sourceRepoUrl: z.string().min(1).max(MAX_REPOSITORY_URL_LENGTH).optional(),
     description: z.string().max(OFFSITE_DESCRIPTION_MAX).optional(),
     // Validated against the shared taxonomy const so adding a category needs no
     // schema change (mirrors the read-path `listAppListingsSchema.category`).
@@ -137,6 +145,13 @@ export const submitExternalListingSchema = z
       const url = validateExternalUrl(val.externalUrl);
       if (!url.ok) {
         ctx.addIssue({ code: 'custom', message: url.error, path: ['externalUrl'] });
+      }
+    }
+    // sourceRepoUrl is OPTIONAL — validate the repo-root shape only when provided.
+    if (val.sourceRepoUrl != null) {
+      const repo = validateRepositoryUrl(val.sourceRepoUrl);
+      if (!repo.ok) {
+        ctx.addIssue({ code: 'custom', message: repo.error, path: ['sourceRepoUrl'] });
       }
     }
     const surface = assertNoOnPlatformSurface({
@@ -177,6 +192,15 @@ export const updateListingPatchSchema = z
     externalUrl: z.string().min(1).max(MAX_EXTERNAL_URL_LENGTH).optional(),
     name: z.string().min(1).max(OFFSITE_NAME_MAX).optional(),
     tagline: z.string().max(OFFSITE_TAGLINE_MAX).nullable().optional(),
+    // Public source-repository link. NULLABLE-optional, following this schema's
+    // established convention: OMITTED leaves it untouched, an explicit `null` CLEARS
+    // it. Re-validated (and normalised) by `buildListingPatchData` in the service —
+    // this bound is only a coarse request-size guard, exactly as for `externalUrl`.
+    //
+    // 🔴 A CHANGE TO THIS FIELD IS MATERIAL (see MATERIAL_PATCH_FIELDS): on an approved
+    // listing it routes through a shadow revision and re-enters moderator review,
+    // because it is an outbound link on a public store page.
+    sourceRepoUrl: z.string().min(1).max(MAX_REPOSITORY_URL_LENGTH).nullable().optional(),
     description: z.string().max(OFFSITE_DESCRIPTION_MAX).nullable().optional(),
     category: z.enum(MARKETPLACE_CATEGORIES).nullable().optional(),
     contentRating: z.enum(OFFSITE_CONTENT_RATINGS).optional(),
@@ -214,14 +238,28 @@ export type BeginListingRevisionInput = z.infer<typeof beginListingRevisionSchem
 
 /**
  * OWNER: resolve the caller's OWN listing by its backing `appBlockId`
- * (`AppListing.appBlockId` is `@unique`) — the entry read for the owner-facing
- * on-site listing-media page. Returns the `AppListing.id` (the target for
- * `beginListingRevision` + the asset procs). Owner-bound in the service
- * (NOT_OWNED→FORBIDDEN, NOT_FOUND when no listing row exists for the app).
+ * (`AppListing.appBlockId` is `@unique`) or by its public `slug`
+ * (`AppListing.slug` is `@unique` across BOTH kinds) — the entry read for the
+ * owner-facing listing-media page and for non-web clients. Returns the
+ * `AppListing.id` (the target for `beginListingRevision` + the asset procs).
+ * Owner-bound in the service (NOT_OWNED→FORBIDDEN, NOT_FOUND when no listing
+ * row exists for the app).
  */
-export const getMyListingForAppSchema = z.object({
-  appBlockId: z.string().min(1).max(64),
-});
+export const getMyListingForAppSchema = z
+  .object({
+    appBlockId: z.string().min(1).max(64).optional(),
+    // The slug arm resolves ANY top-level listing (civitai/civitai#3984): the W13
+    // pre-approval draft of a FIRST-version on-site app (no AppBlock yet), and an
+    // OFF-SITE listing, which in practice carries no AppBlock to be keyed by (0 rows
+    // of the `kind:'offsite'` + non-null `appBlockId` shape in production, measured
+    // 2026-08-11 — empirical, not structural; `appBlockId` is NOT a kind
+    // discriminator, see schema.full.prisma). `appBlockId` takes precedence when
+    // both are supplied.
+    slug: z.string().min(1).max(64).optional(),
+  })
+  .refine((v) => v.appBlockId != null || v.slug != null, {
+    message: 'either appBlockId or slug is required',
+  });
 export type GetMyListingForAppInput = z.infer<typeof getMyListingForAppSchema>;
 
 /**
@@ -301,22 +339,30 @@ export const listOffsiteRequestsSchema = listMySubmissionsSchema;
 export type ListOffsiteRequestsInput = z.infer<typeof listOffsiteRequestsSchema>;
 
 /**
- * AUTHOR: persist a Cloudflare-uploaded image into an `Image` row and return its
- * numeric id, so the submit form's asset step can then attach it to the draft
- * listing via the P1 asset-CRUD procs (`setIcon`/`setCover`/`addScreenshot`,
- * which take a numeric `imageId`). The `url` is the CF upload key (a uuid); the
- * width/height/mime/size come from the client media-preprocess pass and are
- * re-validated for the target asset kind by the P1 attach proc — this proc only
- * MATERIALISES the row (and kicks off ingestion/scan). No listing binding here;
- * ownership is bound to the caller (`userId` from ctx), and the attach proc's
- * owner check gates which listing it can be attached to.
+ * AUTHOR: persist an uploaded image into an `Image` row and return its numeric
+ * id, so the submit form's asset step can then attach it to the draft listing via
+ * the P1 asset-CRUD procs (`setIcon`/`setCover`/`addScreenshot`, which take a
+ * numeric `imageId`). The `url` is the upload key (a uuid) minted by
+ * `/api/v1/image-upload`. This proc only MATERIALISES the row (and kicks off
+ * ingestion/scan); the per-kind rules are applied by the P1 attach proc. No
+ * listing binding here; ownership is bound to the caller (`userId` from ctx), and
+ * the attach proc's owner check gates which listing it can be attached to.
+ *
+ * 🔴 `width` / `height` / `mimeType` / `sizeBytes` are NOT persisted. The server
+ * reads the uploaded object back and measures all four, because the attach proc's
+ * geometry/size/MIME bounds are expressed over exactly those columns — trusting
+ * the uploader for them would make every one of those bounds self-reported. The
+ * guarantee is "measured from real bytes at persist time", NOT "still true of the
+ * object": the presigned PUT stays usable for its full expiry, so the key can be
+ * overwritten afterwards. These fields stay in the contract as optional so
+ * released clients that still send them keep working.
  */
 export const persistListingAssetImageSchema = z.object({
-  // The CF upload key returned by `useCFImageUpload` — imageSchema requires a uuid.
+  // The upload key returned by `/api/v1/image-upload` — imageSchema requires a uuid.
   url: z.string().uuid(),
   name: z.string().max(255).nullish(),
-  width: z.number().int().positive(),
-  height: z.number().int().positive(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
   mimeType: z.string().max(120).optional(),
   sizeBytes: z.number().int().nonnegative().optional(),
 });

@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as TrpcModule from '~/utils/trpc';
 
 /**
  * /apps/review reports queue — the `ReportActionModal` now routes its reason field +
@@ -30,7 +32,15 @@ const mocks = vi.hoisted(() => ({
   errorMode: false,
 }));
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+// 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
+// no-wholesale-module-mock). A hand-written factory silently breaks the day the
+// module graph reaches an export it omits — measured: once the listing detail
+// began importing `SmartCreatorCard` (→ ChatUserButton → useChatEnabled), a
+// factory listing only `useFeatureFlags` made this whole FILE fail to import with
+// `does not provide an export named 'useFeatureFlagsReady'`, reported as 0 tests
+// collected rather than as a failure.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
 
@@ -39,7 +49,14 @@ vi.mock('~/utils/notifications', () => ({
   showErrorNotification: vi.fn(),
 }));
 
-vi.mock('~/utils/trpc', () => {
+// Only the `trpc` client itself is overridden — the rest of `~/utils/trpc`'s real exports
+// (setTrpcBatchingEnabled, trpcVanilla, queryClient, ...) are kept via importOriginal so any
+// transitively-imported consumer elsewhere in the tree (e.g. session/provider chains) still
+// gets a real binding instead of the whack-a-mole of hand-naming every export they touch.
+// Without the spread, a LATER PR adding an export to `~/utils/trpc` breaks this file's ESM
+// link ("does not provide an export named X") and the whole file collects 0 tests.
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof TrpcModule>();
   const mutation =
     (name: string) =>
     (opts?: { onSuccess?: () => void; onError?: (e: { message: string }) => void }) => ({
@@ -52,6 +69,7 @@ vi.mock('~/utils/trpc', () => {
       isPending: false,
     });
   return {
+    ...actual,
     trpc: {
       useUtils: () => ({
         appListings: { listListingReports: { invalidate: mocks.invalidate } },

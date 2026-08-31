@@ -1,0 +1,221 @@
+/**
+ * App Store Listings — the DETAILS ACCORDION row model (pure, React-free).
+ *
+ * The listing detail's right rail carries the model detail page's "Details" accordion:
+ * a `.detailsPanel` of label/value rows (`ModelVersionDetails.module.scss`'s
+ * `.detailRow` / `.detailLabel`). This module decides WHICH rows exist, in WHAT order,
+ * and with WHAT values — so the correctness gate lives in the blocking node `unit`
+ * project rather than in the report-only browser suite.
+ *
+ * Two rules the renderer must not re-implement:
+ *   1. A row whose underlying field is null/absent is OMITTED. A "Rating: —" row is
+ *      noise; an absent row is the honest signal.
+ *   2. In `preview` posture (the moderator listing-media review, rendering an
+ *      UNAPPROVED shadow listing) the REVIEWS, INSTALLS and UPDATED rows are omitted.
+ *      One rule, three fields — every one of them is a number or a date the posture
+ *      cannot supply honestly:
+ *        - REVIEWS: a shadow listing has no review rows at all, so its rollup is
+ *          structurally 0/0. "No reviews yet" there reads as a fact about the APP
+ *          rather than about the POSTURE.
+ *        - INSTALLS: identical reasoning, and it was the inconsistency this rule was
+ *          widened to close. `buildListingStatChips` already returns NO chips in
+ *          preview precisely so a zero cannot be read as a measurement — and then
+ *          `Installs: 0` rendered here anyway, in the rail, one column over. An
+ *          un-approved listing has never been installable by anyone.
+ *        - UPDATED: the date a preview carries is NOT `app_listings.updated_at`.
+ *          `buildListingDetailPreview` has no such field to read and substitutes the
+ *          publish request's SUBMISSION time, so the row labelled "Updated" showed a
+ *          moderator the moment the app was submitted. `AppListingDetailBody` already
+ *          omits its header META LINE in preview for exactly this reason; the rail row
+ *          rendered the same value under the same label two inches lower. The review
+ *          surface prints the submission time itself, twice, correctly labelled.
+ *      🔴 THE RULE IS "a number or date the posture cannot supply honestly", NOT "every
+ *      row a preview does not need". The SOURCE row is deliberately NOT in that list: a
+ *      shadow carries `sourceRepoUrl` verbatim and approving PUBLISHES it, so hiding it
+ *      from the moderator would be hiding the very thing under review.
+ *
+ * The REVIEWS row's word label comes from the SHARED ladder (`~/utils/rating-label`),
+ * the same one the model version page renders — not a second copy with its own
+ * thresholds. See that module's header.
+ */
+
+import {
+  LISTING_KIND_APP_LABELS,
+  STANDALONE_KIND_LABEL,
+} from '~/components/Apps/listingKindLabels';
+import { getRatingLabel } from '~/utils/rating-label';
+import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
+import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
+import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
+
+/** A single label/value row of the Details panel. */
+export type ListingDetailRow = {
+  /** Stable key — also the row's `data-listing-detail-row` attribute in the DOM. */
+  key: 'kind' | 'category' | 'rating' | 'reviews' | 'installs' | 'updated' | 'source';
+  /** Dimmed left-hand label. */
+  label: string;
+  /** Right-hand display value. */
+  value: string;
+  /**
+   * When set, the row's value renders as an ANCHOR to this URL rather than as plain
+   * text. Only the `source` row sets it.
+   *
+   * 🔴 THE RENDERER MUST EMIT `target="_blank"` + `rel="noopener noreferrer"` for it.
+   * `noopener` is the load-bearing half — without it the opened page gets a live
+   * `window.opener` handle to this tab and can navigate it anywhere (reverse
+   * tabnabbing, i.e. replacing the store page the user will come back to with a
+   * look-alike). `noreferrer` additionally withholds the referrer. The value here is
+   * already host-allowlisted and normalised server-side by `validateRepositoryUrl`, so
+   * this is defence in depth on a link we already constrain, not the only control.
+   */
+  href?: string;
+  /**
+   * Mantine colour token for the value, when the value carries a verdict. Only the
+   * `reviews` row sets it (the rating ladder's colour); everything else renders in the
+   * default text colour.
+   */
+  color?: string;
+};
+
+/**
+ * Human label for the store kind. Mirrors `getListingBadge`'s wording — and now
+ * actually does: off-site used to fork here into "Connect app" / "Off-site link"
+ * while the badge said "Connect app" / "Off-site", so the two surfaces disagreed
+ * about the SAME listing. One kind, one word, the same word the store's kind
+ * filter uses.
+ */
+function kindLabel(detail: Pick<ListingDetail, 'kindData'>): string {
+  return detail.kindData.kind === 'onsite' ? LISTING_KIND_APP_LABELS.onsite : STANDALONE_KIND_LABEL;
+}
+
+/**
+ * Build the ordered Details rows for a listing.
+ *
+ * @param opts.preview read-only moderator posture — omits the reviews, installs and
+ *   updated rows (rule 2).
+ * @param opts.formatDate injected so this module stays pure and the test can pin the
+ *   ORDER and OMISSION rules without depending on dayjs' locale or the host timezone.
+ */
+export function buildListingDetailRows(
+  detail: Pick<
+    ListingDetail,
+    | 'kindData'
+    | 'category'
+    | 'contentRating'
+    | 'recommend'
+    | 'reviewCount'
+    | 'installCount'
+    | 'updatedAt'
+  > &
+    Partial<Pick<ListingDetail, 'sourceRepoUrl'>>,
+  opts: { preview?: boolean; formatDate: (iso: string) => string }
+): ListingDetailRow[] {
+  const rows: ListingDetailRow[] = [];
+
+  rows.push({ key: 'kind', label: 'Kind', value: kindLabel(detail) });
+
+  // 🔴 BOTH VALUES GO THROUGH THEIR DISPLAY-LABEL MAP. These two rows shipped
+  // rendering the RAW stored enum — a tester read "utility" and "pg13" in the store
+  // preview — while the card chip, the filter buttons and both mod selectors were
+  // already mapping the same column one component over. Each helper keeps the raw
+  // value as its fallback, so an unknown/legacy rating or a category added after
+  // this client shipped degrades to the stored string rather than to a blank row.
+  if (detail.category) {
+    rows.push({
+      key: 'category',
+      label: 'Category',
+      value: marketplaceCategoryLabel(detail.category),
+    });
+  }
+  if (detail.contentRating) {
+    rows.push({
+      key: 'rating',
+      label: 'Rating',
+      value: offsiteContentRatingLabel(detail.contentRating),
+    });
+  }
+
+  // SOURCE — the app's public source repository, when the author declared one.
+  //
+  // 🔴 PRESENT IN `preview`, unlike reviews / installs / updated, and that is rule 2
+  // applied rather than ignored. Rule 2 omits a row when the PREVIEW POSTURE cannot
+  // supply the value honestly: a shadow listing structurally has no reviews and no
+  // installs, and the date a preview carries is the submission time wearing an
+  // "Updated" label. None of that is true here — the source link is a scalar the
+  // shadow carries verbatim and the one `applyApprovedRevision` will publish, so
+  // showing it to the moderator is the entire point of a review preview.
+  //
+  // 🔴 RUNTIME-GUARDED on the type, like `installCount`/`updatedAt` above and for the
+  // same MEASURED reason: not every producer of a `ListingDetail`-shaped object goes
+  // through `projectListingDetail` (the moderator combined-review surface builds one
+  // through a cast), so a required TYPE is not a runtime guarantee. Absent, a
+  // non-string, or empty ⇒ omit the row entirely — never a "Source: —".
+  if (typeof detail.sourceRepoUrl === 'string' && detail.sourceRepoUrl.length > 0) {
+    rows.push({
+      key: 'source',
+      label: 'Source',
+      // Displayed WITHOUT the scheme (`github.com/owner/repo`): the rail is narrow, and
+      // every accepted value is https by construction, so the prefix is eight columns
+      // of no information. The `href` keeps the full absolute URL — stripping it there
+      // would produce a relative link to a path on civitai.com.
+      value: detail.sourceRepoUrl.replace(/^https:\/\//, ''),
+      href: detail.sourceRepoUrl,
+    });
+  }
+
+  if (!opts.preview) {
+    const { recommendPct } = detail.recommend;
+    if (recommendPct == null || detail.reviewCount === 0) {
+      // Matches `getRecommendLabel`'s zero case. 🔴 The ladder is NOT called here: with
+      // zero reviews `positiveRating` is 0, which the ladder scores `Mixed` — a verdict
+      // about an app nobody has reviewed.
+      rows.push({ key: 'reviews', label: 'Reviews', value: 'No reviews yet' });
+    } else {
+      const { label, color } = getRatingLabel({
+        positiveRating: recommendPct,
+        totalCount: detail.reviewCount,
+      });
+      rows.push({
+        key: 'reviews',
+        label: 'Reviews',
+        value: `${label} (${detail.reviewCount.toLocaleString()})`,
+        color: String(color),
+      });
+    }
+  }
+
+  // 🔴 GUARDED AT RUNTIME EVEN THOUGH BOTH FIELDS ARE DECLARED REQUIRED, and this is a
+  // MEASURED defect rather than defensive habit — the same one
+  // `ListingCollaboratorByline` already carries a note about. Not every producer of a
+  // `ListingDetail`-shaped object goes through `projectListingDetail`: the moderator
+  // combined-review surface builds one directly (through a cast), and the moment these
+  // two fields were added, `undefined.toLocaleString()` threw inside this panel and
+  // took the WHOLE review modal down with it — a crashing child unmounts its ancestors,
+  // so the mod saw a blank `<body>`. Caught by the pre-existing
+  // `CombinedReviewModal.browser.test.tsx`.
+  //
+  // A details row is DECORATION. It must never be able to blank the page it decorates,
+  // and a required TYPE is not a runtime guarantee about a value that crossed a cast.
+  // An absent field therefore takes the same path as a null `category`: omit the row.
+  //
+  // 🔴 …AND OMITTED WHOLESALE IN `preview` (rule 2). A shadow listing has never been
+  // installable, so the zero is a fact about the POSTURE, not about the app — the same
+  // reasoning that makes `buildListingStatChips` return no chips at all in preview.
+  if (!opts.preview && typeof detail.installCount === 'number') {
+    rows.push({
+      key: 'installs',
+      label: 'Installs',
+      value: detail.installCount.toLocaleString(),
+    });
+  }
+
+  // 🔴 OMITTED IN `preview` (rule 2): a preview's `updatedAt` is not the listing row's
+  // `updated_at` — the fallback builder substitutes the publish request's submission
+  // time — so this row labelled a submission date "Updated". The body already omits its
+  // header meta line in preview for the same reason.
+  if (!opts.preview && detail.updatedAt) {
+    rows.push({ key: 'updated', label: 'Updated', value: opts.formatDate(detail.updatedAt) });
+  }
+
+  return rows;
+}

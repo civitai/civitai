@@ -67,7 +67,13 @@ export function AppListingComments({
             <Stack gap={0}>
               <Group justify="space-between">
                 <Group gap="md">
-                  <Title order={4}>Discussion</Title>
+                  {/* 🔴 `order={2}`, matching `ModelDiscussion`'s heading on the model
+                      detail page — the surface the listing detail's layout is ported
+                      from. The model page pairs it with an inline outline "Add Comment"
+                      button because its composer is behind a routed dialog; this thread
+                      renders `<CreateComment />` INLINE a few lines below, so a button
+                      here would be a second affordance for a form already on screen. */}
+                  <Title order={2}>Discussion</Title>
                   {hiddenCount > 0 && !isLoading && (
                     <Button
                       variant="subtle"

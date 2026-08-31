@@ -1,5 +1,8 @@
+import { BuzzApiError } from '@civitai/buzz';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // Verifies chargeEntryFees' two-leg (house + pool) charging and its NO-REFUND partial-failure
 // contract: the buzz ledger keeps a refunded externalTransactionId occupied and exposes no
@@ -13,30 +16,20 @@ const {
   mockGetTransactionByExternalId,
   mockRefundMultiAccountTransaction,
   mockRefundTransaction,
-  mockChallengeUpdate,
-  mockChallengeFindUnique,
-  mockCollectionItemCount,
-  mockLogToAxiom,
+  
 } = vi.hoisted(() => ({
   mockCreateBuzzTransaction: vi.fn(),
   mockCreateBuzzTransactionMany: vi.fn(),
   mockGetTransactionByExternalId: vi.fn(),
   mockRefundMultiAccountTransaction: vi.fn().mockResolvedValue({ refundedTransactions: [] }),
   mockRefundTransaction: vi.fn(),
-  mockChallengeUpdate: vi.fn(),
-  mockChallengeFindUnique: vi.fn(),
-  mockCollectionItemCount: vi.fn(),
-  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
+  
 }));
+const mockChallengeFindUnique = dbMock.dbRead.challenge.findUnique;
+const mockCollectionItemCount = dbMock.dbRead.collectionItem.count;
+const mockChallengeUpdate = dbMock.dbWrite.challenge.update;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    challenge: { findUnique: mockChallengeFindUnique },
-    collectionItem: { count: mockCollectionItemCount },
-  },
-  dbWrite: { challenge: { update: mockChallengeUpdate } },
-}));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mockCreateBuzzTransaction,
   createBuzzTransactionMany: mockCreateBuzzTransactionMany,
@@ -329,6 +322,101 @@ describe('buildWinnerPayoutTransactions', () => {
     });
     expect(tx.toAccountType).toBe('yellow');
   });
+
+  // The choke point's own dedupe is a no-op while both callers dedupe first, so nothing else in the
+  // suite reaches it. Without these two it could be deleted with every test still green — and it
+  // guards a batch of duplicate transaction ids being handed to an external ledger whose
+  // within-batch behaviour we cannot observe.
+  it('never emits the same transaction id twice, even if a caller passes a duplicated creator', () => {
+    const txs = buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'yellow',
+      // One creator named at two places — the shape an un-deduped caller would produce.
+      winners: [
+        { userId: 11, position: 1, prize: 5000 },
+        { userId: 11, position: 2, prize: 2500 },
+        { userId: 22, position: 3, prize: 1000 },
+      ],
+    });
+
+    const ids = txs.map((tx) => tx.externalTransactionId);
+    expect(new Set(ids).size).toBe(ids.length);
+    // The better place survives: dropping the first would silently under-pay.
+    expect(ids).toEqual([
+      'challenge-winner-prize-7-11-place-1',
+      'challenge-winner-prize-7-22-place-3',
+    ]);
+  });
+
+  // `origin: chokepoint` rather than `source`: normSource folds enum drift AND a caller's own null
+  // source into `unknown`, so source alone cannot identify a choke-point drop.
+  const readChokepointDrops = async () => {
+    const client = (await import('prom-client')).default;
+    const metric = client.register.getSingleMetric(
+      'civitai_app_challenge_winner_duplicate_pick_total'
+    ) as unknown as {
+      get: () => Promise<{ values: Array<{ value: number; labels: Record<string, string> }> }>;
+    } | null;
+    if (!metric) return undefined;
+    const data = await metric.get();
+    return data.values.find((v) => v.labels.origin === 'chokepoint')?.value;
+  };
+
+  it('records the drop, so money vanishing here can never be silent', async () => {
+    const before = (await readChokepointDrops()) ?? 0;
+
+    buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'yellow',
+      winners: [
+        { userId: 11, position: 1, prize: 5000 },
+        { userId: 11, position: 2, prize: 2500 },
+      ],
+    });
+
+    expect(await readChokepointDrops()).toBe(before + 1);
+  });
+
+  // The counter is documented as sitting flat at zero and is an alert trigger, so proving it fires
+  // is only half the contract — a version that increments on every payout would pass the test above
+  // and page continuously.
+  it('stays silent on a clean pick — the counter cannot drift up on normal payouts', async () => {
+    const before = (await readChokepointDrops()) ?? 0;
+
+    buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'yellow',
+      winners: [
+        { userId: 11, position: 1, prize: 5000 },
+        { userId: 22, position: 2, prize: 2500 },
+        { userId: 33, position: 3, prize: 1000 },
+      ],
+    });
+
+    expect((await readChokepointDrops()) ?? 0).toBe(before);
+  });
+
+  // Records PLACEMENTS dropped, not "a duplicate happened". With a single-duplicate fixture only,
+  // a hardcoded 1 would pass — and this counter is the sole record of how much money vanished.
+  it('records how many placements were dropped, not merely that some were', async () => {
+    const before = (await readChokepointDrops()) ?? 0;
+
+    buildWinnerPayoutTransactions({
+      challengeId: 7,
+      title: 'Neon Cats',
+      buzzType: 'yellow',
+      winners: [
+        { userId: 11, position: 1, prize: 5000 },
+        { userId: 11, position: 2, prize: 2500 },
+        { userId: 11, position: 3, prize: 1000 },
+      ],
+    });
+
+    expect(await readChokepointDrops()).toBe(before + 2);
+  });
 });
 
 describe('refundUserChallengeFunds — void refunds pool legs only', () => {
@@ -380,6 +468,46 @@ describe('refundUserChallengeFunds — void refunds pool legs only', () => {
     );
 
     await expect(refundUserChallengeFunds(CHALLENGE_ID)).resolves.toEqual({ refundedEntries: 0 });
+  });
+
+  // 409 (→ BAD_REQUEST) is what the buzz service returns for a prefix whose transactions were
+  // ALREADY reversed — a refunded externalTransactionId stays occupied in the ledger. A challenge
+  // voided first and deleted afterwards hits this on the delete, and treating it as a failure
+  // aborted the delete and left the challenge undeletable forever.
+  it('tolerates the buzz conflict when a prefix was already refunded', async () => {
+    mockChallengeFindUnique.mockResolvedValue({
+      source: ChallengeSource.User,
+      basePrizePool: 500,
+      createdById: USER_ID,
+      entryFee: ENTRY_FEE,
+    });
+    mockRefundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({
+        code: 'BAD_REQUEST',
+        message: 'There is a conflict with the transaction',
+        cause: new BuzzApiError(409, 'Conflict'),
+      })
+    );
+
+    await expect(refundUserChallengeFunds(CHALLENGE_ID)).resolves.toEqual({ refundedEntries: 0 });
+  });
+
+  // Tolerance is keyed to the buzz status, not to BAD_REQUEST — a bad request from anywhere else
+  // is still a real failure.
+  it('rethrows a BAD_REQUEST that did not come from the buzz service', async () => {
+    mockChallengeFindUnique.mockResolvedValue({
+      source: ChallengeSource.User,
+      basePrizePool: 0,
+      createdById: USER_ID,
+      entryFee: ENTRY_FEE,
+    });
+    mockRefundMultiAccountTransaction.mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'There is a conflict with the transaction' })
+    );
+
+    await expect(refundUserChallengeFunds(CHALLENGE_ID)).rejects.toThrow(
+      'There is a conflict with the transaction'
+    );
   });
 
   // A non-404 buzz failure is a real error and must still propagate.

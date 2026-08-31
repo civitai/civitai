@@ -45,8 +45,7 @@ vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { $query: vi.fn(() => Promise.resolve([])) },
 }));
 
-vi.mock('~/server/db/client', () => ({ dbWrite: {} }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbWrite: {} }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {},  pgDbWrite: {} }));
 
 // Stub getJobDate so the processor never touches a real timestamp store. Return
 // a far-past date so `shouldUpdate` / `shouldUpdateRank` is true — the flag is
@@ -67,6 +66,7 @@ vi.mock('~/server/redis/queues', () => ({
 }));
 
 import { createMetricProcessor } from '~/server/metrics/base.metrics';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const jobContext = {
   on: vi.fn(),

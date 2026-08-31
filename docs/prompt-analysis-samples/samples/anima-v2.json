@@ -1,0 +1,11 @@
+[
+  {
+    "prompt": "masterpiece, best quality, newest, safe, 1girl, solo, @nnn yryr, silver hair, red eyes, school uniform, classroom, afternoon light through blinds, sitting at desk, chin resting on hand",
+    "negativePrompt": "worst quality, low quality, jpeg artifacts",
+    "assistantResponse": "{\"issues\":[{\"description\":\"The artist tag sits ahead of the character-count tag; this model's ordering puts count and character before the artist tag.\",\"severity\":\"info\"}],\"recommendations\":[\"Move '1girl, solo' ahead of '@nnn yryr' so the ordering runs quality, count, character, artist, then general tags.\",\"Name the blinds' shadow falling across her face, since 'afternoon light through blinds' implies a pattern that will otherwise render flat.\"],\"enhancedPrompt\":\"masterpiece, best quality, newest, safe, 1girl, solo, @nnn yryr, silver hair, red eyes, school uniform, classroom, afternoon light through blinds, striped shadow across her face, sitting at desk, chin resting on hand\",\"enhancedNegativePrompt\":\"worst quality, low quality, jpeg artifacts\"}"
+  },
+  {
+    "prompt": "1girl, solo, nnn yryr, white_hair, fox_ears, kimono, holding fan, cherry blossoms",
+    "assistantResponse": "{\"issues\":[{\"description\":\"The artist tag is missing the '@' prefix, which this model requires for the artist to take effect.\",\"severity\":\"error\"},{\"description\":\"Several tags use underscores rather than spaces.\",\"severity\":\"warning\"}],\"recommendations\":[\"Prefix the artist tag with '@' — '@nnn yryr' — the artist effect is very weak without it.\",\"Rewrite the underscored tags with spaces: white hair, fox ears.\"],\"enhancedPrompt\":\"1girl, solo, @nnn yryr, white hair, fox ears, kimono, holding fan, cherry blossoms\",\"enhancedNegativePrompt\":\"\"}"
+  }
+]

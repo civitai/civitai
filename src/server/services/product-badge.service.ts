@@ -10,8 +10,9 @@ import type {
   UpsertProductBadgeInput,
 } from '~/server/schema/product-badge.schema';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { queueCosmeticPerceptualHash } from '~/server/services/cosmetic-phash.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { getImageUploadBackend } from '~/utils/s3-utils';
 import { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 
@@ -262,6 +263,9 @@ export const upsertProductBadge = async (input: UpsertProductBadgeInput) => {
       },
     });
 
+    if (!isUnchangedUrl) {
+      queueCosmeticPerceptualHash({ id: updated.id, url: resolvedBadgeUrl });
+    }
     results.push(updated);
   } else {
     // Create one cosmetic per product
@@ -279,6 +283,7 @@ export const upsertProductBadge = async (input: UpsertProductBadgeInput) => {
         },
       });
 
+      queueCosmeticPerceptualHash({ id: cosmetic.id, url: resolvedBadgeUrl });
       results.push(cosmetic);
     }
   }

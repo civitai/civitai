@@ -61,6 +61,7 @@ export enum PostSort {
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
   Newest = 'Newest',
+  Oldest = 'Oldest',
 }
 
 export enum ImageType {
@@ -119,6 +120,19 @@ export enum CollectionSort {
   Newest = 'Newest',
 }
 
+// Order of any cosmetic shop grid — the official /shop sections, a creator's
+// storefront, and the community hub all offer the same list. "Newest" is
+// approval order, not submission order: an item stuck in review for a week
+// would otherwise publish already buried.
+export enum CosmeticShopSort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
+  PriceLowToHigh = 'Price: Low to High',
+  PriceHighToLow = 'Price: High to Low',
+  MostPopular = 'Most Popular',
+  Name = 'Name (A-Z)',
+}
+
 export enum SignalMessages {
   BuzzUpdate = 'buzz:update',
   ImageGenStatusUpdate = 'image-gen:status-update',
@@ -127,6 +141,10 @@ export enum SignalMessages {
   ChatNewMessage = 'chat:new-message',
   ChatNewRoom = 'chat:new-room',
   ChatTypingStatus = 'chat:typing-status',
+  ChatMessageDeleted = 'chat:message-deleted',
+  ChatMessageUpdated = 'chat:message-updated',
+  ChatRoomUpdated = 'chat:room-updated',
+  ChatMembersUpdated = 'chat:members-updated',
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   WorkflowUpdate = 'orchestrator:workflow-update',
@@ -153,6 +171,7 @@ export enum SignalMessages {
   ReferralClawback = 'referral:clawback',
   ReferralTokenExpiringSoon = 'referral:token-expiring-soon',
   ScannerPolicyTestProgress = 'scanner-policy:test-progress',
+  ContestScoreRunUpdate = 'contest-score:run-update',
 }
 
 export enum BountySort {
@@ -301,7 +320,9 @@ export enum EntityAccessPermission {
 // domain now). Re-exported here so the ~90 existing `~/server/common/enums` importers are unchanged and
 // there is ONE definition shared with the package — no enum-vs-union mismatch across the seam.
 // nb: when updating the values, similar updates must be made to the notification DB.
-export { NotificationCategory } from '@civitai/notifications';
+// Deep path, not the package barrel: the barrel re-exports `./client`, an HTTP client for the
+// internal notifications service, and this module has 56 client-side importers.
+export { NotificationCategory } from '@civitai/notifications/constants';
 
 export enum BanReasonCode {
   SexualMinor = 'SexualMinor',
@@ -312,6 +333,8 @@ export enum BanReasonCode {
   Scat = 'Scat',
   Nudify = 'Nudify',
   Harassment = 'Harassment',
+  SpamBot = 'SpamBot',
+  BotAccount = 'BotAccount',
   LeaderboardCheating = 'LeaderboardCheating',
   BuzzCheating = 'BuzzCheating',
   RRDViolation = 'RRDViolation',
@@ -325,13 +348,24 @@ export enum StripeConnectStatus {
   Rejected = 'Rejected',
 }
 
+// Tipalti's own spelling. These ARE the strings in
+// UserPaymentConfiguration.tipaltiAccountStatus, both for rows written before the webhook
+// validated anything and for the values `Tipalti.payeeStatusSchema` parses incoming ones against —
+// so normalising their casing here silently breaks every comparison. INTERNAL_VALUE is Tipalti's
+// sentinel for a status this API version does not expose.
 export enum TipaltiStatus {
   PendingOnboarding = 'PendingOnboarding',
-  Active = 'ACTIVE',
-  Suspended = 'SUSPENDED',
-  Blocked = 'BLOCKED',
-  BlockedByTipalti = 'BLOCKED_BY_TIPALTI',
+  Active = 'Active',
+  Suspended = 'Suspended',
+  Blocked = 'Blocked',
+  BlockedByProvider = 'BlockedByProvider',
   InternalValue = 'INTERNAL_VALUE',
+}
+
+const blockedTipaltiStatuses = [TipaltiStatus.Blocked, TipaltiStatus.BlockedByProvider] as const;
+
+export function isBlockedTipaltiStatus(status: string | null | undefined) {
+  return blockedTipaltiStatuses.some((s) => s === status);
 }
 
 export enum OrchPriorityTypes {
@@ -361,6 +395,10 @@ export enum BlocklistType {
   // false-flag `needsReview='minor'`. Edited by moderators at /moderator/blocklists.
   PromptBenignPhrase = 'PromptBenignPhrase',
   NegativeBenignPhrase = 'NegativeBenignPhrase',
+  // Single words that innocently CONTAIN a profanity token ("spreadsheet" holds
+  // "spread"). Suppresses a substring match from the profanity filter rather than
+  // being blanked from the text — different matcher to the two phrase lists above.
+  ProfanityBenignWord = 'ProfanityBenignWord',
 }
 
 export enum ToolSort {
@@ -384,6 +422,7 @@ export enum SignalTopic {
   NewOrderPlayer = 'new-order-player', // with :playerId
   NewOrderQueue = 'new-order-queue', // with :queueId
   Metric = 'metrics', // with :entityType:entityId
+  ContestScore = 'contest-score', // with :collectionId
 }
 
 export enum NewOrderImageRatingStatus {
@@ -413,18 +452,7 @@ export enum NewOrderSignalActions {
 
 export enum ExternalModerationType {
   Clavata = 'Clavata',
-}
-
-export enum ModReviewType {
-  Minor = 'minor',
-  POI = 'poi',
-  Reported = 'reported',
-  CSAM = 'csam',
-  BlockedTags = 'tag',
-  NewUsers = 'newUser',
-  Appeals = 'appeal',
-  RuleViolations = 'modRule',
-  RemixSource = 'remixSource',
+  MessagePattern = 'MessagePattern',
 }
 
 export enum MarketplacePaymentMethod {

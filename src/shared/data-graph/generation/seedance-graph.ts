@@ -8,9 +8,10 @@
  * - v2: Standard quality video generation
  * - v2-fast: Faster generation with lower cost
  * - v2-mini: Smaller/cheaper variant (480p/720p only)
+ * - v2.5: Latest generation, up to 30s clips (480p/720p only)
  *
  * Supports txt2vid and img2vid workflows.
- * Features: aspect ratio, duration (4-15s), resolution (480p/720p),
+ * Features: aspect ratio, duration, resolution (480p/720p),
  * generateAudio toggle, seed, and images (for I2V).
  */
 
@@ -43,6 +44,7 @@ export const seedanceVersionIds = {
   v2: 2864671,
   'v2-fast': 2868300,
   'v2-mini': 3069790,
+  'v2.5': 3207504,
 } as const;
 
 /** Options for seedance version selector */
@@ -50,6 +52,7 @@ const seedanceVersionOptions = [
   { label: 'v2', value: seedanceVersionIds.v2 },
   { label: 'v2 fast', value: seedanceVersionIds['v2-fast'] },
   { label: 'v2 mini', value: seedanceVersionIds['v2-mini'] },
+  { label: 'v2.5', value: seedanceVersionIds['v2.5'] },
 ];
 
 // =============================================================================
@@ -74,7 +77,7 @@ const seedanceResolutions = [
   { label: '720p', value: '720p' },
 ] as const;
 
-// v2-fast does not support 1080p
+// v2 is the only model that supports 1080p
 const seedanceResolutionsV2 = [
   { label: '480p', value: '480p' },
   { label: '720p', value: '720p' },
@@ -106,7 +109,7 @@ export const seedanceGraph = new DataGraph<{ ecosystem: string; workflow: string
     () =>
       createCheckpointGraph({
         versions: { options: seedanceVersionOptions },
-        defaultModelId: seedanceVersionIds.v2,
+        defaultModelId: seedanceVersionIds['v2-mini'],
       }),
     []
   )
@@ -129,7 +132,16 @@ export const seedanceGraph = new DataGraph<{ ecosystem: string; workflow: string
       }),
     ['resolution']
   )
-  .node('duration', sliderNode({ min: 4, max: 15, defaultValue: 5 }))
+  .node(
+    'duration',
+    (ctx) =>
+      sliderNode({
+        min: 4,
+        max: ctx.model?.id === seedanceVersionIds['v2.5'] ? 30 : 15,
+        defaultValue: 5,
+      }),
+    ['model']
+  )
   .node(
     'generateAudio',
     () => ({

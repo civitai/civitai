@@ -91,6 +91,7 @@ export const BountyCard = memo(function BountyCard({ data }: Props) {
 
   return (
     <AspectRatioImageCard
+      impression={{ entityType: 'Bounty', entityId: id }}
       href={`/bounties/${id}/${slugit(name)}`}
       alt={name}
       aspectRatio="square"

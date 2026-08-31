@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 /**
  * STEP-7 sysRedis soft-dependency (Group A) — content.service.getMarkdownContent.
@@ -15,17 +16,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * the wrap would hang the call → the test would TIME OUT.
  */
 
-const { hGet, hSet, mockWithSysReadDeadline } = vi.hoisted(() => ({
-  hGet: vi.fn(),
-  hSet: vi.fn(async () => 1),
-  mockWithSysReadDeadline: vi.fn<(p: Promise<unknown>) => Promise<unknown>>(),
-}));
-
-vi.mock('~/server/redis/client', () => ({
-  sysRedis: { hGet, hSet },
-  REDIS_SYS_KEYS: { CONTENT: { REGION_WARNING: 'content:region-warning' } },
-  withSysReadDeadline: mockWithSysReadDeadline,
-}));
+const hGet = redisMock.sysRedis.hGet;
+const mockWithSysReadDeadline = redisMock.withSysReadDeadline;
 
 import { getMarkdownContent } from '~/server/services/content.service';
 

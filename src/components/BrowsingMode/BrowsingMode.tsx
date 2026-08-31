@@ -64,14 +64,14 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
   return (
     <div id="browsing-mode">
       <Stack gap="md" className="sm:min-w-96">
-        {showNsfw && (
+        {showNsfw && features.canViewNsfw && (
           <Stack gap="lg">
             <Stack gap={4}>
               <Stack gap={0}>
                 <Group align="flex-start">
                   <Text style={{ lineHeight: 1 }}>Browsing Level</Text>
-                  {showNsfw && features.newOrderGame && (
-                    <Tooltip label="Help us improve by playing!" withArrow color="dark">
+                  {features.newOrderGame && (
+                    <Tooltip label="Help us improve by playing!" withArrow>
                       <Button
                         onClick={closeMenu}
                         component={Link}
@@ -92,11 +92,6 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                 <Text c="dimmed">Select the levels of content you want to see</Text>
               </Stack>
               <BrowsingLevelsGrouped />
-              {isRestricted && (
-                <Text c="red" size="xs" inline>
-                  Your content levels are limited by restrictions in your region
-                </Text>
-              )}
               {hasMatureLevelSelected && (
                 <Group gap="sm" mt={4}>
                   <IconAlertTriangle size={16} />
@@ -107,13 +102,31 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                 </Group>
               )}
             </Stack>
-            <Checkbox
-              checked={blurNsfw}
-              onChange={toggleBlurNsfw}
-              label="Blur mature content (R+)"
-              size="md"
-            />
           </Stack>
+        )}
+
+        {/*
+          Outside the gate on purpose. `blurNsfw` is read straight from the store
+          by `BlurText` and `RenderHtml`'s profanity filter, neither of which goes
+          through the domain-forced level — so it still does something where the
+          level picker does not, and this menu is its only reachable toggle once
+          the account page and onboarding are gated.
+        */}
+        {showNsfw && (
+          <Checkbox
+            checked={blurNsfw}
+            onChange={toggleBlurNsfw}
+            label="Blur mature content (R+)"
+            size="md"
+          />
+        )}
+
+        {showNsfw && !features.canViewNsfw && (
+          <Text c="red" size="xs" inline>
+            {isRestricted
+              ? 'Your content levels are limited by restrictions in your region'
+              : 'Mature content levels are not available on this site'}
+          </Text>
         )}
 
         <Group justify="space-between">

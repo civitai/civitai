@@ -5,19 +5,20 @@ import {
   type ListingProblemCode,
   type ListingProblemInput,
 } from '~/server/services/blocks/listing-problems';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
- * Advisory listing-completeness helper tests. `computeListingProblems` is the
- * AUTHORITATIVE gate for the /apps/my-submissions warning icon — it enumerates a
- * listing's problems (missing assets via the shared `checkListingAssetsComplete`
- * gate + empty key text fields). Pure; no DB/network. The db client is mocked
- * only because the reused assets-service module imports it at load time.
+ * A fully-complete listing (no problems). Spread + override per case.
+ *
+ * 🔴 `kind` IS EXPLICIT AND IS `offsite` DELIBERATELY. Every label assertion in this
+ * file predates the kind dimension and pins the ORIGINAL text, which is now the OFF-SITE
+ * arm — so this file doubles as the regression guard that the off-site labels did not
+ * move. The ON-SITE arm and the kind matrix live in `listing-problems.kind.test.ts`.
+ * Omitting `kind` here would silently run this whole file against the implementation's
+ * fallback rather than a declared arm.
  */
-
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-
-/** A fully-complete listing (no problems). Spread + override per case. */
 const complete: ListingProblemInput = {
+  kind: 'offsite',
   iconId: 10,
   coverId: 20,
   screenshotCount: 3,
@@ -30,6 +31,18 @@ const codes = (input: ListingProblemInput): ListingProblemCode[] =>
   computeListingProblems(input).problems.map((p) => p.code);
 
 describe('computeListingProblems', () => {
+  /**
+   * 🔴 FIXTURE GUARD. `kind` is not validated at runtime and an unrecognised value
+   * degrades to the off-site labels, so a fixture that DROPPED `kind` would still make
+   * this whole file pass — while asserting against the fallback instead of a declared
+   * arm. `tsconfig.json` excludes `src/**\/__tests__/**`, so the REQUIRED field on
+   * `ListingProblemInput` is not enforced here by `pnpm typecheck`; this is.
+   */
+  it('🔴 the shared `complete` fixture declares an EXPLICIT kind', () => {
+    expect(complete.kind).toBe('offsite');
+    expect(Object.prototype.hasOwnProperty.call(complete, 'kind')).toBe(true);
+  });
+
   it('returns NO problems for an all-complete listing', () => {
     const result = computeListingProblems(complete);
     expect(result.problems).toEqual([]);
@@ -89,6 +102,7 @@ describe('computeListingProblems', () => {
 
   it('flags EVERY problem for a fully-empty listing, in a stable order', () => {
     const result = computeListingProblems({
+      kind: 'offsite',
       iconId: null,
       coverId: null,
       screenshotCount: 0,

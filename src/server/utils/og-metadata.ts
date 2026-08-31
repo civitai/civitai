@@ -30,14 +30,28 @@ const MAX_DESCRIPTION_LEN = 2000; // mirrors OFFSITE_DESCRIPTION_MAX
  * fallback skips it. A logo is never 32px or smaller on either declared side.
  */
 const MIN_HEADER_IMG_PX = 32;
-// Only the first slice of a document is parsed for metadata — all signals (og:*,
-// <title>, <link rel=icon>, brand/header <img>) live at the page top. Bounds the
-// cost of scanning adversarial HTML (see extractListingMeta).
-const META_HTML_PARSE_CAP = 256_000;
-// A single <header>/<nav> block is never anywhere near this large; bounding the
-// lazy inner capture stops the container regex from rescanning to EOF at every
-// unmatched open tag (the O(n^2) event-loop-freeze vector on hostile input).
-const HEADER_NAV_BLOCK_MAX = 8_000;
+/**
+ * Only the first slice of a document is parsed for metadata — all signals (og:*,
+ * <title>, <link rel=icon>, brand/header <img>) live at the page top. Bounds the
+ * cost of scanning adversarial HTML (see extractListingMeta).
+ *
+ * 🔴 EXPORTED because it is a COST CONTRACT, not an implementation detail: it is
+ * one of the two explicit bounds that make parsing linear-with-small-constant on
+ * hostile input, and the ReDoS regression tests assert it is enforced by
+ * OBSERVING the truncation (content past the cap is not extracted) rather than by
+ * timing the parse on whatever box happens to run CI.
+ */
+export const META_HTML_PARSE_CAP = 256_000;
+/**
+ * A single <header>/<nav> block is never anywhere near this large; bounding the
+ * lazy inner capture stops the container regex from rescanning to EOF at every
+ * unmatched open tag (the O(n^2) event-loop-freeze vector on hostile input).
+ *
+ * 🔴 EXPORTED for the same reason as {@link META_HTML_PARSE_CAP}: the bound is
+ * observable (a header block longer than this yields no icon candidate), which is
+ * what lets the regression test pin it deterministically.
+ */
+export const HEADER_NAV_BLOCK_MAX = 8_000;
 /**
  * Allowed inline-icon data-URI image MIME types (mirrors the server ingest
  * allowlist). A `data:text/html` / `data:application/*` / script URI is NEVER

@@ -10,7 +10,11 @@ import { getUserBanDetails, type BanDetailsMeta } from './ban';
 // honors it while getSessionUser currently defaults. To make them bit-identical, getSessionUser should adopt
 // the same focused read (a small, revenue-adjacent change — left for explicit review). See the cutover doc (D).
 const settingsSchema = z
-  .object({ allowAds: z.boolean().optional(), redBrowsingLevel: z.number().optional() })
+  .object({
+    allowAds: z.boolean().optional(),
+    redBrowsingLevel: z.number().optional(),
+    isEarlyAdopter: z.boolean().optional(),
+  })
   .passthrough();
 
 // PURE derivation: queried rows + permissions → the @civitai/auth SessionUser. No DB / redis / env, so the
@@ -66,6 +70,8 @@ export interface ShapeSessionUserInput {
   subscriptionRows: ProducerSubscriptionRow[];
   permissions: string[];
   roles: string[];
+  /** Comped tier from `UserMembershipOverride`. Ranked alongside subscriptions, so it can only raise. */
+  overrideTier?: string;
   /** `env.TIER_METADATA_KEY` — the `product.metadata` key holding the tier. Undefined → no tier resolved. */
   tierKey?: string;
 }
@@ -75,6 +81,7 @@ export function shapeSessionUser({
   subscriptionRows,
   permissions,
   roles,
+  overrideTier,
   tierKey,
 }: ShapeSessionUserInput): SessionUser {
   // tier / subscriptionsByBuzzType (mirrors the main app's loop).
@@ -105,13 +112,28 @@ export function shapeSessionUser({
     }
   }
 
+  // Competes in the ranking rather than replacing it, so comping bronze can't downgrade a paying gold user.
+  // Deliberately no subscriptionId / `subscriptions` entry: nothing billing-side exists to resolve.
+  if (overrideTier && overrideTier !== 'free') {
+    if (!highestTier || (TIER_ORDER[overrideTier] ?? 0) > (TIER_ORDER[highestTier] ?? 0)) {
+      highestTier = overrideTier;
+    }
+  }
+
   // allowAds / redBrowsingLevel — honor the user's stored settings when present (see settingsSchema note),
   // else fall back to the tier-based default (member → no ads; free → ads). Mirrors getSessionUser's intent.
   const parsedSettings = settingsSchema.safeParse(asObject(row.settings));
   const settings = parsedSettings.success ? parsedSettings.data : {};
-  const allowAds = settings.allowAds != null ? settings.allowAds : highestTier != null ? false : true;
+  const allowAds =
+    settings.allowAds != null ? settings.allowAds : highestTier != null ? false : true;
   const redBrowsingLevel: number | undefined =
     settings.redBrowsingLevel != null ? settings.redBrowsingLevel : undefined;
+
+  // Early-adopter opt-in. Kept SPARSE (undefined when the user never opted in) rather
+  // than coerced to false, so the session payload for the overwhelming majority of users
+  // is unchanged; `buildFliptContext` is what turns it into a 'true'/'false' string.
+  const isEarlyAdopter: boolean | undefined =
+    settings.isEarlyAdopter != null ? settings.isEarlyAdopter : undefined;
 
   // meta → banDetails (parity: the main app strips banDetails out of meta before reading it, so banDetails
   // is effectively undefined; reproduced exactly).
@@ -148,6 +170,7 @@ export function shapeSessionUser({
     subscriptionId: primarySubscriptionId,
     memberInBadState,
     allowAds,
+    isEarlyAdopter,
     tier: highestTier,
     meta: userMeta,
     banDetails: banDetails as Record<string, unknown> | undefined,

@@ -62,6 +62,7 @@ vi.mock('~/utils/trpc', () => ({
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       },
       storage: {
         set: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -74,6 +75,7 @@ vi.mock('~/utils/trpc', () => ({
           list: { fetch: vi.fn() },
           getCount: { fetch: vi.fn() },
           getCounts: { fetch: vi.fn() },
+          get: { fetch: vi.fn() },
         },
         storage: { get: { fetch: vi.fn() }, list: { fetch: vi.fn() }, getQuota: { fetch: vi.fn() } },
       },
@@ -127,6 +129,8 @@ const baseProps = {
   blockInstanceId: 'page_apb_test',
   appName: 'Wildcard Importer',
   iframeSrc: SAME_ORIGIN_SRC,
+  // The public run surface. Required since the init-fragment gate keys on it.
+  surface: 'page-run' as const,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'wildcard-app',

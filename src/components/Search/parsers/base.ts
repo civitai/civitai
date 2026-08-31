@@ -45,6 +45,37 @@ export const searchParamsSchema = z.object({
   page: z.coerce.number().optional(),
 });
 
+// QS.parse runs with parseNumbers/parseBooleans, so `?tags=2026` arrives as a number and
+// `?tags=true` as a boolean. Narrower than `z.coerce.string()`, which would also accept the `null`
+// a bare `?tags` produces and turn it into the string "null" — a filter that matches nothing.
+const coercedString = z.union([z.string(), z.number(), z.boolean()]).transform(String);
+
+export const stringArrayParamSchema = z
+  .union([z.array(coercedString), coercedString])
+  .transform((val) => (Array.isArray(val) ? val : [val]));
+
+/** Retries without the params that failed, so one bad value can't discard the search state. */
+export function parseSearchParams<TSchema extends z.ZodType<Record<string, unknown>>>(
+  schema: TSchema,
+  params: Record<string, unknown>
+): z.output<TSchema> | Record<string, never> {
+  const result = schema.safeParse(params);
+  if (result.success) return result.data;
+
+  const invalidKeys = new Set(
+    result.error.issues
+      .map((issue) => issue.path[0])
+      .filter((key): key is string => typeof key === 'string')
+  );
+  if (!invalidKeys.size) return {};
+
+  const retried = schema.safeParse(
+    Object.fromEntries(Object.entries(params).filter(([key]) => !invalidKeys.has(key)))
+  );
+
+  return retried.success ? retried.data : {};
+}
+
 export type InstantSearchRoutingParser = {
   parseURL: (params: { location: Location }) => UiState;
   routeToState: (routeState: UiState) => UiState;

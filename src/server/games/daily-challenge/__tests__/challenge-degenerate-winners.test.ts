@@ -1,4 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { freshPersistedWinner } from './persisted-winner.fixture';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const mockDbReadChallengeFindUnique = dbMock.dbRead.challenge.findUnique;
+const mockDbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+const mockDbWriteExecuteRaw = dbMock.dbWrite.$executeRaw;
+const mockDbWriteChallengeUpdate = dbMock.dbWrite.challenge.update;
+const mockDbWriteChallengeFindUnique = dbMock.dbWrite.challenge.findUnique;
+dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
+    prizePool: 0,
+    prizeDistribution: null,
+  });
 
 // Verifies Task 10: pickWinnersForChallenge skips the LLM winner-pick (generateWinners) when
 // fewer than 2 distinct entrants were judged. generateWinners is asked to pick "exactly 3"
@@ -12,12 +26,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // DB/LLM/buzz is mocked at the module boundary.
 
 const {
-  mockDbReadQueryRaw,
-  mockDbReadChallengeFindUnique,
-  mockDbWriteQueryRaw,
-  mockDbWriteExecuteRaw,
-  mockDbWriteChallengeUpdate,
-  mockDbWriteChallengeFindUnique,
   mockGetChallengeConfig,
   mockGetJudgingConfig,
   mockEndChallenge,
@@ -27,20 +35,12 @@ const {
   mockGetExistingWinnersForRetry,
   mockResolveEventContext,
   mockUpdateChallengeStatus,
+  mockCompleteChallengeIfClaimHeld,
   mockRefundUserChallengeFunds,
   mockCreateNotification,
   mockCreateChallengeWinner,
   mockGetChallengeById,
 } = vi.hoisted(() => ({
-  mockDbReadQueryRaw: vi.fn(),
-  mockDbReadChallengeFindUnique: vi.fn(),
-  mockDbWriteQueryRaw: vi.fn(),
-  mockDbWriteExecuteRaw: vi.fn().mockResolvedValue(1),
-  mockDbWriteChallengeUpdate: vi.fn().mockResolvedValue(undefined),
-  mockDbWriteChallengeFindUnique: vi.fn().mockResolvedValue({
-    prizePool: 0,
-    prizeDistribution: null,
-  }),
   mockGetChallengeConfig: vi.fn(),
   mockGetJudgingConfig: vi.fn(),
   mockEndChallenge: vi.fn().mockResolvedValue(undefined),
@@ -50,22 +50,11 @@ const {
   mockGetExistingWinnersForRetry: vi.fn().mockResolvedValue([]),
   mockResolveEventContext: vi.fn().mockResolvedValue(undefined),
   mockUpdateChallengeStatus: vi.fn().mockResolvedValue(undefined),
+  mockCompleteChallengeIfClaimHeld: vi.fn().mockResolvedValue(true),
   mockRefundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
-  mockCreateChallengeWinner: vi.fn().mockResolvedValue(1),
+  mockCreateChallengeWinner: vi.fn(),
   mockGetChallengeById: vi.fn().mockResolvedValue(null),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    $queryRaw: mockDbReadQueryRaw,
-    challenge: { findUnique: mockDbReadChallengeFindUnique },
-  },
-  dbWrite: {
-    $queryRaw: mockDbWriteQueryRaw,
-    $executeRaw: mockDbWriteExecuteRaw,
-    challenge: { update: mockDbWriteChallengeUpdate, findUnique: mockDbWriteChallengeFindUnique },
-  },
 }));
 
 vi.mock('~/server/events', () => ({
@@ -93,6 +82,8 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async () => {
 });
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
+  challengeClaimStillHeld: vi.fn().mockResolvedValue(true),
+  completeChallengeIfClaimHeld: mockCompleteChallengeIfClaimHeld,
   claimChallengeForCompletion: mockClaimChallengeForCompletion,
   computeDynamicPool: vi.fn(),
   distributePrizes: vi.fn(),
@@ -227,7 +218,12 @@ beforeEach(() => {
   mockUpdateChallengeStatus.mockResolvedValue(undefined);
   mockRefundUserChallengeFunds.mockResolvedValue({ refundedEntries: 0 });
   mockDbWriteChallengeFindUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
-  mockCreateChallengeWinner.mockResolvedValue(1);
+  // Resolve to the PERSISTED row (fresh insert), the real return shape. Resolving `1` here left the
+  // sole-entrant reconcile on its degrade path — see persisted-winner.fixture.
+  mockCreateChallengeWinner.mockImplementation(
+    async (input: { place: number; buzzAwarded: number; pointsAwarded?: number }) =>
+      freshPersistedWinner(input)
+  );
   mockGetChallengeById.mockResolvedValue(null);
 });
 
@@ -252,7 +248,7 @@ describe('pickWinnersForChallenge degenerate guard', () => {
         buzzAwarded: 500,
       })
     );
-    expect(mockUpdateChallengeStatus).not.toHaveBeenCalled();
+    expect(mockRefundUserChallengeFunds).not.toHaveBeenCalled();
   });
 
   it('calls generateWinners when there are 2+ distinct entrants (guard does not over-trigger)', async () => {
@@ -290,6 +286,8 @@ describe('pickWinnersForChallenge degenerate guard', () => {
     expect(mockGenerateWinners).not.toHaveBeenCalled();
     expect(mockCreateChallengeWinner).not.toHaveBeenCalled();
     expect(mockRefundUserChallengeFunds).toHaveBeenCalledWith(1);
-    expect(mockUpdateChallengeStatus).toHaveBeenCalledWith(1, 'Completed');
+    expect(mockCompleteChallengeIfClaimHeld).toHaveBeenCalledWith(
+      expect.objectContaining({ challengeId: 1 })
+    );
   });
 });

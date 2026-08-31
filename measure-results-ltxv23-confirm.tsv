@@ -1,0 +1,5 @@
+key	sat_live	sat_cand	moved	samples	verdict
+ltxv23	1	0	lighting-48 camera-26 negatives-22 temporal-11 subject+22 audio+52	true	UNSATURATED
+ltxv	1	2	style-48 composition-35 negatives+11 temporal+11 subject+54 camera+63	false	REGRESSED
+happyhorse	1	1	style-11 lighting+15	false	no change
+seedance	2	2	temporal-17 style-11	false	no change

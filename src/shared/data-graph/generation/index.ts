@@ -51,8 +51,7 @@ export {
   veo3AspectRatios,
   veo3Durations,
   veo3VersionIds,
-  veo3Txt2VidVersionOptions,
-  veo3Img2VidVersionOptions,
+  veo3VersionOptions,
 } from './veo3-graph';
 export {
   openaiGraph,

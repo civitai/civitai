@@ -1,7 +1,7 @@
 import type { SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import {
@@ -58,6 +58,14 @@ export type RunModelSearchInput = Partial<Omit<GetAllModelsOutput, 'browsingLeve
   collectionId?: number;
   /** supportsGeneration filter (forwarded from `data.supportsGeneration`). */
   supportsGeneration?: boolean;
+  /**
+   * Keep Meilisearch's relevance order for a text search (default `true`).
+   *
+   * Pass `false` when the caller has an EXPLICIT, user-chosen `sort` that must
+   * win over relevance — otherwise the restore below silently discards it. See
+   * the comment at the `orderedItems` assignment.
+   */
+  preserveRelevanceOrder?: boolean;
 };
 
 export type RunModelSearchContext = {
@@ -182,6 +190,9 @@ export async function runModelSearch(
     primaryFileOnly,
     collectionId,
     searchIds,
+    // Destructured so it does NOT reach `...data` and get spread into the
+    // catalog query as an unknown column filter.
+    preserveRelevanceOrder,
     // Dropped, never forwarded: the ctx value is the only authority. The input
     // type excludes it, but callers spread parsed query data in through a cast,
     // and `browsingLevel` now decides the minor gate as well as the level filter.
@@ -214,10 +225,47 @@ export async function runModelSearch(
 
   // Meilisearch returns ids in relevance order, but getModelsWithVersions
   // re-sorts by lastVersionAt/modelId. For text search, restore relevance.
-  const orderedItems =
-    query && searchIds
-      ? searchIds.map((id) => items.find((m) => m.id === id)).filter(isDefined)
-      : items;
+  //
+  // 🔴 UNLESS THE CALLER EXPLICITLY ASKED FOR AN ORDER. This restore is
+  // unconditional-on-`query` by default, which silently DISCARDS `sort`
+  // whenever a text query is present: `getModelsRaw` builds its `orderBy`
+  // purely from `sort` (`model.service`, the `ModelSort` ladder), the rows come
+  // back correctly ordered, and this line then reimposes relevance over the top.
+  // The caller cannot tell — nothing errors, and the result is a plausible list
+  // in the wrong order. That is how "the most popular ANIME models" returns
+  // relevance-ranked results while "the most popular models" ranks correctly.
+  //
+  // Opt-out rather than a behaviour change: `preserveRelevanceOrder` defaults to
+  // the historical behaviour, so every existing caller — the public endpoint and
+  // `blocks/models` included — is untouched. Only a caller that has a real
+  // user-chosen sort AND wants it to win passes `false`.
+  // 🔴 ZERO HITS MEANS ZERO RESULTS, AND IT MUST NOT DEPEND ON THE FLAG ABOVE.
+  // `getModelsRaw` adds its id predicate under `if (!!ids?.length)`, so an EMPTY
+  // `searchIds` adds NO filter at all and the query degrades to an unfiltered
+  // catalog page. Until `preserveRelevanceOrder` existed, the relevance restore
+  // hid that: mapping over an empty array returned `[]`, so the empty case was
+  // guarded by ACCIDENT rather than on purpose. Opting out of the restore
+  // removed the accident and let a no-match text search return the whole
+  // catalog — measured `[]` vs `[1,2,3]` on identical inputs, i.e. a block
+  // answering "the most downloaded zzzqqq models are…" with the site-wide top
+  // 10. That is strictly worse than the wrong ORDER this flag exists to fix.
+  //
+  // So the empty case is now its own branch, ahead of the flag, and says what it
+  // means. Also covers the SFW-clamped shape where Meili's own nsfwLevel filter
+  // is what leaves the hit list empty.
+  // `!searchIds?.length` rather than an Array.isArray + length check: it covers
+  // `undefined` as well as `[]`. Both degrade identically at
+  // `ids: query ? searchIds ?? [] : queryIds` — an absent id list is no id
+  // predicate, which is the same fail-open. No caller passes `undefined` today
+  // (all three declare `let searchIds: number[] = []`), so this closes a shape
+  // that is currently unreachable rather than fixing a live bug — but the type
+  // permits it, and the cost is one character.
+  const noTextMatches = Boolean(query) && !searchIds?.length;
+  const orderedItems = noTextMatches
+    ? []
+    : query && searchIds && preserveRelevanceOrder !== false
+    ? searchIds.map((id) => items.find((m) => m.id === id)).filter(isDefined)
+    : items;
 
   const preferredFormat = { metadata: user?.filePreferences };
 
@@ -258,7 +306,13 @@ export async function runModelSearch(
           files: includeDownloadUrl
             ? castedFiles
                 .filter((file) => file.visibility === ModelFileVisibility.Public)
-                .map(({ hashes, ...file }) => ({
+                // `modelVersionId` is stripped, not used: getModelsWithVersions
+                // now preserves it (a spliced VAE file belongs to the LINKED
+                // version, not this one), and the `...file` spread would
+                // otherwise put it on the public wire body. This endpoint does
+                // not pin `fileId` at all, so it needs the value only to keep
+                // it out of the response.
+                .map(({ hashes, modelVersionId: _ownerVersionId, ...file }) => ({
                   ...file,
                   name: safeDecodeURIComponent(
                     getDownloadFilename({ model, modelVersion: version, file })

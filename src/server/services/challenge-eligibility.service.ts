@@ -7,6 +7,7 @@ import {
   CHALLENGE_CREATE_DAILY_LIMIT,
 } from '~/shared/constants/challenge.constants';
 import { ChallengeSource, ChallengeStatus, StrikeStatus } from '~/shared/utils/prisma/enums';
+import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 
 function forbidden(message: string) {
   return new TRPCError({ code: 'FORBIDDEN', message });
@@ -17,12 +18,12 @@ type UserChallengeStanding = {
   bannedAt: Date | null;
   muted: boolean;
   deletedAt: Date | null;
-  activeStrikes: number;
+  activePoints: number;
 };
 
 export type ChallengeCreateRequirement =
   | { key: 'score'; met: boolean; current: number; min: number }
-  | { key: 'standing'; met: boolean; muted: boolean; activeStrikes: number; banned: boolean }
+  | { key: 'standing'; met: boolean; muted: boolean; activePoints: number; banned: boolean }
   | { key: 'dailyLimit'; met: boolean; recentCount: number; limit: number }
   | { key: 'activeLimit'; met: boolean; activeCount: number; limit: number };
 
@@ -39,8 +40,11 @@ export async function getUserChallengeStanding(userId: number): Promise<UserChal
   if (!user) throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
 
   const meta = (user.meta ?? {}) as { scores?: { total?: number } };
-  const activeStrikes = await dbRead.userStrike.count({
+  // POINTS, not the strike count — severity is what the ladder measures everywhere else. Gating on the
+  // count locked an account out for a strike's full lifetime over one 1-point strike that mutes nobody.
+  const { _sum } = await dbRead.userStrike.aggregate({
     where: { userId, status: StrikeStatus.Active, expiresAt: { gt: new Date() } },
+    _sum: { points: true },
   });
 
   return {
@@ -48,7 +52,7 @@ export async function getUserChallengeStanding(userId: number): Promise<UserChal
     bannedAt: user.bannedAt,
     muted: user.muted,
     deletedAt: user.deletedAt,
-    activeStrikes,
+    activePoints: _sum.points ?? 0,
   };
 }
 
@@ -64,8 +68,8 @@ export async function assertUserAccountInGoodStanding(
   if (standing.bannedAt || standing.deletedAt)
     throw forbidden('Your account is not eligible to create challenges.');
   if (standing.muted) throw forbidden('Muted accounts cannot create challenges.');
-  if (standing.activeStrikes > 0)
-    throw forbidden('Resolve your active strikes before creating a challenge.');
+  if (standing.activePoints >= MUTE_POINTS)
+    throw forbidden('Your account has active strikes and cannot create challenges right now.');
   return standing;
 }
 
@@ -166,9 +170,9 @@ export async function getUserChallengeCreateEligibility(
     },
     {
       key: 'standing',
-      met: !banned && !standing.muted && standing.activeStrikes === 0,
+      met: !banned && !standing.muted && standing.activePoints < MUTE_POINTS,
       muted: standing.muted,
-      activeStrikes: standing.activeStrikes,
+      activePoints: standing.activePoints,
       banned,
     },
     {

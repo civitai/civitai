@@ -162,13 +162,13 @@ describe('createSessionClient — internal identity routing (AUTH_HUB_INTERNAL_U
     h.loadAuthEnv.mockReturnValue({
       AUTH_JWT_ISSUER: 'https://auth.test',
       AUTH_INTERNAL_TOKEN: 'secret-123',
-      AUTH_HUB_INTERNAL_URL: 'http://civitai-auth.civitai-auth.svc.cluster.local:3000',
+      AUTH_HUB_INTERNAL_URL: 'http://auth-hub.internal.svc.cluster.local:3000',
     });
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
     expect(await createSessionClient().getSessionUser('7')).toMatchObject({ id: 7 });
     // FETCH target is the internal svc; the bearer is still the user's token.
     expect(fetch).toHaveBeenCalledWith(
-      'http://civitai-auth.civitai-auth.svc.cluster.local:3000/api/auth/identity',
+      'http://auth-hub.internal.svc.cluster.local:3000/api/auth/identity',
       { headers: { authorization: 'Bearer 7' }, signal: expect.any(AbortSignal) }
     );
   });
@@ -188,7 +188,7 @@ describe('createSessionClient — internal identity routing (AUTH_HUB_INTERNAL_U
     h.loadAuthEnv.mockReturnValue({
       AUTH_JWT_ISSUER: 'https://auth.test',
       AUTH_INTERNAL_TOKEN: 'secret-123',
-      AUTH_HUB_INTERNAL_URL: 'http://civitai-auth.civitai-auth.svc.cluster.local:3000',
+      AUTH_HUB_INTERNAL_URL: 'http://auth-hub.internal.svc.cluster.local:3000',
     });
     h.verifyToken.mockImplementation(async (t: string) => ({ sub: t, iss: 'https://evil.example' }));
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
@@ -236,12 +236,12 @@ describe('createSessionClient — getSessionUserById internal routing + timeout'
     h.loadAuthEnv.mockReturnValue({
       AUTH_JWT_ISSUER: 'https://auth.test',
       AUTH_INTERNAL_TOKEN: 'secret-123',
-      AUTH_HUB_INTERNAL_URL: 'http://civitai-auth.civitai-auth.svc.cluster.local:3000',
+      AUTH_HUB_INTERNAL_URL: 'http://auth-hub.internal.svc.cluster.local:3000',
     });
     const fetch = stubFetch(async () => ({ ok: true, status: 200, json: async () => richUser(7) }));
     await createSessionClient().getSessionUserById(7);
     expect(fetch).toHaveBeenCalledWith(
-      'http://civitai-auth.civitai-auth.svc.cluster.local:3000/api/auth/identity?userId=7',
+      'http://auth-hub.internal.svc.cluster.local:3000/api/auth/identity?userId=7',
       { headers: { authorization: 'Bearer secret-123' }, signal: expect.any(AbortSignal) }
     );
   });

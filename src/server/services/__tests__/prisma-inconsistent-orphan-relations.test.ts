@@ -1,70 +1,5 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-
-// The modules under test (model.service, article.selector → tag.selector, etc.)
-// call `Prisma.validator<...>()(...)` and the `Prisma.sql`/`raw`/`join` tagged-
-// template helpers at MODULE-LOAD (top-level consts). Under the unit vitest env
-// the real `@prisma/client` is externalised and those runtime members aren't
-// available at SSR import time → `Prisma.validator is not a function`. Mirror the
-// house pattern (see block-registry.page-only-launch / showcase.service tests):
-// stub `@prisma/client` with passthrough runtime helpers. A Proxy backs `Prisma`
-// so any enum the wide import graph references at load resolves to a stub member
-// instead of `undefined`, while the helpers we know the graph calls are real fns.
-vi.mock('@prisma/client', () => {
-  // `Prisma.validator<T>()(x)` → returns a function that returns its argument
-  // unchanged, so the validated select/where object is preserved verbatim (the
-  // tests assert against that exact shape).
-  const validator = () => (x: unknown) => x;
-  // Tagged-template SQL helpers used at module load by caches.ts / selectors.
-  const sql = (strings: TemplateStringsArray, ...values: unknown[]) => ({
-    strings,
-    values,
-    sql: strings.join('?'),
-  });
-  const raw = (s: string) => ({ sql: s, values: [] });
-  const join = (values: unknown[], separator = ',') => ({ values, separator });
-  const empty = { sql: '', values: [] };
-  class Sql {}
-
-  const known: Record<string, unknown> = {
-    validator,
-    sql,
-    raw,
-    join,
-    empty,
-    Sql,
-    // Common Prisma sort/null constants referenced in selectors at load.
-    SortOrder: { asc: 'asc', desc: 'desc' },
-    QueryMode: { default: 'default', insensitive: 'insensitive' },
-    JsonNull: 'JsonNull',
-    DbNull: 'DbNull',
-    AnyNull: 'AnyNull',
-  };
-
-  // Any other `Prisma.<member>` access (Prisma-generated enums referenced at
-  // load time across the wide import graph) resolves to an empty object stub,
-  // so module evaluation never trips over an undefined member.
-  const Prisma = new Proxy(known, {
-    get(target, prop: string) {
-      if (prop in target) return target[prop];
-      return {};
-    },
-  });
-
-  // Prisma-generated *enums* are exported as top-level named exports too
-  // (e.g. `import { MediaType } from '@prisma/client'`). Back the whole module
-  // with a Proxy: `Prisma` resolves above; any other named import (an enum)
-  // resolves to an empty object stub.
-  return new Proxy(
-    { Prisma, PrismaClient: class PrismaClient {} },
-    {
-      get(target, prop: string) {
-        if (prop in target) return (target as Record<string, unknown>)[prop];
-        if (prop === '__esModule') return true;
-        return {};
-      },
-    }
-  );
-});
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Regression tests for the "Inconsistent query result" 500s on
@@ -83,35 +18,93 @@ vi.mock('@prisma/client', () => {
  * resolvable rows / empty) instead of erroring.
  */
 
-// --- model.getRecentlyManuallyAdded ----------------------------------------
-// The handler is a thin wrapper over a single dbRead.imageResourceNew.findMany,
-// so we mock the db client and the env, and stub the (heavy) transitive imports
-// of model.service that aren't exercised by this code path.
+// model.service.ts has a very large import graph and only one thin handler on it
+// is exercised here, so its transitive service/db/search dependencies are stubbed.
+// Mirrors the scaffold in set-model-minor.service.test.ts.
+const findManyMock = dbMock.dbRead.imageResourceNew.findMany;
 
-const findManyMock = vi.fn();
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { imageResourceNew: { findMany: findManyMock } },
-  dbWrite: {},
+vi.mock('~/server/db/db-lag-helpers', () => ({
+  preventReplicationLag: vi.fn(),
+  getDbWithoutLag: vi.fn(async () => dbMock.dbRead),
+  preventModelVersionLagBatch: vi.fn(),
 }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbWrite: {}, pgDbReadLong: {} }));
+vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null, Tracker: class {} }));
+vi.mock('~/server/flipt/client', () => ({ isFlipt: vi.fn(() => false), FLIPT_FEATURE_FLAGS: {} }));
+vi.mock('~/server/metrics', () => ({ modelMetrics: {} }));
+vi.mock('~/server/redis/caches', () => ({
+  dataForModelsCache: {},
+  modelTagCache: { refresh: vi.fn() },
+  modelVotableTagsCache: { bust: vi.fn() },
+  userBasicCache: {},
+  userModelCountCache: { refresh: vi.fn() },
+}));
+vi.mock('~/server/search-index', () => ({
+  collectionsSearchIndex: { queueUpdate: vi.fn() },
+  imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
+  imagesSearchIndex: { queueUpdate: vi.fn() },
+  modelsSearchIndex: { queueUpdate: vi.fn() },
+}));
+vi.mock('~/server/services/auction.service', () => ({
+  deleteBidsForModel: vi.fn(),
+  getLastAuctionReset: vi.fn(),
+}));
+vi.mock('~/server/services/buzz.service', () => ({
+  getMultiAccountTransactionsByPrefix: vi.fn(),
+  getUserBuzzAccountByAccountTypes: vi.fn(),
+  refundMultiAccountTransaction: vi.fn(),
+}));
+vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
+  enforceBlockedBrowsingTagsForModels: vi.fn(),
+}));
+vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+vi.mock('~/server/services/collection.service', () => ({
+  getAvailableCollectionItemsFilterForUser: vi.fn(),
+  getUserCollectionPermissionsById: vi.fn(),
+  saveItemInCollections: vi.fn(),
+}));
+vi.mock('~/server/services/cosmetic.service', () => ({ getCosmeticsForEntity: vi.fn() }));
+vi.mock('~/server/services/creator-program.service', () => ({
+  getValidCreatorMembershipMap: vi.fn(),
+}));
+vi.mock('~/server/services/generation/generation.service', () => ({
+  getUnavailableResources: vi.fn(),
+}));
+vi.mock('~/server/services/image.service', () => ({
+  getImagesForModelVersion: vi.fn(),
+  getImagesForModelVersionCache: {},
+  queueImageSearchIndexUpdate: vi.fn(),
+}));
+vi.mock('~/server/services/model-file.service', () => ({ getFilesForModelVersionCache: {} }));
+vi.mock('~/server/services/model-version.service', () => ({
+  bustMvCache: vi.fn(),
+  bustPublicModelResponseCache: vi.fn(),
+  createModelVersionPostFromTraining: vi.fn(),
+  publishModelVersionsWithEarlyAccess: vi.fn(),
+}));
+vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: vi.fn() }));
+vi.mock('~/server/services/subscriptions.service', () => ({ getHighestTierSubscription: vi.fn() }));
+vi.mock('~/server/services/system-cache', () => ({ getCategoryTags: vi.fn() }));
+vi.mock('~/server/services/user.service', () => ({
+  deleteBasicDataForUser: vi.fn(),
+  getCosmeticsForUsers: vi.fn(),
+  getProfilePicturesForUsers: vi.fn(),
+}));
+vi.mock('~/server/utils/cache-helpers', () => ({
+  bustFetchThroughCache: vi.fn(),
+  fetchThroughCache: vi.fn(),
+}));
+vi.mock('~/utils/s3-utils', () => ({ deleteModelFileObjects: vi.fn() }));
+vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn() }));
+
+import { getBountyDetailsSelect } from '~/server/selectors/bounty.selector';
+import { articleDetailSelect } from '~/server/selectors/article.selector';
+import { postSelect } from '~/server/selectors/post.selector';
+import { getRecentlyManuallyAdded } from '~/server/services/model.service';
+
+// --- model.getRecentlyManuallyAdded ----------------------------------------
 
 describe('getRecentlyManuallyAdded — orphaned ImageResourceNew.modelVersion', () => {
-  // `../model.service` is a ~2500-line module that transitively imports the heavy
-  // image/event-engine service graph; its first cold transform+import takes ~16s in
-  // isolation and balloons further when it has to race the rest of the suite's worker
-  // pool for CPU — which made a PER-TEST `await import(...)` blow even a 30s timeout
-  // under full-suite parallelism (and cascade the later tests into "not a function").
-  // Pay that real-module load ONCE here, off the per-test budget, with a generous
-  // import-only timeout that absorbs worst-case contention. The actual assertions
-  // (the regression guard on the real `{ is: {} }` filter) stay instant + unchanged.
-  let getRecentlyManuallyAdded: (
-    args: { take: number; userId: number }
-  ) => Promise<number[]>;
-
-  beforeAll(async () => {
-    ({ getRecentlyManuallyAdded } = await import('../model.service'));
-  }, 120000);
-
   beforeEach(() => {
     findManyMock.mockReset();
   });
@@ -155,14 +148,12 @@ describe('getRecentlyManuallyAdded — orphaned ImageResourceNew.modelVersion', 
 
 // --- article.getById (shared articleDetailSelect) --------------------------
 // The article 500 comes from the `tags.tag` required relation in the shared
-// `articleDetailSelect`, reused by getArticleById, getModeratorArticles, the
-// search indexer, and the outbound webhook. The fix lives in the selector, so
-// we assert the selector shape directly (a pure data object — no heavy imports).
+// `articleDetailSelect`, reused by getArticleById, the search indexer, and the
+// outbound webhook. The fix lives in the selector, so
+// we assert the selector shape directly.
 
 describe('articleDetailSelect — orphaned TagsOnArticle.tag', () => {
-  it('filters the tags relation on tag existence so orphaned join rows are excluded', async () => {
-    const { articleDetailSelect } = await import('~/server/selectors/article.selector');
-
+  it('filters the tags relation on tag existence so orphaned join rows are excluded', () => {
     // tags must carry a where-clause requiring the related Tag to exist; a
     // bare `{ select: { tag: ... } }` (no where) re-introduces the 500 because
     // TagsOnArticle.tag is a required relation with orphaned rows in prod.
@@ -179,8 +170,7 @@ describe('articleDetailSelect — orphaned TagsOnArticle.tag', () => {
 // so they need the identical existence filter or they 500 the same way.
 
 describe('postSelect — orphaned TagsOnPost.tag', () => {
-  it('filters the tags relation on tag existence', async () => {
-    const { postSelect } = await import('~/server/selectors/post.selector');
+  it('filters the tags relation on tag existence', () => {
     expect(postSelect.tags).toMatchObject({
       where: { tag: { is: {} } },
       select: { tag: { select: expect.anything() } },
@@ -189,8 +179,7 @@ describe('postSelect — orphaned TagsOnPost.tag', () => {
 });
 
 describe('getBountyDetailsSelect — orphaned TagsOnBounty.tag', () => {
-  it('filters the tags relation on tag existence', async () => {
-    const { getBountyDetailsSelect } = await import('~/server/selectors/bounty.selector');
+  it('filters the tags relation on tag existence', () => {
     expect(getBountyDetailsSelect.tags).toMatchObject({
       where: { tag: { is: {} } },
       select: { tag: { select: expect.anything() } },

@@ -24,7 +24,6 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
@@ -52,6 +51,7 @@ vi.mock('~/server/utils/otel-helpers', () => ({
 
 import { getResourceCanGenerate } from '~/server/services/generation/generation.service';
 import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const noHiddenGates = { ecosystems: new Set<string>(), versionIds: new Set<number>() };
 
@@ -83,14 +83,15 @@ describe('getResourceCanGenerate — GenerationDisabled flag', () => {
   });
 
   it('blocks when GenerationDisabled is combined with another flag', () => {
-    expect(canGenerate(ModelVersionFlag.GenerationDisabled | ModelVersionFlag.DisablePayout)).toBe(
+    expect(canGenerate(ModelVersionFlag.GenerationDisabled | ModelVersionFlag.NotDerivative)).toBe(
       false
     );
   });
 
   it('does NOT block on an unrelated flag (bit-confusion guard)', () => {
-    expect(canGenerate(ModelVersionFlag.DisablePayout)).toBe(true);
     expect(canGenerate(ModelVersionFlag.NotDerivative)).toBe(true);
+    // Retired bit 0 (was DisablePayout) — rows in the wild still carry it.
+    expect(canGenerate(1)).toBe(true);
   });
 
   it('blocks a moderator too — the flag is not a visibility gate', () => {

@@ -19,9 +19,10 @@ import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema'
  *    model/in-context slot. A PAGE app (target slot `app.page`, installModel
  *    `'none'`) is stateless — no install row, slot install path server-gated
  *    dark (#2622) — so it never shows Install/Manage.
- *  - Card cleanup: the install count is HIDDEN, the review indicator is hidden
- *    when reviewCount=0 (shown when >0), the mod-assigned category (+ icon) is
- *    shown, and the scopes were MOVED off the card face into the modal.
+ *  - Card cleanup: the install count is HIDDEN, the mod-assigned category
+ *    (+ icon) is shown, and the scopes were MOVED off the card face into the
+ *    modal. (The 5-star rating chip that used to sit here went with the rest of
+ *    the removed `AppBlockReview` system.)
  *  - Round-2 cleanup (2026-06): the slot/location badge and the "by {author}"
  *    attribution line were DROPPED from the card face (launch is page-only →
  *    slot badge is noise; both still on the detail page/modal), and the
@@ -89,8 +90,6 @@ function makeBlock(
     category: null,
     externalUrl: null,
     scopesSummary: [],
-    avgRating: null,
-    reviewCount: 0,
     coverUrl: null,
     ...overrides,
   };
@@ -126,7 +125,12 @@ function expectAtLeastOneAffordance() {
 describe('AppBlockCard action CTA gate', () => {
   test('page app + canOpenPage=false (pages flag off) → "View details" present, NOT actionless [HIGH regression, #2747 retargeted]', async () => {
     renderWithProviders(
-      <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage={false} />
+      <AppBlockCard
+        block={pageBlock()}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+        canOpenPage={false}
+      />
     );
 
     // The live "Open app" run is unavailable (flag off); the never-empty-card
@@ -372,7 +376,12 @@ describe('AppBlockCard — View details modal opens', () => {
 
   test('"View details" button is present on a PAGE app and opens the modal', async () => {
     renderWithProviders(
-      <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage={false} />
+      <AppBlockCard
+        block={pageBlock()}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+        canOpenPage={false}
+      />
     );
 
     const viewDetails = page.getByRole('button', { name: /view details/i });
@@ -432,34 +441,6 @@ describe('AppBlockCard — 2026-06 card cleanup', () => {
     expect(page.getByText('1,234', { exact: false }).query()).toBeNull();
   });
 
-  test('review indicator HIDDEN when reviewCount=0 (no "No reviews" affordance)', async () => {
-    renderWithProviders(
-      <AppBlockCard
-        block={makeBlock({}, { reviewCount: 0, avgRating: null })}
-        alreadySubscribed={false}
-        onOpen={onOpen}
-      />
-    );
-
-    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
-    // No "No reviews" text, and no rating affordance for a 0-review app.
-    expect(page.getByText(/no reviews/i).query()).toBeNull();
-  });
-
-  test('review indicator SHOWN when reviewCount>0 (avg + count)', async () => {
-    renderWithProviders(
-      <AppBlockCard
-        block={makeBlock({}, { reviewCount: 12, avgRating: 4.5 })}
-        alreadySubscribed={false}
-        onOpen={onOpen}
-      />
-    );
-
-    // avg "4.5" and count "(12)" render.
-    await expect.element(page.getByText('4.5', { exact: false })).toBeInTheDocument();
-    await expect.element(page.getByText('(12)', { exact: false })).toBeInTheDocument();
-  });
-
   test('category (+ icon) rendered when a category is set', async () => {
     renderWithProviders(
       <AppBlockCard
@@ -497,10 +478,7 @@ describe('AppBlockCard — 2026-06 card cleanup', () => {
   test('scopes are NOT rendered on the card face (moved into the modal)', async () => {
     renderWithProviders(
       <AppBlockCard
-        block={makeBlock(
-          {},
-          { scopesSummary: ['user:read:self', 'ai:write:budgeted'] }
-        )}
+        block={makeBlock({}, { scopesSummary: ['user:read:self', 'ai:write:budgeted'] })}
         alreadySubscribed={false}
         onOpen={onOpen}
       />
@@ -547,7 +525,12 @@ describe('AppBlockCard — round-2 card cleanup (slot badge + author dropped, Vi
 
   test('slot badge is NOT rendered on a PAGE app (no slot label leaks)', async () => {
     renderWithProviders(
-      <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage={false} />
+      <AppBlockCard
+        block={pageBlock()}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+        canOpenPage={false}
+      />
     );
 
     await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
@@ -564,10 +547,7 @@ describe('AppBlockCard — round-2 card cleanup (slot badge + author dropped, Vi
   test('"by {author}" attribution line is NOT rendered', async () => {
     renderWithProviders(
       <AppBlockCard
-        block={makeBlock(
-          { name: 'Cool Block' },
-          { appName: 'Acme Publisher Co' }
-        )}
+        block={makeBlock({ name: 'Cool Block' }, { appName: 'Acme Publisher Co' })}
         alreadySubscribed={false}
         onOpen={onOpen}
       />
@@ -642,7 +622,12 @@ describe('AppBlockCard — round-2 card cleanup (slot badge + author dropped, Vi
 
   test('"View details" is rendered on a PAGE app too (invariant preserved) and is link-styled', async () => {
     renderWithProviders(
-      <AppBlockCard block={pageBlock()} alreadySubscribed={false} onOpen={onOpen} canOpenPage={false} />
+      <AppBlockCard
+        block={pageBlock()}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+        canOpenPage={false}
+      />
     );
 
     const viewDetails = page.getByRole('button', { name: /view details/i });
@@ -689,7 +674,10 @@ describe('AppBlockCard — cover image (first screenshot) + placeholder fallback
     // …and the placeholder box (aria-hidden, carries an svg glyph) is present, so
     // the cover area is never empty. The card body still renders.
     await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
-    const card = page.getByRole('button', { name: /view details/i }).element().closest('.mantine-Card-root');
+    const card = page
+      .getByRole('button', { name: /view details/i })
+      .element()
+      .closest('.mantine-Card-root');
     expect(card).not.toBeNull();
     const placeholder = card!.querySelector('[aria-hidden]');
     expect(placeholder).not.toBeNull();
@@ -710,9 +698,109 @@ describe('AppBlockCard — cover image (first screenshot) + placeholder fallback
     await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
     // Still no real cover img (no screenshot) — placeholder path.
     expect(page.getByRole('img', { name: /Util App listing image/i }).query()).toBeNull();
-    const card = page.getByRole('button', { name: /view details/i }).element().closest('.mantine-Card-root');
+    const card = page
+      .getByRole('button', { name: /view details/i })
+      .element()
+      .closest('.mantine-Card-root');
     const placeholder = card!.querySelector('[aria-hidden]');
     expect(placeholder).not.toBeNull();
     expect(placeholder!.querySelector('svg')).not.toBeNull();
+  });
+});
+
+/**
+ * The CARD's description is the PLAIN-TEXT PROJECTION of the stored markdown.
+ *
+ * The stored `description` is markdown (see `appListingDescriptionText.ts` for the one
+ * rule). The card is a 3-line clamp in a grid, where markdown BLOCK elements would be
+ * wrong — so it is the one surface that deliberately does NOT render markdown. That
+ * makes it the surface where showing raw SOURCE is tempting and wrong: several live
+ * first-party listings use backticks for literal syntax (`{style}`, `#tag`, `.txt`),
+ * which printed as literal backtick characters in the grid.
+ *
+ * 🔴 RED at `origin/main` on the backtick, emphasis and hard-wrap tests: main passes
+ * `manifest.description` straight into `<Text className="line-clamp-3">`, so the
+ * rendered text still carries the markdown punctuation.
+ */
+describe('AppBlockCard description — plain-text projection', () => {
+  /** The card's description node, read by its rendered text content. */
+  function descriptionText(): string {
+    const el = document.querySelector('.line-clamp-3');
+    if (!el) throw new Error('no .line-clamp-3 description node on the card');
+    return el.textContent ?? '';
+  }
+
+  test('🔴 a backticked token loses its backticks and keeps its content', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ description: 'Use `{style}` and `#tag` here.' })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    expect(descriptionText()).toBe('Use {style} and #tag here.');
+  });
+
+  test('🔴 emphasis markers do not reach the grid', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ description: 'a **bold** and _italic_ word' })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    expect(descriptionText()).toBe('a bold and italic word');
+  });
+
+  test('🔴 hard line wraps collapse into single spaces', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ description: 'wrapped at a fixed\ncolumn width by hand' })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    expect(descriptionText()).toBe('wrapped at a fixed column width by hand');
+  });
+
+  // MEASURED GREEN AT BASE → INVARIANT GUARD, not regression coverage for this
+  // change. At base the card passed raw source into a `<Text>`, so it rendered no
+  // markdown elements either — the assertion cannot tell the two implementations
+  // apart. Kept because it pins the card as a NON-renderer against a future "just
+  // render markdown everywhere" change, which is a real and tempting mistake. NOT
+  // counted in the red/green matrix.
+  test('invariant: the card renders NO markdown elements — it is text, not a renderer', async () => {
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({
+          description: '# Heading\n\n- one\n- two\n\n[link](https://example.com)',
+        })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    const el = document.querySelector('.line-clamp-3')!;
+    // Positive control first: the text DID render, so the zero counts below are facts
+    // about markdown elements rather than about an empty node.
+    expect(el.textContent).toContain('Heading');
+    expect(el.querySelectorAll('h1, ul, li, a, code, strong, em')).toHaveLength(0);
+  });
+
+  test('invariant: plain prose is unchanged', async () => {
+    // Green at base AND at HEAD. Pins that the projection does not mangle ordinary
+    // descriptions, which is the majority case.
+    renderWithProviders(
+      <AppBlockCard
+        block={makeBlock({ description: 'Does a thing.' })}
+        alreadySubscribed={false}
+        onOpen={onOpen}
+      />
+    );
+    await expect.element(page.getByRole('button', { name: /view details/i })).toBeInTheDocument();
+    expect(descriptionText()).toBe('Does a thing.');
   });
 });

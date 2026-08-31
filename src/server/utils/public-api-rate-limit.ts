@@ -1,6 +1,17 @@
 import type { NextApiRequest } from 'next';
-import requestIp from 'request-ip';
+// From the package rather than the `~/server/redis/client` shim on purpose: it is a pure helper
+// with no client state, and importing it through the shim would force every suite that mocks the
+// shim to add it to its mock factory.
+import { prefixCacheKey } from '@civitai/redis';
 import { redis } from '~/server/redis/client';
+import { resolveClientIp } from '~/server/utils/client-ip';
+
+// Re-exported so existing importers (and this module's own test file) keep their
+// import path. `resolveClientIp` now lives in `~/server/utils/client-ip` so the
+// generic tRPC rate-limit middleware can share the SAME implementation without
+// importing this module's redis-bound public-REST limiter. One function, two
+// consumers — see the module doc in client-ip.ts for why that matters.
+export { resolveClientIp };
 
 /**
  * Conservative per-client fixed-window rate limit for the PUBLIC REST endpoints
@@ -53,26 +64,6 @@ export type PublicApiRateLimitResult =
   | { allowed: true }
   | { allowed: false; retryAfterSeconds: number };
 
-/**
- * Resolve the rate-limit client IP.
- *
- * PREFER Cloudflare's `CF-Connecting-IP` (Next lowercases header keys →
- * `cf-connecting-ip`): CF sets it to the real client IP and — unlike the raw
- * `X-Forwarded-For` chain — a caller CANNOT spoof it through Cloudflare, so it
- * can't be rotated to escape the per-IP bucket. Fall back to
- * `requestIp.getClientIp` (which reads XFF/socket) only for non-CF / local
- * requests that never traversed Cloudflare. Same header the bot-detection
- * middleware and region-blocking trust.
- *
- * Exported for unit testing.
- */
-export function resolveClientIp(req: NextApiRequest): string {
-  const cfip = req.headers['cf-connecting-ip'];
-  const cf = Array.isArray(cfip) ? cfip[0] : cfip;
-  if (cf && cf.trim()) return cf.trim();
-  return requestIp.getClientIp(req) ?? 'unknown';
-}
-
 async function checkFixedWindow(
   key: string,
   max: number,
@@ -105,8 +96,11 @@ async function checkFixedWindow(
  * Records one request against the caller's per-family window and reports whether
  * it is within the conservative ceiling.
  *
- * @param req    the incoming request (client IP is resolved from it for the
- *   unauthenticated bucket via the same `request-ip` resolver createContext uses).
+ * @param req    the incoming request. The unauthenticated bucket keys on the
+ *   client IP resolved from it by the shared `~/server/utils/client-ip`
+ *   predicate — which prefers the edge-stamped header and keeps `request-ip`
+ *   only as the non-edge fallback, so it is NOT the same derivation
+ *   `createContext` uses for `ctx.ip`.
  * @param family `articles` | `collections` — independent bucket per family.
  * @param userId the authenticated user id when present; keys the (higher) authed
  *   bucket. `undefined` → the per-IP unauthenticated bucket.
@@ -123,6 +117,10 @@ export async function checkPublicApiRateLimit({
   const authed = typeof userId === 'number';
   const max = authed ? PUBLIC_API_RATE_LIMIT_AUTH_MAX : PUBLIC_API_RATE_LIMIT_UNAUTH_MAX;
   const bucket = authed ? `user:${userId}` : `ip:${resolveClientIp(req)}`;
-  const key = `${KEY_PREFIX}:${family}:${bucket}`;
+  // Minted from a literal rather than derived from REDIS_KEYS, so it does not inherit the
+  // environment namespace from the key table — apply it explicitly. Without this a non-production
+  // deployment burns PRODUCTION users' rate-limit budget and can 429 real traffic. No-op in
+  // production.
+  const key = prefixCacheKey(`${KEY_PREFIX}:${family}:${bucket}`);
   return checkFixedWindow(key, max, PUBLIC_API_RATE_LIMIT_WINDOW_SECONDS);
 }

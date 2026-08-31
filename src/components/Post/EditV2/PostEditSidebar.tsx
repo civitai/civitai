@@ -1,3 +1,4 @@
+import { PlacementSpaceToggle } from '~/components/Sticker/PlacementSpaceToggle';
 import type { TooltipProps } from '@mantine/core';
 import {
   Alert,
@@ -27,7 +28,7 @@ import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
-// import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import type { PostDetailEditable } from '~/server/services/post.service';
 import { CollectionType } from '~/shared/utils/prisma/enums';
@@ -36,6 +37,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { removeEmpty } from '~/utils/object-helpers';
+import { safeInternalPath } from '~/utils/url-helpers';
 import { isValidAIGeneration, hasImageLicenseViolation } from '~/utils/image-utils';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageResourceHelper } from '~/shared/utils/prisma/models';
@@ -64,21 +66,30 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const params = usePostEditParams();
-  // const currentUser = useCurrentUser();
+  const currentUser = useCurrentUser();
   const { runTour } = useTourContext();
   const features = useFeatureFlags();
 
   const [deleted, setDeleted] = useState(false);
-  const [updatePost, isReordering, hasImages, showReorder, collectionId, collectionTagId, images] =
-    usePostEditStore((state) => [
-      state.updatePost,
-      state.isReordering,
-      state.images.filter((x) => x.type === 'added').length > 0,
-      state.images.length > 1,
-      state.collectionId,
-      state.collectionTagId,
-      state.images,
-    ]);
+  const [
+    updatePost,
+    isReordering,
+    hasImages,
+    showReorder,
+    collectionId,
+    collectionTagId,
+    images,
+    flushPendingSaves,
+  ] = usePostEditStore((state) => [
+    state.updatePost,
+    state.isReordering,
+    state.images.filter((x) => x.type === 'added').length > 0,
+    state.images.length > 1,
+    state.collectionId,
+    state.collectionTagId,
+    state.images,
+    state.flushPendingSaves,
+  ]);
   const todayRef = useRef(new Date());
 
   const addedImages = useMemo(
@@ -160,9 +171,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           });
           if (publishedAt && afterPublish) await afterPublish({ postId: id, publishedAt });
           else {
-            if (returnUrl) router.push(returnUrl);
+            if (returnUrl) router.push(safeInternalPath(returnUrl, `/posts/${post.id}`));
             else router.push({ pathname: `/posts/${post.id}`, query: removeEmpty({ returnUrl }) });
-            // else router.push(`/user/${currentUser?.username}/posts`);
           }
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
         },
@@ -227,12 +237,55 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     });
   };
 
+  // Holds the url this handler pushed, so the guard below waives that navigation and no other.
+  // The ref is what the guard reads (synchronously, mid-navigation); the state is only the
+  // button's spinner, since the awaited push is a real round trip to the destination.
+  const savingDraftRef = useRef<string | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+
+  const handleSaveAsDraft = async () => {
+    // A second click would push again and let the first push's `finally` re-arm the guard
+    // mid-navigation, prompting on a navigation the user explicitly asked for.
+    if (savingDraftRef.current) return;
+
+    flushPendingSaves();
+
+    // Only the owner has a drafts section to land on — `/posts/[postId]/edit` also admits
+    // moderators, and the profile posts page shows Published for anyone but the owner.
+    const isOwner = currentUser?.id === post.user.id;
+    // `section=draft` because the posts tab defaults to Published, where the post just saved
+    // is by definition absent.
+    const fallback =
+      isOwner && currentUser.username
+        ? `/user/${currentUser.username}/posts?section=draft`
+        : `/posts/${post.id}`;
+    const destination = safeInternalPath(returnUrl, fallback);
+
+    savingDraftRef.current = destination;
+    setSavingDraft(true);
+    try {
+      await router.push(destination);
+    } catch {
+      // swallowed: a rejected push is a navigation that didn't happen, and the only
+      // thing to do about it is the reset below
+    } finally {
+      // A push that fails or is cancelled leaves this component mounted, and a bypass that
+      // outlives its own navigation disables the unsaved-changes guard for good.
+      savingDraftRef.current = null;
+      setSavingDraft(false);
+    }
+  };
+
   useCatchNavigation({
     // When the post is unpublished because the parent model/version is
     // unpublished, the user can't republish from this page anyway —
     // showing the "you haven't published this post" warning is misleading.
     unsavedChanges: !post.publishedAt && !deleted && !isUnpublishedByParent,
-    message: `You haven't published this post, all images will stay hidden. Do you wish to continue?`,
+    // Every edit is autosaved and the provider flushes anything still pending on the way out,
+    // so nothing is lost here — what the user needs warning about is that a draft is invisible
+    // until they publish it, which is the mistake this prompt was added to prevent.
+    message: `Your changes are saved, but this post is still a draft — it stays hidden until you publish it. Leave anyway?`,
+    bypassRef: savingDraftRef,
   });
   // #endregion
 
@@ -308,12 +361,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       {params.model3dId ? <PostingToModel3DCard model3dId={params.model3dId} /> : null}
 
       {isUnpublishedByParent && (
-        <Alert
-          color="yellow"
-          icon={<IconAlertCircle size={16} />}
-          radius="sm"
-          className="shrink-0"
-        >
+        <Alert color="yellow" icon={<IconAlertCircle size={16} />} radius="sm" className="shrink-0">
           <Stack gap="xs">
             <Text size="sm" fw={600}>
               Post unpublished
@@ -324,8 +372,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               </Text>
             )}
             <Text size="xs">
-              This post is hidden because its parent model or version was unpublished. Republish
-              the parent to bring this post back — the original publish date will be preserved.
+              This post is hidden because its parent model or version was unpublished. Republish the
+              parent to bring this post back — the original publish date will be preserved.
             </Text>
             {parentModelHref && (
               <Text size="xs">
@@ -413,6 +461,17 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         </Button.Group>
       )}
 
+      {!post.publishedAt && !isUnpublishedByParent && !deleted && (
+        <Button
+          variant="default"
+          onClick={handleSaveAsDraft}
+          loading={savingDraft}
+          disabled={!features.canWrite}
+        >
+          Save as Draft
+        </Button>
+      )}
+
       {showReorder && <ReorderImagesButton />}
 
       {/*
@@ -439,6 +498,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           View {postLabel}
         </Button>
       )}
+
+      <PlacementSpaceToggle level="post" entityId={post.id} />
 
       <DeletePostButton postId={post.id}>
         {({ onClick, isLoading }) => (
@@ -467,4 +528,3 @@ const tooltipProps: Partial<TooltipProps> = {
   position: 'bottom',
   withArrow: true,
 };
-

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import type { WithdrawExternalRequestResult } from '~/server/services/blocks/offsite-listing.service';
 
 /**
  * W13 P3a — off-site submission router AUTHZ matrix.
@@ -39,7 +40,13 @@ const {
   mockIsAppBlocksAuthorEnabled,
 } = vi.hoisted(() => ({
   mockSubmit: vi.fn(async () => ({ listingId: 'apl_1', publishRequestId: 'alpr_1', slug: 's' })),
-  mockWithdraw: vi.fn(async () => undefined),
+  // Returns the real service shape: the close OUTCOME, which the router now passes
+  // through so the UI can distinguish "a draft was discarded" from "your live listing is
+  // now delisted and only a moderator can restore it".
+  // Typed with the SERVICE's own result type, not a narrowed literal: the router
+  // must be free to receive any `CloseTerminalListingOutcome`, and a mock pinned to
+  // `'none'` would make the `'removed'` pass-through case below untypeable.
+  mockWithdraw: vi.fn(async (): Promise<WithdrawExternalRequestResult> => ({ outcome: 'none' })),
   mockListMy: vi.fn(async () => ({ items: [], nextCursor: null })),
   mockListPending: vi.fn(async () => ({ items: [{ id: 'alpr_1' }], nextCursor: null })),
   mockListApproved: vi.fn(async () => ({ items: [], nextCursor: null })),
@@ -85,8 +92,7 @@ vi.mock('~/server/services/feature-flags.service', async () => {
   return {
     ...actual,
     getFeatureFlags: (ctx: { user?: { id?: number; isModerator?: boolean } }) => ({
-      appBlocksAuthor:
-        !!ctx.user && (!!ctx.user.isModerator || AUTHOR_IDS.has(ctx.user.id ?? -1)),
+      appBlocksAuthor: !!ctx.user && (!!ctx.user.isModerator || AUTHOR_IDS.has(ctx.user.id ?? -1)),
     }),
   };
 });
@@ -199,8 +205,21 @@ describe('withdrawExternalRequest — appDeveloperProcedure', () => {
     expect(mockWithdraw).toHaveBeenCalledWith({ publishRequestId: 'alpr_1', userId: tester.id });
   });
 
+  it('🔴 passes the close OUTCOME through, rather than collapsing it into `{ ok: true }`', async () => {
+    // `'removed'` means this withdraw delisted a formerly-live listing that only a
+    // moderator can restore. The UI cannot warn about that if the router swallows it.
+    mockWithdraw.mockResolvedValueOnce({ outcome: 'removed' as const });
+    const caller = appListingsRouter.createCaller(fakeCtx(tester) as never);
+    await expect(caller.withdrawExternalRequest({ publishRequestId: 'alpr_1' })).resolves.toEqual({
+      ok: true,
+      outcome: 'removed',
+    });
+  });
+
   it('a service failure maps to BAD_REQUEST with the message', async () => {
-    mockWithdraw.mockRejectedValueOnce(new Error('you can only withdraw your own publish requests'));
+    mockWithdraw.mockRejectedValueOnce(
+      new Error('you can only withdraw your own publish requests')
+    );
     const caller = appListingsRouter.createCaller(fakeCtx(tester) as never);
     await expect(
       caller.withdrawExternalRequest({ publishRequestId: 'alpr_x' })
@@ -251,7 +270,11 @@ describe('persistAssetImage — appDeveloperProcedure (asset-step glue)', () => 
 // ---------------------------------------------------------------------------
 
 describe('review-queue lists — moderatorProcedure', () => {
-  for (const proc of ['listPendingRequests', 'listApprovedRequests', 'listRejectedRequests'] as const) {
+  for (const proc of [
+    'listPendingRequests',
+    'listApprovedRequests',
+    'listRejectedRequests',
+  ] as const) {
     it(`${proc}: a non-mod AUTHOR (tester) is FORBIDDEN`, async () => {
       const caller = appListingsRouter.createCaller(fakeCtx(tester) as never);
       await expect(caller[proc]({})).rejects.toBeInstanceOf(TRPCError);
@@ -411,29 +434,33 @@ describe('rejectExternalRequest — moderatorProcedure', () => {
 describe('setIcon — widened author flag gate + service owner check', () => {
   it('non-author (author flag off) → UNAUTHORIZED, service NOT called', async () => {
     const caller = appListingsRouter.createCaller(fakeCtx(nonAuthor) as never);
-    await expect(
-      caller.setIcon({ listingId: 'own-3', imageId: 5 })
-    ).rejects.toBeInstanceOf(TRPCError);
+    await expect(caller.setIcon({ listingId: 'own-3', imageId: 5 })).rejects.toBeInstanceOf(
+      TRPCError
+    );
     expect(mockSetIcon).not.toHaveBeenCalled();
   });
 
   it('app-dev-tester CAN attach to their OWN listing', async () => {
     const caller = appListingsRouter.createCaller(fakeCtx(tester) as never);
     // listingId `own-2` is owned by the tester (id 2).
-    await expect(caller.setIcon({ listingId: 'own-2', imageId: 5 })).resolves.toEqual({ iconId: 5 });
+    await expect(caller.setIcon({ listingId: 'own-2', imageId: 5 })).resolves.toEqual({
+      iconId: 5,
+    });
     expect(mockSetIcon).toHaveBeenCalledWith({ listingId: 'own-2', imageId: 5 }, tester);
   });
 
   it('app-dev-tester CANNOT attach to ANOTHER user’s listing (owner check → FORBIDDEN)', async () => {
     const caller = appListingsRouter.createCaller(fakeCtx(tester) as never);
     // listingId `other-99` is owned by user 99, not the tester.
-    await expect(
-      caller.setIcon({ listingId: 'other-99', imageId: 5 })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller.setIcon({ listingId: 'other-99', imageId: 5 })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
   });
 
   it('moderator (author floor) can attach as well', async () => {
     const caller = appListingsRouter.createCaller(fakeCtx(mod) as never);
-    await expect(caller.setIcon({ listingId: 'own-1', imageId: 5 })).resolves.toEqual({ iconId: 5 });
+    await expect(caller.setIcon({ listingId: 'own-1', imageId: 5 })).resolves.toEqual({
+      iconId: 5,
+    });
   });
 });

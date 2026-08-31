@@ -5,7 +5,10 @@ import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { PreviewCard } from '~/components/Modals/CardDecorationModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import type {
+  ContentDecorationCosmetic,
+  StickerCosmetic,
+} from '~/server/selectors/cosmetic.selector';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import type { CosmeticGetById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
@@ -44,7 +47,7 @@ export const CosmeticPreview = ({
       browsingLevel: browsingLevel,
     },
     {
-      enabled: !!currentUser && !isProfileRelated,
+      enabled: !!currentUser && cosmetic.type === CosmeticType.ContentDecoration,
     }
   );
   const [activeImageIndex, setActiveImageIndex] = useState(0);
@@ -98,6 +101,38 @@ export const CosmeticPreview = ({
           {descriptionBox}
         </Stack>
       );
+    case CosmeticType.Sticker: {
+      const stickerData = cosmetic.data as StickerCosmetic['data'];
+      if (!stickerData.url) return null;
+
+      return (
+        <Stack gap="xl" align="center">
+          {!hideHeader && (
+            <Text fw="bold" align="center">
+              Preview
+            </Text>
+          )}
+          <Group gap="lg" align="flex-end">
+            {[24, 48, 96].map((size) => (
+              <EdgeMedia
+                key={size}
+                src={stickerData.url}
+                alt={stickerData.slug ? `:${stickerData.slug}:` : cosmetic.name}
+                width={size}
+                anim={stickerData.animated}
+                style={{ width: size, height: size, objectFit: 'contain' }}
+              />
+            ))}
+          </Group>
+          {stickerData.slug && (
+            <Text size="sm" c="dimmed">
+              Type <b>:{stickerData.slug}:</b> to use it
+            </Text>
+          )}
+          {descriptionBox}
+        </Stack>
+      );
+    }
     case CosmeticType.ContentDecoration:
       if (!images.length) {
         return null;

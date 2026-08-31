@@ -90,6 +90,14 @@ export const PaymentProvider = {
   Civitai: 'Civitai',
 } as const;
 export type PaymentProvider = (typeof PaymentProvider)[keyof typeof PaymentProvider];
+export const MembershipGiftStatus = {
+  Pending: 'Pending',
+  Fulfilled: 'Fulfilled',
+  Failed: 'Failed',
+  Refunded: 'Refunded',
+  Revoked: 'Revoked',
+} as const;
+export type MembershipGiftStatus = (typeof MembershipGiftStatus)[keyof typeof MembershipGiftStatus];
 export const UserEngagementType = {
   Follow: 'Follow',
   Hide: 'Hide',
@@ -120,6 +128,7 @@ export const ModelType = {
   Poses: 'Poses',
   Wildcards: 'Wildcards',
   Workflows: 'Workflows',
+  ComfyWorkflows: 'ComfyWorkflows',
   Detection: 'Detection',
   VisionLanguage: 'VisionLanguage',
   CLIP: 'CLIP',
@@ -244,6 +253,7 @@ export const ModelHashType = {
   SHA256: 'SHA256',
   CRC32: 'CRC32',
   BLAKE3: 'BLAKE3',
+  SHA256_12: 'SHA256_12',
 } as const;
 export type ModelHashType = (typeof ModelHashType)[keyof typeof ModelHashType];
 export const ScanResultCode = {
@@ -280,6 +290,7 @@ export const ReportReason = {
   CSAM: 'CSAM',
   Automated: 'Automated',
   Spam: 'Spam',
+  StickerPlacement: 'StickerPlacement',
 } as const;
 export type ReportReason = (typeof ReportReason)[keyof typeof ReportReason];
 export const ReportStatus = {
@@ -425,6 +436,8 @@ export const CosmeticType = {
   ContentDecoration: 'ContentDecoration',
   ProfileDecoration: 'ProfileDecoration',
   ProfileBackground: 'ProfileBackground',
+  Sticker: 'Sticker',
+  ChatTheme: 'ChatTheme',
 } as const;
 export type CosmeticType = (typeof CosmeticType)[keyof typeof CosmeticType];
 export const CosmeticSource = {
@@ -538,6 +551,17 @@ export const CollectionItemStatus = {
   REJECTED: 'REJECTED',
 } as const;
 export type CollectionItemStatus = (typeof CollectionItemStatus)[keyof typeof CollectionItemStatus];
+export const CollectionItemRejectionReason = {
+  OffTopic: 'OffTopic',
+  WrongFormat: 'WrongFormat',
+  Duplicate: 'Duplicate',
+  Quality: 'Quality',
+  RulesViolation: 'RulesViolation',
+  Other: 'Other',
+  Automated: 'Automated',
+} as const;
+export type CollectionItemRejectionReason =
+  (typeof CollectionItemRejectionReason)[keyof typeof CollectionItemRejectionReason];
 export const CollectionContributorPermission = {
   VIEW: 'VIEW',
   ADD: 'ADD',
@@ -546,6 +570,19 @@ export const CollectionContributorPermission = {
 } as const;
 export type CollectionContributorPermission =
   (typeof CollectionContributorPermission)[keyof typeof CollectionContributorPermission];
+export const CollectionCollaboratorRole = {
+  Contributor: 'Contributor',
+  Manager: 'Manager',
+} as const;
+export type CollectionCollaboratorRole =
+  (typeof CollectionCollaboratorRole)[keyof typeof CollectionCollaboratorRole];
+export const CollectionInviteStatus = {
+  Pending: 'Pending',
+  Accepted: 'Accepted',
+  Declined: 'Declined',
+} as const;
+export type CollectionInviteStatus =
+  (typeof CollectionInviteStatus)[keyof typeof CollectionInviteStatus];
 export const HomeBlockType = {
   Collection: 'Collection',
   Announcement: 'Announcement',
@@ -555,6 +592,7 @@ export const HomeBlockType = {
   CosmeticShop: 'CosmeticShop',
   FeaturedModelVersion: 'FeaturedModelVersion',
   FeaturedCollections: 'FeaturedCollections',
+  Feed: 'Feed',
 } as const;
 export type HomeBlockType = (typeof HomeBlockType)[keyof typeof HomeBlockType];
 export const Currency = {
@@ -608,6 +646,11 @@ export const PaidAccessEntityType = {
   ComicChapter: 'ComicChapter',
 } as const;
 export type PaidAccessEntityType = (typeof PaidAccessEntityType)[keyof typeof PaidAccessEntityType];
+export const SaleDiscountType = {
+  Fixed: 'Fixed',
+  Percent: 'Percent',
+} as const;
+export type SaleDiscountType = (typeof SaleDiscountType)[keyof typeof SaleDiscountType];
 export const EntityCollaboratorStatus = {
   Pending: 'Pending',
   Approved: 'Approved',
@@ -633,6 +676,12 @@ export const ChatMemberStatus = {
   Kicked: 'Kicked',
 } as const;
 export type ChatMemberStatus = (typeof ChatMemberStatus)[keyof typeof ChatMemberStatus];
+export const ChatNotifyLevel = {
+  All: 'All',
+  Mentions: 'Mentions',
+  None: 'None',
+} as const;
+export type ChatNotifyLevel = (typeof ChatNotifyLevel)[keyof typeof ChatNotifyLevel];
 export const ChatMessageType = {
   Markdown: 'Markdown',
   Image: 'Image',
@@ -674,6 +723,7 @@ export const JobQueueType = {
   ModerationRequest: 'ModerationRequest',
   BlockedImageDelete: 'BlockedImageDelete',
   ImageScan: 'ImageScan',
+  ReplacedImageDelete: 'ReplacedImageDelete',
 } as const;
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
 export const VaultItemStatus = {
@@ -931,3 +981,10 @@ export const OutboxEntity = {
   ModelVersion: 'ModelVersion',
 } as const;
 export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];
+export const UserHubSourceType = {
+  User: 'User',
+  Model: 'Model',
+  ModelVersion: 'ModelVersion',
+  Collection: 'Collection',
+} as const;
+export type UserHubSourceType = (typeof UserHubSourceType)[keyof typeof UserHubSourceType];

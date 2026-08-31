@@ -25,7 +25,10 @@ import {
   updateCommentReportStatusByReason,
 } from '~/server/services/comment.service';
 import { createNotification } from '~/server/services/notification.service';
-import { throwIfBlockedByOwners } from '~/server/services/block-check.service';
+import {
+  getBlockCheckOwnerIdsForModelComment,
+  throwIfBlockedByOwners,
+} from '~/server/services/block-check.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
@@ -35,7 +38,7 @@ import {
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from '../services/common.service';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
 
 export const getCommentsInfiniteHandler = async ({
   input,
@@ -109,24 +112,22 @@ export const upsertCommentHandler = async ({
   input: CommentUpsertInput;
 }) => {
   try {
-    await throwOnBlockedLinkDomain(input.content);
+    await throwOnBlockedCommentContent(input.content, { isModerator: ctx.user.isModerator });
     const { ownerId, locked } = ctx;
     const { modelId } = input;
 
-    if (!input.commentId && !ctx.user.isModerator) {
-      const parentAuthorId = input.parentId
-        ? (
-            await dbRead.comment.findUnique({
-              where: { id: input.parentId },
-              select: { userId: true },
-            })
-          )?.userId
-        : undefined;
-      await throwIfBlockedByOwners({
-        userId: ctx.user.id,
-        ownerIds: [ownerId, parentAuthorId],
-      });
-    }
+    // `ownerId` is the comment's author (the caller on a create), never the model's owner, so it
+    // can't stand in for the block target. Edits are checked too: a comment written before a block
+    // is otherwise editable into anything afterwards.
+    await throwIfBlockedByOwners({
+      userId: ctx.user.id,
+      ownerIds: await getBlockCheckOwnerIdsForModelComment({
+        commentId: input.id,
+        modelId: input.modelId,
+        parentId: input.parentId,
+      }),
+      isModerator: ctx.user.isModerator,
+    });
 
     // Get model and at least 2 version to confirm access.
     // If model has 1 version, check access to that version. Otherwise, ignore.
@@ -162,7 +163,7 @@ export const upsertCommentHandler = async ({
       }
     }
 
-    const comment = await createOrUpdateComment({ ...input, ownerId, locked });
+    const comment = await createOrUpdateComment({ ...input, ownerId, locked, track: ctx.track });
 
     if (!input.commentId) {
       await ctx.track.comment({

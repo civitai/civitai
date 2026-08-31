@@ -3,6 +3,7 @@ import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 export const grokModelVersionToModelMap = new Map<number, { name: string }>([
   [2738377, { name: 'grok-imagine' }],
+  [3225510, { name: 'grok-imagine' }],
 ]);
 
 export const grokConfig = ImageGenConfig({
@@ -23,6 +24,7 @@ export const grokConfig = ImageGenConfig({
     if (!params.images?.length) {
       return {
         engine: 'grok',
+        version: 'v1.0',
         operation: 'createImage',
         prompt: params.prompt,
         quantity: params.quantity,
@@ -32,6 +34,7 @@ export const grokConfig = ImageGenConfig({
 
     return {
       engine: 'grok',
+      version: 'v1.0',
       operation: 'editImage',
       prompt: params.prompt,
       quantity: params.quantity,

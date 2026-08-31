@@ -16,7 +16,7 @@
 # client MUST exist. A filtered install would drop the root `prisma` devDep, so we do a full frozen
 # install (matching the main image) and let its postinstall generate the client. scripts/ + the prisma
 # schema are required by db:generate.
-FROM node:22-alpine AS deps
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS deps
 RUN apk add --no-cache libc6-compat && corepack enable && corepack prepare pnpm@10.28.1 --activate
 WORKDIR /app
 
@@ -55,7 +55,7 @@ RUN set -eux; \
     cp -R "$src" /app/deploy/node_modules/.prisma
 
 ##### runtime ###################################################################
-FROM node:22-alpine AS runtime
+FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 RUN addgroup -S nodejs -g 1001 && adduser -S nodeapp -u 1001

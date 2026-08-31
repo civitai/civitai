@@ -20,7 +20,7 @@ import { APP_LISTING_MODERATION_ACTIONS } from '~/server/schema/blocks/offsite-m
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
-const MIGRATIONS_DIR = path.join(REPO_ROOT, 'prisma/migrations');
+const MIGRATIONS_DIR = path.join(REPO_ROOT, 'packages/civitai-db-schema/prisma/migrations');
 
 /** The named CHECK constraint whose IN-list is the action taxonomy under test. */
 const ACTION_CHECK_CONSTRAINT = 'app_listing_mod_events_action_check';
@@ -46,7 +46,7 @@ function modEventsMigration(): string {
     .sort();
   if (matches.length === 0)
     throw new Error(
-      `no migration defining the "${ACTION_CHECK_CONSTRAINT}" CHECK found under prisma/migrations`
+      `no migration defining the "${ACTION_CHECK_CONSTRAINT}" CHECK found under packages/civitai-db-schema/prisma/migrations`
     );
   return path.join(MIGRATIONS_DIR, matches[matches.length - 1], 'migration.sql');
 }

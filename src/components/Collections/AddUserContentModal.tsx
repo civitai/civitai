@@ -42,6 +42,7 @@ import { trpc } from '~/utils/trpc';
 import { useCollection } from './collection.utils';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ownContentPickerFilters } from '~/components/Image/image.utils';
 
 export function AddUserContentModal({ collectionId }: Props) {
   const dialog = useDialogContext();
@@ -166,8 +167,12 @@ export function AddUserContentModal({ collectionId }: Props) {
             <MasonryContainer m={0} p={0} px={0}>
               <ImagesInfinite
                 filters={{
+                  // The feed carves out the caller's own unpublished posts, which is right
+                  // for a profile and wrong for a picker: an unpublished image cannot be
+                  // added to a collection. `ownContentPickerFilters` also routes this
+                  // picker off the search index — see its docblock.
+                  ...ownContentPickerFilters(currentUser?.id),
                   collectionId: undefined,
-                  userId: currentUser?.id,
                   period: 'AllTime',
                   sort: ImageSort.Newest,
                   hidden: undefined,

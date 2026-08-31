@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AuditModule from '~/utils/metadata/audit';
 
 /**
  * STEP-6 sysRedis soft-dependency (Group C) — promptAuditing.
@@ -69,16 +70,14 @@ vi.mock('~/server/services/blocklist.service', () => ({
 
 // Force the regex audit to flag the prompt so auditPromptServer enters its catch
 // and reaches addBlockedPrompt (the reads under test).
-vi.mock('~/utils/metadata/audit', () => ({
+vi.mock('~/utils/metadata/audit', async (importOriginal) => ({
+  ...(await importOriginal<typeof AuditModule>()),
   auditPromptEnriched: mockAuditPromptEnriched,
 }));
 vi.mock('~/server/integrations/moderation', () => ({
   extModeration: { moderatePrompt: mockModeratePrompt },
 }));
 
-// Collapse the heavy graph — none of these are reached on the counting path with
-// a below-threshold count.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ updateUserById: vi.fn() }));
@@ -86,11 +85,9 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
   bustFetchThroughCache: vi.fn(),
 }));
-// The mute path's banError catch logs via logToAxiom — stub it so the test
-// doesn't attempt a real network call.
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
-
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const blockingOptions = {
   prompt: 'a flagged prompt',
@@ -147,7 +144,7 @@ describe('auditPromptServer → addBlockedPrompt — sysRedis reads (fail-CLOSED
 describe('auditPromptServer → reportProhibitedRequest → getBlockedPrompts (mute path, fail-CAUGHT)', () => {
   // Drive count > muted (constants.imageGeneration.requestBlocking.muted = 8) so
   // reportProhibitedRequest enters the auto-mute branch and calls getBlockedPrompts.
-  // The downstream dbWrite.userRestriction.create throws (dbWrite is mocked {}),
+  // The downstream applyPendingReviewMute throws (dbWrite is mocked {}),
   // absorbed by the existing `catch (banError)` — so no heavy mute-path scaffolding
   // is needed. Unlike addBlockedPrompt (fail-PROPAGATED), a sysRedis error in
   // getBlockedPrompts is fail-CAUGHT: the auto-mute is skipped, and the current

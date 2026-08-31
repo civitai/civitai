@@ -1,27 +1,44 @@
 import * as z from 'zod';
 import { trackedReasons } from '~/utils/login-helpers';
 
+// Both lists mirror the `views` / `daily_views` Enum8 columns, ordered by the ordinal the column stores —
+// so index + 1 is that ordinal, and the test's snapshot pins it. A value the columns carry but these omit is
+// unreachable: `TrackView` is typed from this schema, and a payload the `/api/internal/pulse` beacon rejects
+// gets a 400 nobody looks at, since `sendView` never inspects the response. `Tracker`'s ViewType /
+// ViewEntityType derive from these, so the two cannot drift apart.
+export const VIEW_TYPES = [
+  'ProfileView',
+  'ImageView',
+  'PostView',
+  'ModelView',
+  'ModelVersionView',
+  'ArticleView',
+  'CollectionView',
+  'BountyView',
+  'BountyEntryView',
+  'ComicProjectView',
+  'ComicChapterView',
+  'Model3DView',
+] as const;
+
+export const VIEW_ENTITY_TYPES = [
+  'User',
+  'Image',
+  'Post',
+  'Model',
+  'ModelVersion',
+  'Article',
+  'Collection',
+  'Bounty',
+  'BountyEntry',
+  'ComicProject',
+  'ComicChapter',
+  'Model3D',
+] as const;
+
 export const addViewSchema = z.object({
-  type: z.enum([
-    'ProfileView',
-    'ImageView',
-    'PostView',
-    'ModelView',
-    'ModelVersionView',
-    'ArticleView',
-    'BountyView',
-    'BountyEntryView',
-  ]),
-  entityType: z.enum([
-    'User',
-    'Image',
-    'Post',
-    'Model',
-    'ModelVersion',
-    'Article',
-    'Bounty',
-    'BountyEntry',
-  ]),
+  type: z.enum(VIEW_TYPES),
+  entityType: z.enum(VIEW_ENTITY_TYPES),
   entityId: z.number(),
   ads: z.enum(['Member', 'Blocked', 'Served', 'Off']).optional(),
   nsfw: z.boolean().optional(),
@@ -68,13 +85,108 @@ export const blockRenderSchema = z.object({
   // timeout). Drives the `civitai_app_block_renders_total{result}` prom counter.
   status: z.enum(['ok', 'error']).default('ok'),
   // Optional low-cardinality failure discriminator (e.g. 'timeout', 'fatal',
-  // 'no_token', 'error', 'error_boundary'). Drives the bounded `error_class`
+  // 'no_token', 'error', 'error_boundary', 'token_lost_midsession'). Drives the bounded `error_class`
   // label on `civitai_app_block_renders_total` (via `normalizeErrorClass`, which
   // clamps any value outside the known set to 'other'). It is STILL stripped from
   // the ClickHouse insert — it never reaches the tracker payload, only the prom
   // label.
   errorClass: z.string().trim().min(1).max(64).optional(),
+  // 🔴 SECONDARY (follow-up) BEACON — drives the prom counter ONLY, never a
+  // `blockRenders` ClickHouse row.
+  //
+  // `blockRenders` is an IMPRESSION table: historically one host mount emitted
+  // exactly ONE beacon (`ok` XOR `error`), so one mount == one row, and every
+  // CH-derived figure counts rows as impressions.
+  //
+  // A host may now emit a SECOND beacon for the same mount when an outcome it
+  // already reported later changes — today: a page that rendered fine and then
+  // lost its credential mid-session (`token_lost_midsession`). That is a status
+  // UPDATE about an impression already counted, NOT a new impression. Since the
+  // CH row carries no status, a second row would be byte-identical to the first
+  // and therefore impossible to de-duplicate after the fact — silently inflating
+  // impressions/renders for exactly the sessions that suffered a revocation.
+  //
+  // So the emitter marks the follow-up and the server skips the insert for it.
+  // 🔴 The discriminator is deliberately THIS FLAG and not `status === 'error'`:
+  // a LAUNCH failure is a mount's ONLY beacon and MUST still write its row (it
+  // is a real attempted render). What is suppressed is specifically a second
+  // beacon for a mount that already reported.
+  secondary: z.boolean().optional().default(false),
+  // 🔴 OPTIONAL LAUNCH TIMINGS — carried on the EXISTING beacon, deliberately.
+  //
+  // There is exactly ONE /api/track/block-render beacon per host mount (guarded
+  // by `blockRenderEmittedRef`, with ok/error mutually exclusive). A second
+  // beacon for timing would break that contract and, more concretely, write a
+  // second `blockRenders` ClickHouse row for one mount — byte-identical to the
+  // first and therefore undedupable, inflating every impression figure. So the
+  // timings ride as optional fields on the beacon that already fires, and
+  // impression accounting is provably unchanged: same beacon count, same row
+  // count, same `renders_total` increments.
+  //
+  // 🔴 LIKE status/errorClass/secondary, THIS IS STRIPPED BY *BOTH* WRITERS
+  // BEFORE THE CLICKHOUSE INSERT — see `blockRenderTrackerPayload` below, which
+  // exists precisely so there is one place to strip rather than two that can
+  // drift. TypeScript cannot catch a missed strip here: `ctx.track.blockRender({
+  // ...renderData, isAnon })` spreads, and spread properties are exempt from
+  // excess-property checking, so an extra field compiles cleanly and lands in
+  // the insert payload.
+  //
+  // 🔴 NUMBERS ONLY — no client-supplied strings, so nothing here can become a
+  // prom LABEL. The `phase` label is code-owned: the server maps these three
+  // named fields onto its own three literals. That is what keeps a public,
+  // client-controlled beacon body from touching cardinality at all.
+  //
+  // Bounds: every leg is a non-negative millisecond count. `max` is a coarse
+  // sanity bound only — the REAL gate is `launchSampleSeconds` server-side
+  // (>0 and <= MAX_APP_BLOCK_LAUNCH_SECONDS, DROPPED not clamped), which the
+  // client mirrors.
+  //
+  // 🔴 `.catch(undefined)` IS LOAD-BEARING, NOT DEFENSIVE CLUTTER. Without it a
+  // malformed `timings` (a client bug producing a NaN, a stale field name, a
+  // future rename) fails the WHOLE `blockRenderSchema.safeParse`, the beacon
+  // route 400s, and the mount's IMPRESSION is lost — an observability add-on
+  // would have broken the analytics series it was bolted onto. With it, junk
+  // timings degrade to "no timings" and the impression is recorded exactly as
+  // before. The add-on must be strictly subordinate to the thing it rides on.
+  timings: z
+    .object({
+      totalMs: z.number().finite().nonnegative().max(600_000),
+      tokenMintMs: z.number().finite().nonnegative().max(600_000).optional(),
+      initWaitMs: z.number().finite().nonnegative().max(600_000).optional(),
+    })
+    .optional()
+    .catch(undefined),
 });
+
+/**
+ * 🔴 THE SINGLE STRIP POINT FOR THE `blockRenders` CLICKHOUSE PAYLOAD.
+ *
+ * There are TWO writers of that table — the REST beacon
+ * (`src/pages/api/track/block-render.ts`) and the `track.blockRender` tRPC
+ * procedure (`src/server/routers/track.router.ts`) — and every prom-only /
+ * observability field added to `blockRenderSchema` has to be removed on BOTH.
+ * Patching one is a SILENT half-fix: the field falls through the other's
+ * `...renderData` spread straight into the insert, and TypeScript does not
+ * complain because spread properties are exempt from excess-property checking.
+ *
+ * 🔴 IT IS AN ALLOWLIST, NOT A DESTRUCTURE-REST. Both writers previously did
+ * `const { status, errorClass, secondary, ...renderData } = input` — which is a
+ * DENYLIST: every field added to the schema is forwarded to ClickHouse by
+ * DEFAULT and stays silent until someone reads the CH payload. Naming the three
+ * real columns instead inverts that: a new schema field can never reach the
+ * insert, and adding a genuine new column is a deliberate edit here.
+ */
+export function blockRenderTrackerPayload(input: BlockRenderInput): {
+  appBlockId: string;
+  blockInstanceId: string;
+  slotId: string;
+} {
+  return {
+    appBlockId: input.appBlockId,
+    blockInstanceId: input.blockInstanceId,
+    slotId: input.slotId,
+  };
+}
 
 export type TrackShareInput = z.infer<typeof trackShareSchema>;
 export const trackShareSchema = z.object({
@@ -220,6 +332,12 @@ const modelCreateClickSchema = z.object({
     .optional(),
 });
 
+// DEFINITION CHANGE, Aug 2026: this used to fire when the Remix button itself
+// was clicked. The button now opens a menu, and the event fires when a menu
+// option is chosen — so volume drops by the menu-abandonment rate across every
+// surface at once, while the `source` values keep matching. On a funnel chart
+// that reads as a conversion collapse; it is a change in what is counted.
+// `remixKind` is absent on rows emitted before this date.
 const imageRemixClickSchema = z.object({
   type: z.literal('Image_Remix_Click'),
   details: z
@@ -238,6 +356,9 @@ const imageRemixClickSchema = z.object({
       // remix:image-card, remix:image-meta, etc.) — left as a string so new
       // remix entry-points can be added without a schema bump.
       source: z.string().optional(),
+      // Which kind of remix was chosen from the menu. Kept out of `source` so
+      // existing dashboards filtering on the bare entry-point tag keep matching.
+      remixKind: z.enum(['edit', 'video', 'reuse']).optional(),
     })
     .optional(),
 });
@@ -270,13 +391,15 @@ const imageRemixClickSchema = z.object({
 //     for "capacity-bounded click" and ignore `isValid` on those rows.
 //
 //   hasRemixOfId semantics:
-//      'legacy' and 'new' (v2): both gate on prompt similarity >= 0.75.
-//                v2 uses the `useRemixOfId()` hook (FormFooter.tsx:803),
-//                which returns `undefined` when below threshold; legacy
-//                applies the equivalent gate before mutate(). The hook
-//                feeds `!!remixOfId` into the emit at FormFooter.tsx:913,
-//                so an unsimilar remix correctly produces hasRemixOfId:false.
-//                The thresholds are identical — legacy ≡ v2 here.
+//      'new' (v2): true whenever the generator was opened from the remix
+//                entry point. It no longer gates on prompt similarity — an
+//                image edit or an image-to-video shares no prompt with its
+//                source, so the old >=0.75 threshold dropped the link exactly
+//                where the derivation was most literal. Historical 'legacy'
+//                and pre-2026-08 'new' rows DO carry that gate, so a roll-up
+//                across that boundary compares two different definitions.
+//                Whether a derivation was actually verified is a separate
+//                field on the image (meta.extra.sourceImageIds), not this one.
 //      'video':  hasRemixOfId is NOT emitted (field absent in the details
 //                payload — see VideoGenerationForm.tsx:153-165, 241-252).
 //                Video form has no prompt-similarity hook yet; add when
@@ -402,9 +525,9 @@ const generatorSubmitSchema = z.object({
     // 'replay' — re-run from the queue / previous output
     // 'direct' — opened from /generate or with no input (panel default)
     fromAction: z.enum(['create', 'remix', 'replay', 'direct']),
-    // True when remixOfId is being sent on the request — gated by the
-    // 0.75 prompt-similarity threshold via the `useRemixOfId()` hook in the
-    // v2 form. See the doc-block above for the hasRemixOfId roll-up caveat.
+    // True when remixOfId is being sent on the request — i.e. the generator was
+    // opened from the remix entry point. See the doc-block above: the meaning
+    // changed when the prompt-similarity gate was removed.
     hasRemixOfId: z.boolean().optional(),
     // 'new' (generation_v2/FormFooter) is emitted by the current form.
     // 'legacy'/'video' are retained for backward-compatibility with
@@ -441,7 +564,11 @@ const generatorSubmitSchema = z.object({
     // (civitai/civitai-orchestration#229 WorkflowTemplate.ExternalId) so
     // tampered clients get rejected at the trpc layer instead of bloating
     // the trackAction body before the orchestrator rejects.
-    externalId: z.string().max(128).regex(/^[A-Za-z0-9_-]+$/).optional(),
+    externalId: z
+      .string()
+      .max(128)
+      .regex(/^[A-Za-z0-9_-]+$/)
+      .optional(),
   }),
 });
 
@@ -460,6 +587,28 @@ const generatorSubmitSchema = z.object({
 // single request; the browser flushes well below this cap (see trackEventBuffer).
 // `trackBatchEventSchema` / `trackBatchSchema` are declared at the bottom of this
 // file (after `trackActionSchema`, which the action arm references).
+// Image/video feed tag bar click-through. This event is the CONDITION the bar ships
+// under — a click-through floor was agreed, and the bar is removed if it is not met
+// (ClickUp 868kv0cdr). The denominator is `pageViews` on /images and /videos; query
+// strings never reach that table, so the path alone identifies the feed.
+//
+// `tag` is null for the All chip, which clears the filter rather than setting one.
+// It is still a press, so it is recorded; a query measuring intent to NARROW
+// should filter it out rather than assume it is absent.
+const feedTagBarClickSchema = z.object({
+  type: z.literal('Feed_TagBar_Click'),
+  details: z.object({
+    // Which feed the bar was pressed on.
+    feed: z.enum(['images', 'videos']),
+    // Chip name, or null for All. Bounded server-side by FEED_TAG_BAR_TAG_NAMES;
+    // capped here so a tampered client cannot bloat the `details` String column.
+    tag: z.string().trim().max(64).nullable(),
+    tagId: z.number().nullable(),
+    // Whether the press selected a chip or cleared back to the whole feed.
+    action: z.enum(['select', 'clear']),
+  }),
+});
+
 export const TRACK_BATCH_MAX = 100;
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
@@ -483,7 +632,86 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   modelCreateClickSchema,
   imageRemixClickSchema,
   generatorSubmitSchema,
+  feedTagBarClickSchema,
 ]);
+
+// Feed impression event — an entity was actually SEEN in a feed, as opposed to
+// opened. `views` only records the latter, so every view count on the platform
+// undercounts reach by however often people scroll past without clicking.
+//
+// One event carries MANY entities. That is the whole reason impressions are
+// affordable: a feed session generates one impression every few hundred ms, and
+// a per-entity event would put that rate on the wire. The browser instead holds
+// a deduplicated set and ships it as a single array (see impressionBuffer.ts),
+// so the request rate is set by the flush interval, not by scroll speed.
+// Stored as LowCardinality(String), NOT Enum8. An Enum8 would make adding an
+// entity type a schema change applied by hand to a raw table plus two rollups, in
+// every environment, before the code that emits the new value can ship. A
+// LowCardinality column costs the same at rest and accepts a new value the day
+// someone adds a card. This list stays the authority on what the SERVER accepts —
+// widening the storage does not widen what a browser can write.
+export const IMPRESSION_ENTITY_TYPES = [
+  'Image',
+  'Model',
+  'Post',
+  'Article',
+  'Collection',
+  'Bounty',
+  'BountyEntry',
+  'User',
+] as const;
+export type ImpressionEntityType = (typeof IMPRESSION_ENTITY_TYPES)[number];
+
+const IMPRESSION_ENTITY_TYPE_SET: ReadonlySet<string> = new Set(IMPRESSION_ENTITY_TYPES);
+
+/** Narrows a loosely-typed entity type from a polymorphic card to a tracked one. */
+export function isImpressionEntityType(value: string | undefined): value is ImpressionEntityType {
+  return value !== undefined && IMPRESSION_ENTITY_TYPE_SET.has(value);
+}
+
+// Where the impression happened. Becomes a LowCardinality(String) column, so it
+// is a closed enum rather than free text — a tampered client cannot introduce a
+// new value and blow up the column's dictionary.
+export const IMPRESSION_SURFACES = [
+  'home',
+  'images',
+  'videos',
+  'posts',
+  'models',
+  'articles',
+  'collections',
+  'bounties',
+  'search',
+  'user',
+  'other',
+] as const;
+export type ImpressionSurface = (typeof IMPRESSION_SURFACES)[number];
+
+// Entities per event. The browser flushes at this cap; the ceiling exists so a
+// tampered body can't turn one request into an unbounded ClickHouse insert.
+export const IMPRESSION_ENTITIES_MAX = 250;
+
+export const trackImpressionSchema = z.object({
+  // Random per-tab token, minted client-side and never persisted. NOT an
+  // identifier: it exists so the SAME entity seen repeatedly during one browsing
+  // session collapses to one impression, and so a batch redelivered by the
+  // at-least-once transport can be recognised as a duplicate at read time
+  // (`uniqExact(sessionKey)` over the raw table) rather than double-counted.
+  sessionKey: z.string().min(1).max(32),
+  // `.catch` rather than a hard reject: an unrecognised surface must not 400 a
+  // batch that is otherwise full of good events.
+  surface: z.enum(IMPRESSION_SURFACES).catch('other'),
+  entities: z
+    .array(
+      z.object({
+        entityType: z.enum(IMPRESSION_ENTITY_TYPES),
+        entityId: z.number().int().positive(),
+      })
+    )
+    .min(1)
+    .max(IMPRESSION_ENTITIES_MAX),
+});
+export type TrackImpressionInput = z.infer<typeof trackImpressionSchema>;
 
 // One coalesced telemetry event in a /api/track/batch payload. `kind` selects the
 // destination (search -> Tracker.search, action -> Tracker.action) and `data` is
@@ -492,6 +720,7 @@ export const trackActionSchema = z.discriminatedUnion('type', [
 export const trackBatchEventSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('search'), data: trackSearchSchema }),
   z.object({ kind: z.literal('action'), data: trackActionSchema }),
+  z.object({ kind: z.literal('impression'), data: trackImpressionSchema }),
 ]);
 export type TrackBatchEvent = z.infer<typeof trackBatchEventSchema>;
 

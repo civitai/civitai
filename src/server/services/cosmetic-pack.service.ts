@@ -1,0 +1,638 @@
+import { randomUUID } from 'crypto';
+import type { Prisma } from '@prisma/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import { refreshOwnedStickerCache } from '~/server/redis/caches';
+import { TransactionType } from '~/shared/constants/buzz.constants';
+import type {
+  CosmeticPurchaseMeta,
+  CosmeticShopItemMeta,
+} from '~/server/schema/cosmetic-shop.schema';
+import {
+  computeCreatorShopSplit,
+  computePackAmountDue,
+  isConsumableCosmeticType,
+} from '~/server/schema/creator-shop.schema';
+import {
+  createBuzzTransaction,
+  createMultiAccountBuzzTransaction,
+  refundMultiAccountTransaction,
+} from '~/server/services/buzz.service';
+import { getBlockedPairIds } from '~/server/services/user-preferences.service';
+import { throwBadRequestError, withRetries } from '~/server/utils/errorHandling';
+import { stickerUsesFromCosmeticData } from '~/shared/utils/sticker-token';
+import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+
+export type PackMemberListing = {
+  cosmeticId: number;
+  name: string;
+  type: CosmeticType;
+  data: unknown;
+  createdById: number | null;
+  /** The member's own listing — a pack does not create one for it. */
+  listingId: number;
+  listingMeta: CosmeticShopItemMeta;
+  addedById: number | null;
+  availableQuantity: number | null;
+  availableFrom: Date | null;
+  availableTo: Date | null;
+  /** Individual sales plus grants made through any pack, so an edition cap holds. */
+  soldCount: number;
+  /** Price snapshotted into the pack at build time. */
+  floorAmount: number;
+};
+
+/**
+ * Loads each member alongside the listing that authorises selling it.
+ *
+ * Delisted members are deliberately included: delisting stops individual sale
+ * while staying bundlable, which is the whole reason `listed` exists. Archived
+ * and never-published ones are not — withdrawn is withdrawn.
+ */
+export const getPackMembers = async (shopItemId: number): Promise<PackMemberListing[]> => {
+  const rows = await dbRead.cosmeticShopItemCosmetic.findMany({
+    where: { shopItemId },
+    orderBy: { index: 'asc' },
+    select: {
+      cosmeticId: true,
+      floorAmount: true,
+      cosmetic: { select: { id: true, name: true, type: true, data: true, createdById: true } },
+    },
+  });
+  if (!rows.length) return [];
+
+  const cosmeticIds = rows.map((r) => r.cosmeticId);
+  const listings = await dbRead.cosmeticShopItem.findMany({
+    // `archivedAt` as well as `status`: a moderator archiving a listing through
+    // the product editor stamps the date and leaves `status` alone, so a
+    // status-only filter keeps selling it inside every pack that contains it.
+    where: {
+      cosmeticId: { in: cosmeticIds },
+      status: CosmeticShopItemStatus.Published,
+      archivedAt: null,
+    },
+    orderBy: { id: 'asc' },
+    select: {
+      id: true,
+      cosmeticId: true,
+      unitAmount: true,
+      meta: true,
+      addedById: true,
+      availableQuantity: true,
+      availableFrom: true,
+      availableTo: true,
+      _count: { select: { purchases: true } },
+    },
+  });
+  // A pack sale never writes a purchase row against the member's own listing, so
+  // counting only those would let limited members be oversold through bundles.
+  // Refunded components released their grant, so they release their stock too.
+  const packSales = await dbRead.userCosmeticShopPurchaseCosmetic.groupBy({
+    by: ['cosmeticId'],
+    where: { cosmeticId: { in: cosmeticIds }, purchase: { refunded: false } },
+    _count: { cosmeticId: true },
+  });
+  const packSoldByCosmetic = new Map(packSales.map((s) => [s.cosmeticId, s._count.cosmeticId]));
+
+  // The SAME listing the pack was priced against — the highest-priced one (see
+  // resolvePackMembers). Picking a different listing here would price the pack
+  // off one set of terms and then sell, pay out and stock-check it against
+  // another, which is exactly what resale-by-reference makes possible.
+  const listingByCosmetic = new Map<number, (typeof listings)[number]>();
+  // Stock stays a property of the ONE listing the pack is priced and paid
+  // against. Aggregating across listings sounds more correct and isn't: an
+  // unlimited listing's sales counted against a limited listing's cap would
+  // permanently sell out every pack containing that cosmetic, while neither
+  // listing had.
+  for (const listing of listings) {
+    if (listing.cosmeticId == null) continue;
+    const current = listingByCosmetic.get(listing.cosmeticId);
+    if (!current || listing.unitAmount > current.unitAmount)
+      listingByCosmetic.set(listing.cosmeticId, listing);
+  }
+
+  return rows.flatMap((row) => {
+    const listing = listingByCosmetic.get(row.cosmeticId);
+    if (!listing || !row.cosmetic) return [];
+    return [
+      {
+        cosmeticId: row.cosmeticId,
+        name: row.cosmetic.name,
+        type: row.cosmetic.type,
+        data: row.cosmetic.data,
+        createdById: row.cosmetic.createdById,
+        listingId: listing.id,
+        listingMeta: (listing.meta ?? {}) as CosmeticShopItemMeta,
+        addedById: listing.addedById,
+        availableQuantity: listing.availableQuantity,
+        availableFrom: listing.availableFrom,
+        availableTo: listing.availableTo,
+        soldCount: listing._count.purchases + (packSoldByCosmetic.get(row.cosmeticId) ?? 0),
+        floorAmount: row.floorAmount,
+      },
+    ];
+  });
+};
+
+/**
+ * A pack accepts Blue Buzz only if every member's own listing does (zuri,
+ * 2026-08-04). `acceptsBlueBuzz` is a creator's decision about their own
+ * cosmetic, and paying blue for a pack pays each member's creator in blue, so
+ * one opt-out has to veto the pack. Returns the members that block it, which is
+ * what the pack builder needs to show.
+ */
+export const packBlueBuzzVeto = (members: PackMemberListing[]) =>
+  members.filter((m) => !m.listingMeta.acceptsBlueBuzz);
+
+/**
+ * Every guard the single purchase enforces, answered once per member.
+ *
+ * The failure this exists to prevent is a rule that is correct for the pack and
+ * wrong for a member: a pack must not sell a sold-out member, a withdrawn one,
+ * or one whose creator the buyer has blocked. The pack's own status says nothing
+ * about any of that.
+ */
+export const assertPackPurchasable = async ({
+  userId,
+  members,
+  memberCount,
+  packCreatorId,
+  stickersEnabled,
+}: {
+  userId: number;
+  members: PackMemberListing[];
+  /** How many members the pack was built with (`meta.packMemberCount`). */
+  memberCount: number;
+  packCreatorId?: number | null;
+  stickersEnabled?: boolean;
+}) => {
+  // The single purchase refuses a creator buying their own cosmetic; this is the
+  // same rule one level up. Pricing it instead — charging only what is owed to
+  // others — made an all-own pack free, and a free purchase is not merely a
+  // discount: each one grants another consumable balance and consumes a member's
+  // quantity, which is a way to make third-party packs containing that member
+  // refuse. Their own members are already theirs; foreign ones can be bought
+  // individually.
+  if (packCreatorId && packCreatorId === userId)
+    throw throwBadRequestError(
+      "You can't buy your own pack — the items other creators made are on sale individually"
+    );
+
+  // Compared against the count recorded when the pack was built, not against the
+  // join rows themselves: a member Cosmetic being deleted cascades its join row
+  // away, so a live count would shrink with the pack and agree with itself.
+  if (members.length !== memberCount)
+    throw throwBadRequestError('This pack contains an item that is no longer available');
+
+  if (!stickersEnabled && members.some((m) => m.type === CosmeticType.Sticker))
+    throw throwBadRequestError('This pack is not available');
+
+  const creatorIds = members
+    .flatMap((m) => [m.createdById, m.addedById])
+    .filter((id): id is number => id != null);
+  if (creatorIds.length) {
+    const blockedPairIds = await getBlockedPairIds(userId);
+    // Same generic error as the single purchase so a block isn't revealed.
+    if (creatorIds.some((id) => blockedPairIds.includes(id)))
+      throw throwBadRequestError('This pack is not available');
+  }
+
+  const now = new Date();
+  for (const member of members) {
+    if (member.availableQuantity !== null && member.soldCount >= member.availableQuantity)
+      throw throwBadRequestError('This pack contains an item that is sold out');
+    // The single purchase refuses on both windows; a bundle must not be a way to
+    // buy a member before its drop or after it ended.
+    if (member.availableFrom && member.availableFrom > now)
+      throw throwBadRequestError('This pack contains an item that is not available yet');
+    if (member.availableTo && member.availableTo < now)
+      throw throwBadRequestError('This pack contains an item that is no longer available');
+  }
+};
+
+/**
+ * Grants every member to the buyer.
+ *
+ * Two behaviours, per D16 and D23. A consumable the buyer already holds is not a
+ * duplicate — the purchase adds uses, so it lands as `remaining + n` on the
+ * existing holding. Everything else is granted only if lacking. Neither can be
+ * expressed as `createMany({ skipDuplicates: true })`: the `UserCosmetic` key is
+ * `[userId, cosmeticId, claimKey]` and each purchase carries a fresh claimKey,
+ * so nothing ever collides and the skip never fires.
+ */
+export const grantPackMembers = async ({
+  tx,
+  userId,
+  members,
+  claimKey,
+}: {
+  tx: Prisma.TransactionClient;
+  userId: number;
+  members: PackMemberListing[];
+  claimKey: string;
+}) => {
+  const consumable = members.filter((m) => isConsumableCosmeticType(m.type));
+  const durable = members.filter((m) => !isConsumableCosmeticType(m.type));
+
+  for (const member of consumable) {
+    const uses = stickerUsesFromCosmeticData(member.data);
+    // No usable `uses` means the grant would read as unlimited. That state is a
+    // data fault (see creatorGrantRemaining), and honouring it here would sell
+    // an unlimited balance at a finite price.
+    if (!uses)
+      throw throwBadRequestError('This pack contains an item that cannot be granted right now');
+    await tx.$executeRaw`
+      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "remaining")
+      VALUES (${userId}, ${member.cosmeticId}, ${claimKey}, ${uses})
+      ON CONFLICT ("userId", "cosmeticId", "claimKey")
+      DO UPDATE SET "remaining" = COALESCE("UserCosmetic"."remaining", 0) + ${uses}
+    `;
+  }
+
+  if (durable.length) {
+    const owned = await tx.userCosmetic.findMany({
+      where: { userId, cosmeticId: { in: durable.map((m) => m.cosmeticId) } },
+      select: { cosmeticId: true },
+    });
+    const ownedIds = new Set(owned.map((o) => o.cosmeticId));
+    const toGrant = durable.filter((m) => !ownedIds.has(m.cosmeticId));
+    if (toGrant.length)
+      await tx.userCosmetic.createMany({
+        // Reads the balance rather than assuming NULL, exactly as the single
+        // purchase does for every type. Partitioning on `isConsumableCosmeticType`
+        // is an optimisation; if it ever disagrees with what a cosmetic's data
+        // says, this branch must not be the one that grants unlimited uses.
+        data: toGrant.map((m) => ({
+          userId,
+          cosmeticId: m.cosmeticId,
+          claimKey,
+          remaining: stickerUsesFromCosmeticData(m.data),
+        })),
+      });
+  }
+};
+
+/**
+ * What each party is owed for a pack sale.
+ *
+ * Foreign members pay their creator as if sold at the price snapshotted into the
+ * pack, with their own listing's sellerShare. The pack creator is paid on the
+ * remainder, so the platform's 30% comes out of every component.
+ *
+ * The invariant this function owes the rest of the system: total payout is at
+ * most 70% of what was collected. It is enforced here rather than assumed from
+ * the price floor, because the floor is checked against live list prices and the
+ * payout runs off snapshots taken when the pack was built.
+ */
+export const computePackPayouts = ({
+  packPrice,
+  packCreatorId,
+  members,
+  buyerId,
+}: {
+  /** What the buyer was actually charged, after any ownership discount. */
+  packPrice: number;
+  packCreatorId: number | null;
+  members: PackMemberListing[];
+  buyerId?: number;
+}) => {
+  const components: { cosmeticId: number; userId: number; amount: number; unitAmount: number }[] =
+    [];
+
+  const payable = members.filter(
+    (m) =>
+      m.createdById != null &&
+      m.createdById !== packCreatorId &&
+      // Paying the buyer for a member they created would round-trip their own
+      // Buzz through the bank and burn the platform's 30% on the way. They are
+      // not charged for it either — see the purchase path.
+      m.createdById !== buyerId
+  );
+  const snapshotTotal = payable.reduce((sum, m) => sum + m.floorAmount, 0);
+
+  // The floor is checked against LIVE list prices while payouts run off the
+  // SNAPSHOT, so the two can diverge: a member re-priced down lets the pack be
+  // re-priced down with it, while its component still pays the old, higher
+  // amount. Unbounded, that pays out more than the pack collected — a mint, and
+  // a repeatable one. Every component is therefore scaled into the collected
+  // amount rather than trusted to fit inside it.
+  const scale = snapshotTotal > packPrice && snapshotTotal > 0 ? packPrice / snapshotTotal : 1;
+
+  let foreignTotal = 0;
+
+  for (const member of payable) {
+    // Floored per member, so scaling can only ever round in the platform's
+    // favour and the total stays inside the price.
+    const basis = scale === 1 ? member.floorAmount : Math.floor(member.floorAmount * scale);
+    if (basis <= 0) continue;
+    foreignTotal += basis;
+    const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
+      basis,
+      member.listingMeta.sellerShare ?? 0
+    );
+    // The member's own reseller, if it has one, is paid out of that member's
+    // pool rather than the pack creator's — unless the reseller is the buyer,
+    // in which case the seller share would be a discount they fund for
+    // themselves. The single purchase refuses this in as many words; a pack
+    // reaches the same state through a member and needs the same answer.
+    const resellerId =
+      member.addedById && member.addedById !== member.createdById && member.addedById !== buyerId
+        ? member.addedById
+        : null;
+    if (resellerId && sellerAmount > 0) {
+      if (creatorAmount > 0)
+        components.push({
+          cosmeticId: member.cosmeticId,
+          userId: member.createdById as number,
+          amount: creatorAmount,
+          unitAmount: basis,
+        });
+      components.push({
+        cosmeticId: member.cosmeticId,
+        userId: resellerId,
+        amount: sellerAmount,
+        unitAmount: basis,
+      });
+    } else if (creatorPool > 0) {
+      components.push({
+        cosmeticId: member.cosmeticId,
+        userId: member.createdById as number,
+        amount: creatorPool,
+        unitAmount: basis,
+      });
+    }
+  }
+
+  const remainder = Math.max(0, packPrice - foreignTotal);
+  // Not paid to the buyer: a pack creator buying their own pack is not charged
+  // for their own portion (see computePackAmountDue), so there is nothing to pay
+  // back — and paying it would book a Sell crediting them for a sale they funded.
+  const packCreatorAmount =
+    packCreatorId && packCreatorId !== buyerId ? computeCreatorShopSplit(remainder).creatorPool : 0;
+
+  return { components, foreignTotal, remainder, packCreatorAmount, scaled: scale !== 1 };
+};
+
+export const purchaseCosmeticPack = async ({
+  userId,
+  shopItem,
+  members,
+  payWith = 'default',
+  buzzType = 'yellow',
+  stickersEnabled,
+}: {
+  userId: number;
+  shopItem: {
+    id: number;
+    title: string;
+    unitAmount: number;
+    addedById: number | null;
+    meta: CosmeticShopItemMeta;
+    memberCount: number;
+  };
+  members: PackMemberListing[];
+  payWith?: 'default' | 'blue' | 'blue-first';
+  buzzType?: BuzzSpendType;
+  stickersEnabled?: boolean;
+}) => {
+  await assertPackPurchasable({
+    userId,
+    members,
+    memberCount: shopItem.memberCount,
+    packCreatorId: shopItem.addedById,
+    stickersEnabled,
+  });
+
+  // The discount is part of the price, not a label. Computed here, on the
+  // writer, rather than trusted from the client — and from the same helper the
+  // detail view renders, so the button and the charge cannot disagree.
+  const owned = await dbWrite.userCosmetic.findMany({
+    where: { userId, cosmeticId: { in: members.map((m) => m.cosmeticId) } },
+    select: { cosmeticId: true },
+  });
+  const { amountDue: amountCharged } = computePackAmountDue({
+    packPrice: shopItem.unitAmount,
+    members: members.map((m) => ({
+      cosmeticId: m.cosmeticId,
+      type: m.type,
+      listPrice: m.floorAmount,
+      isOwn: m.createdById === shopItem.addedById,
+      createdById: m.createdById,
+    })),
+    ownedCosmeticIds: [...new Set(owned.map((o) => o.cosmeticId))],
+    buyerId: userId,
+    packCreatorId: shopItem.addedById,
+  });
+
+  // AND across members, not the pack's own flag: the pack listing's
+  // acceptsBlueBuzz is a request, and one member's opt-out vetoes it.
+  if (payWith !== 'default') {
+    if (!shopItem.meta.acceptsBlueBuzz || packBlueBuzzVeto(members).length)
+      throw throwBadRequestError('This pack does not accept Blue Buzz');
+  }
+  const fromAccountTypes: BuzzSpendType[] =
+    payWith === 'blue-first' ? ['blue', buzzType] : [buzzType];
+
+  // A pack can price to zero, and not only through the discount: `selfAuthored`
+  // is computed over the members the buyer created, so a pack made entirely of
+  // someone else's listings of the buyer's own work reaches zero with no
+  // discount involved at all. What such a purchase delivers is free repeat
+  // top-ups of the buyer's own consumables, and every repeat also consumes a
+  // member's remaining quantity — which is what makes third-party packs
+  // containing that member refuse. Nothing to pay means nothing left to buy.
+  if (amountCharged <= 0) throw throwBadRequestError('You already own everything in this pack');
+
+  // Random rather than a timestamp: a pack is repeatable (a consumable member
+  // tops up), so two calls in the same millisecond would share an external id —
+  // and a duplicate reads as "the money already moved".
+  const transactionId = `cosmetic-pack-${userId}-${shopItem.id}-${randomUUID()}`;
+  const transaction = await createMultiAccountBuzzTransaction({
+    fromAccountId: userId,
+    fromAccountTypes,
+    toAccountId: 0,
+    amount: amountCharged,
+    type: TransactionType.Purchase,
+    description: `Cosmetic pack purchase - ${shopItem.title}`,
+    externalTransactionIdPrefix: transactionId,
+  });
+  // 🔴 NOT a 400, and that changed meaning recently. The Buzz service answered
+  // and created nothing, which is AMBIGUOUS — the charge may have happened. The
+  // sticker purchase flow now reads a 4xx as "nothing was charged, retry as a
+  // new intent", so raising a refusal here would release an idempotency key on a
+  // failure that may already have taken the money. The shop path's identical
+  // case is a 500 for the same reason.
+  if (!transaction.transactionCount) throw new Error('There was an error creating the transaction');
+  const bluePaid = transaction.transactionIds
+    .filter((t) => t.accountType === 'blue')
+    .reduce((sum, t) => sum + t.amount, 0);
+
+  try {
+    await dbWrite.$transaction(async (tx) => {
+      await tx.userCosmeticShopPurchases.create({
+        data: {
+          userId,
+          cosmeticId: null,
+          shopItemId: shopItem.id,
+          unitAmount: amountCharged,
+          buzzTransactionId: transactionId,
+          refunded: false,
+        },
+      });
+
+      const { components } = computePackPayouts({
+        packPrice: amountCharged,
+        packCreatorId: shopItem.addedById,
+        members,
+        buyerId: userId,
+      });
+      const attributedByCosmetic = new Map<number, number>();
+      for (const member of members) attributedByCosmetic.set(member.cosmeticId, member.floorAmount);
+      for (const c of components) attributedByCosmetic.set(c.cosmeticId, c.unitAmount);
+
+      await tx.userCosmeticShopPurchaseCosmetic.createMany({
+        data: members.map((m) => ({
+          buzzTransactionId: transactionId,
+          cosmeticId: m.cosmeticId,
+          unitAmount: attributedByCosmetic.get(m.cosmeticId) ?? m.floorAmount,
+        })),
+      });
+
+      await grantPackMembers({ tx, userId, members, claimKey: transactionId });
+
+      await tx.cosmeticShopItem.update({
+        where: { id: shopItem.id },
+        data: {
+          meta: {
+            ...shopItem.meta,
+            purchases: (shopItem.meta.purchases ?? 0) + 1,
+          } as Prisma.InputJsonValue,
+        },
+      });
+    });
+  } catch (error) {
+    // The only path where the buyer is actually out of pocket, so it must leave
+    // a trace: a failing refund used to discard the grant error and surface its
+    // own instead, recording nothing. Retried like the payout, and logged with
+    // the transaction id, which is what makes it reconcilable by hand.
+    try {
+      await withRetries(
+        () =>
+          refundMultiAccountTransaction({
+            externalTransactionIdPrefix: transactionId,
+            description: `Failed to purchase cosmetic pack - ${shopItem.title}`,
+          }),
+        3
+      );
+    } catch (refundError) {
+      logToAxiom({
+        level: 'error',
+        message: 'Failed to refund a failed pack purchase',
+        data: { shopItemId: shopItem.id, userId, transactionId, error: refundError },
+      });
+    }
+    logToAxiom({
+      level: 'error',
+      message: 'Failed to grant a pack purchase',
+      data: { shopItemId: shopItem.id, userId, transactionId, error },
+    });
+    throw throwBadRequestError('Failed to purchase pack');
+  }
+
+  // Outside the try: the money moved and the grant committed, so a cache refresh
+  // failing here is not grounds for refunding someone who kept their cosmetics.
+  await refreshOwnedStickerCache([userId]);
+
+  try {
+    await withRetries(async () => {
+      const price = amountCharged;
+      const { components, packCreatorAmount, scaled } = computePackPayouts({
+        packPrice: price,
+        packCreatorId: shopItem.addedById,
+        members,
+        buyerId: userId,
+      });
+      // Reaching this means a pack sold for less than its members' snapshots,
+      // which the floor and the re-snapshot both exist to prevent. Everyone is
+      // paid proportionally less, so the shortfall is real money and silence
+      // makes it invisible until a creator counts it themselves. Logged here
+      // rather than inside computePackPayouts, which is also called inside the
+      // write transaction and would emit twice.
+      if (scaled)
+        void logToAxiom({
+          level: 'error',
+          message: 'Pack payouts scaled down to fit the collected amount',
+          data: { shopItemId: shopItem.id, userId, transactionId, price },
+          // `.catch`, not `await`: a degraded Axiom returns a rejecting promise,
+          // and unattached that is an unhandled rejection.
+        }).catch(() => undefined);
+      const recipients = [
+        ...components.map((c) => ({
+          userId: c.userId,
+          amount: c.amount,
+          cosmeticId: c.cosmeticId,
+        })),
+        ...(shopItem.addedById && packCreatorAmount > 0
+          ? [{ userId: shopItem.addedById, amount: packCreatorAmount, cosmeticId: null }]
+          : []),
+      ];
+
+      // Paid in the colors the buyer paid with, pro-rated and floored per
+      // recipient, exactly as a single purchase does.
+      const payouts = recipients.flatMap((r) => {
+        const blueAmount = price > 0 ? Math.floor((r.amount * bluePaid) / price) : 0;
+        return [
+          { ...r, amount: blueAmount, color: 'blue' as BuzzSpendType },
+          { ...r, amount: r.amount - blueAmount, color: buzzType },
+        ].filter((p) => p.amount > 0);
+      });
+
+      const paid = await Promise.all(
+        payouts.map(async (p) => {
+          const { transactionId: payoutTransactionId } = await createBuzzTransaction({
+            fromAccountId: 0,
+            toAccountId: p.userId,
+            toAccountType: p.color,
+            amount: p.amount,
+            type: TransactionType.Sell,
+            description: `A user has purchased your cosmetic - ${shopItem.title}`,
+            // Unique per recipient, color AND member: one user can be paid for
+            // several members of the same pack.
+            externalTransactionId: `${transactionId}:sell:${p.userId}:${p.color}:${
+              p.cosmeticId ?? 'pack'
+            }`,
+            details: { purchasedBy: userId, originalAmount: price },
+          });
+          return {
+            userId: p.userId,
+            amount: p.amount,
+            color: p.color,
+            transactionId: payoutTransactionId ?? undefined,
+          };
+        })
+      );
+
+      await dbWrite.userCosmeticShopPurchases.update({
+        where: { buzzTransactionId: transactionId },
+        data: {
+          meta: {
+            payouts: paid,
+            platformCut: price - paid.reduce((sum, p) => sum + p.amount, 0),
+          } satisfies CosmeticPurchaseMeta as Prisma.InputJsonValue,
+        },
+      });
+    }, 3);
+  } catch (e) {
+    logToAxiom({
+      level: 'error',
+      message: 'Failed to distribute pack funds',
+      data: { shopItemId: shopItem.id, userId, transactionId, error: e },
+    });
+  }
+
+  return {
+    transactionId,
+    // Names, not ids: the completion modal tells the buyer what they just got.
+    granted: members.map((m) => ({ cosmeticId: m.cosmeticId, name: m.name, type: m.type })),
+  };
+};

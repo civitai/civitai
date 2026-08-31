@@ -1,5 +1,7 @@
 import {
   isKnownBlockScope,
+  sensitiveScopeJustificationError,
+  unjustifiedSensitiveScopes,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
@@ -12,11 +14,41 @@ import {
 // imported by `ManifestEditForm.tsx`). `safe-fetch.ts` imports the same helpers,
 // so the manifest validator and the fetch-time guard share ONE source of truth.
 import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
+// The manifest `repository` rule. `external-app.schema` is dependency-free (plain TS
+// over the WHATWG `URL`), so importing it keeps this module client-bundle-safe while
+// giving the manifest path and the off-site listing path ONE validator. See the
+// re-export block below MANIFEST_TAGLINE_MAX_LENGTH.
+import {
+  MAX_REPOSITORY_URL_LENGTH,
+  REPOSITORY_HOST_ALLOWLIST,
+  validateRepositoryUrl,
+} from '~/server/schema/blocks/external-app.schema';
 // Single source for the per-scope justification length bound — shared with the
 // OAuth-connect scope-review validator in @civitai/auth so the two can't drift.
 import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '@civitai/auth/token-scope';
 
 type ValidationResult = { valid: true } | { valid: false; errors: string[] };
+
+/**
+ * Options controlling WHICH validation rules run. Defaults to full enforcement
+ * (every rule on); a caller passes this only to RELAX a rule for a specific
+ * context. Currently the sole knob exempts the sensitive-scope-justification
+ * enforcement on the moderator APPROVE re-validation.
+ */
+export type ManifestValidationOptions = {
+  /**
+   * Enforce that every declared SENSITIVE scope carries a non-empty
+   * justification. Default `true` (the genuine submit / new-version paths). The
+   * moderator APPROVE re-validation passes `false` so a LEGACY pending request —
+   * submitted before this rule shipped, with a sensitive scope and no
+   * justification — stays approvable (grandfathered). No bypass is created: a
+   * post-deploy submission already passed this gate at submit time, so
+   * re-checking it on approve is redundant, and nothing can reach the approve
+   * queue post-deploy without first passing the submit gate. ALL OTHER
+   * validation still runs on approve.
+   */
+  enforceSensitiveScopeJustification?: boolean;
+};
 
 interface RawManifest {
   blockId?: unknown;
@@ -44,6 +76,21 @@ interface RawManifest {
    * is fine (the store simply shows no tagline).
    */
   tagline?: unknown;
+  /**
+   * OPTIONAL public source-repository link ("this app is open source"), shown as a
+   * `Source` row on the app's `/apps` store DETAIL page. Manifest-governed for the
+   * same reason `tagline` is — an onsite listing has no other author surface — so it
+   * flows to the listing on approve and is re-synced on every subsequent approved
+   * version. When present it must pass {@link validateRepositoryUrl}: https, no
+   * credentials, no port, an exact-host match against
+   * {@link REPOSITORY_HOST_ALLOWLIST}, and a `/<owner>/<repo>` repository-root path.
+   * Absent is fine (the store simply shows no Source row).
+   *
+   * 🔴 NOT `AppBlock.repoUrl`. That column is the app's INTERNAL Forgejo repository
+   * and is platform-owned; this is an author-declared PUBLIC link, and the two must
+   * never be conflated in either direction.
+   */
+  repository?: unknown;
   iframe?: {
     src?: unknown;
     minHeight?: unknown;
@@ -151,6 +198,27 @@ const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
  * so the duplication can never silently diverge.
  */
 export const MANIFEST_TAGLINE_MAX_LENGTH = 140;
+
+/**
+ * The manifest `repository` rule is IMPORTED, not re-declared.
+ *
+ * Unlike the tagline bound above (which is re-declared because
+ * `offsite-listing.schema` would drag zod into this client-bundle-safe module),
+ * `external-app.schema` has NO imports at all — it is plain TypeScript over the WHATWG
+ * `URL` — so importing it here costs the browser bundle nothing and buys ONE
+ * implementation of the rule instead of two plus a drift guard. The off-site listing
+ * path (`buildListingPatchData`, `submitExternalListing`) calls the same function, so
+ * an on-site manifest and an off-site listing form cannot disagree about what a valid
+ * repository link is.
+ *
+ * Re-exported so `ManifestEditForm.tsx` can import the bound + the host list from the
+ * validator it already imports, rather than reaching into the schema module directly.
+ */
+export {
+  MAX_REPOSITORY_URL_LENGTH,
+  REPOSITORY_HOST_ALLOWLIST,
+  validateRepositoryUrl,
+};
 
 // Config-as-code `buildCommand` shape allowlist (defense-in-depth — see the
 // field comment in RawManifest). The build sandbox is already isolated; this
@@ -301,7 +369,11 @@ export class BlockManifestValidator {
   // Back-compat overload: the existing test suite passes a bitmask number.
   // Real callers pass the AppContext shape (with allowedOrigins) so the
   // H8 binding check actually runs.
-  static validate(manifest: unknown, app: AppContext | number): ValidationResult {
+  static validate(
+    manifest: unknown,
+    app: AppContext | number,
+    opts?: ManifestValidationOptions
+  ): ValidationResult {
     const ctx: AppContext =
       typeof app === 'number'
         ? { allowedScopes: app, allowedOrigins: [] }
@@ -387,6 +459,22 @@ export class BlockManifestValidator {
       }
     }
 
+    // Optional `repository` (the public source-repo link). Absent is fine. When
+    // present it goes through the SHARED `validateRepositoryUrl` — the same function
+    // the off-site listing form uses — rather than a second copy of the host allowlist
+    // and path rule here. The error is re-labelled to the MANIFEST key name, because
+    // an on-site author who typed this into `block.manifest.json` never saw a field
+    // called `sourceRepoUrl` and would have nothing to go on.
+    //
+    // 🔴 TRIMMED, matching the tagline convention above: the validator measures the
+    // trimmed value while the published JSON Schema's `maxLength` counts the raw
+    // string, so the schema stays no MORE permissive than the server. `validateRepositoryUrl`
+    // trims internally; passing the raw value keeps that single-sourced.
+    if (m.repository !== undefined) {
+      const repo = validateRepositoryUrl(m.repository);
+      if (!repo.ok) errors.push(repo.error.replace('sourceRepoUrl', 'repository'));
+    }
+
     if (!Array.isArray(m.scopes)) {
       errors.push('scopes must be an array of strings');
     } else {
@@ -457,6 +545,34 @@ export class BlockManifestValidator {
             );
           }
         }
+      }
+    }
+
+    // ENFORCEMENT (was presentation-only): every declared SENSITIVE scope — the
+    // subset that can spend/read the viewer's Buzz, read their PRIVATE data, or
+    // write data other users see (see SENSITIVE_BLOCK_SCOPES) — MUST carry a
+    // non-empty justification. `scopeJustifications` used to be fully optional;
+    // for sensitive scopes it is now REQUIRED, so a moderator always sees WHY an
+    // elevated-risk permission was requested. An entirely-absent
+    // `scopeJustifications` (previously valid) now fails when any sensitive scope
+    // is declared. Reuses the single-sourced sensitive set (never re-hardcodes
+    // it), and runs for every SUBMIT path because both the CLI submit-version and
+    // the web `updateManifest` funnel through `validateSubmission` → this
+    // `validate`.
+    //
+    // SUBMIT-ONLY (default on): the moderator APPROVE re-validation passes
+    // `enforceSensitiveScopeJustification:false` so a LEGACY pending request
+    // (submitted before this shipped, no justification) stays approvable. Only
+    // THIS rule is exempted on approve — every other check above still runs.
+    if (opts?.enforceSensitiveScopeJustification !== false) {
+      // DRY: the rule (which sensitive scopes are unjustified + the message) is
+      // single-sourced in block-scope.constants so this validator and the
+      // submit-time gate in `submitVersion` can never drift. The `!== false`
+      // gate (approve exemption for legacy pending requests) stays HERE; the
+      // helper is the pure rule and always evaluates.
+      const unjustifiedSensitive = unjustifiedSensitiveScopes(m);
+      if (unjustifiedSensitive.length > 0) {
+        errors.push(sensitiveScopeJustificationError(unjustifiedSensitive));
       }
     }
 
@@ -718,9 +834,10 @@ export class BlockManifestValidator {
    */
   static async validateSubmission(
     manifest: unknown,
-    app: AppContext | number
+    app: AppContext | number,
+    opts?: ManifestValidationOptions
   ): Promise<ValidationResult> {
-    const base = this.validate(manifest, app);
+    const base = this.validate(manifest, app, opts);
     const errors: string[] = base.valid ? [] : [...base.errors];
 
     const settings =

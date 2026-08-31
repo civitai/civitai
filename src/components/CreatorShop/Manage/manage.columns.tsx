@@ -1,14 +1,30 @@
-import { ActionIcon, Badge, Group, Menu, Stack, Text } from '@mantine/core';
+import { ActionIcon, Badge, Group, Menu, Stack, Text, ThemeIcon } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconArchive, IconArchiveOff, IconDots, IconEdit, IconTrash } from '@tabler/icons-react';
+import { IconPackage } from '@tabler/icons-react';
+import {
+  IconArchive,
+  IconArchiveOff,
+  IconDots,
+  IconEdit,
+  IconEye,
+  IconEyeOff,
+  IconTrash,
+} from '@tabler/icons-react';
 import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 import { CreatorShopSubmitModal } from '~/components/CreatorShop/CreatorShopSubmitModal';
-import type { CreatorShopManageItem } from '~/components/CreatorShop/creator-shop.util';
-import { useMutateCreatorShop } from '~/components/CreatorShop/creator-shop.util';
+import { CreatorShopPackModal } from '~/components/CreatorShop/Pack/CreatorShopPackModal';
+import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
+import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
+import type {
+  CreatorShopManageItem,
+  useMutateCreatorShop,
+} from '~/components/CreatorShop/creator-shop.util';
 import { CosmeticThumb } from '~/components/CreatorShop/CosmeticThumb';
+import { ItemResellersPopover } from '~/components/CreatorShop/Manage/ItemResellersPopover';
 import { statusMeta } from '~/components/CreatorShop/Manage/manage.constants';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { wasLastReviewARejection } from '~/server/services/creator-shop.data';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -16,6 +32,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 
 type ArchiveMutation = ReturnType<typeof useMutateCreatorShop>['archiveItem'];
+type SetListedMutation = ReturnType<typeof useMutateCreatorShop>['setItemListed'];
 type UnarchiveMutation = ReturnType<typeof useMutateCreatorShop>['unarchiveItem'];
 type DeleteMutation = ReturnType<typeof useMutateCreatorShop>['deleteItem'];
 
@@ -29,17 +46,33 @@ export type ManageColumn = {
   render: (item: CreatorShopManageItem) => ReactNode;
 };
 
+const packTiles = (item: CreatorShopManageItem) =>
+  ((item.meta ?? {}) as CosmeticShopItemMeta).coverTiles ?? [];
+
 function ItemCell({ item }: { item: CreatorShopManageItem }) {
   return (
     <Group gap="sm" wrap="nowrap" align="center">
-      <CosmeticThumb data={item.cosmetic.data} name={item.title} bare />
+      {/* A pack has no cosmetic art, and may have no cover either — its
+          contents are the picture, with an icon when even those are missing. */}
+      {item.cosmetic ? (
+        <CosmeticThumb data={item.cosmetic.data} name={item.title} bare />
+      ) : packTiles(item).length ? (
+        <PackCoverTiles tiles={packTiles(item)} size={44} className="shrink-0" fallbackIcon />
+      ) : (
+        <ThemeIcon variant="light" color="gray" size={44} radius="md" className="shrink-0">
+          <IconPackage size={22} />
+        </ThemeIcon>
+      )}
       <Stack gap={0} className="min-w-0">
         <Text size="sm" fw={600} lineClamp={1}>
           {item.title}
         </Text>
         <Text size="xs" c="dimmed">
-          {getDisplayName(item.cosmetic.type)}
+          {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
         </Text>
+        {item.resellerCount > 0 && (
+          <ItemResellersPopover shopItemId={item.id} count={item.resellerCount} />
+        )}
         {item.rejectionReason &&
           (item.status === CosmeticShopItemStatus.Rejected ||
             item.status === CosmeticShopItemStatus.RequestedChanges) && (
@@ -61,16 +94,23 @@ function ItemCell({ item }: { item: CreatorShopManageItem }) {
 function ItemActionsMenu({
   item,
   archiveItem,
+  setItemListed,
   unarchiveItem,
   deleteItem,
 }: {
   item: CreatorShopManageItem;
   archiveItem: ArchiveMutation;
+  setItemListed: SetListedMutation;
   unarchiveItem: UnarchiveMutation;
   deleteItem: DeleteMutation;
 }) {
   const currentUser = useCurrentUser();
   const isArchived = item.status === CosmeticShopItemStatus.Archived;
+  // Archiving overwrites the status, so an item archived back when that was
+  // allowed still has to read as rejected — restoring one is refused server-side.
+  const isRejected =
+    item.status === CosmeticShopItemStatus.Rejected ||
+    (isArchived && wasLastReviewARejection(((item.meta ?? {}) as CosmeticShopItemMeta).history));
 
   const confirmDelete = () =>
     openConfirmModal({
@@ -96,6 +136,31 @@ function ItemActionsMenu({
       onConfirm: () => deleteItem.mutate({ id: item.id }),
     });
 
+  // Withdrawing ends other creators' listings and sends the item back to review
+  // before it can sell again. Both are worth knowing before the click, not after.
+  const confirmWithdrawal = (action: 'Delist' | 'Archive', onConfirm: () => void) => {
+    openConfirmModal({
+      title: `${action} ${item.title}`,
+      children: (
+        <Stack gap="xs">
+          {item.resellerCount > 0 && (
+            <Text size="sm">
+              <strong>{numberWithCommas(item.resellerCount)}</strong> other creator
+              {item.resellerCount === 1 ? '' : 's'} resell this. Their listings will be removed and
+              they&apos;ll be notified.
+            </Text>
+          )}
+          <Text size="sm">
+            Putting it back on sale needs a new review, so it won&apos;t return instantly.
+          </Text>
+        </Stack>
+      ),
+      labels: { confirm: action, cancel: 'Cancel' },
+      centered: true,
+      onConfirm,
+    });
+  };
+
   return (
     <Menu withinPortal position="bottom-end">
       <Menu.Target>
@@ -104,32 +169,75 @@ function ItemActionsMenu({
         </ActionIcon>
       </Menu.Target>
       <Menu.Dropdown>
-        {isArchived ? (
+        {isRejected ? (
+          // Editing, listing and archiving a rejected item are all refused
+          // server-side — archiving because restoring afterwards used to put it
+          // back in the queue with the verdict cleared.
+          <Menu.Label>Rejected — this item is final and can&apos;t be changed.</Menu.Label>
+        ) : isArchived ? (
           <Menu.Item
             leftSection={<IconArchiveOff size={16} />}
             disabled={unarchiveItem.isPending}
             onClick={() => unarchiveItem.mutate({ id: item.id })}
           >
-            Restore
+            <Stack gap={2}>
+              <Text size="sm">Restore</Text>
+              <Text size="xs" c="dimmed">
+                Goes back to review before it can sell again.
+              </Text>
+            </Stack>
           </Menu.Item>
         ) : (
           <>
             <Menu.Item
               leftSection={<IconEdit size={16} />}
-              // Rejected is terminal — nothing more can be changed.
-              disabled={item.status === CosmeticShopItemStatus.Rejected}
               onClick={() =>
-                dialogStore.trigger({ component: CreatorShopSubmitModal, props: { item } })
+                dialogStore.trigger({
+                  // A pack has no cosmetic to edit — its contents and price live
+                  // in the pack builder instead.
+                  component: item.cosmetic ? CreatorShopSubmitModal : CreatorShopPackModal,
+                  props: { item },
+                })
               }
             >
               {item.status === CosmeticShopItemStatus.RequestedChanges ? 'Edit & resubmit' : 'Edit'}
             </Menu.Item>
+            {/* Only a live item has a listing to withdraw. */}
+            {item.status === CosmeticShopItemStatus.Published && (
+              <Menu.Item
+                leftSection={item.listed ? <IconEyeOff size={16} /> : <IconEye size={16} />}
+                disabled={setItemListed.isPending}
+                onClick={() => {
+                  const toggle = () => setItemListed.mutate({ id: item.id, listed: !item.listed });
+                  // Relisting takes nothing away, so it needs no warning.
+                  return item.listed ? confirmWithdrawal('Delist', toggle) : toggle();
+                }}
+              >
+                <Stack gap={2}>
+                  <Text size="sm">{item.listed ? 'Delist' : 'List'}</Text>
+                  <Text size="xs" c="dimmed">
+                    {item.listed
+                      ? item.cosmetic
+                        ? 'Stops sales and ends other creators’ resale listings. Packs bundling it keep selling.'
+                        : 'Takes the pack off sale and ends other creators’ resale listings.'
+                      : 'Sends it back to review before it sells again.'}
+                  </Text>
+                </Stack>
+              </Menu.Item>
+            )}
             <Menu.Item
               leftSection={<IconArchive size={16} />}
               disabled={archiveItem.isPending}
-              onClick={() => archiveItem.mutate({ id: item.id })}
+              onClick={() =>
+                confirmWithdrawal('Archive', () => archiveItem.mutate({ id: item.id }))
+              }
             >
-              Archive
+              <Stack gap={2}>
+                <Text size="sm">Archive</Text>
+                <Text size="xs" c="dimmed">
+                  Withdraws it completely. Restoring it needs a new review.
+                </Text>
+              </Stack>
             </Menu.Item>
           </>
         )}
@@ -151,6 +259,7 @@ function ItemActionsMenu({
 
 export function useManageColumns(
   archiveItem: ArchiveMutation,
+  setItemListed: SetListedMutation,
   unarchiveItem: UnarchiveMutation,
   deleteItem: DeleteMutation
 ): ManageColumn[] {
@@ -161,9 +270,9 @@ export function useManageColumns(
         key: 'type',
         header: 'Type',
         width: 110,
-        render: () => (
+        render: (item) => (
           <Text size="sm" c="dimmed">
-            Cosmetic
+            {item.cosmetic ? 'Cosmetic' : 'Pack'}
           </Text>
         ),
       },
@@ -216,12 +325,13 @@ export function useManageColumns(
           <ItemActionsMenu
             item={item}
             archiveItem={archiveItem}
+            setItemListed={setItemListed}
             unarchiveItem={unarchiveItem}
             deleteItem={deleteItem}
           />
         ),
       },
     ],
-    [archiveItem, unarchiveItem, deleteItem]
+    [archiveItem, setItemListed, unarchiveItem, deleteItem]
   );
 }

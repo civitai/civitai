@@ -47,6 +47,7 @@ const nameOverrides: Record<string, string> = {
   DoRA: 'DoRA',
   scheduler: 'Scheduler',
   TextualInversion: 'Embedding',
+  ComfyWorkflows: 'ComfyUI Workflows',
   MotionModule: 'Motion',
   BenefactorsOnly: 'Supporters Only',
   ModelVersion: 'Model Version',
@@ -56,7 +57,8 @@ const nameOverrides: Record<string, string> = {
   'PixArt a': 'PixArt α',
   ProfileDecoration: 'Avatar Decoration',
   CogVideoX: 'CogVideoX',
-  minimax: 'Hailou by MiniMax',
+  minimax: 'Hailuo by MiniMax',
+  MiniMaxH3: 'MiniMax H3',
   NoobAI: 'NoobAI',
   InternalValue: 'Internal Value',
   ACH: 'ACH',
@@ -141,7 +143,10 @@ export function camelCase(str: string) {
 
 const validModelExtensions = ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.gguf', '.onnx'];
 
-export function sanitizeDownloadFilename(value: string, fallbackExtension = '.safetensors'): string {
+export function sanitizeDownloadFilename(
+  value: string,
+  fallbackExtension = '.safetensors'
+): string {
   let name = value
     .trim()
     .replace(/["\\\r\n\t]/g, '') // strip Content-Disposition-breaking chars
@@ -207,14 +212,34 @@ export function getModel3DUrl({ id, name }: { id: number; name?: string | null }
 }
 
 /**
+ * One HTML tag. `[^<>]` (not `[^>]`) so an unterminated run of `<` can't force quadratic
+ * backtracking (ReDoS) — a `<` always starts a fresh potential tag.
+ *
+ * Deliberately NOT exported. A shared module-scope regex carrying `g` is safe only while every
+ * consumer uses `String.replace`, which resets `lastIndex`; the first caller to reach for
+ * `.test()` or `.exec()` gets a guard that is inert on every other invocation. The two joins
+ * callers actually want are exported as functions instead.
+ */
+const HTML_TAG = /<[^<>]*>/g;
+
+/**
+ * Tags removed with nothing in their place, so `civitai.id<strong>5</strong>92807.click` reads
+ * as one string. The comment blocklist needs this alongside `removeTags`: neither join alone is
+ * enough, because collapsing to a space defeats a pattern split mid-token, while joining with
+ * nothing glues `<p>a</p><p>b</p>` into `ab`.
+ */
+export function removeTagsCompact(str: string) {
+  if (!str) return '';
+  return str.replace(HTML_TAG, '');
+}
+
+/**
  * @see https://www.geeksforgeeks.org/how-to-strip-out-html-tags-from-a-string-using-javascript/
  */
 export function removeTags(str: string) {
   if (!str) return '';
 
-  // Replace all HTML tags with a single space. `[^<>]` (not `[^>]`) so an unterminated run of
-  // `<` can't force quadratic backtracking (ReDoS) — a `<` always starts a fresh potential tag.
-  const stringWithoutTags = str.replace(/<[^<>]*>/g, ' ');
+  const stringWithoutTags = str.replace(HTML_TAG, ' ');
 
   // Replace multiple spaces with a single space
   const stringWithoutExtraSpaces = stringWithoutTags.replace(/\s+/g, ' ');

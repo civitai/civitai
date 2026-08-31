@@ -48,10 +48,7 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
           reaction,
           user: {
             id: currentUser.id,
-            deletedAt: null,
             username: currentUser.username ?? '',
-            image: currentUser.image ?? '',
-            profilePicture: null,
           },
         };
         const reacted = previousReactions.find(
@@ -108,7 +105,13 @@ export function CommentDiscussionItem({ data: comment, modelUserId }: Props) {
       </Group>
 
       <ContentClamp maxHeight={100}>
-        <RenderHtml html={comment.content} className="text-sm" withMentions withProfanityFilter />
+        <RenderHtml
+          html={comment.content}
+          className="text-sm"
+          withMentions
+          withProfanityFilter
+          allowStickers
+        />
       </ContentClamp>
 
       <Group mt="sm" align="flex-start" justify="space-between" wrap="nowrap">

@@ -8,6 +8,25 @@
 /** Ceiling for a per-image licensing fee, in Buzz. Mirrored by the app's model-version schema. */
 export const MAX_LICENSING_FEE = 100;
 
+// Video costs far more to generate than an image, so the fee ceiling is worth this much more on a video
+// model. Applied to the licensing-fee ceiling and the suggested defaults — but NOT to the monthly
+// pricing allowance, which counts prices rather than sizing them.
+export const VIDEO_CAP_MULTIPLIER = 5;
+
+/** The axis the ceiling resolves against. See capMediaType for how a base model maps onto it. */
+export type CapMediaType = 'image' | 'video';
+
+const mediaMultiplier = (mediaType: CapMediaType | undefined) =>
+  mediaType === 'video' ? VIDEO_CAP_MULTIPLIER : 1;
+
+/** Tier does not narrow this — what a tier governs is monthlyPricingAllowance, not fee size. */
+export function maxLicensingFeeCeiling(mediaType?: CapMediaType): number {
+  return MAX_LICENSING_FEE * mediaMultiplier(mediaType);
+}
+
+/** Infinity means 'no limit', which no JSON boundary survives — every cap crosses one as null. */
+export const finiteOrNull = (n: number): number | null => (Number.isFinite(n) ? n : null);
+
 export type FeeRatio = { buzz: number; images: number };
 
 // Image-count denominators the creator UI offers (a select, not a free input). Every stored fee maps
@@ -30,6 +49,32 @@ export function feeToRatio(perImage: number | null | undefined): FeeRatio {
   // Unreachable while 100 ∈ FEE_IMAGE_OPTIONS (cents*100 % 100 === 0 always); guards a mislisted set.
   const images = FEE_IMAGE_OPTIONS[FEE_IMAGE_OPTIONS.length - 1];
   return { buzz: Math.round((cents * images) / 100), images };
+}
+
+// "N ⚡ per M images" → per-image fee at 0.01 precision (0 clears). buzz(int) / images(∈ FEE_IMAGE_OPTIONS) is
+// always a multiple of 0.01, so it satisfies the column + the schema's multipleOf(0.01). Inverse of feeToRatio.
+export function ratioToFee(buzz: number, images: number): number {
+  if (!buzz || buzz <= 0 || !images) return 0;
+  return Math.round((buzz / images) * 100) / 100;
+}
+
+// Suggested per-image fee by model type — the seeded default for a NEW version. Checkpoints carry more value;
+// everything else is 0.1 ⚡/image (= 1 ⚡ per 10 images).
+export const SUGGESTED_FEE_PER_IMAGE: Record<string, number> = { Checkpoint: 1 };
+export const DEFAULT_SUGGESTED_FEE_PER_IMAGE = 0.1;
+/** @internal Editors should read monetizationLimits().fee.suggested / .suggestedPerGeneration. */
+export function suggestedFeePerImage(
+  modelType: string | null | undefined,
+  mediaType?: CapMediaType
+): number {
+  const base =
+    (modelType ? SUGGESTED_FEE_PER_IMAGE[modelType] : undefined) ?? DEFAULT_SUGGESTED_FEE_PER_IMAGE;
+  return base * mediaMultiplier(mediaType);
+}
+
+/** @internal Editors should read monetizationLimits().fee — it applies the media axis for them. */
+export function maxFeeBuzzForRatio(images: number, mediaType?: CapMediaType): number {
+  return Math.floor(maxLicensingFeeCeiling(mediaType) * images);
 }
 
 // Fees can be charged per image, per video, etc., so the cadence noun stays media-agnostic:

@@ -1,12 +1,13 @@
 import { Prisma } from '@prisma/client';
 
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { toPublicBlockManifest } from '~/server/schema/blocks/subscription.schema';
 import { isMatureContentRating } from '~/server/utils/server-domain';
 import type { StoreVisibilityScope } from '~/server/services/app-blocks-flag';
+import { narrowStoreScope } from '~/shared/utils/store-visibility-scope';
 import type {
   GetAppListingDetailInput,
   ListAllListingsForModerationInput,
@@ -20,8 +21,11 @@ import type {
   ListingKind,
   ListingRecommendRollup,
   ListingSort,
-  OffsiteSubKind,
 } from '~/server/schema/blocks/app-listing-read.schema';
+import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listing-media-url';
+// The MANUAL-APPLY `source_repo_url` column is read ONLY through this guard — never via
+// `listingHydrateSelect`, which the public `/apps` GRID shares. See its module header.
+import { readListingSourceRepoUrl } from '~/server/services/blocks/app-listing-source-repo.service';
 import { queryCache } from '~/server/utils/cache-helpers';
 
 /**
@@ -61,7 +65,9 @@ import { queryCache } from '~/server/utils/cache-helpers';
 /**
  * Bayesian prior COUNT for the `top-rated` recommend sort — how many "average"
  * reviews a 0-review app is seeded with so a 1-review 100% app can't outrank a
- * many-review 95% app. Mirrors the AppBlock rating sort's `BAYES_MIN_REVIEWS`.
+ * many-review 95% app. (This mirrored the removed AppBlock 5-star rating sort's
+ * `BAYES_MIN_REVIEWS`, which no longer exists — this constant is now the single
+ * source for the store's shrinkage prior, with nothing to stay in step with.)
  */
 export const LISTING_BAYES_PRIOR = 10;
 
@@ -148,11 +154,6 @@ export function recommendRollup(
   };
 }
 
-/** Off-site sub-kind: OAuth-connect when a connect client is set, else external-link. */
-export function resolveOffsiteSubKind(connectClientId: string | null | undefined): OffsiteSubKind {
-  return connectClientId ? 'connect' : 'external-link';
-}
-
 /**
  * Re-assert (defense-in-depth) that an off-site `externalUrl` is an https URL
  * before it reaches the wire — so a bad row can never surface a `javascript:` /
@@ -163,19 +164,16 @@ function safeExternalUrl(url: string | null | undefined): string | null {
   return url && /^https:\/\//i.test(url) ? url : null;
 }
 
-/** Build a CDN icon URL from an icon Image row (or null). */
-function iconUrl(icon: { url: string | null } | null | undefined): string | null {
-  return icon?.url ? getEdgeUrl(icon.url, { width: 256 }) : null;
-}
+/**
+ * Build a CDN icon URL from an icon Image row (or null).
+ *
+ * Thin alias over the shared projection in `listing-media-url.ts` — the author-facing
+ * `listMine` read needs the same hop, and two copies is two places to drift a width.
+ */
+const iconUrl = listingIconUrl;
 
 /** Cover URL = the cover Image, else the first screenshot's Image, else null. */
-function coverUrl(
-  cover: { url: string | null } | null | undefined,
-  firstScreenshotUrl: string | null
-): string | null {
-  if (cover?.url) return getEdgeUrl(cover.url, { width: 1200 });
-  return firstScreenshotUrl;
-}
+const coverUrl = listingCoverUrl;
 
 function creatorChip(
   user: { id: number; username: string | null; image: string | null } | null | undefined
@@ -223,7 +221,14 @@ export const listingHydrateSelect = {
   icon: { select: { url: true } },
   cover: { select: { url: true } },
   user: { select: { id: true, username: true, image: true } },
-  metric: { select: { thumbsUpCount: true, thumbsDownCount: true } },
+  // Projected into the DETAIL DTO only (the header's "Updated: <date>" meta line).
+  // Harmless extra column for the card projection, which doesn't surface it.
+  updatedAt: true,
+  // `installCount` feeds the detail header's install stat chip. It is the SAME
+  // column the public `popular` sort already orders every approved listing by
+  // (`lpad(COALESCE(m.install_count, 0)…)` below), so the ordering is public
+  // already — see the DTO field's allowlist justification.
+  metric: { select: { thumbsUpCount: true, thumbsDownCount: true, installCount: true } },
   // `currentVersionDeployedAt` powers the DEPLOY-GATE on the detail read (an
   // onsite listing whose backing block has never successfully deployed is
   // treated as unavailable). NULL ⇔ never-deployed; non-null ⇔ live (stays
@@ -252,7 +257,6 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
   if (row.kind === 'offsite') {
     return {
       kind: 'offsite',
-      subKind: resolveOffsiteSubKind(row.connectClientId),
       externalUrl: safeExternalUrl(row.externalUrl),
     };
   }
@@ -286,16 +290,44 @@ export function projectListingCard(row: HydratedListing): ListingCard {
   };
 }
 
-function detailKindData(row: HydratedListing): ListingDetailKindData {
+/**
+ * The listing columns `detailKindData` actually reads. Widened from
+ * `HydratedListing` (which still satisfies it structurally — this is a pure
+ * relaxation, no behaviour change) so a caller holding only the four off-site
+ * columns can reuse the REAL projection instead of re-deriving it.
+ *
+ * 🔴 That reuse is the point: `app-listing-actionable.service` runs the go-live
+ * actionability gate through this exact function, so the gate and the store can
+ * never disagree about what a listing's detail renders. The on-site inputs are
+ * optional because the on-site arm is the only consumer of them.
+ */
+export type DetailKindDataSource = {
+  kind: string;
+  slug: string;
+  // `| undefined` so a Prisma *create input* (whose nullable columns are optional)
+  // satisfies this as-is. Both consumers below (`safeExternalUrl` and the
+  // `|| null` on `connectClientId`) treat `undefined` identically to `null`.
+  externalUrl?: string | null;
+  connectClientId?: string | null;
+  appBlockId?: string | null;
+  appBlock?: { manifest: Prisma.JsonValue } | null;
+};
+
+export function detailKindData(row: DetailKindDataSource): ListingDetailKindData {
   if (row.kind === 'offsite') {
-    const subKind = resolveOffsiteSubKind(row.connectClientId);
     return {
       kind: 'offsite',
-      subKind,
       externalUrl: safeExternalUrl(row.externalUrl),
       // The OAuth client_id is public (it's sent in the connect URL); the secret
-      // is never selected here. Null for an external-link listing.
-      connectClientId: subKind === 'connect' ? row.connectClientId ?? null : null,
+      // is never selected here. Null when no OAuth app is connected.
+      //
+      // 🔴 `|| null`, NOT `?? null`, and that is deliberate: this used to read
+      // `subKind === 'connect' ? row.connectClientId ?? null : null`, and the
+      // removed sub-kind was `connectClientId ? 'connect' : 'external-link'` —
+      // a TRUTHINESS test. So an EMPTY-STRING client id projected as `null`
+      // before, and `?? null` would newly project it as `''`. `|| null` keeps
+      // the wire value byte-identical for every input.
+      connectClientId: row.connectClientId || null,
     };
   }
   return {
@@ -346,13 +378,55 @@ export async function getListingPreviewForReview(args: {
     select: listingHydrateSelect,
   });
   if (!row) return null;
-  return { card: projectListingCard(row), detail: projectListingDetail(row) };
+  // Same manual-apply guard as the public read — a moderator previewing a shadow must
+  // see the source link the apply will publish, and the preview must not 500 while the
+  // migration is outstanding. `args.listingId` is the row this preview projects (a
+  // shadow id here, deliberately), not its parent.
+  const sourceRepo = await readListingSourceRepoUrl(args.listingId, dbRead);
+  return {
+    card: projectListingCard(row),
+    detail: projectListingDetail(row, [], sourceRepo.value),
+  };
 }
 
-/** Project a hydrated listing row → the PUBLIC detail DTO (allowlist). */
-export function projectListingDetail(row: HydratedListing): ListingDetail {
+/**
+ * Project a hydrated listing row → the PUBLIC detail DTO (allowlist).
+ *
+ * `collaborators` is passed IN rather than selected on `row`, and that is deliberate
+ * on two counts:
+ *   1. INERTNESS. `app_collaborators` is a MANUAL-APPLY table. A nested Prisma select
+ *      on it would make the whole public store-detail read fail with P2021 until a
+ *      human applies the migration — turning an additive feature into an outage. The
+ *      caller resolves them through `safeCollaboratorQuery`, which degrades to `[]`.
+ *   2. PURITY. This projection stays synchronous and IO-free, so it remains directly
+ *      unit-testable (which is how the public-projection allowlist is pinned).
+ *
+ * 🔴 The chips are built by the SAME `creatorChip` allowlist as `creator` — exactly
+ * `{id, username, image}`, nothing else, ever.
+ * `app-collaborator.public-projection.test.ts` asserts the projected key set is exactly
+ * those three even when the input user row carries extra fields (email, bannedAt, …), so
+ * a wider `select` upstream cannot leak through this seam.
+ *
+ * 🔴 `sourceRepoUrl` is passed IN for EXACTLY reason (1) above, and it is worth being
+ * explicit that this is the same trap a second time, not a copied habit.
+ * `app_listings.source_repo_url` is a MANUAL-APPLY COLUMN. Putting `sourceRepoUrl: true`
+ * into `listingHydrateSelect` — the obvious implementation — makes every public store
+ * read that shares that select (the `/apps` GRID as well as this detail page) throw
+ * P2022 from the moment this deploys until a human runs the SQL. The caller resolves it
+ * through `readListingSourceRepoUrl`, which degrades to null, and the row is not even
+ * consulted for it here. It defaults to `null` so the several test fixtures and the
+ * moderator preview path that call this with two arguments keep working unchanged.
+ */
+export function projectListingDetail(
+  row: HydratedListing,
+  collaborators: Array<{ id: number; username: string | null; image: string | null }> = [],
+  sourceRepoUrl: string | null = null
+): ListingDetail {
   const recommend = recommendRollup(row.metric);
   return {
+    collaborators: collaborators
+      .map((u) => creatorChip(u))
+      .filter((c): c is ListingCreatorChip => c !== null),
     id: row.id,
     serialId: row.serialId,
     slug: row.slug,
@@ -367,6 +441,17 @@ export function projectListingDetail(row: HydratedListing): ListingDetail {
     creator: creatorChip(row.user),
     recommend,
     reviewCount: recommend.recommendedCount + recommend.notRecommendedCount,
+    // ISO-8601, not a `Date` — this DTO also crosses the transformer-less public REST
+    // boundary. See the field's docstring on `ListingDetail`.
+    updatedAt: row.updatedAt.toISOString(),
+    // `COALESCE(install_count, 0)` in projection form: a listing with no metric row
+    // has had no installs, exactly as the ranking SQL reads it.
+    installCount: row.metric?.installCount ?? 0,
+    // Public source-repo link — resolved by the caller through the manual-apply guard,
+    // never selected on `row`. See this function's docstring. Normalised at every write
+    // (`validateRepositoryUrl`), so what reaches the wire is always
+    // `https://<allowlisted-host>/<owner>/<repo>`.
+    sourceRepoUrl: sourceRepoUrl ?? null,
     screenshots: galleryScreenshots(row),
     kindData: detailKindData(row),
   };
@@ -446,10 +531,13 @@ export function listingMatureFilter(redCapable: boolean): Prisma.Sql {
  * public external App-store GA. Mirrors `listingMatureFilter`'s pure-`Prisma.Sql`
  * shape (uses the `al` alias, safe to AND into the keyset WHERE):
  *   - `full`            → `TRUE` (no kind restriction — byte-identical to today).
- *   - `public-external` → `al.kind = 'offsite'` — the offsite subset ONLY, for BOTH
- *     sub-kinds (`connect` AND `external-link`). Onsite App Blocks are excluded.
+ *   - `public-external` → `al.kind = 'offsite'` — the offsite subset ONLY, whether
+ *     or not the listing links an OAuth client. Onsite App Blocks are excluded.
  *     🔴 The kind gate is `kind='offsite'`, NOT `connect_client_id IS NULL` — an
  *     offsite listing is public whether or not it links an OAuth connect client.
+ *     (This used to say "for BOTH sub-kinds (`connect` AND `external-link`)";
+ *     that display taxonomy is gone — offsite is one kind — but the gate itself
+ *     is unchanged, because it never keyed on the sub-kind in the first place.)
  *   - `none`            → `FALSE` — fail-closed. (The router short-circuits `none`
  *     before reaching SQL, so this is defense-in-depth, never the live path.)
  *
@@ -506,18 +594,22 @@ export async function listAvailableListings(
 ): Promise<{ items: ListingCard[]; nextCursor?: string }> {
   const { kind, category, sort, cursor, limit } = input;
   const redCapable = opts.redCapable ?? false;
-  // Default `full` for callers that don't pass a scope (the router ALWAYS passes
-  // an explicit scope and NEVER calls this with `none` — it short-circuits an
-  // empty page at the proc). `full` → `TRUE` predicate → byte-identical WHERE.
-  const scope = opts.scope ?? 'full';
+  // 🔴 FAIL CLOSED on an absent / unrecognized scope (civitai#3983). This used to be
+  // `opts.scope ?? 'full'`, on the reasoning that every caller passes an explicit
+  // scope. Every caller does — and production still reached here with `undefined`,
+  // so the `??` fired and this function served the WHOLE approved catalog (on-site
+  // apps included) to anonymous callers of the public REST endpoint. A default is an
+  // authorization decision; the only safe one here is `none` → `FALSE` predicate →
+  // an empty page. `narrowStoreScope` is the single shared rule; see
+  // `~/shared/utils/store-visibility-scope`.
+  const scope = narrowStoreScope(opts.scope);
 
   const { cursorSortKey, cursorId, cursorMean } = decodeListingCursor(cursor);
 
   // Only `top-rated` needs the global mean. PIN it into the cursor across a
   // paging session (page 1 reads the 1h cache + encodes it; pages 2..N reuse
   // the pinned value, NOT a fresh read) so the sort key can't shift mid-scan.
-  const globalMean =
-    sort === 'top-rated' ? cursorMean ?? (await getGlobalRecommendMean()) : 0;
+  const globalMean = sort === 'top-rated' ? cursorMean ?? (await getGlobalRecommendMean()) : 0;
 
   const { expr: sortKeyExpr, descending } = listingSortKeyExpr(sort, globalMean);
   const dir = descending ? Prisma.sql`DESC` : Prisma.sql`ASC`;
@@ -574,9 +666,7 @@ export async function listAvailableListings(
     where: { id: { in: pageIds } },
     select: listingHydrateSelect,
   });
-  const byId = new Map(
-    hydrated.map((r: HydratedListing): [string, HydratedListing] => [r.id, r])
-  );
+  const byId = new Map(hydrated.map((r: HydratedListing): [string, HydratedListing] => [r.id, r]));
   const items = pageIds
     .map((id: string) => byId.get(id))
     .filter((r): r is HydratedListing => r != null)
@@ -596,8 +686,10 @@ export async function getListingDetail(
   opts: { redCapable?: boolean; scope?: StoreVisibilityScope } = {}
 ): Promise<ListingDetail | null> {
   const redCapable = opts.redCapable ?? false;
-  // Default `full` for callers that don't pass a scope (see listAvailableListings).
-  const scope = opts.scope ?? 'full';
+  // 🔴 FAIL CLOSED on an absent / unrecognized scope — see listAvailableListings
+  // (civitai#3983). Previously `opts.scope ?? 'full'`, which let an absent scope
+  // reach a listing's full detail through the public REST endpoint.
+  const scope = narrowStoreScope(opts.scope);
   // STORE-SCOPE `none` (default-closed): a caller with no store visibility gets
   // nothing — symmetric with the list path's `listingPublicVisibilityFilter('none')`
   // → FALSE. The v1 endpoints short-circuit `none` before calling this, but honor
@@ -626,8 +718,8 @@ export async function getListingDetail(
   if (!row || row.status !== 'approved') return null;
   // STORE-SCOPE kind gate (the public/onsite security boundary): under
   // `public-external` an ONSITE listing is indistinguishable from a missing one —
-  // return null so no crafted id/slug can reach an onsite listing's detail. Both
-  // offsite sub-kinds (connect + external-link) remain visible (gate on `kind`,
+  // return null so no crafted id/slug can reach an onsite listing's detail. EVERY
+  // offsite listing remains visible, OAuth-connected or not (gate on `kind`,
   // never `connectClientId`). `full` imposes no kind restriction (unchanged).
   if (scope === 'public-external' && row.kind !== 'offsite') return null;
   // DEPLOY-GATE (generic, all app-blocks): an ONSITE listing whose backing
@@ -641,7 +733,73 @@ export async function getListingDetail(
   // a missing one (mirrors the AppBlock detail's red-only 404).
   if (!redCapable && isMatureContentRating(row.contentRating)) return null;
 
-  return projectListingDetail(row);
+  // Both extras run in PARALLEL with each other, so the public detail read costs one
+  // round trip more than before, not two. Each is separately guarded against its own
+  // manual-apply migration being outstanding — the collaborator TABLE
+  // (`safeCollaboratorQuery` → `[]`) and the source-repo COLUMN
+  // (`readListingSourceRepoUrl` → `{available:false, value:null}`).
+  const [collaborators, sourceRepo] = await Promise.all([
+    loadDisplayedCollaboratorChips(row.id),
+    readListingSourceRepoUrl(row.id, dbRead),
+  ]);
+  return projectListingDetail(row, collaborators, sourceRepo.value);
+}
+
+/**
+ * Hydrate the PUBLIC collaborator byline for a listing: its ACCEPTED **and**
+ * `displayed` collaborators, projected to the same `{id, username, image}` allowlist as
+ * the creator chip.
+ *
+ * 🔴 KEYED ON THE LISTING, so it works for BOTH kinds. This read is the whole point of
+ * the block→listing re-key: an OFF-SITE listing has no AppBlock, so while seats were
+ * block-keyed its byline could only ever be empty.
+ *
+ * 🔴 CONSENT + OPT-IN, both load-bearing (enforced in `listDisplayedCollaboratorUserIds`):
+ * a PENDING invitee must never appear publicly — otherwise anyone could attach a
+ * stranger's name to their listing simply by inviting them — and an accepted
+ * collaborator who opted out of the byline must not appear either.
+ *
+ * Returns `[]` when the manual-apply migration has not landed — so the public read is
+ * byte-identical to today until both the table and a seat exist. The caller only ever
+ * passes a PARENT listing id (shadow revisions are filtered out of every public read),
+ * which is also the only id a seat can exist under.
+ */
+async function loadDisplayedCollaboratorChips(
+  appListingId: string | null
+): Promise<Array<{ id: number; username: string | null; image: string | null }>> {
+  if (!appListingId) return [];
+  const { listDisplayedCollaboratorUserIds } = await import(
+    '~/server/services/blocks/app-access.service'
+  );
+  const userIds = await listDisplayedCollaboratorUserIds(appListingId);
+  if (userIds.length === 0) return [];
+  // 🔴 EXPLICIT ALLOWLIST at the SELECT, not only at the projection. Two independent
+  // narrowings: nothing but these three columns ever leaves the DB, and `creatorChip`
+  // re-shapes them. Widening either alone cannot leak.
+  // 🔴 BANNED AND DELETED ACCOUNTS ARE FILTERED OUT, EXPLICITLY.
+  //
+  // This is the read that puts a collaborator's name and avatar on a PUBLIC app page,
+  // linked to their profile. Without these two clauses a banned user keeps that placement
+  // indefinitely, and a deleted one fell out only INCIDENTALLY — a hard delete nulls
+  // `username` and the chip component skips username-less rows, which is luck, not a
+  // filter. Neither is something to leave to the render layer.
+  //
+  // 🔴 DELIBERATELY STRICTER THAN `creatorChip`, which has the same shape and is NOT
+  // changed here. The two are different subjects: the creator IS the app's owner, whose
+  // ban delists the app anyway, so their chip and the listing disappear together. A
+  // COLLABORATOR is a third party — banning them must not require touching an app that
+  // may be perfectly healthy and owned by someone else entirely.
+  const users = await dbRead.user.findMany({
+    where: { id: { in: userIds }, bannedAt: null, deletedAt: null },
+    select: { id: true, username: true, image: true },
+  });
+  // Preserve the seat order (`createdAt asc`) rather than the DB's row order.
+  const byId = new Map(users.map((u: { id: number }) => [u.id, u]));
+  return userIds
+    .map((id) => byId.get(id))
+    .filter(
+      (u): u is { id: number; username: string | null; image: string | null } => u !== undefined
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -687,6 +845,20 @@ export type ModerationListingRow = {
     changelog: string | null;
     submittedBy: ModerationUserChip | null;
   } | null;
+  /**
+   * 🔴 ON-SITE ONLY, AND NOT THE SAME THING AS `pendingRequest`.
+   *
+   * `pendingRequest` above comes from the `AppListingPublishRequest` relation, whose
+   * `appListingId` the schema documents as "On-site: NULL until approve". So for an on-site
+   * PRE-APPROVAL DRAFT it is `null` no matter what — the live submission behind that row is an
+   * `AppBlockPublishRequest`, joined to the listing by the shared `@unique` SLUG and by no
+   * foreign key at all.
+   *
+   * This flag is that missing signal, resolved by a slug-keyed lookup. Without it the table
+   * cannot tell an ABANDONED draft from one under active review, and offered the destructive
+   * Purge action on both. Always `false` for an off-site row (whose requests do carry the FK).
+   */
+  hasPendingBlockRequest: boolean;
 };
 
 /**
@@ -719,12 +891,26 @@ export const moderationListingSelect = {
   },
 } satisfies Prisma.AppListingSelect;
 
-type HydratedModerationRow = Prisma.AppListingGetPayload<{ select: typeof moderationListingSelect }>;
+type HydratedModerationRow = Prisma.AppListingGetPayload<{
+  select: typeof moderationListingSelect;
+}>;
 
-/** Project a hydrated moderation row → the {@link ModerationListingRow} DTO. */
-export function projectModerationListing(row: HydratedModerationRow): ModerationListingRow {
+/**
+ * Project a hydrated moderation row → the {@link ModerationListingRow} DTO.
+ *
+ * `pendingBlockRequestSlugs` is the set of slugs with a live `AppBlockPublishRequest`,
+ * resolved by the caller in one batched query (there is no FK to include). A caller that
+ * cannot resolve it passes an empty set — see the 🔴 note on `hasPendingBlockRequest`, and
+ * note that an empty set is the PERMISSIVE direction, so only the mod-table read (which does
+ * resolve it) may drive a destructive affordance from this field.
+ */
+export function projectModerationListing(
+  row: HydratedModerationRow,
+  pendingBlockRequestSlugs: ReadonlySet<string> = new Set()
+): ModerationListingRow {
   const pending = row.publishRequests[0] ?? null;
   return {
+    hasPendingBlockRequest: row.kind === 'onsite' && pendingBlockRequestSlugs.has(row.slug),
     id: row.id,
     slug: row.slug,
     name: row.name,
@@ -765,9 +951,7 @@ export function projectModerationListing(row: HydratedModerationRow): Moderation
  * Pure, total. Returned as its own fragment so the caller composes it under `AND`
  * (this clause may itself be an `OR`, which would collide with the `search` `OR`).
  */
-export function moderationStatusWhere(
-  status: string | undefined
-): Prisma.AppListingWhereInput {
+export function moderationStatusWhere(status: string | undefined): Prisma.AppListingWhereInput {
   if (!status) return {};
   if (status === 'pending') {
     return {
@@ -828,6 +1012,24 @@ export async function listAllListingsForModeration(
 
   const hasNext = rows.length > limit;
   const page = hasNext ? rows.slice(0, limit) : rows;
-  const items = page.map(projectModerationListing);
+
+  // 🔴 The on-site "is this draft under review?" signal, which no `include` can supply: an
+  // on-site `AppBlockPublishRequest` is joined to its listing by the shared `@unique` SLUG
+  // and carries no FK (`AppListingPublishRequest.appListingId` is "On-site: NULL until
+  // approve"). One batched query over just this page's on-site slugs, so it stays O(1) reads
+  // regardless of page size and costs nothing on an all-off-site page.
+  const onsiteSlugs = page.filter((r) => r.kind === 'onsite').map((r) => r.slug);
+  const pendingBlockRequestSlugs = new Set<string>(
+    onsiteSlugs.length
+      ? (
+          await dbRead.appBlockPublishRequest.findMany({
+            where: { slug: { in: onsiteSlugs }, status: 'pending' },
+            select: { slug: true },
+          })
+        ).map((r: { slug: string }) => r.slug)
+      : []
+  );
+
+  const items = page.map((r) => projectModerationListing(r, pendingBlockRequestSlugs));
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }

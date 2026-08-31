@@ -475,80 +475,131 @@ export async function sendImagesForScanBulk(
 }
 
 const BLOCKED_IMAGE_RETENTION_DAYS = 7;
+// Ceiling on the CSAM hold below, measured from the REPORT, not from the block: the
+// send/archive pipeline has no retry limit and no dead-letter, so a report nobody finishes
+// would otherwise hold a user's blocked media forever. Clocking it from the block instead
+// would silently shrink each report's budget by however old the block already was.
+const CSAM_HOLD_MAX_DAYS = 30;
 
 export const removeBlockedImages = createJob(
   'remove-blocked-images',
   '0 * * * *',
   async () => {
-    // Pull from JobQueue instead of scanning Image table
+    // dbWrite because a report created within replica lag would otherwise be invisible here
+    // and its evidence purged in this same run.
+    const heldUsers = await dbWrite.$queryRaw<{ userId: number; oldestReport: Date }[]>`
+      SELECT "userId", MIN("createdAt") AS "oldestReport"
+      FROM "CsamReport"
+      WHERE "userId" IS NOT NULL
+        AND ("reportSentAt" IS NULL OR "archivedAt" IS NULL)
+      GROUP BY "userId"
+    `;
+    const holdCutoff = decreaseDate(new Date(), CSAM_HOLD_MAX_DAYS, 'days');
+    const activeUserIds = heldUsers.filter((u) => u.oldestReport > holdCutoff).map((u) => u.userId);
+    const expiredUserIds = heldUsers
+      .filter((u) => u.oldestReport <= holdCutoff)
+      .map((u) => u.userId);
+
+    // Excluded from the batch rather than filtered out after: held rows stay queued forever, so
+    // in an oldest-first window they would occupy the whole batch every run, stalling deletion
+    // site-wide for every other user.
+    const heldActive = activeUserIds.length
+      ? (
+          await dbRead.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Image"
+        WHERE "userId" = ANY(${activeUserIds})
+          AND ingestion = 'Blocked'::"ImageIngestionStatus"
+      `
+        ).map((x) => x.id)
+      : [];
+
     const jobQueue = await dbRead.jobQueue.findMany({
-      where: { type: JobQueueType.BlockedImageDelete, entityType: EntityType.Image },
+      where: {
+        type: JobQueueType.BlockedImageDelete,
+        entityType: EntityType.Image,
+        ...(heldActive.length ? { entityId: { notIn: heldActive } } : {}),
+      },
       take: 15000,
       orderBy: { createdAt: 'asc' },
     });
 
     if (!jobQueue.length) {
-      console.log('No blocked images in queue');
-      return { processed: 0 };
+      console.log('No blocked images in queue', { csamHeld: heldActive.length });
+      return { processed: 0, csamHeld: heldActive.length };
     }
 
     const imageIds = jobQueue.map((j) => j.entityId);
     console.log(`Found ${imageIds.length} blocked images in queue`);
 
-    // Fetch image data to check retention period and blockedFor status
+    // The queue row is written by trg_blocked_image_delete_queue on the transition into
+    // Blocked, so its createdAt is the block time. Image.createdAt would start the clock at
+    // upload, making anything blocked more than a week after upload deletable on the next run.
+    const blockedAt = new Map(jobQueue.map((j) => [j.entityId, j.createdAt]));
     const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
     const images = await dbRead.$queryRaw<
-      { id: number; blockedFor: string | null; createdAt: Date; updatedAt: Date }[]
+      { id: number; userId: number; blockedFor: string | null }[]
     >`
-    SELECT id, "blockedFor", "createdAt", "updatedAt"
+    SELECT id, "userId", "blockedFor"
     FROM "Image"
     WHERE id = ANY(${imageIds})
       AND ingestion = 'Blocked'::"ImageIngestionStatus"
   `;
+    const imageById = new Map(images.map((img) => [img.id, img]));
 
-    // Filter images ready for deletion based on retention period
     const imagesToDelete = images.filter((img) => {
-      // Skip AiNotVerified - these are handled differently
+      // AiNotVerified is unblocked by a separate re-verification path, never purged here.
       if (img.blockedFor === 'AiNotVerified') return false;
 
-      // Moderated images use updatedAt for retention
-      if (img.blockedFor === 'moderated') {
-        return img.updatedAt <= cutoff;
-      }
-
-      // All other blocked images use createdAt for retention
-      return img.createdAt <= cutoff;
+      const queuedAt = blockedAt.get(img.id);
+      return !!queuedAt && queuedAt <= cutoff;
     });
 
-    // Find stale queue entries (image deleted, status changed, or AiNotVerified)
-    const imageIdSet = new Set(images.map((img) => img.id));
+    // Queued but no longer purgeable: the image is gone, left Blocked, or is AiNotVerified.
     const deleteReadyIds = new Set(imagesToDelete.map((img) => img.id));
     const staleIds = imageIds.filter((id) => {
-      // Image was deleted or status changed from Blocked
-      if (!imageIdSet.has(id)) return true;
-      // AiNotVerified images should be removed from queue
-      const img = images.find((i) => i.id === id);
-      if (img?.blockedFor === 'AiNotVerified') return true;
-      return false;
+      const img = imageById.get(id);
+      if (!img) return true;
+      return img.blockedFor === 'AiNotVerified';
     });
 
-    // Find images still waiting for retention period
+    const staleIdSet = new Set(staleIds);
     const waitingIds = imageIds.filter((id) => {
-      if (!imageIdSet.has(id)) return false;
+      if (!imageById.has(id)) return false;
       if (deleteReadyIds.has(id)) return false;
-      if (staleIds.includes(id)) return false;
+      if (staleIdSet.has(id)) return false;
       return true;
     });
+
+    // Only the images actually being destroyed this run, so the alert can't over-report an
+    // expired hold whose images fell outside the batch or turned out to be stale.
+    const expiredUserIdSet = new Set(expiredUserIds);
+    const holdExpiredDeletions = imagesToDelete.filter((img) => expiredUserIdSet.has(img.userId));
 
     console.log({
       imagesToDelete: imagesToDelete.length,
       waitingForRetention: waitingIds.length,
+      csamHeld: heldActive.length,
+      csamHoldExpired: holdExpiredDeletions.length,
       staleIds: staleIds.length,
     });
 
     if (!isProd) return { imagesToDelete: imagesToDelete.length };
 
     if (!env.DATABASE_IS_PROD) return { imagesToDelete: 0 };
+
+    // Emitted immediately before the delete and never truncated: once these rows and their
+    // queue entries are gone this log is the only record that the evidence existed.
+    if (holdExpiredDeletions.length) {
+      logToAxiom({
+        name: 'remove-blocked-images',
+        type: 'error',
+        subType: 'csam-hold-expired',
+        message: `CSAM report older than ${CSAM_HOLD_MAX_DAYS} days; purging its evidence anyway`,
+        userIds: [...new Set(holdExpiredDeletions.map((x) => x.userId))],
+        imageIds: holdExpiredDeletions.map((x) => x.id),
+        count: holdExpiredDeletions.length,
+      });
+    }
 
     // Delete images that are past retention period
     if (imagesToDelete.length > 0) {
@@ -570,6 +621,8 @@ export const removeBlockedImages = createJob(
       deleted: imagesToDelete.length,
       staleRemoved: staleIds.length,
       waitingForRetention: waitingIds.length,
+      csamHeld: heldActive.length,
+      csamHoldExpired: holdExpiredDeletions.length,
     };
   },
   // Deleting 15k images per run can exceed the 5-min default lock; a second pod

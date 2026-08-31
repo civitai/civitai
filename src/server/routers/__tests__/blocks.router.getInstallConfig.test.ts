@@ -21,13 +21,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * suite exercises the router's auth gate, approved gate, and projection.
  */
 
-const {
-  mockIsAppBlocksEnabled,
-  mockDbReadAppBlockFindUnique,
-  mockGetUserBuzzAccounts,
-} = vi.hoisted(() => ({
+const { mockIsAppBlocksEnabled, mockGetUserBuzzAccounts } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(async () => true),
-  mockDbReadAppBlockFindUnique: vi.fn(),
   mockGetUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),
 }));
 
@@ -49,14 +44,6 @@ vi.mock('~/server/services/block-registry.service', () => ({
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { appBlock: { findUnique: mockDbReadAppBlockFindUnique } },
-  dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
-}));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>('@civitai/redis/client');
-  return { ...actual, redis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) } };
-});
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
   verifyBlockToken: vi.fn(),
   parseSubjectUserId: vi.fn(),
@@ -95,6 +82,10 @@ vi.mock('~/server/middleware.trpc', async () => {
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.set.mockImplementation(async () => undefined);
+const mockDbReadAppBlockFindUnique = dbMock.dbRead.appBlock.findUnique;
 
 function authedCtx(userId: number, isModerator = true) {
   return {

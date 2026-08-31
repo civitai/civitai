@@ -50,12 +50,14 @@ import { usersSearchIndex } from '~/server/search-index';
 import type {
   BadgeCosmetic,
   ContentDecorationCosmetic,
+  StickerCosmetic,
   NamePlateCosmetic,
   ProfileBackgroundCosmetic,
   WithClaimKey,
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getUserNotificationCount } from '~/server/services/notification.service';
+import { getPendingPlacementCounts } from '~/server/services/placement.service';
 import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
 import { getUserResourceReview } from '~/server/services/resourceReview.service';
 import {
@@ -89,28 +91,30 @@ import {
   getUsers,
   getUserContentSettings,
   getUserSettings,
-  setDismissedAlerts,
+  setAlertDismissed,
   getUsersWithSearch,
   isUsernamePermitted,
   restoreUser,
   setLeaderboardEligibility,
   setUserSetting,
+  patchUserSettings,
+  splitSettingsPatch,
   toggleBan,
   toggleBookmarked,
   toggleContestBan,
   toggleFollowUser,
-  toggleHideUser,
   toggleModelEngagement,
-  toggleModelHide,
   toggleModelNotify,
   toggleReview,
   toggleUserArticleEngagement,
   toggleUserBountyEngagement,
   unequipCosmeticByType,
   updateLeaderboardRank,
+  updateLeaderboardRankForUsers,
   updateUserById,
   userByReferralCode,
 } from '~/server/services/user.service';
+import { assertEmailAllowed } from '~/server/services/blocklist.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -135,7 +139,11 @@ import {
   computeUserFeatureFlagsOverlay,
   defaultToggleableFeatures,
 } from '../services/feature-flags.service';
-import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
+import {
+  getEntityCoverImage,
+  ingestImage,
+  queueReplacedImageDeletion,
+} from '../services/image.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 
 export const getAllUsersHandler = async ({
@@ -254,10 +262,18 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
   const { id } = ctx.user;
 
   try {
-    const unreadCount = await getUserNotificationCount({
-      userId: id,
-      unread: true,
-    });
+    // Concurrent, not serial: these hit two different backends — the
+    // notifications service over HTTP (with its own retries) and the main
+    // Postgres replica — with no data dependency between them. Awaiting them in
+    // sequence tacked a full DB round trip onto a request already waiting on a
+    // retrying HTTP call.
+    const [unreadCount, placementCounts] = await Promise.all([
+      getUserNotificationCount({ userId: id, unread: true }),
+      // Degrades to zeroes rather than failing the request, matching
+      // getUserNotificationCount: an under-reported badge for one session beats
+      // taking the notification bell down with it.
+      getPendingPlacementCounts({ ownerId: id }).catch(() => ({ sticker: 0, remix: 0 })),
+    ]);
 
     const reduced = unreadCount.reduce(
       (acc, { category, count }) => {
@@ -268,7 +284,28 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       },
       { all: 0 } as Record<Lowercase<NotificationCategory> | 'all', number>
     );
-    return reduced;
+
+    // `pendingPlacements` rides along here rather than getting its own query:
+    // this is the one request that already runs once per session for every
+    // signed-in user (`staleTime: Infinity`, see useQueryNotificationsCount),
+    // and the user menu badge needs a number on every page. A second per-page
+    // count would be a production cost for a creator-only chore.
+    //
+    // Deliberately NOT folded into `all`: that number is the notification bell's
+    // badge, and a pending placement is not an unread notification. Adding it
+    // there would inflate the bell by rows the drawer cannot show and cannot
+    // clear. It is also excluded by name from the client's mark-all-read wipe —
+    // see NON_CATEGORY_COUNT_KEYS in notifications.utils.ts, which is where the
+    // invariant for adding another non-category key to this payload lives.
+    return {
+      ...reduced,
+      // One number for the menu entry, and the split for the segmented control
+      // on the placements page — the entry points at both queues now, so a
+      // sticker-only count would under-report the thing it links to.
+      pendingPlacements: placementCounts.sticker + placementCounts.remix,
+      pendingStickerPlacements: placementCounts.sticker,
+      pendingRemixSubmissions: placementCounts.remix,
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -364,6 +401,9 @@ export const completeOnboardingHandler = async ({
       case OnboardingSteps.Profile: {
         if (input.username && !(await isUsernamePermitted(input.username)))
           throw throwBadRequestError('Invalid username');
+        // OAuth providers that hand us no email (Reddit) land here with `email: null`, and this step
+        // then REQUIRES one — free text that is never verified, which is the burner ring's door in.
+        if (input.email && input.email !== ctx.user.email) await assertEmailAllowed(input.email);
         await dbWrite.user.update({
           where: { id },
           data: { onboarding, username: input.username, email: input.email },
@@ -418,13 +458,29 @@ export const completeOnboardingHandler = async ({
     // main app READS the cached SessionUser, it no longer recomputes it per request. Bust that cache so the
     // client's next session read reflects the advanced step — without this the stale cached `onboarding` makes a
     // NEW user repeat the same step forever ("can't get through account creation"). Mirrors updateUserHandler.
-    if (changed) await refreshSession(id);
+    //
+    // 🔴 Gating on `changed` ALONE is narrower than what this handler WRITES. The Profile step writes
+    // `username`/`email` unconditionally (see the switch above), and both are carried on the session shape — so a
+    // re-submit of a step whose bit is already set advanced nothing, skipped the bust, and left the new username
+    // in the database with the old one in the session for the rest of its 4h TTL. Bust on either condition.
+    const wroteSessionIdentity =
+      input.step === OnboardingSteps.Profile && (!!input.username || !!input.email);
+    // Best-effort, like the sibling call in `user.service.ts:updateUserContentSettings`. The onboarding
+    // step above is already COMMITTED by the time we get here, so letting an invalidation failure reach
+    // the `catch` below would `throwDbError` a mutation that succeeded — the client is told the step
+    // failed and re-submits an already-applied write. A failed bust degrades to staleness bounded by the
+    // entry's own 4h TTL, which is strictly better than that. Logged, never swallowed silently.
+    if (changed || wroteSessionIdentity)
+      await refreshSession(id, { caller: 'profile' }).catch(handleLogError);
 
     const isComplete = onboarding === OnboardingComplete;
     if (isComplete && changed && onboardingCompletedCounter) onboardingCompletedCounter.inc();
   } catch (e) {
     const err = e as Error;
-    if (!err.message.includes('constraint failed')) onboardingErrorCounter?.inc();
+    // A TRPCError here is a policy REFUSAL (blocked domain, undeliverable domain, rejected
+    // username), not a fault. Counting those inflates the error signal and hides the refusal rate.
+    if (!(e instanceof TRPCError) && !err.message.includes('constraint failed'))
+      onboardingErrorCounter?.inc();
     if (e instanceof TRPCError) throw e;
     throw throwDbError(e);
   }
@@ -527,9 +583,17 @@ export const updateUserHandler = async ({
     // Post-update operations â€” parallelize independent work
     const postUpdatePromises: Promise<unknown>[] = [];
 
-    // Delete old profilePic and ingest new one
+    // Queue the old profilePic for a DEFERRED reap, and ingest the new one.
+    //
+    // This used to be an inline `deleteImageById`, which destroyed the row and the stored
+    // object the instant the new picture saved. The write is instant; the references are
+    // not — the image CDN caches its redirect for 24h, the account-switcher roster in
+    // localStorage is durable by design, and other surfaces hold rendered avatar urls. None
+    // of those are bugs on their own; they only became user-visible breakage because the
+    // target was *gone* rather than merely *stale*. Queuing instead keeps the old picture
+    // fetchable for the retention window, so every one of those caches self-corrects.
     if (user.profilePictureId && profilePicture && user.profilePictureId !== profilePicture.id) {
-      postUpdatePromises.push(deleteImageById({ id: user.profilePictureId }));
+      postUpdatePromises.push(queueReplacedImageDeletion([user.profilePictureId]));
     }
 
     if (
@@ -553,6 +617,15 @@ export const updateUserHandler = async ({
     if (isSettingCosmetics)
       postUpdatePromises.push(equipCosmetic({ userId: id, cosmeticId: payloadCosmeticIds }));
 
+    // Without this the new showcase isn't visible until the nightly rebuild, up to 24h later.
+    // The modal sends the field on every user-level save, so this recomputes on cosmetic
+    // saves too. That is deliberate: comparing against the stored value would have to read
+    // it back, and the only cheap read is the replica — an A->B->A save inside the
+    // replication window would then compare equal and skip the recompute it needs. The
+    // upsert is 0.87 ms and idempotent, so the redundant call costs less than that risk.
+    if (input.leaderboardShowcase !== undefined)
+      postUpdatePromises.push(updateLeaderboardRankForUsers({ userIds: id }));
+
     if (userReferralCode || source || landingPage) {
       postUpdatePromises.push(
         createUserReferral({
@@ -571,7 +644,11 @@ export const updateUserHandler = async ({
 
     purgeCache({ tags: [`user-creator-${id}`] }).catch();
 
-    postUpdatePromises.push(refreshSession(id));
+    // The `.catch` is attached BEFORE the push, not around the `Promise.all` below: this batch runs after
+    // the user row is already written, and `Promise.all` rejects on the FIRST rejection, so an unguarded
+    // cache bust here both `throwDbError`s a committed write and masks whatever the other members did.
+    // Guarding this one member keeps the rest of the batch reporting its own failures normally.
+    postUpdatePromises.push(refreshSession(id, { caller: 'profile' }).catch(handleLogError));
 
     await Promise.all(postUpdatePromises);
 
@@ -838,59 +915,6 @@ export const getUserHiddenListHandler = async ({ ctx }: { ctx: ProtectedContext 
   }
 };
 
-export const toggleHideUserHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ToggleFollowUserSchema;
-  ctx: ProtectedContext;
-}) => {
-  try {
-    const { id: userId } = ctx.user;
-    const result = await toggleHideUser({ ...input, userId });
-    if (result) {
-      await ctx.track.userEngagement({
-        type: 'Hide',
-        targetUserId: input.targetUserId,
-      });
-    } else {
-      await ctx.track.userEngagement({
-        type: 'Delete',
-        targetUserId: input.targetUserId,
-      });
-    }
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
-export const toggleHideModelHandler = async ({
-  input,
-  ctx,
-}: {
-  input: ToggleModelEngagementInput;
-  ctx: ProtectedContext;
-}) => {
-  try {
-    const { id: userId } = ctx.user;
-    const result = await toggleModelHide({ ...input, userId });
-    if (result) {
-      await ctx.track.modelEngagement({
-        type: 'Hide',
-        modelId: input.modelId,
-      });
-    } else {
-      await ctx.track.modelEngagement({
-        type: 'Delete',
-        modelId: input.modelId,
-      });
-    }
-    await redis.del(`${REDIS_KEYS.USER.BASE}:${userId}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`);
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
-
 export async function toggleFavoriteHandler({
   input: { modelId, modelVersionId, setTo },
   ctx,
@@ -1088,7 +1112,7 @@ export const toggleMuteHandler = async ({
     },
     updateSource: 'toggleMute',
   });
-  await invalidateSession(id);
+  await invalidateSession(id, 'moderation');
 
   await ctx.track.userActivity({
     type: user.muted ? 'Unmuted' : 'Muted',
@@ -1206,6 +1230,8 @@ export const getUserCosmeticsHandler = async ({
             ...sharedData,
             data: data as ProfileBackgroundCosmetic['data'],
           });
+        else if (type === CosmeticType.Sticker)
+          acc.sticker.push({ ...sharedData, data: data as StickerCosmetic['data'] });
 
         return acc;
       },
@@ -1215,6 +1241,7 @@ export const getUserCosmeticsHandler = async ({
         profileDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
         profileBackground: [] as WithClaimKey<ProfileBackgroundCosmetic>[],
         contentDecorations: [] as WithClaimKey<ContentDecorationCosmetic>[],
+        sticker: [] as WithClaimKey<StickerCosmetic>[],
       }
     );
 
@@ -1283,11 +1310,16 @@ export const userByReferralCodeHandler = async ({ input }: { input: UserByReferr
 export const userRewardDetailsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     // TODO.Optimization: This will make multiple requests to redis, we could probably do it in one and make this faster. This will get slower as we add more Active rewards.
-    const rewardDetails = await Promise.all(
-      Object.values(rewards)
-        .filter((x) => x.visible)
-        .map((x) => x.getUserRewardDetails(ctx.user.id))
-    );
+    // `visible` is compile-time ("the kind of reward we advertise"); a null here
+    // is the runtime disable. Filtering `visible` first keeps an unadvertised
+    // reward off the config read entirely.
+    const rewardDetails = (
+      await Promise.all(
+        Object.values(rewards)
+          .filter((x) => x.visible)
+          .map((x) => x.getUserRewardDetails(ctx.user.id))
+      )
+    ).filter((x) => x !== null);
 
     // sort by `onDemand` first
     return orderBy(rewardDetails, ['onDemand', 'awardAmount'], ['desc', 'asc']);
@@ -1380,18 +1412,21 @@ export const toggleUserFeatureFlagHandler = async ({
 }) => {
   try {
     const { id } = ctx.user;
-    const { features = {}, ...restSettings } = await getUserSettings(id);
+    const { features = {} } = await getUserSettings(id);
 
-    const updatedFeatures: Partial<FeatureAccess> = {
-      ...features,
-      [input.feature]: isDefined(features[input.feature])
-        ? input.value ?? !features[input.feature]
-        : input.value ?? !defaultToggleableFeatures[input.feature],
-    };
+    // The read decides what this ONE flag toggles to; it must not decide what gets
+    // written. Only the toggled flag is sent, merged into `settings.features` by the
+    // database, so a concurrent write to any other setting — or to another flag —
+    // survives instead of being reverted to its read-time value.
+    const value = isDefined(features[input.feature])
+      ? input.value ?? !features[input.feature]
+      : input.value ?? !defaultToggleableFeatures[input.feature];
 
-    await setUserSetting(id, { ...restSettings, features: updatedFeatures });
+    const settings = await patchUserSettings(id, {
+      mergeInto: { features: { [input.feature]: value } },
+    });
 
-    return updatedFeatures;
+    return (settings.features ?? { [input.feature]: value }) as Partial<FeatureAccess>;
   } catch (error) {
     throw throwDbError(error);
   }
@@ -1410,6 +1445,16 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: ProtectedContext })
   }
 };
 
+/**
+ * Settings keys that `setUserSettingsInput` can write AND that the auth hub folds into the cached
+ * SessionUser (`apps/auth/src/lib/server/auth/session-shape.ts` — its `settingsSchema` reads
+ * `allowAds`, `redBrowsingLevel`, `isEarlyAdopter`). Writing one of these without busting
+ * `session:data2:{id}` leaves the session serving the old value for the rest of its 4h TTL.
+ * Keep this in sync with that schema; `redBrowsingLevel` is intentionally excluded because this
+ * endpoint cannot write it (see the gate below).
+ */
+const SESSION_PROJECTED_SETTING_KEYS = ['allowAds', 'isEarlyAdopter'] as const;
+
 export const setUserSettingHandler = async ({
   input,
   ctx,
@@ -1425,20 +1470,56 @@ export const setUserSettingHandler = async ({
       throw throwAuthorizationError('You do not have permission to perform this action');
     }
 
-    const { tourSettings, ...restSettings } = await getUserSettings(id);
-    const newSettings = {
-      ...restSettings,
-      ...restInput,
-      tourSettings: tourSettings ? { ...tourSettings, ...tour } : { ...tour },
-    };
-
-    await setUserSetting(id, newSettings);
+    // Read for COMPARISON only — the two side effects below fire on a change, so they
+    // need the previous value. Nothing read here is written back: the patch carries
+    // only the keys this request is changing, and the database merges them onto
+    // whatever the column holds at write time. Spreading the read snapshot into the
+    // write is what used to revert a concurrent notice dismissal / feature toggle.
+    const restSettings = await getUserSettings(id);
+    const newSettings = await patchUserSettings(id, {
+      ...splitSettingsPatch(restInput),
+      // One level deep, so a tour another request just completed is not dropped.
+      ...(tour && Object.keys(tour).length ? { mergeInto: { tourSettings: tour } } : {}),
+    });
 
     const privacyKeys = ['hideModelBuzz', 'hideModelDownloads', 'hideModelGenerations'] as const;
     const metricPrivacyChanged = privacyKeys.some(
       (k) => k in restInput && (restSettings as Record<string, unknown>)[k] !== restInput[k]
     );
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
+
+    // Some settings keys are PROJECTED ONTO THE SESSION by the auth hub — `shapeSessionUser`
+    // reads `allowAds`, `redBrowsingLevel` and `isEarlyAdopter` out of `User.settings` and
+    // folds them into the SessionUser — and the hub caches that projection in
+    // `session:data2:{id}` for 4h. Without a bust the toggle reads as instantly applied
+    // client-side (the `getSettings` cache is patched optimistically) while every session
+    // read — and every Flipt evaluation built from it — keeps the OLD value until the entry
+    // expires: the toggle appears to do nothing. `refreshSession` busts that cache and
+    // signals the browser to re-pull. Awaited so the bust lands before the mutation returns;
+    // same reason `updateContentSettings` awaits its own call.
+    //
+    // 🔴 This used to name `isEarlyAdopter` as "the one settings key projected onto the
+    // session". It was not: `allowAds` is projected too and is writable through THIS
+    // endpoint's schema, so turning ads off left the session serving `allowAds: true` for up
+    // to 4h. The gate is a set now, so adding a projected key is one edit here rather than a
+    // silent re-introduction of the same bug (#4298's defect class).
+    // `redBrowsingLevel` is deliberately absent — it is not part of `setUserSettingsInput`;
+    // it is written by `updateContentSettings`, which performs its own bust.
+    //
+    // Gated on a CHANGE, not on key presence, and compared against `restInput` — the keys
+    // THIS request sent — rather than against the stored blob. Mirrors the
+    // `metricPrivacyChanged` comparison directly above. (The payload no longer carries the
+    // whole blob, so a presence check on it would no longer fire on unrelated toggles the
+    // way it did when this handler rewrote everything; the change comparison is still the
+    // right test, because re-sending the value a user already holds is not a change.)
+    const sessionProjectedSettingChanged = SESSION_PROJECTED_SETTING_KEYS.some(
+      (key) => key in restInput && restSettings[key] !== restInput[key]
+    );
+    // Best-effort — the settings write above has already committed, so an invalidation failure must not
+    // reach the `throwDbError` below and report a succeeded mutation as a 500. Staleness is bounded by
+    // the cached entry's own TTL; a misreported write is not bounded by anything.
+    if (sessionProjectedSettingChanged)
+      await refreshSession(id, { caller: 'profile' }).catch(handleLogError);
 
     return newSettings;
   } catch (error) {
@@ -1455,13 +1536,9 @@ export const dismissAlertHandler = async ({
 }) => {
   try {
     const { id } = ctx.user;
-    const { dismissedAlerts = [] } = await getUserSettings(id);
-
-    const updated = input.dismiss
-      ? [...new Set([...dismissedAlerts, input.alertId])]
-      : dismissedAlerts.filter((a: string) => a !== input.alertId);
-
-    await setDismissedAlerts(id, updated);
+    // One statement, computed over the stored array. The array is never read into
+    // JS, so two dismissals of different notices arriving together both land.
+    await setAlertDismissed(id, input.alertId, input.dismiss);
   } catch (error) {
     throw throwDbError(error);
   }
@@ -1476,11 +1553,11 @@ export const restoreAlertHandler = async ({
 }) => {
   try {
     const { id } = ctx.user;
-    const { dismissedAlerts = [] } = await getUserSettings(id);
-
-    await setUserSetting(id, {
-      dismissedAlerts: dismissedAlerts.filter((a: string) => a !== input.alertId),
-    });
+    // Same write path as `dismissAlert({ dismiss: false })`. It previously went through
+    // the whole-blob merge instead, which had a second defect: `removeEmpty` drops an
+    // EMPTY array, so restoring the user's last remaining dismissal wrote nothing at
+    // all and the notice stayed hidden.
+    await setAlertDismissed(id, input.alertId, false);
   } catch (error) {
     throw throwDbError(error);
   }

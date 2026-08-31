@@ -1,12 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockDbWrite } = vi.hoisted(() => ({
-  mockDbWrite: { $executeRaw: vi.fn(async () => 0) },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: mockDbWrite }));
-
 import { removeImageScanJobQueue } from '~/server/services/job-queue.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbWrite = dbMock.dbWrite;
 
 beforeEach(() => {
   mockDbWrite.$executeRaw.mockClear();

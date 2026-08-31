@@ -30,14 +30,11 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: mockGetServerAuthSession,
 }));
 
-const { mockFindUnique } = vi.hoisted(() => ({ mockFindUnique: vi.fn() }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: { keyValue: { findUnique: mockFindUnique } },
-  dbWrite: {},
-}));
-
-const { mockGetClientIp } = vi.hoisted(() => ({ mockGetClientIp: vi.fn() }));
-vi.mock('request-ip', () => ({ default: { getClientIp: mockGetClientIp } }));
+// The client IP is NOT mocked: the handler derives it via getTrustedClientIp,
+// so these tests drive the real derivation by supplying the edge headers /
+// transport peer the way a real request would. Mocking the derivation away
+// would leave the blacklist test asserting against a value no request can
+// actually produce.
 
 // Mock the Axiom logger. `safeError` mirrors the real @civitai/axiom shape
 // (spreads `name: <errClass>` which the handler overrides). We assert server-fault
@@ -55,18 +52,23 @@ vi.mock('~/server/logging/client', () => ({
 // real abort classification runs.
 
 import handler from '~/pages/api/download/[...key]';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 
 function createMocks({
   key = ['images', '127209598'],
   headers = {},
+  remoteAddress,
 }: {
   key?: string[];
   headers?: Record<string, string>;
+  remoteAddress?: string;
 } = {}) {
   const req = {
     method: 'GET',
     headers,
     query: { key },
+    socket: remoteAddress ? { remoteAddress } : undefined,
   } as unknown as NextApiRequest;
 
   let statusCode = 200;
@@ -118,9 +120,9 @@ const authedSession = { user: { id: 42 } };
 describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Defaults: no blacklist, no ip, authed user. Individual tests override.
+    // Defaults: no blacklist, no derivable ip (no edge headers, no socket peer),
+    // authed user. Individual tests override.
     mockFindUnique.mockResolvedValue({ value: '' });
-    mockGetClientIp.mockReturnValue(null);
     mockGetServerAuthSession.mockResolvedValue(authedSession);
   });
 
@@ -251,14 +253,25 @@ describe('/api/download/[...key] — unresolvable key returns 4xx, not 500', () 
   });
 
   it('blacklisted ip → 403 (unchanged), never calls the delivery worker', async () => {
-    mockGetClientIp.mockReturnValue('1.2.3.4');
     mockFindUnique.mockResolvedValue({ value: '9.9.9.9,1.2.3.4' });
-    const { req, res } = createMocks();
+    const { req, res } = createMocks({
+      headers: { 'cf-ray': '8a1b2c3d4e5f6789-IAD', 'cf-connecting-ip': '1.2.3.4' },
+    });
 
     await handler(req, res);
 
     expect(res._getStatusCode()).toBe(403);
     expect(res._getJSONData()).toEqual({ error: 'Forbidden' });
+    expect(mockGetDownloadUrl).not.toHaveBeenCalled();
+  });
+
+  it('blacklisted transport peer → 403, never calls the delivery worker', async () => {
+    mockFindUnique.mockResolvedValue({ value: '9.9.9.9,1.2.3.4' });
+    const { req, res } = createMocks({ remoteAddress: '1.2.3.4' });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(403);
     expect(mockGetDownloadUrl).not.toHaveBeenCalled();
   });
 

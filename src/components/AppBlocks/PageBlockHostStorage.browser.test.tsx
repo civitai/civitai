@@ -1,4 +1,5 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { BLOCK_STORAGE_READ_STALE_TIME_MS } from '~/components/AppBlocks/blockStorageCache';
 import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -40,6 +41,9 @@ const mocks = vi.hoisted(() => ({
   del: vi.fn(),
   list: vi.fn(),
   getQuota: vi.fn(),
+  // Router-level invalidate: what the host calls after every private write so
+  // the block's own next read is not served from the staleTime:Infinity cache.
+  storageInvalidate: vi.fn(),
 }));
 
 // AppBlockChrome (in the host frame) calls useCurrentUser() for the platform-nav
@@ -79,6 +83,7 @@ vi.mock('~/utils/trpc', () => ({
         vote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         unvote: { useMutation: () => ({ mutateAsync: vi.fn() }) },
         withdraw: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+        report: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       },
       storage: {
         set: { useMutation: () => ({ mutateAsync: mocks.set }) },
@@ -91,11 +96,13 @@ vi.mock('~/utils/trpc', () => ({
           list: { fetch: vi.fn() },
           getCount: { fetch: vi.fn() },
           getCounts: { fetch: vi.fn() },
+          get: { fetch: vi.fn() },
         },
         storage: {
           get: { fetch: mocks.get },
           list: { fetch: mocks.list },
           getQuota: { fetch: mocks.getQuota },
+          invalidate: mocks.storageInvalidate,
         },
       },
     }),
@@ -148,6 +155,8 @@ const baseProps = {
   blockInstanceId: 'page_apb_test',
   appName: 'Notepad',
   iframeSrc: SAME_ORIGIN_SRC,
+  // The public run surface. Required since the init-fragment gate keys on it.
+  surface: 'page-run' as const,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -180,6 +189,8 @@ describe('PageBlockHost storage bridge (W10 KV datastore wiring)', () => {
     mocks.del.mockReset();
     mocks.list.mockReset();
     mocks.getQuota.mockReset();
+    mocks.storageInvalidate.mockReset();
+    mocks.storageInvalidate.mockResolvedValue(undefined);
     useDialogStore.getState().closeAll();
   });
 
@@ -192,7 +203,10 @@ describe('PageBlockHost storage bridge (W10 KV datastore wiring)', () => {
     postFromBlock('APP_STORAGE_GET', { requestId: 'rq_get', key: 'draft' });
 
     await vi.waitFor(() => {
-      expect(mocks.get).toHaveBeenCalledWith({ blockToken: 'tok_abc', key: 'draft' });
+      expect(mocks.get).toHaveBeenCalledWith(
+        { blockToken: 'tok_abc', key: 'draft' },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('APP_STORAGE_GET_RESULT');
@@ -324,12 +338,15 @@ describe('PageBlockHost storage bridge (W10 KV datastore wiring)', () => {
     });
 
     await vi.waitFor(() => {
-      expect(mocks.list).toHaveBeenCalledWith({
-        blockToken: 'tok_abc',
-        prefix: 'a',
-        limit: 200,
-        cursor: 'cur1',
-      });
+      expect(mocks.list).toHaveBeenCalledWith(
+        {
+          blockToken: 'tok_abc',
+          prefix: 'a',
+          limit: 200,
+          cursor: 'cur1',
+        },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('APP_STORAGE_LIST_RESULT');
@@ -373,7 +390,10 @@ describe('PageBlockHost storage bridge (W10 KV datastore wiring)', () => {
     postFromBlock('APP_STORAGE_QUOTA', { requestId: 'rq_quota' });
 
     await vi.waitFor(() => {
-      expect(mocks.getQuota).toHaveBeenCalledWith({ blockToken: 'tok_abc' });
+      expect(mocks.getQuota).toHaveBeenCalledWith(
+        { blockToken: 'tok_abc' },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
     });
     await vi.waitFor(() => {
       const r = replies.last('APP_STORAGE_QUOTA_RESULT');
@@ -412,5 +432,58 @@ describe('PageBlockHost storage bridge (W10 KV datastore wiring)', () => {
       if (!el) return;
     });
     expect(mocks.get).not.toHaveBeenCalled();
+  });
+  // ── Private read-cache invalidation (write -> own next read) ────────────────
+  // Same defect as the shared bridge: staleTime:Infinity + fetchQuery means an
+  // APP_STORAGE_SET followed by the block's own APP_STORAGE_GET was served the
+  // pre-write value. See blockStorageCache.ts.
+
+  test('APP_STORAGE_SET invalidates the private read cache', async () => {
+    mocks.set.mockResolvedValue({ sizeBytes: 12 });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('APP_STORAGE_SET', { requestId: 'rq_ps', key: 'k', value: { a: 1 } });
+
+    await vi.waitFor(() => {
+      const r = replies.last('APP_STORAGE_SET_RESULT');
+      if (!r) throw new Error('no reply yet');
+    });
+    expect(mocks.storageInvalidate).toHaveBeenCalledTimes(1);
+    replies.stop();
+  });
+
+  test('APP_STORAGE_DELETE invalidates the private read cache', async () => {
+    mocks.del.mockResolvedValue({ deleted: true });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('APP_STORAGE_DELETE', { requestId: 'rq_pd', key: 'k' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('APP_STORAGE_DELETE_RESULT');
+      if (!r) throw new Error('no reply yet');
+    });
+    expect(mocks.storageInvalidate).toHaveBeenCalledTimes(1);
+    replies.stop();
+  });
+
+  test('a private READ does not invalidate', async () => {
+    // Control: proves the invalidation is wired to the write path specifically.
+    mocks.get.mockResolvedValue({ value: { a: 1 }, sizeBytes: 4 });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('APP_STORAGE_GET', { requestId: 'rq_pr', key: 'k' });
+
+    await vi.waitFor(() => {
+      const r = replies.last('APP_STORAGE_GET_RESULT');
+      if (!r) throw new Error('no reply yet');
+    });
+    expect(mocks.storageInvalidate).not.toHaveBeenCalled();
+    replies.stop();
   });
 });
