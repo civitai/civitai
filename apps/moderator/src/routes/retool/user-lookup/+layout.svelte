@@ -92,6 +92,11 @@
         <Badge variant="destructive">CSAM ban</Badge>
       {/if}
     {/if}
+    <!-- Outside the `bannedAt` block on purpose: a contest ban leaves the account otherwise in good
+         standing, so it is the one enforcement state that is invisible everywhere else on this page. -->
+    {#if identity.contestBannedAt}
+      <Badge variant="secondary">contest banned</Badge>
+    {/if}
     <!-- Retool put both of these in the persistent header. A CSAM report against the account is the
          single most important thing on the screen, and a Pending restriction is a SYSTEM mute nobody
          has ruled on — without it that account reads as an unexplained manual mute. -->

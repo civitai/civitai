@@ -4,8 +4,8 @@ The moderation team reviews the app in a feedback channel and reports as they go
 place to see what these rounds asked for and whether it is done.
 
 **Scope:** the comment-spam round raised on 2026-08-24, the follow-up round raised on 2026-08-25 after
-that push and its changelog, the strike-visibility round raised on 2026-08-27, the Bulk Ban round
-raised on 2026-08-28, PLUS everything still open from earlier rounds — in that order.
+that push and its changelog, the queue and strike-visibility reports raised on 2026-08-27, the Bulk Ban
+round raised on 2026-08-28, PLUS everything still open from earlier rounds — in that order.
 
 **This is the live list.** A round gets its own dated section so it is clear when something was first
 asked for, and unfinished items move forward rather than being ticked across several files — so this is
@@ -97,8 +97,31 @@ accurate, but four of the seven have a cause that is not what the symptom sugges
       for an index *expression* until an ANALYZE runs after the index exists, and
       `CREATE INDEX CONCURRENTLY` does not do it — so every domain, one with ~600k accounts and one
       with none, estimated the identical 57,821 rows and the planner kept choosing the primary key.
-      The migration file now carries the step and how to confirm the plan changed. **Until that ANALYZE
-      runs on the primary this is NOT fixed** — the index is 84 MB of maintenance cost buying nothing.
+      The migration file now carries the step and how to confirm the plan changed.
+
+      🔴 **The ANALYZE has now been run, on 2026-08-31, and it did NOT fix it.** This entry previously
+      said the search was fixed the moment that step ran. That was a prediction, and it was wrong;
+      leaving it would send the next person to a step already taken.
+
+      What the ANALYZE did do: `pg_stat_user_tables.last_analyze` is set, and the index now has real
+      statistics where it had none — `n_distinct` 3,876, a 200-entry MCV list and a 201-bound
+      histogram. So the stated cause was real and is now removed.
+
+      What did not change is the plan. Measured on the primary immediately after, on a domain with no
+      accounts at all — the case Bulk Ban is actually used for, since it exists for disposable domains:
+      still `Parallel Index Scan Backward using "User_pkey"` with the expression as a filter, still
+      estimating **58,070** rows for a value with **zero** matches, **16.5 s** and 12.5M buffers to
+      return nothing. The expression in the plan's `Filter` is character-for-character the index's own
+      definition and the partial predicate matches, so this is not the rewording hazard above.
+
+      ⚠️ A common domain is the WRONG test and will read as success. `qq.com` has 565,759 live
+      accounts, so walking the primary key backward finds 500 of them in ~370 ms and the planner is
+      right to do it. Only a rare domain shows the defect. The first measurement here was taken on a
+      common one and briefly looked fine.
+
+      So the estimate is the thing to chase: with an MCV list and a histogram in place, a value absent
+      from both should estimate near zero rather than 58,070, and that number did not move before and
+      after. **Still open**, with the cheap explanation now eliminated rather than assumed.
 
 - [x] **Blocklist "message pattern" does not apply to comments.** It does now, on every comment
       surface — model comments through `upsertCommentHandler`, image / article / post / bounty through
@@ -652,6 +675,41 @@ there is still exactly one list with open boxes; each item carries the date it w
       the name — but if anything ever appends to an imported row's notes, that text becomes the
       client-visible "by …" string.
 
+- [x] **Bulk Image Manager loses the selection when you page.** *(08-27)* Ticking images, pressing
+      **Next** and finding the previous page unticked — so a ToS sweep could only be done one page at a
+      time. Fixed in **566b09c08f** *(fix(moderator): keep an image selection across pages in Bulk Image
+      Manager)*. The reporter had already narrowed it themselves: the user-report removal tool keeps its
+      selection correctly and the User Lookup one did not, which is where to look when this shape
+      recurs.
+
+- [x] **Actioned reports come back on the dashboard.** *(08-27)* "I action, hit refresh, see something
+      else — refresh again and the ones I initially actioned are back." Fixed in **89e18fe73a**
+      *(fix(moderator): stop actioned reports coming back on the dashboard)*. Related to, but not the
+      same as, the 08-25 "pressing Actioned fails" item above — that one was a 409 rendered as "failed —
+      retry"; this one is the row reappearing after a successful write.
+
+- [ ] **A long report detail shoves the dashboard columns sideways.** *(08-27)* Reported as "long comment
+      caused the reason and rightwards to move over instead of spacing it down". Read but **not
+      reproduced** — the details block on the Most Reported row renders each entry as a bare `<span>`
+      inside a `flex flex-col` with no width constraint, and the table is auto-layout, so a long value
+      widens that column and pushes reason / age / reporter / actions right rather than wrapping. That
+      is a hypothesis from reading the markup, not a diagnosis: it needs a report whose details actually
+      contain a long comment.
+      *Closes when:* the reporter opens the dashboard on a report carrying a long comment and the row
+      wraps instead of widening.
+
+- [ ] **"Dashboard being funkeh" — a screen recording nobody has read back.** *(08-27)* Posted as a
+      video with no description, twenty minutes after the actioned-reports report above and after a fix
+      had been deployed, so it may be that same bug, its fix not yet live, or a third thing. Recording
+      it rather than guessing: a video in a chat log is evidence only for as long as someone remembers
+      it exists.
+      *Closes when:* the reporter says in one line what the recording shows, or confirms it was the
+      actioned-reports bug now fixed in **89e18fe73a**.
+
+- [x] **User Lookup 500s after a deploy.** *(08-27)* Reported and fixed inside the hour by the deploy
+      that followed it; the reporter did not raise it again. Recorded because a 500 on the app’s most
+      used page is worth having in the history, not because anything is outstanding.
+
 # Round 2026-08-28
 
 ## Reported defects
@@ -890,15 +948,35 @@ four have a root cause that is not what the symptom suggests.
       Fix belongs in the port, not in a bigger `limit`: its own load, ordered by `bannedAt` desc, paged
       with a count, searchable, and with unban and edit-reason on the row.
 
-      ⚠️ Latent while we are here: in `getUsers` the `ORDER BY` is spliced **into the middle of the
-      `WHERE` clause**, before the `contestBanned` predicate. It is unreachable only because the
-      contest-banned path never passes `query`; passing both would emit invalid SQL.
+      ⚠️ **Fixed 2026-08-31, and it was reachable rather than latent.** In `getUsers` the `ORDER BY`
+      was spliced into the middle of the `WHERE` clause, above the `contestBanned` predicate, so a
+      caller passing both emitted `... ORDER BY ... AND ...` — rejected by Postgres with 42601 before
+      it ran. `user.getAll` routes to `getUsers` whenever a moderator sets `contestBanned`, and `query`
+      is on the same input schema, so any moderator searching a contest-ban list would have hit it. The
+      clause now sits after every predicate.
 
-- [ ] **User Lookup shows no contest-ban flag.** `getUserLookup` already selects
+      Pinned by `get-users-clause-order.sql.service.test.ts`, which reads the emitted SQL and asserts
+      the ORDER of the clauses rather than their presence — both branches are optional, so the wrong
+      shape typechecks and every current caller passes one or the other. Mutation-checked: putting the
+      clause back on the `!= -1` line fails it. This does NOT close the item above; the list still
+      needs its own load, ordering and paging.
+
+- [x] **User Lookup shows no contest-ban flag.** `getUserLookup` already selects
       `u.meta #>> '{banDetails,reasonCode}'` and `{banDetails,detailsInternal}` off the same row, so
       adding `{contestBanDetails,bannedAt}` costs nothing extra. Render it as a badge in the pinned
       account-state column beside banned / muted — the column that exists precisely so a flag is not
       buried behind a long username.
+
+      **Done 2026-08-31.** One more `#>>` beside the two already there, and a `contest banned` badge
+      OUTSIDE the `bannedAt` block — a contest ban leaves the account otherwise in good standing, so
+      nesting it under the site ban would hide it on exactly the accounts that have one. Checked
+      against production: 39 accounts are contest-banned and every one sampled has `bannedAt` null,
+      which is why this was invisible rather than merely unlabelled.
+
+      ⚠️ **Not seen rendered.** Verified by typecheck and by confirming the JSON path returns real
+      timestamps in production; the local login could not be re-established to look at the page. Three
+      lines of markup mirroring the two badges above it, but that is an argument about risk, not
+      evidence.
 
 - [ ] **Split contest bans: daily challenges vs everything else.** Most contest-banned accounts were
       farming Buzz on the daily challenge and may still compete fairly elsewhere, and today the ban is
