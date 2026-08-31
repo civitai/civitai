@@ -47,8 +47,6 @@
 --   operator: on a non-empty table the guard raises, which aborts the entire
 --   `DO` block — the DROPs live inside it — so a mistaken apply cannot silently
 --   destroy rows.
---
--- IF-EXISTS guards so a manual re-run is a no-op.
 
 -- ENFORCED PRECONDITION. The "expect 0" check above is a comment, and a comment
 -- cannot stop an irreversible DROP — so assert it in SQL instead.
@@ -77,9 +75,10 @@
 --           transaction early, so when the SECOND file fails the DROP is
 --           ALREADY COMMITTED: the batch aborts, the table is gone anyway, and
 --           the rollback the operator thinks they got does not exist.
---         * `\set AUTOCOMMIT off` — the pgAdmin/DBeaver/Retool posture, and
---           Retool is a documented apply path for this database. No explicit
---           `BEGIN` is needed: psql opens the transaction implicitly, this
+--         * `\set AUTOCOMMIT off` — the posture many GUI SQL clients default
+--           to, and this migration is applied BY HAND, so an operator may well
+--           be running it from one. No explicit `BEGIN` is needed: psql opens
+--           the transaction implicitly, this
 --           file's COMMIT closes it, and the operator's subsequent `ROLLBACK;`
 --           prints only `WARNING: there is no transaction in progress`. The
 --           DROP stands, and anything else pending in that session is committed
@@ -100,10 +99,22 @@
 -- this header cited — across all 15 combinations of {plain `-f`, `-1`,
 -- `-v ON_ERROR_STOP=1`, a `BEGIN; \i this; \i failing-file; COMMIT;` batch, and
 -- `\set AUTOCOMMIT off` + `ROLLBACK;`} × {3 rows, empty, already dropped}: the
--- table and its rows survive every non-empty case, the empty/absent cases drop
--- and no-op as intended, and no case leaves the caller's transaction in a state
--- it did not choose. The matrix is observing the guard rather than running blind:
--- on the same server, a negative control with the guard stripped out destroys
+-- table and its rows survive every non-empty case, the block drops cleanly and
+-- re-runs as a no-op in the empty/absent cases, and no case leaves the caller's
+-- transaction in a state it did not choose.
+--
+-- ⚠️ WHAT THE BLOCK DOES IS NOT ALWAYS WHAT YOUR SESSION COMMITS — BY DESIGN.
+-- In 2 of those 15 cells — the failing `BEGIN; \i …` batch and `AUTOCOMMIT off`
+-- + `ROLLBACK;`, both against the EMPTY table — the DROP runs inside the block
+-- and is then undone by the operator's OWN abort or rollback, so the committed
+-- outcome is the table still PRESENT with 0 rows. That is correct and wanted:
+-- this file never overrides the caller's transaction. But it means a run that
+-- looked successful under one of those shapes has NOT necessarily dropped
+-- anything. If you applied it that way, confirm the outcome before calling it
+-- done:  SELECT to_regclass('"app_block_reviews"');   -- NULL = actually dropped
+--
+-- The matrix is observing the guard rather than running blind: on the same
+-- server, a negative control with the guard stripped out destroys
 -- all 3 rows under `-f`, `-1` and `ON_ERROR_STOP=1` (the two nested shapes are
 -- saved by the OPERATOR's rollback there, not by the file), and the earlier
 -- `BEGIN;`/`COMMIT;`-wrapped draft leaves the table dropped-and-committed with
@@ -140,9 +151,27 @@ BEGIN
 
   -- The two indexes go with the table, but drop them explicitly so a partially
   -- applied state (table already gone, indexes somehow left) still converges.
-  -- They are EXECUTEd (like the COUNT above) rather than written as plain
-  -- PL/pgSQL statements for the same reason: nothing in this block should be
-  -- planned against objects that may not exist on a re-run.
+  -- The IF EXISTS guards are what make a manual re-run a no-op.
+  --
+  -- 🔴 ALL THREE STATEMENTS MUST STAY INSIDE THIS `DO` BLOCK — DO NOT LIFT THEM
+  -- BACK OUT TO TOP LEVEL. The reason is the one in the header: a single `DO`
+  -- block is ONE statement and therefore atomic by itself, and that is the only
+  -- thing that makes the RAISE above abort these DROPs under EVERY psql
+  -- invocation rather than only the careful ones — without this file issuing a
+  -- transaction-control statement of its own, which is what would hijack the
+  -- caller's transaction. Hoisted to top level they become separate statements,
+  -- and a plain `psql -f` runs them after the raise: the measured data-loss
+  -- shape described as hazard (1) above.
+  --
+  -- The `EXECUTE` wrapping is only stylistic consistency with the COUNT above;
+  -- it is NOT load-bearing, and it is not what protects anything. An earlier
+  -- revision of this comment claimed the DROPs had to be dynamic because
+  -- "nothing in this block should be planned against objects that may not exist
+  -- on a re-run" — that is FALSE. Measured on PostgreSQL 18.6: written as plain
+  -- PL/pgSQL against an absent table, these three complete at exit 0 with three
+  -- `does not exist, skipping` NOTICEs; PL/pgSQL does not fail to compile a
+  -- utility statement against a missing relation. Only the COUNT genuinely
+  -- needs to be dynamic-or-guarded, and the `IF` above already guards it.
   EXECUTE 'DROP INDEX IF EXISTS "app_block_reviews_app_agg_idx"';
   EXECUTE 'DROP INDEX IF EXISTS "app_block_reviews_app_user_uniq"';
 
