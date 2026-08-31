@@ -19,10 +19,22 @@ export type PostSortClauses = {
 export const getPostSortClauses = ({
   sort,
   draftOnly,
+  collectionJoined,
 }: {
   sort: PostSort;
   draftOnly?: boolean;
+  /** Whether the caller joined "CollectionItem" as `ci`, which `RecentlyAdded` orders on. */
+  collectionJoined?: boolean;
 }): PostSortClauses => {
+  if (sort === PostSort.RecentlyAdded && collectionJoined) {
+    return {
+      orderBy: 'ci."id" DESC',
+      primarySortProp: 'ci."id"',
+      isDateSort: false,
+      ascending: false,
+    };
+  }
+
   switch (sort) {
     case PostSort.MostComments:
       return {

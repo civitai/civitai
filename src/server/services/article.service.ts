@@ -202,6 +202,11 @@ export const getArticles = async ({
       (!ids && !username && !collectionId && !followed && !hidden && !favorites && !userIds);
 
     const AND: Prisma.Sql[] = [];
+    let collectionJoin = Prisma.empty;
+
+    if (sort === ArticleSort.RecentlyAdded && !collectionId) {
+      throw throwBadRequestError('Recently Added sort requires a collectionId');
+    }
 
     if (query) {
       AND.push(Prisma.sql`a."title" ILIKE ${'%' + query + '%'}`);
@@ -264,13 +269,22 @@ export const getArticles = async ({
         userId: sessionUser?.id,
       });
 
-      AND.push(
-        Prisma.sql`EXISTS (
+      // `RecentlyAdded` orders on ci."id", which a semi-join cannot expose. The partial unique
+      // index on ("collectionId", "articleId") means the join cannot multiply rows, so the two
+      // shapes select the same articles.
+      if (sort === ArticleSort.RecentlyAdded) {
+        collectionJoin = Prisma.sql`JOIN "CollectionItem" ci ON ci."articleId" = a."id"
+          AND ci."collectionId" = ${collectionId}
+          AND ${Prisma.join(collectionItemModelsRawAND, ' AND ')}`;
+      } else {
+        AND.push(
+          Prisma.sql`EXISTS (
         SELECT 1 FROM "CollectionItem" ci
         WHERE ci."articleId" = a."id"
         AND ci."collectionId" = ${collectionId}
         AND ${Prisma.join(collectionItemModelsRawAND, ' AND ')})`
-      );
+        );
+      }
     }
 
     if (!isOwnerRequest) {
@@ -385,6 +399,10 @@ export const getArticles = async ({
         sortExpr = `extract(epoch from a."updatedAt")`;
         sortDir = 'DESC';
         break;
+      case ArticleSort.RecentlyAdded:
+        sortExpr = `ci."id"`;
+        sortDir = 'DESC';
+        break;
       case ArticleSort.Newest:
       default:
         sortExpr = `extract(epoch from a."publishedAt")`;
@@ -411,6 +429,7 @@ export const getArticles = async ({
       FROM "Article" a
       LEFT JOIN "User" u ON a."userId" = u.id
       LEFT JOIN "ArticleRank" rank ON rank."articleId" = a.id
+      ${collectionJoin}
       WHERE ${Prisma.join(AND, ' AND ')}
     `;
     const articles = await dbRead.$queryRaw<(ArticleRaw & { cursorV: number })[]>`

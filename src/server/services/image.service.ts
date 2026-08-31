@@ -2049,6 +2049,10 @@ export const getAllImages = async (
     throw throwBadRequestError('Random sort requires a collectionId');
   }
 
+  if (sort === ImageSort.RecentlyAdded && !collectionId) {
+    throw throwBadRequestError('Recently Added sort requires a collectionId');
+  }
+
   if (collectionTagId && !collectionId) {
     throw throwBadRequestError('collectionTagId requires a collectionId');
   }
@@ -2103,13 +2107,14 @@ export const getAllImages = async (
     WITH.push(
       Prisma.sql`
         ct AS (
-          SELECT "imageId", note, status, "addedById", "sortKey"
+          SELECT "imageId", note, status, "addedById", "collectionItemId", "sortKey"
           FROM (
             SELECT
               ci."imageId",
               ci.note,
               ci.status,
               ci."addedById",
+              ci.id as "collectionItemId",
               abs(mod(hashtext(concat(ci.id::text, '${Prisma.raw(
                 seedStr
               )}')), 1000000000)) as "sortKey"
@@ -2160,6 +2165,8 @@ export const getAllImages = async (
     if (sort === ImageSort.Random) {
       isPersonalized = true; // random ordering should not be pinned by a cache
       orderBy = 'ct."sortKey" DESC, i."id" DESC';
+    } else if (sort === ImageSort.RecentlyAdded) {
+      orderBy = 'ct."collectionItemId" DESC';
     }
     // TODO this causes the app to spike
     // else if (sort === ImageSort.Oldest) {

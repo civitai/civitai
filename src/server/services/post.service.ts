@@ -4,7 +4,7 @@ import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { env } from '~/env/server';
-import { BlockedReason, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getDbWithoutLag,
@@ -302,6 +302,7 @@ export const getPostsInfinite = async ({
   const canSeeUnpublished = canSeePostDrafts({ isOwnerRequest, isModerator, targetUser });
 
   const joins: string[] = [];
+  let collectionJoined = false;
   if (!canSeeUnpublished) {
     if (scheduled && userId) {
       // Surface own scheduled posts alongside the public published feed. Mirrors
@@ -366,6 +367,10 @@ export const getPostsInfinite = async ({
     }
   }
 
+  if (sort === PostSort.RecentlyAdded && !collectionId) {
+    throw throwBadRequestError('Recently Added sort requires a collectionId');
+  }
+
   if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);
   if (collectionId) {
     cacheTime = CacheTTL.day;
@@ -383,12 +388,22 @@ export const getPostsInfinite = async ({
       ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${user?.id})`
       : '';
 
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "CollectionItem" ci
-      WHERE ci."collectionId" = ${collectionId}
-        AND ci."postId" = p.id
-        AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
-    )`);
+    // `RecentlyAdded` orders on ci."id", which a semi-join cannot expose. The partial unique
+    // index on ("collectionId", "postId") means the join cannot multiply rows, so the two
+    // shapes select the same posts.
+    if (sort === PostSort.RecentlyAdded) {
+      collectionJoined = true;
+      joins.push(
+        `JOIN "CollectionItem" ci ON ci."postId" = p.id AND ci."collectionId" = ${collectionId} AND (ci."status" = 'ACCEPTED' ${displayReviewItems})`
+      );
+    } else {
+      AND.push(Prisma.sql`EXISTS (
+        SELECT 1 FROM "CollectionItem" ci
+        WHERE ci."collectionId" = ${collectionId}
+          AND ci."postId" = p.id
+          AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
+      )`);
+    }
   }
 
   if (excludedUserIds && targetUser && excludedUserIds.includes(targetUser)) {
@@ -405,6 +420,7 @@ export const getPostsInfinite = async ({
   const { orderBy, primarySortProp, isDateSort, ascending, filter } = getPostSortClauses({
     sort,
     draftOnly,
+    collectionJoined,
   });
   if (filter) AND.push(filter);
 

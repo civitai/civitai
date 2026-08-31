@@ -4700,6 +4700,7 @@ model CollectionItem {
   @@index([modelId], type: Hash)
   @@index([model3dId], type: Hash)
   @@index([collectionId], type: Hash)
+  @@index([collectionId, id(sort: Desc)])
 }
 
 model CollectionItemScore {

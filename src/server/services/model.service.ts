@@ -483,6 +483,11 @@ export const getModelsRaw = async ({
 
   let isPrivate = false;
   const AND: Prisma.Sql[] = [];
+  let collectionJoin = Prisma.empty;
+
+  if (sort === ModelSort.RecentlyAdded && !collectionId) {
+    throw throwBadRequestError('Recently Added sort requires a collectionId');
+  }
 
   const userId = sessionUser?.id;
   const isModerator = sessionUser?.isModerator ?? false;
@@ -832,15 +837,25 @@ export const getModelsRaw = async ({
     const { rawAND: collectionItemModelsAND }: { rawAND: Prisma.Sql[] } =
       getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
 
-    AND.push(
-      Prisma.sql`EXISTS (
+    // `RecentlyAdded` orders on ci."id", which a semi-join cannot expose. The partial unique
+    // index on ("collectionId", "modelId") means the join cannot multiply rows, so the two
+    // shapes select the same models.
+    if (sort === ModelSort.RecentlyAdded) {
+      collectionJoin = Prisma.sql`JOIN "CollectionItem" ci ON ci."modelId" = mm."modelId"
+        AND ci."collectionId" = ${collectionId}
+        AND ${Prisma.join(collectionItemModelsAND, ' AND ')}
+        ${collectionTagId ? Prisma.sql`AND ci."tagId" = ${collectionTagId}` : Prisma.empty}`;
+    } else {
+      AND.push(
+        Prisma.sql`EXISTS (
         SELECT 1 FROM "CollectionItem" ci
         WHERE ci."modelId" = mm."modelId"
         AND ci."collectionId" = ${collectionId}
         AND ${Prisma.join(collectionItemModelsAND, ' AND ')}
         ${collectionTagId ? Prisma.sql`AND ci."tagId" = ${collectionTagId}` : Prisma.empty}
       )`
-    );
+      );
+    }
 
     isPrivate = !permissions.publicCollection;
   }
@@ -867,6 +882,7 @@ export const getModelsRaw = async ({
   else if (sort === ModelSort.ImageCount)
     orderBy = `${pAlias}."imageCount" DESC, ${pAlias}."thumbsUpCount" DESC, ${pAlias}."modelId"`;
   else if (sort === ModelSort.Oldest) orderBy = `mm."lastVersionAt" ASC, ${pAlias}."modelId"`;
+  else if (sort === ModelSort.RecentlyAdded) orderBy = `ci."id" DESC`;
 
   // Cursor predicate split (perf): we build two branches that are combined with
   // UNION ALL when there is a multi-field sort + cursor. The OR-form predicate
@@ -999,7 +1015,8 @@ export const getModelsRaw = async ({
       mm."userId",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"`;
 
-  const fromAndJoin = fromClause;
+  const fromAndJoin = Prisma.sql`${fromClause}
+      ${collectionJoin}`;
 
   const limitValue = (take ?? 100) + 1;
   const orderByRaw = Prisma.raw(orderBy);
