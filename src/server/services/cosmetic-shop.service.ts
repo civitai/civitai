@@ -200,6 +200,7 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
 
 export const upsertCosmeticShopItem = async ({
   userId,
+  isModerator,
   availableQuantity,
   availableTo,
   availableFrom,
@@ -207,7 +208,7 @@ export const upsertCosmeticShopItem = async ({
   archived,
   videoUrl,
   ...cosmeticShopItem
-}: UpsertCosmeticShopItemInput & { userId: number }) => {
+}: UpsertCosmeticShopItemInput & { userId: number; isModerator?: boolean }) => {
   // Read on the writer: this row gates a write (the pack refusal and the
   // quantity check below), and a lagging replica returning nothing would skip
   // both while the update still ran against the primary.
@@ -257,6 +258,7 @@ export const upsertCosmeticShopItem = async ({
       ? () => getReferencedBlurbIds({ entityType: 'CosmeticShopItem', entityId: existingItem.id })
       : undefined;
   await throwOnBlockedUserContent([cosmeticShopItem.title, cosmeticShopItem.description], {
+    isModerator,
     surface: 'cosmeticShop',
   });
 

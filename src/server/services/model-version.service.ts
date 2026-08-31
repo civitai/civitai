@@ -538,7 +538,12 @@ export const upsertModelVersion = async ({
   // `declineReviewHandler` replay the STORED row through this function and pass no moderator flag,
   // so scanning the name would check text the actor never submitted and cannot edit — a version
   // whose name trips a list could then never be declined or resubmitted, which is worse than the
-  // name going unscanned. The name is checked where a user actually authors it.
+  // name going unscanned.
+  //
+  // 🔴 So a version name is scanned NOWHERE. That is a known gap, not a rule: the model name IS
+  // scanned in `upsertModel`, and nothing makes versions different except this replay. Closing it
+  // needs a way to tell a user edit from a replay — do not "fix" it by adding `data.name` here,
+  // which reintroduces the version that cannot be declined.
   await throwOnBlockedUserContent(data.description, {
     isModerator,
     surface: 'modelVersion',
@@ -2023,6 +2028,8 @@ export const upsertExplorationPrompt = async ({
   index,
   prompt,
 }: UpsertExplorationPromptInput) => {
+  await throwOnBlockedUserContent([name, prompt], { surface: 'explorationPrompt' });
+
   try {
     const explorationPrompt = await dbWrite.modelVersionExploration.upsert({
       where: { modelVersionId_name: { modelVersionId, name } },

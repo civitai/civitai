@@ -197,6 +197,9 @@ describe('throwOnBlockedUserContent', () => {
       getFliptBoolean.mockResolvedValue(true);
       setLists({ patterns: ['account verification notice'] });
 
+      // 🔴 Several characters below are deliberately NOT ASCII. "Correcting" them to their
+      // ASCII twins makes the pattern match directly, leaves this test green, and quietly
+      // removes the only coverage the normalisation step has.
       const error = await rejection('<p>Аccount verificаtiоn nоtice</p>');
       expect(error).toBeInstanceOf(TRPCError);
     });

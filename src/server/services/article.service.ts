@@ -2608,6 +2608,8 @@ export async function createArticleRatingReview({
   userId: number;
   isModerator?: boolean;
 }) {
+  await throwOnBlockedUserContent(userComment, { isModerator, surface: 'articleRatingReview' });
+
   // --- Validate the suggested level against the canonical bitwise set ---
   if (!VALID_NSFW_LEVELS.has(suggestedLevel)) {
     throw throwBadRequestError(

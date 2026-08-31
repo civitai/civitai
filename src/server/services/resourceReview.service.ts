@@ -456,6 +456,8 @@ export const createResourceReview = async ({
   isModerator,
   ...data
 }: CreateResourceReviewInput & { userId: number; isModerator?: boolean }) => {
+  await throwOnBlockedUserContent(data.details, { isModerator, surface: 'resourceReview' });
+
   await throwIfBlockedByModelOwners({
     userId: data.userId,
     isModerator,
@@ -491,6 +493,8 @@ export const updateResourceReview = async ({
   isModerator,
   ...data
 }: UpdateResourceReviewInput & { userId: number; isModerator?: boolean }) => {
+  await throwOnBlockedUserContent(data.details, { isModerator, surface: 'resourceReview' });
+
   // The request carries no modelId, so the review's stored model is the only target.
   await throwIfBlockedByModelOwners({
     userId,

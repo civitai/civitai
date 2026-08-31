@@ -272,7 +272,12 @@ export async function upsertUserHub({
   const writable = hubWriterWhere({ userId, isModerator });
   const { id, sources, description, filters, ...data } = input;
 
-  await throwOnBlockedUserContent([data.name, description], { isModerator, surface: 'userHub' });
+  // `sources[].alias` too: it is user-supplied, it is written by this same call, and a guard that
+  // scans only some of its writer's fields is invisible to a test that counts CALLS.
+  await throwOnBlockedUserContent(
+    [data.name, description, ...(sources?.map((source) => source.alias) ?? [])],
+    { isModerator, surface: 'userHub' }
+  );
 
   if (sources) {
     const duplicate = new Set<string>();
@@ -379,6 +384,8 @@ export async function addUserHubSource({
   hubId,
   ...source
 }: AddUserHubSourceInput & { userId: number }) {
+  await throwOnBlockedUserContent(source.alias, { surface: 'userHub' });
+
   // Read through the WRITER, like `upsertUserHub` above and for the same reason: the
   // duplicate check, the cap and the next index all come off this row, and a modal of
   // checkboxes invites a second write inside the replica's lag window.

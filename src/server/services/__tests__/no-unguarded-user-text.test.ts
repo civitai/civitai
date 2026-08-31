@@ -39,22 +39,23 @@ const BANNED = 'throwOnBlockedLinkDomain';
  * green, and that second call is the one with no user in the loop to notice.
  */
 const SURFACES: Record<string, number> = {
-  'src/server/services/collection.service.ts': 1,
-  'src/server/services/cosmetic-shop.service.ts': 3,
-  'src/server/services/article.service.ts': 3,
+  'src/server/services/apps/shared-content-safety.ts': 1,
+  'src/server/services/article.service.ts': 4,
   'src/server/services/blurb.service.ts': 2,
   'src/server/services/bounty.service.ts': 3,
   'src/server/services/bountyEntry.service.ts': 1,
-  'src/server/services/model-version.service.ts': 3,
+  'src/server/services/collection.service.ts': 1,
+  'src/server/services/cosmetic-shop.service.ts': 3,
+  'src/server/services/creator-announcement.service.ts': 1,
+  'src/server/services/model-version.service.ts': 4,
   'src/server/services/model.service.ts': 3,
   'src/server/services/model3d-review.service.ts': 1,
   'src/server/services/model3d.service.ts': 1,
   'src/server/services/post.service.ts': 2,
-  'src/server/services/resourceReview.service.ts': 1,
-  'src/server/services/user-hub.service.ts': 1,
+  'src/server/services/resourceReview.service.ts': 3,
+  'src/server/services/user-hub.service.ts': 2,
   'src/server/services/user-link.service.ts': 2,
   'src/server/services/user-profile.service.ts': 1,
-  'src/server/services/apps/shared-content-safety.ts': 1,
 };
 
 /**
@@ -88,7 +89,11 @@ const LINK_ONLY_ALLOWED: Record<string, string> = {
  */
 const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
   'src/server/services/apps/shared-content-safety.ts': { assertSharedTextSafe: 1 },
-  'src/server/services/article.service.ts': { applyArticleContentChange: 1, upsertArticle: 2 },
+  'src/server/services/article.service.ts': {
+    applyArticleContentChange: 1,
+    createArticleRatingReview: 1,
+    upsertArticle: 2,
+  },
   'src/server/services/blurb.service.ts': { createBlurb: 1, updateBlurbContent: 1 },
   'src/server/services/bounty.service.ts': { applyBountyContentChange: 1, upsertBounty: 2 },
   'src/server/services/bountyEntry.service.ts': { upsertBountyEntry: 1 },
@@ -97,16 +102,22 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     applyCosmeticShopItemContentChange: 1,
     upsertCosmeticShopItem: 2,
   },
+  'src/server/services/creator-announcement.service.ts': { upsertCreatorAnnouncement: 1 },
   'src/server/services/model-version.service.ts': {
     applyModelVersionContentChange: 1,
+    upsertExplorationPrompt: 1,
     upsertModelVersion: 2,
   },
   'src/server/services/model.service.ts': { applyModelContentChange: 1, upsertModel: 2 },
   'src/server/services/model3d-review.service.ts': { upsertModel3DReview: 1 },
   'src/server/services/model3d.service.ts': { upsertModel3D: 1 },
   'src/server/services/post.service.ts': { createPost: 1, updatePost: 1 },
-  'src/server/services/resourceReview.service.ts': { upsertResourceReview: 1 },
-  'src/server/services/user-hub.service.ts': { upsertUserHub: 1 },
+  'src/server/services/resourceReview.service.ts': {
+    createResourceReview: 1,
+    updateResourceReview: 1,
+    upsertResourceReview: 1,
+  },
+  'src/server/services/user-hub.service.ts': { addUserHubSource: 1, upsertUserHub: 1 },
   'src/server/services/user-link.service.ts': { upsertManyUserLinks: 1, upsertUserLink: 1 },
   'src/server/services/user-profile.service.ts': { updateUserProfile: 1 },
 };
@@ -154,13 +165,23 @@ function callsByFunction(source: ts.SourceFile, names: string[]): Map<string, nu
   const counts = new Map<string, number>();
   if (!names.length) return counts;
 
-  const visit = (node: ts.Node, enclosing: string) => {
+  const visit = (node: ts.Node, enclosing: string, depth: number) => {
     let scope = enclosing;
+    let nextDepth = depth;
+
     if (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) {
+      nextDepth = depth + 1;
       if (node.name) scope = node.name.getText();
     } else if (ts.isVariableDeclaration(node) && node.initializer) {
       const init = node.initializer;
+      // Names the scope but does NOT bump depth — the arrow itself is the function-like node and
+      // bumps it a line below. Bumping here too made every `export const x = async () => {}`
+      // writer read as depth 2, i.e. as if its guard were buried in a callback.
       if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) scope = node.name.getText();
+    } else if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+      // An anonymous callback — a `.map`, a transaction body. It does not rename the scope, but
+      // it does bury it, and `depth` is what makes that visible below.
+      nextDepth = depth + 1;
     }
 
     if (
@@ -168,13 +189,19 @@ function callsByFunction(source: ts.SourceFile, names: string[]): Map<string, nu
       ts.isIdentifier(node.expression) &&
       names.includes(node.expression.text)
     ) {
-      counts.set(scope, (counts.get(scope) ?? 0) + 1);
+      // 🔴 Depth, not just name. Attribution by nearest NAMED scope alone is forgeable: a local
+      // `const createPost = async () => { await guard(); }` declared inside `updatePost` produces
+      // the same map as two real top-level writers, so the guard reads as covering a writer that
+      // has no call at all. A guard call belongs at the top level of its writer; anything deeper
+      // is recorded under a name that fails loudly rather than passing quietly.
+      const key = depth === 1 ? scope : `${scope} (nested, depth ${depth})`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
     }
 
-    node.forEachChild((child) => visit(child, scope));
+    node.forEachChild((child) => visit(child, scope, nextDepth));
   };
 
-  source.forEachChild((node) => visit(node, '<module>'));
+  source.forEachChild((node) => visit(node, '<module>', 0));
   return counts;
 }
 

@@ -52,6 +52,21 @@ describe('assertSharedTextSafe — how a blocklist rejection is classified', () 
   });
 
   /**
+   * Pins the ARGUMENT, not just the outcome. The guard scans values separately so a pattern
+   * cannot match across the boundary between two independent fields, and handing it the two
+   * fields already joined into one string silently reinstates exactly that. Nothing else here
+   * notices — the mock swallows whatever it is given — so that revert passed every test.
+   */
+  it('hands the guard the fields separately, not pre-joined', async () => {
+    await assertSharedTextSafe(input);
+
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith(
+      [input.title, input.body],
+      expect.objectContaining({ surface: 'appListing' })
+    );
+  });
+
+  /**
    * The guard reaches redis and Flipt. An infrastructure failure must not escape as a raw 500 on
    * user input — but it must also not be mistaken for a content block that the router would then
    * act on. It is reported as a block, deliberately: refusing the write is the safe direction when

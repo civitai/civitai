@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
   AnnouncementMetaSchema,
@@ -304,6 +305,12 @@ export async function upsertCreatorAnnouncement({
   isModerator = false,
   ...input
 }: UpsertCreatorAnnouncementSchema & { userId: number; isModerator?: boolean }) {
+  // Push, not pull: this text is delivered to every follower rather than waiting to be visited.
+  await throwOnBlockedUserContent(
+    [input.title, input.content, input.action?.linkText, input.action?.link],
+    { isModerator, surface: 'creatorAnnouncement' }
+  );
+
   const existing = input.id ? await assertOwnedAnnouncement(input.id, userId) : undefined;
 
   // An announcement costs a slot when it starts notifying, not when it is created.
