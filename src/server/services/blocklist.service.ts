@@ -414,7 +414,8 @@ function substringEntries(entries: string[]) {
  * qualifier — folding crosses namespaces, so a lookalike entry manufactures the REAL domain as
  * a live rule. Checked against the 6 non-ASCII rows live today: every one folds to its intended
  * target and none is a mainstream domain. Adding a lookalike of a domain we do not want to
- * block would block it here and nowhere else, since `throwOnBlockedLinkDomain` does not fold. That is the whole difference from
+ * block would block it on every surface that runs the shared guard — which is now all of them,
+ * not comments alone — while `throwOnBlockedLinkDomain` itself still does not fold. That is the whole difference from
  * `substringEntries` above, and it is why the two exist separately rather than as one helper
  * with a flag. 6 of the 696 live link domains are non-ASCII — styled Unicode and
  * invisible-character spellings — and folding them is what makes those rows enforce at all.

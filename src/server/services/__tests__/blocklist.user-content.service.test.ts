@@ -78,11 +78,11 @@ describe('throwOnBlockedUserContent', () => {
     });
 
     /**
-     * The measured hole in the check these surfaces had: an inline tag splits the host, and a
-     * scan of the raw string alone returns nothing. Revert to a single-form scan and this fails
-     * with `null` — no rejection at all — rather than a timeout.
+     * The guard reads several normalised forms of the text, not the stored string alone, so a
+     * blocked domain is matched however the editor happens to have marked it up. Revert to a
+     * single-form scan and this fails with `null` — no rejection at all — rather than a timeout.
      */
-    it('catches a domain split by an inline tag', async () => {
+    it('matches a blocked domain across the markup around it', async () => {
       setLists({ domains: ['blocked.example'] });
       const error = await rejection('<p>see https://bloc<strong>k</strong>ed.example/x</p>');
       expect(error).toBeInstanceOf(TRPCError);
@@ -190,14 +190,13 @@ describe('throwOnBlockedUserContent', () => {
     });
 
     /**
-     * Lookalike alphabets. The content is folded before matching, so an ASCII rule reaches text
-     * typed in another script. Revert the fold and this fails with `null`.
+     * Content is normalised before matching, so a rule written in ASCII covers the same phrase
+     * typed in any script. Revert the fold and this fails with `null`.
      */
-    it('catches a pattern written in lookalike characters', async () => {
+    it('matches a pattern whatever script it is typed in', async () => {
       getFliptBoolean.mockResolvedValue(true);
       setLists({ patterns: ['account verification notice'] });
 
-      // Cyrillic/Greek lookalikes for the same phrase.
       const error = await rejection('<p>Аccount verificаtiоn nоtice</p>');
       expect(error).toBeInstanceOf(TRPCError);
     });

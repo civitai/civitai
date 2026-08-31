@@ -256,11 +256,20 @@ export const upsertCosmeticShopItem = async ({
     existingItem && ownerId !== userId
       ? () => getReferencedBlurbIds({ entityType: 'CosmeticShopItem', entityId: existingItem.id })
       : undefined;
+  await throwOnBlockedUserContent([cosmeticShopItem.title, cosmeticShopItem.description], {
+    surface: 'cosmeticShop',
+  });
+
   const expansion = await expandBlurbs({
     userId: ownerId,
     html: cosmeticShopItem.description ?? '',
     restrictToBlurbIds,
   });
+
+  // The guard above saw the CLIENT's html. A creator's blurb body was spliced in since, so the
+  // string about to be written is one it never checked — the same second call its four sibling
+  // upserts make, and the reason this file's guard count is three rather than one.
+  await throwOnBlockedUserContent(expansion.html, { surface: 'cosmeticShop' });
 
   const data = {
     ...cosmeticShopItem,

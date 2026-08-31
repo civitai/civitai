@@ -63,7 +63,6 @@ vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion:
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(),
   throwOnBlockedUserContent: vi.fn(),
-  throwOnBlockedUserContent: vi.fn(),
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction: vi.fn(),

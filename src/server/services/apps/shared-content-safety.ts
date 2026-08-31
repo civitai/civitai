@@ -113,7 +113,10 @@ export async function assertSharedTextSafe(
   // The outer catch is still load-bearing: the guard reaches redis and Flipt, and an
   // infrastructure throw from either must not escape as a raw 500 on user input.
   try {
-    await throwOnBlockedUserContent(combined, {
+    // `[title, body]`, NOT `combined`: the guard scans values separately so a pattern cannot match
+    // across the seam between two independent fields. Handing it the joined string reintroduces
+    // exactly the false positive that separation exists to prevent.
+    await throwOnBlockedUserContent([title, body], {
       surface: 'appListing',
       onBlocked: (kind) => {
         throw kind === 'link'

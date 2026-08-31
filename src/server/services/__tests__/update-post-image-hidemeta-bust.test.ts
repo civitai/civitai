@@ -117,7 +117,6 @@ vi.mock('~/server/services/tool.service', () => ({
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(),
   throwOnBlockedUserContent: vi.fn(),
-  throwOnBlockedUserContent: vi.fn(),
 }));
 
 // isValidAIGeneration is called before shouldIngest; keep it deterministic. shouldIngest is

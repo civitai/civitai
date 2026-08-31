@@ -40,7 +40,7 @@ const BANNED = 'throwOnBlockedLinkDomain';
  */
 const SURFACES: Record<string, number> = {
   'src/server/services/collection.service.ts': 1,
-  'src/server/services/cosmetic-shop.service.ts': 1,
+  'src/server/services/cosmetic-shop.service.ts': 3,
   'src/server/services/article.service.ts': 3,
   'src/server/services/blurb.service.ts': 2,
   'src/server/services/bounty.service.ts': 3,
@@ -69,6 +69,46 @@ const LINK_ONLY_ALLOWED: Record<string, string> = {
   'src/server/services/blocks/app-moderator-message.service.ts':
     'moderator-authored message to an app developer',
   'src/server/services/blocklist.service.ts': 'defines both functions',
+};
+
+/**
+ * Which function in each file holds the calls. Named rather than counted, so moving a call from
+ * one writer to another fails naming both — the shape a bare total cannot see.
+ *
+ * 🔴 DERIVE THESE FROM THE INVARIANT, NEVER FROM THE TREE. The invariant is: every writer of a
+ * surface's user-authored text guards once, and a writer that splices other content into that
+ * text afterwards guards a second time on the spliced result — which is why the entries reading
+ * `2` are exactly the upserts that expand snippets, and every `applyXContentChange` fan-out reads
+ * `1`.
+ *
+ * Generating this map by walking the current code is how the previous version of this file
+ * recorded a `1` for a writer that had no check at all: the count did not merely miss the gap, it
+ * pinned the gap as intended and then defended it against the next person who noticed. A number
+ * with a test behind it reads as a decision somebody made. Make it one.
+ */
+const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
+  'src/server/services/apps/shared-content-safety.ts': { assertSharedTextSafe: 1 },
+  'src/server/services/article.service.ts': { applyArticleContentChange: 1, upsertArticle: 2 },
+  'src/server/services/blurb.service.ts': { createBlurb: 1, updateBlurbContent: 1 },
+  'src/server/services/bounty.service.ts': { applyBountyContentChange: 1, upsertBounty: 2 },
+  'src/server/services/bountyEntry.service.ts': { upsertBountyEntry: 1 },
+  'src/server/services/collection.service.ts': { upsertCollection: 1 },
+  'src/server/services/cosmetic-shop.service.ts': {
+    applyCosmeticShopItemContentChange: 1,
+    upsertCosmeticShopItem: 2,
+  },
+  'src/server/services/model-version.service.ts': {
+    applyModelVersionContentChange: 1,
+    upsertModelVersion: 2,
+  },
+  'src/server/services/model.service.ts': { applyModelContentChange: 1, upsertModel: 2 },
+  'src/server/services/model3d-review.service.ts': { upsertModel3DReview: 1 },
+  'src/server/services/model3d.service.ts': { upsertModel3D: 1 },
+  'src/server/services/post.service.ts': { createPost: 1, updatePost: 1 },
+  'src/server/services/resourceReview.service.ts': { upsertResourceReview: 1 },
+  'src/server/services/user-hub.service.ts': { upsertUserHub: 1 },
+  'src/server/services/user-link.service.ts': { upsertManyUserLinks: 1, upsertUserLink: 1 },
+  'src/server/services/user-profile.service.ts': { updateUserProfile: 1 },
 };
 
 function read(rel: string) {
@@ -102,16 +142,40 @@ function importedNames(source: ts.SourceFile, exported: string): string[] {
   return names;
 }
 
-function countCalls(source: ts.SourceFile, names: string[]) {
-  if (!names.length) return 0;
-  let count = 0;
-  const visit = (node: ts.Node) => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression))
-      if (names.includes(node.expression.text)) count++;
-    node.forEachChild(visit);
+/**
+ * Calls grouped by the FUNCTION that contains them, not counted per file.
+ *
+ * A file-wide total is satisfiable by the wrong arrangement: move both of a file's calls into one
+ * writer, or delete a post-expansion re-check while adding a call anywhere else, and the total is
+ * unchanged while a writer goes unguarded. That is the same "swap that reads as a tidy-up" this
+ * file exists to catch, so counting per file would have left the hole open in the guard itself.
+ */
+function callsByFunction(source: ts.SourceFile, names: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  if (!names.length) return counts;
+
+  const visit = (node: ts.Node, enclosing: string) => {
+    let scope = enclosing;
+    if (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)) {
+      if (node.name) scope = node.name.getText();
+    } else if (ts.isVariableDeclaration(node) && node.initializer) {
+      const init = node.initializer;
+      if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) scope = node.name.getText();
+    }
+
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      names.includes(node.expression.text)
+    ) {
+      counts.set(scope, (counts.get(scope) ?? 0) + 1);
+    }
+
+    node.forEachChild((child) => visit(child, scope));
   };
-  source.forEachChild(visit);
-  return count;
+
+  source.forEachChild((node) => visit(node, '<module>'));
+  return counts;
 }
 
 /**
@@ -139,7 +203,7 @@ function sweptFiles(): string[] {
 }
 
 describe('no unguarded user-authored text', () => {
-  it.each(Object.entries(SURFACES))('%s runs the guard on every writer', (rel, expected) => {
+  it.each(Object.entries(SURFACES))('%s runs the guard in every writer', (rel, expected) => {
     const source = parse(rel);
     const names = importedNames(source, REQUIRED);
 
@@ -147,10 +211,20 @@ describe('no unguarded user-authored text', () => {
       names.length,
       `${rel} does not import ${REQUIRED} from ${BLOCKLIST_MODULE}`
     ).toBeGreaterThan(0);
+
+    const byFunction = callsByFunction(source, names);
+    const total = [...byFunction.values()].reduce((sum, n) => sum + n, 0);
+
+    // Both, and the second is the one with teeth: the total alone is satisfied by moving a call
+    // from one writer into another, which leaves a writer unguarded with the count unchanged.
     expect(
-      countCalls(source, names),
+      total,
       `${rel} should call ${REQUIRED} ${expected}x — a writer of this surface's text has lost its check`
     ).toBe(expected);
+    expect(
+      Object.fromEntries([...byFunction].sort()),
+      `${rel}: the guard calls moved between functions. Same total, different writers — check which writer lost its call`
+    ).toEqual(EXPECTED_WRITERS[rel]);
   });
 
   it.each(Object.keys(SURFACES))('%s does not fall back to the link-only check', (rel) => {

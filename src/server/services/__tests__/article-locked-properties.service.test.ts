@@ -13,7 +13,6 @@ const mockDbWrite = dbMock.dbWrite;
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(),
   throwOnBlockedUserContent: vi.fn(),
-  throwOnBlockedUserContent: vi.fn(),
 }));
 
 // upsertArticle's UPDATE path does post-commit work that reaches Redis: the
