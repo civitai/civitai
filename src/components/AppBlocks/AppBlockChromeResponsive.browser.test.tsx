@@ -72,6 +72,21 @@ const MODEL_SIDEBAR_PX = 340;
  */
 const LONG_NAME = 'Background Remover Pro Max Ultra Deluxe Edition';
 
+/**
+ * `ActionIcon size="sm"` at rest. `@mantine/core` 7.17.8 ships
+ * `--ai-size-sm: calc(1.375rem * var(--mantine-scale))`; this repo overrides
+ * neither the ActionIcon sizes nor `--mantine-scale`, so 1.375rem = 22px.
+ */
+const RESTING_ICON_PX = 22;
+
+/**
+ * The bar's rendered resting height: 22 (ActionIcon sm) + 8 (`py={4}` ×2) + 1
+ * (bottom border). See the long note on the height guard at the bottom of this
+ * file for why this is NOT `CHROME_BAR_PX` and why that is a pre-existing finding
+ * rather than something this change caused.
+ */
+const CHROME_BAR_RENDERED_PX = RESTING_ICON_PX + 8 + 1;
+
 const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
 
 /**
@@ -171,7 +186,10 @@ describe('AppBlockChrome responsive geometry', () => {
     const dropdown = document.querySelector('.mantine-Menu-dropdown') as HTMLElement | null;
     // Positive control on the lookup: a null here would make every width
     // assertion below unreachable, which is the reassuring-zero shape.
-    expect(dropdown, 'the platform-nav dropdown must be in the document once opened').not.toBeNull();
+    expect(
+      dropdown,
+      'the platform-nav dropdown must be in the document once opened'
+    ).not.toBeNull();
     expect(
       Math.round(rect(dropdown as HTMLElement).width),
       `at ${ULTRAWIDE[0]}px the platform-nav dropdown must be wider than the legacy 200px`
@@ -204,9 +222,10 @@ describe('AppBlockChrome responsive geometry', () => {
       Math.round(rect(name).width),
       `a ${MODEL_SIDEBAR_PX}px bar must keep the narrow 160px name cap`
     ).toBeLessThanOrEqual(160);
-    expect(root.scrollWidth, `no horizontal overflow in a ${MODEL_SIDEBAR_PX}px bar`).toBeLessThanOrEqual(
-      root.clientWidth + 1
-    );
+    expect(
+      root.scrollWidth,
+      `no horizontal overflow in a ${MODEL_SIDEBAR_PX}px bar`
+    ).toBeLessThanOrEqual(root.clientWidth + 1);
   });
 
   test(`at ${PHONE[0]}x${PHONE[1]} the row stays on one line, does not overflow, and keeps its controls at full size`, async () => {
@@ -221,48 +240,69 @@ describe('AppBlockChrome responsive geometry', () => {
       root.clientWidth + 1
     );
 
-    // Both icon buttons keep their resting 26px (`ActionIcon size="sm"`). The ⋯
-    // trigger is the one that gained an explicit `flexShrink: 0` in this change;
-    // its left-hand sibling already had one. In a `wrap="nowrap"` row a shrinkable
-    // button is what gets crushed first when the name is long.
+    // Both icon buttons keep their resting size. The ⋯ trigger is the one that
+    // gained an explicit `flexShrink: 0` in this change; its left-hand sibling has
+    // carried one all along. In a `wrap="nowrap"` row a shrinkable button is what
+    // gets crushed first when the name is long, so the load-bearing claim is the
+    // RELATIONAL one — the two triggers must be the same size as each other.
     const navTrigger = page.getByTestId('app-platform-nav-trigger').element();
     const overflowTrigger = page.getByTestId('app-block-menu-trigger').element();
     expect(
       Math.round(rect(navTrigger).width),
-      `the apps-menu trigger must keep its 26px size at ${PHONE[0]}px`
-    ).toBe(26);
+      `the apps-menu trigger must render at its resting ActionIcon size="sm" at ${PHONE[0]}px`
+    ).toBe(RESTING_ICON_PX);
     expect(
       Math.round(rect(overflowTrigger).width),
-      `the ⋯ trigger must keep its 26px size at ${PHONE[0]}px`
-    ).toBe(26);
+      `the ⋯ trigger must not be squeezed below the apps-menu trigger at ${PHONE[0]}px`
+    ).toBe(Math.round(rect(navTrigger).width));
 
     // One line: the two triggers share a row.
-    expect(
-      Math.round(rect(navTrigger).top),
-      `the row must not wrap at ${PHONE[0]}px`
-    ).toBe(Math.round(rect(overflowTrigger).top));
+    expect(Math.round(rect(navTrigger).top), `the row must not wrap at ${PHONE[0]}px`).toBe(
+      Math.round(rect(overflowTrigger).top)
+    );
   });
 
   // 🔴 NOT REGRESSION COVERAGE — both cases pass at `origin/main`, and they are
-  // supposed to. `CHROME_BAR_PX` is the model slot's CLS reservation, pinned in
-  // `slotReservation.ts` and asserted in `__tests__/slotReservation.test.ts`. This
-  // change is width-only and must not move it; this is the check that says so at a
-  // rendered pixel level rather than by reading the constant back. Two cases, not
-  // one loop: `cleanup()` runs per TEST, so two renders inside one test would leave
-  // two chrome bars in the document and every document-scoped query would be
-  // ambiguous.
+  // supposed to. This change is WIDTH-ONLY, and the bar's resting height is the
+  // model slot's CLS reservation, so this is the check that says the height did
+  // not move — at a rendered pixel level, rather than by reading a constant back.
+  //
+  // 🔴 IT PINS THE MEASURED HEIGHT, NOT `CHROME_BAR_PX`, AND THOSE TWO DISAGREE.
+  // This test was written asserting `CHROME_BAR_PX` (35) and failed at 31 — at BOTH
+  // viewports, and identically before and after this change, so it is a
+  // PRE-EXISTING divergence this test found rather than one it caused. The
+  // derivation comment on `CHROME_BAR_PX` in `slotReservation.ts` states
+  // "`--ai-size-sm` = rem(26px) = 26px"; the installed `@mantine/core` 7.17.8 ships
+  // `--ai-size-sm: calc(1.375rem * var(--mantine-scale))` = 22px, and this repo
+  // overrides neither the ActionIcon sizes nor `--mantine-scale`
+  // (`src/providers/ThemeProvider.tsx` sets only `color`/`variant` defaults). So the
+  // real resting height is 22 + 8 (`py={4}` ×2) + 1 (border) = 31, and the slot
+  // over-reserves by 4px.
+  //
+  // Deliberately NOT fixed here. Changing `CHROME_BAR_PX` changes the model-page
+  // slot's server-seeded reservation height — a behavioural change on a different
+  // surface, with its own before/after to measure — and F1 is a width-only pass.
+  // Left as a reported finding; `CHROME_BAR_PX` is untouched by this change.
+  //
+  // Two cases, not one loop: `cleanup()` runs per TEST, so two renders inside one
+  // test would leave two chrome bars in the document and every document-scoped
+  // query would be ambiguous.
   test.each([
     ['phone', PHONE, 'base'],
     ['ultrawide', ULTRAWIDE, 'xl'],
   ] as const)(
-    `INVARIANT GUARD — the bar's resting height is CHROME_BAR_PX (${CHROME_BAR_PX}) at the %s viewport`,
+    `INVARIANT GUARD — the bar's resting height is unchanged (${CHROME_BAR_RENDERED_PX}px) at the %s viewport`,
     async (_label, viewport, expectTier) => {
       const root = await renderChrome({ viewport, expectTier, appName: LONG_NAME });
       expect(styleSheetLoaded(root), '@mantine/core/styles.css must be loaded').toBe(true);
       expect(
         Math.round(rect(root).height),
-        `the chrome bar must be exactly CHROME_BAR_PX tall at ${viewport[0]}px`
-      ).toBe(CHROME_BAR_PX);
+        `the chrome bar's resting height must not move at ${viewport[0]}px`
+      ).toBe(CHROME_BAR_RENDERED_PX);
+      // The constant this height is SUPPOSED to equal, restated so the divergence
+      // above is visible in the file rather than only in a commit message. It is an
+      // over-reservation (35 > 31), which is the safe direction for a CLS reserve.
+      expect(CHROME_BAR_PX).toBeGreaterThanOrEqual(CHROME_BAR_RENDERED_PX);
     }
   );
 });
