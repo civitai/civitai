@@ -139,50 +139,43 @@ describe('inbound credential attribution', () => {
     ]);
   });
 
-  it('records WEBHOOK_TOKEN for the legacy credential — the class the migration is waiting to stop seeing', async () => {
+  it('🔴 the RETIRED credential emits NOTHING — so a zero for it is a real zero, not a filtered one', async () => {
+    // The retired class must contribute no attribution records at all. If a refused credential still
+    // emitted, its count could never fall to zero and would read as ongoing use forever — the signal
+    // this whole mechanism exists to provide would be permanently stuck. `beforeEach` still SETS the
+    // variable (four outbound callers need it), so this is a statement about the accepted set.
     await run(eventFor({ query: LEGACY_SECRET }));
-    expect(emitted()).toEqual([
-      {
-        type: 'info',
-        event: CREDENTIAL_ATTRIBUTION_EVENT,
-        credential: 'WEBHOOK_TOKEN',
-        path: PATH,
-        method: METHOD,
-        userAgent: USER_AGENT,
-      },
-    ]);
+    expect(emitted()).toEqual([]);
   });
 
-  it('🔴 BOTH classes emit from one deployment — the zero is only evidence beside a live control', async () => {
-    // The property this whole change exists to provide, and the one a "log only the legacy token"
-    // optimisation would silently remove. Both requests hit the SAME env state, so a non-zero
-    // MOD_INBOUND_TOKEN count is the in-band positive control that proves the emit path was live at
-    // the moment a WEBHOOK_TOKEN count read zero. Asserted as a SET of classes so it cannot be
-    // satisfied by two lines naming the same one.
-    await run(eventFor({ query: INBOUND_SECRET }));
-    await run(eventFor({ query: LEGACY_SECRET }));
-    expect(emitted().map((record) => record.credential)).toEqual([
-      'MOD_INBOUND_TOKEN',
-      'WEBHOOK_TOKEN',
-    ]);
-  });
+  // 🔴 DORMANT: 'BOTH classes emit from one deployment — the zero is only evidence beside a live
+  // control'. It needs two ACCEPTED classes and cannot be written at one. The property it pinned is
+  // the reason the emit covers every accepted class rather than just a retiring one: a non-zero count
+  // for a live class is the in-band positive control proving the emit path was live at the moment a
+  // retiring class's count read zero. Restore it if a second class is added — asserted as a SET of
+  // classes, so it cannot be satisfied by two lines naming the same one.
 
   it('attributes a Bearer-presented credential the same as a query-presented one', async () => {
-    await run(eventFor({ authorization: `Bearer ${LEGACY_SECRET}` }));
+    await run(eventFor({ authorization: `Bearer ${INBOUND_SECRET}` }));
     expect(emitted()).toHaveLength(1);
-    expect(emitted()[0].credential).toBe('WEBHOOK_TOKEN');
+    expect(emitted()[0].credential).toBe('MOD_INBOUND_TOKEN');
   });
 
   it('🔴 carries NOTHING derived from the token bytes, even when the token is in the URL', async () => {
     // `?token=` is how the main app calls in, so `url.href`/`url.search` would put the live secret on
     // a log stream far more readable than the secret store. `pathname` is what keeps it out.
-    await run(eventFor({ query: LEGACY_SECRET }));
+    //
+    // 🔴 Driven with the ACCEPTED secret deliberately. Presenting the retired one emits nothing, so
+    // every assertion below would run against an EMPTY array and pass without testing anything — a
+    // vacuous green on the one test here that guards a secret.
+    await run(eventFor({ query: INBOUND_SECRET }));
+    expect(emitted()).toHaveLength(1); // the record exists, so the assertions below have a subject
     const serialized = JSON.stringify(emitted());
-    expect(serialized).not.toContain(LEGACY_SECRET);
+    expect(serialized).not.toContain(INBOUND_SECRET);
     // …and no PREFIX of it either, which is what a "just the first few characters for correlation"
     // edit would add. Six characters past the shared `sk-` prefix is already an oracle.
-    expect(serialized).not.toContain(LEGACY_SECRET.slice(0, 9));
-    expect(serialized).not.toContain(String(LEGACY_SECRET.length));
+    expect(serialized).not.toContain(INBOUND_SECRET.slice(0, 9));
+    expect(serialized).not.toContain(String(INBOUND_SECRET.length));
   });
 });
 
@@ -208,7 +201,7 @@ describe('what must NOT be recorded', () => {
     const { response, resolve } = await run(eventFor({ query: LEGACY_SECRET }));
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({
-      message: 'Neither MOD_INBOUND_TOKEN nor WEBHOOK_TOKEN is configured on this deployment.',
+      message: 'MOD_INBOUND_TOKEN is not configured on this deployment.',
     });
     expect(resolve).not.toHaveBeenCalled();
     expect(logToAxiom).not.toHaveBeenCalled();
@@ -237,10 +230,13 @@ describe('locals.tokenClient stays exactly "webhook"', () => {
     expect(event.locals.tokenClient).toBe('webhook');
   });
 
-  it('for WEBHOOK_TOKEN', async () => {
+  it('and is NOT set for the retired credential, which never authenticates', async () => {
+    // The mirror of the case above. A refused credential must leave `tokenClient` unset, so nothing
+    // downstream can treat a retired token as a webhook caller — `WebhookEndpoint` and
+    // `defineWebhookEndpoint` gate on this field, and a stale `'webhook'` here would wave it through.
     const event = eventFor({ query: LEGACY_SECRET });
     await run(event);
-    expect(event.locals.tokenClient).toBe('webhook');
+    expect(event.locals.tokenClient).toBeUndefined();
   });
 
   it('and grants are emptied on token ingress, so nothing reached this way inherits a permission', async () => {

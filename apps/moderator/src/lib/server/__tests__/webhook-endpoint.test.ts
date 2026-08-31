@@ -74,18 +74,17 @@ describe('authenticateWebhookToken', () => {
     expect(authenticateWebhookToken(eventWith({}))).toEqual({ kind: 'none' });
   });
 
-  it('REGRESSION: attributes WEBHOOK_TOKEN via ?token= — the main app calls in this way', () => {
-    expect(authenticateWebhookToken(eventWith({ query: LEGACY }))).toEqual({
-      kind: 'authenticated',
-      credential: 'WEBHOOK_TOKEN',
-    });
+  it('REGRESSION: the retired WEBHOOK_TOKEN is REFUSED via ?token= — the shape the main app used to call in', () => {
+    // `beforeEach` still SETS the variable, because four outbound callers need it and every real
+    // deployment has it. Refusing here is therefore a statement about the accepted SET, not about the
+    // variable being absent — which is the whole distinction this removal turns on.
+    expect(refusalOf(authenticateWebhookToken(eventWith({ query: LEGACY }))).status).toBe(401);
   });
 
-  it('REGRESSION: attributes WEBHOOK_TOKEN via Authorization: Bearer', () => {
-    expect(authenticateWebhookToken(eventWith({ authorization: `Bearer ${LEGACY}` }))).toEqual({
-      kind: 'authenticated',
-      credential: 'WEBHOOK_TOKEN',
-    });
+  it('REGRESSION: the retired WEBHOOK_TOKEN is REFUSED via Authorization: Bearer', () => {
+    expect(
+      refusalOf(authenticateWebhookToken(eventWith({ authorization: `Bearer ${LEGACY}` }))).status
+    ).toBe(401);
   });
 
   it('REGRESSION: attributes MOD_INBOUND_TOKEN via ?token=', () => {
@@ -102,14 +101,19 @@ describe('authenticateWebhookToken', () => {
     });
   });
 
-  it('REGRESSION: the two classes are attributed DIFFERENTLY from the same deployment', () => {
-    // The pairwise-distinct check the whole signal rests on: a stub returning one constant for every
-    // caller satisfies either test above on its own, and fails this one. Both verdicts are read from
-    // the SAME env state, so nothing but the presented bytes can be deciding.
-    const legacy = authenticateWebhookToken(eventWith({ query: LEGACY }));
-    const inbound = authenticateWebhookToken(eventWith({ query: INBOUND }));
-    expect(legacy).toEqual({ kind: 'authenticated', credential: 'WEBHOOK_TOKEN' });
-    expect(inbound).toEqual({ kind: 'authenticated', credential: 'MOD_INBOUND_TOKEN' });
+  it('REGRESSION: the verdict is decided by the PRESENTED BYTES, not by the request shape', () => {
+    // What survives of the old pairwise-distinct check now that there is one class to attribute. A
+    // stub that returned `authenticated` for every caller would satisfy the two tests above on their
+    // own and fails this one. Both verdicts are read from the SAME env state, so nothing but the
+    // presented bytes can be deciding.
+    //
+    // 🔴 The stronger form — two classes attributed DIFFERENTLY from one deployment — is dormant at
+    // one accepted credential, for the same reason the no-early-exit guard is (see
+    // webhook-endpoint-timing.test.ts). Restore it if a second class is added.
+    const accepted = authenticateWebhookToken(eventWith({ query: INBOUND }));
+    const retired = authenticateWebhookToken(eventWith({ query: LEGACY }));
+    expect(accepted).toEqual({ kind: 'authenticated', credential: 'MOD_INBOUND_TOKEN' });
+    expect(retired.kind).toBe('refused');
   });
 
   it('REGRESSION: MOD_INBOUND_TOKEN alone is a complete configuration — the post-migration state', () => {
@@ -120,12 +124,13 @@ describe('authenticateWebhookToken', () => {
     });
   });
 
-  it('REGRESSION: WEBHOOK_TOKEN alone is a complete configuration — the pre-migration state', () => {
+  it('REGRESSION: WEBHOOK_TOKEN alone is NO LONGER a configuration — it fails CLOSED with 503', () => {
+    // The inverse of the test this replaces, and the sharpest statement of what the removal did. A
+    // deployment carrying ONLY the retired variable now has no accepted class at all, so every
+    // wrapped endpoint is unreachable (503, a deployment problem) rather than reachable on a
+    // platform-wide admin credential. 503 and not 401: the caller is not at fault.
     setEnv({ WEBHOOK_TOKEN: LEGACY });
-    expect(authenticateWebhookToken(eventWith({ query: LEGACY }))).toEqual({
-      kind: 'authenticated',
-      credential: 'WEBHOOK_TOKEN',
-    });
+    expect(refusalOf(authenticateWebhookToken(eventWith({ query: LEGACY }))).status).toBe(503);
   });
 
   it('INVARIANT: the two tokens are independent — presenting one does not depend on the other being set', () => {
@@ -154,20 +159,14 @@ describe('authenticateWebhookToken', () => {
     );
   });
 
-  it('REGRESSION: both variables set to the SAME value attribute to the LEGACY class, not the preferred one', () => {
-    // 🔴 The ambiguous case, and the direction of the bias is the point. One shared value is
-    // indistinguishable on the wire, so attribution has to pick; picking the most legacy class can
-    // only OVERSTATE legacy use, and a migration proof that errs toward "still in use" is safe while
-    // one that errs toward zero authorises the removal that 401s every delegated moderation action.
-    //
-    // This also pins the no-`else`/last-match-wins shape of the match loop against the tidier-looking
-    // first-match-wins rewrite, which would report the post-migration class here.
-    setEnv({ WEBHOOK_TOKEN: LEGACY, MOD_INBOUND_TOKEN: LEGACY });
-    expect(authenticateWebhookToken(eventWith({ query: LEGACY }))).toEqual({
-      kind: 'authenticated',
-      credential: 'WEBHOOK_TOKEN',
-    });
-  });
+  // 🔴 DORMANT: 'both variables set to the SAME value attribute to the LEGACY class'. The ambiguous
+  // case needs TWO accepted classes to exist, so it cannot be written today. It pinned the
+  // last-match-wins shape of the match loop against a tidier-looking first-match-wins rewrite, and the
+  // direction of that bias was the point: one shared value is indistinguishable on the wire, so
+  // attribution has to pick, and picking the most LEGACY class can only overstate legacy use — a
+  // migration proof erring toward "still in use" is safe, one erring toward zero authorises a removal
+  // that 401s every delegated moderation action. The property is recorded on ACCEPTED_CREDENTIALS in
+  // webhook-endpoint.ts; restore this test if a second class is added.
 
   it('REGRESSION: EVERY accepted class is reachable — no class can be listed but never attributable', () => {
     // The ledger guard. A class added to ACCEPTED_CREDENTIALS but not read in `acceptedTokens` would
@@ -192,7 +191,10 @@ describe('authenticateWebhookToken', () => {
     // `.trim()`ed to ZERO length, and timingSafeEqual(<empty>, <empty>) is TRUE — so a request
     // presenting `?token=` with no value authenticated and every wrapped endpoint was open. Latent (a
     // real deployment holds a real value) but real, and pinned here so it stays shut.
-    setEnv({ WEBHOOK_TOKEN: '   ' });
+    // 🔴 Pinned on the ACCEPTED class. Setting the retired variable here instead would make this test
+    // pass for the WRONG REASON — a 503 because nothing is accepted at all, rather than because the
+    // whitespace-only value was filtered — and the bypass this closed would be untested.
+    setEnv({ MOD_INBOUND_TOKEN: '   ' });
     expect(refusalOf(authenticateWebhookToken(eventWith({ query: '' }))).status).toBe(503);
   });
 
@@ -208,7 +210,7 @@ describe('authenticateWebhookToken', () => {
     // that class's name, so a `stringContaining` guard passes on exactly the message that would send
     // an operator to set the wrong variable.
     expect(body).toEqual({
-      message: 'Neither MOD_INBOUND_TOKEN nor WEBHOOK_TOKEN is configured on this deployment.',
+      message: 'MOD_INBOUND_TOKEN is not configured on this deployment.',
     });
   });
 
@@ -219,22 +221,15 @@ describe('authenticateWebhookToken', () => {
     expect(refusalOf(authenticateWebhookToken(eventWith({ query: '' }))).status).toBe(503);
   });
 
-  it('INVARIANT: a blank MOD_INBOUND_TOKEN does not become a usable credential alongside a real one', () => {
+  it('REGRESSION: a blank MOD_INBOUND_TOKEN does NOT fall back to a set WEBHOOK_TOKEN', () => {
+    // 🔴 The failure mode with the worst blast radius, and the reason this is a REGRESSION rather than
+    // an invariant: if the removal were half-done — the class dropped from the list but still read as
+    // a fallback — blanking the narrow credential would silently re-open every wrapped endpoint to the
+    // platform-wide admin token. Both assertions are 503 (nothing accepted), never 401 (a bad token
+    // against something that IS accepted); the two statuses are what tell those states apart.
     setEnv({ WEBHOOK_TOKEN: LEGACY, MOD_INBOUND_TOKEN: '' });
-    expect(refusalOf(authenticateWebhookToken(eventWith({ query: '' }))).status).toBe(401);
-    // …and the real one still works, still attributed to the class it came from.
-    expect(authenticateWebhookToken(eventWith({ query: LEGACY }))).toEqual({
-      kind: 'authenticated',
-      credential: 'WEBHOOK_TOKEN',
-    });
-  });
-
-  it('REGRESSION: a WEBHOOK_TOKEN injected with surrounding whitespace still matches, and is still attributed', () => {
-    setEnv({ WEBHOOK_TOKEN: `  ${LEGACY}\n` });
-    expect(authenticateWebhookToken(eventWith({ query: LEGACY }))).toEqual({
-      kind: 'authenticated',
-      credential: 'WEBHOOK_TOKEN',
-    });
+    expect(refusalOf(authenticateWebhookToken(eventWith({ query: '' }))).status).toBe(503);
+    expect(refusalOf(authenticateWebhookToken(eventWith({ query: LEGACY }))).status).toBe(503);
   });
 
   it('REGRESSION: the same whitespace tolerance applies to MOD_INBOUND_TOKEN', () => {
