@@ -164,7 +164,9 @@ const FEATURE_FLAG_GATED_ECOSYSTEMS: Array<{ key: string; flag: keyof FeatureAcc
  * they never diverge. Reads gating from `ext`, populated async by
  * `getGenerationConfig` — hence `meta` must call this on every `setExt`.
  */
-function getEcosystemStates(
+// Exported (additive) so the form-graph port reuses this rather than
+// duplicating the gate resolution. Behaviour unchanged.
+export function getEcosystemStates(
   workflow: string,
   ext: EcosystemGateExt
 ): {
