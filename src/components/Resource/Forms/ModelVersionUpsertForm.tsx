@@ -950,9 +950,13 @@ export function ModelVersionUpsertForm({
 
   // Removals the creator cannot prevent — the gate goes on save whatever they do, whether the submit
   // substitutes null (suppressed model, ungatable usage control) or an effect already cleared the config
-  // (non-commercial base model). Nothing to offer them, so say why instead. Anything reachable here
-  // without an arm below reads as the reversible early-access loss, which is the wrong sentence.
+  // (non-commercial base model). Nothing to offer them, so say why instead.
   const gateRemovalIsStructural = removingStoredGate && (gateSuppressed || !paidAccessUsageOk);
+  // The one thing a gate removal actually costs. A timed Early Access window can't be started again
+  // after publish (`canChooseTimed`), so dropping one is one-way; permanent Paid Access can be re-added
+  // whenever, so there is nothing to warn about there.
+  const gateRemovalLosesTimedWindow =
+    removingStoredGate && !gateRemovalIsStructural && isPublished && timedAlreadySet;
   // Whether the control each sentence is about is actually on screen (see the colour rule below).
   const removalControlsVisible =
     (!removingStoredFee || (showChargeSettings && showLicensingFeeBlock)) &&
@@ -1430,12 +1434,13 @@ export function ModelVersionUpsertForm({
                             ? "A private model can't have paid access, so this can't be kept."
                             : "This version's usage control can't be gated, so this can't be kept."}
                         </Text>
-                      ) : (
+                      ) : gateRemovalLosesTimedWindow ? (
                         <Text size="xs" c="red">
-                          You will not be able to add this model to early access again after
-                          removing it. Also, your payment for early access will be lost.
+                          This version is already published, so its Early Access window can&apos;t
+                          be started again once removed. Permanent paid access can still be added
+                          back at any time.
                         </Text>
-                      ))}
+                      ) : null)}
                     {/* No affordance for a removal the creator cannot prevent: the submit substitutes
                         null for these regardless, so restoring would clear nothing and read as broken.
                         The fully-blocked reasons (POI, non-commercial) never reach here — they render the
