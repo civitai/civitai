@@ -100,7 +100,7 @@ function UserPostsPage() {
                   }}
                 />
               )}
-              <ActiveTagFilter tagIds={query.tags ?? []} />
+              {!selfView && <ActiveTagFilter tagIds={query.tags ?? []} />}
               <Group gap={8} ml="auto" wrap="nowrap">
                 <SortFilter
                   type="posts"

@@ -110,8 +110,9 @@ describe('the tag-filtered feeds mount the clear control', () => {
     // Read-only `?tags=` since its category scroller was removed, and it reads the param
     // with `parseNumericStringArray` — the same dead end, on a flag-gated feed.
     ['src/pages/3d-models/index.tsx'],
-    // Both spread the whole parsed query into their feed, and `tags` is in both route
-    // schemas, so `?tags=` genuinely filters them. Added by 868kz0qq6.
+    // Both spread the whole parsed query into their feed and `tags` is in both route
+    // schemas, so `?tags=` reaches the server on each. Added by 868kz0qq6. Whether the
+    // server then APPLIES it differs per viewer — see the gating block below.
     ['src/pages/user/[username]/posts.tsx'],
     ['src/pages/user/[username]/articles.tsx'],
   ])('%s renders <ActiveTagFilter />', (relative) => {
@@ -140,48 +141,65 @@ describe('the tag-filtered feeds mount the clear control', () => {
 });
 
 /**
- * A decision, not an accident — do not "fix" this by ungating the mount.
+ * ⚠️ These gates pin a DECISION (868kz0qq6) about SERVER behaviour that neither page's
+ * source reveals. Do not "tidy" either mount by ungating it.
  *
- * `/user/[username]/articles` renders `ArticlesInfinite` (which receives `tags`) only in
- * the published section; the draft section renders `UserDraftArticles`, which takes no
- * filters at all. So in drafts there is no tag filter in force, and an ungated control
- * would offer to clear one that was never applied — the same falsehood that kept
+ * The control must only appear where the feed actually applied the tag filter, otherwise it
+ * offers to clear something that was never in force — the same falsehood that kept
  * `/tools/[slug]` out of the list above.
  *
- * The sibling posts page is deliberately NOT gated: it renders `PostsInfinite` in both
- * sections and spreads `tags` into the filters either way, so the control is honest in
- * drafts there too.
+ * `/user/[username]/posts` is gated on `!selfView` because `getPostsInfinite` puts the tag
+ * clause behind `if (!isOwnerRequest)` (`post.service.ts`, "these are discovery filters, not
+ * publication ones"), and the page always sends `username`. So an owner viewing their own
+ * profile gets an UNFILTERED feed in both the published and draft sections, however much
+ * `?tags=` the url carries. Moderators are not owners there, so they keep both the filter
+ * and the control.
  *
- * The mount guard above cannot see this — it reads source lines, and its own comment
- * records that a flag-gated mount passes it. This is the assertion that does.
+ * `/user/[username]/articles` is gated on `viewingPublished` instead, for an unrelated
+ * reason: `getInfiniteArticles` applies its tag clause unconditionally, so every viewer is
+ * filtered — but the draft section renders `UserDraftArticles`, which takes no filters at
+ * all.
+ *
+ * Two different gates, two different causes. The mount guard above cannot see either: it
+ * reads source lines, and its own comment records that a flag-gated mount passes it.
  */
-describe('the articles clear control is gated on the published section', () => {
+describe('each user feed gates the clear control on where its filter really applies', () => {
+  const mountLine = (relative: string) =>
+    read(relative)
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.includes('<ActiveTagFilter'));
+
   const read = (relative: string) =>
     fs.readFileSync(
       path.join(path.resolve(__dirname, '../../../..'), ...relative.split('/')),
       'utf-8'
     );
 
-  it('gates the mount on viewingPublished', () => {
-    const line = read('src/pages/user/[username]/articles.tsx')
-      .split('\n')
-      .map((l) => l.trim())
-      .find((l) => l.includes('<ActiveTagFilter'));
-
+  it('gates the posts mount on !selfView, not on the draft section', () => {
+    const line = mountLine('src/pages/user/[username]/posts.tsx');
     expect(line).toBeDefined();
-    expect(line).toContain('viewingPublished &&');
+    expect(line).toContain('!selfView &&');
+    // The gate that looks right and is not: drafts are not the axis, ownership is.
+    expect(line).not.toContain('viewingDraft');
   });
 
-  // Positive control for the matcher above: the posts page mounts the same component on
-  // the same kind of line and must NOT carry that gate, so a match here would mean the
-  // assertion passes on any mount rather than on the gate.
-  it('does not gate the posts mount', () => {
-    const line = read('src/pages/user/[username]/posts.tsx')
-      .split('\n')
-      .map((l) => l.trim())
-      .find((l) => l.includes('<ActiveTagFilter'));
-
+  it('gates the articles mount on viewingPublished, not on ownership', () => {
+    const line = mountLine('src/pages/user/[username]/articles.tsx');
     expect(line).toBeDefined();
-    expect(line).not.toContain('viewingPublished');
+    expect(line).toContain('viewingPublished &&');
+    expect(line).not.toContain('selfView');
+  });
+
+  /**
+   * The control for both assertions above. Each page asserts the OTHER page's gate is
+   * absent, so a matcher loose enough to be satisfied by any `<ActiveTagFilter …/>` line
+   * would have to fail one of the four. This is also the assertion that fails first if
+   * someone unifies the two gates on the theory that they ought to match.
+   */
+  it('does not use the same gate on both pages', () => {
+    const posts = mountLine('src/pages/user/[username]/posts.tsx');
+    const articles = mountLine('src/pages/user/[username]/articles.tsx');
+    expect(posts).not.toEqual(articles);
   });
 });
