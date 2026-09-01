@@ -1908,7 +1908,9 @@ describe('AppListingDetailBody — moderator menu section', () => {
     const unpublishText = dropdown
       .querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)!
       .textContent!.trim();
-    const hideText = dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)!.textContent!.trim();
+    const hideText = dropdown
+      .querySelector(`[data-testid="${HIDE}-menu-item"]`)!
+      .textContent!.trim();
     expect(unpublishText).not.toBe(hideText);
     expect(unpublishText.toLowerCase()).toContain('review');
     expect(hideText.toLowerCase()).toContain('reversible');
@@ -2196,8 +2198,9 @@ describe('AppListingDetailBody — the beta badge + notice', () => {
     // 🔴 THIS IS THE ONE PREVIEW CASE THAT IS A *KEEP*, and it needs the same rigour as the
     // omissions above precisely because it points the other way. The omission ledger
     // withholds everything LIVE, INTERACTIVE or AGGREGATE; the beta declaration is none of
-    // those, `beginListingRevision` clones it onto the shadow so this preview can render it,
-    // and a moderator approving a shadow must see the beta framing they are approving.
+    // those — `getListingPreviewForReview` resolves it for a shadow by reading the PARENT,
+    // since beta is never staged — and a moderator approving a shadow must see the beta
+    // framing they are approving.
     //
     // The badge deliberately lives in the identity block rather than in the `!preview` meta
     // line beside the category badge — placing it there would have silently reversed this
@@ -2216,9 +2219,7 @@ describe('AppListingDetailBody — the beta badge + notice', () => {
 
     // …and the preview arm keeps BOTH. `canOpenPage` stays true so `preview` is the only
     // variable, exactly as the omission cases above are constructed.
-    const prev = await renderScoped(
-      <AppListingDetailBody detail={detail} canOpenPage preview />
-    );
+    const prev = await renderScoped(<AppListingDetailBody detail={detail} canOpenPage preview />);
     await expect.element(prev.within.getByText('My App')).toBeInTheDocument();
     expect(
       prev.container.querySelectorAll('[data-testid="apps-listing-beta-badge"]').length,

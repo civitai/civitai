@@ -376,20 +376,23 @@ describe('🔴 a degraded render read is LOGGED, and the logging cannot take the
    * table-scoped failure on `app_listings` (`42P01`, `42501`) is invisible to it. Without a
    * log, a half-applied schema leaves the badge permanently and silently absent.
    */
-  it('logs once, at WARNING, when a render read degrades', async () => {
+  it('logs once, at ERROR severity, when a render read degrades', async () => {
     const err = new Error('permission denied for table app_listings') as Error & {
       code?: string;
     };
     err.code = '42501';
     await readListingBetaForRender('apl_1', throwingClient(err));
     expect(logToAxiom).toHaveBeenCalledTimes(1);
-    // 🔴 `warning`, NOT `error`. `type` is what the Alloy→Loki pipeline reads as the level,
-    // and a missing column during the manual-apply window is an expected intermediate state,
-    // not an incident — logging it at error severity puts an expected state on the error
-    // board, which is the rule `~/server/logging/client` states.
+    // 🔴 `error`, NOT `warning`, and an earlier version of this assertion had it backwards.
+    // `type` is what the Alloy→Loki pipeline reads as the level, and `~/server/logging/client`
+    // keys severity on FAULT (`server ? 'error' : 'info'`). The missing-COLUMN case — the one
+    // the old comment used to justify `warning` — cannot reach this catch at all: the narrow
+    // readers swallow `P2022`/`42703` upstream and return `BETA_UNAVAILABLE` without throwing.
+    // What arrives is the complement (timeout, `42P01`, `42501`, connection failure), all
+    // server faults, and filing those as warnings keeps a real outage off the error board.
     expect(logToAxiom.mock.calls[0][0]).toMatchObject({
       name: 'app-listing-beta-read-degraded',
-      type: 'warning',
+      type: 'error',
       code: '42501',
     });
   });

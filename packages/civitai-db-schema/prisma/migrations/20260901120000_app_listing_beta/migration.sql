@@ -10,12 +10,23 @@
 -- Prisma returns the created/updated row, so it emits
 -- `INSERT/UPDATE … RETURNING <every scalar the MODEL declares>`. Both columns below are
 -- declared on the `AppListing` model, so the generated SQL names them whether or not the
--- keys appear in `data` — and the same is true of any `findUnique` / `findFirst` /
--- `findMany` / `create` / `update` / `upsert` on this model that passes no explicit
--- `select`, of which there are many. (`updateMany` / `deleteMany` / `createMany` return a
--- row COUNT rather than rows, so those cannot raise it — the exposure is decided by the
--- METHOD, not by a site count, and this header deliberately no longer quotes one: the
--- figure it used to give was copied from a sibling migration and was ~2.6x high.)
+-- keys appear in `data` — and the same is true of any call that RETURNS ROWS and passes no
+-- explicit `select`: `findUnique` / `findFirst` / `findMany` / `create` / `update` /
+-- `upsert` / `delete`, and the `…AndReturn` variants (`createManyAndReturn`,
+-- `updateManyAndReturn`). There are many of those on this model.
+--
+-- `updateMany` / `deleteMany` / `createMany` return a `BatchPayload` row COUNT, so they name
+-- no scalars IN THE RETURNING LIST. 🔴 THAT IS THE ONLY THING IT EXEMPTS: such a call still
+-- names whatever columns appear in its own `data` and `where`, so an
+-- `appListing.updateMany({ data: { is_beta … } })` raises 42703 exactly like the rest. An
+-- earlier version of this header said they "cannot raise it", full stop, which is false —
+-- and note that `createManyAndReturn` / `updateManyAndReturn` CONTAIN the exempt names as
+-- substrings, so a grep built from those names alone matches them and gets the wrong answer.
+-- Match whole method names.
+--
+-- (This header deliberately quotes no site COUNT. The figure it used to give was copied from
+-- a sibling migration, never re-measured, and ~2.6x high; nothing asserts on it, so it rots.)
+--
 -- Deploying the code first therefore turns an additive, optional, cosmetic feature into a
 -- public-store outage:
 --

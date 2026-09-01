@@ -863,8 +863,9 @@ export interface AppListingDetailBodyProps {
    * rather than an omission that was missed. Everything above is withheld because it is
    * LIVE, INTERACTIVE or an AGGREGATE a shadow listing structurally does not have; the beta
    * declaration is none of those. It is a presentational scalar the author set on the
-   * listing, `beginListingRevision` clones it onto the shadow precisely so this preview can
-   * render it, and it is exactly the context a moderator needs while reviewing — "this
+   * listing, `getListingPreviewForReview` resolves it for a shadow by reading the PARENT
+   * (beta is never staged, so the live row is the only place it exists), and it is exactly
+   * the context a moderator needs while reviewing — "this
    * developer says the app is unfinished" changes how you read the screenshots and the
    * copy. Withholding it would show the reviewer a different page from the one approving
    * publishes. Its badge is deliberately placed in the identity block rather than in the

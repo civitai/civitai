@@ -770,3 +770,110 @@ describe('🔴 materialEditBlockedReason — role-aware, and pinned as WHOLE str
     expect(drifted(undefined)).not.toMatch(/republish the app from the Publishing tab/i);
   });
 });
+
+describe('🔴 NEW-1 — an ABANDONED beta note does not fail the whole save', () => {
+  /**
+   * 🔴 THE REGRESSION THIS PINS WAS INTRODUCED BY THE FIX FOR N5. The server refuses a
+   * `betaMessage` set while the effective flag is off — correct for a stale form and for a
+   * direct API caller, and reachable from four ordinary clicks in ONE tab:
+   *   1. listing has beta OFF; 2. author ticks the box, revealing the textarea;
+   *   3. types a note; 4. changes their mind and UNTICKS.
+   * The textarea is hidden but NOT cleared (deliberately — re-ticking should restore what
+   * they typed), so `current.betaMessage` still holds the text while `current.isBeta` is back
+   * to its original `false`. The diff then emitted `{betaMessage}` ALONE, the server refused,
+   * and because the whole form saves in one mutation every other edit in it — name, tagline,
+   * description, category, URL — was rejected with it. The refusal's own advice ("tick the
+   * box and save again") would have published the note they had just abandoned.
+   */
+  const OFF_LISTING = {
+    parentId: 'apl_1',
+    slug: 's',
+    status: 'approved',
+    hasPendingRevision: false,
+    shadowId: null,
+    scalars: {
+      name: 'n',
+      tagline: null,
+      description: null,
+      category: null,
+      contentRating: 'g',
+      externalUrl: null,
+      isBeta: false,
+      betaMessage: null,
+    },
+    assets: {
+      icon: { imageId: null, url: null },
+      cover: { imageId: null, url: null },
+      screenshots: [],
+    },
+  } as never;
+
+  it('tick → type → untick emits NO beta keys at all', () => {
+    const current = {
+      ...editContextToForm(OFF_LISTING),
+      isBeta: false, // unticked again
+      betaMessage: 'Expect rough edges', // still in the hidden textarea
+    };
+    const patch = buildScalarPatch(OFF_LISTING, current);
+    expect('betaMessage' in patch).toBe(false);
+    expect('isBeta' in patch).toBe(false);
+  });
+
+  it('an unrelated edit in the SAME save still goes through', () => {
+    // 🔴 THE HARM WAS NEVER THE BETA FIELD — it was that one refused key took the whole form
+    // with it. This is the half that matters to the author.
+    const current = {
+      ...editContextToForm(OFF_LISTING),
+      isBeta: false,
+      betaMessage: 'Expect rough edges',
+      tagline: 'a new tagline',
+    };
+    const patch = buildScalarPatch(OFF_LISTING, current);
+    expect(patch.tagline).toBe('a new tagline');
+    expect('betaMessage' in patch).toBe(false);
+  });
+
+  it('positive control — with the box TICKED the note IS emitted', () => {
+    // Without this, the two assertions above would pass on a diff that never emits the note
+    // at all, which would silently break the feature.
+    const current = {
+      ...editContextToForm(OFF_LISTING),
+      isBeta: true,
+      betaMessage: 'Expect rough edges',
+    };
+    const patch = buildScalarPatch(OFF_LISTING, current);
+    expect(patch.isBeta).toBe(true);
+    expect(patch.betaMessage).toBe('Expect rough edges');
+  });
+
+  it('unticking a listing that HAS a note still clears it (no note in the patch needed)', () => {
+    // The server nulls the note on the off transition, so the note never has to ride the
+    // patch to be removed — which is what makes suppressing it here safe.
+    const on = {
+      ...OFF_LISTING,
+      scalars: {
+        ...(OFF_LISTING as never as { scalars: object }).scalars,
+        isBeta: true,
+        betaMessage: 'x',
+      },
+    } as never;
+    const current = { ...editContextToForm(on), isBeta: false };
+    const patch = buildScalarPatch(on, current);
+    expect(patch.isBeta).toBe(false);
+    expect('betaMessage' in patch).toBe(false);
+  });
+
+  it('editing the note while beta stays ON still emits it', () => {
+    const on = {
+      ...OFF_LISTING,
+      scalars: {
+        ...(OFF_LISTING as never as { scalars: object }).scalars,
+        isBeta: true,
+        betaMessage: 'x',
+      },
+    } as never;
+    const current = { ...editContextToForm(on), betaMessage: 'y' };
+    const patch = buildScalarPatch(on, current);
+    expect(patch.betaMessage).toBe('y');
+  });
+});

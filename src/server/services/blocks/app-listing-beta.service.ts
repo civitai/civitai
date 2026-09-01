@@ -249,13 +249,31 @@ export async function readListingBetaMany(
 /**
  * Record a degraded beta read, without letting the recording break the page.
  *
- * 🔴 `type: 'warning'`, NOT `'error'`. `type` is what the Alloy→Loki pipeline reads as the
- * log level, and the rule in `~/server/logging/client` is that a fault which is not a
- * server-side failure must never sit on the error board. A missing column during the
- * manual-apply window is an expected intermediate state, not an incident.
+ * 🔴 `type: 'error'`, AND AN EARLIER VERSION OF THIS COMMENT ARGUED FOR `'warning'` ON A
+ * CASE THAT CANNOT REACH HERE. It said "a missing column during the manual-apply window is
+ * an expected intermediate state, not an incident" — but the missing-column error is
+ * swallowed UPSTREAM: `readListingBeta` and its siblings match `P2022`/`42703` themselves and
+ * RETURN `BETA_UNAVAILABLE` without throwing, so it never reaches {@link readForRender}'s
+ * catch at all.
+ *
+ * What actually arrives here is the complement: a connection failure, a statement timeout, a
+ * missing TABLE (`42P01`), a permission error (`42501`) — exactly the set this module's
+ * `readListingBeta` docstring calls "a real outage". Those are SERVER faults, and
+ * `~/server/logging/client` classifies severity on precisely that axis
+ * (`fault === 'server' ? 'error' : 'info'`). Filing them as warnings would keep a genuine
+ * `app_listings` outage off the error board.
+ *
+ * 🔴 THE FLOODING OBJECTION DOES NOT APPLY, which is why this differs from
+ * `app-listing-assets.service`'s deliberate `'warning'`. That one downgrades because an
+ * AUTHOR can trigger it at will (by swapping the object behind a key they own), so at
+ * `error` it is an author-controlled tap on the error board. Nothing an author can do
+ * produces a `42P01` here.
+ *
+ * `type` is the load-bearing field — the Alloy→Loki pipeline reads it as the level; `level`
+ * is not read.
  *
  * 🔴 THE `.catch(() => null)` IS LOAD-BEARING, not tidiness. Nothing awaits this call, and
- * `logToAxiom` awaits an ingest that REJECTS when Axiom itself is degraded — so without the
+ * `logToAxiom` returns a promise that can reject — so without the
  * catch the rejection has nowhere to go but `unhandledRejection`, and the render this exists
  * merely to OBSERVE would be taken down by the observation. That is the precise failure this
  * whole `…ForRender` posture exists to prevent, reintroduced through the logging. Same
@@ -265,7 +283,7 @@ export async function readListingBetaMany(
 function noteDegradedBetaRead(err: unknown): void {
   logToAxiom({
     name: 'app-listing-beta-read-degraded',
-    type: 'warning',
+    type: 'error',
     message: err instanceof Error ? err.message : String(err),
     code: (err as { code?: unknown })?.code ?? null,
   }).catch(() => null);
@@ -295,11 +313,17 @@ function noteDegradedBetaRead(err: unknown): void {
  * request hit the same client". True on the two LIST surfaces, whose siblings read
  * `app_listings` — and FALSE on the one surface this was built for: the run page's only
  * sibling reads `app_blocks`, so a table-scoped failure on `app_listings` (`42P01`, `42501`
- * — the exact codes this module's tests enumerate) is invisible to it. Without a log a
- * half-applied schema would leave the badge permanently and silently absent. Hence the warn
- * in {@link noteDegradedBetaRead}: the page still renders, and the failure is still
- * findable. What is suppressed is only this label's ability to be the thing that takes a
- * page down.
+ * — the exact codes this module's tests enumerate) is invisible to it. Without a log, an
+ * `app_listings` outage would leave the badge silently absent on that page with no signal
+ * anywhere. Hence {@link noteDegradedBetaRead}: the page still renders, and the failure is
+ * still findable. What is suppressed is only this label's ability to be the thing that takes
+ * a page down.
+ *
+ * 🔴 NOTE WHICH CASE IS **NOT** IN THAT SET. An earlier version of this paragraph justified
+ * the log by "a half-applied schema would leave the badge permanently absent" — but a missing
+ * COLUMN never reaches this catch: the narrow readers swallow `P2022`/`42703` themselves and
+ * return `BETA_UNAVAILABLE` without throwing. The manual-apply window is silent here by
+ * construction, and deliberately so; what this logs is the real-outage complement.
  *
  * `available` is reported honestly as `false` on any failure, so a caller that ever wanted to
  * gate a write on one of these reads would still fail CLOSED — but none does, and none should.

@@ -1544,8 +1544,9 @@ export async function updateListing(opts: {
       // 🔴 EXCEPT THE BETA HALF, WHICH GOES TO THE LIVE PARENT — the ONE place in this file
       // where a single patch produces two writes. Beta is TRIVIAL and is never staged; see
       // {@link splitBetaPatch} for the three separate ways staging it goes wrong, the
-      // sharpest being that `applyApprovedRevision` would restore the clone-time value and
-      // silently undo every beta edit the author made while the revision sat in the queue.
+      // sharpest being that `applyApprovedRevision` copies a shadow's scalars unconditionally
+      // — so a staged beta value would be written back onto the parent at approve time,
+      // silently undoing every beta edit the author made while the revision sat in the queue.
       //
       // 🔴 EVERY THROWING STEP RUNS BEFORE THE FIRST WRITE. That is the invariant this
       // function states 180 lines up — "Checked here, nothing has been written when it
@@ -2040,9 +2041,10 @@ async function loadListingEditView(
   // one asymmetry in this loader. Every other scalar here comes from the EFFECTIVE source
   // (the in-progress shadow when there is one), because those are the values under review.
   // Beta is not staged — it lives on the live listing and is written there directly — so
-  // prefilling it from a shadow would show the author the clone-time snapshot instead of
-  // what their listing says right now, and their next save would diff against the wrong
-  // baseline and either re-send a value they never touched or drop one they did.
+  // prefilling it from a shadow would show the author the schema DEFAULTS (nothing writes a
+  // shadow's beta columns) instead of what their listing says right now, and their next save
+  // would diff against the wrong baseline and either re-send a value they never touched or
+  // drop one they did.
   const betaSourceId = parentIdForBeta ?? listingId;
   const beta = skipBeta ? BETA_NOT_SET : await readListingBeta(betaSourceId, db);
   const row = (await db.appListing.findUnique({
@@ -3643,9 +3645,10 @@ async function applyApprovedRevision(opts: {
           // easiest to mistake for an omission: everything else the author can edit IS
           // copied. Beta is the exception because it is never staged — it is written
           // straight to this parent by `updateListing` / `updateRevisionDraft` the moment
-          // the author toggles it, so the live row is already correct and the shadow's
-          // clone-time snapshot is stale by construction. Copying it would undo every beta
-          // edit made while this revision sat in the review queue. That is also why neither
+          // the author toggles it, so the live row is already correct. The shadow's own beta
+          // columns are never written at all — they hold the schema defaults — so copying
+          // them here would not restore an older value, it would CLEAR the live one. That is
+          // also why neither
           // column belongs in `OFFSITE_UNCOMPARED_APPLY_FIELDS`: that list names fields this
           // apply COPIES without comparing, and this apply copies neither.
           connectClientId: shadow.connectClientId,

@@ -1558,9 +1558,9 @@ describe('beta survives the revision round trip — for BOTH kinds', () => {
    *
    * Beta closes that hazard by the opposite route, and these tests pin the route rather than
    * the recipe: the apply names NEITHER beta column, in EITHER kind branch, so there is
-   * nothing to revert to and the parent's value survives by construction. The clone still
-   * carries them, but only so the moderator PREVIEW (which renders the shadow row) shows the
-   * beta banner being approved.
+   * nothing to revert to and the parent's value survives by construction. There is no clone
+   * either — `getListingPreviewForReview` reads beta from the PARENT for a shadow, so the
+   * moderator preview shows the LIVE declaration without one.
    */
 
   /** Drive an approved offsite revision all the way through `applyApprovedRevision`. */
@@ -1571,10 +1571,14 @@ describe('beta survives the revision round trip — for BOTH kinds', () => {
       id: 'apl_shadow',
       status: 'draft',
       revisionOfId: 'apl_parent',
-      // The shadow's own (clone-time) beta snapshot, deliberately DIFFERENT from what the
-      // live parent would now hold — that difference is what a copy-back would destroy.
+      // 🔴 A SHAPE PRODUCTION CAN NO LONGER PRODUCE, kept deliberately as a STRUCTURAL pin.
+      // Nothing writes a shadow's beta columns any more, so a real shadow carries the schema
+      // defaults. Seeding NON-default values is what makes the assertion below falsifiable:
+      // if the apply ever starts naming these columns it would carry THESE onto the parent
+      // and the test would see it. A fixture matching production exactly (both defaults)
+      // could not tell "not copied" from "copied a default".
       isBeta: true,
-      betaMessage: 'stale clone-time note',
+      betaMessage: 'a value a real shadow would never hold',
     };
     mockRead.appListing.findUnique.mockImplementation(
       findUniqueById({ apl_parent: parent, apl_shadow: shadow })
@@ -2057,5 +2061,82 @@ describe('🔴 N5 — a note can never sit behind an OFF flag, by any route', ()
       where: { id: 'apl_parent' },
       data: { betaMessage: null },
     });
+  });
+});
+
+describe('🔴 NEW-2 — updateRevisionDraft evaluates the note/flag rule against the PARENT', () => {
+  /**
+   * 🔴 THIS PATH HAD ZERO COVERAGE AND A SURVIVED MUTANT. Every earlier `updateRevisionDraft`
+   * beta test sent `patch: { isBeta: true }`, where the effective flag is `true` regardless of
+   * what `currentIsBeta` holds — so replacing `currentIsBeta: parentIsBeta` with `false`
+   * shipped GREEN across 155 files / 3677 tests, while the equivalent mutant on
+   * `updateListing` was killed. Measured, not reasoned.
+   *
+   * What that mutant would break in production is the most ordinary beta edit there is:
+   * editing the NOTE on an approved listing that is already in beta. The form calls
+   * `updateRevisionDraft` for an approved listing, `buildScalarPatch` emits `{betaMessage}`
+   * alone when only the text changed, and with `currentIsBeta` stuck at `false` the effective
+   * flag reads off → every such save 400s.
+   */
+  function shadowOfBetaParent(parentIsBeta: boolean) {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    // The PRIMARY answers both the editability probe (`{status}`) and the guarded beta read.
+    mockWrite.appListing.findUnique.mockImplementation(
+      async (args: { select?: Record<string, unknown> }) => {
+        if (args?.select && 'isBeta' in args.select)
+          return { isBeta: parentIsBeta, betaMessage: parentIsBeta ? 'old note' : null };
+        return { status: 'approved' };
+      }
+    );
+  }
+
+  it('a NOTE-ONLY patch SUCCEEDS when the parent is already in beta', async () => {
+    shadowOfBetaParent(true);
+    await updateRevisionDraft({
+      shadowId: 'apl_shadow',
+      patch: { betaMessage: 'new note' },
+      userId: OWNER,
+    });
+    const calls = mockWrite.appListing.update.mock.calls.map((c) => c[0]) as Array<{
+      where: { id: string };
+      data: Record<string, unknown>;
+    }>;
+    // The note landed on the LIVE PARENT, not the shadow.
+    expect(calls.find((c) => c.where.id === 'apl_parent')?.data).toEqual({
+      betaMessage: 'new note',
+    });
+  });
+
+  it('the SAME patch is REFUSED when the parent is NOT in beta (the discriminating half)', async () => {
+    // 🔴 THE PAIR IS THE TEST. One case alone cannot tell `currentIsBeta: parentIsBeta` from
+    // a hardcoded constant — the first test dies on `false`, this one dies on `true`, so only
+    // a read of the parent's real flag passes both.
+    shadowOfBetaParent(false);
+    await expect(
+      updateRevisionDraft({
+        shadowId: 'apl_shadow',
+        patch: { betaMessage: 'new note' },
+        userId: OWNER,
+      })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
+  it('the flag comes from the PARENT, not from the shadow row', async () => {
+    // The shadow's own columns are never written, so they hold schema defaults. An
+    // implementation that read the shadow would see `isBeta: false` and refuse the first
+    // case above; this pins WHICH id the guarded read is given.
+    shadowOfBetaParent(true);
+    await updateRevisionDraft({
+      shadowId: 'apl_shadow',
+      patch: { betaMessage: 'new note' },
+      userId: OWNER,
+    });
+    const betaRead = mockWrite.appListing.findUnique.mock.calls
+      .map((c) => c[0] as { where?: { id?: string }; select?: Record<string, unknown> })
+      .find((a) => a?.select && 'isBeta' in a.select);
+    expect(betaRead?.where).toEqual({ id: 'apl_parent' });
   });
 });
