@@ -128,7 +128,11 @@
 }
 
 /* FULL-BLEED OPT-OUT LEDGER — one rule per app, and the ONLY way out of the cap.
-   Empty today.
+   One member today: `playable-collections` (its reasoning is on the rule itself,
+   below). The membership set is ASSERTED in
+   `src/components/AppBlocks/__tests__/pageBlockHostMaxWidth.test.ts` and fails if
+   it grows OR shrinks, so adding or removing a rule here without updating that
+   expectation is a test failure, not a silent change.
 
    🔴 WHY THIS IS CSS AND NOT A MANIFEST FIELD. The App Block manifest schema is
    byte-mirrored across three repos (`public/schemas/app-block/v1.json`, the Go
@@ -160,6 +164,33 @@
    rule of exactly this shape at a 2560px viewport and assert the host goes back
    to full width — so this block cannot rot into a comment describing something
    that no longer works. */
+
+/* Playable Collections (`playable-collections`) — a collection PLAYER, and every
+   one of its open-collection surfaces is uncapped by the app itself.
+
+   Read at the app's deployed ref (`sync/deployed-0.2.2`), whose manifest declares
+   this same `blockId`. The app does carry a 960px well, but it is `contentStyle`
+   (`App.tsx:972`) applied only to the BROWSE shell (`App.tsx:789`): opening a
+   collection early-returns at `App.tsx:733` past that wrapper into
+   `CollectionViewer`, whose root (`CollectionViewer.tsx:582`) is
+   `width: 100%; min-height: 100dvh` with no max-width — and that root serves all
+   THREE view modes (classic `Player`, continuous-horizontal, continuous-vertical)
+   plus the ambient "cast" state. So the cap would bind on all of them: the
+   slideshow's media is `object-fit: contain`, so a centred column simply shrinks
+   the player, and the ticker/wall modes are `repeat(cols, minmax(0, 1fr))` grids
+   that spend whatever width they are given.
+
+   The browse list is unaffected either way — it is behind that early return and
+   the app already caps it at 960, well under the default.
+
+   🔴 THIS ENTRY IS ALSO ASSERTED IN `__tests__/pageBlockHostMaxWidth.test.ts`,
+   which fails if this set GROWS OR SHRINKS, and it is EXERCISED by the red/green
+   pair in `PageBlockHostMaxWidth.browser.test.tsx` — that suite parses THIS file
+   and injects the rule below verbatim, so deleting or mistyping it fails a test
+   rather than silently letterboxing the app again. */
+[data-testid='app-page-frame'][data-block-id='playable-collections'] {
+  --app-page-max-width: none;
+}
 
 /* `data-adhesive-ad` is on the ad BAR itself (src/components/Ads/AdhesiveAd.tsx),
    not on a wrapper, so this matches only when the bar is really rendered and

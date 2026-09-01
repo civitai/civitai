@@ -232,11 +232,19 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    * an unrelated change and an app that needs full bleed is quietly letterboxed
    * again). Modelled on the `fill` opt-in ledger in `pageRunScrollContract.test.ts`.
    *
-   * 🔴 IT IS EMPTY TODAY, AND THAT IS A REAL ASSERTION, NOT A PLACEHOLDER. An
-   * empty expectation is exactly what makes the FIRST entry a deliberate,
-   * reviewed act: adding a rule to globals.css fails this test until someone
-   * writes the block id here too, with a reason. Adding a row is the intended
-   * maintenance path — deleting the assertion is not.
+   * 🔴 THE EXPECTATION IS AN ENUMERATION, NOT A FLOOR. It was `[]` when the
+   * mechanism shipped, which is what forced the first entry to be argued for
+   * rather than appended; `playable-collections` was then added by an explicit
+   * product decision, with the reasoning recorded beside the rule in
+   * `globals.css`. Adding a row here is the intended maintenance path — relaxing
+   * this to a `toContain`, a length check or a superset test is not, and would
+   * throw away the shrink half. A second entry must fail this test first.
+   *
+   * WHY EACH MEMBER IS HERE (keep this list in step with the rules):
+   *   · `playable-collections` — a collection player whose three open-collection
+   *     view modes are all uncapped by the app; the 960px well it does have
+   *     applies only to its browse shell, behind an early return. Full reasoning
+   *     and the file:line evidence live on the rule in `globals.css`.
    *
    * The ids are read from the SELECTORS, not from a hand-kept list elsewhere, so
    * a rule nobody told this test about is what it notices. `code()` strips
@@ -258,7 +266,7 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
         '(`app-listing-mapper.ts` sets `slug: ab.blockId`), which is exactly the condition under ' +
         'which the wrong one goes unnoticed. If you REMOVED one, an app that needed full bleed is ' +
         'now capped again — confirm that is intended.'
-    ).toEqual([]);
+    ).toEqual(['playable-collections']);
   });
 
   /**

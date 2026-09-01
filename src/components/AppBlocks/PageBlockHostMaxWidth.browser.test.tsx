@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+// Raw text, NOT a stylesheet import — the ledger's REAL rules are parsed out of
+// this and injected. See `ledgerFromGlobals` for why that indirection exists.
+import globalsCss from '~/styles/globals.css?raw';
 // Type-only namespace import for the `importOriginal` spread below (the repo's
 // local-rules/no-wholesale-module-mock cure). NOT `typeof import(...)`, which
 // @typescript-eslint/consistent-type-imports rejects.
@@ -152,6 +156,48 @@ afterEach(() => {
 });
 
 /**
+ * The REAL full-bleed opt-out rules, parsed out of `globals.css` itself.
+ *
+ * 🔴 WHY THIS INDIRECTION EXISTS RATHER THAN JUST LOADING THE STYLESHEET. The
+ * component harness deliberately does NOT load the app cascade — `component-
+ * setup.tsx` extracts only the `:root` custom properties, because importing
+ * `globals.css` pulls Tailwind preflight and Mantine layer ordering and changes
+ * the rendered geometry of every existing test. So the ledger's rules are simply
+ * ABSENT here by default, and a test that wrote its own copy of the rule would be
+ * asserting against a fixture rather than against the ledger: deleting the real
+ * entry, or mistyping its selector, would leave that test green.
+ *
+ * Taking the rules from the file and injecting ONLY those keeps the cascade the
+ * suite has always had while making the assertions depend on the shipped text.
+ *
+ * 🔴 THE BROWSER PARSES IT, NOT A REGEX — the same decision, for the same reason,
+ * that `component-setup.tsx` records at length: three successive regex extractors
+ * there each shipped a defect (a comment glued to the next property, a `}` inside
+ * a string truncating the capture), because several regexes cannot agree on where
+ * a CSS block ends. `replaceSync` hands that to the engine that will evaluate it.
+ */
+function ledgerFromGlobals(): { css: string; ids: string[] } {
+  const sheet = new CSSStyleSheet();
+  sheet.replaceSync(globalsCss);
+  const css: string[] = [];
+  const ids: string[] = [];
+  const walk = (rules: CSSRuleList) => {
+    for (const rule of Array.from(rules)) {
+      if (rule instanceof CSSStyleRule) {
+        if (!rule.selectorText.includes('data-block-id')) continue;
+        css.push(rule.cssText);
+        for (const m of rule.selectorText.matchAll(/\[data-block-id\s*=\s*['"]?([^'"\]]+)['"]?\]/g))
+          ids.push(m[1]);
+      } else if (typeof CSSLayerBlockRule !== 'undefined' && rule instanceof CSSLayerBlockRule) {
+        walk(rule.cssRules);
+      }
+    }
+  };
+  walk(sheet.cssRules);
+  return { css: css.join('\n'), ids };
+}
+
+/**
  * The production chain, reduced to what decides WIDTH.
  *
  * Mirrors `src/pages/apps/run/[slug]/[[...path]].tsx`: `AppLayout`'s no-scroll
@@ -159,7 +205,7 @@ afterEach(() => {
  * are `width: 100%` with no bound of their own — that is the chain the defect
  * lived in, and the reason the cap has to be on the host rather than on them.
  */
-function renderInPageChain() {
+function renderInPageChain(props: Partial<typeof baseProps> = {}) {
   return renderWithProviders(
     <div
       data-testid="layout-main"
@@ -181,15 +227,15 @@ function renderInPageChain() {
           width: '100%',
         }}
       >
-        <PageBlockHost {...baseProps} fit="fill" />
+        <PageBlockHost {...baseProps} {...props} fit="fill" />
       </div>
     </div>
   );
 }
 
-async function mountAt(width: number, height: number) {
+async function mountAt(width: number, height: number, props: Partial<typeof baseProps> = {}) {
   await page.viewport(width, height);
-  renderInPageChain();
+  renderInPageChain(props);
   await expect.element(page.getByTestId('app-page-frame')).toBeInTheDocument();
   const host = page.getByTestId('app-page-frame').element() as HTMLElement;
   const parent = page.getByTestId('page-wrapper').element() as HTMLElement;
@@ -375,6 +421,64 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
         'restore full-bleed at 2560x1080 — either `data-block-id` is no longer stamped or the ' +
         'cap is no longer overridable, and every opt-out in that ledger is inert'
     ).toBe(optedOut.parentWidth);
+  });
+
+  /**
+   * 🔴 THE LEDGER'S ONE REAL MEMBER, EXERCISED AGAINST THE SHIPPED RULE.
+   *
+   * `playable-collections` is opted out of the cap by an explicit product
+   * decision: every one of its open-collection surfaces is uncapped by the app
+   * (the 960px well it has applies only to its browse shell, behind an early
+   * return), so a centred column shrinks the player and truncates the ticker and
+   * wall grids. The reasoning, with file:line evidence, is on the rule itself in
+   * `globals.css`; the membership set is pinned in
+   * `__tests__/pageBlockHostMaxWidth.test.ts`.
+   *
+   * THIS IS A PAIR, and the second arm is what makes the first mean anything.
+   * Both arms render at 2560 with the SAME real ledger CSS injected and differ
+   * ONLY in `blockId`. Without the second arm, "the host is full width" is
+   * satisfied by a cap that stopped working for every app.
+   */
+  test('LEDGER — `playable-collections` is full-bleed at 2560x1080 while another app stays capped', async () => {
+    const ledger = ledgerFromGlobals();
+
+    // POSITIVE CONTROL on the extraction itself. If the parse returned nothing —
+    // a renamed property, a rule moved into an at-rule this walk skips, or a
+    // `?raw` import that silently resolved to an empty string — the green arm
+    // would fail with a confusing width mismatch instead of naming the cause.
+    expect(
+      ledger.ids,
+      'no `[data-block-id=…]` rules were parsed out of src/styles/globals.css. Either the ' +
+        'full-bleed ledger is empty (then this test should be deleted deliberately, together ' +
+        'with the membership expectation in __tests__/pageBlockHostMaxWidth.test.ts), or the ' +
+        'rules moved somewhere this walk does not reach.'
+    ).toContain('playable-collections');
+    injectCss(ledger.css);
+
+    // GREEN ARM — the opted-out app takes the full width of its parent.
+    const optedOut = await mountAt(2560, 1080, { blockId: 'playable-collections' });
+    expect(
+      optedOut.hostWidth,
+      'at 2560x1080 the app `playable-collections` is NOT full-bleed. Its ledger rule in ' +
+        'src/styles/globals.css is missing, mistyped, or no longer overrides ' +
+        '`--app-page-max-width` — so a collection player whose every view mode is uncapped by ' +
+        'the app is being letterboxed to the default cap again.'
+    ).toBe(optedOut.parentWidth);
+
+    // The two arms mount separately, so the first tree has to go: two mounted
+    // `app-page-frame` nodes would fail every `getByTestId` on the strict-mode
+    // single-match rule.
+    await cleanup();
+
+    // RED-PAIR ARM — an app NOT in the ledger, same cascade, still capped. This
+    // is what distinguishes "the ledger works" from "the cap stopped working".
+    const stillCapped = await mountAt(2560, 1080, { blockId: BLOCK_ID });
+    expect(
+      stillCapped.hostWidth,
+      `at 2560x1080 the app '${BLOCK_ID}' is full-bleed despite having NO ledger entry. The ` +
+        'opt-out is matching apps it should not — check the ledger selector is keyed on ' +
+        '`data-block-id` and not on something every host carries.'
+    ).toBeLessThan(stillCapped.parentWidth);
   });
 
   /**

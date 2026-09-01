@@ -407,6 +407,14 @@ your app's line with a one-line reason, or ask a maintainer to. A narrower value
 (`--app-page-max-width: 1100px`) is equally valid if your app wants a tighter
 frame than the default.
 
+**Currently opted out:** `playable-collections` — a collection player whose three
+open-collection view modes (slideshow, ticker, wall) are all uncapped by the app
+itself, so a centred column shrinks the player and truncates the grids. Its own
+960px well applies only to the browse list, which sits behind an early return and
+is unaffected either way. Every entry is expected to carry a reason like this
+one; the ledger's membership is asserted in a test, so a rule cannot be added or
+removed here without that being a deliberate, reviewed change.
+
 The mechanism is measured, not just documented:
 `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx` injects a rule
 of exactly this shape at a 2560px viewport and asserts the host goes back to full
