@@ -106,19 +106,20 @@ export const defaultModelType = ModelType.Checkpoint;
  * value, which submits.
  *
  * A saved model keeps its type whatever it is, retired or not, and the picker re-offers it. A
- * template or bounty seeds a NEW model, so a retired type there falls back to `Other` rather than to
- * `Checkpoint` — the substitution is invisible either way, and `Other` is the one selectable type
- * that claims nothing about the model. Filing a pose pack as a fine-tune is the worse silent error.
+ * template or bounty seeds a NEW model, so a retired type there falls back to `Other`, the one
+ * selectable type that claims nothing about the model. `replacedType` names what was dropped, so the
+ * form can say so rather than substituting silently.
  */
 export function resolveModelTypeDefaults(model: ModelTypeSeed) {
   const seeded = (model?.type ?? null) as ModelType | null;
   const isSaved = !!model?.id;
 
-  if (isSaved && seeded) return { grandfatheredType: seeded, initialType: seeded };
-  if (!seeded) return { grandfatheredType: null, initialType: defaultModelType };
+  if (isSaved && seeded)
+    return { grandfatheredType: seeded, initialType: seeded, replacedType: null };
+  if (!seeded)
+    return { grandfatheredType: null, initialType: defaultModelType, replacedType: null };
+  if (selectableModelTypeSet.has(seeded))
+    return { grandfatheredType: null, initialType: seeded, replacedType: null };
 
-  return {
-    grandfatheredType: null,
-    initialType: selectableModelTypeSet.has(seeded) ? seeded : ModelType.Other,
-  };
+  return { grandfatheredType: null, initialType: ModelType.Other, replacedType: seeded };
 }

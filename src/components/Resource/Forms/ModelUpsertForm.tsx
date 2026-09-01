@@ -66,7 +66,7 @@ import {
 import type { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
-import { getModelUrl, splitUppercase, titleCase } from '~/utils/string-helpers';
+import { getDisplayName, getModelUrl, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
@@ -153,7 +153,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   // `grandfatheredType` that kept recomputing could drift from it if a caller ever mounted this
   // form before `model` arrived.
   const initialModel = useRef(model).current;
-  const { grandfatheredType, initialType } = resolveModelTypeDefaults(initialModel);
+  const { grandfatheredType, initialType, replacedType } = resolveModelTypeDefaults(initialModel);
   const defaultValues: ModelUpsertSchema = {
     ...model,
     name: model?.name ?? '',
@@ -348,6 +348,18 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
           <Stack>
             <InputText name="name" label="Name" placeholder="Name" withAsterisk />
             <Stack gap={5}>
+              {replacedType && (
+                <AlertWithIcon
+                  color="yellow"
+                  iconColor="yellow"
+                  icon={<IconExclamationMark />}
+                  size="sm"
+                >
+                  {`This template is ${getDisplayName(
+                    replacedType
+                  )}, which new models can no longer be. The type has been set to Other. Pick the one that fits before you publish.`}
+                </AlertWithIcon>
+              )}
               <Group gap="sm" grow>
                 <InputSelect
                   name="type"
