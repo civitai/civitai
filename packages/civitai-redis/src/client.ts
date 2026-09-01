@@ -2306,7 +2306,6 @@ const REDIS_KEYS_UNPREFIXED = {
     // one integer per eligible collection, consumed from the front, with an hour's TTL.
     FEATURED_COLLECTIONS_CYCLE: 'home-blocks:featured-collections:cycle',
     FEATURED_COLLECTIONS_CYCLE_LOCK: 'home-blocks:featured-collections:cycle-lock',
-    FEATURED_COLLECTIONS_LAST_PICKED: 'home-blocks:featured-collections:last-picked',
   },
   CACHE_LOCKS: 'cache-lock',
   BUZZ: {

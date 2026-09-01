@@ -583,7 +583,11 @@ export const getHomeBlockData = async ({
       // Round-robin over a shuffled pass rather than an independent draw each window. The block is
       // cached for 3 minutes in one shared entry, so an uncorrelated shuffle shows every visitor in
       // that window the same five and can repeat 4 of those 5 on the next one.
-      const picks = await takeFeaturedCollectionCycle(candidates, renderCount);
+      // `withCoreData` renders no items — it is the admin block picker, not the homepage. Drawing
+      // from the shared pass there would spend the homepage's turns on a modal nobody is looking at.
+      const picks = input.withCoreData
+        ? candidates.slice(0, renderCount)
+        : await takeFeaturedCollectionCycle(candidates, renderCount);
 
       const hydrated = await Promise.all(
         picks.map(async (id) => {

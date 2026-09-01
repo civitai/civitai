@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { takeFeaturedCollectionCycle } from '~/server/services/featured-collections-rotation';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import {
+  liveRotationDeps,
+  takeFeaturedCollectionCycle,
+} from '~/server/services/featured-collections-rotation';
 
 /**
  * An in-memory stand-in for the three list commands and the lock, so the tests exercise the real
@@ -10,29 +14,54 @@ import { takeFeaturedCollectionCycle } from '~/server/services/featured-collecti
  * would hide a branch.
  */
 function fakeRedis({ lockHeldByAnother = false }: { lockHeldByAnother?: boolean } = {}) {
-  const state = { list: [] as string[], ttl: null as number | null, locked: false };
+  // Key-addressed on purpose. A fake that ignores the key argument cannot tell a DEL of the lock
+  // from a DEL of the pass — and deleting the pass in the refill's `finally` would degrade the
+  // cycle to the random draw permanently, with every assertion still green.
+  const lists = new Map<string, string[]>();
+  const ttls = new Map<string, number>();
+  const locks = new Map<string, string>();
+  const list = (key: string) => lists.get(key) ?? [];
+
   const deps = {
-    lPopCount: vi.fn(async (_key: string, count: number) => {
-      if (state.list.length === 0) return null;
-      return state.list.splice(0, count);
+    lPopCount: vi.fn(async (key: string, count: number) => {
+      const held = list(key);
+      if (held.length === 0) return null;
+      const taken = held.splice(0, count);
+      lists.set(key, held);
+      return taken;
     }),
-    rPush: vi.fn(async (_key: string, values: string[]) => state.list.push(...values)),
-    expire: vi.fn(async (_key: string, seconds: number) => {
-      state.ttl = seconds;
+    lLen: vi.fn(async (key: string) => list(key).length),
+    rPush: vi.fn(async (key: string, values: string[]) => {
+      const held = list(key);
+      held.push(...values);
+      lists.set(key, held);
+      return held.length;
+    }),
+    expire: vi.fn(async (key: string, seconds: number) => {
+      // Real EXPIRE on a missing key sets nothing and returns 0, so an `expire` hoisted above the
+      // push would silently never apply.
+      if (list(key).length === 0) return 0;
+      ttls.set(key, seconds);
       return 1;
     }),
-    setLock: vi.fn(async () => {
-      if (lockHeldByAnother || state.locked) return null;
-      state.locked = true;
+    setLock: vi.fn(async (key: string, token: string) => {
+      if (lockHeldByAnother || locks.has(key)) return null;
+      locks.set(key, token);
       return 'OK';
     }),
-    del: vi.fn(async () => {
-      state.locked = false;
+    readKey: vi.fn(async (key: string) => locks.get(key) ?? null),
+    del: vi.fn(async (key: string) => {
+      locks.delete(key);
+      lists.delete(key);
+      ttls.delete(key);
       return 1;
     }),
   };
-  return { state, deps };
+  return { lists, ttls, locks, deps };
 }
+
+const CYCLE_KEY = 'home-blocks:featured-collections:cycle';
+const LOCK_KEY = 'home-blocks:featured-collections:cycle-lock';
 
 const ELIGIBLE = [11, 22, 33, 44, 55, 66, 77];
 
@@ -57,36 +86,35 @@ describe('takeFeaturedCollectionCycle', () => {
     // a re-added id only duplicates when it happens to land in the remaining pops, so asserting
     // on the result is a coin flip that passes most of the time with the exclusion removed.
     await takeFeaturedCollectionCycle(ELIGIBLE, 3, deps);
-    await takeFeaturedCollectionCycle(ELIGIBLE, 3, deps);
-    deps.rPush.mockClear();
+    const second = await takeFeaturedCollectionCycle(ELIGIBLE, 3, deps);
     const spanning = await takeFeaturedCollectionCycle(ELIGIBLE, 3, deps);
 
     expect(spanning).toHaveLength(3);
     expect(new Set(spanning).size).toBe(3);
-    // The refill legitimately supplies the rest of this draw, so most of what it pushed WILL be in
-    // the result. The invariant is narrower: the id already taken before the refill — the first
-    // one, since picks accumulate in order — must not be pushed back into the new pass.
-    const pushed = (deps.rPush.mock.calls[0]?.[1] ?? []).map(Number);
+    // The draw that spans a refill must not repeat the one before it either: the new pass excludes
+    // what the refill's own draw took, and a rewritten pass cannot hold a queued duplicate.
+    expect(spanning.filter((id) => second.includes(id))).toEqual([]);
+    const pushed = (deps.rPush.mock.calls.at(-1)?.[1] ?? []).map(Number);
     expect(pushed).not.toHaveLength(0);
-    expect(pushed).not.toContain(spanning[0]);
+    expect(new Set(pushed).size).toBe(pushed.length);
   });
 
   it('puts an hour on the pass so an idle key cannot pin a stale ordering', async () => {
-    const { state, deps } = fakeRedis();
+    const { ttls, deps } = fakeRedis();
 
     await takeFeaturedCollectionCycle(ELIGIBLE, 3, deps);
 
-    expect(state.ttl).toBe(60 * 60);
+    expect(ttls.get(CYCLE_KEY)).toBe(60 * 60);
   });
 
   it('drops ids that are no longer eligible and still fills the draw', async () => {
-    const { state, deps } = fakeRedis();
+    const { lists, deps } = fakeRedis();
     await takeFeaturedCollectionCycle(ELIGIBLE, 3, deps);
 
     // Two collections go stale between draws; their ids are still sitting in the pass. The queue
     // holds strings, so these have to be compared as numbers — the first version of this test
     // compared them raw, filtered nothing, and passed for any implementation.
-    const stale = state.list.slice(0, 2).map(Number);
+    const stale = (lists.get(CYCLE_KEY) ?? []).slice(0, 2).map(Number);
     expect(stale).toHaveLength(2);
     const stillEligible = ELIGIBLE.filter((id) => !stale.includes(id));
     const picks = await takeFeaturedCollectionCycle(stillEligible, 3, deps);
@@ -112,6 +140,8 @@ describe('takeFeaturedCollectionCycle', () => {
       lPopCount: vi.fn(async () => {
         throw new Error('ECONNREFUSED');
       }),
+      lLen: vi.fn(async () => 0),
+      readKey: vi.fn(async () => null),
       rPush: vi.fn(async () => 0),
       expire: vi.fn(async () => 1),
       setLock: vi.fn(async () => null),
@@ -125,12 +155,75 @@ describe('takeFeaturedCollectionCycle', () => {
   });
 
   it('releases the refill lock even when the push fails', async () => {
-    const { deps } = fakeRedis();
+    const { locks, deps } = fakeRedis();
     deps.rPush.mockRejectedValueOnce(new Error('write failed'));
 
     await takeFeaturedCollectionCycle(ELIGIBLE, 3, deps);
 
-    expect(deps.del).toHaveBeenCalled();
+    expect(deps.del).toHaveBeenCalledWith(LOCK_KEY);
+    expect(locks.has(LOCK_KEY)).toBe(false);
+  });
+
+  it('does not release a lock it no longer holds', async () => {
+    // A refill that overran the 10s TTL would otherwise delete whoever holds the lock now, and two
+    // concurrent rewrites are the thing the lock exists to prevent.
+    const { locks, deps } = fakeRedis();
+    deps.rPush.mockImplementationOnce(async () => {
+      locks.set(LOCK_KEY, 'someone-elses-token');
+      return 1;
+    });
+
+    await takeFeaturedCollectionCycle(ELIGIBLE, 3, deps);
+
+    expect(deps.del).not.toHaveBeenCalledWith(LOCK_KEY);
+    expect(locks.get(LOCK_KEY)).toBe('someone-elses-token');
+  });
+
+  // The pass empties EXACTLY whenever the eligible count is a multiple of the draw size, and the
+  // pool has sat at 10 eligible. Before the top-up, the next draw refilled with nothing excluded,
+  // so the fresh pass contained the five just shown — 10.3% odds of repeating 4 of 5, which is the
+  // scheme this replaces. ELIGIBLE is 7 and every other test draws 3, so none of them can see it.
+  it('does not repeat across a pass that empties exactly', async () => {
+    const tenEligible = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const { deps } = fakeRedis();
+
+    const first = await takeFeaturedCollectionCycle(tenEligible, 5, deps);
+    const second = await takeFeaturedCollectionCycle(tenEligible, 5, deps);
+    const third = await takeFeaturedCollectionCycle(tenEligible, 5, deps);
+
+    expect(new Set([...first, ...second]).size).toBe(10);
+    expect(third.filter((id) => second.includes(id))).toEqual([]);
+  });
+
+  // A fixed pass order would satisfy every other assertion here — same ids, same turns — while the
+  // homepage showed the same five in the same sequence forever. Two cold starts must differ.
+  it('shuffles each pass rather than dealing a fixed order', async () => {
+    const orders = new Set<string>();
+    for (let run = 0; run < 12; run++) {
+      const { deps } = fakeRedis();
+      orders.add((await takeFeaturedCollectionCycle(ELIGIBLE, 7, deps)).join(','));
+    }
+
+    expect(orders.size).toBeGreaterThan(1);
+  });
+
+  // A stale id at the head under-fills a draw WITHOUT emptying the pass, so the refill runs while
+  // entries are still queued. Appending there stacked two passes in one key: the queued ids appear
+  // again in the new pass, so a collection can be drawn twice and one shown this window can return
+  // in the next. Replacing the pass is what makes that impossible.
+  it('does not leave a queued id sitting in the pass twice', async () => {
+    const { lists, deps } = fakeRedis();
+    await takeFeaturedCollectionCycle(ELIGIBLE, 3, deps);
+
+    const queued = () => (lists.get(CYCLE_KEY) ?? []).map(Number);
+    const goneStale = queued()[0];
+    const stillEligible = ELIGIBLE.filter((id) => id !== goneStale);
+
+    const second = await takeFeaturedCollectionCycle(stillEligible, 3, deps);
+    const afterRefill = queued();
+
+    expect(new Set(afterRefill).size).toBe(afterRefill.length);
+    expect(afterRefill.filter((id) => second.includes(id))).toEqual([]);
   });
 
   it('asks for no more than the pool holds', async () => {
@@ -144,12 +237,31 @@ describe('takeFeaturedCollectionCycle', () => {
     // The pass is shared state. Popping `count` when only two collections are eligible would
     // discard the turns of everything else still queued behind them — invisible in the result,
     // and the next draw would skip those collections entirely.
-    const { state, deps } = fakeRedis();
+    const { lists, deps } = fakeRedis();
     await takeFeaturedCollectionCycle(ELIGIBLE, 1, deps);
-    const queuedBefore = state.list.length;
+    const queued = () => lists.get(CYCLE_KEY) ?? [];
+    const queuedBefore = queued().length;
 
-    await takeFeaturedCollectionCycle([Number(state.list[0])], 5, deps);
+    await takeFeaturedCollectionCycle([Number(queued()[0])], 5, deps);
 
-    expect(state.list.length).toBe(queuedBefore - 1);
+    expect(queued().length).toBe(queuedBefore - 1);
+  });
+
+  // The live bindings are otherwise unreachable: every other test injects its own deps, so
+  // `NX: true` becoming `NX: false` — every instance winning the lock and pushing its own pass —
+  // and RPUSH becoming LPUSH would both be invisible.
+  describe('live Redis bindings', () => {
+    it('takes the refill lock only when nobody holds it', async () => {
+      await liveRotationDeps.setLock('k', 'token', 10);
+
+      expect(redisMock.redis.set).toHaveBeenCalledWith('k', 'token', { NX: true, EX: 10 });
+    });
+
+    it('appends a new pass to the tail so it is consumed in order', async () => {
+      await liveRotationDeps.rPush('k', ['1', '2']);
+
+      expect(redisMock.redis.rPush).toHaveBeenCalledWith('k', ['1', '2']);
+      expect(redisMock.redis.lPush).not.toHaveBeenCalled();
+    });
   });
 });
