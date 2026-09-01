@@ -298,24 +298,29 @@ describe('the mod review preview fits its panel instead of being clipped out of 
     // wrong reason.
     expect(frame.getBoundingClientRect().height).toBeGreaterThan(320);
 
-    // Nothing is stranded. Stated as the DISJUNCTION the surface actually
-    // promises rather than a flat "no overflow": at ordinary modal widths the
-    // banner is one row and the host fits exactly, but this runner's viewport is
-    // ~414px WIDE, the banner wraps, and the floor legitimately binds — at which
-    // point the panel must be scrollable rather than clipping. The red arm's
-    // panel satisfies NEITHER branch, which is what makes this a real test and
-    // not a tautology.
+    // 🔴 NOTHING IS STRANDED — AND THIS IS NOW A FLAT ZERO, NOT A DISJUNCTION.
+    //
+    // It used to read "overflow === 0 OR the panel scrolls", with the justification
+    // that "this runner's viewport is ~414px WIDE, the banner wraps, and the floor
+    // legitimately binds". That sentence described a viewport this file had merely
+    // INHERITED from Vitest's default and never chosen — and it is now false twice
+    // over: the viewport is pinned to 1440 (see the file header), so the banner does
+    // not wrap, and the stylesheet is loaded, so `flex: 1` resolves against the real
+    // panel and the `FILL_MIN_HEIGHT_PX` floor does not bind. Measured here: the host
+    // is 380px inside the 420px panel and the overflow is 0.
+    //
+    // Keeping the weakened form would have been the worse outcome of the two: a
+    // disjunction whose second branch can no longer occur is satisfied entirely by
+    // its first, so it reads as tolerance the surface no longer needs while quietly
+    // accepting any amount of clipping that a scrollbar happens to make reachable.
     const overflow = box.scrollHeight - box.clientHeight;
-    const reachable = ['auto', 'scroll'].includes(getComputedStyle(box).overflowY);
     expect(
-      overflow === 0 || reachable,
-      `preview overflows its panel by ${overflow}px with overflowY=${
+      overflow,
+      `preview overflows its 420px panel by ${overflow}px (overflowY=${
         getComputedStyle(box).overflowY
-      } — that content is unreachable`
-    ).toBe(true);
-    // And whatever residue the floor leaves is SMALL — a fraction of the loss the
-    // red arm measures, not merely "some overflow".
-    expect(overflow).toBeLessThan(60);
+      }). At a pinned 1440px viewport with the stylesheet loaded the host fits exactly — any ` +
+        'residue means the fit regressed, not that the banner wrapped.'
+    ).toBe(0);
   });
 
   /**

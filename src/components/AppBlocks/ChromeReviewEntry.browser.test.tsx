@@ -491,3 +491,60 @@ describe('the review modal is full-screen on a phone', () => {
     expect(content.getAttribute('data-full-screen')).toBeNull();
   });
 });
+
+/**
+ * F3 — IS THE BOTTOM SHEET AS LAZY AS THE DROPDOWN?
+ *
+ * 🔴 THE QUESTION IS NOT ANSWERABLE FROM MANTINE'S DEFAULT, WHICH IS WHY THIS IS A
+ * TEST AND NOT A COMMENT. F4's laziness is STRUCTURAL: the listing query lives inside
+ * the ⋮ surface's children, and Mantine unmounts a closed `Menu.Dropdown`'s children,
+ * so a chrome nobody has opened issues no `getAppDetail`. F3 swaps that surface for a
+ * `Drawer` below the `sm` breakpoint. `Drawer` and `Menu` do share a `keepMounted`
+ * default of `false` — but "two components document the same default" is an argument
+ * about the library, not a measurement of this chrome, and the whole point of a
+ * structural gate is that it must be re-checked when the structure changes. If the
+ * sheet kept its children mounted, every mobile chrome render would fire a listing
+ * request for an affordance nobody asked for.
+ *
+ * 🔴 THE ABSENCE IS REPORTED AS A PAIR, NEVER ALONE. A `0` while closed is
+ * indistinguishable from a counter wired to nothing, so the same test opens the sheet
+ * and watches the number move to `1`. The "after" is what licenses the "before".
+ */
+describe('the mobile ⋮ SHEET is as lazy as the desktop dropdown', () => {
+  const PHONE: [number, number] = [375, 720];
+
+  test(`at ${PHONE[0]}px a CLOSED sheet issues no listing request, and opening it issues exactly one`, async () => {
+    await page.viewport(...PHONE);
+    renderChrome();
+
+    // Happens-before for the absence: the chrome has measured itself and COMMITTED
+    // the sheet decision. Asserting the count before this would be asserting it at a
+    // moment when the ⋮ surface has not been resolved at all, which is a green every
+    // implementation earns.
+    // `render` returns before React has committed, so a synchronous `.element()`
+    // throws against an EMPTY body — the trap this file's own header records.
+    await expect.element(page.getByTestId('app-block-chrome')).toBeInTheDocument();
+    const root = page.getByTestId('app-block-chrome').element() as HTMLElement;
+    await vi.waitFor(() => expect(root.getAttribute('data-chrome-compact')).toBe('true'));
+    // Two frames past the commit, so a mount-time effect would have run.
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+
+    expect(
+      mocks.detailFetches,
+      'a CLOSED bottom sheet must not fetch the listing — the sheet is the mobile rendering of ' +
+        'the ⋮ surface, and F4’s laziness is structural (the query lives inside the surface’s ' +
+        'children, which Mantine unmounts while it is closed). A non-zero here means every ' +
+        'mobile chrome render issues a request for an affordance nobody opened.'
+    ).toBe(0);
+
+    // …and the counter is live, which is what makes the zero above mean something.
+    await openOverflow();
+    await expect.element(reviewItem()).toBeInTheDocument();
+    expect(
+      mocks.detailFetches,
+      'opening the sheet must fetch exactly once — a zero here would mean the assertion above ' +
+        'was measuring a probe wired to nothing'
+    ).toBe(1);
+  });
+});
