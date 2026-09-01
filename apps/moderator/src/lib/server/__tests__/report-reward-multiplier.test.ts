@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as Axiom from '@civitai/axiom';
 
 /**
  * `rewardReportReporters` writes the `pending` buzzEvents row that IS the payout: the main app's
@@ -13,12 +14,21 @@ const bonusEvents = vi.fn();
 const ineligibleRows = vi.fn();
 /** The ids the chain fake requires the `User` query to have asked for; set by `rowsFor`. */
 let reporterIds: number[] = [];
-const logToAxiom = vi.fn().mockResolvedValue(undefined);
-const logAxiomError = vi.fn();
+/**
+ * The axiom PACKAGE is mocked, not `../axiom`, so both `logToAxiom` and `logAxiomError` run for real
+ * over one spy. That is the only level at which the defect this file now pins is visible: the bug was
+ * `logAxiomError`'s own composition — `safeError` spreads LAST, so a `name`/`message` passed by a
+ * caller is silently overwritten by the Error's. A mocked `logAxiomError` cannot see that, and did
+ * not: the marker was clobbered for a full commit with the suite green.
+ */
+const axiom = vi.fn(async (_data: Record<string, unknown>, _datastream?: string) => {});
+vi.mock('@civitai/axiom', async (importOriginal) => ({
+  ...(await importOriginal<typeof Axiom>()),
+  createAxiomLogger: () => ({ logToAxiom: axiom }),
+}));
 
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({ insert }) }));
 vi.mock('../redis', () => ({ getRedis: () => ({ packed: { get: redisGet } }) }));
-vi.mock('../axiom', () => ({ logToAxiom, logAxiomError }));
 /**
  * A stand-in for the two Kysely chains this module builds.
  *
@@ -42,6 +52,9 @@ function chain(resolve: (wheres: unknown[][]) => unknown) {
   return builder;
 }
 
+/** Exact clause count, so an ADDED restrictive clause is visible too, not just a changed one. */
+const wheresAre = (wheres: unknown[][], count: number) => wheres.length === count;
+
 const has = (wheres: unknown[][], ...expected: unknown[]) =>
   wheres.some(
     (w) =>
@@ -59,12 +72,15 @@ vi.mock('../db', () => ({
     selectFrom: (table: string) =>
       table === 'User'
         ? chain((wheres) =>
+            wheresAre(wheres, 2) &&
             has(wheres, 'id', 'in', reporterIds) &&
             has(wheres, 'rewardsEligibility', '=', 'Ineligible')
               ? ineligibleRows()
               : []
           )
-        : chain((wheres) => (has(wheres, 'enabled', '=', true) ? bonusEvents() : [])),
+        : chain((wheres) =>
+            wheresAre(wheres, 1) && has(wheres, 'enabled', '=', true) ? bonusEvents() : []
+          ),
   },
   dbWrite: {},
 }));
@@ -77,22 +93,35 @@ const cached = (rewardsMultiplier: number) => ({ rewardsMultiplier, notFound: fa
 /** `RewardsBonusEvent.multiplier` is stored x10, so 50 is a 5x event. */
 const bonus = (stored: number) => [{ multiplier: stored, startsAt: null, endsAt: null }];
 
+const HOUR = 60 * 60 * 1000;
+/** An event whose window has closed but whose `enabled` was never flipped — the schema permits it. */
+const expiredBonus = (stored: number) => [
+  {
+    multiplier: stored,
+    startsAt: new Date(Date.now() - 2 * HOUR),
+    endsAt: new Date(Date.now() - HOUR),
+  },
+];
+
 async function rowsFor({
   tiers,
   storedBonus,
   ineligible = [],
+  events,
 }: {
   /** Ordered [reporterId, cached tier] pairs — an object would reorder integer keys. */
   tiers: [number, unknown][];
   storedBonus: number;
   ineligible?: number[];
+  /** Raw RewardsBonusEvent rows, when a case needs a window rather than a plain multiplier. */
+  events?: unknown[];
 }) {
   reporterIds = tiers.map(([id]) => id);
   redisGet.mockImplementation(async (key: string) => {
     const id = Number(key.split(':').pop());
     return tiers.find(([tierId]) => tierId === id)?.[1];
   });
-  bonusEvents.mockReturnValue(bonus(storedBonus));
+  bonusEvents.mockReturnValue(events ?? bonus(storedBonus));
   ineligibleRows.mockReturnValue(ineligible.map((id) => ({ id })));
   await rewardReportReporters({ reportId: 1, reporterIds });
   expect(insert).toHaveBeenCalledTimes(1);
@@ -106,15 +135,18 @@ async function rowFor({
   tier,
   storedBonus,
   ineligible = false,
+  events,
 }: {
   tier: unknown;
   storedBonus: number;
   ineligible?: boolean;
+  events?: unknown[];
 }) {
   const [row] = await rowsFor({
     tiers: [[42, tier]],
     storedBonus,
     ineligible: ineligible ? [42] : [],
+    events,
   });
   return row;
 }
@@ -138,8 +170,8 @@ describe('rewardReportReporters multiplier', () => {
 
   it('reports a clamp to Axiom rather than swallowing it', async () => {
     await rowFor({ tier: cached(4), storedBonus: 50 });
-    expect(logToAxiom).toHaveBeenCalledTimes(1);
-    expect(logToAxiom.mock.calls[0][0]).toMatchObject({ clampedEvents: 1, maxRaw: 20 });
+    expect(axiom).toHaveBeenCalledTimes(1);
+    expect(axiom.mock.calls[0][0]).toMatchObject({ clampedEvents: 1, maxRaw: 20 });
   });
 
   it('leaves a product the column can hold exactly alone', async () => {
@@ -148,7 +180,7 @@ describe('rewardReportReporters multiplier', () => {
     const row = await rowFor({ tier: cached(4), storedBonus: 20 });
     expect(row.multiplier).toBe(8);
     expect(row.transactionDetails).toBe('{}');
-    expect(logToAxiom).not.toHaveBeenCalled();
+    expect(axiom).not.toHaveBeenCalled();
   });
 
   it('writes 0 for a rewards-ineligible reporter instead of paying them the base award', async () => {
@@ -191,8 +223,8 @@ describe('rewardReportReporters multiplier', () => {
     expect(row.multiplier).toBe(2);
     // Not reported as a clamp: nothing came near the column's ceiling.
     expect(row.transactionDetails).toBe('{}');
-    expect(logToAxiom).toHaveBeenCalledTimes(1);
-    expect(logToAxiom.mock.calls[0][0].message).toMatch(/not finite/);
+    expect(axiom).toHaveBeenCalledTimes(1);
+    expect(axiom.mock.calls[0][0].message).toMatch(/not finite/);
   });
 
   it('bars only the ineligible reporter in a batch, not the whole report', async () => {
@@ -220,5 +252,44 @@ describe('rewardReportReporters multiplier', () => {
   it('does not consult the shared cache at all for an ineligible reporter', async () => {
     await rowFor({ tier: cached(4), storedBonus: 20, ineligible: true });
     expect(redisGet).not.toHaveBeenCalled();
+  });
+
+  it('ignores a bonus event whose window has closed but whose enabled was never flipped', async () => {
+    // Nothing flips `enabled` at expiry — upsertRewardsBonusEvent writes `enabled` and `endsAt`
+    // independently. Without the active-window filter a finished 5x promotion keeps multiplying
+    // every accepted report forever, and diverges from the main app, which evaluates the window live.
+    const row = await rowFor({ tier: cached(4), storedBonus: 50, events: expiredBonus(50) });
+    expect(row.multiplier).toBe(4);
+  });
+
+  it('caps a mistyped bonus event at MAX_GLOBAL_BONUS', async () => {
+    // 200 instead of 20 is the operator typo the cap exists for. Uncapped this pays a tier-1
+    // reporter 9.99x — the clamp's ceiling — rather than the intended 5x.
+    const row = await rowFor({ tier: cached(1), storedBonus: 200 });
+    expect(row.multiplier).toBe(5);
+  });
+
+  it('records a failed write as a findable event rather than swallowing it', async () => {
+    // Nothing retries this: reports.service marks the report Actioned BEFORE calling, and its
+    // guarded UPDATE matches nothing on a second attempt. The Axiom line is the only trace that
+    // these reporters were never paid, so the marker has to survive serialization —
+    // `safeError` spreads LAST inside logAxiomError, which is why the marker cannot be `name` or
+    // `message`. It was both, for a whole commit, with this suite green.
+    insert.mockRejectedValueOnce(new Error('clickhouse unreachable'));
+    redisGet.mockResolvedValue(cached(1));
+    bonusEvents.mockReturnValue(bonus(10));
+    ineligibleRows.mockReturnValue([]);
+    reporterIds = [42, 7];
+
+    await expect(rewardReportReporters({ reportId: 91234, reporterIds })).resolves.toBeUndefined();
+
+    expect(axiom).toHaveBeenCalledTimes(1);
+    const payload = axiom.mock.calls[0][0];
+    expect(payload.event).toBe('reportAccepted rewards write failed');
+    expect(payload.reportId).toBe(91234);
+    expect(payload.reporterIds).toEqual([42, 7]);
+    // safeError's fields land alongside the marker rather than instead of it.
+    expect(payload.message).toBe('clickhouse unreachable');
+    expect(JSON.stringify(payload)).toContain('reportAccepted rewards write failed');
   });
 });

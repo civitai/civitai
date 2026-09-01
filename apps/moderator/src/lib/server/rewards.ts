@@ -27,9 +27,7 @@ export async function rewardReportReporters(input: {
         const base = ineligible.has(reporterId) ? 0 : await getBaseRewardsMultiplier(reporterId);
         const raw = base * globalBonus;
         const multiplier = clampBuzzEventMultiplier(raw);
-        // `raw` is non-finite only if the cached tier was garbage, and 1 is then the fallback rather
-        // than a clamp — reporting it as one would fire an error alert naming a ceiling nothing hit.
-        const wasClamped = Number.isFinite(raw) && multiplier !== raw;
+        const wasClamped = multiplier !== raw;
         if (wasClamped) clamped.push(raw);
         // toUserId === byUserId (an accepted report rewards its reporter); ip omitted for localhost/empty
         // so the ClickHouse column falls back to its '' default.
@@ -65,8 +63,7 @@ export async function rewardReportReporters(input: {
     // never paid and the moderator sees a successful action. That has to leave a trace someone
     // can find, which pod stdout is not.
     logAxiomError(err, {
-      name: 'buzz-rewards',
-      message: 'failed to record reportAccepted events; reporters will not be paid',
+      event: 'reportAccepted rewards write failed',
       reportId: input.reportId,
       reporterIds: input.reporterIds,
     });
