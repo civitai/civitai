@@ -6,6 +6,13 @@ import { dbRead } from '~/server/db/client';
  * Their own module because both the job and the two collection-item removal paths need them,
  * and importing the service from collection.service.ts would pull the whole home-block graph in.
  */
+/**
+ * The `getJobDate` key `auto-feature-images` advances on. Shared so the health check watching that
+ * timestamp cannot drift from the job that writes it — a mismatch would read as a permanently
+ * silent job and page forever.
+ */
+export const AUTO_FEATURE_JOB_DATE_KEY = 'job:auto-feature-images';
+
 export const AUTO_FEATURE_USERNAME = 'CivitaiOfficial';
 export const AUTO_FEATURE_NOTE_PREFIX = 'auto-featured';
 export const autoFeatureNote = (sourceCollectionId: number) =>
