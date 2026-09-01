@@ -73,6 +73,20 @@ async function histSum(source: string, outcome: string) {
   );
 }
 
+/** Cumulative bucket value at boundary `le` (prom histogram buckets are cumulative). */
+async function histBucket(source: string, outcome: string, le: number) {
+  const vals = await samples(HIST);
+  return (
+    vals.find(
+      (v) =>
+        v.metricName === `${HIST}_bucket` &&
+        v.labels.source === source &&
+        v.labels.outcome === outcome &&
+        Number(v.labels.le) === le
+    )?.value ?? 0
+  );
+}
+
 async function skippedCount(source: string) {
   const vals = await samples(SKIPPED);
   return vals.find((v) => v.labels.source === source)?.value ?? 0;
@@ -252,6 +266,78 @@ describe('moderatePrompt instrumentation — failure paths', () => {
     expect(await histCount('preset', 'ok')).toBe(1);
     expect(await histCount('generate', 'error')).toBe(1);
   });
+});
+
+describe('a FIRED deadline is observed ABOVE the bucket boundary that equals the deadline', () => {
+  /**
+   * 🔴 THE ONE CLAIM THE BUCKET SET IS DESIGNED AROUND, DRIVEN END TO END.
+   *
+   * `external-moderation.metrics.test.ts` pins that the boundaries `5` and `7.5` both exist and
+   * that a 4.9 s and a 5.02 s observation land on opposite sides of `le=5`. But it hand-feeds those
+   * two numbers to `observeExternalModeration`, so it never runs the code that PRODUCES the number
+   * and cannot see a regression that makes a real fired deadline observe at or below 5 s. Every
+   * operator-facing sentence about this family — the help text's "those observations land just above
+   * the cap (le=7.5 at the 5s default), never in le=5" — is a claim about the produced value, not
+   * about the bucket list.
+   *
+   * WHY IT HOLDS TODAY, mechanically: `start` is taken in `moderatePrompt` BEFORE `withSpan`, and
+   * `AbortSignal.timeout(EXTERNAL_MODERATION_TIMEOUT_MS)` is constructed later, inside the callback.
+   * The deadline therefore starts counting strictly AFTER `start`, so elapsed-at-record is strictly
+   * greater than the deadline. Reorder those two — or clamp the recorded duration to the deadline,
+   * or start the timer inside the callback — and a capped call starts landing in `le=5`,
+   * indistinguishable from a gateway that answered just in time. That is the exact distinction the
+   * `timeout` outcome and the 5/7.5 boundary pair exist to draw.
+   *
+   * 🔴 THE WALL TIME IS THE POINT, AND IS PAID DELIBERATELY. `AbortSignal.timeout` is a Node-native
+   * timer that vitest's fake timers do not drive, and running this at a shortened deadline would
+   * test a boundary pair (`le=3`/`le=5`) that no deployment uses — the claim in the help text is
+   * about the 5 s DEFAULT. So this case really does park for ~5 s. It is one test.
+   *
+   * The assertion is written as `le=5 is EMPTY` rather than `le=7.5 is 1` on purpose: a loaded
+   * runner can stretch the observation past 7.5, which would make the tighter form flaky without
+   * making it stronger. "Never counted as sub-cap" is the whole property.
+   */
+  it('a real 5s abort lands strictly above le=5, never in it', async () => {
+    env.EXTERNAL_MODERATION_TIMEOUT_MS = 5000; // the production default, explicitly
+    // A gateway that never answers: only the abort can settle this promise.
+    vi.stubGlobal('fetch', (_url: string, opts: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        opts.signal?.addEventListener('abort', () =>
+          reject((opts.signal as AbortSignal).reason ?? new Error('aborted'))
+        );
+      });
+    });
+
+    await expect(extModeration.moderatePrompt('a hanging prompt', 'generate')).rejects.toBeTruthy();
+
+    // Preconditions — without these the bucket assertion below could pass vacuously by observing
+    // nothing at all, or by landing on a different series.
+    expect(
+      await histCount('generate', 'timeout'),
+      'the fired deadline must be recorded exactly once, as outcome=timeout'
+    ).toBe(1);
+    expect(await histTotalCount()).toBe(1);
+
+    // 🔴 THE PIN. le is INCLUSIVE, so a duration of exactly 5.000 would count here.
+    expect(
+      await histBucket('generate', 'timeout', 5),
+      'a call cut by the 5s deadline must NOT be counted at or below le=5. If it is, a capped ' +
+        "call and a call that answered just under the cap share a bucket, the help text's " +
+        '"never in le=5" becomes false, and "is the gateway slow or are we cutting it off?" ' +
+        'stops being answerable — check that `start` is still taken BEFORE the AbortSignal is ' +
+        'constructed, and that the recorded duration is the real elapsed time, unclamped.'
+    ).toBe(0);
+    expect(
+      await histSum('generate', 'timeout'),
+      'the recorded duration must be the real elapsed wall time, which exceeds the deadline'
+    ).toBeGreaterThan(5);
+    // …and it must still land in a FINITE bucket rather than being swallowed by +Inf, which is
+    // the other half of why the top boundary sits at 20 and not at the cap.
+    expect(
+      await histBucket('generate', 'timeout', 20),
+      'a capped call must land in a finite bucket, not in +Inf alongside pathological ones'
+    ).toBe(1);
+  }, 20_000);
 });
 
 describe('moderatePrompt instrumentation — not configured', () => {

@@ -200,6 +200,13 @@ export const processEnqueuedComicPanelsJob = createJob(
               userId,
               isGreen,
               isModerator: sessionUser.isModerator,
+              // Observability only — see `~/server/prom/external-moderation.metrics`. This job makes
+              // TWO external-moderation calls per panel: this explicit pre-submit gate, and a second
+              // one inside `submitPresetImageGen` → `generateFromGraph`, which labels itself `preset`
+              // via the surface mapping. Leaving this one undeclared would default it to `other`,
+              // so `preset` would undercount this cron by exactly half while `other` — documented as
+              // "every OTHER auditPromptServer caller" — carried the difference.
+              moderationSource: 'preset',
             });
 
             // Submit to orchestrator via the generation graph. `versionIdOverride`

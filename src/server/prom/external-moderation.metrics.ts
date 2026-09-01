@@ -36,13 +36,24 @@ import { registerCounterWithLabels, registerHistogram } from '@civitai/telemetry
  * The label is load-bearing rather than decorative. `moderatePrompt` is reached from two very
  * different kinds of caller, and mixing them makes the headline figure meaningless:
  *
- * - `generate`    — the request-path prompt gate reached from `orchestrator.generateFromGraph`
- *                   (surface `onsite`/`api`). This is the population the metric exists to size: the
- *                   number to divide against that procedure's own wall time.
+ * - `generate`    — the request-path prompt gate reached from `orchestrator.generateFromGraph`.
+ *                   🔴 That is EVERY `GenerationSurface` EXCEPT `preset` — `onsite`, `api` AND
+ *                   `block` (the App Blocks bridge) — because `submitSourceForSurface` maps
+ *                   everything but `preset` to `generate`. Do not read a rise here as on-site
+ *                   generator latency: App Blocks submissions are in it too. An ABSENT surface
+ *                   falls to `other`, never to here. This is the population the metric exists to
+ *                   size: the number to divide against that procedure's own wall time.
  * - `preset`      — the SAME `generateFromGraph` code reached through preset/comics generation,
  *                   which includes the `process-enqueued-comic-panels` CRON JOB. Split out for
  *                   exactly the reason its sibling on the submit metric is: a background job blended
  *                   into `generate` would corrupt the one division this metric supports.
+ *                   🔴 That cron makes TWO external-moderation calls per panel and BOTH are labelled
+ *                   here: its explicit pre-submit `auditPromptServer` gate, which declares
+ *                   `moderationSource: 'preset'` by hand, and the one inside `submitPresetImageGen`
+ *                   → `generateFromGraph`, which derives the same value from surface `preset`. So a
+ *                   per-panel rate on this series is 2× the panel rate, by construction. (Until the
+ *                   round-1 fix the explicit gate declared nothing and fell to `other`, which halved
+ *                   this series' count for that cron and inflated `other` by the same amount.)
  * - `remixAudit`  — the `audit-remix-sources` background job, which calls `moderatePrompt` directly
  *                   rather than through `auditPromptServer`. Batch work, no user waiting on it.
  * - `other`       — every other `auditPromptServer` caller (App Blocks host-side audits, prompt
@@ -57,10 +68,24 @@ import { registerCounterWithLabels, registerHistogram } from '@civitai/telemetry
 export type ExternalModerationSource = 'generate' | 'preset' | 'remixAudit' | 'other';
 
 /**
- * Runtime narrowing for the `source` label. The TYPE is a compile-time guarantee only, and
- * `AuditPromptOptions.source` travels inside an options object that call sites build by spread —
- * excess-property checking does not apply to spread properties, so one stray string would mint an
- * unbounded label value on a hot-path histogram, silently and with a green suite.
+ * Runtime narrowing for the `source` label.
+ *
+ * ⚠️ THE RATIONALE HERE WAS WRONG TWICE and is corrected rather than deleted, because the clamp
+ * itself is worth keeping. It used to name the field `AuditPromptOptions.source` (it is
+ * `moderationSource`) and justify itself by "an options object that call sites build by spread" —
+ * but NO production caller spreads: all nine `auditPromptServer` call sites build an explicit object
+ * literal, so excess-property checking does apply to every one of them, and spread appears only in
+ * tests. That argument was fiction.
+ *
+ * THE REAL REASON. `moderatePrompt` is EXPORTED (`extModeration.moderatePrompt`) and its second
+ * argument is reachable from any future caller, including one outside the `auditPromptServer` funnel
+ * — `audit-remix-sources.ts` already is one. The type is a compile-time guarantee about the callers
+ * that exist today under `tsc`, and two populations sit outside that: values that arrive already
+ * widened to `string` (a cast, a `JSON.parse`, an `as never` in a test), and the test tree, which
+ * `tsconfig.json` EXCLUDES (`src/**\/__tests__/**`) and where a helper CAN spread. What the clamp
+ * buys is that none of those can mint an unbounded label value on a hot-path histogram — prom-client
+ * retains every distinct label set in the Node heap forever, across ~130 scraped pods, so one stray
+ * string is a cardinality incident with a green suite and no error anywhere.
  */
 const EXTERNAL_MODERATION_SOURCES: ReadonlySet<string> = new Set<ExternalModerationSource>([
   'generate',
@@ -145,8 +170,9 @@ const durationHistogram = registerHistogram({
     'invisible to every user-facing signal — it means prompts are being generated with only the local ' +
     'regex gate applied. outcome=timeout is the EXTERNAL_MODERATION_TIMEOUT_MS deadline firing; those ' +
     'observations land just above the cap (le=7.5 at the 5s default), never in le=5. Filter on source ' +
-    'before attributing a figure to a procedure: source=generate is exactly the ' +
-    'orchestrator.generateFromGraph prompt gate, while remixAudit is batch work with nobody waiting.',
+    'before attributing a figure to a procedure: source=generate is the orchestrator.generateFromGraph ' +
+    'prompt gate for EVERY surface except preset — onsite, api AND block (App Blocks), so it is not ' +
+    'on-site-only — while remixAudit is batch work with nobody waiting.',
   labelNames: ['source', 'outcome'] as const,
   buckets: [...EXTERNAL_MODERATION_BUCKETS],
 });

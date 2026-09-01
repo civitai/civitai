@@ -181,7 +181,22 @@ describe('observeExternalModeration', () => {
   });
 });
 
-describe('bucket boundaries resolve the EXTERNAL_MODERATION_TIMEOUT_MS deadline', () => {
+/**
+ * ⚠️ WHAT THIS BLOCK DOES AND DOES NOT COVER — the description used to overstate it.
+ *
+ * These cases hand `observeExternalModeration` its numbers directly, so what they pin is the BUCKET
+ * SET: that boundaries exist on both sides of the cap, that they are far enough apart to separate a
+ * capped call from a sub-cap one, and that the sub-second population is resolved. They never run the
+ * code that PRODUCES a duration, so no regression that makes a fired deadline observe at or below
+ * 5 s is visible from here — a guard reading as coverage while providing none is worse than none.
+ *
+ * That other half — a real `AbortSignal.timeout` firing and landing strictly above `le=5` — is
+ * driven end to end in
+ * `src/server/integrations/__tests__/moderation.instrumentation.test.ts`
+ * ("a real 5s abort lands strictly above le=5, never in it"). The two together are the claim; keep
+ * them together if either moves.
+ */
+describe('the bucket SET straddles the EXTERNAL_MODERATION_TIMEOUT_MS deadline', () => {
   // The default deadline, in seconds (env: EXTERNAL_MODERATION_TIMEOUT_MS, default 5000).
   const CAP_SECONDS = 5;
 
