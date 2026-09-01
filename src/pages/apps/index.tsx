@@ -86,12 +86,10 @@ export default function AppsPage() {
             nothing is pushed down. For a viewer inside it, the prompt is one
             collapsed line above the search/sort row; the grid stays in view.
 
-            `active` is deliberately UNCONDITIONAL. The images-feed mount gates on
-            `feedSnapshot.source === 'bitdex'` because that prompt asks about one
-            specific backend and would misattribute reports about any other. This
-            one asks about the marketplace page as a whole, so there is no
-            equivalent condition and inventing one would only make the surface
-            silently dark. The Flipt flag is the rollout control. */}
+            `active` is deliberately UNCONDITIONAL: this prompt asks about the
+            marketplace page as a whole, so there is no backend-specific condition
+            to gate on and inventing one would only make the surface silently
+            dark. The Flipt flag is the rollout control. */}
         <FeedbackPrompt
           area="apps-marketplace"
           active

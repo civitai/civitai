@@ -394,7 +394,6 @@ Run `node .claude/skills/dev-server/console.mjs` (or `pnpm run dev:daemon`) for 
 | Key | Action |
 |-----|--------|
 | `1` | Filter: errors (error + warn levels) |
-| `2` | Filter: bitdex |
 | `3` | Filter: trpc |
 | `4` | Filter: api |
 | `5` | Filter: prisma |

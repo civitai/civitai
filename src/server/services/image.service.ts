@@ -229,6 +229,39 @@ import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
+import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
+import client from 'prom-client';
+import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
+import { ImagesFeed } from '../../../event-engine-common/feeds';
+import { MetricService } from '../../../event-engine-common/services/metrics';
+import { CacheService } from '../../../event-engine-common/services/cache';
+import type { IMeilisearch } from '../../../event-engine-common/types/meilisearch-interface';
+import type {
+  IClickhouseClient,
+  IDbClient,
+  IRedisClient,
+} from '../../../event-engine-common/types/package-stubs';
+import type { FeedQueryInput } from '../../../event-engine-common/feeds/types';
+import type { ImageQueryInput } from '../../../event-engine-common/types/image-feed-types';
+import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { getGenerationDisplayKeys } from '~/server/services/orchestrator/legacy-metadata-mapper';
+import {
+  sanitizeProvenance,
+  storedSourceImageIds,
+} from '~/server/services/orchestrator/remix-provenance';
+
+const {
+  cacheHitRequestsTotal,
+  ffRequestsTotal,
+  requestDurationSeconds,
+  requestTotal,
+  droppedIdsTotal,
+  postFilterIterations,
+  postFilterDocsProcessed,
+  postFilterFilterRatio,
+} = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
+
+// no user should have to see images on the site that haven't been scanned or are queued for removal
 
 /**
  * How much of an image's cached variants the invalidation may remove.
@@ -1495,9 +1528,6 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
-  // Pre-evaluated BITDEX_IMAGE_SEARCH variant from the controller — pass-through
-  // to avoid a second Flipt evaluation inside getImagesFromSearch.
-  bitdexMode?: string | null;
   // Caller identity forwarded to Meili via X-Search-Actor for abuse/rate
   // correlation. Built upstream via buildSearchActor().
   actor?: string;
@@ -1808,7 +1838,7 @@ export const getAllImages = async (
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!effectivePending) {
     // Strict published-only, with the owner carve-out gated on the `scheduled`
-    // opt-in — the same rule the two Meili builders and the BitDex merge apply
+    // opt-in — the same rule the two Meili builders apply
     // FOR A NON-MODERATOR.
     //
     // Deliberately not claiming full parity, because there isn't any. A
@@ -2814,7 +2844,7 @@ export const getAllImagesIndex = async (
       getThumbnailsForImages(videoIds), // Only need this for videos
       getImageMetricsObject(searchResults),
       // Fetch tagIds from cache so client-side hidden-tag filtering works.
-      // Search results from BitDex don't include tagIds (too expensive to store),
+      // Search results don't include tagIds (too expensive to store),
       // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
       include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
       include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
@@ -2832,14 +2862,14 @@ export const getAllImagesIndex = async (
 
   // Visibility-check the RAW `model3dId` carried on the search docs (indexed
   // from `Post.model3dId`) before it reaches the client — same no-leak bar as
-  // the raw-SQL feed path and `image.get`. Meili docs carry it; BitDex docs do
+  // the raw-SQL feed path and `image.get`. Meili docs carry it; raw-SQL rows do
   // NOT (the field is left `undefined` there → the chip falls back to the
   // postId lookup, the documented self-healing path). Only the non-null few
   // are resolved, in ONE batched query (no per-image N+1).
   const rawIndexModel3dIds = [
     ...new Set(
       searchResults
-        // model3dId is present on Meili docs but not on BitDex docs (which the
+        // model3dId is present on Meili docs (which the
         // search-result union also covers) — read it defensively.
         .map((sr) => (sr as { model3dId?: number }).model3dId)
         .filter((id): id is number => typeof id === 'number')
@@ -2870,19 +2900,12 @@ export const getAllImagesIndex = async (
       //  - Meili doc, no link           → null (resolved-absent → chip renders
       //                                   nothing AND does NOT fall back, the
       //                                   durable elimination of getByPostId)
-      //  - BitDex doc (field not stored)→ undefined (fall back to getByPostId;
-      //                                   self-healing, the documented gap)
-      // `searchSource` is per-page (one backend serves the whole page), so an
-      // absent model3dId means "confirmed no link" on Meili but "not indexed"
-      // on BitDex — only the former is safe to assert as a resolved null.
       const rawModel3dId = (sr as { model3dId?: number }).model3dId;
       const model3dId =
         typeof rawModel3dId === 'number'
           ? visibleIndexModel3DIds?.has(rawModel3dId)
             ? rawModel3dId
             : null
-          : searchSource === 'bitdex'
-          ? undefined
           : null;
 
       return {
@@ -2890,7 +2913,7 @@ export const getAllImagesIndex = async (
         model3dId,
         // Override tagIds from authoritative cache when available.
         // This ensures client-side hidden-tag filtering works even when
-        // the search engine (BitDex) doesn't return tagIds.
+        // the search engine doesn't return tagIds.
         tagIds: tagIdsVar?.[sr.id]?.tags ?? sr.tagIds,
         modelVersionId: sr.postedToId,
         type: sr.type as MediaType,
@@ -2957,7 +2980,7 @@ export const getAllImagesIndex = async (
 
   return {
     nextCursor,
-    // Always-on wire trim on the DOMINANT tRPC Meili/BitDex feed path: the item
+    // Always-on wire trim on the DOMINANT tRPC Meili feed path: the item
     // literal above emits `scannedAt`/`mimeType`/`postTitle` as explicit `null`
     // props (plus any of IMAGE_INFINITE_DROPPED_FIELDS carried on `...sr`), which
     // still SERIALIZE even though the return type is narrowed to `Omit<...>` (a
@@ -3019,9 +3042,6 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   entry?: number;
   blockedFor?: string[];
   signal?: AbortSignal;
-  // Pre-evaluated BITDEX_IMAGE_SEARCH variant from the caller (controller).
-  // When provided, getImagesFromSearch skips its own Flipt evaluation.
-  bitdexMode?: string | null;
   actor?: string;
   // Per-request memo of `resolveHubSources`, set by `resolvedHubSources` below.
   // `undefined` means "not resolved yet"; `null` is a resolved answer meaning the
@@ -3064,11 +3084,6 @@ export function redactSearchInputForLog<T extends Record<string, unknown>>(input
 }
 
 /**
- * Defense-in-depth post-filter for BitDex results. The main query uses strict
- * cacheable filters (no per-user clauses), so this rarely removes anything.
- * User's own excluded content is fetched in a separate second pass and merged.
- */
-/**
  * Per-request tally, created by the caller and threaded through.
  *
  * NOT module-level. This process serves feed requests concurrently and every
@@ -3089,16 +3104,6 @@ type PostFilterStats = {
   sortAtOnlyIds: Set<number>;
 };
 
-
-
-
-/**
- * Fetch from BitDex in primary mode with post-filtering and pagination loop.
- * The main query is fully cacheable (no per-user filter clauses).
- * Returns null if BitDex can't serve the request.
- */
-
-
 export async function getImagesFromSearch(input: ImageSearchInput) {
   let searchFn = getImagesFromSearchPreFilter;
   // Wrap Flipt feature-flag evaluation so the trace shows whether per-request
@@ -3115,107 +3120,7 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     return input;
   });
 
-  // Check BitDex mode (off / shadow / primary)
-  // Use buildFliptContext (same as comics) so both 'moderators' (isModerator=true)
-  // and 'testers' (userId in list) segments match correctly.
-  // Reuse the controller's pre-evaluated value when present (it queries the same
-  // flag with the same entityId+context) to avoid a duplicate Flipt round-trip.
-  const bitdexMode = await withSpan('image:flipt:bitdexMode', async () =>
-    input.bitdexMode !== undefined
-      ? input.bitdexMode
-      : await getFliptVariant(
-          FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-          input.currentUserId?.toString() || 'anonymous',
-          buildFliptContext(
-            input.currentUserId
-              ? ({ id: input.currentUserId, isModerator: input.isModerator } as SessionUser)
-              : undefined
-          )
-        )
-  );
-  console.log('[BitDex] flipt mode:', JSON.stringify(bitdexMode), 'user:', input.currentUserId);
-
-  // Primary mode: bypass Meili entirely, query BitDex directly with full docs.
-  // BitDex queries use strict filters (no per-user OR clauses) for cacheability.
-  // Post-filter re-adds the user's own private/blocked/poi/unpublished content.
-  if (bitdexMode === 'primary') {
-    try {
-      const result = await withSpan('image:bitdex:primary', { 'bitdex.mode': 'primary' }, () =>
-        fetchBitdexPrimary(input, { serving: true })
-      );
-      if (result) return { ...result, source: 'bitdex' as const };
-      console.log('[BitDex] PRIMARY returned no results, falling through to Meili');
-    } catch (err) {
-      // Re-raised, not swallowed: this is the one throw from `fetchBitdexPrimary`
-      // that means "do not fall through to Meili". Falling through would hand the
-      // Meili path a `bdx:` cursor it cannot parse and restart the user's scroll
-      // at page 1, which is the defect this branch exists to prevent.
-      if (err instanceof BitdexCursoredPageUnavailable) {
-        throw new TRPCError({
-          code: 'SERVICE_UNAVAILABLE',
-          message: 'Image feed is temporarily unavailable — please retry.',
-          cause: err,
-        });
-      }
-      console.error('[BitDex] PRIMARY error, falling through to Meili:', err);
-      recordBitdexError(err);
-      // Distinct from `fallback_error`, and the distinction is the point: the
-      // client never throws, so nothing that reaches here came from BitDex being
-      // unhealthy. This is the application's own map/merge/sort code throwing —
-      // a different team's page. It reads a flat zero today, which is what makes
-      // it a usable tripwire rather than a redundant series.
-      recordBitdexPrimaryResult('fallback_exception', 'primary');
-    }
-    // Fall through to Meili if BitDex fails
-  }
-
-  const meiliStart = Date.now();
   const result = await searchFn(input);
-
-  // Shadow mode: run the same fetchBitdexPrimary path (cacheable filters + second pass)
-  // that primary uses, compare results against Meili, but serve Meili results.
-  //
-  // The shadow span is detached (its own root with a Link back to the user-request
-  // trace) because shadow work intentionally outlives the user-facing return.
-  // Keeping it as an active child of image:getAllImagesIndex:search would produce
-  // a child span whose end-time is past its parent's, which confuses parent-
-  // duration interpretation in trace UIs.
-  if (bitdexMode === 'shadow') {
-    const meiliElapsed = Date.now() - meiliStart;
-    void withDetachedSpan('image:bitdex:shadow', { 'bitdex.mode': 'shadow' }, () =>
-      fetchBitdexPrimary(input)
-        .then((bitdexResult) => {
-          if (bitdexResult) {
-            compareBitdexResults({
-              bitdexIds: bitdexResult.data.map((d) => d.id),
-              meiliIds: result.data.map((i: { id: number }) => i.id),
-              bitdexTotalMatched: bitdexResult.data.length,
-              meiliTotalMatched: result.data.length,
-              bitdexElapsedMs: 0, // timing not available from fetchBitdexPrimary
-              meiliElapsedMs: meiliElapsed,
-              sort: input.sort ?? 'Newest',
-              hasPeriod: !!input.period,
-              hasFilters: !!(
-                input.tags?.length ||
-                input.types?.length ||
-                input.userId ||
-                input.withMeta ||
-                input.fromPlatform ||
-                input.baseModels?.length ||
-                input.postId
-              ),
-            });
-          }
-        })
-        .catch((err) => {
-          recordBitdexError(err);
-          // Same meaning as the primary arm above, in the cohort where nothing
-          // reaches a user. Recorded so an app-side throw is visible BEFORE the
-          // cohort is flipped, rather than only once it is serving.
-          recordBitdexPrimaryResult('fallback_exception', 'shadow');
-        })
-    );
-  }
 
   return { ...result, source: 'meili' as const };
 }
@@ -3471,8 +3376,7 @@ function hubCreatorScope(sources: ResolvedHubSources | null) {
 }
 
 // One resolution per request, memoized on the input object itself. A hub feed page
-// runs the BitDex pass loop up to 8 times and can then fall through to Meili, and
-// each of those rebuilt the whole filter — 8-9 resolutions of the same hub, at 3 SQL
+// rebuilt the whole filter on every pass — several resolutions of the same hub, at 3 SQL
 // statements each. The memo is per-request state, not a cache: nothing outlives the
 // object, so there is no TTL, no invalidation, and no way to serve one viewer's hub
 // resolution to another.
@@ -3492,8 +3396,7 @@ async function resolvedHubSources(input: ImageSearchInput) {
 type HubFilterArm = { field: MetricsImageFilterableAttribute; ids: number[] };
 
 // The single enumeration of the arms a hub ORs together. Both backends build their
-// own clause syntax from this, so an arm added here cannot reach one of them only —
-// which is how the BitDex copy drifted into a third builder.
+// own clause syntax from this, so an arm added here cannot reach one of them only.
 // Returns null for "no arm", which callers must treat as "serve nothing"; treating
 // it as "no filter" hands the caller the global feed as their hub.
 function hubFilterArms(
@@ -4178,12 +4081,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     throw err;
   }
 }
-
-// --- BitDex document mapping ---
-// BitDex low_cardinality_string fields preserve original casing (case-insensitive for queries,
-// but output matches input). Sort fields are u32 unix seconds. Nullable fields return null directly.
-
-
 
 export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   if (!metricsSearchClient) return { data: [], nextCursor: undefined };

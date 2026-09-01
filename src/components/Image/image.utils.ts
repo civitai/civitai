@@ -174,14 +174,11 @@ export function getFeedSources(pages: unknown[] | undefined): string[] {
 }
 
 /**
- * The backend currently serving the feed.
- *
- * BitDex falls back to Meili PER PAGE — on an error, and routinely whenever a
- * pass accumulates zero documents — so the answer is the LAST page's backend,
- * not whether any page was BitDex. Only genuinely sourceless pages are skipped:
- * an empty terminal page is what scrolling to the end looks like and must not
- * retract a notice the whole scroll earned, while a DB page names itself 'db'
- * and DOES answer, because that is the flag going off mid-session.
+ * The backend currently serving the feed — the LAST page's backend, not a
+ * summary of the scroll. Genuinely sourceless pages are skipped: an empty
+ * terminal page is what scrolling to the end looks like and must not retract a
+ * notice the whole scroll earned, while a DB page names itself 'db' and DOES
+ * answer, because that is a routing change mid-session.
  */
 export function resolveFeedSource(sources: string[]): string | undefined {
   for (let i = sources.length - 1; i >= 0; i--) {

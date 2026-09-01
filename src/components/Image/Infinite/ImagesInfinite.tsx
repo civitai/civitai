@@ -45,7 +45,7 @@ type ImagesInfiniteProps = {
   disableStoreFilters?: boolean;
   /**
    * Opt-in, because this component also backs image PICKERS (the collection
-   * add-content modal, challenge submission). Those are BitDex-served too, but a
+   * add-content modal, challenge submission). Those are index-served too, but a
    * "tell us if the feed looks off" box does not belong above a picker.
    */
   showFeedbackPrompt?: boolean;
@@ -220,28 +220,6 @@ export function ImagesInfiniteContent({
 
   return (
     <>
-      {showFeedbackPrompt && (
-        <FeedbackPrompt
-          area="bitdex-image-feed"
-          // Excluded while the index path ignores `hidden`: a BitDex-served hidden
-          // view is the ordinary feed under the wrong title, so reports about it
-          // would be misattributed.
-          active={feedSnapshot.source === 'bitdex' && !filters.hidden}
-          notice="We're testing a new system behind this feed. If anything looks off, tell us."
-          placeholder="What looked wrong? Missing images, odd ordering, repeats, anything."
-          context={{
-            path: typeof window !== 'undefined' ? window.location.pathname : undefined,
-            reportedSource: feedSnapshot.source,
-            reportedPageSources: feedSnapshot.sources,
-            pagesLoaded: feedSnapshot.pagesLoaded,
-            filters: {
-              sort: feedSnapshot.sort,
-              period: feedSnapshot.period,
-              browsingLevel: feedSnapshot.browsingLevel,
-            },
-          }}
-        />
-      )}
       {!images.length && isFetching && !isRetrying ? (
         <Center p="xl">
           <Loader />

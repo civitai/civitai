@@ -3,7 +3,6 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-check';
-import { auditBitdexConsistency } from '~/server/jobs/audit-bitdex-consistency';
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
@@ -89,7 +88,6 @@ import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
 import { refreshFeaturedCollectionsEligibility } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { autoFeatureImages } from '~/server/jobs/auto-feature-images';
-import { reemitBitdexOps } from '~/server/jobs/reemit-bitdex-ops';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
@@ -135,8 +133,6 @@ export const jobs: Job[] = [
   deliverPurchasedCosmetics,
   deliverLeaderboardCosmetics,
   reindexRecentScheduledImages,
-  reemitBitdexOps,
-  auditBitdexConsistency,
   pushDiscordMetadata,
   applyVotedTags,
   removeOldDrafts,

@@ -42,9 +42,7 @@ vi.mock('~/server/services/feature-flags.service', () => ({
 }));
 
 vi.mock('~/server/flipt/client', () => ({
-  FLIPT_FEATURE_FLAGS: {
-    BITDEX_IMAGE_SEARCH: 'bitdex-image-search',
-  },
+  FLIPT_FEATURE_FLAGS: {},
   getFliptVariant: mockGetFliptVariant,
 }));
 
@@ -299,7 +297,9 @@ describe('/api/v1/images API Handler', () => {
   });
 
   it('should return nested shape when flatMeta=false is explicitly passed, regardless of path', async () => {
-    const { req, res } = createMocks({ query: { limit: '10', withMeta: 'true', flatMeta: 'false' } });
+    const { req, res } = createMocks({
+      query: { limit: '10', withMeta: 'true', flatMeta: 'false' },
+    });
 
     await handler(req, res);
 
@@ -316,7 +316,9 @@ describe('/api/v1/images API Handler', () => {
   });
 
   it('should return flat shape when flatMeta=true is explicitly passed, regardless of path', async () => {
-    const { req, res } = createMocks({ query: { imageId: '100', withMeta: 'true', flatMeta: 'true' } });
+    const { req, res } = createMocks({
+      query: { imageId: '100', withMeta: 'true', flatMeta: 'true' },
+    });
 
     await handler(req, res);
 
@@ -332,7 +334,9 @@ describe('/api/v1/images API Handler', () => {
   it('should return consistent nested wrapper for data-less images (meta: null, not bare null)', async () => {
     // Image has no meta in cache — the wrapper shape must still be emitted, not bare null
     mockImageMetaCacheFetch.mockResolvedValue({ 100: { id: 100, meta: undefined } });
-    const { req, res } = createMocks({ query: { imageId: '100', withMeta: 'true', flatMeta: 'false' } });
+    const { req, res } = createMocks({
+      query: { imageId: '100', withMeta: 'true', flatMeta: 'false' },
+    });
 
     await handler(req, res);
 
@@ -344,7 +348,9 @@ describe('/api/v1/images API Handler', () => {
 
   it('should return null (not a wrapper) for data-less images in flat mode', async () => {
     mockImageMetaCacheFetch.mockResolvedValue({ 100: { id: 100, meta: undefined } });
-    const { req, res } = createMocks({ query: { limit: '10', withMeta: 'true', flatMeta: 'true' } });
+    const { req, res } = createMocks({
+      query: { limit: '10', withMeta: 'true', flatMeta: 'true' },
+    });
 
     await handler(req, res);
 
@@ -353,86 +359,13 @@ describe('/api/v1/images API Handler', () => {
     expect(data.items[0].meta).toBeNull();
   });
 
-  it('should route to getAllImagesIndex when BitDex Flipt variant is shadow', async () => {
-    mockGetFliptVariant.mockResolvedValue('shadow');
-    const { req, res } = createMocks({ query: { limit: '10' } });
-
-    await handler(req, res);
-
-    expect(res._getStatusCode()).toBe(200);
-    expect(mockGetAllImagesIndex).toHaveBeenCalled();
-    expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
-    expect(mockGetAllImages).not.toHaveBeenCalled();
-  });
-
-  it('should route to getAllImagesIndex when BitDex Flipt variant is primary', async () => {
-    mockGetFliptVariant.mockResolvedValue('primary');
-    const { req, res } = createMocks({ query: { limit: '10' } });
-
-    await handler(req, res);
-
-    expect(res._getStatusCode()).toBe(200);
-    expect(mockGetAllImagesIndex).toHaveBeenCalled();
-    expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
-    expect(mockGetAllImages).not.toHaveBeenCalled();
-  });
-
   it('should pass withMeta:false to getAllImages on legacy path regardless of query param', async () => {
     const { req, res } = createMocks({ query: { imageId: '100', withMeta: 'true' } });
 
     await handler(req, res);
 
     expect(res._getStatusCode()).toBe(200);
-    expect(mockGetAllImages).toHaveBeenCalledWith(
-      expect.objectContaining({ withMeta: false })
-    );
-  });
-
-  it('should pass withMeta:false to getAllImagesIndex on BitDex path regardless of query param', async () => {
-    mockGetFliptVariant.mockResolvedValue('shadow');
-    const { req, res } = createMocks({ query: { limit: '10', withMeta: 'true' } });
-
-    await handler(req, res);
-
-    expect(res._getStatusCode()).toBe(200);
-    expect(mockGetAllImagesIndex).toHaveBeenCalledWith(
-      expect.objectContaining({ withMeta: false })
-    );
-  });
-
-  it('should return tags with withTags=true on BitDex path', async () => {
-    mockGetFliptVariant.mockResolvedValue('shadow');
-    const { req, res } = createMocks({ query: { limit: '10', withTags: 'true' } });
-
-    await handler(req, res);
-
-    expect(res._getStatusCode()).toBe(200);
-    const data = res._getJSONData();
-    expect(data.items[0].tags).toEqual([
-      { id: 1, name: 'anime' },
-      { id: 2, name: 'portrait' },
-    ]);
-    expect(mockGetAllImagesIndex).toHaveBeenCalledWith(
-      expect.objectContaining({
-        include: expect.arrayContaining(['tags']),
-      })
-    );
-  });
-
-  it('should not pass tags in include to BitDex when withTags is false', async () => {
-    mockGetFliptVariant.mockResolvedValue('shadow');
-    const { req, res } = createMocks({ query: { limit: '10' } });
-
-    await handler(req, res);
-
-    expect(res._getStatusCode()).toBe(200);
-    const data = res._getJSONData();
-    expect(data.items[0].tags).toBeUndefined();
-    expect(mockGetAllImagesIndex).toHaveBeenCalledWith(
-      expect.objectContaining({
-        include: expect.not.arrayContaining(['tags']),
-      })
-    );
+    expect(mockGetAllImages).toHaveBeenCalledWith(expect.objectContaining({ withMeta: false }));
   });
 
   it('should return empty tags array when image has no tags', async () => {

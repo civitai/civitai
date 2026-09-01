@@ -1,8 +1,7 @@
-# BitDex app-side removal — handoff (2026-09-01, incomplete)
+# BitDex app-side removal — record (2026-09-01)
 
-Written mid-task so the analysis survives the session. **The branch
-`chore/remove-bitdex-app-code` is WIP and does not typecheck** — the block
-excision is done, the in-place edits are not.
+What was removed from the main app when BitDex was decommissioned, and what the
+removed machinery did. Kept because the *why* is not recoverable from the diff.
 
 ## Where the decommission stands
 
@@ -17,7 +16,7 @@ excision is done, the in-place edits are not.
 ⚠️ `#4552` is applied to production but not merged. The database is ahead of
 `main`. That is the one state worth knowing before anyone reasons about either.
 
-## What is already done on this branch
+## What was removed
 
 18 files deleted outright: both jobs + tests, `src/server/bitdex/`, the two
 internal endpoints, `bitdex-feed-serve.metrics.ts` + tests, six `bitdex-*`
@@ -35,17 +34,6 @@ cut by brace balance from its own declaration:
 Verified before cutting: 11 of the 15 `_int`/`_eq`/`_and` filter helpers were
 referenced *only* from inside those blocks, and `isPublicallyPublished` /
 `isScheduledForFuture` had no callers outside them.
-
-## What remains — the part that needs judgement
-
-~52 in-place references in `image.service.ts`, plus `image.controller.ts` (21),
-`image-search.service.ts` (8), `metrics.ts` (4), `ImagesInfinite.tsx` (4),
-`image.utils.ts` (2), and one line each in `image-infinite-wire.ts`,
-`image.schema.ts`, `ImageDetail2.tsx`, `user-hub.service.ts`,
-`meilisearch/client.ts`, `metric-helpers.ts`. Then the two job registrations in
-`src/pages/api/webhooks/run-jobs/[[...run]].ts`, three `FLIPT_FEATURE_FLAGS`
-entries, and the `reemit_*` / `bitdex_audit_*` counters in
-`packages/civitai-telemetry/src/client.ts`.
 
 ## What the removed machinery actually did
 

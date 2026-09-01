@@ -38,7 +38,7 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
 // freezes the module for the whole worker under `isolate: false`. Any later file whose
 // consumer reaches one of the other 13 — `serverDomainPrimaryMap` is the one that bit — then
 // dies at MODULE scope, so it collects zero tests instead of failing. It took out a different
-// file at each worker count (tag-with-model-count-cache at 4, bitdex-model3did at 12), which
+// file at each worker count (two different files at 4 and 12), which
 // is why it read as flakiness rather than as one broken file. (Found by ivy.)
 vi.mock('~/server/utils/server-domain', async (importOriginal) => ({
   ...(await importOriginal<typeof ServerDomain>()),

@@ -667,7 +667,7 @@ export async function resolveHubSources({
  * must serve as an empty page rather than as an uncapped one.
  *
  * Extracted because three filter builders apply it — the two Meilisearch paths and
- * BitDex — and a cap missing from one of them is a hub quietly serving past its
+ * builders — and a cap missing from one of them is a hub quietly serving past its
  * own setting on whichever backend that request happened to take.
  */
 export function hubBrowsingLevel(browsingLevel: number | undefined, sources: ResolvedHubSources) {

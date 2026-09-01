@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
 
-// getImagesFromFeedSearch is the DEFAULT (non-bitdex, non-legacy) /api/v1/images +
+// getImagesFromFeedSearch is the DEFAULT (non-legacy) /api/v1/images +
 // image-feed path. Its metric-enrichment leg runs INSIDE event-engine-common's
 // `feed.populatedQuery()` (the MetricService ClickHouse read), so a CH connection
 // error thrown there is NOT a Meili error and — before this fix — fell through the

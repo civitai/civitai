@@ -28,17 +28,9 @@ import '~/server/metrics/flipt-eval-cache.metrics';
 // only consumer is the scrape, and this module is what serves it, so the series
 // are present in every response that could ever observe them.
 import { ensureRegisterGenerationModelSubstitutionMetrics } from '~/server/metrics/generation-model-substitution.metrics';
-// Same reason again (#3930): seeds all 8 (outcome, mode) series of
-// bitdex_primary_result_total and all 6 reasons of bitdex_query_failures_total
-// at 0. `fallback_error` is the series the issue is about, and it is expected to
-// read zero on a healthy day — so an absent series and a healthy zero MUST be
-// distinguishable, or the metric answers nothing. The older bitdex_shadow_*
-// counters skipped this and are `no data` on a live read today.
-import { ensureRegisterBitdexFeedServeMetrics } from '~/server/metrics/bitdex-feed-serve.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
-ensureRegisterBitdexFeedServeMetrics();
 
 const labels: Record<string, string> = {};
 if (process.env.PODNAME) {
