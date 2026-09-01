@@ -132,7 +132,28 @@ function IteratePage() {
   }, [router]);
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    // 🔴 `flex: 1` and not `height: 100vh`. This page is a flex item inside the
+    // shell's `<main className="flex flex-1 flex-col overflow-hidden">`, and the
+    // shell renders `SubNav` above it — this route nulls `header` and `footer`
+    // but NOT `subNav`. So a hard `100vh` was already taller than its slot by
+    // the SubNav's height, and `overflow: hidden` on every ancestor meant the
+    // overflow was CLIPPED rather than scrolled: the bottom of the editor was
+    // simply unreachable.
+    //
+    // `viewport-fit=cover` makes that strictly worse — `100vh` now measures the
+    // cover viewport, so it exceeds the safe one by the top inset as well — and
+    // the bottom inset this route pays (via `--safe-area-inset-bottom-page` in
+    // IterativeImageEditor.module.scss) would land inside the clipped region and
+    // do nothing. Sizing to the slot is what makes both correct.
+    <div
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}
+    >
       <div
         style={{
           padding: '12px 24px',
