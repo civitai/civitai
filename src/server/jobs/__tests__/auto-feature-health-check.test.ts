@@ -11,10 +11,6 @@ vi.mock('~/server/flipt/client', () => ({
   isFlipt: mocks.isFlipt,
   FLIPT_FEATURE_FLAGS: { AUTO_FEATURE_IMAGES: 'auto-feature-images' },
 }));
-// LOGGING is read by createLogger at module load; the webhook is the only value asserted on.
-vi.mock('~/env/server', () => ({
-  env: { DISCORD_WEBHOOK_MOD_ALERTS: 'https://discord.test/webhook', LOGGING: [] },
-}));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (name: string, cron: string, fn: () => Promise<unknown>) => ({ name, cron, run: fn }),
 }));
@@ -25,8 +21,12 @@ import {
   readAutoFeatureHealth,
 } from '~/server/jobs/auto-feature-health-check';
 import { AUTO_FEATURE_JOB_DATE_KEY } from '~/server/common/auto-feature';
+import { autoFeatureSchema } from '~/server/schema/home-block.schema';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
+const WEBHOOK = 'https://discord.test/webhook';
 
 const NOW = new Date('2026-09-01T18:00:00Z');
 const hoursBefore = (h: number) => new Date(NOW.getTime() - h * 3_600_000);
@@ -74,7 +74,17 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal('fetch', mocks.fetch);
   mocks.isFlipt.mockResolvedValue(true);
+  // Declared rather than replacing the whole module: `~/env/server` exports one `env` object of
+  // ~200 keys, so a full replacement gives `undefined` for anything the graph later reads, which
+  // is silently wrong rather than a loud missing-export error.
+  setEnv({ DISCORD_WEBHOOK_MOD_ALERTS: WEBHOOK });
 });
+
+/** The request `notifyModAlert` actually emitted, rather than the fact that fetch was called. */
+function discordCall() {
+  const [url, init] = mocks.fetch.mock.calls[0] as [string, RequestInit];
+  return { url, init, body: JSON.parse(String(init.body)) };
+}
 
 describe('auto-feature-health-check reads state the producer does not have to be alive for', () => {
   it('watches the same KeyValue row the job advances', async () => {
@@ -99,7 +109,10 @@ describe('auto-feature-health-check reads state the producer does not have to be
     // is the odd one out and normalising it is the plausible edit. Both sides are read from source
     // here because the producer has no suite of its own to assert it in.
     const producer = readFileSync(resolve(__dirname, '../auto-feature-images.ts'), 'utf-8');
-    const call = producer.match(/getJobDate\(\s*([^)]+?)\s*\)/);
+    // First identifier only. `getJobDate(key, defaultValue?)` takes a second optional argument, so
+    // capturing to the closing paren reddens on a behaviour-neutral edit with a message that blames
+    // the edit rather than this regex.
+    const call = producer.match(/getJobDate\(\s*([A-Za-z_$][\w$]*)/);
 
     expect(call?.[1]).toBe('AUTO_FEATURE_JOB_DATE_KEY');
     expect(AUTO_FEATURE_JOB_DATE_KEY).toBe('job:auto-feature-images');
@@ -150,7 +163,12 @@ describe('auto-feature-health-check reads state the producer does not have to be
 
     // A vanished config is itself a fault the producer cannot report while it is not running.
     // Refusing to check without one would blind this job to precisely that case.
-    expect(result).toMatchObject({ healthy: false, staleAfterHours: 13 });
+    //
+    // Derived from the schema rather than written as 13: the fallback claims to match the cadence
+    // the job would itself have run at, and asserting a literal here cannot see the schema default
+    // moving out from under it — which is the only way that claim can become false.
+    const schemaDefault = autoFeatureSchema.parse({ collectionId: 1 }).intervalHours;
+    expect(result).toMatchObject({ healthy: false, staleAfterHours: schemaDefault * 2 + 1 });
   });
 });
 
@@ -236,6 +254,69 @@ describe('auto-feature-health-check alerting', () => {
     expect(result).toMatchObject({ healthy: false, paged: 1 });
   });
 
+  it('is gated on the SAME flag the producer is gated on', async () => {
+    stateIs({ lastRun: hoursBefore(1), lastRow: hoursBefore(1) });
+
+    await autoFeatureHealthCheckJob.run();
+
+    // Pinned as a literal. Gate this on any other flag and the check goes silent while the producer
+    // keeps running, or stays noisy while the producer is off — and every other assertion in this
+    // file passes either way, because the mock ignores its argument.
+    expect(mocks.isFlipt).toHaveBeenCalledWith('auto-feature-images');
+  });
+
+  it('sends the page to the webhook, with the failure in the body', async () => {
+    stateIs({ lastRun: hoursBefore(79), lastRow: hoursBefore(79) });
+
+    await autoFeatureHealthCheckJob.run();
+
+    // `toHaveBeenCalledOnce` describes the harness; the thing that matters is the request. An empty
+    // embed, a blank description, or a POST to the wrong host all satisfy a call-count assertion
+    // identically, and all three deliver a page that tells nobody anything.
+    const { url, init, body } = discordCall();
+    expect(url).toBe(WEBHOOK);
+    expect(init.method).toBe('POST');
+    expect(body.embeds[0].description).toContain('No completed run');
+    expect(body.embeds[0].title).toContain('Auto-feature');
+  });
+
+  it('does not fetch at all when no webhook is configured', async () => {
+    stateIs({ lastRun: hoursBefore(79), lastRow: hoursBefore(79) });
+    setEnv({ DISCORD_WEBHOOK_MOD_ALERTS: undefined });
+
+    const result = await autoFeatureHealthCheckJob.run();
+
+    // Every other test in this file sets the webhook, so the guard's absence is invisible to them —
+    // deleting it would only show up in an environment that has no webhook, as `fetch(undefined)`.
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    // The finding still has to survive to Axiom; only its delivery is missing.
+    expect(result).toMatchObject({ healthy: false, alerts: 1, paged: 0 });
+  });
+
+  it('reports paged: 0 when the webhook rejects the page', async () => {
+    stateIs({ lastRun: hoursBefore(79), lastRow: hoursBefore(79) });
+    mocks.fetch.mockResolvedValue(new Response(null, { status: 404 }));
+
+    const result = await autoFeatureHealthCheckJob.run();
+
+    // A revoked webhook must not leave the job claiming it alerted someone. This job exists to make
+    // a silent failure visible; it must not have one of its own.
+    expect(result).toMatchObject({ healthy: false, alerts: 1, paged: 0 });
+    expect(axiom('warning').some((a) => a.message?.includes('reached nobody'))).toBe(true);
+  });
+
+  it('does not blame the caps when the attribution account is missing', async () => {
+    stateIs({ lastRun: hoursBefore(1), lastRow: null });
+    dbMock.dbRead.user.findFirst.mockResolvedValue(null);
+
+    const result = await autoFeatureHealthCheckJob.run();
+
+    // lastRow is null because we could not look, not because the job wrote nothing. Reporting
+    // "running but not writing" here names the caps for a fault that is a missing user account.
+    expect(result).toMatchObject({ healthy: true });
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
   it('skips without paging when the auto-feature flag is off', async () => {
     stateIs({ lastRun: hoursBefore(79), lastRow: hoursBefore(79) });
     mocks.isFlipt.mockResolvedValue(false);
@@ -266,8 +347,11 @@ describe('auto-feature-health-check heartbeat parsing', () => {
     // `KeyValue.value` is untyped Json and other keys in the table hold arrays and strings. Reading
     // one of those as epoch 0 rather than as null would page, which is the safe direction — but an
     // unparseable value must not become a plausible-looking date either.
-    for (const value of [null, {}, 'not-a-date', 0]) {
+    // `['1']` is here because `KeyValue` genuinely holds arrays for other keys and `Number(['1'])`
+    // is 1 — the one shape that becomes a plausible-looking 1970 date rather than obviously junk.
+    for (const value of [null, {}, 'not-a-date', 0, ['1']]) {
       vi.clearAllMocks();
+      setEnv({ DISCORD_WEBHOOK_MOD_ALERTS: WEBHOOK });
       stateIs({ lastRun: NOW, lastRow: NOW });
       dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
         key: AUTO_FEATURE_JOB_DATE_KEY,

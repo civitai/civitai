@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
-import type { AutoFeatureSchema, HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { autoFeatureSchema } from '~/server/schema/home-block.schema';
+import type { AutoFeatureSchema } from '~/server/schema/home-block.schema';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getFeaturedCollectionsState } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { CollectionItemStatus, HomeBlockType } from '~/shared/utils/prisma/enums';
@@ -10,6 +9,7 @@ import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 import {
   AUTO_FEATURE_NOTE_PREFIX,
   autoFeatureNote,
+  getAutoFeatureBlockConfig,
   getAutoFeatureUserId,
   isAutoFeaturedRow,
 } from '~/server/common/auto-feature';
@@ -181,25 +181,6 @@ export function selectAutoFeaturePicks({
   return finish();
 }
 
-async function getAutoFeatureConfig() {
-  const block = await dbRead.homeBlock.findFirst({
-    where: { userId: -1, type: HomeBlockType.FeaturedCollections },
-    select: { id: true, metadata: true },
-    orderBy: { id: 'asc' },
-  });
-  if (!block) return null;
-  const metadata = (block.metadata || {}) as HomeBlockMetaSchema;
-  // Parsed rather than cast: hand-edited JSON, and every default the job relies on — perRun,
-  // the decay constants, dryRun — exists only if the schema fills it in.
-  const config = autoFeatureSchema.safeParse(metadata.featuredCollections?.autoFeature);
-  if (!config.success) return null;
-  return {
-    blockId: block.id,
-    config: config.data,
-    pool: metadata.featuredCollections?.collectionIds ?? [],
-  };
-}
-
 async function getEligibleCollectionIds(poolFallback: number[]) {
   const state = await getFeaturedCollectionsState();
   // A Redis miss means the eligibility job hasn't run yet. Bootstrapping from the full pool is
@@ -355,7 +336,7 @@ export async function runAutoFeatureImages({
   lastRun,
   dryRunOverride,
 }: { lastRun?: Date; dryRunOverride?: boolean } = {}) {
-  const resolved = await getAutoFeatureConfig();
+  const resolved = await getAutoFeatureBlockConfig();
   if (!resolved) return { reason: 'no-auto-feature-config' as const };
   const { config, pool } = resolved;
 

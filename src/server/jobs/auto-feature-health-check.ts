@@ -17,7 +17,18 @@
  * heartbeat over a stale output means it runs and picks nothing — legitimate when the caps are
  * doing their job, so that one is recorded rather than paged.
  *
- * Two limits worth knowing before tuning anything here:
+ * 🔴 **To verify this, do NOT turn off the `AUTO_FEATURE_IMAGES` flag.** That is the obvious reading
+ * of "suppress the job and observe the alert", and it produces no alert BY DESIGN — the flag gate
+ * below returns before anything is evaluated, and the Axiom "Skipped" line it leaves reads like a
+ * pass. What works, and what was used:
+ *
+ *   1. note the current value of `KeyValue['job:auto-feature-images']`
+ *   2. set it back a day
+ *   3. `GET /api/webhooks/run-jobs/auto-feature-health-check?token=$WEBHOOK_TOKEN` — the endpoint
+ *      selects one job by name, so this runs the check alone and immediately
+ *   4. observe the Discord page, then restore the value
+ *
+ * Three limits worth knowing before tuning anything here:
  *
  * - **The threshold's margin collapses at the bottom of the config's range.** The producer stamps
  *   its heartbeat during a run, so the next hourly wake is always fractionally short of the gate
@@ -25,24 +36,33 @@
  *   `2 * intervalHours + 1`. That leaves `intervalHours` hours of slack — six missed wakes at
  *   today's 6, but only one at the schema's minimum of 1. At the maximum of 168 the threshold is
  *   14 days, which would not have caught the 79-hour August outage at all.
- * - **This shares a control plane with the job it watches.** `isFlipt` returns false when Flipt is
- *   unreachable, so a Flipt outage stops the producer and silences this check in the same instant.
- *   The flag-off path logs the heartbeat age precisely so that case leaves a trace to search for.
+ * - **This shares two control planes with the job it watches.** `isFlipt` returns false when Flipt
+ *   is unreachable, so a Flipt outage stops the producer and silences this check in the same
+ *   instant; the flag-off path logs the heartbeat age so that case leaves a trace. More likely, it
+ *   rides the same scheduler and the same `run-jobs` endpoint, so a failure in *that* layer takes
+ *   both down together. For the August outage specifically that was not the cause — other crons
+ *   logged continuously through all 79 hours — but nothing here would catch a scheduler-wide stop.
+ * - **`job_duration_seconds_count` already detects half of this.** It increments on every
+ *   invocation and `seedJobMetrics` makes an absent series distinguishable from an idle one, so
+ *   `rate(...[6h]) == 0` catches a job that stopped executing with no code at all. It is not enough
+ *   on its own: it counts the `flag-off` and `interval-not-elapsed` early returns, so it cannot see
+ *   a job that runs but never scores, nor one that scores but writes nothing. This repo also cannot
+ *   ship a Prometheus alert rule — see `clickhouse-refresh-monitor.ts`, which hit the same wall and
+ *   wrote its PromQL in a comment.
  */
 
-import { env } from '~/env/server';
 import {
+  AUTO_FEATURE_DEFAULT_INTERVAL_HOURS,
   AUTO_FEATURE_JOB_DATE_KEY,
   AUTO_FEATURE_NOTE_PREFIX,
+  getAutoFeatureBlockConfig,
   getAutoFeatureUserId,
 } from '~/server/common/auto-feature';
+import { notifyModAlert } from '~/server/common/mod-alert';
 import { dbRead } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
-import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { autoFeatureSchema } from '~/server/schema/home-block.schema';
-import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('jobs:auto-feature-health-check', 'yellow');
@@ -58,40 +78,30 @@ const log = createLogger('jobs:auto-feature-health-check', 'yellow');
 const STALE_INTERVALS = 2;
 const WAKE_SLACK_HOURS = 1;
 
-/**
- * Used only when the home block's config cannot be read. Matches `autoFeatureSchema`'s own default
- * so a missing config produces the threshold the job would itself have run at — a config that has
- * gone missing is a fault the producer cannot report while it is not running, and refusing to check
- * without one would blind this job to precisely that.
- */
-const DEFAULT_INTERVAL_HOURS = 6;
-
 type AutoFeatureHealth = {
   lastRow: Date | null;
   lastRun: Date | null;
+  /**
+   * Whether `lastRow` is an answer about the job's output at all. False when there is no config or
+   * no attribution account, where a null `lastRow` means "could not look" rather than "wrote
+   * nothing" — a distinction the record alert would otherwise blame the caps for.
+   */
+  rowsReadable: boolean;
   staleAfterHours: number;
   dryRun: boolean;
   collectionId: number | null;
 };
 
-async function readAutoFeatureConfig() {
-  const block = await dbRead.homeBlock.findFirst({
-    where: { userId: -1, type: HomeBlockType.FeaturedCollections },
-    select: { metadata: true },
-    orderBy: { id: 'asc' },
-  });
-  const metadata = (block?.metadata || {}) as HomeBlockMetaSchema;
-  const parsed = autoFeatureSchema.safeParse(metadata.featuredCollections?.autoFeature);
-  return parsed.success ? parsed.data : null;
-}
-
 async function readLastRun() {
   const row = await dbRead.keyValue.findUnique({ where: { key: AUTO_FEATURE_JOB_DATE_KEY } });
   if (!row) return null;
-  const ms = Number(row.value);
-  // `KeyValue.value` is untyped Json. A row holding anything but a millisecond number is not a
-  // timestamp this job can reason about, and treating it as epoch 0 would page forever.
-  return Number.isFinite(ms) && ms > 0 ? new Date(ms) : null;
+  // `KeyValue.value` is untyped Json and other keys in the table hold arrays and strings. The
+  // `typeof` test is load-bearing rather than defensive: `Number(['1'])` is `1`, so a coercion
+  // alone turns a one-element array into a plausible 1970 timestamp instead of rejecting it.
+  // `getJobDate` only ever writes `date.getTime()`, so anything that is not a number is not a
+  // heartbeat this job can reason about.
+  const ms = row.value;
+  return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? new Date(ms) : null;
 }
 
 /**
@@ -119,21 +129,25 @@ async function readLastRow(collectionId: number, autoFeatureUserId: number) {
 }
 
 export async function readAutoFeatureHealth(): Promise<AutoFeatureHealth> {
-  const config = await readAutoFeatureConfig();
-  const intervalHours = config?.intervalHours ?? DEFAULT_INTERVAL_HOURS;
+  const resolved = await getAutoFeatureBlockConfig();
+  const config = resolved?.config ?? null;
+  const intervalHours = config?.intervalHours ?? AUTO_FEATURE_DEFAULT_INTERVAL_HOURS;
   const collectionId = config?.collectionId ?? null;
 
   const autoFeatureUserId = collectionId === null ? null : await getAutoFeatureUserId();
+  // Only meaningful when there is a collection to look in AND an account to attribute rows to.
+  // Without both, `lastRow` would be null for a reason that has nothing to do with the job's
+  // output, and a null read as "wrote nothing" names a cause that is not the one.
+  const canReadRows = collectionId !== null && autoFeatureUserId !== null;
   const [lastRun, lastRow] = await Promise.all([
     readLastRun(),
-    collectionId !== null && autoFeatureUserId !== null
-      ? readLastRow(collectionId, autoFeatureUserId)
-      : Promise.resolve(null),
+    canReadRows ? readLastRow(collectionId, autoFeatureUserId) : Promise.resolve(null),
   ]);
 
   return {
     lastRow,
     lastRun,
+    rowsReadable: canReadRows,
     staleAfterHours: intervalHours * STALE_INTERVALS + WAKE_SLACK_HOURS,
     dryRun: config?.dryRun ?? true,
     collectionId,
@@ -179,7 +193,12 @@ export function evaluateAutoFeatureHealth(
   // would be one outage described twice, and the second line names a cause that is not the one.
   const rowAge = hoursSince(health.lastRow, now);
   const heartbeatHealthy = runAge !== null && runAge <= staleAfterHours;
-  if (heartbeatHealthy && !health.dryRun && (rowAge === null || rowAge > staleAfterHours)) {
+  if (
+    heartbeatHealthy &&
+    health.rowsReadable &&
+    !health.dryRun &&
+    (rowAge === null || rowAge > staleAfterHours)
+  ) {
     alerts.push({
       severity: 'record',
       message:
@@ -192,18 +211,6 @@ export function evaluateAutoFeatureHealth(
   }
 
   return alerts;
-}
-
-async function alertDiscord(title: string, description: string) {
-  if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return;
-
-  await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      embeds: [{ title, description, color: 0xf44336, timestamp: new Date().toISOString() }],
-    }),
-  }).catch(() => null);
 }
 
 export async function checkAutoFeatureHealth() {
@@ -249,13 +256,29 @@ export async function checkAutoFeatureHealth() {
   }).catch(() => null);
 
   const paging = alerts.filter((a) => a.severity === 'page');
-  if (paging.length)
-    await alertDiscord(
+  // `paged` reports what LANDED, not what was attempted. A revoked or rotated webhook otherwise
+  // leaves this job returning `paged: 1` forever while nobody is being told — the outage detector
+  // having its own silent outage, which is the exact failure the job exists to make visible.
+  const delivered =
+    paging.length > 0 &&
+    (await notifyModAlert(
       `🚨 Auto-feature pipeline — ${paging.length} check(s) failing`,
       paging.map((a) => a.message).join('\n\n')
-    );
+    ));
 
-  return { healthy: false as const, alerts: alerts.length, paged: paging.length, ...details };
+  if (paging.length > 0 && !delivered)
+    await logToAxiom({
+      type: 'warning',
+      name: 'auto-feature-health-check',
+      message: 'Discord alert did not land — the page above reached nobody',
+    }).catch(() => null);
+
+  return {
+    healthy: false as const,
+    alerts: alerts.length,
+    paged: delivered ? paging.length : 0,
+    ...details,
+  };
 }
 
 /**
