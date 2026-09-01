@@ -370,8 +370,10 @@ export interface PageBlockSsr {
    *  state, so the run host stands its veil down and shows the iframe from mount.
    *  Publisher-controlled and read from the APPROVED manifest snapshot, so it is
    *  as trustworthy as the rest of that snapshot; the blast radius of a false
-   *  declaration is cosmetic (a blank iframe on that app's own page), and the
-   *  platform build refuses a build that declares it with an empty `#root`. */
+   *  declaration is cosmetic — a blank iframe on that app's own page. 🔴 Nothing
+   *  validates it yet: no strict manifest schema rejects it and no build check
+   *  exists, so a declaration over an empty `#root` reaches production. A
+   *  platform-build check is planned (talos-infra). */
   bootSkeleton: boolean;
 }
 
@@ -390,6 +392,11 @@ export interface DevPageBlockResolution {
   blockId: string;
   appId: string;
   status: string;
+  /** `manifest.bootSkeleton` — carried so the AUTHOR's dev tunnel renders the
+   *  same presentation a user will get. Without it the dev route showed the
+   *  host veil while production stood it down, i.e. the one surface an author
+   *  checks was the one that could not show them the feature. */
+  bootSkeleton: boolean;
   trustTier: 'unverified' | 'verified' | 'internal';
   name: string;
   pageTitle: string;
@@ -1973,6 +1980,8 @@ export class BlockRegistry {
       pageTitle: typeof page.title === 'string' ? page.title : name,
       sandbox: typeof iframe.sandbox === 'string' ? iframe.sandbox : '',
       scopes: declaredScopes,
+      // Same strict `=== true` as the SSR projection: publisher JSON.
+      bootSkeleton: (manifest as { bootSkeleton?: unknown }).bootSkeleton === true,
       contentRating: typeof ab.contentRating === 'string' ? ab.contentRating : null,
     };
   }
@@ -2104,6 +2113,11 @@ export class BlockRegistry {
       appBlockId: `ephemeral-${blockId}`,
       blockId,
       appId: `ephemeral-${blockId}`,
+      // No stored manifest on this path (unclaimed slug, or a pending request
+      // whose manifest is not the approved snapshot), so there is nothing to
+      // read a declaration from. False keeps the host veil, which is the safe
+      // side: it shows SOMETHING rather than trusting an empty #root.
+      bootSkeleton: false,
       status: 'ephemeral',
       trustTier: 'unverified',
       name: blockId,

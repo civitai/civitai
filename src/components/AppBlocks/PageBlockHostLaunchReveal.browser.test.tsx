@@ -120,6 +120,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. The DEFAULT (host-veil) presentation; the bootSkeleton tests
+  // below override it explicitly.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -268,6 +271,40 @@ describe('PageBlockHost launch reveal — branded loading', () => {
   test('bootSkeleton: the iframe is VISIBLE from mount, not opacity 0', async () => {
     const frame = await renderBootSkeletonApp();
     expect(frame.style.opacity).toBe('1');
+  });
+
+  test('bootSkeleton: the frame is marked aria-busy while it boots', async () => {
+    // The veil was the host's ONLY loading announcement (role="status" +
+    // aria-busy). Standing it down removed it with nothing in its place — the
+    // app's boot state is cross-origin, so the host cannot borrow the app's.
+    const frame = await renderBootSkeletonApp();
+    expect(frame.getAttribute('aria-busy')).toBe('true');
+    // And it must not persist past the handshake, or the region claims to be
+    // loading forever.
+    await driveToReady();
+    expect(iframeEl().getAttribute('aria-busy')).toBeNull();
+  });
+
+  test('bootSkeleton: a RETRY brings the veil back, so the user gets feedback', async () => {
+    // `key={reloadNonce}` remounts the iframe, so on a retry the app's document
+    // is being re-fetched and its skeleton is NOT on screen. The "Retrying …"
+    // copy lives inside the veil, so suppressing the veil here left an empty
+    // region and no sign anything had happened.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        bootSkeleton
+        token={null}
+        tokenError
+        onConsentGranted={vi.fn()}
+      />
+    );
+    // Terminal first — that is where Retry is offered.
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    await page.getByRole('button', { name: /Retry/i }).click();
+
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await expect.element(page.getByText(/Retrying/)).toBeInTheDocument();
   });
 
   test('bootSkeleton: no translateY settle and no reveal transition', async () => {

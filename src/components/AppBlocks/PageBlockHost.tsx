@@ -416,11 +416,23 @@ export interface PageBlockHostProps {
    *
    * The host's own skeleton stays the default for every app that does NOT
    * declare this: an app with an empty `#root` and no veil is a blank white
-   * iframe for 300-1200ms, which is worse than what we had. The platform build
-   * fails a build that declares this with an empty `#root`, so the claim cannot
-   * rot into that.
+   * iframe for 300-1200ms, which is worse than what we had.
+   *
+   * 🔴 NOTHING VALIDATES THE DECLARATION TODAY — do not rest a safety argument
+   * on a build gate that does not exist yet. An app may set this over an empty
+   * `#root` and the result is that blank iframe, with no rejection anywhere in
+   * submit, approve or build. A platform-build check is planned (talos-infra);
+   * until it lands, the only thing standing between a false declaration and a
+   * blank run page is the author looking at their own app.
    */
-  bootSkeleton?: boolean;
+  // REQUIRED, and passed explicitly by every call site — the same shape
+  // `surface` above uses, for the same reason. An optional prop with a
+  // `= false` default made the DEV route and the MODERATOR REVIEW preview
+  // silently render the veil: the author checking their own app and the
+  // moderator approving it both saw the pre-feature presentation, and the
+  // first person to see the real one would have been a user. Required means
+  // a new host is a type error until someone decides what it should do.
+  bootSkeleton: boolean;
   /**
    * Which surface mounted this host. REQUIRED, and passed explicitly by each
    * call site rather than inferred, because it is one of the two axes the
@@ -615,7 +627,7 @@ export function PageBlockHost({
   blockInstanceId,
   appName,
   iframeSrc,
-  bootSkeleton = false,
+  bootSkeleton,
   surface,
   sandbox,
   trustTier,
@@ -3962,6 +3974,16 @@ export function PageBlockHost({
             data-testid="app-page-iframe"
             data-block-instance-id={blockInstanceId}
             data-block-ready={isReady ? 'true' : 'false'}
+            /* 🔴 A11Y. The veil is the host's ONLY loading announcement
+                (role="status" + aria-busy). Standing it down for a bootSkeleton
+                app removed it with nothing in its place — measured, ZERO
+                elements matching [role="status"],[aria-busy],[role="alert"] —
+                and the host cannot borrow the app's, because that boot state is
+                inside a cross-origin frame it can never read. Marking the frame
+                itself busy restores a machine-readable "still loading" without
+                claiming to know what it says. Only while the veil is absent:
+                two busy regions would announce twice. */
+            aria-busy={bootSkeleton && !isReady ? true : undefined}
             style={{
               flex: 1,
               display: 'block',
@@ -3997,7 +4019,17 @@ export function PageBlockHost({
               exactly as it was, and it is the reason NOT declaring the field is
               the safe default: no veil plus an empty `#root` is a blank white
               iframe. */}
-          {!bootSkeleton && overlayMounted && (
+          {/* 🔴 `reloadNonce > 0` deliberately RE-ENABLES the veil for a
+              bootSkeleton app. The opt-out is about FIRST boot, where the app's
+              own skeleton is about to paint. A RETRY is the opposite situation:
+              `key={reloadNonce}` remounts the iframe, so the app's document is
+              being re-fetched and its skeleton is NOT on screen — and the
+              "Retrying …" copy lives inside this veil, so suppressing it left
+              the user with an empty region and no indication anything had
+              happened, for the manual attempt and every automatic one.
+              Measured: veil absent, iframe blank, the string "Retrying" nowhere
+              in the document. */}
+          {(!bootSkeleton || reloadNonce > 0) && overlayMounted && (
             <Center
               data-testid="app-page-loading"
               // Announce the loading state on the REGION: role="status" +

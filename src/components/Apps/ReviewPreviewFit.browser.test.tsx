@@ -205,6 +205,9 @@ const directHostProps = {
   appName: RENDER_ONLY_MINT.appName,
   iframeSrc: SAME_ORIGIN_SRC,
   surface: 'review-preview' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: RENDER_ONLY_MINT.sandbox,
   trustTier: 'unverified' as const,
   slug: RENDER_ONLY_MINT.blockId,

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://civitai.com/schemas/app-block/v1.json",
   "title": "Civitai App Block Manifest",
-  "description": "THE canonical, server-published schema for block.manifest.json \u2014 the ONLY mandatory file in a Civitai App Block. Published at https://civitai.com/schemas/app-block/v1.json. This is the single source of truth for the block manifest contract: the platform's server-side validator (src/server/services/block-manifest-validator.service.ts) and the `civitai` CLI both validate against these same rules. Set this URL as your manifest's `$schema` for editor validation.",
+  "description": "THE canonical, server-published schema for block.manifest.json — the ONLY mandatory file in a Civitai App Block. Published at https://civitai.com/schemas/app-block/v1.json. This is the single source of truth for the block manifest contract: the platform's server-side validator (src/server/services/block-manifest-validator.service.ts) and the `civitai` CLI both validate against these same rules. Set this URL as your manifest's `$schema` for editor validation.",
   "type": "object",
   "required": ["blockId", "version", "name", "contentRating", "scopes"],
   "properties": {
@@ -30,14 +30,14 @@
     },
     "tagline": {
       "type": "string",
-      "description": "Optional one-line pitch shown under the app's name on its `/apps` store card + detail page. Manifest-governed: it flows to the store listing on moderator-approve and is re-synced from the manifest on every subsequent approved version. Omit it and the store simply shows no tagline. Must contain a non-whitespace character and is capped at 140 characters \u2014 the same bound off-site listings use (OFFSITE_TAGLINE_MAX), kept in lockstep with MANIFEST_TAGLINE_MAX_LENGTH in src/server/services/block-manifest-validator.service.ts (a drift-guard test enforces equality). NOTE: the server measures the TRIMMED length, while this maxLength counts the raw string \u2014 so a value padded past 140 is rejected here but accepted server-side. That asymmetry is deliberate and one-directional: this schema is never more permissive than the server, so local validation can't green-light something submit would reject.",
+      "description": "Optional one-line pitch shown under the app's name on its `/apps` store card + detail page. Manifest-governed: it flows to the store listing on moderator-approve and is re-synced from the manifest on every subsequent approved version. Omit it and the store simply shows no tagline. Must contain a non-whitespace character and is capped at 140 characters — the same bound off-site listings use (OFFSITE_TAGLINE_MAX), kept in lockstep with MANIFEST_TAGLINE_MAX_LENGTH in src/server/services/block-manifest-validator.service.ts (a drift-guard test enforces equality). NOTE: the server measures the TRIMMED length, while this maxLength counts the raw string — so a value padded past 140 is rejected here but accepted server-side. That asymmetry is deliberate and one-directional: this schema is never more permissive than the server, so local validation can't green-light something submit would reject.",
       "minLength": 1,
       "maxLength": 140,
       "pattern": "\\S"
     },
     "repository": {
       "type": "string",
-      "description": "Optional PUBLIC SOURCE-REPOSITORY link for an open-source app, rendered as a `Source` row on the app's `/apps` store DETAIL page (never on a store grid card). Manifest-governed: it flows to the store listing on moderator-approve and is re-synced from the manifest on every subsequent approved version; remove the key and the link is cleared. This is NOT your app's internal Civitai repository \u2014 it is a link you publish. Must be an `https://` URL, carrying no embedded credentials and no port, whose host is EXACTLY one of github.com, gitlab.com or codeberg.org (an exact-host allowlist \u2014 `www.github.com`, `gist.github.com` and `raw.githubusercontent.com` are all rejected), and whose path is exactly `/<owner>/<repo>`, the repository ROOT (a deep link such as `/owner/repo/tree/main` is rejected). A trailing `/` or `.git`, a query string and a fragment are accepted and STRIPPED \u2014 the stored value is normalised to `https://<host>/<owner>/<repo>`. Capped at 200 characters, kept in lockstep with MAX_REPOSITORY_URL_LENGTH in src/server/schema/blocks/external-app.schema.ts (a drift-guard test enforces equality, and enforces that this description names exactly the hosts REPOSITORY_HOST_ALLOWLIST contains). NOTE: as with `tagline`, the server measures the TRIMMED string while this maxLength counts the raw one, so the LENGTH bound here is never looser than the server's. The `pattern`, however, is a coarse SHAPE check and NOT the whole rule, so unlike `tagline` this field CAN pass local validation and still be rejected at submit. The server additionally requires each of the two path segments to begin with an ASCII letter or digit and to contain only letters, digits, `.`, `-` and `_`, and it strips a trailing `.git` BEFORE applying that test. Values such as a repository segment that is only `.git`, one starting with a dash, one containing a percent-escape, and one containing a non-ASCII character all match this pattern and are refused by the server. The pattern is deliberately left coarse rather than tightened: the CLI and the starter templates byte-mirror this file, and a stricter regex would be a compatibility change for every vendored copy. Treat passing local validation as necessary, not sufficient \u2014 `validateRepositoryUrl` in src/server/schema/blocks/external-app.schema.ts is authoritative.",
+      "description": "Optional PUBLIC SOURCE-REPOSITORY link for an open-source app, rendered as a `Source` row on the app's `/apps` store DETAIL page (never on a store grid card). Manifest-governed: it flows to the store listing on moderator-approve and is re-synced from the manifest on every subsequent approved version; remove the key and the link is cleared. This is NOT your app's internal Civitai repository — it is a link you publish. Must be an `https://` URL, carrying no embedded credentials and no port, whose host is EXACTLY one of github.com, gitlab.com or codeberg.org (an exact-host allowlist — `www.github.com`, `gist.github.com` and `raw.githubusercontent.com` are all rejected), and whose path is exactly `/<owner>/<repo>`, the repository ROOT (a deep link such as `/owner/repo/tree/main` is rejected). A trailing `/` or `.git`, a query string and a fragment are accepted and STRIPPED — the stored value is normalised to `https://<host>/<owner>/<repo>`. Capped at 200 characters, kept in lockstep with MAX_REPOSITORY_URL_LENGTH in src/server/schema/blocks/external-app.schema.ts (a drift-guard test enforces equality, and enforces that this description names exactly the hosts REPOSITORY_HOST_ALLOWLIST contains). NOTE: as with `tagline`, the server measures the TRIMMED string while this maxLength counts the raw one, so the LENGTH bound here is never looser than the server's. The `pattern`, however, is a coarse SHAPE check and NOT the whole rule, so unlike `tagline` this field CAN pass local validation and still be rejected at submit. The server additionally requires each of the two path segments to begin with an ASCII letter or digit and to contain only letters, digits, `.`, `-` and `_`, and it strips a trailing `.git` BEFORE applying that test. Values such as a repository segment that is only `.git`, one starting with a dash, one containing a percent-escape, and one containing a non-ASCII character all match this pattern and are refused by the server. The pattern is deliberately left coarse rather than tightened: the CLI and the starter templates byte-mirror this file, and a stricter regex would be a compatibility change for every vendored copy. Treat passing local validation as necessary, not sufficient — `validateRepositoryUrl` in src/server/schema/blocks/external-app.schema.ts is authoritative.",
       "minLength": 1,
       "maxLength": 200,
       "pattern": "^https://(github\\.com|gitlab\\.com|codeberg\\.org)/[^/]+/[^/]+/?$"
@@ -54,7 +54,7 @@
     },
     "category": {
       "type": "string",
-      "description": "Optional marketplace category for the app's `/apps` store listing. When present it flows to the listing automatically on moderator-approve (only when a moderator has not already curated a category). Omit to let a moderator categorise the app. Must be one of the known marketplace categories \u2014 this enum is kept in lockstep with MARKETPLACE_CATEGORIES in src/server/services/blocks/marketplace-categories.constants.ts (a drift-guard test enforces equality).",
+      "description": "Optional marketplace category for the app's `/apps` store listing. When present it flows to the listing automatically on moderator-approve (only when a moderator has not already curated a category). Omit to let a moderator categorise the app. Must be one of the known marketplace categories — this enum is kept in lockstep with MARKETPLACE_CATEGORIES in src/server/services/blocks/marketplace-categories.constants.ts (a drift-guard test enforces equality).",
       "enum": ["generation", "games", "utility", "discovery", "moderation", "analytics", "other"]
     },
     "renderMode": {
@@ -64,7 +64,7 @@
     },
     "trustTier": {
       "type": "string",
-      "description": "SERVER-OWNED. Do NOT set this in your manifest \u2014 the platform assigns the trust tier during review. Present here only to reject dev-set values.",
+      "description": "SERVER-OWNED. Do NOT set this in your manifest — the platform assigns the trust tier during review. Present here only to reject dev-set values.",
       "$comment": "Rejected via 'not' below.",
       "enum": ["unverified", "verified", "internal"]
     },
@@ -91,7 +91,7 @@
     },
     "scopeJustifications": {
       "type": "object",
-      "description": "Per-scope justification: a map of scope-id \u2192 free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. REQUIRED for SENSITIVE scopes \u2014 any declared scope that can spend or read the viewer's Buzz, read the viewer's private data, or write data other users see (e.g. `ai:write:budgeted`, `social:tip:self`, `buzz:read:self`, `collections:read:private`, `apps:storage:shared:write`) MUST carry a non-empty justification here, or the manifest is rejected at submit time. OPTIONAL for non-sensitive scopes \u2014 omit those and the manifest stays valid. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. The requirement is enforced imperatively by the manifest validator (not expressed as JSON-Schema conditionals here). NOTE: the justification captures the developer's STATED rationale only; the platform does not verify the truth of the claims.",
+      "description": "Per-scope justification: a map of scope-id → free-text rationale explaining WHY the app needs that permission, shown to the moderator during review. REQUIRED for SENSITIVE scopes — any declared scope that can spend or read the viewer's Buzz, read the viewer's private data, or write data other users see (e.g. `ai:write:budgeted`, `social:tip:self`, `buzz:read:self`, `collections:read:private`, `apps:storage:shared:write`) MUST carry a non-empty justification here, or the manifest is rejected at submit time. OPTIONAL for non-sensitive scopes — omit those and the manifest stays valid. Every key MUST be a scope also present in `scopes` (justifications for scopes you don't request are rejected). Each value is a non-empty string of at most 500 characters. The requirement is enforced imperatively by the manifest validator (not expressed as JSON-Schema conditionals here). NOTE: the justification captures the developer's STATED rationale only; the platform does not verify the truth of the claims.",
       "additionalProperties": {
         "type": "string",
         "minLength": 1,
@@ -116,30 +116,13 @@
       "minLength": 1,
       "maxLength": 256,
       "allOf": [
-        {
-          "$comment": "no leading '/' (absolute path)",
-          "not": {
-            "pattern": "^/"
-          }
-        },
+        { "$comment": "no leading '/' (absolute path)", "not": { "pattern": "^/" } },
         {
           "$comment": "no backslash separators (Windows / '\\..' traversal)",
-          "not": {
-            "pattern": "\\\\"
-          }
+          "not": { "pattern": "\\\\" }
         },
-        {
-          "$comment": "no '..' path-traversal segment",
-          "not": {
-            "pattern": "(^|/)\\.\\.(/|$)"
-          }
-        },
-        {
-          "$comment": "no Windows drive prefix (e.g. C:)",
-          "not": {
-            "pattern": "^[A-Za-z]:"
-          }
-        }
+        { "$comment": "no '..' path-traversal segment", "not": { "pattern": "(^|/)\\.\\.(/|$)" } },
+        { "$comment": "no Windows drive prefix (e.g. C:)", "not": { "pattern": "^[A-Za-z]:" } }
       ]
     },
     "publicSettingsKeys": {
@@ -154,17 +137,17 @@
     },
     "assetBundleUrl": {
       "type": "string",
-      "description": "Optional v2 surface \u2014 HTTPS URL to a hosted asset bundle. Must be a public https URL.",
+      "description": "Optional v2 surface — HTTPS URL to a hosted asset bundle. Must be a public https URL.",
       "format": "uri",
       "pattern": "^https://"
     },
     "iframe": {
       "type": "object",
-      "description": "iframe envelope. NOTE: iframe.src is SERVER-OWNED \u2014 do NOT set it; the platform stamps the canonical bundle URL during build/approve.",
+      "description": "iframe envelope. NOTE: iframe.src is SERVER-OWNED — do NOT set it; the platform stamps the canonical bundle URL during build/approve.",
       "additionalProperties": false,
       "properties": {
         "src": {
-          "description": "SERVER-OWNED. Do NOT set iframe.src \u2014 the platform assigns it. Present here only so the schema can reject dev-set values.",
+          "description": "SERVER-OWNED. Do NOT set iframe.src — the platform assigns it. Present here only so the schema can reject dev-set values.",
           "$comment": "Rejected via 'not' below."
         },
         "minHeight": {
@@ -193,7 +176,8 @@
     "bootSkeleton": {
       "type": "boolean",
       "default": false,
-      "description": "The app's shipped index.html paints its own themed loading state inside #root. The full-page run host then stands down its own branded overlay and shows the iframe from mount, so the app's boot state is visible at first paint and its React render replaces it in place with no cross-fade, no reveal transform and no theme change. Omit (or false) unless the app really ships one: without a veil an empty #root is a blank white iframe. The platform build fails a build that declares this with an empty #root."
+      "description": "The app's shipped index.html paints its own loading state inside #root. The full-page run host then stands down its own branded overlay and shows the iframe from mount, so the app's boot state is visible at first paint and its own render replaces it in place with no cross-fade and no reveal transform. Omit (or false) unless the app really ships one: with the overlay stood down, an empty #root is a blank iframe for the whole load. To paint in the HOST's theme rather than guessing from prefers-color-scheme, the app must also be enabled for the BLOCK_INIT URL fragment and read it before first paint; without that the theme is a guess that can disagree with the host and be corrected on BLOCK_INIT.",
+      "$comment": "Honoured by the full-page run host. Other block surfaces ignore it."
     },
     "page": {
       "type": "object",
@@ -221,7 +205,7 @@
         },
         "buzzBudgetPerGen": {
           "type": "integer",
-          "description": "Optional per-generation Buzz SAFETY CEILING for `ai:write:budgeted` tokens \u2014 the most a SINGLE generation this app requests is allowed to cost. It is a ceiling against a malicious or compromised app draining the viewer's Buzz, NOT a cost forecast: size it WELL ABOVE your worst-case generation (a good rule of thumb is several times your expected cost \u2014 e.g. 1000 when a run costs ~100), never at your estimate. Setting it to an estimate is the common mistake. The server re-prices every submit and compares that real price against this budget BEFORE anything runs, so a generation that comes in over budget is REJECTED outright with `insufficient buzz budget` \u2014 no workflow is created and no Buzz is spent, but the user gets nothing, and it stays broken for EVERY user until you ship a new manifest version and it is re-approved. So any upward drift in real cost (more steps, a bigger resolution, a pricier model or recipe, a colder cache) turns a budget sized to today's estimate into a hard outage. Positive integer. Omit it and the token is minted with a 10 Buzz default, which is below almost any real generation. Server-clamped to the platform per-gen cap (1000 today), so a generous value is safe. This bounds ONE generation only \u2014 cumulative spend is separately capped per viewer per day and per app, so a high per-gen ceiling does not widen total exposure.",
+          "description": "Optional per-generation Buzz SAFETY CEILING for `ai:write:budgeted` tokens — the most a SINGLE generation this app requests is allowed to cost. It is a ceiling against a malicious or compromised app draining the viewer's Buzz, NOT a cost forecast: size it WELL ABOVE your worst-case generation (a good rule of thumb is several times your expected cost — e.g. 1000 when a run costs ~100), never at your estimate. Setting it to an estimate is the common mistake. The server re-prices every submit and compares that real price against this budget BEFORE anything runs, so a generation that comes in over budget is REJECTED outright with `insufficient buzz budget` — no workflow is created and no Buzz is spent, but the user gets nothing, and it stays broken for EVERY user until you ship a new manifest version and it is re-approved. So any upward drift in real cost (more steps, a bigger resolution, a pricier model or recipe, a colder cache) turns a budget sized to today's estimate into a hard outage. Positive integer. Omit it and the token is minted with a 10 Buzz default, which is below almost any real generation. Server-clamped to the platform per-gen cap (1000 today), so a generous value is safe. This bounds ONE generation only — cumulative spend is separately capped per viewer per day and per app, so a high per-gen ceiling does not widen total exposure.",
           "exclusiveMinimum": 0
         }
       }
