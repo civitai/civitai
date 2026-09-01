@@ -299,6 +299,13 @@ describe('getThreadMuted', () => {
     expect(statement).toContain(
       'LEFT JOIN "ThreadMute" tm ON tm."threadId" = mt."id" AND tm."userId" = ?'
     );
+
+    // The row type is a cast, not a checked contract: drop this column and `row.locked` is
+    // undefined, `?? false` makes it false, and `canMute` is unconditionally true. Every test here
+    // supplies `locked` from the mock, so nothing else observes what the SQL computes. The join
+    // must stay inner — outer, `th.locked` is NULL on an unresolvable hop and `bool_or` skips it.
+    expect(statement).toContain('bool_or(th.locked) "locked"');
+    expect(statement).toMatch(/\n\s*JOIN "Thread" th ON th\.id = mt\."id"/);
   });
 
   /**

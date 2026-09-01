@@ -96,6 +96,10 @@ describe('comment notifications — per-thread mute', () => {
     // Seeded from the comment's OWN thread alias. Passing `root.id` instead is valid SQL that starts
     // the walk at NULL for a top-level comment, so the filter matches nothing and suppression dies.
     expect(sql).toContain('SELECT t.id "id", 0 "depth"');
+    // The connector, not just the clause. `OR` binds looser, so it makes the whole WHERE true for
+    // any unmuted recipient — past `lastSent`, the self-notify guard and the block filter. Only 3 of
+    // these 13 have a whole-statement snapshot that would see it.
+    expect(sql).toMatch(/AND\s+NOT EXISTS\s*\(\s*WITH RECURSIVE muteable_threads/);
   });
 
   it.each(filteredTypes)('%s mutes for the RECIPIENT, not the comment author', (type) => {
