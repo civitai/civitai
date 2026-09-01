@@ -196,14 +196,30 @@ describe('🔴 run page — the beta read FAILS OPEN; it can never take the app 
     expect(res).toEqual({ notFound: true });
   });
 
-  it('a NON-missing-column database error is NOT swallowed', async () => {
-    // 🔴 THE NARROWNESS OF THE GUARD, asserted at the page level. Degrading on a real
-    // outage would turn it into a silently missing badge — the failure this posture exists
-    // to avoid, reached from the other side. A missing TABLE (42P01) is a half-applied
-    // schema and must surface.
-    const err = new Error('relation does not exist') as Error & { code?: string };
-    err.code = '42P01';
+  it.each([
+    ['a missing TABLE (42P01) — a half-applied schema', '42P01', 'relation does not exist'],
+    ['a statement TIMEOUT', '57014', 'canceling statement due to statement timeout'],
+    ['a PERMISSION error', '42501', 'permission denied for table app_listings'],
+    ['a CONNECTION failure', 'P1001', "Can't reach database server"],
+    ['an error with NO code at all', undefined, 'boom'],
+  ])('🔴 still serves the app on %s — this path degrades on EVERY error', async (_l, code, msg) => {
+    // 🔴 THIS IS THE ONE PLACE THE NARROW GUARD IS DELIBERATELY NOT USED, and this block
+    // used to assert the opposite: that a 42P01 propagates. It does propagate from
+    // `readListingBetaBySlug` — and `createServerSideProps` has NO try/catch, so on THIS
+    // page that rejection is an HTTP 500 on the app-launch path. The suite title said "it
+    // can never take the app launch down" while the test below it proved it could. The run
+    // page now uses `readListingBetaBySlugForRender`, which degrades on anything.
+    //
+    // The narrow guard is still correct everywhere it gates a WRITE — a real outage must not
+    // be reported to an author as "beta is not available on this environment yet" — and
+    // `app-listing-beta.service.test.ts` pins that propagation directly on the reader.
+    const err = new Error(msg) as Error & { code?: string };
+    if (code) err.code = code;
     mockFindUnique.mockRejectedValue(err);
-    await expect(run()).rejects.toBe(err);
+    const res = await run();
+    expect(res.props.appBlockId).toBe('ab_1');
+    expect(res.props.iframeSrc).toBe(PAGE.iframeSrc);
+    expect(res.props.isBeta).toBe(false);
+    expect(res.props.betaMessage).toBeNull();
   });
 });

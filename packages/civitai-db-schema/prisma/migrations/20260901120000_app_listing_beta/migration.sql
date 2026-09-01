@@ -11,9 +11,13 @@
 -- `INSERT/UPDATE … RETURNING <every scalar the MODEL declares>`. Both columns below are
 -- declared on the `AppListing` model, so the generated SQL names them whether or not the
 -- keys appear in `data` — and the same is true of any `findUnique` / `findFirst` /
--- `findMany` / `update` on this model that passes no explicit `select`, which roughly
--- half the ~92 `appListing.*` query sites do not. Deploying the code first therefore
--- turns an additive, optional, cosmetic feature into a public-store outage:
+-- `findMany` / `create` / `update` / `upsert` on this model that passes no explicit
+-- `select`, of which there are many. (`updateMany` / `deleteMany` / `createMany` return a
+-- row COUNT rather than rows, so those cannot raise it — the exposure is decided by the
+-- METHOD, not by a site count, and this header deliberately no longer quotes one: the
+-- figure it used to give was copied from a sibling migration and was ~2.6x high.)
+-- Deploying the code first therefore turns an additive, optional, cosmetic feature into a
+-- public-store outage:
 --
 --     HTTP 500 — The column `app_listings.is_beta` does not exist in the current database.
 --

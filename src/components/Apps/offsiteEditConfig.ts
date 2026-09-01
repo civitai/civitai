@@ -290,12 +290,16 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     externalUrl: s.externalUrl ?? '',
     sourceRepoUrl: s.sourceRepoUrl ?? '',
     isBeta: s.isBeta === true,
-    // 🔴 `s.isBeta === true &&`, not just `?? ''`. A row can carry a stale note from an
-    // author who turned beta OFF (the server clears the note only on the next write), and
-    // prefilling it would silently re-publish that note the moment they tick the box again.
-    // The server projections apply the same rule; this mirrors it so the form's baseline
-    // and the wire value agree — otherwise `buildScalarPatch` would diff against a note the
-    // author cannot see and emit a spurious clear.
+    // 🔴 `s.isBeta === true &&`, not just `?? ''`. This mirrors the rule the server
+    // projections apply, so the form's baseline and the wire value agree — otherwise
+    // `buildScalarPatch` would diff against a note the author cannot see and emit a spurious
+    // clear.
+    //
+    // 🔴 IT IS NO LONGER THE ONLY THING STANDING BETWEEN A STALE NOTE AND THE PUBLIC PAGE,
+    // and an earlier version of this comment said the opposite — that "the server clears the
+    // note only on the next write", which described a write that did not exist. It does now:
+    // `buildListingPatchData` nulls `beta_message` whenever a patch turns the flag OFF. That
+    // is the real fix; this line is defence in depth for rows written before it existed.
     betaMessage: s.isBeta === true ? s.betaMessage ?? '' : '',
     tagline: s.tagline ?? '',
     description: s.description ?? '',

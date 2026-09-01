@@ -2,13 +2,17 @@ import { TRPCError } from '@trpc/server';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  BETA_UNAVAILABLE,
   BETA_UNAVAILABLE_MESSAGE,
   assertBetaWritable,
   betaWriteFragment,
   isBetaColumnAvailable,
   readListingBeta,
   readListingBetaBySlug,
+  readListingBetaForRender,
+  readListingBetaBySlugForRender,
   readListingBetaMany,
+  readListingBetaManyForRender,
   type BetaReadClient,
   type ListingBetaRead,
 } from '~/server/services/blocks/app-listing-beta.service';
@@ -308,5 +312,75 @@ describe('the two write helpers are NOT interchangeable', () => {
   it('the system helper is SILENT and the author helper is LOUD on the same input', () => {
     expect(betaWriteFragment(unavailable)).toEqual({});
     expect(() => assertBetaWritable(unavailable.available)).toThrow(TRPCError);
+  });
+});
+
+describe('🔴 the …ForRender readers — a cosmetic label must never take a page down', () => {
+  /**
+   * 🔴 TWO POSTURES, DELIBERATELY, and this block pins the DIFFERENCE rather than either half
+   * alone. The narrow reader is right where the answer licenses a WRITE: swallowing a timeout
+   * there would tell an author "beta is not available on this environment yet" when the truth
+   * is that the database is unwell. On a read-only RENDER the trade inverts, and on one
+   * surface dramatically: `/apps/run/<slug>` is the APP LAUNCH path, its SSR has no try/catch
+   * above it, and before this feature it never touched `app_listings` at all — so a narrow
+   * guard there would let a statement timeout on a cosmetic badge return an HTTP 500 on the
+   * page that runs the app.
+   */
+  const HARD_ERRORS: Array<[string, string | undefined]> = [
+    ['a missing TABLE (42P01)', '42P01'],
+    ['a statement timeout', '57014'],
+    ['a permission error', '42501'],
+    ['a connection failure', 'P1001'],
+    ['an error with no code', undefined],
+  ];
+
+  it.each(HARD_ERRORS)('readListingBetaForRender degrades on %s', async (_l, code) => {
+    const err = new Error('boom') as Error & { code?: string };
+    if (code) err.code = code;
+    expect(await readListingBetaForRender('apl_1', throwingClient(err))).toEqual(BETA_UNAVAILABLE);
+  });
+
+  it.each(HARD_ERRORS)('readListingBetaBySlugForRender degrades on %s', async (_l, code) => {
+    const err = new Error('boom') as Error & { code?: string };
+    if (code) err.code = code;
+    expect(await readListingBetaBySlugForRender('s', throwingClient(err))).toEqual(
+      BETA_UNAVAILABLE
+    );
+  });
+
+  it.each(HARD_ERRORS)(
+    'readListingBetaManyForRender degrades to an empty map on %s',
+    async (_l, code) => {
+      const err = new Error('boom') as Error & { code?: string };
+      if (code) err.code = code;
+      expect((await readListingBetaManyForRender(['a'], throwingClient(err))).size).toBe(0);
+    }
+  );
+
+  it('🔴 the NARROW readers still PROPAGATE the same errors — the split is real', async () => {
+    // The control that makes the three blocks above mean something. If the narrow readers
+    // had also been widened, "the render reader degrades" would be a statement about nothing.
+    for (const [, code] of HARD_ERRORS) {
+      const err = new Error('boom') as Error & { code?: string };
+      if (code) err.code = code;
+      await expect(readListingBeta('apl_1', throwingClient(err))).rejects.toBe(err);
+    }
+  });
+
+  it('the render readers still return REAL values on the happy path', async () => {
+    // Positive control: a reader that returned BETA_UNAVAILABLE unconditionally would pass
+    // every degradation case above.
+    expect(
+      await readListingBetaForRender('apl_1', okClient({ isBeta: true, betaMessage: 'x' }))
+    ).toEqual({
+      available: true,
+      isBeta: true,
+      betaMessage: 'x',
+    });
+    const map = await readListingBetaManyForRender(
+      ['a'],
+      okClient(null, [{ id: 'a', isBeta: true, betaMessage: null }])
+    );
+    expect(map.get('a')?.isBeta).toBe(true);
   });
 });

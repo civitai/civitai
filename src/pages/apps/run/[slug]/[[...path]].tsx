@@ -10,7 +10,7 @@ import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
 import { IconFlask } from '@tabler/icons-react';
 import { dbRead } from '~/server/db/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
-import { readListingBetaBySlug } from '~/server/services/blocks/app-listing-beta.service';
+import { readListingBetaBySlugForRender } from '~/server/services/blocks/app-listing-beta.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import { Page } from '~/components/AppLayout/Page';
@@ -92,7 +92,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // all resolves to `isBeta: false` rather than throwing.
     const [page, beta] = await Promise.all([
       BlockRegistry.resolvePageBlockBySlug(slug, { db: 'read' }),
-      readListingBetaBySlug(slug, dbRead),
+      readListingBetaBySlugForRender(slug, dbRead),
     ]);
     if (!page || !page.iframeSrc) return { notFound: true };
 

@@ -20,7 +20,20 @@
  * claimed otherwise. Controlling explicit `select`s says nothing about a query that passes
  * NO `select`: Prisma then returns the full model and names every scalar the MODEL declares
  * — including these two — in the `SELECT` / `INSERT … RETURNING` / `UPDATE … RETURNING`
- * list. Roughly half the ~92 `appListing.*` query sites take that default.
+ * list.
+ *
+ * 🔴 STATED AS A MECHANISM, NOT A COUNT, AND DELIBERATELY SO. An earlier version of this
+ * paragraph quoted "roughly half the ~92 `appListing.*` query sites", a figure copied from
+ * the sibling module and never re-measured here. Two independent counts of it disagreed
+ * (they scope "a query site" differently and both drift with every commit), and no test
+ * asserts on it — an unpinned number in a comment is a claim that rots silently, which is
+ * how the wrong one got copied forward in the first place. What actually decides exposure is
+ * the METHOD, and that does not drift: `findUnique` / `findFirst` / `findMany` / `create` /
+ * `update` / `upsert` / `delete` return model rows, so with no explicit `select` they name
+ * every scalar. `updateMany` / `deleteMany` / `createMany` return `BatchPayload` — a row
+ * COUNT — so they name no scalars and cannot raise P2022 from a missing column at all
+ * (verified against the pinned client's own generated types). Both shapes exist in this
+ * file's neighbourhood; to see today's exposure, grep for the first list without a `select:`.
  *
  * 🔴 NO TEST IN THIS REPO CAN SEE THAT. The suites mock Prisma, so none of them ever
  * generates SQL; this module's own tests are green and blind to it. The consequence is
@@ -214,6 +227,78 @@ export async function readListingBetaMany(
   } catch (err) {
     if (isMissingColumnError(err)) return new Map();
     throw err;
+  }
+}
+
+/**
+ * A read for a RENDERING path, which degrades on **any** error rather than only on a missing
+ * column.
+ *
+ * 🔴 THIS IS A DELIBERATE SECOND POSTURE, NOT A WIDENING OF THE ONE ABOVE, and the split is
+ * the whole point. The narrow guard is right where the answer LICENSES A WRITE: there,
+ * swallowing a timeout would tell an author "beta is not available on this environment yet"
+ * when the truth is that the database is unwell, and a real outage would be reported as a
+ * missing feature. Every write path therefore keeps {@link readListingBeta}.
+ *
+ * 🔴 BUT ON A PURELY COSMETIC RENDER, PROPAGATING IS THE WORSE ANSWER, and on ONE surface it
+ * is much worse. `/apps/run/<slug>` is the APP LAUNCH path, and before this feature existed
+ * it never touched `app_listings` at all — its SSR resolves out of `app_blocks`. A statement
+ * timeout, a deadlock, a connection reset or a `42P01` on this lookup does not cost a badge
+ * there: `createServerSideProps` has no try/catch, so the rejection becomes an SSR **500 on
+ * the page that runs the app**. Trading "the app is unusable" for "the Beta badge is missing"
+ * is not a close call. The same reasoning, at lower stakes, covers the public `/apps` grid
+ * and the moderator table, which are also read-only renders of a cosmetic label.
+ *
+ * The error is NOT lost — the sibling queries in the same request hit the same client, so a
+ * genuine outage still surfaces through them (and through the logs and metrics of whatever
+ * broke). What is suppressed is only this label's ability to be the thing that takes a page
+ * down.
+ *
+ * `available` is reported honestly as `false` on any failure, so a caller that ever wanted to
+ * gate a write on one of these reads would still fail CLOSED — but none does, and none should.
+ */
+async function readForRender(read: () => Promise<ListingBetaRead>): Promise<ListingBetaRead> {
+  try {
+    return await read();
+  } catch {
+    return BETA_UNAVAILABLE;
+  }
+}
+
+/** {@link readListingBeta} on a RENDERING path — degrades on any error. See {@link readForRender}. */
+export async function readListingBetaForRender(
+  listingId: string,
+  db: BetaReadClient
+): Promise<ListingBetaRead> {
+  return readForRender(() => readListingBeta(listingId, db));
+}
+
+/**
+ * {@link readListingBetaBySlug} on the APP-LAUNCH path — degrades on any error.
+ *
+ * 🔴 THE ONE CALLER IS THE RUN PAGE, and this function exists so that call site cannot be
+ * written any other way. See {@link readForRender} for why launch is different from a store
+ * surface.
+ */
+export async function readListingBetaBySlugForRender(
+  slug: string,
+  db: BetaReadClient
+): Promise<ListingBetaRead> {
+  return readForRender(() => readListingBetaBySlug(slug, db));
+}
+
+/**
+ * {@link readListingBetaMany} on a RENDERING path — degrades to an EMPTY map on any error, so
+ * every row in the page renders as not-beta rather than the page 500ing.
+ */
+export async function readListingBetaManyForRender(
+  listingIds: readonly string[],
+  db: BetaReadClient
+): Promise<Map<string, ListingBetaRead>> {
+  try {
+    return await readListingBetaMany(listingIds, db);
+  } catch {
+    return new Map();
   }
 }
 

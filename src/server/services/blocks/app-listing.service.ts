@@ -31,8 +31,8 @@ import { readListingSourceRepoUrl } from '~/server/services/blocks/app-listing-s
 // its module header.
 import {
   BETA_NOT_SET,
-  readListingBeta,
-  readListingBetaMany,
+  readListingBetaForRender,
+  readListingBetaManyForRender,
   type ListingBetaRead,
 } from '~/server/services/blocks/app-listing-beta.service';
 import { queryCache } from '~/server/utils/cache-helpers';
@@ -418,7 +418,7 @@ export async function getListingPreviewForReview(args: {
   // `beginListingRevision` clones the columns onto the shadow.
   const [sourceRepo, beta] = await Promise.all([
     readListingSourceRepoUrl(args.listingId, dbRead),
-    readListingBeta(args.listingId, dbRead),
+    readListingBetaForRender(args.listingId, dbRead),
   ]);
   return {
     card: projectListingCard(row, beta),
@@ -710,15 +710,19 @@ export async function listAvailableListings(
   // Hydrate the public projection for the page, then re-apply the keyset order
   // (findMany does not preserve the `IN (...)` order).
   const pageIds = trimmed.map((r: { id: string; sort_key: string }) => r.id);
-  const hydrated = await dbRead.appListing.findMany({
-    where: { id: { in: pageIds } },
-    select: listingHydrateSelect,
-  });
-  // ONE batched guarded read for the whole page's beta declaration — never a column in the
-  // select above, which the public detail read shares. O(1) queries regardless of page
-  // size, and it degrades to an EMPTY map (⇒ every card renders as not-beta) while the
-  // manual-apply migration is outstanding, rather than 500ing the public grid.
-  const betaById = await readListingBetaMany(pageIds, dbRead);
+  // 🔴 IN PARALLEL WITH THE HYDRATE, not after it. Both are keyed on `pageIds`, which is
+  // already in hand, so the beta read depends on nothing the hydrate produces — running them
+  // serially would add a whole round trip to the public `/apps` grid for a cosmetic badge.
+  // ONE batched read for the page, so it stays O(1) queries regardless of page size, and it
+  // is the `…ForRender` variant: a failure renders every card as not-beta rather than 500ing
+  // the grid, which is exactly what this module's header says must not happen.
+  const [hydrated, betaById] = await Promise.all([
+    dbRead.appListing.findMany({
+      where: { id: { in: pageIds } },
+      select: listingHydrateSelect,
+    }),
+    readListingBetaManyForRender(pageIds, dbRead),
+  ]);
   const byId = new Map(hydrated.map((r: HydratedListing): [string, HydratedListing] => [r.id, r]));
   const items = pageIds
     .map((id: string) => byId.get(id))
@@ -799,7 +803,7 @@ export async function getListingDetail(
   const [collaborators, sourceRepo, beta] = await Promise.all([
     loadDisplayedCollaboratorChips(row.id),
     readListingSourceRepoUrl(row.id, dbRead),
-    readListingBeta(row.id, dbRead),
+    readListingBetaForRender(row.id, dbRead),
   ]);
   return projectListingDetail(row, collaborators, sourceRepo.value, beta);
 }
@@ -1111,7 +1115,7 @@ export async function listAllListingsForModeration(
   // ONE batched guarded read for this page's beta declaration — never a column in
   // `moderationListingSelect`, which would 500 the whole mod table until a human runs the
   // migration. Same O(1)-per-page shape as the on-site pending-request lookup above.
-  const betaById = await readListingBetaMany(
+  const betaById = await readListingBetaManyForRender(
     page.map((r: { id: string }) => r.id),
     dbRead
   );

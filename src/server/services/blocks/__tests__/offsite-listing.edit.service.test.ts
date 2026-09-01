@@ -8,9 +8,11 @@ import {
   beginListingRevision,
   listMySubmissions,
   rejectExternalRequest,
+  buildListingPatchData,
   splitBetaPatch,
   submitListingRevision,
   updateListing,
+  updateRevisionDraft,
   withdrawExternalRequest,
 } from '~/server/services/blocks/offsite-listing.service';
 import {
@@ -1773,5 +1775,194 @@ describe('splitBetaPatch — the never-staged ledger', () => {
     // "turn beta off" and "clear the note" edits.
     const { betaPatch } = splitBetaPatch({ isBeta: false, betaMessage: null });
     expect(betaPatch).toEqual({ isBeta: false, betaMessage: null });
+  });
+});
+
+describe('🔴 F1 — the note never outlives the flag', () => {
+  /**
+   * 🔴 THE REGRESSION THIS PINS, in full, because it is the one defect in this feature that
+   * republished copy an author had deleted. Nothing used to write `beta_message = NULL` when
+   * the flag went off, so: set beta + a note → untick beta (patch is `{isBeta:false}`, the
+   * note box is not in the diff) → the column keeps the string while every projection hides
+   * it → re-tick beta weeks later (the prefill nulls the note, so the textarea is EMPTY and
+   * the diff emits `{isBeta:true}` alone) → the ORIGINAL note is public again, on the store
+   * page and the app run page, invisible in the author's own form.
+   *
+   * Three comments asserted the opposite at the time, which is why the fix is at the WRITE
+   * and not only at the projections: a projection rule protects rows written from now on,
+   * the write rule is what stops the column ever holding a note the flag does not cover.
+   */
+  it('turning beta OFF clears the note in the SAME write', async () => {
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    await updateListing({ listingId: 'apl_parent', patch: { isBeta: false }, userId: OWNER });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { isBeta: false, betaMessage: null },
+    });
+  });
+
+  it('the clear WINS over an explicit betaMessage in the same patch', async () => {
+    // A note with the flag off is unreachable by construction (every projection nulls it),
+    // so storing one is storing exactly the dead text that comes back to life later.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { isBeta: false, betaMessage: 'keep me' },
+      userId: OWNER,
+    });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { isBeta: false, betaMessage: null },
+    });
+  });
+
+  it('🔴 turning beta ON does NOT clear the note — only the OFF transition destroys', async () => {
+    // The asymmetry is deliberate and this is its guard. A caller re-asserting `{isBeta:true}`
+    // on a listing that already carries a note means "keep it"; making the rule symmetric
+    // would silently wipe notes on an idempotent write. A mutant that clears on any `isBeta`
+    // instruction dies here rather than passing on the two cases above.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    await updateListing({ listingId: 'apl_parent', patch: { isBeta: true }, userId: OWNER });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { isBeta: true },
+    });
+  });
+
+  it('a patch that does not mention isBeta leaves the note alone', async () => {
+    // Reachability control: the clear must be caused by the OFF instruction, not by merely
+    // calling the builder. A mutant that nulls unconditionally dies here.
+    mockRead.appListing.findUnique.mockResolvedValue(approvedParent());
+    await updateListing({ listingId: 'apl_parent', patch: { tagline: 'x' }, userId: OWNER });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_parent' },
+      data: { tagline: 'x' },
+    });
+  });
+
+  it('the whole round trip: off then on again yields NO note', async () => {
+    // The end-to-end statement of the defect, driven through the real builder both times.
+    const off = buildListingPatchData(
+      { isBeta: false },
+      { connectAllowedScopes: null, sourceRepoAvailable: true, betaAvailable: true }
+    );
+    expect(off.betaMessage).toBeNull();
+    // With the column now NULL, the re-tick has nothing to resurrect: the prefill is empty,
+    // so the patch carries only the flag, and the stored note stays null.
+    const on = buildListingPatchData(
+      { isBeta: true },
+      { connectAllowedScopes: null, sourceRepoAvailable: true, betaAvailable: true }
+    );
+    expect('betaMessage' in on).toBe(false);
+  });
+});
+
+describe('🔴 F4 — updateRevisionDraft cannot write beta onto a moderator-removed parent', () => {
+  /** A shadow whose parent was taken down after the revision was opened. */
+  function shadowOfRemovedParent() {
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    mockWrite.appListing.findUnique.mockResolvedValue({ status: 'removed' });
+  }
+
+  it('refuses a beta write when the parent was delisted by a MODERATOR', async () => {
+    // 🔴 `updateListing` refuses EVERY edit on a mod-removed listing. This function did not
+    // write to the parent at all before beta existed, so routing the beta half there reached
+    // that row through a door with no such gate: a delist leaves an open shadow behind, and
+    // its owner could then set public copy on the delisted listing.
+    shadowOfRemovedParent();
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({ action: 'delist' });
+    await expect(
+      updateRevisionDraft({ shadowId: 'apl_shadow', patch: { isBeta: true }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockWrite.appListing.update).not.toHaveBeenCalled();
+  });
+
+  it('ALLOWS it when the parent is OWNER-unpublished (the repair state)', async () => {
+    // The positive control, and a real requirement: `updateListing` lets an owner edit
+    // trivial fields while their own app is down, so the shadow path must not be stricter.
+    shadowOfRemovedParent();
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({ action: 'owner-unpublish' });
+    await updateRevisionDraft({ shadowId: 'apl_shadow', patch: { isBeta: true }, userId: OWNER });
+    const calls = mockWrite.appListing.update.mock.calls.map((c) => c[0]) as Array<{
+      where: { id: string };
+    }>;
+    expect(calls.some((c) => c.where.id === 'apl_parent')).toBe(true);
+  });
+
+  it('a NON-beta patch is unaffected — the gate is about the PARENT write', async () => {
+    // Reachability control: without a beta half there is no parent write, so a mod-removed
+    // parent must not block an ordinary shadow edit that this function always allowed.
+    shadowOfRemovedParent();
+    mockWrite.appListingModerationEvent.findFirst.mockResolvedValue({ action: 'delist' });
+    await updateRevisionDraft({ shadowId: 'apl_shadow', patch: { tagline: 'x' }, userId: OWNER });
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_shadow' },
+      data: { tagline: 'x' },
+    });
+  });
+});
+
+describe('the shadow clone sees the POST-edit beta value', () => {
+  it('🔴 a patch that flips beta AND changes a material field clones the NEW framing', async () => {
+    // 🔴 THE CLONE'S ONLY JOB is to let the moderator review preview render the beta banner
+    // it is approving. Minting the shadow BEFORE applying the author's beta edit cloned the
+    // PRE-edit value, so exactly the save that turns beta on would be reviewed without it —
+    // the one case the clone exists for. The parent write now lands first.
+    const parent = approvedParent();
+    mockRead.appListing.findUnique.mockResolvedValue(parent);
+    mockRead.appListing.findFirst.mockResolvedValue(null);
+    // The primary reflects the beta write that just happened.
+    mockWrite.appListing.findUnique.mockResolvedValue({
+      ...parent,
+      isBeta: true,
+      betaMessage: 'wip',
+    });
+    mockWrite.appListing.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'apl_new_1' });
+
+    await updateListing({
+      listingId: 'apl_parent',
+      patch: { name: 'Renamed', isBeta: true, betaMessage: 'wip' },
+      userId: OWNER,
+    });
+
+    // The parent beta write came BEFORE the clone.
+    const order = mockWrite.appListing.update.mock.invocationCallOrder[0];
+    const createOrder = mockWrite.appListing.create.mock.invocationCallOrder[0];
+    expect(order).toBeLessThan(createOrder);
+    // …and the clone carries the new framing.
+    const created = mockWrite.appListing.create.mock.calls[0][0].data as Row;
+    expect(created).toMatchObject({ isBeta: true, betaMessage: 'wip' });
+  });
+});
+
+describe('the F4 gate is SCOPED to the parent write', () => {
+  it('🔴 a shadow edit with NO beta half reads the parent NOT AT ALL', async () => {
+    // 🔴 THE REGRESSION THIS PINS. The first version of the F4 gate read the parent (and
+    // threw NOT_FOUND when it was unreadable) on EVERY call, which put a round trip on every
+    // shadow scalar edit and invented a 404 for edits that never touch the parent row. Two
+    // pre-existing source-repo tests went red on exactly that. The gate belongs to the parent
+    // WRITE, so without one there must be neither a read nor a refusal.
+    mockRead.appListing.findUnique.mockResolvedValue(
+      approvedParent({ id: 'apl_shadow', status: 'draft', revisionOfId: 'apl_parent' })
+    );
+    // The parent is deliberately UNREADABLE on the primary. A gate that still ran would 404.
+    mockWrite.appListing.findUnique.mockResolvedValue(null);
+
+    await updateRevisionDraft({ shadowId: 'apl_shadow', patch: { tagline: 'x' }, userId: OWNER });
+
+    expect(mockWrite.appListing.update).toHaveBeenCalledWith({
+      where: { id: 'apl_shadow' },
+      data: { tagline: 'x' },
+    });
+    // Positive control that the same fixture DOES trip the gate once a beta half exists —
+    // otherwise this test would pass against a gate that was deleted outright.
+    mockWrite.appListing.update.mockClear();
+    await expect(
+      updateRevisionDraft({ shadowId: 'apl_shadow', patch: { isBeta: true }, userId: OWNER })
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

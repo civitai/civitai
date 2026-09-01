@@ -22,6 +22,7 @@ import {
   type ListingSourceRepoRead,
 } from '~/server/services/blocks/app-listing-source-repo.service';
 import {
+  BETA_NOT_SET,
   assertBetaWritable,
   betaWriteFragment,
   readListingBeta,
@@ -922,6 +923,34 @@ export function buildListingPatchData(
     const trimmed = patch.betaMessage === null ? null : patch.betaMessage.trim();
     data.betaMessage = trimmed !== null && trimmed.length > 0 ? trimmed : null;
   }
+  // 🔴 TURNING BETA OFF CLEARS THE NOTE, UNCONDITIONALLY AND LAST.
+  //
+  // Without this the note OUTLIVES the flag, and the consequence is not cosmetic: it
+  // republishes copy the author deleted, on a public page, where they cannot see it.
+  // The full path, all of it reachable through the ordinary UI:
+  //   1. author sets `isBeta` + a note ("Payments are broken — do not buy yet"). Live.
+  //   2. author unticks Beta. The patch is `{isBeta: false}` — the note box is not part of
+  //      the diff because it did not change — so `beta_message` keeps its old string. The
+  //      store renders nothing, because every projection nulls the note while the flag is
+  //      off, so the row looks clean from the outside.
+  //   3. weeks later they tick Beta again. The prefill nulls the note (it is off), so the
+  //      textarea is EMPTY; `buildScalarPatch` diffs '' against '' and emits `{isBeta:true}`
+  //      and nothing else.
+  //   4. the flag is back on over the ORIGINAL string, and the public detail page and the
+  //      app run page both display it again.
+  // The author never re-authored that sentence and cannot see it in their own form.
+  //
+  // 🔴 IT GOES LAST, AND IT OVERRIDES AN EXPLICIT `betaMessage` IN THE SAME PATCH. A note
+  // with the flag off is unreachable by construction (every projection nulls it), so
+  // `{isBeta:false, betaMessage:'x'}` asking to store 'x' is asking to store dead text —
+  // and dead text is precisely what comes back to life in step 4. One rule, stated once:
+  // the note exists only while the flag does.
+  //
+  // 🔴 AND IT IS DELIBERATELY NOT THE MIRROR RULE. Turning beta ON does NOT clear the note,
+  // because a caller sending `{isBeta:true}` on a listing that already has one (an API
+  // client re-asserting state, a future partial-patch surface) means "keep it". Only the
+  // OFF transition destroys, which is the direction that cannot resurrect anything.
+  if (patch.isBeta === false) data.betaMessage = null;
   if (patch.externalUrl !== undefined) {
     const url = validateExternalUrl(patch.externalUrl);
     if (!url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
@@ -1478,26 +1507,34 @@ export async function updateListing(opts: {
       // sharpest being that `applyApprovedRevision` would restore the clone-time value and
       // silently undo every beta edit the author made while the revision sat in the queue.
       //
-      // 🔴 BOTH WRITES IN ONE TRANSACTION. They touch two different rows, so a failure
-      // between them would leave the author's beta toggle applied while their material edit
-      // was never staged — a state whose only symptom is a change that did not reach review.
-      const { shadowId } = await beginListingRevision({ listingId, userId });
-      const shadowData = buildListingPatchData(restPatch, patchOpts);
+      // 🔴 THE TWO WRITES ARE **NOT** ATOMIC, AND THAT IS A TRADE MADE ON PURPOSE — this
+      // comment used to claim they were wrapped in one transaction, which stopped being true
+      // when the ordering below was fixed. Prisma has no nested interactive transaction, and
+      // `beginListingRevision` opens its own, so "beta + mint the shadow + write the shadow"
+      // cannot be one unit. The choice is therefore between an atomic pair that clones a
+      // STALE beta value into the moderator's preview, and a correctly-ordered pair that can
+      // be interrupted. Interrupted loses less: beta is a trivial in-place edit, so a failure
+      // after it leaves an applied beta change and no staged revision — visible, and fixed by
+      // pressing Save again. A stale preview is silent and misleads a moderator.
+      //
+      // 🔴 THE BETA WRITE LANDS **BEFORE** THE SHADOW IS MINTED, and the order is
+      // load-bearing rather than incidental. `beginListingRevision` clones the parent's beta
+      // columns onto the shadow so the moderator review preview renders the beta framing —
+      // that is the clone's only job. Minting the shadow first would clone the PRE-EDIT
+      // value, so an author who ticks Beta and changes their name in one save would be
+      // reviewed with the OLD framing: precisely the case the clone exists to prevent.
+      // Writing beta first is also safe on failure — it is a trivial in-place edit, so if
+      // the shadow creation then fails the author simply has an applied beta change and no
+      // staged revision, which is a state they can retry out of.
       const betaData = patchHasAnyField(betaPatch)
         ? buildListingPatchData(betaPatch, patchOpts)
         : null;
-      // 🔴 THE INTERACTIVE (callback) FORM, deliberately, not `$transaction([...])`. Both
-      // are real Prisma APIs and the array form reads more naturally for two independent
-      // updates — but every other transaction in this file is interactive, and the whole
-      // existing test suite mocks `$transaction` as "call the callback with the client".
-      // Introducing the array form here makes those mocks hand an ARRAY to a parameter typed
-      // as a function, which fails as `TypeError: cb is not a function` in tests that have
-      // nothing to do with this feature. Matching the file's one shape keeps that seam
-      // whole.
-      await dbWrite.$transaction(async (tx) => {
-        await tx.appListing.update({ where: { id: shadowId }, data: shadowData });
-        if (betaData) await tx.appListing.update({ where: { id: listingId }, data: betaData });
-      });
+      if (betaData) {
+        await dbWrite.appListing.update({ where: { id: listingId }, data: betaData });
+      }
+      const { shadowId } = await beginListingRevision({ listingId, userId });
+      const shadowData = buildListingPatchData(restPatch, patchOpts);
+      await dbWrite.appListing.update({ where: { id: shadowId }, data: shadowData });
       return { listingId, status: listing.status, requiresReview: true, shadowId };
     }
     default:
@@ -1957,7 +1994,13 @@ async function loadListingEditView(
    * required because the non-shadow callers genuinely have no separate parent, and an
    * absent value correctly falls back to `listingId`, which IS the parent in that case.
    */
-  parentIdForBeta?: string
+  parentIdForBeta?: string,
+  /**
+   * Skip the guarded beta read entirely. For a caller that destructures only `assets` — the
+   * beta columns then cost a round trip nobody reads. `false` (the default) keeps every
+   * existing caller's behaviour.
+   */
+  skipBeta = false
 ): Promise<{
   scalars: ListingEditScalars;
   assets: GetMyListingForEditResult['assets'];
@@ -1977,7 +2020,7 @@ async function loadListingEditView(
   // what their listing says right now, and their next save would diff against the wrong
   // baseline and either re-send a value they never touched or drop one they did.
   const betaSourceId = parentIdForBeta ?? listingId;
-  const beta = await readListingBeta(betaSourceId, db);
+  const beta = skipBeta ? BETA_NOT_SET : await readListingBeta(betaSourceId, db);
   const row = (await db.appListing.findUnique({
     where: { id: listingId },
     select: {
@@ -2431,9 +2474,13 @@ export async function getMyListingForApp(opts: {
   // (`retry: false`), discarding the editor mid-upload. Every non-shadow target
   // (draft/pending edited in place, or an approved parent with no shadow yet) is old
   // and stays on the replica.
+  // `skipBeta` — this caller reads ONLY `assets`, so the guarded beta read would be a round
+  // trip whose result is discarded.
   const { assets } = await loadListingEditView(
     effectiveId,
-    effectiveId !== listing.id ? dbWrite : dbRead
+    effectiveId !== listing.id ? dbWrite : dbRead,
+    undefined,
+    true
   );
 
   // 🔴 Only a `removed` listing needs this — it is the ONE status whose editability is not
@@ -2616,6 +2663,45 @@ export async function updateRevisionDraft(opts: {
   const shadowData = buildListingPatchData(restPatch, patchOpts);
   const betaData = patchHasAnyField(betaPatch) ? buildListingPatchData(betaPatch, patchOpts) : null;
   const parentId = shadow.revisionOfId;
+  // 🔴 THE PARENT'S OWN EDITABILITY IS RE-ASSERTED BEFORE WRITING TO IT, and this gate exists
+  // because THIS FUNCTION DID NOT PREVIOUSLY WRITE TO THE PARENT AT ALL. Every other write
+  // here targets the shadow, whose `status === 'draft'` check above is the whole gate it
+  // needs. Routing the beta half to the live parent reaches a row that `updateListing` guards
+  // much more strictly: its `removed` branch refuses EVERY edit on a listing a MODERATOR took
+  // down (`FORBIDDEN`), and only lets an OWNER-unpublished one through.
+  //
+  // Without this check the moderator gate is bypassable: a delist sets `status='removed'`
+  // without deleting rows, so a shadow opened before the takedown survives it — and its owner
+  // could then set `isBeta` / `betaMessage` on the delisted parent through a door
+  // `updateListing` would have closed. Nothing renders while the listing is removed, so the
+  // damage only surfaces if a moderator later relists it and finds copy they never approved;
+  // that is a small blast radius and still the wrong side of a moderation gate to be on.
+  //
+  // Reads the PRIMARY (`dbWrite`) for the same reason `updateListing`'s branch does — the
+  // takedown may be seconds old, and a replica that has not caught up would wave it through.
+  //
+  // 🔴 SCOPED TO `betaData`, AND THE FIRST VERSION OF THIS GATE WAS NOT — it read the parent
+  // and threw `NOT_FOUND` on EVERY call. That is wrong twice over: it puts a round trip on
+  // every shadow scalar edit, and it invents a new failure mode for edits that never touch
+  // the parent at all (a revision draft whose parent row is momentarily unreadable used to
+  // save fine and would have started 404ing). The gate exists BECAUSE of the parent write,
+  // so no parent write ⇒ no gate and no read. Caught by two pre-existing source-repo tests
+  // that patch a shadow without naming beta.
+  if (betaData) {
+    const parent = await dbWrite.appListing.findUnique({
+      where: { id: parentId },
+      select: { status: true },
+    });
+    if (!parent) {
+      throw new OffsiteRequestError('NOT_FOUND', `parent listing ${parentId} not found`);
+    }
+    if (parent.status === 'removed' && !(await isOwnerUnpublishedListing(dbWrite, parentId))) {
+      throw new OffsiteRequestError(
+        'FORBIDDEN',
+        'this listing has been removed by a moderator and can no longer be edited'
+      );
+    }
+  }
   // Interactive form for the same reason as `updateListing`'s material branch — see there.
   await dbWrite.$transaction(async (tx) => {
     await tx.appListing.update({ where: { id: shadowId }, data: shadowData });
