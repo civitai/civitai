@@ -73,7 +73,14 @@ export const startReadyRemixSubmissionClocksJob = createJob(
       'remix-gallery-readiness',
       jobContext,
       () => startReadyRemixSubmissionClocks({ limit: BATCH }),
-      (result) => result.considered
+      // Drains on rows that LEFT the set, not on rows that were selected — the
+      // same rule `sweepDeletedRemixGallerySubmissionsJob` below states. A row
+      // leaves only by having its clock started or its escrow settled; a failed
+      // settle is caught and stepped over, and a review-blocked row is marked
+      // and stepped over. Draining on `considered` re-reads the identical
+      // lowest-100 ids on all ten passes whenever settlement is down, burning
+      // the cap without ever reaching row 101.
+      (result) => result.started + result.refunded
     );
 
     return {

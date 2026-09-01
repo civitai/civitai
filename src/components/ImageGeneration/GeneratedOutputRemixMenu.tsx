@@ -27,10 +27,36 @@ import { trpc } from '~/utils/trpc';
  */
 export function GeneratedOutputRemixMenu({ output }: { output: BlobData }) {
   const features = useFeatureFlags();
+
+  // 🔴 Both flags, and the gate is in a WRAPPER so the hooks below it never
+  // mount. `remixGallery` is the base and gates `submitToRemixGallery` itself —
+  // without it "Post this remix to submit it" creates a real post and lands the
+  // poster in an editor where the submit card renders nothing, with nothing
+  // having errored. Same pairing `useRemixSources` makes.
+  //
+  // The wrapper matters on its own: `GeneratedOutput` renders this once per
+  // output and the generator feed is an unvirtualised infinite list, so putting
+  // `useRouter` and a mutation observer above the gate pays a router
+  // subscription per accumulated output for a menu that is null for almost all
+  // of them.
+  //
+  // Audio has no post system and no gallery to go to; the Post button filters it
+  // out for the same reason.
+  if (!features.remixGalleryGenerator || !features.remixGallery) return null;
+  if (!output.remixOfId || output.mediaType === 'audio') return null;
+
+  return <GeneratedOutputRemixMenuContent output={output} remixOfId={output.remixOfId} />;
+}
+
+function GeneratedOutputRemixMenuContent({
+  output,
+  remixOfId,
+}: {
+  output: BlobData;
+  remixOfId: number;
+}) {
   const router = useRouter();
   const createPost = trpc.post.create.useMutation();
-
-  const remixOfId = output.remixOfId;
 
   /**
    * A generated output is not an `Image` row yet — it is an orchestrator blob —
@@ -62,10 +88,6 @@ export function GeneratedOutputRemixMenu({ output }: { output: BlobData }) {
       });
     }
   };
-
-  // Audio has no post system and no gallery to go to; the Post button filters it
-  // out for the same reason.
-  if (!features.remixGalleryGenerator || !remixOfId || output.mediaType === 'audio') return null;
 
   return (
     /* Same z-index as the workflow menu three lines up in this footer. They

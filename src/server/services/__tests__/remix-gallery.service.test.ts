@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
 import {
@@ -654,9 +655,75 @@ describe('submission refusals', () => {
     }
   );
 
+  /**
+   * 🔴 Named for the decision. `Blocked` is a terminal verdict, so it is refused
+   * BEFORE any money moves — not deferred, and not merely excluded from the
+   * deferral.
+   *
+   * Both cases are here because they fail differently and only one of them is
+   * loud. An unpublished Blocked image short-circuits on `!publishedAt` and is
+   * charged, then refunded minutes later. A PUBLISHED one is charged and gets no
+   * `awaitingReadiness` marker at all, so the readiness pass never selects it and
+   * `queueImageIsListable` hides it from the owner: it sits invisible for 48h and
+   * expires silently with no notification. Delete the refusal and this test says
+   * which of the two you broke.
+   */
+  it.each([
+    ['published', new Date('2026-01-01')],
+    ['unpublished', null],
+  ] as const)(
+    'refuses a Blocked %s image rather than charging for it',
+    async (_label, publishedAt) => {
+      primeQueries({ submission: { ...goodSubmission, ingestion: 'Blocked', publishedAt } });
+
+      await expect(submit()).rejects.toThrow(/cannot be submitted/i);
+      expect(placementCreate).not.toHaveBeenCalled();
+      expect(createFreePlacement).not.toHaveBeenCalled();
+      expect(holdPlacementEscrow).not.toHaveBeenCalled();
+    }
+  );
+
+  /**
+   * The negative half of the `awaitingReadiness` test above. Without it, marking
+   * every submission awaiting passes both — and every ordinary paid submission
+   * becomes invisible to its owner until the five-minute job restamps its clock.
+   */
+  it('does not mark an ordinary published, scanned submission as awaiting readiness', async () => {
+    await submit();
+
+    const [args] = placementCreate.mock.calls.at(-1) as [{ data: MixedObject }];
+    expect(args.data.data).not.toHaveProperty('awaitingReadiness');
+  });
+
   it('refuses a second submission of the same image to the same gallery', async () => {
     placementFindFirst.mockResolvedValue({ id: 1 });
     await expect(submit()).rejects.toThrow(/already in this gallery/i);
+  });
+
+  /**
+   * The read-side guard above is a `findFirst` five statements before the insert,
+   * with no transaction between them, so two concurrent submits both pass it. The
+   * unique partial index `Placement_surface_target_image_live_key` is what
+   * actually enforces the rule; this pins that a lost race reads as the refusal
+   * rather than as a 500, which is the only part of it a test can see.
+   */
+  it('turns a unique-violation on insert into the duplicate refusal, not a 500', async () => {
+    placementCreate.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      })
+    );
+
+    await expect(submit()).rejects.toThrow(/already in this gallery/i);
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
+  });
+
+  it('does not swallow an unrelated insert failure as a duplicate', async () => {
+    placementCreate.mockRejectedValueOnce(new Error('connection terminated'));
+
+    await expect(submit()).rejects.toThrow(/connection terminated/i);
+    expect(holdPlacementEscrow).not.toHaveBeenCalled();
   });
 
   it('looks for the duplicate among live entries as well as pending ones', async () => {
@@ -670,6 +737,23 @@ describe('submission refusals', () => {
     expect(where.status.in).toEqual(expect.arrayContaining(['pending', 'approved']));
     expect(where.data).toEqual({ path: ['imageId'], equals: REMIX_IMAGE });
     expect(where.targetId).toBe(HOST_IMAGE);
+  });
+
+  /**
+   * 🔴 `remixOfId` is carried through from CLIENT-AUTHORED `meta.extra` unchanged
+   * — `sanitizeProvenance` strips the verified fields beside it and leaves this
+   * one alone. A bare `::int` on it raises `invalid input syntax for type integer`
+   * for any non-numeric value, which 500s the mutation before a single refusal
+   * runs. Asserted on the statement because a mock answers regardless of SQL, so
+   * nothing else here can see the cast at all.
+   */
+  it('guards the remixOfId cast, so client-authored junk cannot 500 the submit', async () => {
+    await submit();
+
+    const sql = flatten(queryRaw.mock.calls[0]);
+    expect(sql, 'the remixOfId cast must be guarded by a numeric test').toMatch(
+      /remixOfId'\s*~\s*'\^\[0-9\]\+\$'/
+    );
   });
 
   it('refuses past the pending cap for one owner', async () => {
@@ -1619,6 +1703,126 @@ describe('startReadyRemixSubmissionClocks', () => {
 
     await expect(startReadyRemixSubmissionClocks({})).resolves.toMatchObject({ refunded: 1 });
     expect(lastSettleArgs()).toMatchObject({ action: 'expire' });
+  });
+
+  /**
+   * The same wedge as the refund path, one branch over. `markUndeliverable` is a
+   * write and can fail on transport; uncaught, it aborts the batch, and selection
+   * is `ORDER BY pl.id ASC`, so the same row is re-read first every tick forever.
+   */
+  it('keeps going when marking a review-blocked row undeliverable fails', async () => {
+    const OTHER_PLACEMENT = 4244;
+    respondReadiness({
+      rows: [
+        actionable({ id: PLACEMENT_ID, needsReview: 'tag' }),
+        actionable({ id: OTHER_PLACEMENT }),
+      ],
+    });
+    // `Once`, because nothing in this file's `beforeEach` restores
+    // `placementUpdate` — a persistent rejection would leak into every test after
+    // this one and fail them for a reason that has nothing to do with them.
+    placementUpdate.mockRejectedValueOnce(new Error('connection terminated'));
+
+    const result = await startReadyRemixSubmissionClocks({});
+
+    expect(result, 'the row behind a failed marker must still start').toMatchObject({
+      started: 1,
+    });
+  });
+
+  /**
+   * The in-memory listability guard, which every other fixture satisfies. Its own
+   * comment says it exists because a unit test cannot execute the WHERE clause —
+   * so without a `listable: false` row carrying a real `imageId`, the guard it
+   * describes has nothing observing it and deleting the line stays green.
+   */
+  it('leaves a row alone when the image is still not listable', async () => {
+    respondReadiness({ rows: [actionable({ listable: false })] });
+
+    const result = await startReadyRemixSubmissionClocks({});
+
+    expect(result, 'an unlistable image must neither start nor refund').toMatchObject({
+      started: 0,
+      refunded: 0,
+    });
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(placementUpdateMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 The quiet arm of a two-armed control. Only a MISSING host is terminal;
+   * anything else — a Postgres blip inside either call — must leave the row
+   * pending so the next tick retries. Without this test, reverting to
+   * refund-on-any-error turns a transient fault into an irreversible one and no
+   * assertion moves, because the loud arm above still passes.
+   */
+  it('does not refund a healthy submission when the space lookup fails transiently', async () => {
+    respondReadiness({ rows: [actionable()] });
+    resolvePlacementSpaceFor.mockRejectedValue(new Error('connection terminated'));
+
+    const result = await startReadyRemixSubmissionClocks({});
+
+    expect(result, 'a transient fault must not spend the terminal outcome').toMatchObject({
+      started: 0,
+      refunded: 0,
+    });
+    expect(settlePlacement).not.toHaveBeenCalled();
+    expect(placementUpdate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `settlePlacement` reports `settled: false` when it loses the claim race to
+   * the expiry sweep or the deleted-image sweep. Counting the call rather than
+   * the result reports refunds nobody made — and that number now also decides
+   * whether `drain` keeps going, so an inflated count re-reads the same batch.
+   */
+  it('does not count a refund it lost the race to settle', async () => {
+    respondReadiness({ rows: [actionable({ doomed: true })] });
+    settlePlacement.mockResolvedValue({ settled: false });
+
+    await expect(startReadyRemixSubmissionClocks({})).resolves.toMatchObject({ refunded: 0 });
+  });
+
+  /**
+   * 🔴 The restamp must name THIS placement and must only touch a row that is
+   * still pending. Without the id it restamps a stranger's placement; without the
+   * status it can resurrect a deadline on a row the expiry sweep already refunded,
+   * because expiry does not clear the awaiting marker.
+   */
+  it('restamps only this placement, and only while it is still pending', async () => {
+    respondReadiness({ rows: [actionable()] });
+
+    await startReadyRemixSubmissionClocks({});
+
+    const [args] = placementUpdateMany.mock.calls.at(-1) as [{ where: MixedObject }];
+    expect(args.where).toMatchObject({
+      id: PLACEMENT_ID,
+      status: 'pending',
+      data: { path: ['awaitingReadiness'], equals: true },
+    });
+  });
+
+  /**
+   * 🔴 Batch isolation, which three comments in the service claim and no test
+   * observed — every other fixture here has exactly one row. Selection is
+   * `ORDER BY pl.id ASC`, so a row that aborts the loop is re-read FIRST on every
+   * tick and nothing behind it is ever reached again.
+   */
+  it('keeps going after a row that fails, so one bad row cannot wedge the batch', async () => {
+    const OTHER_PLACEMENT = 4243;
+    respondReadiness({
+      rows: [actionable({ id: PLACEMENT_ID, doomed: true }), actionable({ id: OTHER_PLACEMENT })],
+    });
+    settlePlacement.mockRejectedValue(new Error('buzz unavailable'));
+
+    const result = await startReadyRemixSubmissionClocks({});
+
+    expect(result, 'the healthy row behind the failing one must still start').toMatchObject({
+      started: 1,
+      refunded: 0,
+    });
+    const [args] = placementUpdateMany.mock.calls.at(-1) as [{ where: MixedObject }];
+    expect(args.where).toMatchObject({ id: OTHER_PLACEMENT });
   });
 
   it('refunds when the finished rating is above what the gallery accepts', async () => {

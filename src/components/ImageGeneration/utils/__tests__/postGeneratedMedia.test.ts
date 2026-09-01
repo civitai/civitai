@@ -99,6 +99,11 @@ describe('postGeneratedMedia', () => {
     const [target, , options] = router.replace.mock.calls[0];
     expect(target.query.postId).toBe('99');
     expect(target.query.src).toBe(GENERATOR_TRANSMITTER_KEY);
+    // 🔴 The mailbox, not just the query pointing at it. Moving `setUrls` below
+    // the already-editing fork leaves this navigation pointing `src` at an EMPTY
+    // slot: the poster is dropped into their editor with the output gone, and
+    // every other assertion here still passes.
+    expect(transmitted()[GENERATOR_TRANSMITTER_KEY]).toEqual(media);
     expect(options, 'shallow, so the editor is not remounted under the user').toEqual({
       shallow: true,
     });

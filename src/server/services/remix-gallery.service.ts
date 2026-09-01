@@ -112,7 +112,15 @@ async function loadSubmissionImage(imageId: number): Promise<SubmissionImage> {
     SELECT i.id, i."userId", i."nsfwLevel", i.minor, i.poi, i."tosViolation",
            i.ingestion::text AS ingestion, i."needsReview",
            p."publishedAt",
-           (i.meta -> 'extra' ->> 'remixOfId')::int AS "remixOfId",
+           -- Guarded cast, for the same reason getRemixSourcesForImage guards
+           -- its own: sanitizeProvenance carries remixOfId through from
+           -- client-authored meta unchanged, so a non-numeric value raises
+           -- invalid input syntax for type integer and 500s the mutation before
+           -- any refusal runs. Junk must read as no old-standard source.
+           CASE
+             WHEN i.meta -> 'extra' ->> 'remixOfId' ~ '^[0-9]+$'
+             THEN (i.meta -> 'extra' ->> 'remixOfId')::int
+           END AS "remixOfId",
            ${sourceImageIdsSql()} AS "sourceImageIds"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
@@ -241,13 +249,18 @@ export async function createRemixGallerySubmission({
   // their own are deferred. Do not extend this to the flags underneath it: see
   // `no-unverified-provenance-write` for the adjacent rule about trusting
   // unfinished state.
-  // `Blocked` is excluded deliberately: it is `!== 'Scanned'` like `Pending` is,
-  // but it is a terminal VERDICT rather than work in progress, so folding it in
-  // here would take someone's Buzz for a submission that can never be delivered
-  // and refund it minutes later with an apology.
-  const pendingReadiness =
-    !submission.publishedAt ||
-    (submission.ingestion !== 'Scanned' && submission.ingestion !== 'Blocked');
+  // 🔴 Refused HERE, above `pendingReadiness`, and not by being excluded from it.
+  // Excluding `Blocked` from the deferral only decides which of two bad outcomes
+  // a charged submission gets: a draft short-circuits on `!publishedAt` and is
+  // refunded minutes later, and a published one gets no `awaitingReadiness`
+  // marker at all — so the readiness pass never sees it, `queueImageIsListable`
+  // hides it from the owner, and it expires 48h later with no notification.
+  // `Blocked` is a terminal verdict; the only outcome that is not a charge for
+  // something undeliverable is refusing before any money moves.
+  if (submission.ingestion === 'Blocked')
+    throw throwBadRequestError('remix gallery: that image cannot be submitted');
+
+  const pendingReadiness = !submission.publishedAt || submission.ingestion !== 'Scanned';
 
   // Not creator preferences, so they are refused under either content rule.
   if (submission.tosViolation || submission.minor || submission.poi)
@@ -370,22 +383,34 @@ export async function createRemixGallerySubmission({
       'remix gallery: you already have the maximum submissions waiting with this creator'
     );
 
-  const placement = await dbWrite.placement.create({
-    data: {
-      surface: SURFACE,
-      targetType: TARGET_TYPE,
-      targetId: hostImageId,
-      ownerId: space.ownerId,
-      placerId,
-      // No seller: nobody sold the submitted image, so the surface's seller
-      // share is zero and the owner takes the remainder after the platform cut.
-      sellerId: null,
-      amount: space.price,
-      status: 'pending',
-      data,
-    },
-    select: { id: true },
-  });
+  // `assertNotAlreadySubmitted` above is a read, and the insert is five
+  // statements later with no transaction and no lock between them — so two
+  // concurrent submits of the same image both pass it. The unique partial index
+  // `Placement_surface_target_image_live_key` is what actually enforces the rule;
+  // this catch only restores the message the read-side guard would have given,
+  // so a lost race reads as the refusal it is rather than a 500.
+  const placement = await dbWrite.placement
+    .create({
+      data: {
+        surface: SURFACE,
+        targetType: TARGET_TYPE,
+        targetId: hostImageId,
+        ownerId: space.ownerId,
+        placerId,
+        // No seller: nobody sold the submitted image, so the surface's seller
+        // share is zero and the owner takes the remainder after the platform cut.
+        sellerId: null,
+        amount: space.price,
+        status: 'pending',
+        data,
+      },
+      select: { id: true },
+    })
+    .catch((error) => {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
+        throw throwBadRequestError('remix gallery: that image is already in this gallery');
+      throw error;
+    });
 
   try {
     await holdPlacementEscrow({
@@ -2018,8 +2043,13 @@ const isMissingHostError = (error: unknown) =>
 async function refundUnreadySubmission(placementId: number, data: RemixGalleryPlacementData) {
   try {
     await markUndeliverable(placementId, data);
-    await settlePlacement({ placementId, action: 'expire' });
-    return true;
+    // `settled: false` means this lost the claim race to the expiry sweep or the
+    // deleted-image sweep, which all claim on `WHERE status = 'pending'`. Both
+    // pre-existing loops count `result.settled` rather than the call returning;
+    // counting the call would report refunds nobody made, which is the number an
+    // operator reads to decide whether this job is working.
+    const result = await settlePlacement({ placementId, action: 'expire' });
+    return result.settled;
   } catch (error) {
     await logToAxiom({
       name: 'remix-gallery',
@@ -2180,7 +2210,20 @@ export async function startReadyRemixSubmissionClocks({ limit = 200 }: { limit?:
     // Measured 2026-08-27: needsReview p90 age is 146h against a 48h window, so
     // this is the common outcome for these rows rather than a corner.
     if (row.needsReview) {
-      if (!row.data.undeliverable) await markUndeliverable(row.id, row.data);
+      // Caught for the reason `refundUnreadySubmission`'s docblock gives: an
+      // uncaught write here aborts the batch, and the row is re-read first on
+      // every tick because selection is `ORDER BY pl.id ASC`, so one transient
+      // failure wedges everything behind it permanently.
+      if (!row.data.undeliverable)
+        await markUndeliverable(row.id, row.data).catch((error) =>
+          logToAxiom({
+            name: 'remix-gallery',
+            type: 'error',
+            message: 'marking a review-blocked submission undeliverable failed',
+            placementId: row.id,
+            error: (error as Error).message,
+          }).catch(() => null)
+        );
       continue;
     }
 

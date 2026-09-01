@@ -30,7 +30,11 @@ export function RemixGalleryMenuItems({
 }) {
   const features = useFeatureFlags();
 
-  if (!features.remixGalleryMenu) return null;
+  // Both flags, the same pairing `useRemixSources` makes. `SubmitRemixMenuItem`
+  // gets the base flag for free through that hook; `ViewOriginalMenuItem` does
+  // not query through it, so without this the surface flag alone decides whether
+  // a provenance link renders.
+  if (!features.remixGalleryMenu || !features.remixGallery) return null;
 
   return (
     <>
@@ -102,10 +106,15 @@ function ViewOriginalMenuItem({ imageId }: { imageId: number }) {
     { id: sourceId as number },
     { enabled: !!sourceId }
   );
+  // 🔴 Deliberately WITHOUT `allowLowerLevels`, matching `ImageRemixOfDetails`
+  // rather than a feed. That option swaps the strict `Flags.intersects` test for
+  // `nsfwLevel > maxBrowsingLevel`, so a level the viewer specifically switched
+  // OFF still renders as long as something above it is on. Fine for content that
+  // was asked for; wrong for an image pulled in sideways by somebody else's
+  // provenance, which is exactly what this link is.
   const { items } = useApplyHiddenPreferences({
     type: 'images',
     data: source ? [source] : [],
-    allowLowerLevels: true,
   });
 
   if (!sourceId || !items.length) return null;
