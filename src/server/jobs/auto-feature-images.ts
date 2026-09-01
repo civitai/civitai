@@ -22,5 +22,26 @@ export const autoFeatureImages = createJob('auto-feature-images', '20 * * * *', 
   // push the next attempt an interval away.
   if ('picked' in result) await setLastRun();
 
+  // What the caps did with this run. `job-summary` is the existing vocabulary for this
+  // (`image-ingestion.ts`), and it is emitted on EVERY run rather than only a short one: a healthy
+  // run and a dead job must not produce the same evidence.
+  //
+  // ⚠️ It cannot detect the job not running at all — the 79-hour silence in August emitted nothing
+  // from anywhere, and nothing logged from inside a run ever will. That needs a separate health
+  // check against the collection's own state; filed as 868kz3ef5, with challenge-health-check.ts
+  // as the precedent.
+  if ('picked' in result)
+    logToAxiom({
+      type: 'job-summary',
+      name: 'auto-feature-images',
+      target: result.target,
+      picked: result.picked,
+      scored: result.scored,
+      candidates: result.candidates,
+      blockedByRunCap: result.blocked.creatorRun,
+      blockedByCreatorCap: result.blocked.creatorWindow,
+      blockedByCollectionCap: result.blocked.collectionWindow,
+    }).catch(() => null);
+
   return result;
 });
