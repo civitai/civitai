@@ -503,6 +503,81 @@ export const placementNotifications = createNotificationProcessor({
   },
 
   /**
+   * The one refund that needs explaining: a submission paid for from the post
+   * editor whose image never became submittable.
+   *
+   * Deliberately NOT a general expiry notification. `remix-gallery-resolved`
+   * excludes `expired` because "nobody decided anything and the refund is full,
+   * so any message here would describe a decision that was never made" — and
+   * that reasoning still holds for a creator who simply never answered. This
+   * covers the other cause, where we took the money and then could not deliver:
+   * the image stayed a draft, was blocked, or came back rated above what the
+   * creator accepts.
+   *
+   * The two are told apart by `awaitingReadiness`, which the readiness pass
+   * CLEARS when it starts the clock. So a row still carrying it at expiry never
+   * reached the owner's queue, and one without it did — a distinction no status
+   * column records, which is why this reads the surface's own payload.
+   */
+  'remix-gallery-undelivered': {
+    displayName: 'A remix submission could not be delivered',
+    category: NotificationCategory.Creator,
+    // The money sentence comes from `amount`, not from `free` — a free row moved
+    // no Buzz, and telling someone their Buzz came back when none was spent is
+    // false in a way they can check. Same rule the sticker type follows, and the
+    // reason one type can serve both.
+    prepareMessage: ({ details }) => ({
+      message:
+        Number(details.amount ?? 0) > 0
+          ? `Your remix couldn't be submitted to ${details.ownerUsername}'s gallery, so your Buzz has been returned.`
+          : `Your remix couldn't be submitted to ${details.ownerUsername}'s gallery.`,
+      url: `/images/${details.imageId}`,
+    }),
+    prepareQuery: async ({ lastSent }) => `
+      WITH data AS (
+        SELECT
+          p."placerId" "userId",
+          p.id "placementId",
+          jsonb_build_object(
+            'placementId', p.id,
+            'imageId', p."targetId",
+            -- The party to name on the avatar. This notification is addressed to
+            -- the PLACER, so the other party is the owner; without the id the row
+            -- falls back to a generic bell.
+            'ownerId', p."ownerId",
+            'ownerUsername', u.username,
+            -- Decides the money sentence above. A free row is 0 and must not be
+            -- told about Buzz that never moved.
+            'amount', p.amount
+          ) as "details"
+        FROM "Placement" p
+        JOIN "User" u ON u.id = p."ownerId"
+        WHERE p.surface = 'remixGallery'
+          AND p."targetType" = 'image'
+          AND p.status = 'expired'
+          -- Refused for something about the IMAGE, not by a deadline passing.
+          -- A draft the submitter simply never published also ends as expired
+          -- with the same refund, and telling THEM we could not deliver would be
+          -- the false-blame message the resolved type exists to avoid. Only the
+          -- readiness pass sets this.
+          AND p.data ->> 'undeliverable' = 'true'
+          -- Keyed off when it was settled, not when it was created: a submission
+          -- made before the last run and expired after it would be missed by a
+          -- createdAt window.
+          AND p."resolvedAt" IS NOT NULL
+          AND p."resolvedAt" > '${lastSent}'
+      )
+      SELECT
+        CONCAT('remix-gallery-undelivered:',"placementId") "key",
+        "userId",
+        'remix-gallery-undelivered' "type",
+        details
+      FROM data
+      WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = data."userId" AND type = 'remix-gallery-undelivered')
+    `,
+  },
+
+  /**
    * The sticker placer's side, and the gap Ellie reported: a placement could be
    * accepted and the only signal was the placer's Buzz balance moving.
    *
