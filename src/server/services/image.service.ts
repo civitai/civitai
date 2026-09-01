@@ -1665,6 +1665,12 @@ export const getAllImages = async (
       new Error('getAllImages cannot serve a hub; hub queries must use the index path')
     );
 
+  // Ahead of every early empty return below: the point of throwing rather than falling back is
+  // that the misuse is legible, and an empty page from one of those branches hides it.
+  if (input.sort === ImageSort.RecentlyAdded && !input.collectionId) {
+    throw throwBadRequestError('Recently Added sort requires a collectionId');
+  }
+
   const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
     id: input.user?.id,
     username: input.user?.username,
@@ -2103,13 +2109,14 @@ export const getAllImages = async (
     WITH.push(
       Prisma.sql`
         ct AS (
-          SELECT "imageId", note, status, "addedById", "sortKey"
+          SELECT "imageId", note, status, "addedById", "collectionItemId", "sortKey"
           FROM (
             SELECT
               ci."imageId",
               ci.note,
               ci.status,
               ci."addedById",
+              ci.id as "collectionItemId",
               abs(mod(hashtext(concat(ci.id::text, '${Prisma.raw(
                 seedStr
               )}')), 1000000000)) as "sortKey"
@@ -2160,6 +2167,8 @@ export const getAllImages = async (
     if (sort === ImageSort.Random) {
       isPersonalized = true; // random ordering should not be pinned by a cache
       orderBy = 'ct."sortKey" DESC, i."id" DESC';
+    } else if (sort === ImageSort.RecentlyAdded) {
+      orderBy = 'ct."collectionItemId" DESC';
     }
     // TODO this causes the app to spike
     // else if (sort === ImageSort.Oldest) {

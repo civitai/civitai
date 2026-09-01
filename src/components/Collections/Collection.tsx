@@ -47,6 +47,17 @@ import {
   useCollection,
   useCollectionEntryCount,
 } from '~/components/Collections/collection.utils';
+import {
+  articleCollectionSortOptions,
+  contestArticleSorts,
+  contestModelSorts,
+  contestPostSorts,
+  imageCollectionSortOptions,
+  modelCollectionSortOptions,
+  postCollectionSortOptions,
+  resolveImageCollectionSort,
+  toSortMenuOptions,
+} from '~/components/Collections/collection-sort';
 import { CollectionInvitePrompt } from '~/components/Collections/CollectionCollaborators/CollectionInvitePrompt';
 import { usePendingInviteFor } from '~/components/Collections/CollectionCollaborators/collectionInvite.util';
 import { CollectionCollaboratorsSummary } from '~/components/Collections/CollectionCollaboratorsSummary';
@@ -115,7 +126,7 @@ const ModelCollection = ({
   const { set, ...query } = useModelQueryParams();
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
-    ? getRandom(Object.values(ModelSort))
+    ? getRandom(contestModelSorts)
     : query.sort ?? ModelSort.Newest;
   const currentUser = useCurrentUser();
 
@@ -180,6 +191,7 @@ const ModelCollection = ({
                   type="models"
                   value={sort}
                   onChange={(x) => set({ sort: x as ModelSort })}
+                  options={toSortMenuOptions(modelCollectionSortOptions)}
                 />
                 <ModelFiltersDropdown
                   filterMode="query"
@@ -204,7 +216,6 @@ const ModelCollection = ({
   );
 };
 
-const imageCollectionSortOptions = [ImageSort.Newest, ImageSort.Oldest];
 const ImageCollection = ({
   collection,
   permissions,
@@ -214,9 +225,10 @@ const ImageCollection = ({
 }) => {
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const { replace, query } = useImageQueryParams();
-  const defaultSort =
-    query.sort && imageCollectionSortOptions.includes(query.sort) ? query.sort : ImageSort.Newest;
-  const sort = isContestCollection ? ImageSort.Random : defaultSort;
+  const sort = resolveImageCollectionSort({
+    querySort: query.sort,
+    isContest: isContestCollection,
+  });
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImage = useUpdateCollectionCoverImage();
   const currentUser = useCurrentUser();
@@ -305,7 +317,7 @@ const ImageCollection = ({
                   type="images"
                   value={sort}
                   onChange={(x) => replace({ sort: x as ImageSort })}
-                  options={imageCollectionSortOptions.map((x) => ({ label: x, value: x }))}
+                  options={toSortMenuOptions(imageCollectionSortOptions)}
                   ignoreNsfwLevel
                 />
                 <MediaFiltersDropdown
@@ -366,16 +378,13 @@ const ImageCollection = ({
     </ImageContextMenuProvider>
   );
 };
-// Contest rotation randomises the sort on each render to spread entry visibility. Oldest is
-// held out of that pool deliberately: it is the only ascending sort, so a roll landing on it
-// pins the earliest submissions to the top of every contest feed for that render.
-const contestPostSorts = Object.values(PostSort).filter((sort) => sort !== PostSort.Oldest);
-
 const PostCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { replace, query } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
-  const sort = isContestCollection ? getRandom(contestPostSorts) : query.sort ?? PostSort.Newest;
+  const sort = isContestCollection
+    ? getRandom(contestPostSorts)
+    : query.sort ?? PostSort.Newest;
 
   const filters = isContestCollection
     ? {
@@ -409,6 +418,7 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
                 type="posts"
                 value={sort}
                 onChange={(sort) => replace({ sort: sort as PostSort })}
+                options={toSortMenuOptions(postCollectionSortOptions)}
               />
               <PostFiltersDropdown query={filters} onChange={(value) => replace(value)} />
             </Group>
@@ -427,7 +437,7 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
   const period = query.period ?? MetricTimeframe.AllTime;
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const sort = isContestCollection
-    ? getRandom(Object.values(ArticleSort))
+    ? getRandom(contestArticleSorts)
     : query.sort ?? ArticleSort.Newest;
 
   // For contest collections, we need to keep the filters clean from outside intervention.
@@ -460,6 +470,7 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
                 type="articles"
                 value={sort}
                 onChange={(x) => replace({ sort: x as ArticleSort })}
+                options={toSortMenuOptions(articleCollectionSortOptions)}
               />
               <ArticleFiltersDropdown query={filters} onChange={(value) => replace(value)} />
             </Group>

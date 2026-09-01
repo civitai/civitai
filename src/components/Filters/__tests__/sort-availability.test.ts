@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isSortAvailable, resolveFeedSort } from '~/components/Filters/sort-availability';
-import { ImageSort, ModelSort } from '~/server/common/enums';
+import { ImageSort, ImageSortHidden, ModelSort } from '~/server/common/enums';
 
 // The three availabilities the rule distinguishes. `.green` is the domain that
 // withholds Newest and Oldest outright; SFW-by-choice withholds Newest on the
@@ -49,7 +49,8 @@ describe('resolveFeedSort', () => {
   it('never returns a sort the menu would hide', () => {
     // The property the whole thing exists for, over every images sort the menu
     // can offer and all three availabilities.
-    const sorts = Object.values(ImageSort).filter((s) => s !== ImageSort.Random);
+    const hidden = Object.values(ImageSortHidden);
+    const sorts = Object.values(ImageSort).filter((s) => !hidden.includes(s));
     expect(sorts).toHaveLength(5);
 
     for (const availability of [green, sfwByChoice, moderator]) {

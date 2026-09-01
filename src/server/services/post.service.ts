@@ -4,7 +4,7 @@ import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { env } from '~/env/server';
-import { BlockedReason, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getDbWithoutLag,
@@ -40,6 +40,7 @@ import {
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
   getCollectionById,
+  getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
@@ -301,7 +302,8 @@ export const getPostsInfinite = async ({
 
   const canSeeUnpublished = canSeePostDrafts({ isOwnerRequest, isModerator, targetUser });
 
-  const joins: string[] = [];
+  let collectionJoined = false;
+  let collectionJoin = Prisma.empty;
   if (!canSeeUnpublished) {
     if (scheduled && userId) {
       // Surface own scheduled posts alongside the public published feed. Mirrors
@@ -366,6 +368,10 @@ export const getPostsInfinite = async ({
     }
   }
 
+  if (sort === PostSort.RecentlyAdded && !collectionId) {
+    throw throwBadRequestError('Recently Added sort requires a collectionId');
+  }
+
   if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);
   if (collectionId) {
     cacheTime = CacheTTL.day;
@@ -383,12 +389,27 @@ export const getPostsInfinite = async ({
       ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${user?.id})`
       : '';
 
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "CollectionItem" ci
-      WHERE ci."collectionId" = ${collectionId}
-        AND ci."postId" = p.id
-        AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
-    )`);
+    // A semi-join cannot expose ci."id" to the ORDER BY. Safe to widen: CollectionItem_post_idx is
+    // unique on ("collectionId", "postId"), so the join cannot multiply rows. schema.full.prisma
+    // does not declare it — it lives in containers/db/docker-init/02_all_dll.sql.
+    if (sort === PostSort.RecentlyAdded) {
+      const { rawAND: collectionItemAND } = getAvailableCollectionItemsFilterForUser({
+        permissions,
+        userId: user?.id,
+      });
+      collectionJoined = true;
+      collectionJoin = Prisma.sql`JOIN "CollectionItem" ci
+        ON ci."postId" = p.id
+        AND ci."collectionId" = ${collectionId}
+        AND ${Prisma.join(collectionItemAND, ' AND ')}`;
+    } else {
+      AND.push(Prisma.sql`EXISTS (
+        SELECT 1 FROM "CollectionItem" ci
+        WHERE ci."collectionId" = ${collectionId}
+          AND ci."postId" = p.id
+          AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
+      )`);
+    }
   }
 
   if (excludedUserIds && targetUser && excludedUserIds.includes(targetUser)) {
@@ -401,14 +422,23 @@ export const getPostsInfinite = async ({
     AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.raw(`${excluded.join(',')}`)})`);
   }
 
-  // sorting - always include id as tiebreaker for stable pagination
-  const { orderBy, primarySortProp, isDateSort, ascending, filter } = getPostSortClauses({
-    sort,
-    draftOnly,
-  });
+  // Every sort carries a p.id tiebreaker except Recently Added, whose ci."id" is already unique
+  // per row through the ("collectionId", "postId") join.
+  const { orderBy, primarySortProp, isDateSort, ascending, filter, singleColumnCursor } =
+    getPostSortClauses({
+      sort,
+      draftOnly,
+      collectionJoined,
+    });
   if (filter) AND.push(filter);
 
-  const cursorClause = buildPostCursorClause({ cursor, primarySortProp, isDateSort, ascending });
+  const cursorClause = buildPostCursorClause({
+    cursor,
+    primarySortProp,
+    isDateSort,
+    ascending,
+    singleColumnCursor,
+  });
   if (cursorClause) AND.push(cursorClause);
 
   const postsRawQuery = Prisma.sql`
@@ -423,7 +453,7 @@ export const getPostsInfinite = async ({
       ${include?.includes('detail') ? Prisma.sql`p."detail",` : Prisma.sql``}
       ${Prisma.raw(primarySortProp)} "cursorId"
     FROM "Post" p
-    ${Prisma.raw(joins.join('\n'))}
+    ${collectionJoin}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit + 1}`;
@@ -457,7 +487,7 @@ export const getPostsInfinite = async ({
   let nextCursor: string | undefined;
   if (postsRaw.length > limit) {
     const nextItem = postsRaw.pop();
-    if (nextItem) nextCursor = encodePostCursor(nextItem);
+    if (nextItem) nextCursor = encodePostCursor(nextItem, singleColumnCursor);
   }
 
   // Filter to published model versions:
