@@ -36,9 +36,10 @@ describe('notifyUploadRejection', () => {
 
     expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1);
     const { error } = mocks.showErrorNotification.mock.calls[0][0];
-    // Both numbers, because "too large" without the limit does not tell anyone what to do.
-    expect(error.message).toContain('60 MB');
-    expect(error.message).toContain('50 MB');
+    // The WHOLE string, not two `toContain`s: the two numbers sit in fixed roles, and
+    // asserting them separately passes just as happily on "That file is 50 MB. The limit
+    // is 60 MB." — the message with the file size and the cap swapped.
+    expect(error.message).toBe('That file is 60 MB. The limit is 50 MB.');
   });
 
   it('reports a wrong file type as a type problem, not a size one', () => {
@@ -75,7 +76,7 @@ describe('notifyUploadRejection', () => {
  * the argument absent, `useCFImageUpload` falls back to `?? currentUser?.isModerator`, so the
  * feature keeps working for whoever is testing it and silently fails for creators.
  */
-describe('the pack cover matches the cosmetic upload settings', () => {
+describe('the pack cover reads the cosmetic size limit and asks for animation itself', () => {
   const modal = () => read('src/components/CreatorShop/Pack/CreatorShopPackModal.tsx');
 
   it('sizes the cover dropzone from the shared constant, not a literal', () => {
@@ -88,13 +89,22 @@ describe('the pack cover matches the cosmetic upload settings', () => {
     expect(modal()).toContain('allowAnimatedWebP: true');
   });
 
-  // Positive control for the two matchers above: the cosmetic path is the thing being
-  // matched, so it must already satisfy the same properties. If this fails, the assertions
-  // are checking a spelling that the reference implementation does not itself use.
-  it('matches what the cosmetic submit path already does', () => {
+  /**
+   * NOT a claim of parity, and the describe above is named to avoid implying one. The two
+   * paths agree on the size limit and disagree on animation ON PURPOSE: the cosmetic form
+   * passes `allowAnimatedWebP: supportsAnimated`, gated on cosmetic type, because a badge
+   * or decoration is worn across the site. A cover only appears on a shop card, so it
+   * always may animate — hence the hardcoded `true` pinned above.
+   *
+   * This asserts the disagreement rather than a similarity. The previous version checked
+   * that the cosmetic file contained `'allowAnimatedWebP:'`, which is satisfied by any
+   * value including `false`, and so could not fail.
+   */
+  it('deliberately differs from the cosmetic path on animation, and only there', () => {
     const cosmetic = read('src/components/CreatorShop/Submit/useSubmitCreatorShopForm.ts');
-    expect(cosmetic).toContain('constants.mediaUpload.maxImageFileSize');
-    expect(cosmetic).toContain('allowAnimatedWebP:');
+    expect(cosmetic).toContain('const maxSize = constants.mediaUpload.maxImageFileSize;');
+    expect(cosmetic).toContain('allowAnimatedWebP: supportsAnimated');
+    expect(cosmetic).not.toContain('allowAnimatedWebP: true');
   });
 });
 
@@ -107,9 +117,12 @@ describe('both CreatorShop pickers report a rejected file', () => {
   it.each([
     ['src/components/CreatorShop/Pack/PackCoverField.tsx'],
     ['src/components/CreatorShop/Submit/ArtworkField.tsx'],
-  ])('%s wires onReject', (relative) => {
-    const source = read(relative);
-    expect(source).toContain('notifyUploadRejection');
-    expect(source).toMatch(/onReject=\{/);
+  ])('%s wires onReject to the shared handler', (relative) => {
+    // The conjunction, in one matcher. Asserting `toContain('notifyUploadRejection')` and
+    // `/onReject=\{/` separately is satisfied by `onReject={() => {}}` with the IMPORT line
+    // supplying the name — i.e. by an inert handler, which is the exact bug this guards.
+    expect(read(relative)).toMatch(
+      /onReject=\{\s*\([^)]*\)\s*=>\s*notifyUploadRejection\(\s*\w+\s*,\s*maxSize\s*\)/
+    );
   });
 });
