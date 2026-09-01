@@ -130,29 +130,45 @@ export type AppBlockLaunchPhase = (typeof APP_BLOCK_LAUNCH_PHASES)[number];
  * that mass cannot be separated (the phase histogram carries no `app_block_id`
  * by design), and a diluted null is indistinguishable from no effect.
  */
-export const APP_BLOCK_LAUNCH_HELLO = ['yes', 'no'] as const;
+export const APP_BLOCK_LAUNCH_HELLO = ['yes', 'no', 'unknown'] as const;
 export type AppBlockLaunchHello = (typeof APP_BLOCK_LAUNCH_HELLO)[number];
 
 /**
- * Map the beacon's boolean onto the label, or `null` to DROP the sample.
+ * Map the beacon's boolean onto the label. TOTAL — every launch gets a bucket.
  *
- * 🔴 ABSENT IS NOT `false`, AND THAT DISTINCTION IS THE WHOLE POINT. A client
- * that predates the field omits it; a launch that saw no hello sends `false`.
- * Labelling the first `no` would file every stale-client launch into the exact
- * population this metric exists to isolate — a systematic, invisible bias in the
- * direction that flatters the cadence change. So an absent or non-boolean value
- * DROPS the observation instead.
+ * 🔴 ABSENT IS NEITHER `yes` NOR `no`; IT IS ITS OWN VALUE. A client older than
+ * this field omits it; a launch that saw no hello sends `false`. Collapsing the
+ * two would file every stale-client launch into the `no` population this metric
+ * exists to isolate — a systematic bias in the direction that flatters the
+ * cadence change.
  *
- * The cost is bounded and honest: during a rollout window the two LABELLED
- * histograms under-count, while `launch_total_seconds` — which takes no `hello`
- * label — still counts every launch, so the loss is visible as a `_count`
- * divergence rather than hidden. A missing sample is recoverable; a mislabelled
- * one is not.
+ * 🔴 BUT DROPPING THE SAMPLE IS ALSO WRONG, and that was this function's first
+ * design. Measured: on the previous revision a beacon with no `hello` key
+ * contributed NO `launch_phase_seconds` sample at all, while the same beacon
+ * against the pre-label module contributed one. That is a silent COVERAGE
+ * REGRESSION on an existing metric — and it is not bounded by a deploy window,
+ * because the "old client" here is a BROWSER BUNDLE, not a server pod: the
+ * beacon route deliberately skips the client-version middleware, so a tab opened
+ * before the deploy keeps sending the old shape for as long as it stays open.
+ *
+ * Worse, the loss is CORRELATED with the thing being measured. A pre-label
+ * bundle is also a pre-cadence-change bundle, so the dropped launches are
+ * systematically the slow-cadence ones — removing them makes the unstratified
+ * phase aggregate look FASTER than reality across the deploy, in the direction
+ * that flatters the change. A drop is only harmless when droppedness is
+ * independent of latency, and here it is not.
+ *
+ * So the third bucket keeps the sample VISIBLE without contaminating either
+ * analysis population: `sum without (hello)` recovers exactly the pre-label
+ * series, `yes`/`no` stay clean, and the size of the stale-client tail is a
+ * value anyone can read off the metric instead of a `_count` divergence nobody
+ * is watching. (Checked: nothing in the cluster repo alerts on or dashboards
+ * these series, so that divergence would never have been noticed.)
  */
-export function launchHelloLabel(value: unknown): AppBlockLaunchHello | null {
+export function launchHelloLabel(value: unknown): AppBlockLaunchHello {
   if (value === true) return 'yes';
   if (value === false) return 'no';
-  return null;
+  return 'unknown';
 }
 
 /**
@@ -751,7 +767,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const launchPhaseSeconds = getOrCreateHistogram(
     reg,
     'civitai_app_block_launch_phase_seconds',
-    'App Block launch PHASE seconds by phase (token_mint = host mount -> first token; init_wait = first BLOCK_INIT -> BLOCK_READY) and by `hello`. Both phases are host-side. 🔴 The phases are PARALLEL legs of one race (the iframe mounts before any token exists) and do NOT sum to launch_total. There is deliberately no cross-origin frame-fetch phase — see launchTimings.ts. 🔴 `hello` = did the GUEST announce BLOCK_HELLO during this launch (yes|no) — NOT whether the accelerator fired an extra post; see launchHelloLabel. It exists because BLOCK_HELLO short-circuits the very wait the host re-post cadence governs, so `init_wait` must be read WITHIN a `hello` value: comparing the unstratified aggregate across a cadence change mixes two populations and dilutes toward the null. 🔴 RETROACTIVE LIMIT: samples recorded before this label shipped carry no `hello` and can never be stratified, so a post-vs-pre read is only sound for hello="no"; the within-period hello="no" vs hello="yes" contrast is the clean one. 🔴 A sample whose beacon carried no usable boolean is DROPPED here but still counted in launch_total_seconds, so these _count series legitimately diverge during a rollout.',
+    'App Block launch PHASE seconds by phase (token_mint = host mount -> first token; init_wait = first BLOCK_INIT -> BLOCK_READY) and by `hello`. Both phases are host-side. 🔴 The phases are PARALLEL legs of one race (the iframe mounts before any token exists) and do NOT sum to launch_total. There is deliberately no cross-origin frame-fetch phase — see launchTimings.ts. 🔴 `hello` = did the GUEST announce BLOCK_HELLO during this launch (yes|no|unknown) — NOT whether the accelerator fired an extra post; see launchHelloLabel. `unknown` = the beacon carried no boolean, i.e. a browser bundle older than the label; it is a real bucket rather than a drop, so `sum without (hello)` recovers exactly the pre-label series and no coverage is lost. EXCLUDE `unknown` from any yes-vs-no contrast, and watch its share: a large or growing `unknown` means stale clients are a big slice of traffic and the stratified read is thin. It exists because BLOCK_HELLO short-circuits the very wait the host re-post cadence governs, so `init_wait` must be read WITHIN a `hello` value: comparing the unstratified aggregate across a cadence change mixes two populations and dilutes toward the null. 🔴 RETROACTIVE LIMIT: samples recorded before this label shipped carry no `hello` and can never be stratified, so a post-vs-pre read is only sound for hello="no"; the within-period hello="no" vs hello="yes" contrast is the clean one. 🔴 RETROACTIVE LIMIT applies only to pre-label data; a stale CLIENT is visible as hello="unknown" rather than silently missing, which matters because the beacon route runs no client-version gate so old browser bundles persist for as long as their tab does.',
     ['phase', 'hello'],
     APP_BLOCK_LAUNCH_BUCKETS
   );
@@ -773,7 +789,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const launchInitPostsTotal = getOrCreateHistogram(
     reg,
     'civitai_app_block_launch_init_posts',
-    'BLOCK_INIT posts the host made before the block acknowledged with BLOCK_READY, per successful non-secondary launch. 🔴 THIS IS THE DISCRIMINATOR FOR `init_wait`: the share at `le=1` says whether launches ack on the first post (so `init_wait` is the block\'s own boot time and the re-post cadence is not the lever) or wait out re-post ticks (so the cadence IS the lever). A `le=1` share that RISES after a cadence change, at unchanged or lower `init_wait`, is the intended effect. Read as a share, never as a raw count. 🔴 THE DENOMINATOR IS THIS HISTOGRAM\'S OWN `_count`, NEVER `launch_total_seconds_count` — the two DIVERGE, and not randomly. A launch is counted in `launch_total_seconds` but NOT here whenever the post count is unusable: a block that posts BLOCK_READY before the host ever sent an init (count 0 — reachable today, e.g. a hand-rolled host shim acking while the token is still resolving), or a manual-retry storm pushing the count past the cap. The first case is FAST, no-quantization traffic, so dividing by the larger series subtracts it from the numerator but not the denominator and UNDERSTATES the `le=1` share — i.e. it makes the data look more quantized than it is, which is the direction that flatters the cadence change. Use `civitai_app_block_launch_init_posts_count`, AND read it within a single `hello` value. 🔴 `hello` = did the GUEST announce BLOCK_HELLO during this launch (yes|no) — NOT whether the accelerator fired; see launchHelloLabel. Stratifying matters most here: `hello="no"` is the population whose first-post-sufficiency the re-post cadence actually governs, so the `le=1` share AMONG hello="no" is the mechanism read, while the pooled share is dominated by accelerator apps. 🔴 RETROACTIVE LIMIT: pre-label samples carry no `hello` and cannot be stratified. A sample whose beacon carried no usable boolean is DROPPED rather than labelled `no`.',
+    'BLOCK_INIT posts the host made before the block acknowledged with BLOCK_READY, per successful non-secondary launch. 🔴 THIS IS THE DISCRIMINATOR FOR `init_wait`: the share at `le=1` says whether launches ack on the first post (so `init_wait` is the block\'s own boot time and the re-post cadence is not the lever) or wait out re-post ticks (so the cadence IS the lever). A `le=1` share that RISES after a cadence change, at unchanged or lower `init_wait`, is the intended effect. Read as a share, never as a raw count. 🔴 THE DENOMINATOR IS THIS HISTOGRAM\'S OWN `_count`, NEVER `launch_total_seconds_count` — the two DIVERGE, and not randomly. A launch is counted in `launch_total_seconds` but NOT here whenever the post count is unusable: a block that posts BLOCK_READY before the host ever sent an init (count 0 — reachable today, e.g. a hand-rolled host shim acking while the token is still resolving), or a manual-retry storm pushing the count past the cap. The first case is FAST, no-quantization traffic, so dividing by the larger series subtracts it from the numerator but not the denominator and UNDERSTATES the `le=1` share — i.e. it makes the data look more quantized than it is, which is the direction that flatters the cadence change. Use `civitai_app_block_launch_init_posts_count`, AND read it within a single `hello` value. 🔴 `hello` = did the GUEST announce BLOCK_HELLO during this launch (yes|no|unknown) — NOT whether the accelerator fired; see launchHelloLabel. `unknown` is a stale browser bundle: keep it out of any yes-vs-no contrast. Stratifying matters most here: `hello="no"` is the population whose first-post-sufficiency the re-post cadence actually governs, so the `le=1` share AMONG hello="no" is the mechanism read, while the pooled share is dominated by accelerator apps. 🔴 RETROACTIVE LIMIT: pre-label samples carry no `hello` and cannot be stratified. A beacon with no boolean is labelled `unknown` — never `no`, and never dropped.',
     ['hello'],
     APP_BLOCK_LAUNCH_INIT_POST_BUCKETS
   );
@@ -839,13 +855,10 @@ export function observeAppBlockLaunch(
       ensureRegisterAppBlockRuntimeMetrics();
     launchTotalSeconds.observe({ app_block_id: appBlockIdLabel }, total);
 
-    // 🔴 THE STRATIFIER GATES BOTH LABELLED HISTOGRAMS. `null` means the beacon
-    // carried no usable boolean — a client older than the field — and the sample
-    // is DROPPED rather than guessed at. Labelling it `no` would file every
-    // stale-client launch into the population this metric exists to isolate.
-    // `launch_total_seconds` above takes no `hello` label and is deliberately
-    // observed BEFORE this gate, so it still counts every launch and the drop
-    // shows up as a `_count` divergence instead of vanishing.
+    // 🔴 TOTAL — every launch gets a bucket, including `unknown`. This must NOT
+    // become a gate: dropping a sample whose `hello` is absent is a coverage
+    // regression on an existing metric, and one correlated with slow launches.
+    // See `launchHelloLabel`.
     const hello = launchHelloLabel(timings.hello);
 
     const phases: Array<[AppBlockLaunchPhase, unknown]> = [
@@ -855,7 +868,6 @@ export function observeAppBlockLaunch(
     for (const [phase, ms] of phases) {
       const seconds = launchSampleSeconds(ms);
       if (seconds === null) continue;
-      if (hello === null) continue;
       launchPhaseSeconds.observe({ phase, hello }, seconds);
     }
 
@@ -863,7 +875,7 @@ export function observeAppBlockLaunch(
     // count with no end-to-end duration to interpret it against is an orphan,
     // and the reader's whole question is "how many posts for THAT init_wait".
     const initPosts = launchInitPostsSample(timings.initPosts);
-    if (initPosts !== null && hello !== null) launchInitPostsTotal.observe({ hello }, initPosts);
+    if (initPosts !== null) launchInitPostsTotal.observe({ hello }, initPosts);
   } catch {
     /* instrument-only — never let a metrics error touch the beacon response */
   }

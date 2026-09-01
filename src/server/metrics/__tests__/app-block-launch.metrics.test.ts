@@ -592,37 +592,52 @@ describe('launchHelloLabel — the code-owned stratifier', () => {
   it('maps the booleans onto the two literals, and nothing else', () => {
     expect(launchHelloLabel(true)).toBe('yes');
     expect(launchHelloLabel(false)).toBe('no');
-    expect(APP_BLOCK_LAUNCH_HELLO).toEqual(['yes', 'no']);
+    expect(APP_BLOCK_LAUNCH_HELLO).toEqual(['yes', 'no', 'unknown']);
   });
 
   /**
-   * 🔴 ABSENT IS NOT `false` — the whole reason this returns `null` rather than
-   * defaulting. A client older than the field omits it; a launch with no hello
-   * sends `false`. Collapsing the two would file every stale-client launch into
-   * the `hello="no"` population — the exact group this metric exists to isolate
-   * — as a silent, systematic bias in the direction that flatters the change.
+   * 🔴 ABSENT IS ITS OWN VALUE — neither `no` (which would bias the very
+   * population being isolated) nor a DROP (which would silently cut coverage of
+   * an existing metric, and cut it in a latency-correlated way — see
+   * `launchHelloLabel`). It gets `unknown`, so the sample stays visible and
+   * `sum without (hello)` still recovers every launch.
    */
-  it('🔴 returns null (DROP) for an absent or non-boolean value, never "no"', () => {
-    expect(launchHelloLabel(undefined)).toBe(null);
-    expect(launchHelloLabel(null)).toBe(null);
+  it('🔴 returns `unknown` for an absent or non-boolean value — never "no", never a drop', () => {
+    expect(launchHelloLabel(undefined)).toBe('unknown');
+    expect(launchHelloLabel(null)).toBe('unknown');
     // Truthy/falsy look-alikes must not be coerced — a client sending a string
-    // must not become a label value.
-    expect(launchHelloLabel('yes')).toBe(null);
-    expect(launchHelloLabel('true')).toBe(null);
-    expect(launchHelloLabel(1)).toBe(null);
-    expect(launchHelloLabel(0)).toBe(null);
-    expect(launchHelloLabel({})).toBe(null);
+    // must not become a label value, and must not be read as a boolean either.
+    expect(launchHelloLabel('yes')).toBe('unknown');
+    expect(launchHelloLabel('true')).toBe('unknown');
+    expect(launchHelloLabel(1)).toBe('unknown');
+    expect(launchHelloLabel(0)).toBe('unknown');
+    expect(launchHelloLabel({})).toBe('unknown');
   });
 
   it('🔴 no client-supplied string can become a label value', () => {
     // The beacon field is a BOOLEAN and this is the only mapping, so the label
     // set is closed by construction — the same rule `phase` follows, and what
-    // keeps a public beacon body from touching cardinality.
-    for (const junk of ['maybe', '../../etc', 'yes ', 'YES', '']) {
-      expect(launchHelloLabel(junk)).toBe(null);
+    // keeps a public beacon body from touching cardinality. A junk value lands
+    // in `unknown`, never in a bucket of its own.
+    for (const junk of ['maybe', '../../etc', 'yes ', 'YES', '', 'unknown']) {
+      expect(launchHelloLabel(junk)).toBe('unknown');
+    }
+    // TOTAL: whatever it returns is always inside the closed set.
+    for (const junk of [undefined, null, 1, {}, [], 'x', true, false]) {
+      expect(APP_BLOCK_LAUNCH_HELLO).toContain(launchHelloLabel(junk));
     }
   });
 });
+
+/** Total `_count` across every `hello` value for one phase. */
+async function phaseCountAllHello(phase: string): Promise<number> {
+  const metric = client.register.getSingleMetric(PHASE_METRIC);
+  if (!metric) return 0;
+  const data = await (metric as unknown as { get(): Promise<{ values: HistPoint[] }> }).get();
+  return data.values
+    .filter((v) => v.metricName === `${PHASE_METRIC}_count` && v.labels.phase === phase)
+    .reduce((a, v) => a + v.value, 0);
+}
 
 describe('observeAppBlockLaunch — hello stratification', () => {
   it('labels a hello launch `yes` and a hello-less launch `no`, on BOTH histograms', async () => {
@@ -646,36 +661,56 @@ describe('observeAppBlockLaunch — hello stratification', () => {
   });
 
   /**
-   * 🔴 THE DROP, WITH ITS POSITIVE CONTROL. A stale-client beacon must move
-   * NEITHER labelled histogram — and `launch_total_seconds`, which takes no
-   * `hello` label, must still count it. That asymmetry is deliberate: it makes
-   * the loss visible as a `_count` divergence rather than hiding it.
+   * 🔴 A STALE-CLIENT BEACON IS BUCKETED, NOT DROPPED — and this test is the
+   * reason the earlier design was caught. Dropping it cut `launch_phase_seconds`
+   * coverage for any browser bundle older than the label (the beacon route runs
+   * no client-version gate, so those persist as long as their tab does), and cut
+   * it in a latency-correlated way: a pre-label bundle is also a pre-cadence
+   * bundle, so the dropped launches were systematically the slow ones.
+   *
+   * 🔴 THE ASSERTION IS ON `unknown` MOVING, NOT ONLY ON yes/no STAYING PUT. An
+   * earlier version of this test checked only that `yes` and `no` did not move —
+   * which stayed green after the drop was removed, because a bucketed sample
+   * does not move them either. Green for the wrong reason is the failure mode a
+   * negative-only assertion invites.
    */
-  it('🔴 DROPS a sample with no usable hello from both labelled histograms', async () => {
+  it('🔴 buckets a hello-less beacon as `unknown` — coverage is preserved, yes/no stay clean', async () => {
     const app = 'apb_hello_absent';
     const t0 = await readHist(TOTAL_METRIC, '_count', { app_block_id: app });
     const pY = await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'yes' });
     const pN = await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'no' });
-    const iY = await readHist(INIT_POSTS_METRIC, '_count', { hello: 'yes' });
-    const iN = await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' });
+    const pU = await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'unknown' });
+    const iU = await readHist(INIT_POSTS_METRIC, '_count', { hello: 'unknown' });
 
-    // A complete, otherwise-valid launch — only `hello` is missing.
+    // Exactly what a browser bundle older than this label sends.
     observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 300, initPosts: 2 });
 
+    // 🔴 The sample IS observed — this is the coverage regression that the
+    // drop-based design introduced and this bucket removes.
+    expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'unknown' })).toBe(
+      pU + 1
+    );
+    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'unknown' })).toBe(iU + 1);
+    // …and neither analysis bucket is contaminated.
     expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'yes' })).toBe(pY);
     expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'no' })).toBe(pN);
-    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'yes' })).toBe(iY);
-    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' })).toBe(iN);
-    // 🔴 …but the launch IS still counted end-to-end, so a zero above is a fact
-    // about the gate and not about a metric wired to nothing.
+    // …and the end-to-end count still matches, as it always did.
     expect(await readHist(TOTAL_METRIC, '_count', { app_block_id: app })).toBe(t0 + 1);
+  });
 
-    // POSITIVE CONTROL: the identical sample WITH a boolean is observed.
-    observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 300, initPosts: 2, hello: false });
-    expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'no' })).toBe(
-      pN + 1
-    );
-    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' })).toBe(iN + 1);
+  /**
+   * 🔴 THE COVERAGE INVARIANT, stated directly: summing the phase histogram over
+   * every `hello` value must recover the pre-label series exactly. This is what
+   * makes `sum without (hello)` a safe rewrite of any existing query, and it is
+   * the property the drop-based design silently broke.
+   */
+  it('🔴 sum over all hello values equals one sample per launch — no launch is lost', async () => {
+    const app = 'apb_hello_coverage';
+    const before = await phaseCountAllHello('init_wait');
+    observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 300, hello: true });
+    observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 300, hello: false });
+    observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 300 }); // stale client
+    expect(await phaseCountAllHello('init_wait')).toBe(before + 3);
   });
 
   it('🔴 the existing discipline still gates the label — total anchor, drop-not-clamp', async () => {

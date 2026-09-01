@@ -451,3 +451,75 @@ describe('computeLaunchTimings — the hello stratifier', () => {
     expect(out.initPosts).toBe(1);
   });
 });
+
+/**
+ * 🔴 `helloSeen` LIFETIME — enumerated against the states a launch can actually
+ * reach, because "the guest announced during the launch window" only means one
+ * thing once "the launch window" is pinned.
+ *
+ * The mark's lifetime is deliberately IDENTICAL to `initPosts`': both live on
+ * the marks, both are cleared only by `resetLaunchMarks` (one call site, gated
+ * on `blockInstanceId`), and both therefore survive a retry and are cleared by a
+ * soft navigation. That symmetry is the point — `init_wait` spans every attempt
+ * of one launch, so its two companions must span exactly the same window or the
+ * three describe different things while looking like one record.
+ */
+describe('helloSeen lifetime — the states it must file correctly', () => {
+  it('🔴 survives a retry, exactly like initPosts (one launch, many attempts)', () => {
+    // `performRetry` remounts the iframe and builds a fresh controller but does
+    // NOT reset the marks, so an announcement on attempt 1 still describes the
+    // launch that attempt 3 completes. That is correct: the SAME app bundle is
+    // reloaded each time, so its announce behaviour cannot change mid-launch.
+    const m = marks({ helloSeen: true, initPosts: 1 });
+    m.initPosts += 29; // a second attempt's posts accumulate
+    const out = computeLaunchTimings(m)!;
+    expect(out.hello).toBe(true);
+    expect(out.initPosts).toBe(30);
+  });
+
+  it('🔴 is cleared by a soft navigation, exactly like initPosts', () => {
+    // Both marks are cleared by the SAME call, so they cannot drift apart: app
+    // A's announcement can never label app B's launch.
+    const m = createLaunchMarks(0, false);
+    m.helloSeen = true;
+    m.initPosts = 5;
+    resetLaunchMarks(m, 500, false);
+    expect(m.helloSeen).toBe(false);
+    expect(m.initPosts).toBe(0);
+  });
+
+  /**
+   * A DUPLICATE announcement is idempotent here. `IframeInitController` honours
+   * only the first (a chatty frame cannot amplify host work), but the MARK has
+   * no such latch and needs none — it is a boolean, and "announced twice" is
+   * still "announced".
+   */
+  it('a duplicate hello does not change the mark', () => {
+    const m = marks({ helloSeen: false });
+    m.helloSeen = true;
+    m.helloSeen = true;
+    expect(computeLaunchTimings(m)?.hello).toBe(true);
+  });
+
+  /**
+   * 🔴 THE ONE WINDOW THAT CAN MIS-FILE, stated rather than hidden.
+   *
+   * The mark is read when the success beacon effect runs, one React commit after
+   * BLOCK_READY flips the status. An announcement landing inside that commit is
+   * counted as `yes` even though it arrived after ready and short-circuited
+   * nothing; an announcement landing after the beacon is not counted at all.
+   *
+   * Neither is worth code to prevent. A guest sends hello when its message
+   * listener attaches, which necessarily precedes any BLOCK_READY it sends over
+   * that same listener — so a hello-after-ready is a duplicate or an
+   * out-of-order delivery, and in both cases the guest genuinely did announce,
+   * which is exactly what the label claims. This test pins that reading so the
+   * window is a documented consequence rather than a surprise.
+   */
+  it('reads the mark as of the beacon — a later mutation cannot change a sent sample', () => {
+    const m = marks({ helloSeen: false });
+    const sent = computeLaunchTimings(m)!;
+    m.helloSeen = true; // arrives after the beacon was built
+    expect(sent.hello).toBe(false);
+  });
+});

@@ -153,8 +153,11 @@ export type LaunchTimingsPayload = {
    * 🔴 ALWAYS PRESENT when a sample is emitted, never omitted for `false`. An
    * omitted field and a `false` field would be indistinguishable on the wire,
    * and the server must be able to tell "this client does not send the field"
-   * (drop) from "this launch had no hello" (label it `no`). Emitting it
-   * unconditionally is what makes that distinction exist.
+   * (labelled `unknown`) from "this launch had no hello" (labelled `no`).
+   * Emitting it unconditionally is what makes that distinction exist — without
+   * it, every launch from a current client that simply saw no hello would be
+   * lumped in with stale browser bundles and the `no` population would be
+   * unusable.
    */
   hello: boolean;
 };

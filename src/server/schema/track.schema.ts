@@ -181,8 +181,10 @@ export const blockRenderSchema = z.object({
       //
       // 🔴 OPTIONAL HERE, BUT ABSENCE IS NOT `false`. A client that predates this
       // field omits it; a launch that genuinely saw no hello sends `false`. The
-      // server must tell those apart — it labels the second `no` and DROPS the
-      // first — so this stays `.optional()` rather than `.default(false)`, which
+      // server must tell those apart — it labels the second `no` and the first
+      // `unknown` (a real bucket, never a drop: dropping would cut coverage of
+      // an existing metric, and cut it in a latency-correlated way) — so this
+      // stays `.optional()` rather than `.default(false)`, which
       // would erase the distinction at the parse boundary and silently file every
       // stale-client launch into the `no` population this metric exists to
       // isolate.
