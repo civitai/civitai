@@ -1,4 +1,5 @@
 import { Drawer, Modal } from '@mantine/core';
+import { Notifications } from '@mantine/notifications';
 import { describe, expect, test } from 'vitest';
 import { renderWithProviders } from '../../../../test/component-setup';
 
@@ -105,6 +106,51 @@ describe('the Mantine slot selectors globals.css pays on describe real elements'
     // Both halves are load-bearing: the class, and the attribute the
     // non-fullScreen rule uses to EXCLUDE this case.
     await portalled('.mantine-Modal-content[data-full-screen]');
+  });
+
+  /**
+   * `@mantine/notifications` is the one seam rule that BRANCHES rather than
+   * applying unconditionally, so it needs two facts to be true, not one: the
+   * static class, and `data-position` on each container. Both are load-bearing
+   * — `Notifications` renders all six position containers and a single `style`
+   * prop is spread onto every one, which is exactly why the payment cannot be
+   * done at the call site and has to read the attribute.
+   *
+   * The `-center` variants are asserted TOO, and asserted as the case the
+   * inline rules must NOT match: they are placed with `left: 50%` and a
+   * transform, so they have no inline edge to pay and an `[data-position$=…]`
+   * that caught them would shove them off-centre.
+   */
+  test('every Notifications container emits the static class AND its data-position', async () => {
+    renderWithProviders(<Notifications />);
+
+    await portalled('.mantine-Notifications-root');
+    for (const position of [
+      'top-center',
+      'top-left',
+      'top-right',
+      'bottom-right',
+      'bottom-left',
+      'bottom-center',
+    ]) {
+      await portalled(`.mantine-Notifications-root[data-position='${position}']`);
+    }
+
+    // The branch the globals.css rules actually make, read back off the real
+    // DOM rather than assumed from the attribute values: exactly four of the
+    // six containers have an inline edge to pay, and the two centred ones are
+    // not among them.
+    const inlineEdged = document.body.querySelectorAll(
+      ".mantine-Notifications-root[data-position$='-left'], " +
+        ".mantine-Notifications-root[data-position$='-right']"
+    );
+    expect(
+      inlineEdged,
+      'the `[data-position$="-left"] / $="-right"` selectors in globals.css no longer select ' +
+        'exactly the four corner containers. If they now catch `top-center` / `bottom-center`, ' +
+        'those are placed by `left: 50%` + a transform and an inline margin shoves them ' +
+        'off-centre; if they catch fewer, a corner container pays nothing in landscape.'
+    ).toHaveLength(4);
   });
 
   test('a plain Modal emits `inner`, and its root carries NO `data-full-screen`', async () => {
