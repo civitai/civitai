@@ -1,7 +1,9 @@
+import { clampBuzzEventMultiplier } from '@civitai/clickhouse';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { getClickhouse } from './clickhouse';
 import { getRedis } from './redis';
 import { dbRead } from './db';
+import { logToAxiom } from './axiom';
 
 const MAX_GLOBAL_BONUS = 5;
 
@@ -18,9 +20,13 @@ export async function rewardReportReporters(input: {
   if (!input.reporterIds.length) return;
   try {
     const globalBonus = await getGlobalRewardsBonus();
+    const clamped: number[] = [];
     const rows = await Promise.all(
       input.reporterIds.map(async (reporterId) => {
         const base = await getBaseRewardsMultiplier(reporterId);
+        const raw = base * globalBonus;
+        const multiplier = clampBuzzEventMultiplier(raw);
+        if (multiplier !== raw) clamped.push(raw);
         // toUserId === byUserId (an accepted report rewards its reporter); ip omitted for localhost/empty
         // so the ClickHouse column falls back to its '' default.
         return {
@@ -29,13 +35,25 @@ export async function rewardReportReporters(input: {
           forId: input.reportId,
           byUserId: reporterId,
           awardAmount: REPORT_ACCEPTED_AWARD,
-          multiplier: base * globalBonus,
+          multiplier,
           status: 'pending',
-          transactionDetails: '{}',
+          // The raw product is kept so a clamped row is still traceable back to the tier and bonus
+          // that produced it.
+          transactionDetails: multiplier === raw ? '{}' : JSON.stringify({ multiplierRaw: raw }),
           ...(input.ip && input.ip !== '::1' ? { ip: input.ip } : {}),
         };
       })
     );
+    if (clamped.length) {
+      logToAxiom({
+        name: 'buzz-rewards',
+        type: 'error',
+        message: 'Buzz event multiplier exceeded the ClickHouse column and was clamped',
+        clampedEvents: clamped.length,
+        batchSize: rows.length,
+        maxRaw: Math.max(...clamped),
+      }).catch(() => null);
+    }
     await getClickhouse().insert({ table: 'buzzEvents', values: rows, format: 'JSONEachRow' });
   } catch (err) {
     console.error('[rewards] failed to record reportAccepted events', err);
@@ -48,7 +66,11 @@ async function getBaseRewardsMultiplier(userId: number): Promise<number> {
     const cached = await getRedis().packed.get<{ rewardsMultiplier?: number; notFound?: boolean }>(
       `${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}` as RedisKeyTemplateCache
     );
-    if (cached && !cached.notFound && cached.rewardsMultiplier) return cached.rewardsMultiplier;
+    // A multiplier of 0 is the cache reporting rewardsEligibility = 'Ineligible', not a missing
+    // value. Falling through to 1 there paid an ineligible reporter the full award — the same hole
+    // PR #4383 closed on the main app's side of this table.
+    if (cached && !cached.notFound && typeof cached.rewardsMultiplier === 'number')
+      return cached.rewardsMultiplier;
   } catch {
     // Shared-cache read is best-effort; fall back to the base multiplier.
   }
