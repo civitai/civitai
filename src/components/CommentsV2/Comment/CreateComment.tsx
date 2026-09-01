@@ -147,18 +147,18 @@ function useSectionMute({ target, enabled }: { target?: SectionMuteInput; enable
     <Menu position="bottom-end" withinPortal opened={opened} onChange={setOpened}>
       <Menu.Target>
         {/*
-          `self-center` because the enclosing Group is `align="flex-start"` — the avatar has to stay
-          level with the top of the input, but the kebab reads as belonging to the whole composer, so
-          it centres against it rather than hanging off the first line.
+          Centred on the INPUT, not on the composer. The composer is two rows — the field, then the
+          emoji picker and Cancel/Comment — so centring against the whole block drops the kebab into
+          the gap between them. `self-start` with the avatar's own height puts it level with the
+          field, the same way the avatar is. 38px is Mantine's `md` Avatar, which is the size
+          `UserAvatar` gets here: this control only renders when `replyToCommentId` is absent, which
+          is exactly when that avatar is `md`.
         */}
-        <LegacyActionIcon
-          size="sm"
-          variant="subtle"
-          className="self-center"
-          aria-label="Comment notification settings"
-        >
-          <IconDotsVertical size={16} />
-        </LegacyActionIcon>
+        <div className="flex h-[38px] shrink-0 items-center self-start">
+          <LegacyActionIcon size="sm" variant="subtle" aria-label="Comment notification settings">
+            <IconDotsVertical size={16} />
+          </LegacyActionIcon>
+        </div>
       </Menu.Target>
       <Menu.Dropdown>
         {/*
