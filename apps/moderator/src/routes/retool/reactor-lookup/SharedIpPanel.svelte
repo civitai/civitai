@@ -43,8 +43,8 @@
               {acc.username ?? `#${acc.userId}`}
             </a>
             <span class="text-xs text-dark-2">
-              {num(acc.addresses.length)}
-              {acc.addresses.length === 1 ? 'address' : 'addresses'} with
+              {num(acc.addressCount)}
+              {acc.addressCount === 1 ? 'address' : 'addresses'} with
             </span>
             {#each acc.peers as p (p.userId)}
               <a
@@ -62,9 +62,9 @@
                 <span class="text-dark-2">{breadth(a)}</span>
               </li>
             {/each}
-            {#if acc.addresses.length > MAX_SHOWN}
+            {#if acc.addressCount > MAX_SHOWN}
               <li class="text-xs text-dark-2">
-                +{num(acc.addresses.length - MAX_SHOWN)} more
+                +{num(acc.addressCount - MAX_SHOWN)} more, narrowest shown
               </li>
             {/if}
           </ul>

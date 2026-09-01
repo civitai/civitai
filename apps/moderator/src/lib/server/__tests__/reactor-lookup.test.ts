@@ -17,11 +17,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const chQueries = vi.hoisted(() => [] as string[]);
 const chRows = vi.hoisted(() => [] as unknown[][]);
 
+// 🔴 The fake HONOURS `LIMIT`. Ignoring it makes every assertion about a row budget vacuous — the
+// caller gets all the canned rows however small the budget is, so shrinking `CLUSTER_SCAN` from 1000
+// to 50 left this whole file green. A fake that answers more generously than the database is not a
+// fake of the database.
 vi.mock('$lib/server/clickhouse', () => ({
   getClickhouse: () => ({
     $query: (sql: string) => {
       chQueries.push(sql);
-      return Promise.resolve(chRows.shift() ?? []);
+      const rows = chRows.shift() ?? [];
+      const limit = Number(sql.match(/LIMIT\s+(\d+)\s*$/m)?.[1]);
+      return Promise.resolve(Number.isInteger(limit) ? rows.slice(0, limit) : rows);
     },
   }),
 }));
@@ -288,5 +294,55 @@ describe('getCollectionAdders', () => {
 
     // Left in, it takes the top row and pushes the rows worth reading off the end of the limit.
     expect(pgQueries.find((q) => q.includes('"CollectionItem"'))).toContain('"addedById" !=');
+  });
+});
+
+describe('getSharedIps per-account budget', () => {
+  const TARGET = 2832460;
+  const HOARDER = 7717426;
+  const QUIET = 9983152;
+
+  // One rotating connection produces far more clusters than everyone else combined: measured on
+  // eileen33bits, 29 of 31 belonged to a single reactor.
+  const rotation = Array.from({ length: 400 }, (_, i) => ({
+    cluster: `88.7.${Math.floor(i / 256)}.${i % 256}`,
+    userIds: [String(HOARDER), String(TARGET)],
+    ips: [`88.7.${Math.floor(i / 256)}.${i % 256}`],
+  }));
+  const quiet = {
+    cluster: '203.0.113.7',
+    userIds: [String(QUIET), String(TARGET)],
+    ips: ['203.0.113.7'],
+  };
+
+  it('does not let one rotating account starve the others', async () => {
+    // The quiet account's single address sits AFTER 400 rows, which is where a flat cluster budget
+    // of 50 dropped it — the panel then renders one account and says nothing about the loss.
+    chRows.push([...rotation, quiet], []);
+    const accounts = await getSharedIps([HOARDER, QUIET], { targetId: TARGET });
+
+    expect(accounts.map((a) => a.userId).sort()).toEqual([QUIET, HOARDER].sort());
+  });
+
+  it('caps what it renders per account but reports the true total', async () => {
+    chRows.push([...rotation, quiet], []);
+    const [hoarder] = await getSharedIps([HOARDER, QUIET], { targetId: TARGET }).then((a) =>
+      a.filter((x) => x.userId === HOARDER)
+    );
+
+    // Rendering 400 rows is not a panel, and `addresses.length` as the headline would under-report
+    // the rotation — which is itself the signal worth reading.
+    expect(hoarder.addresses.length).toBeLessThanOrEqual(12);
+    expect(hoarder.addressCount).toBe(400);
+  });
+
+  it('asks for breadth only on the clusters it kept', async () => {
+    chRows.push([...rotation, quiet], []);
+    await getSharedIps([HOARDER, QUIET], { targetId: TARGET });
+
+    // The breadth query interpolates an `IN` list. Built from every scanned row it would carry
+    // hundreds of addresses to answer about rows nothing renders.
+    const ipsAsked = (chQueries[1].match(/'\d+\.\d+\.\d+\.\d+'/g) ?? []).length;
+    expect(ipsAsked).toBeLessThanOrEqual(25);
   });
 });

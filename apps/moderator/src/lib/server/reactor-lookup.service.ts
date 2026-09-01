@@ -386,7 +386,10 @@ export type SharedIpAccount = {
   username: string | null;
   /** Shares at least one address with the creator being looked up. The finding. */
   withTarget: boolean;
-  /** Narrowest first, so the most identifying address leads. */
+  /** Every shared address this account has, which `addresses.length` is capped below. A rotating
+   *  connection reaches the hundreds, and "showing 12 of 214" is itself part of the picture. */
+  addressCount: number;
+  /** Narrowest first, so the most identifying address leads. Capped per account. */
   addresses: SharedAddress[];
   /** Everyone else seen on those addresses, creator first. */
   peers: SharedIpPeer[];
@@ -432,13 +435,22 @@ const clusterExpr = (groupIpv4: boolean) => `if(position(ip, ':') > 0,
  * addresses seen ONLY in a reaction — which by definition have no activity row, so their breadth was
  * unmeasurable anyway.
  */
+/**
+ * 🔴 Clusters are budgeted PER ACCOUNT, not globally, because one rotating connection exhausts a
+ * global budget on its own. Measured on eileen33bits: of 31 shared clusters across nine accounts,
+ * **29 belong to one reactor** — a residential line that changes address constantly. Under the
+ * original flat `LIMIT 50` a single such account on a mobile carrier pushes every other account's
+ * addresses off the panel, and the panel just renders fewer entries with nothing to say it did.
+ *
+ * `SCAN` is the raw row budget, deliberately far above the per-account cap so the ordering — creator
+ * first, fewest members next — decides what survives rather than an account's row count.
+ */
+const CLUSTER_SCAN = 1_000;
+const CLUSTERS_PER_ACCOUNT = 12;
+
 export async function getSharedIps(
   userIds: number[],
-  {
-    targetId,
-    groupIpv4 = false,
-    limit = 50,
-  }: { targetId: number; groupIpv4?: boolean; limit?: number }
+  { targetId, groupIpv4 = false }: { targetId: number; groupIpv4?: boolean }
 ): Promise<SharedIpAccount[]> {
   // 🔴 The target belongs in the correlation set even when it is not in the actor list — it usually
   // is not. A creator appears among their own reactors only through self-reactions, and plenty have
@@ -455,42 +467,53 @@ export async function getSharedIps(
   }>(`
     SELECT ${clusterExpr(groupIpv4)} AS cluster,
            groupUniqArray(targetUserId) AS userIds,
-           groupUniqArray(20)(ip) AS ips
+           groupUniqArray(5)(ip) AS ips
     FROM default.userActivities
     WHERE targetUserId IN (${ids.join(',')})
       AND ${PUBLIC_IP_ONLY}
     GROUP BY cluster
     HAVING uniq(targetUserId) > 1
     ORDER BY max(targetUserId = ${targetId}) DESC, uniq(targetUserId) ASC, cluster ASC
-    LIMIT ${limit}
+    LIMIT ${CLUSTER_SCAN}
   `);
   if (!rows.length) return [];
 
-  // Ordered in SQL, not after: clusters holding the target have to outrank the LIMIT, not just the
-  // other rows on the page. Narrowest next — a cluster of two is the decisive one, and ordering by
-  // "most accounts", the obvious choice, puts the VPN exits on top and buries the evidence.
-  const [breadth, byId] = await Promise.all([
-    accountsPerCluster(
-      rows.flatMap((r) => r.ips),
-      groupIpv4
-    ),
-    usersByIds(rows.flatMap((r) => r.userIds.map(Number))),
-  ]);
-
-  const accounts = new Map<number, { addresses: SharedAddress[]; peers: Set<number> }>();
+  // Ordered in SQL, not after: clusters holding the target have to outrank the scan budget, not just
+  // the rows that survived it. Fewest members next — a cluster of two is the decisive one, and
+  // ordering by "most accounts", the obvious choice, puts the VPN exits on top.
+  const accounts = new Map<
+    number,
+    { clusters: string[]; addressCount: number; peers: Set<number> }
+  >();
   for (const row of rows) {
     const members = row.userIds.map(Number);
-    const address = { cluster: row.cluster, totalAccounts: breadth.get(row.cluster) ?? null };
     for (const userId of members) {
       // The creator gets no entry of its own: it is a member of every finding here, so its entry
       // would be a copy of the whole panel.
       if (userId === targetId) continue;
-      const entry = accounts.get(userId) ?? { addresses: [], peers: new Set<number>() };
-      entry.addresses.push(address);
+      const entry = accounts.get(userId) ?? {
+        clusters: [],
+        addressCount: 0,
+        peers: new Set<number>(),
+      };
+      entry.addressCount++;
+      if (entry.clusters.length < CLUSTERS_PER_ACCOUNT) entry.clusters.push(row.cluster);
       for (const peer of members) if (peer !== userId) entry.peers.add(peer);
       accounts.set(userId, entry);
     }
   }
+
+  // Breadth is fetched only for the clusters that survived the per-account cap. Fetching it for all
+  // `CLUSTER_SCAN` rows first would put thousands of addresses into one `IN` list to answer about
+  // rows nothing will render.
+  const kept = new Set([...accounts.values()].flatMap((e) => e.clusters));
+  const [breadth, byId] = await Promise.all([
+    accountsPerCluster(
+      rows.filter((r) => kept.has(r.cluster)).flatMap((r) => r.ips),
+      groupIpv4
+    ),
+    usersByIds(rows.flatMap((r) => r.userIds.map(Number))),
+  ]);
 
   // Unknown breadth sorts as wide, not narrow: `null` means no activity row to measure, which is
   // weaker evidence than a measured 2, and `?? 0` would rank it as the strongest thing on the page.
@@ -502,7 +525,10 @@ export async function getSharedIps(
       userId,
       username: byId.get(userId)?.username ?? null,
       withTarget: entry.peers.has(targetId),
-      addresses: entry.addresses.sort((a, b) => width(a) - width(b)),
+      addressCount: entry.addressCount,
+      addresses: entry.clusters
+        .map((cluster) => ({ cluster, totalAccounts: breadth.get(cluster) ?? null }))
+        .sort((a, b) => width(a) - width(b)),
       peers: [...entry.peers]
         .sort((a, b) => Number(b === targetId) - Number(a === targetId) || a - b)
         .map((peer) => ({
