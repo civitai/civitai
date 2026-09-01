@@ -39,9 +39,8 @@ export const toSortMenuOptions = <T extends string>(options: T[]) =>
   options.map((value) => ({ label: value, value }));
 
 /**
- * The sort an image collection is served. A contest re-rolls at random; otherwise the URL wins
- * when it names one of this menu's sorts, and Recently Added is the default — the sort a viewer
- * gets without asking, which is the whole point of the feature.
+ * A contest re-rolls at random. Otherwise the URL wins only when it names one of this menu's
+ * sorts: the ImageSorts left out order on columns the collection query never selects.
  */
 export const resolveImageCollectionSort = ({
   querySort,
@@ -53,7 +52,7 @@ export const resolveImageCollectionSort = ({
   if (isContest) return ImageSort.Random;
   return querySort && imageCollectionSortOptions.includes(querySort)
     ? querySort
-    : ImageSort.RecentlyAdded;
+    : ImageSort.Newest;
 };
 
 export const contestModelSorts = visible(Object.values(ModelSort), ModelSortHidden);

@@ -77,18 +77,21 @@ describe('collection sort options', () => {
     }
   );
 
-  // The one behaviour the feature exists for: a viewer who asks for nothing gets add order.
-  // Only images default to it — models, posts and articles keep Newest.
-  it('defaults an image collection to Recently Added', () => {
-    expect(resolveImageCollectionSort({})).toBe(ImageSort.RecentlyAdded);
+  // Recently Added is opt-in for every collection type, images included: no viewer gets a
+  // reordered feed without asking.
+  it('defaults an image collection to Newest, like the other three types', () => {
+    expect(resolveImageCollectionSort({})).toBe(ImageSort.Newest);
   });
 
   it('lets the URL override the default, but only with a sort this menu serves', () => {
     expect(resolveImageCollectionSort({ querySort: ImageSort.Oldest })).toBe(ImageSort.Oldest);
+    expect(resolveImageCollectionSort({ querySort: ImageSort.RecentlyAdded })).toBe(
+      ImageSort.RecentlyAdded
+    );
     // MostReactions is a real ImageSort the collection menu does not offer, so it falls back
     // rather than reaching a service that would order on a column the CTE never selected.
     expect(resolveImageCollectionSort({ querySort: ImageSort.MostReactions })).toBe(
-      ImageSort.RecentlyAdded
+      ImageSort.Newest
     );
   });
 
