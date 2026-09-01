@@ -423,6 +423,8 @@ type ReconcileDetail = {
   error?: string;
   userId?: number;
   buzzAmount?: number;
+  /** The buzz was already granted, and a stale local row was settled to match. */
+  repairedRow?: boolean;
 };
 
 /**
@@ -463,10 +465,12 @@ export const reconcileDeposits = async ({
     newlyProcessed: 0,
     failed: 0,
     skipped: 0,
+    repairedRows: 0,
     details,
   };
 
   for (const d of details) {
+    if (d.repairedRow) results.repairedRows++;
     if (d.action === 'already_processed') results.alreadyProcessed++;
     else if (d.action === 'processed') results.newlyProcessed++;
     else if (d.action === 'failed') results.failed++;
@@ -517,6 +521,56 @@ async function fetchPaymentsByDateRange(
   return allPayments;
 }
 
+/**
+ * Settle a deposit whose buzz was granted but whose row never caught up.
+ *
+ * `processDeposit` grants the buzz before it writes the row, and the two are not in
+ * one transaction — so anything that throws in between leaves the buzz paid and the
+ * row on `confirming` with a null `buzzCredited`. Nothing then repaired it: the
+ * ledger check above returns early for exactly these rows, so they never reach
+ * `processDeposit` again and stay pending to the user for good. Payment 5416277437
+ * sat that way for two weeks with its 9,886 buzz already in the account.
+ *
+ * The amount comes from the ledger rather than from `outcome_amount`, because the
+ * ledger records what the user was actually credited while a stale row's stored
+ * outcome can predate the final conversion — that row held 42190.36 against a real
+ * credit of 9,886.
+ *
+ * `failed` is left alone: it outranks `finished` in `processDeposit`'s status ladder
+ * and is written by the retry sweep on exhaustion, so it is a deliberate terminal
+ * state rather than a stale one.
+ */
+async function repairCreditedRow(
+  paymentId: string | number,
+  buzzCredited: number
+): Promise<boolean> {
+  // Without a real amount there is nothing to record, and settling the row anyway
+  // would replace a visibly-stuck deposit with one that looks complete and credits
+  // nothing — worse than leaving it for the next run.
+  if (!Number.isFinite(buzzCredited)) return false;
+
+  const id = BigInt(typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId);
+  try {
+    const local = await dbRead.cryptoDeposit.findUnique({
+      where: { paymentId: id },
+      select: { status: true, buzzCredited: true },
+    });
+    if (!local) return false;
+    if (local.status === 'finished' && local.buzzCredited != null) return false;
+    if (local.status === 'failed') return false;
+
+    await dbWrite.cryptoDeposit.update({
+      where: { paymentId: id },
+      data: { status: 'finished', buzzCredited },
+    });
+    return true;
+  } catch {
+    // Never fail reconciliation over the repair — the buzz is already granted, which
+    // is the part that matters; the row gets another chance on the next run.
+    return false;
+  }
+}
+
 /** Process a single payment: check idempotency, validate, grant buzz. */
 async function reconcileSinglePayment(
   payment: NOWPayments.CreatePaymentResponse
@@ -528,7 +582,13 @@ async function reconcileSinglePayment(
   try {
     const existing = await getTransactionByExternalId(externalId);
     if (existing) {
-      return { paymentId, status: payment.payment_status, action: 'already_processed' };
+      const repairedRow = await repairCreditedRow(paymentId, existing.amount);
+      return {
+        paymentId,
+        status: payment.payment_status,
+        action: 'already_processed',
+        repairedRow,
+      };
     }
   } catch {
     // If lookup fails, proceed to process (processDeposit is idempotent)

@@ -615,6 +615,90 @@ describe('reconcileDeposits', () => {
     expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
   });
 
+  // 🔴 IF YOU ARE HERE TO DELETE THESE: the early return above is what made a stale row
+  // permanent. `processDeposit` grants buzz before it writes the row and the two are not
+  // in one transaction, so a failure between them leaves the buzz paid and the row on
+  // `confirming` — and a granted deposit never reaches `processDeposit` again, so nothing
+  // ever fixed it. Payment 5416277437 sat that way for two weeks with its 9,886 buzz
+  // already in the user's account, showing "confirming" on the Buy Buzz page the whole
+  // time. Repairing from the ledger is deliberate; so is NOT re-granting.
+  it('settles a stale row when the buzz was already granted', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
+      data: [makePayment({ payment_id: 555 })],
+    });
+    mockGetTransactionByExternalId.mockResolvedValueOnce({ amount: 9886 });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'confirming',
+      buzzCredited: null,
+    });
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(mockDbWrite.cryptoDeposit.update).toHaveBeenCalledWith({
+      where: { paymentId: BigInt(555) },
+      data: { status: 'finished', buzzCredited: 9886 },
+    });
+    expect(result.repairedRows).toBe(1);
+    expect(result.alreadyProcessed).toBe(1);
+    // The buzz is already in the account; re-granting is the one thing this must not do.
+    expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+  });
+
+  // The stale row's own `outcomeAmount` can predate the final conversion — 5416277437
+  // stored 42190.36 against a real credit of 9,886 — so the ledger is the only source
+  // that says what the user actually got.
+  it('records the amount the ledger paid, not the one the stale row stored', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
+      data: [makePayment({ payment_id: 556, outcome_amount: 42190.36 })],
+    });
+    mockGetTransactionByExternalId.mockResolvedValueOnce({ amount: 9886 });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'confirming',
+      buzzCredited: null,
+    });
+
+    await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    const written = mockDbWrite.cryptoDeposit.update.mock.calls[0]?.[0];
+    expect(written?.data.buzzCredited).toBe(9886);
+    // 42190360 is what deriving it from the row's own outcome would have produced.
+    expect(written?.data.buzzCredited).not.toBe(42190360);
+  });
+
+  it('leaves a row that is already settled alone', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
+      data: [makePayment({ payment_id: 557 })],
+    });
+    mockGetTransactionByExternalId.mockResolvedValueOnce({ amount: 9886 });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'finished',
+      buzzCredited: 9886,
+    });
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(mockDbWrite.cryptoDeposit.update).not.toHaveBeenCalled();
+    expect(result.repairedRows).toBe(0);
+  });
+
+  // `failed` outranks `finished` in processDeposit's status ladder and is written by the
+  // retry sweep on exhaustion — a deliberate terminal state, not a stale one.
+  it('does not resurrect a row that was deliberately marked failed', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
+      data: [makePayment({ payment_id: 558 })],
+    });
+    mockGetTransactionByExternalId.mockResolvedValueOnce({ amount: 9886 });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'failed',
+      buzzCredited: null,
+    });
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(mockDbWrite.cryptoDeposit.update).not.toHaveBeenCalled();
+    expect(result.repairedRows).toBe(0);
+  });
+
   it('skips payments with invalid order_id', async () => {
     mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
       data: [makePayment({ payment_id: 333, order_id: 'bad-format' })],

@@ -35,13 +35,14 @@ export const reconcileNowpaymentsJob = createJob(
       logToAxiom({
         name: 'reconcile-nowpayments-job',
         type: 'info',
-        message: `Reconciliation complete: ${results.newlyProcessed} processed, ${results.alreadyProcessed} already done, ${results.failed} failed`,
+        message: `Reconciliation complete: ${results.newlyProcessed} processed, ${results.alreadyProcessed} already done, ${results.repairedRows} rows repaired, ${results.failed} failed`,
         dateFrom,
         dateTo,
         totalPayments: results.totalPayments,
         completedPayments: results.completedPayments,
         alreadyProcessed: results.alreadyProcessed,
         newlyProcessed: results.newlyProcessed,
+        repairedRows: results.repairedRows,
         failed: results.failed,
         skipped: results.skipped,
       });
@@ -72,7 +73,15 @@ export const reconcileNowpaymentsJob = createJob(
     return {
       dateFrom,
       dateTo,
-      ...(results ?? { totalPayments: 0, completedPayments: 0, alreadyProcessed: 0, newlyProcessed: 0, failed: 0, skipped: 0 }),
+      ...(results ?? {
+        totalPayments: 0,
+        completedPayments: 0,
+        alreadyProcessed: 0,
+        newlyProcessed: 0,
+        repairedRows: 0,
+        failed: 0,
+        skipped: 0,
+      }),
       retryResults,
     };
   },
