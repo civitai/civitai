@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-empty-function */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { CivitaiLinkInstance } from '~/components/CivitaiLink/civitai-link-api';
+import { getCivitaiLinkBaseUrl } from '~/components/CivitaiLink/civitai-link-api';
 import type {
   Command,
   ResponseResourcesList,
@@ -64,6 +65,12 @@ type CivitaiLinkState = {
 };
 
 const CivitaiLinkCtx = createContext<CivitaiLinkState>({} as any);
+
+// Shown when the current origin can't reach a Link host that would accept its
+// session cookie (see `getCivitaiLinkBaseUrl`). Distinct from the
+// 'Civitai Link is not enabled' flag message: the feature IS enabled for this
+// user, it just cannot work from this domain.
+export const UNAVAILABLE_ON_DOMAIN = 'Civitai Link is not available on this domain';
 // #endregion
 
 // #region zu store
@@ -149,9 +156,16 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
 
   //TODO.civitai-link - timeout when setting active instance
 
-  const getWorker = () => {
+  const getWorker = (): Promise<SharedWorker | undefined> => {
     if (workerPromise.current) return workerPromise.current;
     if (workerRef.current) return Promise.resolve(workerRef.current);
+    // The Link service authenticates ONLY via the civitai session cookie, which
+    // never reaches it from an origin on a different registrable domain (PR
+    // previews on *.civitaic.com, civitai.green). Spawning the worker there buys
+    // nothing but a confusing `request failed (401 )` and a socket pointed at a
+    // host that will never accept us — so don't. Checked here rather than in
+    // render so SSR and hydration can't disagree.
+    if (!getCivitaiLinkBaseUrl()) return Promise.resolve(undefined);
     // Built by `pnpm build:workers` (scripts/build-workers.mjs) → public/workers.
     // Static path (not new URL(import.meta.url)) to bypass Turbopack's broken
     // .ts SharedWorker compilation — see vercel/next.js#74842.
@@ -216,12 +230,13 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
 
   const boot = async () => {
     const worker = await getWorker();
+    if (!worker) setError(UNAVAILABLE_ON_DOMAIN);
     return worker;
   };
 
   const workerReq = async (req: WorkerIncomingMessage) => {
     const worker = await getWorker();
-    worker.port.postMessage(req);
+    worker?.port.postMessage(req);
   };
 
   const selectInstance = (id: number) => workerReq({ type: 'join', id });

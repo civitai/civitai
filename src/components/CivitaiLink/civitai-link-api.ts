@@ -10,7 +10,16 @@ export type CivitaiLinkInstance = {
 };
 
 /**
- * Resolve the Civitai Link service base URL for the current host.
+ * Registrable domain (last two labels) of a hostname — `link.civitai.com` →
+ * `civitai.com`. Assumes a 2-label registrable domain, which is all we deploy;
+ * mirrors `cookieDomainForHost` in `~/server/auth/civ-cookie`, which is what
+ * decides the Domain the session cookie is actually set on.
+ */
+const registrableDomain = (hostname: string): string => hostname.split('.').slice(-2).join('.');
+
+/**
+ * Resolve the Civitai Link service base URL for the current host, or
+ * `undefined` when the service cannot authenticate this origin at all.
  *
  * `NEXT_PUBLIC_CIVITAI_LINK` (e.g. https://link.civitai.com) is baked at build
  * time and identical for the .com and .red builds. But the Link service
@@ -20,14 +29,46 @@ export type CivitaiLinkInstance = {
  * generation hangs forever (ClickUp 868k49796). Target the same-registrable-
  * domain link.civitai.red instead so the .civitai.red cookie is sent.
  *
+ * The `.red` rewrite only covers the one color we happen to run a Link host
+ * for. Every OTHER origin this app is served from hits the same cookie problem
+ * with no rewrite to save it, so refuse to build a URL we know cannot carry a
+ * credential:
+ *   - PR previews (`pr-N.civitaic.com`) — the session cookie is scoped to
+ *     `civitaic.com` and `SameSite=Lax`, so neither the preview's own cookie nor
+ *     a civitai.com cookie in the same browser is sent to link.civitai.com. A
+ *     preview's civ-token is also minted by a different auth hub than the one
+ *     the Link service verifies against, so it would be rejected even if it
+ *     arrived.
+ *   - `civitai.green` — no `link.civitai.green` host exists.
+ * Both surfaced as `Error loading instances: Civitai Link request failed
+ * (401 )`. Returning undefined lets callers disable the feature cleanly instead
+ * of firing a request that can never succeed.
+ *
  * Runs in both window and SharedWorker contexts (`globalThis.location`).
  */
 export const getCivitaiLinkBaseUrl = (): string | undefined => {
   const base = env.NEXT_PUBLIC_CIVITAI_LINK;
   if (!base) return base;
-  const host = (globalThis as { location?: { hostname?: string } }).location?.hostname?.toLowerCase();
-  const isRed = host === 'civitai.red' || (host?.endsWith('.civitai.red') ?? false);
-  return isRed ? base.replace('.civitai.com', '.civitai.red') : base;
+  const host = (
+    globalThis as { location?: { hostname?: string } }
+  ).location?.hostname?.toLowerCase();
+  // No location (SSR / node): keep the baked value. The same-domain check below
+  // is a CLIENT decision — deciding it server-side would make SSR and hydration
+  // disagree about whether the feature exists.
+  if (!host) return base;
+
+  const isRed = host === 'civitai.red' || host.endsWith('.civitai.red');
+  const resolved = isRed ? base.replace('.civitai.com', '.civitai.red') : base;
+
+  let resolvedHost: string;
+  try {
+    resolvedHost = new URL(resolved).hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+  if (registrableDomain(host) !== registrableDomain(resolvedHost)) return undefined;
+
+  return resolved;
 };
 
 const clFetch = async (url: string, options: RequestInit = {}) => {
