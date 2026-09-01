@@ -198,12 +198,19 @@ export const ShopItem = ({
           >
             <div className={classes.cardHeader}>
               <div className={clsx(classes.sampleWrapper, outOfStock && classes.dim)}>
+                {/*
+                  Every shop grid renders this card unvirtualised — the largest live section
+                  is 94 items — so without `lazy` the whole section's artwork is fetched on
+                  first paint. Animated cosmetics and covers are the expensive ones: measured
+                  2026-09-01, an animated cover is 1.7-4.6 MB at width=450 against 43.8 KB for
+                  a static one, because resizing an animated WebP barely compresses it.
+                */}
                 {cosmetic ? (
-                  <CosmeticSample cosmetic={cosmetic} size="lg" />
+                  <CosmeticSample cosmetic={cosmetic} size="lg" lazy />
                 ) : itemMeta.coverUrl ? (
-                  <EdgeMedia src={itemMeta.coverUrl} width={450} alt={item.title} />
+                  <EdgeMedia src={itemMeta.coverUrl} width={450} alt={item.title} loading="lazy" />
                 ) : (
-                  <PackCoverTiles tiles={itemMeta.coverTiles ?? []} size={220} fallbackIcon />
+                  <PackCoverTiles tiles={itemMeta.coverTiles ?? []} size={220} fallbackIcon lazy />
                 )}
               </div>
               <Text size="xs" c="dimmed" px={6} component="div" className={classes.type}>
