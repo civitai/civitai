@@ -31,20 +31,11 @@ export function providerName(engine?: string): string | undefined {
 
 /**
  * Collect raw error strings from every place a failed step can carry them —
- * `step.output.errors` / TOS message, failed `step.jobs[].reason`, and
- * `step.metadata.error`. Deduped. The job path is the one that actually surfaces
- * external-provider failures; the rest preserve prior behavior.
+ * `step.output.errors` / TOS message and `step.metadata.error`. Deduped.
  */
 export function extractStepErrors(step: unknown): string[] {
   const s = step as {
     output?: { errors?: unknown; message?: unknown; externalTOSViolation?: unknown };
-    jobs?: Array<{
-      status?: string;
-      reason?: unknown;
-      error?: unknown;
-      message?: unknown;
-      errors?: unknown;
-    }>;
     metadata?: { error?: unknown; errors?: unknown };
   } | null;
   if (!s) return [];
@@ -60,14 +51,6 @@ export function extractStepErrors(step: unknown): string[] {
   if (s.output) {
     pushAll(s.output.errors);
     if ('externalTOSViolation' in s.output) push(s.output.message);
-  }
-
-  if (Array.isArray(s.jobs)) {
-    for (const job of s.jobs) {
-      if (job?.status !== 'failed') continue;
-      push(job.reason ?? job.error ?? job.message);
-      pushAll(job.errors);
-    }
   }
 
   if (s.metadata) {

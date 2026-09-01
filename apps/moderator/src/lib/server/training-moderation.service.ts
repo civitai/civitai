@@ -2,7 +2,7 @@ import { env } from '$env/dynamic/private';
 import { sql } from '@civitai/db/kysely';
 import { getWorkflow } from '@civitai/client';
 import { dbRead, dbWrite } from './db';
-import { getOrchestratorClient, releaseAmbientJob } from './orchestrator';
+import { getOrchestratorClient, releaseModerationGate } from './orchestrator';
 import { syncSearchIndex } from './search-index';
 import { civitaiWebhookUrl } from './civitai-url';
 import { callModEndpoint, type ActionResult } from './user-actions.service';
@@ -543,11 +543,7 @@ export async function moderateTrainingData(input: {
       error: `Workflow ${workflowId} reports no status, so the approval could not be recorded. Nothing was changed.`,
     };
 
-  const step = workflow.steps?.[0] as { jobs?: { id?: string }[] } | undefined;
-  const gateId = step?.jobs?.[1]?.id;
-  if (!gateId) return { ok: false, error: 'Could not find the gate job for this workflow.' };
-
-  const released = await releaseAmbientJob(gateId, input.approve);
+  const released = await releaseModerationGate(workflowId, input.approve);
   if (!released.ok) return released;
 
   await recordModActivity({

@@ -1,7 +1,6 @@
 import type { WorkflowStatus } from '@civitai/client';
 import { TRPCError } from '@trpc/server';
 import { env } from '~/env/server';
-import type { CustomImageResourceTrainingStep } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -108,7 +107,7 @@ function pickGatedTrainingFile<T extends { metadata: unknown }>(files: T[]): T |
   return pending[0] ?? files[0];
 }
 
-const getJobIdFromVersion = async (modelVersionId: number) => {
+const getWorkflowFromVersion = async (modelVersionId: number) => {
   const modelFiles = await dbWrite.modelFile.findMany({
     where: { modelVersionId, type: 'Training Data' },
     select: {
@@ -147,47 +146,37 @@ const getJobIdFromVersion = async (modelVersionId: number) => {
 
   if (!workflow) throw new Error(`Could not find workflow with id: ${workflowId}`);
 
-  const step = workflow.steps?.[0] as CustomImageResourceTrainingStep | undefined;
-  // nb: get exactly the second job
-  const gateId = step?.jobs?.[1]?.id;
-  if (!gateId) {
-    logWebhook({
-      message: 'Could not find jobId for gate job',
-      data: { modelVersionId, important: true },
-    });
-    throw throwNotFoundError('Could not find jobId for gate job');
-  }
-
-  return { workflowId: workflow.id, status: workflow.status, gateId };
+  return { workflowId, status: workflow.status };
 };
 
 const moderateTrainingData = async ({
   modelVersionId,
-  gateId,
   approve,
   workflowId,
   status,
 }: {
   modelVersionId: number;
-  gateId: string;
   approve: boolean;
-  workflowId?: string | null;
+  workflowId: string;
   status?: WorkflowStatus;
 }) => {
   if (!env.ORCHESTRATOR_ENDPOINT) throw throwInternalServerError('No orchestrator endpoint');
 
   try {
-    const response = await fetch(`${env.ORCHESTRATOR_ENDPOINT}/v1/manager/ambientjobs/${gateId}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        approved: approve,
-        // message: ''
-      }),
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
-      },
-    });
+    const response = await fetch(
+      `${env.ORCHESTRATOR_ENDPOINT}/v1/manager/workflows/${workflowId}/moderation-gate`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          approved: approve,
+          // message: ''
+        }),
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
+        },
+      }
+    );
 
     if (response.ok) {
       if (workflowId && status) {
@@ -215,7 +204,7 @@ const moderateTrainingData = async ({
           modelVersionId,
           important: true,
           status: response.status,
-          gateJobId: gateId,
+          workflowId,
         },
       });
 
@@ -243,6 +232,6 @@ const moderateTrainingData = async ({
 
 export async function handleDenyTrainingData({ input }: { input: GetByIdInput }) {
   const modelVersionId = input.id;
-  const { gateId, workflowId, status } = await getJobIdFromVersion(modelVersionId);
-  return await moderateTrainingData({ modelVersionId, gateId, workflowId, status, approve: false });
+  const { workflowId, status } = await getWorkflowFromVersion(modelVersionId);
+  return await moderateTrainingData({ modelVersionId, workflowId, status, approve: false });
 }
