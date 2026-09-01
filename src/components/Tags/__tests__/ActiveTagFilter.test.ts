@@ -99,9 +99,16 @@ describe('ActiveTagFilter', () => {
  * runs. `?tags=` reaches that page and goes nowhere. Mounting the control there would
  * offer to clear a filter the feed never applied.
  *
- * ⚠️ Named for the pages it pins, not for the property. Still NOT a closed set — a new
- * feed that spreads its parsed query into `filters` inherits the same defect and nothing
- * here will notice. Do not read a green run as "every tag-filtered feed is covered".
+ * ⚠️ Named for the pages it pins, not for the property, and NOT a closed set. Two
+ * surfaces have the same defect right now and are deliberately absent because they were
+ * out of scope for 868kz0qq6, not because they are covered: `/user/[username]/images` and
+ * `/user/[username]/videos`, both backed by `UserMediaInfinite`, which spreads `...query`
+ * (retaining `tags`) into `ImagesInfinite` and renders no tag control at all, while
+ * `getAllImages` applies its tag clause for every viewer. Do not read a green run here as
+ * "every tag-filtered feed is covered" — read it as "these five".
+ *
+ * The note above about /images and /videos means the ROOT feeds, whose escape hatch is the
+ * `All` chip on ImageFeedTagBar. That bar is not on the profile tabs.
  */
 describe('the tag-filtered feeds mount the clear control', () => {
   it.each([
@@ -164,42 +171,71 @@ describe('the tag-filtered feeds mount the clear control', () => {
  * reads source lines, and its own comment records that a flag-gated mount passes it.
  */
 describe('each user feed gates the clear control on where its filter really applies', () => {
-  const mountLine = (relative: string) =>
-    read(relative)
-      .split('\n')
-      .map((l) => l.trim())
-      .find((l) => l.includes('<ActiveTagFilter'));
-
   const read = (relative: string) =>
     fs.readFileSync(
       path.join(path.resolve(__dirname, '../../../..'), ...relative.split('/')),
       'utf-8'
     );
 
-  it('gates the posts mount on !selfView, not on the draft section', () => {
-    const line = mountLine('src/pages/user/[username]/posts.tsx');
-    expect(line).toBeDefined();
-    expect(line).toContain('!selfView &&');
-    // The gate that looks right and is not: drafts are not the axis, ownership is.
-    expect(line).not.toContain('viewingDraft');
-  });
+  /**
+   * Returns the gate expression guarding the mount — `!selfView`, `viewingPublished` — or
+   * undefined if the mount is absent, commented out, or written in some other shape.
+   *
+   * Whitespace is collapsed before matching so a Prettier re-wrap (both mount lines are
+   * within ~25 columns of printWidth, so one added prop wraps them) moves the gate onto
+   * its own line without reddening this.
+   */
+  const mountGate = (source: string) => {
+    const stripped = source
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('//'))
+      .join(' ')
+      .replace(/\s+/g, ' ');
 
-  it('gates the articles mount on viewingPublished, not on ownership', () => {
-    const line = mountLine('src/pages/user/[username]/articles.tsx');
-    expect(line).toBeDefined();
-    expect(line).toContain('viewingPublished &&');
-    expect(line).not.toContain('selfView');
-  });
+    return stripped.match(/\{ ?([^{}]*?) ?&& ?<ActiveTagFilter/)?.[1];
+  };
 
   /**
-   * The control for both assertions above. Each page asserts the OTHER page's gate is
-   * absent, so a matcher loose enough to be satisfied by any `<ActiveTagFilter …/>` line
-   * would have to fail one of the four. This is also the assertion that fails first if
-   * someone unifies the two gates on the theory that they ought to match.
+   * The control for every assertion below, and the reason they are exact-equality rather
+   * than `toContain`.
+   *
+   * `toContain('viewingPublished &&')` is satisfied by `'!viewingPublished &&'` — the
+   * substring is a prefix of its own negation — so the ONE mutation this block exists to
+   * catch, mounting the control on the section where the filter is not applied, passed
+   * silently. Same for an extra conjunct narrowing the gate. Both are pinned here against
+   * fixtures rather than against the repo, so the discrimination is demonstrated without
+   * mutating a page.
    */
-  it('does not use the same gate on both pages', () => {
-    const posts = mountLine('src/pages/user/[username]/posts.tsx');
-    const articles = mountLine('src/pages/user/[username]/articles.tsx');
-    expect(posts).not.toEqual(articles);
+  it.each([
+    ['{viewingPublished && <ActiveTagFilter tagIds={x} />}', 'viewingPublished'],
+    ['{!viewingPublished && <ActiveTagFilter tagIds={x} />}', '!viewingPublished'],
+    ['{!selfView && <ActiveTagFilter tagIds={x} />}', '!selfView'],
+    ['{selfView && <ActiveTagFilter tagIds={x} />}', 'selfView'],
+    [
+      '{canViewDrafts && !selfView && <ActiveTagFilter tagIds={x} />}',
+      'canViewDrafts && !selfView',
+    ],
+    // Prettier re-wrapped across lines: same gate, still found.
+    ['{viewingPublished &&\n  <ActiveTagFilter tagIds={x} />}', 'viewingPublished'],
+  ])('reads the gate out of %j', (source, expected) => {
+    expect(mountGate(source)).toBe(expected);
+  });
+
+  it.each([
+    ['// {!selfView && <ActiveTagFilter tagIds={x} />}'],
+    ['{/* {!selfView && <ActiveTagFilter tagIds={x} />} */}'],
+    ['<ActiveTagFilter tagIds={x} />'],
+  ])('reports no gate for %j', (source) => {
+    expect(mountGate(source)).toBeUndefined();
+  });
+
+  it('gates the posts mount on ownership, and on nothing else', () => {
+    expect(mountGate(read('src/pages/user/[username]/posts.tsx'))).toBe('!selfView');
+  });
+
+  it('gates the articles mount on the published section, and on nothing else', () => {
+    expect(mountGate(read('src/pages/user/[username]/articles.tsx'))).toBe('viewingPublished');
   });
 });
