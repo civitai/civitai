@@ -1,8 +1,10 @@
 import { PrismaClient } from '@prisma/client';
+import { REDIS_SYS_KEYS } from '@civitai/redis/client';
 import { createClient } from 'redis';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 // Top-level, not an inline `typeof import(...)` — that trips consistent-type-imports.
 import type * as SysReadDeadline from '~/server/redis/sys-read-deadline';
+import type * as RedisPackage from '@civitai/redis/client';
 
 /**
  * End-to-end proof for the dropped-enqueue parking lot, against a REAL Postgres and a
@@ -38,13 +40,26 @@ vi.mock('~/server/redis/client', async () => {
   const { withSysReadDeadline } = await vi.importActual<typeof SysReadDeadline>(
     '~/server/redis/sys-read-deadline'
   );
+  // The key CONSTANTS come from the package, never hand-typed: a literal copy drifts from
+  // production silently, and this suite asserts against a real Redis, so a stale copy would
+  // make it prove the wrong keys. Importing the package (not the `~/server/redis/client`
+  // shim) gets the constants without constructing a real client -- the same split
+  // `src/__tests__/setup.ts` relies on.
+  const actual = await vi.importActual<typeof RedisPackage>('@civitai/redis/client');
+  // Every key this suite writes derives from BUCKETS, so prefixing arg 0 of each command
+  // namespaces the whole run at the transport layer. That keeps the production key names
+  // in play -- the mirror of the scratch SCHEMA on the Postgres side, where the SQL stays
+  // unqualified and the isolation lives on the connection.
+  const nsKey = (key: unknown) =>
+    Array.isArray(key) ? key.map((k) => `${NS}:${k}`) : `${NS}:${key}`;
   const call =
     (fn: string) =>
-    (...args: never[]) =>
+    (key: unknown, ...rest: never[]) =>
       holder.backing
-        ? holder.backing[fn](...args)
+        ? holder.backing[fn](nsKey(key) as never, ...rest)
         : Promise.reject(new Error('sysRedis unavailable (test outage)'));
   return {
+    ...actual,
     sysRedis: {
       hGet: call('hGet'),
       hSet: call('hSet'),
@@ -54,8 +69,6 @@ vi.mock('~/server/redis/client', async () => {
       exists: call('exists'),
       set: call('set'),
     },
-    REDIS_SYS_KEYS: { QUEUES: { BUCKETS: `${NS}:buckets` } },
-    REDIS_SUB_KEYS: { QUEUES: { MERGING: 'merging' } },
     withSysReadDeadline,
   };
 });
@@ -127,9 +140,13 @@ describe.skipIf(!databaseUrl || !redisUrl)('queues parking lot — real Postgres
       `SELECT "key","value" FROM ${SCHEMA}."KeyValue" ORDER BY "key"`
     );
 
+  // Reads through the same `${NS}:` prefix the sysRedis stub applies, against the REAL
+  // key names. The bucket NAME stored in the hash is a value, not a key, so it is
+  // unprefixed on the way out and has to be prefixed again to be read back.
   const bucketMembers = async () => {
-    const bucket = await redis.hGet(`${NS}:buckets`, 'images_v6:Delete');
-    return bucket ? redis.sMembers(bucket) : [];
+    const bucketsKey = `${NS}:${REDIS_SYS_KEYS.QUEUES.BUCKETS}`;
+    const bucket = await redis.hGet(bucketsKey, 'images_v6:Delete');
+    return bucket ? redis.sMembers(`${NS}:${bucket}`) : [];
   };
 
   it('a healthy enqueue reaches redis and writes nothing to Postgres', async () => {
