@@ -985,6 +985,15 @@ export function PageBlockHost({
     // `init_wait` is meant to include the re-post quantization, not exclude it.
     const marks = launchMarksRef.current;
     if (marks && marks.initSentAt === null) marks.initSentAt = nowMs();
+    // 🔴 COUNT EVERY POST, not just the first — this is the whole point of the
+    // field. `initSentAt` above is stamped once because `init_wait` must span
+    // the re-post quantization; `initPosts` counts the posts INSIDE that span,
+    // which is what tells a quantized wait apart from a slow-booting block.
+    //
+    // Counted HERE rather than read off `controller.postCount()` at ack time
+    // because the auto-retry path builds a fresh controller per attempt while
+    // these marks persist across the whole launch — see `LaunchMarks.initPosts`.
+    if (marks) marks.initPosts += 1;
     send('BLOCK_INIT', (buildInitPayloadRef.current ?? (() => undefined as never))());
   }, [send]);
 
@@ -1203,9 +1212,21 @@ export function PageBlockHost({
   // 🔴 PURELY ADDITIVE — see `IframeInitController.notifyHello`. The immediate
   // post on start(), the retry interval and the readiness timeout are all
   // unchanged, so a block that never announces (older SDK) behaves exactly as
-  // today and a block that announces but never acks still times out. The retry
-  // loop is NOT removed: as of 2026-08-05 no deployed block sends BLOCK_HELLO,
-  // so it is still doing all of the work.
+  // today and a block that announces but never acks still times out.
+  //
+  // 🔴 THE RETRY LOOP IS STILL DOING ALMOST ALL OF THE WORK, and the number
+  // behind that claim was re-measured. An earlier revision of this comment said
+  // "as of 2026-08-05 no deployed block sends BLOCK_HELLO"; that is now stale.
+  // MEASURED 2026-08-31 against the deployed fleet: 4 of 23 deployed blocks
+  // ship the accelerator — so 19 do not, including two hand-rolled
+  // `civitai-host.js` shims and one inline-shell app.
+  //
+  // Treat that as a DATED MEASUREMENT, not a standing fact: it moves whenever a
+  // block is rebuilt and re-approved. Its consequence is what matters here —
+  // getting the remaining 19 onto the accelerator is 19 separate
+  // rebuild-and-moderator-approve cycles, so the host-side re-post cadence
+  // (`INIT_RETRY_BACKOFF_MS`) is the only lever that reaches every deployed app
+  // immediately.
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_HELLO', () => {
       controllerRef.current?.notifyHello();

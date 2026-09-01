@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import client from 'prom-client';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { blockRenderSchema } from '~/server/schema/track.schema';
 
 /**
  * Coverage for POST /api/track/block-render — the lightweight beacon that
@@ -488,6 +489,7 @@ async function histCount(name: string, labels: Record<string, string>): Promise<
 
 const LAUNCH_TOTAL = 'civitai_app_block_launch_total_seconds';
 const LAUNCH_PHASE = 'civitai_app_block_launch_phase_seconds';
+const LAUNCH_INIT_POSTS = 'civitai_app_block_launch_init_posts';
 const timings = { totalMs: 1_100, tokenMintMs: 180, initWaitMs: 700 };
 
 describe('POST /api/track/block-render — launch-latency histograms', () => {
@@ -550,6 +552,106 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
     const arg = mockBlockRender.mock.calls[0][0];
     expect(arg).not.toHaveProperty('timings');
     expect(arg).toEqual({ ...validInput, isAnon: true });
+  });
+
+  /**
+   * 🔴 THE HALF-FIX HAZARD, FOR THE NEW `initPosts` FIELD — the REST half of the
+   * pair. Its SIBLING is
+   * `src/server/routers/__tests__/track.router.blockRender.test.ts` >
+   * "accepts `initPosts` on the beacon and keeps it out of the ClickHouse
+   * payload", and the two must be kept in step: there are exactly two writers of
+   * the `blockRenders` table, and a field stripped in one and not the other
+   * reaches ClickHouse with NOTHING failing. Not TypeScript — the dispatch is a
+   * spread and spread properties are exempt from excess-property checking — not
+   * the schema, and not any pre-existing test.
+   *
+   * 🔴 EXACT PAYLOAD EQUALITY, NOT `not.toHaveProperty`. The strip is today an
+   * ALLOWLIST (`blockRenderTrackerPayload` names the three real columns), so
+   * `initPosts` cannot leak by construction. Converting that back to a
+   * `const { …, ...rest } = input` DENYLIST would re-open the class for every
+   * FUTURE field while a field-specific assertion stayed green. Only a "these
+   * keys and no others" assertion sees it.
+   *
+   * MUTATION-CHECKED: adding `initPosts: input.timings?.initPosts` to
+   * `blockRenderTrackerPayload` fails this on its own `toEqual`, not on another
+   * guard's error.
+   */
+  it('🔴 accepts `initPosts` and keeps it out of the ClickHouse insert (REST writer)', async () => {
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const withPosts = { ...timings, initPosts: 4 };
+
+    // 🔴 THE HALF OF THIS TEST THAT CAN GO RED, and it has to be stated
+    // explicitly. The strip assertion below passes even on a schema that does
+    // NOT know the field, because zod drops unknown keys — so on its own it is
+    // an invariant guard, not regression coverage, and it would report "the
+    // field is safely stripped" about a field the beacon silently discarded on
+    // the way in. Pinning acceptance first is what makes the strip be about
+    // something. Mirrors the tRPC sibling exactly.
+    const parsed = blockRenderSchema.parse({ ...validInput, timings: withPosts });
+    expect(parsed.timings?.initPosts).toBe(4);
+
+    await handler(
+      makeReq({
+        origin: 'https://civitai.com',
+        body: { ...validInput, timings: withPosts },
+      }) as any,
+      makeRes()
+    );
+
+    // The beacon was accepted (not 400'd) and reached the writer at all — this
+    // is the half that is red before the schema carries the field.
+    expect(mockBlockRender).toHaveBeenCalledTimes(1);
+    const arg = mockBlockRender.mock.calls[0][0];
+    expect(arg).toEqual({ ...validInput, isAnon: true });
+    expect(Object.keys(arg).sort()).toEqual(['appBlockId', 'blockInstanceId', 'isAnon', 'slotId']);
+  });
+
+  /**
+   * The prom half of the same beacon: `initPosts` DOES reach the histogram even
+   * though it never reaches ClickHouse. Without this the strip test above is
+   * satisfied by a field that is simply thrown away everywhere — i.e. the
+   * instrument could be wired to nothing and both writers would still look
+   * correct.
+   */
+  it('🔴 observes initPosts on the prom side while ClickHouse stays unchanged', async () => {
+    const before = await histCount(LAUNCH_INIT_POSTS, {});
+    const handler = (await import('~/pages/api/track/block-render')).default;
+
+    await handler(
+      makeReq({
+        origin: 'https://civitai.com',
+        body: { ...validInput, timings: { ...timings, initPosts: 4 } },
+      }) as any,
+      makeRes()
+    );
+
+    expect(await histCount(LAUNCH_INIT_POSTS, {})).toBe(before + 1);
+    expect(mockBlockRender.mock.calls[0][0]).not.toHaveProperty('initPosts');
+  });
+
+  it('🔴 does NOT observe initPosts for an `error` or `secondary` beacon', async () => {
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const body = { ...validInput, timings: { ...timings, initPosts: 4 } };
+    const before = await histCount(LAUNCH_INIT_POSTS, {});
+
+    await handler(
+      makeReq({
+        origin: 'https://civitai.com',
+        body: { ...body, status: 'error', errorClass: 'timeout' },
+      }) as any,
+      makeRes()
+    );
+    await handler(
+      makeReq({ origin: 'https://civitai.com', body: { ...body, secondary: true } }) as any,
+      makeRes()
+    );
+    expect(await histCount(LAUNCH_INIT_POSTS, {})).toBe(before);
+
+    // POSITIVE CONTROL — the identical body on the ok / non-secondary path moves
+    // it by exactly one, so the zero above is a fact about the gating rather
+    // than about a metric that never records anything.
+    await handler(makeReq({ origin: 'https://civitai.com', body }) as any, makeRes());
+    expect(await histCount(LAUNCH_INIT_POSTS, {})).toBe(before + 1);
   });
 
   /**

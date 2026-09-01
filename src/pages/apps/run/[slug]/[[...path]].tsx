@@ -1,5 +1,7 @@
 import { Box, useComputedColorScheme } from '@mantine/core';
+import Head from 'next/head';
 import { useEffect, useMemo } from 'react';
+import { blockPreconnectHint } from '~/components/AppBlocks/blockPreconnect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { Meta } from '~/components/Meta/Meta';
@@ -208,6 +210,23 @@ function AppPage(props: PageProps) {
 
   return (
     <>
+      {/* 🔴 SSR RESOURCE HINT — and its VALUE comes entirely from being HERE.
+          The block iframe mounts on the first client render AFTER hydration,
+          hundreds of ms after this head is parsed; that gap is the head start
+          the DNS/TCP/TLS handshake gets. The same link emitted from
+          `PageBlockHost` would fire on the render that mounts the iframe, i.e.
+          exactly when the browser would have connected anyway — shipped-looking
+          and inert.
+
+          It is a SEPARATE `<Head>` from `<Meta>` on purpose: `Meta` implements a
+          stacking context in which only the topmost mounted instance renders its
+          tags, so a dialog mounting its own `Meta` would suppress this hint too.
+          The hint has nothing to do with document metadata precedence.
+
+          `crossorigin` is load-bearing, not decoration — see `blockPreconnect.tsx`.
+          The origin is derived from the `iframeSrc` prop this page already
+          resolved in `getServerSideProps`, never rebuilt from the slug. */}
+      <Head>{blockPreconnectHint(iframeSrc)}</Head>
       <Meta title={`${appName} — Civitai Apps`} deIndex />
       {/* 🔴 THE THIRD LEG OF THE LAYOUT CONTRACT — not incidental styling. Pinned
           by `pageRunScrollContract.test.ts`, because reverting it passes every

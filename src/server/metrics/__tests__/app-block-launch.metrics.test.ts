@@ -21,7 +21,9 @@ import client from 'prom-client';
  */
 
 import {
+  launchInitPostsSample,
   launchSampleSeconds,
+  MAX_APP_BLOCK_LAUNCH_INIT_POSTS,
   MAX_APP_BLOCK_LAUNCH_SECONDS,
   observeAppBlockLaunch,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -302,5 +304,158 @@ describe('launch histogram bucket boundaries', () => {
       beforeSum + 28,
       6
     );
+  });
+});
+
+/**
+ * 🔴 `civitai_app_block_launch_init_posts` — THE DISCRIMINATING INSTRUMENT.
+ *
+ * `launch_phase_seconds{phase="init_wait"}` has a 0.4-0.6s mode that two
+ * mutually exclusive mechanisms produce identically: the host's BLOCK_INIT
+ * re-post quantization (>=2 posts) and blocks that simply boot that slowly
+ * (1 post). No duration metric can separate them; the `le=1` share of THIS
+ * histogram can.
+ *
+ * Every rule pinned below fails by producing a plausible number that points at
+ * the SECOND explanation — the one that would retire the cadence lever. A clamp
+ * puts junk in the top bucket ("lots of quantization"); a zero or a rounded
+ * fraction lands at `le=1` ("no quantization"). Both are silent.
+ */
+const INIT_POSTS_METRIC = 'civitai_app_block_launch_init_posts';
+
+describe('launchInitPostsSample — the count gate', () => {
+  it('🔴 DROPS an out-of-range count rather than clamping it', () => {
+    expect(launchInitPostsSample(MAX_APP_BLOCK_LAUNCH_INIT_POSTS)).toBe(
+      MAX_APP_BLOCK_LAUNCH_INIT_POSTS
+    );
+    // One past the bound → dropped. A clamp would return the bound here, and it
+    // would land in the TOP bucket — reading as a heavily-quantized launch that
+    // never happened.
+    expect(launchInitPostsSample(MAX_APP_BLOCK_LAUNCH_INIT_POSTS + 1)).toBe(null);
+    expect(launchInitPostsSample(5_000)).toBe(null);
+  });
+
+  it('🔴 rejects ZERO (a launch that acked posted at least once)', () => {
+    // A 0 would be counted at `le=1`, biasing the share toward "acks on the
+    // first post" — the answer that says the cadence is not the lever.
+    expect(launchInitPostsSample(0)).toBe(null);
+    expect(launchInitPostsSample(-3)).toBe(null);
+  });
+
+  it('🔴 rejects a NON-INTEGER instead of rounding it', () => {
+    // Rounding 1.6 to 2 would invent a re-post that never happened; rounding 2.4
+    // to 2 would launder junk into a real-looking sample. A fractional value can
+    // only come from something that is not counting posts.
+    expect(launchInitPostsSample(1.5)).toBe(null);
+    expect(launchInitPostsSample(2.0000001)).toBe(null);
+    // …and a float that IS integral is fine — JSON has no int type.
+    expect(launchInitPostsSample(2.0)).toBe(2);
+  });
+
+  it('rejects non-finite and non-numeric input (the body is client-supplied)', () => {
+    expect(launchInitPostsSample(Number.NaN)).toBe(null);
+    expect(launchInitPostsSample(Number.POSITIVE_INFINITY)).toBe(null);
+    expect(launchInitPostsSample('3' as unknown)).toBe(null);
+    expect(launchInitPostsSample(undefined)).toBe(null);
+    expect(launchInitPostsSample(null)).toBe(null);
+    expect(launchInitPostsSample({} as unknown)).toBe(null);
+  });
+});
+
+describe('observeAppBlockLaunch — initPosts', () => {
+  it('observes exactly ONE sample per successful launch that carries a count', async () => {
+    const before = await readHist(INIT_POSTS_METRIC, '_count', {});
+    const beforeSum = await readHist(INIT_POSTS_METRIC, '_sum', {});
+    observeAppBlockLaunch('apb_initposts_one', {
+      totalMs: 1_100,
+      initWaitMs: 700,
+      initPosts: 3,
+    });
+    expect(await readHist(INIT_POSTS_METRIC, '_count', {})).toBe(before + 1);
+    // The REAL value reaches _sum — a distinct, non-1 count so this cannot pass
+    // against a mutant that observes a constant.
+    expect(await readHist(INIT_POSTS_METRIC, '_sum', {})).toBe(beforeSum + 3);
+  });
+
+  it('🔴 the le=1 vs le=2 gap is resolvable — the whole point of the edges', async () => {
+    // If the first bucket were `le=2`, a single-post launch and a two-post
+    // launch would be indistinguishable, which is precisely the distinction the
+    // metric exists to make.
+    const beforeOne = await readBucket(INIT_POSTS_METRIC, '1', {});
+    const beforeTwo = await readBucket(INIT_POSTS_METRIC, '2', {});
+    observeAppBlockLaunch('apb_initposts_edges', { totalMs: 500, initPosts: 2 });
+    // A 2-post launch does NOT count at le=1…
+    expect(await readBucket(INIT_POSTS_METRIC, '1', {})).toBe(beforeOne);
+    // …but does at le=2 (buckets are cumulative).
+    expect(await readBucket(INIT_POSTS_METRIC, '2', {})).toBe(beforeTwo + 1);
+
+    observeAppBlockLaunch('apb_initposts_edges', { totalMs: 500, initPosts: 1 });
+    expect(await readBucket(INIT_POSTS_METRIC, '1', {})).toBe(beforeOne + 1);
+  });
+
+  it('🔴 observes NOTHING when the count is absent — with a positive control', async () => {
+    const before = await readHist(INIT_POSTS_METRIC, '_count', {});
+    observeAppBlockLaunch('apb_initposts_absent', { totalMs: 1_100, initWaitMs: 700 });
+    expect(await readHist(INIT_POSTS_METRIC, '_count', {})).toBe(before);
+    // 🔴 POSITIVE CONTROL. Without this, "0 observations" is indistinguishable
+    // from a histogram wired to nothing, and every absence assertion in this
+    // file would be vacuously green.
+    observeAppBlockLaunch('apb_initposts_absent', {
+      totalMs: 1_100,
+      initWaitMs: 700,
+      initPosts: 5,
+    });
+    expect(await readHist(INIT_POSTS_METRIC, '_count', {})).toBe(before + 1);
+  });
+
+  it('🔴 DROPS an out-of-range count without touching _sum or the tail', async () => {
+    const beforeCount = await readHist(INIT_POSTS_METRIC, '_count', {});
+    const beforeSum = await readHist(INIT_POSTS_METRIC, '_sum', {});
+    observeAppBlockLaunch('apb_initposts_huge', {
+      totalMs: 1_100,
+      initPosts: MAX_APP_BLOCK_LAUNCH_INIT_POSTS + 1,
+    });
+    // A clamp would have incremented BOTH — and the increment would sit in the
+    // top bucket, reading as the strongest possible quantization evidence.
+    expect(await readHist(INIT_POSTS_METRIC, '_count', {})).toBe(beforeCount);
+    expect(await readHist(INIT_POSTS_METRIC, '_sum', {})).toBe(beforeSum);
+  });
+
+  it('🔴 is suppressed with the phases when `total` is invalid (total is the anchor)', async () => {
+    const before = await readHist(INIT_POSTS_METRIC, '_count', {});
+    // A post count with no end-to-end duration to interpret it against is an
+    // orphan that still moves the distribution.
+    observeAppBlockLaunch('apb_initposts_anchor', { totalMs: 0, initPosts: 4 });
+    observeAppBlockLaunch('apb_initposts_anchor', { totalMs: undefined, initPosts: 4 });
+    expect(await readHist(INIT_POSTS_METRIC, '_count', {})).toBe(before);
+    // POSITIVE CONTROL: the identical count with a VALID total is observed.
+    observeAppBlockLaunch('apb_initposts_anchor', { totalMs: 900, initPosts: 4 });
+    expect(await readHist(INIT_POSTS_METRIC, '_count', {})).toBe(before + 1);
+  });
+
+  it('carries the bucket edges the design justified, not prom-client defaults', async () => {
+    observeAppBlockLaunch('apb_initposts_buckets', { totalMs: 900, initPosts: 1 });
+    expect(await bucketEdges(INIT_POSTS_METRIC)).toEqual([
+      1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 28, 40, 64,
+    ]);
+  });
+
+  it('🔴 carries NO labels (the cardinality decision, asserted)', async () => {
+    observeAppBlockLaunch('apb_initposts_labels', { totalMs: 900, initPosts: 2 });
+    const metric = client.register.getSingleMetric(INIT_POSTS_METRIC);
+    const data = await (metric as unknown as { get(): Promise<{ values: HistPoint[] }> }).get();
+    for (const v of data.values) {
+      // `le` is the histogram's own bucket key, not a dimension we chose.
+      expect(Object.keys(v.labels).filter((k) => k !== 'le')).toEqual([]);
+    }
+  });
+
+  it('never throws on a garbage count (it runs on a public fire-and-forget beacon)', () => {
+    expect(() =>
+      observeAppBlockLaunch('apb_initposts_throw', {
+        totalMs: 900,
+        initPosts: 'many' as unknown,
+      })
+    ).not.toThrow();
   });
 });

@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
   boundedDeltaMs,
   boundedDurationMs,
+  boundedInitPosts,
   computeLaunchTimings,
   createLaunchMarks,
+  MAX_LAUNCH_INIT_POSTS,
   MAX_LAUNCH_SAMPLE_MS,
   resetLaunchMarks,
   shouldResetLaunchMarks,
@@ -28,6 +30,10 @@ const BASE_MARKS: LaunchMarks = {
   initSentAt: 1_400,
   readyAt: 2_100,
   wasHidden: false,
+  // 🔴 DISTINCT FROM EVERY OTHER FIXTURE VALUE, and not 1. A count that
+  // coincided with another field (or with the `1` a broken counter would emit)
+  // could not tell a correct read from a mutant that returns a constant.
+  initPosts: 3,
 };
 
 const marks = (over: Partial<LaunchMarks> = {}): LaunchMarks => ({ ...BASE_MARKS, ...over });
@@ -92,6 +98,7 @@ describe('createLaunchMarks / resetLaunchMarks', () => {
       initSentAt: null,
       readyAt: null,
       wasHidden: false,
+      initPosts: 0,
     });
   });
 
@@ -104,6 +111,11 @@ describe('createLaunchMarks / resetLaunchMarks', () => {
     m.tokenAt = 10;
     m.initSentAt = 20;
     m.readyAt = 30;
+    // 🔴 A NON-ZERO post count is part of the fixture on purpose. `initPosts` is
+    // the one mark that ACCUMULATES rather than being overwritten, so a reset
+    // that forgot it would leave app A's posts attributed to app B's launch and
+    // compound with every soft navigation. Seeding 0 here could not see that.
+    m.initPosts = 7;
     const same = m;
     resetLaunchMarks(m, 500, false);
     // Same object identity — callers hold this in a ref.
@@ -114,6 +126,7 @@ describe('createLaunchMarks / resetLaunchMarks', () => {
       initSentAt: null,
       readyAt: null,
       wasHidden: false,
+      initPosts: 0,
     });
   });
 });
@@ -158,6 +171,7 @@ describe('computeLaunchTimings', () => {
       totalMs: 1_100, // 2100 - 1000
       tokenMintMs: 180, // 1180 - 1000
       initWaitMs: 700, // 2100 - 1400
+      initPosts: 3, // BASE_MARKS.initPosts, carried through verbatim
     });
   });
 
@@ -167,7 +181,7 @@ describe('computeLaunchTimings', () => {
     // mounts on the first client render before any token exists. A guard that
     // assumed a serial sum would silently drop real samples.
     const out = computeLaunchTimings(marks({ tokenAt: 1_900, initSentAt: 1_050 }))!;
-    expect(out).toEqual({ totalMs: 1_100, tokenMintMs: 900, initWaitMs: 1_050 });
+    expect(out).toEqual({ totalMs: 1_100, tokenMintMs: 900, initWaitMs: 1_050, initPosts: 3 });
     expect(out.tokenMintMs! + out.initWaitMs!).toBeGreaterThan(out.totalMs);
   });
 
@@ -226,6 +240,9 @@ describe('computeLaunchTimings', () => {
     expect(computeLaunchTimings(marks({ initSentAt: null }))).toEqual({
       totalMs: 1_100,
       tokenMintMs: 180,
+      // The COUNT survives even though the DURATION leg does not: they answer
+      // different questions and are gated independently.
+      initPosts: 3,
     });
   });
 
@@ -253,6 +270,100 @@ describe('computeLaunchTimings', () => {
   it('never emits a frameFetchMs field (the cross-origin phase is deliberately deferred)', () => {
     const out = computeLaunchTimings(marks())!;
     expect(out).not.toHaveProperty('frameFetchMs');
-    expect(Object.keys(out).sort()).toEqual(['initWaitMs', 'tokenMintMs', 'totalMs']);
+    expect(Object.keys(out).sort()).toEqual(['initPosts', 'initWaitMs', 'tokenMintMs', 'totalMs']);
+  });
+});
+
+/**
+ * 🔴 `initPosts` — THE DISCRIMINATING INSTRUMENT.
+ *
+ * `init_wait` dominates launch and has a pronounced 0.4-0.6s mode. Two mutually
+ * exclusive mechanisms produce an identical curve there:
+ *
+ *   (a) re-post QUANTIZATION — the block's listener attached early but the
+ *       host's next BLOCK_INIT was not due yet.  Signature: initPosts >= 2.
+ *   (b) the block simply BOOTS in 400-600ms.       Signature: initPosts == 1.
+ *
+ * No duration can separate them. The post count can, and it is also the only
+ * way to show that shortening `INIT_RETRY_BACKOFF_MS` moved anything. Every
+ * rule below exists because breaking it produces a PLAUSIBLE WRONG NUMBER that
+ * points at (b) — the reassuring answer, and the one that would retire the
+ * cadence lever on false evidence.
+ */
+describe('boundedInitPosts — the count gate', () => {
+  it('🔴 DROPS an out-of-range count rather than clamping it to the bound', () => {
+    // A clamp lands junk in the TOP bucket, which reads as "this launch waited
+    // out very many re-post ticks" — manufacturing exactly the evidence the
+    // metric exists to test for. Dropping is the only honest failure.
+    expect(boundedInitPosts(MAX_LAUNCH_INIT_POSTS + 1)).toBeUndefined();
+    expect(boundedInitPosts(5_000)).toBeUndefined();
+    // The boundary itself is IN range — an off-by-one here silently trims the
+    // most-quantized launches, which are the signal.
+    expect(boundedInitPosts(MAX_LAUNCH_INIT_POSTS)).toBe(MAX_LAUNCH_INIT_POSTS);
+  });
+
+  it('🔴 REJECTS zero and negatives (a launch that acked posted at least once)', () => {
+    // A 0 is a broken counter, never a fast launch. Emitting it would pull the
+    // `le=1` share up, i.e. toward "the cadence is not the problem".
+    expect(boundedInitPosts(0)).toBeUndefined();
+    expect(boundedInitPosts(-1)).toBeUndefined();
+  });
+
+  it('🔴 REJECTS a non-integer instead of rounding it', () => {
+    // Rounding would invent information: a fractional value can only come from
+    // something that is not counting posts.
+    expect(boundedInitPosts(2.5)).toBeUndefined();
+    expect(boundedInitPosts(1.0001)).toBeUndefined();
+  });
+
+  it('rejects non-numbers and non-finite values', () => {
+    expect(boundedInitPosts(undefined)).toBeUndefined();
+    expect(boundedInitPosts(null)).toBeUndefined();
+    expect(boundedInitPosts(Number.NaN)).toBeUndefined();
+    expect(boundedInitPosts(Number.POSITIVE_INFINITY)).toBeUndefined();
+  });
+
+  it('passes a plausible count through unchanged', () => {
+    expect(boundedInitPosts(1)).toBe(1);
+    expect(boundedInitPosts(7)).toBe(7);
+  });
+});
+
+describe('computeLaunchTimings — initPosts', () => {
+  it('carries the count through on a healthy launch', () => {
+    expect(computeLaunchTimings(marks({ initPosts: 4 }))?.initPosts).toBe(4);
+    // POSITIVE CONTROL for every "is omitted" assertion below: the same field,
+    // same call, DOES appear when it should. Without this a suite could be
+    // asserting absence against a field that is never emitted at all.
+    expect(computeLaunchTimings(marks({ initPosts: 1 }))?.initPosts).toBe(1);
+  });
+
+  it('OMITS the field rather than emitting a zero for an uncounted launch', () => {
+    const out = computeLaunchTimings(marks({ initPosts: 0 }));
+    expect(out).not.toHaveProperty('initPosts');
+    // …and the launch is still reported. The count is subordinate to the
+    // durations, never the other way round.
+    expect(out?.totalMs).toBe(1_100);
+  });
+
+  it('OMITS an out-of-range count while still reporting the durations', () => {
+    const out = computeLaunchTimings(marks({ initPosts: MAX_LAUNCH_INIT_POSTS + 1 }));
+    expect(out).not.toHaveProperty('initPosts');
+    expect(out?.totalMs).toBe(1_100);
+    expect(out?.initWaitMs).toBe(700);
+  });
+
+  it('🔴 is dropped with the whole sample when the tab was ever hidden', () => {
+    // A background tab has throttled timers, so its post count measures
+    // tab-switching — it would answer the quantization question with data from
+    // the one situation where quantization does not matter.
+    expect(computeLaunchTimings(marks({ wasHidden: true, initPosts: 9 }))).toBeNull();
+  });
+
+  it('🔴 is dropped with the whole sample when `total` is unusable', () => {
+    // `total` is the anchor: a post count with no end-to-end duration to read it
+    // against is an orphan that still moves the distribution.
+    expect(computeLaunchTimings(marks({ readyAt: null, initPosts: 9 }))).toBeNull();
+    expect(computeLaunchTimings(marks({ mountedAt: null, initPosts: 9 }))).toBeNull();
   });
 });
