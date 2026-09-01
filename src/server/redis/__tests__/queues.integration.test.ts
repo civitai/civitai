@@ -2,9 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { REDIS_SYS_KEYS } from '@civitai/redis/client';
 import { createClient } from 'redis';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-// Top-level, not an inline `typeof import(...)` — that trips consistent-type-imports.
-import type * as SysReadDeadline from '~/server/redis/sys-read-deadline';
-import type * as RedisPackage from '@civitai/redis/client';
+import { dbMock, redisMock } from '~/__tests__/mocks';
 
 /**
  * End-to-end proof for the dropped-enqueue parking lot, against a REAL Postgres and a
@@ -29,65 +27,39 @@ const redisUrl = process.env.QUEUES_IT_REDIS_URL;
 
 const SCHEMA = 'queues_it';
 
+const NS = `queues-it:${process.pid}`;
+
 // `backing = null` is the outage: every command rejects fast, which is the DOWN mode
 // queues.ts fails open on. Swapping it back is the recovery the drain has to survive.
-const { holder, NS } = vi.hoisted(() => ({
-  holder: { backing: null as null | Record<string, (...args: never[]) => Promise<unknown>> },
-  NS: `queues-it:${process.pid}`,
-}));
+let backing: typeof redis | null = null;
 
-vi.mock('~/server/redis/client', async () => {
-  const { withSysReadDeadline } = await vi.importActual<typeof SysReadDeadline>(
-    '~/server/redis/sys-read-deadline'
-  );
-  // The key CONSTANTS come from the package, never hand-typed: a literal copy drifts from
-  // production silently, and this suite asserts against a real Redis, so a stale copy would
-  // make it prove the wrong keys. Importing the package (not the `~/server/redis/client`
-  // shim) gets the constants without constructing a real client -- the same split
-  // `src/__tests__/setup.ts` relies on.
-  const actual = await vi.importActual<typeof RedisPackage>('@civitai/redis/client');
-  // Every key this suite writes derives from BUCKETS, so prefixing arg 0 of each command
-  // namespaces the whole run at the transport layer. That keeps the production key names
-  // in play -- the mirror of the scratch SCHEMA on the Postgres side, where the SQL stays
-  // unqualified and the isolation lives on the connection.
-  const nsKey = (key: unknown) =>
-    Array.isArray(key) ? key.map((k) => `${NS}:${k}`) : `${NS}:${key}`;
-  const call =
-    (fn: string) =>
-    (key: unknown, ...rest: never[]) =>
-      holder.backing
-        ? holder.backing[fn](nsKey(key) as never, ...rest)
-        : Promise.reject(new Error('sysRedis unavailable (test outage)'));
-  return {
-    ...actual,
-    sysRedis: {
-      hGet: call('hGet'),
-      hSet: call('hSet'),
-      sAdd: call('sAdd'),
-      sMembers: call('sMembers'),
-      del: call('del'),
-      exists: call('exists'),
-      set: call('set'),
-    },
-    withSysReadDeadline,
-  };
-});
+/**
+ * 🔴 This file drives the CANONICAL shared mocks rather than registering its own.
+ *
+ * `~/server/db/client`, `~/server/redis/client` and `~/server/logging/client` all have
+ * canonical mocks registered once in `src/__tests__/setup.ts`, and a per-file `vi.mock` of
+ * any of them freezes that shape into every later file in the same worker under
+ * `isolate: false` — which is what `no-direct-shared-module-mock` exists to stop, and why
+ * `gen-mock-allowlist.mjs` refuses to allowlist a new file.
+ *
+ * Being an INTEGRATION test is not an exemption from that, only a constraint on how the
+ * seam is used: the canonical nodes are `vi.fn()`s, so instead of declaring canned return
+ * values this file points them at the REAL Postgres and Redis clients it builds in
+ * `beforeAll`. That satisfies the guard and keeps the suite end-to-end.
+ *
+ * It also removes the hand-typed key constants this file used to carry — `setup.ts` spreads
+ * the real `@civitai/redis/client` into the canonical factory, so `REDIS_SYS_KEYS` and
+ * `REDIS_SUB_KEYS` are production's own values and cannot drift
+ * (`no-hand-typed-redis-key-constants`). `withSysReadDeadline` likewise defaults to the real
+ * implementation there, so queues.ts keeps running the real deadline wrapper.
+ */
 
+// `~/server/redis/fail-open-log` is a PENDING specifier: no canonical mock exists yet, so a
+// direct mock is counted rather than enforced. Stubbed because the real logger is noise here.
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(() => Promise.resolve()) }));
 
 let prisma: PrismaClient;
 let bootstrap: PrismaClient;
-// A getter, not a value: the client cannot exist until beforeAll has the URL, and
-// queues.ts captures the binding at import.
-vi.mock('~/server/db/client', () => ({
-  get dbWrite() {
-    return prisma;
-  },
-  get dbRead() {
-    return prisma;
-  },
-}));
 
 const { addToQueue, drainDroppedEnqueues } = await import('~/server/redis/queues');
 
@@ -113,6 +85,36 @@ describe.skipIf(!databaseUrl || !redisUrl)('queues parking lot — real Postgres
 
     redis = createClient({ url: redisUrl });
     await redis.connect();
+
+    // Point the canonical db mock at the REAL scratch-schema client. queues.ts calls these as
+    // TAGGED TEMPLATES, so the implementation forwards (strings, ...values) verbatim — which
+    // is exactly the binding this suite exists to prove (the `::jsonb` cast, and
+    // `jsonb_array_length` on what we actually store).
+    dbMock.dbWrite.$queryRaw.mockImplementation((sql: TemplateStringsArray, ...values: unknown[]) =>
+      prisma.$queryRaw(sql, ...values)
+    );
+    dbMock.dbWrite.$executeRaw.mockImplementation(
+      (sql: TemplateStringsArray, ...values: unknown[]) => prisma.$executeRaw(sql, ...values)
+    );
+
+    // Point the canonical sysRedis mock at the REAL redis. Every key this suite writes derives
+    // from BUCKETS, so prefixing arg 0 namespaces the whole run at the transport layer while
+    // leaving the PRODUCTION key names in play — the mirror of the scratch SCHEMA on the
+    // Postgres side, where the SQL stays unqualified and the isolation lives on the connection.
+    // `del` accepts an array of keys as well as one.
+    const nsKey = (key: unknown) =>
+      Array.isArray(key) ? key.map((k) => `${NS}:${k}`) : `${NS}:${key}`;
+    const COMMANDS = ['hGet', 'hSet', 'sAdd', 'sMembers', 'del', 'exists', 'set'] as const;
+    for (const cmd of COMMANDS) {
+      redisMock.sysRedis[cmd].mockImplementation((key: unknown, ...rest: unknown[]) =>
+        backing
+          ? (backing as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[cmd](
+              nsKey(key),
+              ...rest
+            )
+          : Promise.reject(new Error('sysRedis unavailable (test outage)'))
+      );
+    }
   }, 30000);
 
   afterAll(async () => {
@@ -132,7 +134,7 @@ describe.skipIf(!databaseUrl || !redisUrl)('queues parking lot — real Postgres
     await prisma.$executeRawUnsafe(`TRUNCATE ${SCHEMA}."KeyValue"`);
     const keys = await redis.keys(`${NS}*`);
     if (keys.length) await redis.del(keys);
-    holder.backing = redis as never;
+    backing = redis;
   });
 
   const parked = () =>
@@ -157,7 +159,7 @@ describe.skipIf(!databaseUrl || !redisUrl)('queues parking lot — real Postgres
   });
 
   it('an outage parks the ids in Postgres instead of losing them', async () => {
-    holder.backing = null;
+    backing = null;
 
     await expect(addToQueue('images_v6:Delete', [10, 11])).resolves.toBe(false);
 
@@ -165,7 +167,7 @@ describe.skipIf(!databaseUrl || !redisUrl)('queues parking lot — real Postgres
   });
 
   it('successive drops during one outage accumulate under the same key', async () => {
-    holder.backing = null;
+    backing = null;
     await addToQueue('images_v6:Delete', [10, 11]);
     await addToQueue('images_v6:Delete', [12]);
 
@@ -173,9 +175,9 @@ describe.skipIf(!databaseUrl || !redisUrl)('queues parking lot — real Postgres
   });
 
   it('the drain replays them into redis once the outage ends, and clears the row', async () => {
-    holder.backing = null;
+    backing = null;
     await addToQueue('images_v6:Delete', [10, 11]);
-    holder.backing = redis as never;
+    backing = redis;
 
     await expect(drainDroppedEnqueues()).resolves.toEqual({ keys: 1, replayed: 2, reparked: 0 });
 
@@ -184,22 +186,22 @@ describe.skipIf(!databaseUrl || !redisUrl)('queues parking lot — real Postgres
   });
 
   it('the drain leaves the row parked while the outage continues, and never duplicates it', async () => {
-    holder.backing = null;
+    backing = null;
     await addToQueue('images_v6:Delete', [10, 11]);
 
     await expect(drainDroppedEnqueues()).resolves.toEqual({ keys: 1, replayed: 0, reparked: 2 });
     // Still exactly the two ids — a re-park would have appended a second copy.
     expect((await parked())[0].value).toEqual([10, 11]);
 
-    holder.backing = redis as never;
+    backing = redis;
     await expect(drainDroppedEnqueues()).resolves.toEqual({ keys: 1, replayed: 2, reparked: 0 });
     expect(await parked()).toHaveLength(0);
   });
 
   it('a drop landing between the drain read and its delete is not swallowed', async () => {
-    holder.backing = null;
+    backing = null;
     await addToQueue('images_v6:Delete', [10, 11]);
-    holder.backing = redis as never;
+    backing = redis;
 
     // The interleaving the length guard exists for: the drain has read [10,11] and is
     // about to delete when another pod parks id 12. The delete must refuse the grown row.
