@@ -31,12 +31,17 @@ export default function CivitaiLinkSuccessModal() {
           <ThemeIcon color="green" size="xl" radius="xl">
             <IconCheck />
           </ThemeIcon>
-          <Title ta="center">{`You're connected!`}</Title>
+          <Title ta="center">{`You're connected`}</Title>
         </Stack>
 
         <Form form={form} onSubmit={handleSubmit}>
           <Stack>
-            <InputText name="name" label="Name your Stable Diffusion instance" placeholder="name" />
+            <InputText
+              name="name"
+              label="Name this app"
+              description="Shown wherever you pick where to send a model."
+              placeholder="Workstation"
+            />
             <Button type="submit">Save</Button>
           </Stack>
         </Form>

@@ -1,5 +1,6 @@
 import type { GroupProps, StackProps } from '@mantine/core';
 import {
+  Badge,
   Group,
   Popover,
   Stack,
@@ -22,6 +23,8 @@ import {
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification } from '@mantine/notifications';
 import {
+  IconBoxMultiple,
+  IconDeviceDesktop,
   IconDownload,
   IconLink,
   IconPlus,
@@ -133,6 +136,31 @@ function SupporterHelp() {
   );
 }
 
+function LinkPitch({ children }: { children?: React.ReactNode }) {
+  return (
+    <Stack py="sm" px="lg" gap="xs" align="center">
+      <Center p="md" pb={0}>
+        <CivitaiLinkSvg />
+      </Center>
+      <Text fw={600} ta="center">
+        Send models straight to your machine
+      </Text>
+      <Text size="xs" c="dimmed" ta="center">
+        {children ??
+          `One click on any model page and it lands in the app you generate with — no downloading, no moving files.`}
+      </Text>
+      <Group gap="xs" justify="center" mt={4}>
+        <Badge variant="light" color="gray" size="sm" leftSection={<IconBoxMultiple size={12} />}>
+          ComfyUI node pack
+        </Badge>
+        <Badge variant="light" color="gray" size="sm" leftSection={<IconDeviceDesktop size={12} />}>
+          Link desktop app
+        </Badge>
+      </Group>
+    </Stack>
+  );
+}
+
 function AboutCivitaiLink() {
   return (
     <>
@@ -146,12 +174,9 @@ function AboutCivitaiLink() {
         This feature is currently in early access and only available to Supporters.
       </AlertWithIcon>
       <SupporterHelp />
-      <Stack py="sm" px="lg" gap={4}>
-        <Center p="md" pb={0}>
-          <CivitaiLinkSvg />
-        </Center>
-        <Text my="xs">Interact with any Stable Diffusion instance in realtime from Civitai</Text>
-      </Stack>
+      <LinkPitch>
+        Supporters get one-click sending to the ComfyUI node pack or the Link desktop app.
+      </LinkPitch>
       <Divider />
       <Group gap={0} grow>
         <Button
@@ -193,7 +218,7 @@ function LinkDropdown() {
             </Title>
           </Group>
           {canToggleManageInstances && (
-            <Tooltip label="Manage instances">
+            <Tooltip label="Manage apps">
               <LegacyActionIcon onClick={handleManageClick}>
                 <IconSettings size={20} />
               </LegacyActionIcon>
@@ -202,7 +227,7 @@ function LinkDropdown() {
         </Group>
         {!!instances?.length && (
           <Text c="dimmed" size="xs">
-            {instance?.name ?? 'no instance selected'}
+            {instance?.name ?? 'no app selected'}
           </Text>
         )}
       </Stack>
@@ -281,7 +306,7 @@ function InstancesManager() {
   return (
     <Stack gap={0}>
       <Group justify="space-between" p="xs">
-        <Text fw={500}>Stable Diffusion Instances</Text>
+        <Text fw={500}>Connected apps</Text>
         {showControls && (
           <Button
             size="compact-xs"
@@ -289,7 +314,7 @@ function InstancesManager() {
             leftSection={<IconPlus size={18} />}
             onClick={handleAddClick}
           >
-            Add Instance
+            Add app
           </Button>
         )}
       </Group>
@@ -346,12 +371,7 @@ function BigIndicator() {
 function GetStarted() {
   return (
     <>
-      <Stack py="sm" px="lg" gap={4}>
-        <Center p="md" pb={0}>
-          <CivitaiLinkSvg />
-        </Center>
-        <Text my="xs">Interact with any Stable Diffusion instance in realtime from Civitai</Text>
-      </Stack>
+      <LinkPitch />
       <Divider />
       <Stack>
         <Button
@@ -359,7 +379,7 @@ function GetStarted() {
           radius={0}
           onClick={() => openCivitaiLinkWizardModal()}
         >
-          Get Started
+          Set up Civitai Link
         </Button>
       </Stack>
     </>
@@ -378,7 +398,7 @@ function GetReconnected() {
         radius={0}
         size="md"
         color="yellow"
-      >{`Couldn't connect to SD instance!`}</AlertWithIcon>
+      >{`${instance?.name ?? 'This app'} hasn't checked in. Sending is paused until it's back.`}</AlertWithIcon>
       <Stack p="sm" gap={4}>
         {instance?.key && (
           <Stack gap={0} align="center" mb="md">
@@ -403,12 +423,13 @@ function GetReconnected() {
           </Stack>
         )}
         <Text size="md" fw={500}>
-          Troubleshooting
+          Try this
         </Text>
         <List type="unordered">
-          <List.Item>Make sure your SD instance is up and running.</List.Item>
+          <List.Item>Make sure the app is running on that machine.</List.Item>
+          <List.Item>{`Open its Civitai Link panel and check it's still paired.`}</List.Item>
           <List.Item>
-            If your instance is running and you are still unable to connect,{' '}
+            {`Still stuck? `}
             <Text
               c="blue.4"
               display="inline"
@@ -416,8 +437,8 @@ function GetReconnected() {
               onClick={handleGenerateKey}
             >
               generate a new connection key
-            </Text>{' '}
-            and add it to your SD instance.
+            </Text>
+            {` and paste it into the app.`}
           </List.Item>
         </List>
       </Stack>
@@ -435,7 +456,7 @@ function ActivityList() {
     </ScrollArea.Autosize>
   ) : (
     <Center p="lg">
-      <Text c="dimmed">No activity for this instance</Text>
+      <Text c="dimmed">No activity for this app</Text>
     </Center>
   );
 }
