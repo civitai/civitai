@@ -50,6 +50,16 @@ describe('getCivitaiLinkBaseUrl', () => {
     expect(getCivitaiLinkBaseUrl()).toBe('https://link.civitai.red');
   });
 
+  // Pins the NARROWNESS of the .red matcher, on a host that stays on civitai.com
+  // so the same-registrable-domain check cannot mask the result. Widening
+  // `endsWith('.civitai.red')` to `includes('civitai.red')` sends this host to
+  // link.civitai.red, which is then refused as cross-domain and returns
+  // undefined — so this case, and only this case, goes red for that mutant.
+  it('does not treat a .com host containing "civitai.red" as a .red host', () => {
+    setHostname('civitai.redirect.civitai.com');
+    expect(getCivitaiLinkBaseUrl()).toBe('https://link.civitai.com');
+  });
+
   it('falls back to the baked .com host when no location is available (SSR)', () => {
     setHostname(undefined);
     expect(getCivitaiLinkBaseUrl()).toBe('https://link.civitai.com');

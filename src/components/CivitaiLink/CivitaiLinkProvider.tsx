@@ -249,6 +249,19 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
     const payload = command as Command;
     payload.id = uuid();
 
+    // No reachable Link host: deliver nothing and hand back an already-settled
+    // promise. Registering in `commandPromises` first would leak the entry
+    // forever — nothing can complete it, and the default `timeout = 0` arms no
+    // rejection timer, so `.promise` would stay pending for the page's life.
+    // Settle rather than reject: callers `await runCommand(...)` (the outer
+    // call) and none attach a handler to `.promise`, so a rejection here would
+    // surface as an unhandled rejection.
+    const worker = await getWorker();
+    if (!worker) {
+      setError(UNAVAILABLE_ON_DOMAIN);
+      return { promise: Promise.resolve(undefined), id: payload.id, cancel: () => {} };
+    }
+
     // Setup promise for later resolution
     const promise = new Promise((resolve, reject) => {
       commandPromises[payload.id] = { resolve, reject };
@@ -260,7 +273,7 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
       }, timeout);
     });
 
-    await workerReq({ type: 'command', payload });
+    worker.port.postMessage({ type: 'command', payload });
     const cancel = () => {
       if (!commandPromises[payload.id]) return;
       runCommand({ type: 'activities:cancel', activityId: payload.id });

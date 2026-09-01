@@ -11,9 +11,20 @@ export type CivitaiLinkInstance = {
 
 /**
  * Registrable domain (last two labels) of a hostname — `link.civitai.com` →
- * `civitai.com`. Assumes a 2-label registrable domain, which is all we deploy;
- * mirrors `cookieDomainForHost` in `~/server/auth/civ-cookie`, which is what
- * decides the Domain the session cookie is actually set on.
+ * `civitai.com`. Assumes a 2-label registrable domain, which is all we deploy.
+ *
+ * This is a COMPARISON KEY for "would one host's cookie reach the other?", not a
+ * cookie Domain, and it deliberately does NOT mirror `cookieDomainForHost`
+ * (`~/server/auth/civ-cookie`): that returns undefined (host-only cookie) for
+ * `localhost` and bare IPv4, where this returns the last two labels. Safe here
+ * because BOTH sides of the comparison go through this same function, so an
+ * identical host still compares equal and a host-only cookie is still shared —
+ * `localhost` page + `http://localhost:3000` Link host resolves normally.
+ *
+ * Known imprecision, deliberately not fixed: two DIFFERENT private IPv4 hosts
+ * (`10.0.0.1`, `192.168.0.1`) both key to `0.1` and so compare equal. That is a
+ * false ACCEPT, which merely degrades to the pre-existing behaviour of issuing
+ * the request and getting a 401 — never a false refusal of a working origin.
  */
 const registrableDomain = (hostname: string): string => hostname.split('.').slice(-2).join('.');
 
@@ -64,6 +75,11 @@ export const getCivitaiLinkBaseUrl = (): string | undefined => {
   try {
     resolvedHost = new URL(resolved).hostname.toLowerCase();
   } catch {
+    // A malformed NEXT_PUBLIC_CIVITAI_LINK is a CONFIG error, but it lands the
+    // caller in the same `undefined` branch as an unreachable domain and so gets
+    // reported as "not available on this domain". Say which it really is — the
+    // env var is only schema-validated as a URL in prod, so dev can hit this.
+    console.error(`Civitai Link: NEXT_PUBLIC_CIVITAI_LINK is not a valid URL (${base})`);
     return undefined;
   }
   if (registrableDomain(host) !== registrableDomain(resolvedHost)) return undefined;
