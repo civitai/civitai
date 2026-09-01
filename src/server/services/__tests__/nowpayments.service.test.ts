@@ -634,14 +634,65 @@ describe('reconcileDeposits', () => {
 
     const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
 
-    expect(mockDbWrite.cryptoDeposit.update).toHaveBeenCalledWith({
-      where: { paymentId: BigInt(555) },
+    // The `status` predicate is part of the assertion, not incidental: the read above it
+    // comes from the replica, so without it in the WHERE the `failed` exclusion is only
+    // ever as fresh as that snapshot.
+    expect(mockDbWrite.cryptoDeposit.updateMany).toHaveBeenCalledWith({
+      where: { paymentId: BigInt(555), status: { not: 'failed' } },
       data: { status: 'finished', buzzCredited: 9886 },
     });
+    // `toHaveBeenCalledWith` cannot see a doubled call and `repairedRow` is a boolean, so
+    // without this a call-site that repaired twice would pass.
+    expect(mockDbWrite.cryptoDeposit.updateMany).toHaveBeenCalledTimes(1);
     expect(result.repairedRows).toBe(1);
     expect(result.alreadyProcessed).toBe(1);
     // The buzz is already in the account; re-granting is the one thing this must not do.
     expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+  });
+
+  // 🔴 `finished` with a null `buzzCredited` is a REACHABLE row shape, not a contradiction:
+  // `processDeposit` sets the status and the credit independently (`buzzCredited: buzzAmount
+  // > 0 && !buzzGrantFailed ? ... : null`), so a grant that reported nothing back still
+  // advances the status. It is one of the two shapes this repair exists for, which is why
+  // the guard is `finished && buzzCredited != null` and not `finished`. Widening it to the
+  // status alone turns these rows permanently unrepairable — the exact bug this PR fixes —
+  // and every other test here passes when you do.
+  it('settles a finished row that never recorded its credit', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
+      data: [makePayment({ payment_id: 559 })],
+    });
+    mockGetTransactionByExternalId.mockResolvedValueOnce({ amount: 9886 });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'finished',
+      buzzCredited: null,
+    });
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(mockDbWrite.cryptoDeposit.updateMany).toHaveBeenCalledWith({
+      where: { paymentId: BigInt(559), status: { not: 'failed' } },
+      data: { status: 'finished', buzzCredited: 9886 },
+    });
+    expect(result.repairedRows).toBe(1);
+  });
+
+  // The comment on the amount guard states the stake — settling a row that credits nothing
+  // is worse than leaving it visibly stuck — so the guard needs a test that fails when it
+  // is deleted. A ledger entry with no usable amount is the shape that reaches it.
+  it('refuses to settle a row when the ledger reports no credit', async () => {
+    mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
+      data: [makePayment({ payment_id: 560 })],
+    });
+    mockGetTransactionByExternalId.mockResolvedValueOnce({ amount: 0 });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'confirming',
+      buzzCredited: null,
+    });
+
+    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
+
+    expect(mockDbWrite.cryptoDeposit.updateMany).not.toHaveBeenCalled();
+    expect(result.repairedRows).toBe(0);
   });
 
   // The stale row's own `outcomeAmount` can predate the final conversion — 5416277437
@@ -659,7 +710,7 @@ describe('reconcileDeposits', () => {
 
     await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
 
-    const written = mockDbWrite.cryptoDeposit.update.mock.calls[0]?.[0];
+    const written = mockDbWrite.cryptoDeposit.updateMany.mock.calls[0]?.[0];
     expect(written?.data.buzzCredited).toBe(9886);
     // 42190360 is what deriving it from the row's own outcome would have produced.
     expect(written?.data.buzzCredited).not.toBe(42190360);
@@ -677,7 +728,7 @@ describe('reconcileDeposits', () => {
 
     const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
 
-    expect(mockDbWrite.cryptoDeposit.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.cryptoDeposit.updateMany).not.toHaveBeenCalled();
     expect(result.repairedRows).toBe(0);
   });
 
@@ -695,7 +746,7 @@ describe('reconcileDeposits', () => {
 
     const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
 
-    expect(mockDbWrite.cryptoDeposit.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.cryptoDeposit.updateMany).not.toHaveBeenCalled();
     expect(result.repairedRows).toBe(0);
   });
 

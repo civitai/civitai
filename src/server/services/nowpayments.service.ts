@@ -536,37 +536,56 @@ async function fetchPaymentsByDateRange(
  * outcome can predate the final conversion — that row held 42190.36 against a real
  * credit of 9,886.
  *
- * `failed` is left alone: it outranks `finished` in `processDeposit`'s status ladder
- * and is written by the retry sweep on exhaustion, so it is a deliberate terminal
- * state rather than a stale one.
+ * `failed` is left alone because `processDeposit` treats it as the one status that may
+ * override `finished` — "finished is immutable except via failed (manual)" — i.e. it is
+ * how a takedown or refund is recorded, and resurrecting one would undo that by hand.
+ * Note the retry-sweep-on-exhaustion route to `failed` is NOT the reason: that route
+ * means buzz was never granted, and this function only runs on a ledger hit, so the
+ * only `failed` row it can ever see is the contradictory one. Skipping is deliberate
+ * and silent; whether such a row should instead be surfaced is an open question.
  */
 async function repairCreditedRow(
   paymentId: string | number,
   buzzCredited: number
 ): Promise<boolean> {
-  // Without a real amount there is nothing to record, and settling the row anyway
-  // would replace a visibly-stuck deposit with one that looks complete and credits
-  // nothing — worse than leaving it for the next run.
-  if (!Number.isFinite(buzzCredited)) return false;
-
-  const id = BigInt(typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId);
   try {
+    const id = BigInt(typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId);
     const local = await dbRead.cryptoDeposit.findUnique({
       where: { paymentId: id },
       select: { status: true, buzzCredited: true },
     });
+    // No row at all means the upsert never ran, and creating one here would need
+    // deposit data this function does not have. Left for `processDeposit`.
     if (!local) return false;
     if (local.status === 'finished' && local.buzzCredited != null) return false;
     if (local.status === 'failed') return false;
 
-    await dbWrite.cryptoDeposit.update({
-      where: { paymentId: id },
+    // Checked after the row read, not before it: a guard that returns early can only be
+    // tested against a row it never looked at, and `!local` then absorbs the mutation —
+    // so the test for it would pass with the guard deleted.
+    // Without a real credit there is nothing to record, and settling the row anyway would
+    // replace a visibly-stuck deposit with one that looks complete and credits nothing.
+    if (!(buzzCredited > 0)) return false;
+
+    // `updateMany` for the `status` predicate: the read above is from the replica, so
+    // the `failed` check is made against a snapshot that can already be stale. Repeating
+    // it in the write makes the exclusion structural rather than a race we happen to win.
+    const { count } = await dbWrite.cryptoDeposit.updateMany({
+      where: { paymentId: id, status: { not: 'failed' } },
       data: { status: 'finished', buzzCredited },
     });
-    return true;
-  } catch {
-    // Never fail reconciliation over the repair — the buzz is already granted, which
-    // is the part that matters; the row gets another chance on the next run.
+    return count > 0;
+  } catch (e) {
+    // Never fail reconciliation over the repair — the buzz is already granted, which is
+    // the part that matters. Logged rather than swallowed: silence here is
+    // indistinguishable from "nothing needed repairing", and a row that reliably throws
+    // falls out of the job's 72h window with no trace.
+    await log({
+      message: 'Failed to repair a credited deposit row',
+      paymentId,
+      buzzCredited,
+      error: e instanceof Error ? e.message : String(e),
+    });
     return false;
   }
 }
@@ -1016,7 +1035,15 @@ export const reconcileUserDeposits = async (userId: number) => {
         select: { status: true, buzzCredited: true },
       });
 
-      if (existingTx || (existingDeposit?.status === 'finished' && existingDeposit.buzzCredited)) {
+      // Same repair as the reconcile job. This is the "check my deposits" button, so it
+      // is where someone staring at a stale `confirming` row actually goes — skipping
+      // here without settling the row left the one path a user can trigger telling them
+      // nothing was wrong.
+      if (existingTx) {
+        await repairCreditedRow(numericId, existingTx.amount);
+        continue;
+      }
+      if (existingDeposit?.status === 'finished' && existingDeposit.buzzCredited) {
         continue;
       }
 

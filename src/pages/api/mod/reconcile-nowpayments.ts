@@ -38,7 +38,7 @@ export default ModEndpoint(
       logToAxiom({
         type: 'info',
         name: 'reconcile-nowpayments',
-        message: `Reconciliation complete: ${results.newlyProcessed} processed, ${results.alreadyProcessed} already done, ${results.failed} failed`,
+        message: `Reconciliation complete: ${results.newlyProcessed} processed, ${results.alreadyProcessed} already done, ${results.repairedRows} rows repaired, ${results.failed} failed`,
         dateFrom,
         dateTo,
         paymentIds,
@@ -46,6 +46,7 @@ export default ModEndpoint(
         completedPayments: results.completedPayments,
         alreadyProcessed: results.alreadyProcessed,
         newlyProcessed: results.newlyProcessed,
+        repairedRows: results.repairedRows,
         failed: results.failed,
         skipped: results.skipped,
       });
