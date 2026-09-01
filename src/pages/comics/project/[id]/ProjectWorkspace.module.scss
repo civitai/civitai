@@ -407,8 +407,10 @@
   @media (max-width: 860px) {
     display: flex;
     position: fixed;
-    bottom: 16px;
-    left: 16px;
+    /* This FAB renders ONLY under 860px — i.e. exclusively on the devices that
+       have a home indicator — and 16px is less than its 34px. */
+    bottom: max(16px, var(--safe-area-inset-bottom));
+    left: max(16px, var(--safe-area-inset-left));
     z-index: 100;
   }
 }
@@ -587,6 +589,18 @@
   bottom: 0;
   width: 100%;
   max-width: 700px;
+  /* `width: 100%` makes this a FULL-SCREEN panel on a phone, so its own header
+     is at the top edge and its footer at the bottom edge — and in landscape,
+     where the cutout is on the SIDES, its left and right edges too. That is why
+     all four are paid and not just the vertical pair: this is documented as a
+     full-screen phone panel, and a phone held sideways is the orientation where
+     `--safe-area-inset-left/right` are the ~47px ones. The panel's background
+     and border still reach the physical edges — only its contents are inset,
+     which is the point. */
+  padding-top: var(--safe-area-inset-top);
+  padding-bottom: var(--safe-area-inset-bottom);
+  padding-left: var(--safe-area-inset-left);
+  padding-right: var(--safe-area-inset-right);
   background: light-dark(var(--mantine-color-gray-0), #25262b);
   border-left: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5);

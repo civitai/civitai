@@ -1003,6 +1003,28 @@ export function GenerationForm() {
               )}
             />
 
+            {/* MiniMax Music 3 mode picker (simple | custom). A separate node
+                from aceAudioMode so each ecosystem keeps its own stored value. */}
+            <Controller
+              graph={graph}
+              name="minimaxMusicMode"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Mode</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={
+                      meta.options?.map((o: { label: string; value: string }) => ({
+                        label: o.label,
+                        value: o.value,
+                      })) ?? []
+                    }
+                  />
+                </div>
+              )}
+            />
+
             {/* Snippet sources strip. Lives in its own Controller so it
                 auto-hides whenever the active graph doesn't include the
                 snippets node — i.e. the ecosystem subgraph didn't opt the

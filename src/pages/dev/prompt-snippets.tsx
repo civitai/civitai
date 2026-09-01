@@ -24,7 +24,13 @@ function PromptSnippetsDevPage() {
   if (!isDev) return <NotFound />;
 
   return (
-    <Container size="xs" className="h-screen max-h-screen w-full overflow-hidden px-0 py-3">
+    // `min-h-0 flex-1` for the reason spelled out in `pages/data-graph-v2.tsx`,
+    // whose host setup this page mirrors — including the exact ancestor chain,
+    // which is not "directly in `#__next`": `h-screen` measures the cover
+    // viewport while this element's slot is `#__next`'s CONTENT box, i.e. the
+    // cover viewport minus the top inset, and `overflow-hidden` here turns that
+    // difference into clipped, unreachable form controls rather than scroll.
+    <Container size="xs" className="min-h-0 w-full flex-1 overflow-hidden px-0 py-3">
       <IsClient>
         <GenerationFormProvider debug skipStorage>
           <GenerationForm />

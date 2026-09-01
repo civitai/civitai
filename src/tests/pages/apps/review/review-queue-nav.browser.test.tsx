@@ -27,8 +27,32 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
   createServerSideProps: () => async () => ({ props: {} }),
 }));
 
+// 🔴 ALL THREE HOOKS, because this factory REPLACES the module. The queue page's row now
+// renders the review entry point, which reads flags through `useOptionalFeatureFlags`
+// (the non-throwing variant, correct outside a provider). A factory naming only
+// `useFeatureFlags` left that named import nothing to bind to:
+//   SyntaxError: The requested module '/src/providers/FeatureFlagsProvider.tsx'
+//   does not provide an export named 'useOptionalFeatureFlags'
+// and in BROWSER mode that does not fail this file — it takes down the whole run. The
+// factory is resolved over the browser<->node channel inside a Playwright route handler
+// that does not catch, so the rejection escapes as an Unhandled Rejection in the
+// orchestrator: no summary, no per-file results, zero tests collected, exit 1. This one
+// file zeroed the entire `preview / component-tests` tier.
+//
+// 🔴 So the rule is EVERY RUNTIME EXPORT the module has, not "the ones we know about".
+// `useFeatureFlagsReady` is the third hook (`src/providers/FeatureFlagsProvider.tsx:36`), with
+// four live consumers — useChatEnabled, useFeatureNotice, NavTidyNotice,
+// YellowBuzzMigrationNotice — and `FeatureFlagsProvider` itself is the fourth export
+// (`:37`, imported today only by `src/pages/_app.tsx`). Neither is in this page's graph TODAY,
+// which is the only reason naming fewer would still load — and "not in this graph today" is
+// precisely the reasoning that put this file in the diff. So name all four.
+// The flag hooks return the SAME flags: the gate must be decided by this fixture, not by
+// which of them a component happens to call.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => state.flags,
+  useOptionalFeatureFlags: () => state.flags,
+  useFeatureFlagsReady: () => true,
+  FeatureFlagsProvider: ({ children }: { children: unknown }) => children,
 }));
 
 // Stub the modal component (assert whether a selection opened it) but keep the
@@ -73,7 +97,12 @@ const PENDING = {
   bundleSizeBytes: '2048',
   bundleSha256: 'abc',
   manifest: {},
-  fileSummary: { files: [{ path: 'index.js', sha256: 'x', sizeBytes: 10 }], added: [], removed: [], changed: [] },
+  fileSummary: {
+    files: [{ path: 'index.js', sha256: 'x', sizeBytes: 10 }],
+    added: [],
+    removed: [],
+    changed: [],
+  },
   manifestDiffSummary: { kind: 'first-version', fields: [] },
   reviewRepoUrl: 'https://forgejo.example/repo',
   pushCommitUrl: null,
@@ -91,8 +120,16 @@ const emptyQuery = () => ({
 vi.mock('~/utils/trpc', () => ({
   trpc: {
     useUtils: () => ({
-      blocks: { listPendingRequests: inert, listApprovedRequests: inert, listRejectedRequests: inert },
-      appListings: { listPendingRequests: inert, listApprovedRequests: inert, listRejectedRequests: inert },
+      blocks: {
+        listPendingRequests: inert,
+        listApprovedRequests: inert,
+        listRejectedRequests: inert,
+      },
+      appListings: {
+        listPendingRequests: inert,
+        listApprovedRequests: inert,
+        listRejectedRequests: inert,
+      },
     }),
     blocks: {
       listPendingRequests: {
