@@ -334,6 +334,7 @@ export const workflowConfigs: WorkflowConfigs = {
       ECO.HappyHorse,
       ECO.MiniMaxH3,
       ECO.Grok,
+      ECO.Seedance,
     ],
     // Grok referenceToVideo is a v1.5-only operation.
     excludeModelVersionIds: [viduVersionIds.q3, grokVersionIds['v1.0'], grokVersionIds['v2.0']],
