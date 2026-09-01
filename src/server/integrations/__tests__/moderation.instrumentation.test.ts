@@ -337,7 +337,12 @@ describe('a FIRED deadline is observed ABOVE the bucket boundary that equals the
       await histBucket('generate', 'timeout', 20),
       'a capped call must land in a finite bucket, not in +Inf alongside pathological ones'
     ).toBe(1);
-  }, 20_000);
+    // 🔴 NO PER-TEST TIMEOUT HERE ON PURPOSE. This test parks 5s of REAL time, so it is the one
+    // most exposed to a tight bound — and the `unit` project's `testTimeout: 60000` exists
+    // precisely because a shorter one produced "a PASS→FAIL that tracked CI load, not code"
+    // (see the comment on that setting in `vitest.config.mts`). A third argument here would opt
+    // this test DOWN out of that protection. Leave it on the project default.
+  });
 });
 
 describe('moderatePrompt instrumentation — not configured', () => {

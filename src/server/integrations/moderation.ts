@@ -35,8 +35,15 @@ async function moderatePrompt(
   prompt: string,
   source: ExternalModerationSource = 'other'
 ): Promise<{ flagged: false; categories: string[] }> {
-  // Clamp once, here, so every instrument below shares one bounded value regardless of what a
-  // spread-built options object handed us.
+  // Clamp once, here, so every instrument below shares one bounded value.
+  //
+  // 🔴 NOT because callers build these options by spread — none do, and that rationale was fiction;
+  // it is corrected in full at `~/server/prom/external-moderation.metrics`. The real reason is that
+  // `moderatePrompt` is EXPORTED, so this argument is reachable from callers `tsc` does not
+  // constrain: a value already widened to `string` (a cast, a `JSON.parse`), and the test tree,
+  // which `tsconfig.json` excludes. An unbounded label value on a hot-path histogram is a
+  // cardinality incident — prom-client retains every distinct label set in the Node heap forever,
+  // across ~130 scraped pods — and it arrives with a green suite and no error anywhere.
   const metricSource = clampExternalModerationSource(source);
 
   // Read once, into locals, so the guard below narrows them for the fetch. The fetch now runs inside

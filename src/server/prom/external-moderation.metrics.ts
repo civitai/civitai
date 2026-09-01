@@ -43,27 +43,53 @@ import { registerCounterWithLabels, registerHistogram } from '@civitai/telemetry
  *                   generator latency: App Blocks submissions are in it too. An ABSENT surface
  *                   falls to `other`, never to here. This is the population the metric exists to
  *                   size: the number to divide against that procedure's own wall time.
- * - `preset`      — the SAME `generateFromGraph` code reached through preset/comics generation,
- *                   which includes the `process-enqueued-comic-panels` CRON JOB. Split out for
- *                   exactly the reason its sibling on the submit metric is: a background job blended
- *                   into `generate` would corrupt the one division this metric supports.
- *                   🔴 That cron makes TWO external-moderation calls per panel and BOTH are labelled
- *                   here: its explicit pre-submit `auditPromptServer` gate, which declares
- *                   `moderationSource: 'preset'` by hand, and the one inside `submitPresetImageGen`
- *                   → `generateFromGraph`, which derives the same value from surface `preset`. So a
- *                   per-panel rate on this series is 2× the panel rate, by construction. (Until the
- *                   round-1 fix the explicit gate declared nothing and fell to `other`, which halved
- *                   this series' count for that cron and inflated `other` by the same amount.)
+ * - `preset`      — surface `preset`: the SAME `generateFromGraph` code reached through
+ *                   `submitPresetImageGen`. Split out for exactly the reason its sibling on the
+ *                   submit metric is: a background job blended into `generate` would corrupt the one
+ *                   division this metric supports.
+ *                   🔴 THIS SERIES COUNTS CALLS, NOT SUBMISSIONS, AND NO CONSTANT CONVERTS ONE INTO
+ *                   THE OTHER. `submitPresetImageGen` has THREE callers which contribute at
+ *                   DIFFERENT rates, and nothing on the series distinguishes them:
+ *                     · `orchestrator.router.ts`, the `iterateGenerate` procedure — interactive
+ *                       tRPC, 1 call per submission;
+ *                     · `comics.router.ts`, via the `submitComicGeneration` helper that several of
+ *                       that router's procedures share — interactive tRPC, 1 call per submission;
+ *                     · `process-enqueued-comic-panels.ts` — the CRON JOB, up to 2 calls per panel:
+ *                       its explicit pre-submit `auditPromptServer` gate, which declares
+ *                       `moderationSource: 'preset'` by hand, plus the one inside
+ *                       `generateFromGraph`, which derives the same value from the surface.
+ *                   So the series is `interactive + up-to-2×cron`, and it CANNOT be divided by 2.
+ *                   The cron's own share is not a fixed 2 either: `auditPromptServer` returns early
+ *                   on an empty prompt (`promptAuditing.ts:244`) and a HARD regex block throws at
+ *                   `:288`, both BEFORE `moderatePrompt` at `:295` — so a blocked panel contributes
+ *                   0 or 1, never 2.
+ *                   (The ACE Audio creative-field audit in `generateFromGraph` derives `preset`
+ *                   too, but `buildPresetGraphInput` emits only txt2img/img2img input, so as of
+ *                   today it contributes nothing here. A preset graph that ever carried
+ *                   `musicDescription`/`lyrics` would add a fourth, again-different rate.)
+ *                   🔴 THE TRADE THIS PR MADE, so nobody re-derives it as a bug: before it, the
+ *                   cron's explicit gate declared nothing and fell to `other` — which inflated
+ *                   `other` and undercounted the cron here, but left `preset` at exactly one
+ *                   observation per preset submission. Labelling the gate `preset` fixed the `other`
+ *                   inflation and cost `preset` that 1:1 relationship. Read it as a call rate on
+ *                   preset work; to recover a per-panel figure you need a label that separates the
+ *                   cron from the two interactive routes, which does not exist today.
  * - `remixAudit`  — the `audit-remix-sources` background job, which calls `moderatePrompt` directly
  *                   rather than through `auditPromptServer`. Batch work, no user waiting on it.
  * - `other`       — every other `auditPromptServer` caller (App Blocks host-side audits, prompt
  *                   enhancement, shared content-safety). The DEFAULT, so a caller that declares
  *                   nothing can never silently inflate `generate`.
  *
- * 🔴 `other` is a genuine mixture, not a residue worth attributing: it is deliberately NOT split
- * further, because doing so means threading a source through `AuditPromptOptions` to nine call
- * sites. If a figure for one of those funnels is ever needed, that plumbing is the change — do not
- * read `other` as any single path.
+ * 🔴 `other` is a genuine mixture, not a residue worth attributing — do not read it as any single
+ * path. It is deliberately NOT split further, but the PLUMBING IS NO LONGER THE REASON: this PR put
+ * `moderationSource` on `AuditPromptOptions` and it already reaches all nine `auditPromptServer`
+ * call sites, every one of which can declare a value today. What splitting a funnel out still costs
+ * is vocabulary and a decision per site: a new member added BOTH to this union and to
+ * `EXTERNAL_MODERATION_SOURCES` below (the clamp is a closed set — a union member missing from the
+ * set falls silently to `other`), the literal written at the site being split, and that site's row
+ * updated in `moderation-source-wiring.test.ts`. That is cheap per funnel and is why it is done one
+ * funnel at a time, on evidence that the funnel is worth its own series — not because `other` is
+ * hard to reach.
  */
 export type ExternalModerationSource = 'generate' | 'preset' | 'remixAudit' | 'other';
 
