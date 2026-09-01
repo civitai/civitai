@@ -785,12 +785,19 @@ describe('🔴 NEW-1 — an ABANDONED beta note does not fail the whole save', (
    * description, category, URL — was rejected with it. The refusal's own advice ("tick the
    * box and save again") would have published the note they had just abandoned.
    */
-  const OFF_LISTING = {
-    parentId: 'apl_1',
-    slug: 's',
+  /**
+   * 🔴 BUILT THROUGH `makeCtx`, NOT HAND-ROLLED WITH A CAST. An earlier version of this
+   * fixture was a literal cast `as never`, which is how a fixture silently stops modelling
+   * the contract: `tsconfig.json` excludes every `__tests__` directory, so nothing
+   * type-checks these files today, and a cast guarantees they stay invisible even if that
+   * exclusion is ever narrowed. (The exclude glob is deliberately NOT written out here — a
+   * `**` followed by `/` closes a block comment, which is exactly how this docstring broke
+   * the file's parse the first time.) When `ListingEditContext` gains a field the diff reads, `makeCtx` is the
+   * one place a maintainer updates — a cast-built fixture would keep passing against a
+   * contract it no longer models.
+   */
+  const OFF_LISTING = makeCtx({
     status: 'approved',
-    hasPendingRevision: false,
-    shadowId: null,
     scalars: {
       name: 'n',
       tagline: null,
@@ -801,12 +808,13 @@ describe('🔴 NEW-1 — an ABANDONED beta note does not fail the whole save', (
       isBeta: false,
       betaMessage: null,
     },
-    assets: {
-      icon: { imageId: null, url: null },
-      cover: { imageId: null, url: null },
-      screenshots: [],
-    },
-  } as never;
+  });
+
+  /** The same listing with beta already ON and a stored note. */
+  const ON_LISTING = makeCtx({
+    status: 'approved',
+    scalars: { ...OFF_LISTING.scalars, isBeta: true, betaMessage: 'x' },
+  });
 
   it('tick → type → untick emits NO beta keys at all', () => {
     const current = {
@@ -846,9 +854,16 @@ describe('🔴 NEW-1 — an ABANDONED beta note does not fail the whole save', (
     expect(patch.betaMessage).toBe('Expect rough edges');
   });
 
-  it('unticking a listing that HAS a note still clears it (no note in the patch needed)', () => {
-    // The server nulls the note on the off transition, so the note never has to ride the
-    // patch to be removed — which is what makes suppressing it here safe.
+  it('INVARIANT GUARD — unticking a listing that HAS a note emits no note key', () => {
+    // 🔴 LABELLED AS AN INVARIANT GUARD, NOT COUNTED AS REGRESSION COVERAGE. Measured: this
+    // case survives BOTH directions of the NEW-1 mutation, because the fixture's current and
+    // original notes are identical so the key is omitted with or without the guard. It pins
+    // what must not move; it is not evidence the fix works.
+    //
+    // 🔴 AND IT ASSERTS ONLY THE CLIENT HALF. The claim that unticking CLEARS a stored note
+    // is the SERVER's (`buildListingPatchData` nulls it on the off transition), and it is
+    // covered separately by the N5 block in `offsite-listing.edit.service.test.ts`. All this
+    // shows is that the client does not need to send the note for that to happen.
     const on = {
       ...OFF_LISTING,
       scalars: {

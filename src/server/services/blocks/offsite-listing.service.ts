@@ -3602,8 +3602,18 @@ async function applyApprovedRevision(opts: {
       // kinds, which is exactly the shape that would otherwise justify a carve-out from the
       // assets-only rule). The reason is narrower and stronger: beta is never STAGED. Every
       // beta write in this file targets the LIVE listing, including from
-      // `updateRevisionDraft`, so the shadow's copy is a display snapshot that is allowed to
-      // go stale (see `beginListingRevision`) and copying it back would REVERT the author.
+      // `updateRevisionDraft`, so a shadow's own beta columns are never written at all —
+      // they hold the schema defaults. Copying them here would therefore not restore an
+      // older value, it would CLEAR the live one.
+      //
+      // 🔴 DO NOT "FRESHEN" THE SHADOW TO FIX THAT. `beginListingRevision` deliberately
+      // clones NO beta column, and re-adding one re-imposes the ordering constraint that was
+      // removed: the parent's beta write would have to land before the shadow is minted,
+      // which hoists a write above `buildListingPatchData` and makes a REJECTED patch apply
+      // its beta half anyway (pinned by "a REJECTED patch writes NOTHING"). The moderator
+      // preview does not need a clone — `getListingPreviewForReview` reads beta from the
+      // PARENT for a shadow.
+      //
       // Keeping the branch assets-only is also what preserves
       // `revisionApplyScope('onsite') === 'assets-only'`, which is the sole thing licensing
       // the review panel's "approving changes nothing" claim. See {@link splitBetaPatch}.
