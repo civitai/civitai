@@ -3,7 +3,7 @@ import { REDIS_KEYS, type RedisKeyTemplateCache } from '@civitai/redis';
 import { getClickhouse } from './clickhouse';
 import { getRedis } from './redis';
 import { dbRead } from './db';
-import { logToAxiom } from './axiom';
+import { logAxiomError, logToAxiom } from './axiom';
 
 const MAX_GLOBAL_BONUS = 5;
 
@@ -60,7 +60,16 @@ export async function rewardReportReporters(input: {
     }
     await getClickhouse().insert({ table: 'buzzEvents', values: rows, format: 'JSONEachRow' });
   } catch (err) {
-    console.error('[rewards] failed to record reportAccepted events', err);
+    // Nothing retries this. reports.service marks the report Actioned BEFORE calling here and its
+    // guarded UPDATE matches nothing on a second attempt, so a throw means these reporters are
+    // never paid and the moderator sees a successful action. That has to leave a trace someone
+    // can find, which pod stdout is not.
+    logAxiomError(err, {
+      name: 'buzz-rewards',
+      message: 'failed to record reportAccepted events; reporters will not be paid',
+      reportId: input.reportId,
+      reporterIds: input.reporterIds,
+    });
   }
 }
 
@@ -89,8 +98,19 @@ async function getBaseRewardsMultiplier(userId: number): Promise<number> {
     // A multiplier of 0 is the cache reporting rewardsEligibility = 'Ineligible', not a missing
     // value. Falling through to 1 there paid an ineligible reporter the full award — the same hole
     // PR #4383 closed on the main app's side of this table.
-    if (cached && !cached.notFound && typeof cached.rewardsMultiplier === 'number')
-      return cached.rewardsMultiplier;
+    // Finite, not just `typeof number`: NaN and Infinity are both `'number'` and both reach the
+    // Decimal(3, 2) column as values it cannot parse. Rejecting them here rather than letting the
+    // clamp catch them is what makes a garbage entry pay the same as a missing one — the clamp
+    // never sees `globalBonus`, so falling back there pays 1 where a miss pays 1 x the bonus.
+    if (cached && !cached.notFound && typeof cached.rewardsMultiplier === 'number') {
+      if (Number.isFinite(cached.rewardsMultiplier)) return cached.rewardsMultiplier;
+      logToAxiom({
+        name: 'buzz-rewards',
+        type: 'error',
+        message: 'Cached rewards multiplier was not finite; paid the base multiplier instead',
+        userId,
+      }).catch(() => null);
+    }
   } catch {
     // Shared-cache read is best-effort; fall back to the base multiplier.
   }
