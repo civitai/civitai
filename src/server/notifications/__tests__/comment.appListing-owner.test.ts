@@ -259,6 +259,21 @@ describe('new-app-listing-comment — SQL: who it notifies, and who it must not'
       WHERE (blk."userId" = CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END AND blk."targetUserId" = c."userId" AND blk.type IN ('Block', 'Hide'))
       OR (blk."userId" = c."userId" AND blk."targetUserId" = CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END AND blk.type = 'Block')
       )
+      AND NOT EXISTS (
+      WITH RECURSIVE muteable_threads AS (
+      SELECT t.id "id", 0 "depth"
+      UNION ALL
+      SELECT pc."threadId", mt."depth" + 1
+      FROM muteable_threads mt
+      JOIN "Thread" th ON th.id = mt."id"
+      JOIN "CommentV2" pc ON pc.id = th."commentId"
+      WHERE mt."depth" < 100
+      )
+      SELECT 1
+      FROM muteable_threads mt
+      JOIN "ThreadMute" tm ON tm."threadId" = mt."id"
+      WHERE tm."userId" = CASE WHEN al.kind = 'onsite' THEN COALESCE(oc."userId", al."user_id") ELSE al."user_id" END
+      )
       )
       SELECT
       concat('new-comment-app-listing:owner:v2:', details->>'commentId') "key",

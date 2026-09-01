@@ -2,6 +2,7 @@ import type { GetByIdInput } from './../schema/base.schema';
 import type { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
+import { MAX_THREAD_CHAIN_DEPTH, muteableThreadsCte } from '~/server/common/thread-chain';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
@@ -9,6 +10,8 @@ import type {
   UpsertCommentV2Input,
   CommentConnectorInput,
   GetCommentsInfiniteInput,
+  SectionMuteInput,
+  ToggleThreadMuteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
 import {
@@ -272,12 +275,10 @@ export async function isViewerContentOwner({
 }
 
 /**
- * Both a cycle backstop and a ceiling on how deep a chain this can resolve. Reaching it is
- * treated as "could not resolve", not as "no lock found" — measured on the 2,000 most recent
- * threads in production the deepest chain is 17 and the mean is 2.65, so no real conversation
- * is near it, and a caller who built one past it must not get a pass out of the guard.
+ * Reaching the cap is treated as "could not resolve", not as "no lock found" — a caller who built a
+ * chain past it must not get a pass out of the guard. The number itself, and what production
+ * actually holds, live beside the constant.
  */
-const MAX_THREAD_CHAIN_DEPTH = 100;
 
 /**
  * Every owner-bearing FK on `Thread`. A thread with none of them and no parent comment is an
@@ -473,6 +474,168 @@ export const upsertComment = async ({
 
   return updated;
 };
+
+export async function toggleThreadMute({
+  commentId,
+  userId,
+}: ToggleThreadMuteInput & { userId: number }) {
+  const comment = await dbWrite.commentV2.findUnique({
+    where: { id: commentId },
+    select: {
+      threadId: true,
+      tosViolation: true,
+      childThread: { select: { id: true } },
+    },
+  });
+  if (!comment) throw throwNotFoundError();
+  // A ToS-flagged comment is not visible to a non-moderator, and this endpoint takes a bare id — so
+  // without this it doubles as an oracle for whether an id exists and whether it was actioned.
+  if (comment.tosViolation) throw throwNotFoundError();
+
+  let threadId = comment.childThread?.id;
+  if (!threadId) {
+    // Only the CREATE path is gated. Muting an existing thread writes one small row; creating one
+    // writes into `Thread`, which is large and heavily indexed, so that is the path worth refusing
+    // inside a chain no one may write to.
+    await throwIfThreadChainLocked(comment.threadId);
+    // A comment's reply thread is created lazily by the first reply, so muting can run before one
+    // exists. It must be created with the SAME ancestry `upsertComment` would give it: the reply
+    // path finds this row and skips its own create, and a thread left with a null `rootThreadId`
+    // drops out of the reply/thread-response notification queries entirely — they INNER JOIN on it.
+    const parentThread = await dbWrite.thread.findUnique({
+      where: { id: comment.threadId },
+      select: { id: true, rootThreadId: true },
+    });
+    // `upsert`, not `create`: a first mute and a first reply can land on the same comment together
+    // and `Thread.commentId` is unique, so the loser of that race would surface a raw constraint
+    // error and silently not mute.
+    const created = await dbWrite.thread.upsert({
+      where: { commentId },
+      create: {
+        commentId,
+        parentThreadId: comment.threadId,
+        rootThreadId: parentThread?.rootThreadId ?? comment.threadId,
+      },
+      update: {},
+      select: { id: true },
+    });
+    threadId = created.id;
+  }
+
+  const { count } = await dbWrite.threadMute.deleteMany({ where: { threadId, userId } });
+  if (count > 0) return { muted: false, threadId };
+
+  // `createMany({ skipDuplicates })` emits ON CONFLICT DO NOTHING: two concurrent toggles both see
+  // no row and both insert, and the loser would surface a raw constraint error over a mute that did
+  // apply. Same reason the `Thread` write above is an upsert.
+  await dbWrite.threadMute.createMany({ data: [{ threadId, userId }], skipDuplicates: true });
+  return { muted: true, threadId };
+}
+
+/**
+ * The section-level mute: silences a whole comment section rather than one conversation under a
+ * comment. It is the only writer that targets an ENTITY ROOT thread, which is what makes the mute
+ * filter on the entity-owner processors reachable at all — see `notThreadMuted`.
+ *
+ */
+export async function toggleSectionMute({
+  entityType,
+  entityId,
+  userId,
+}: SectionMuteInput & { userId: number }) {
+  // Deliberately does NOT create the thread. An entity with no thread has no comments, so there is
+  // nothing to be notified about and nothing to mute; the first comment creates the thread and the
+  // control works from then on. Refusing to create also means this endpoint — which takes a plain
+  // entity id — cannot be walked to insert rows into `Thread`.
+  const thread = await dbWrite.thread.findUnique({
+    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
+    select: { id: true },
+  });
+  if (!thread) return { muted: false, threadId: null };
+
+  const { count } = await dbWrite.threadMute.deleteMany({ where: { threadId: thread.id, userId } });
+  if (count > 0) return { muted: false, threadId: thread.id };
+
+  await dbWrite.threadMute.createMany({
+    data: [{ threadId: thread.id, userId }],
+    skipDuplicates: true,
+  });
+  return { muted: true, threadId: thread.id };
+}
+
+export async function getSectionMuted({
+  entityType,
+  entityId,
+  userId,
+}: SectionMuteInput & { userId: number }) {
+  const thread = await dbRead.thread.findUnique({
+    where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
+    select: { id: true },
+  });
+  // `hasThread: false` is not the same as "not muted" and the caller must be able to tell them
+  // apart: nothing can be muted yet, so offering the action would report success over a no-op.
+  if (!thread) return { muted: false, hasThread: false };
+
+  const mute = await dbRead.threadMute.findUnique({
+    where: { userId_threadId: { userId, threadId: thread.id } },
+    select: { userId: true },
+  });
+  return { muted: !!mute, hasThread: true };
+}
+
+export async function getThreadMuted({
+  commentId,
+  userId,
+}: ToggleThreadMuteInput & { userId: number }) {
+  const comment = await dbRead.commentV2.findUnique({
+    where: { id: commentId },
+    select: { threadId: true, tosViolation: true, childThread: { select: { id: true } } },
+  });
+  // Refuses what the toggle refuses; answering for a ToS-removed comment makes this the oracle its
+  // neighbour was fixed not to be.
+  if (!comment || comment.tosViolation) return { muted: false, viaAncestor: false, canMute: false };
+
+  // Seeded from the comment's OWN thread, not its reply thread, so the answer is right before anyone
+  // has replied — a reply thread is created lazily, and returning early when it is missing reported
+  // "not muted" on every reply-less comment inside a muted discussion while notifications were in
+  // fact suppressed. That is the menu-versus-notification divergence this shared walk exists to
+  // prevent, and skipping the walk was the one way back into it.
+  const ownThreadId = comment.childThread?.id ?? null;
+
+  // Walks ancestors, because SUPPRESSION does, and through the SAME shared CTE rather than a retyped
+  // copy — mirroring it by hand is what makes the menu and the notification disagree. Reading only
+  // this thread made the menu offer "Mute" on a comment already silenced from above, and offer an
+  // "Unmute" that deletes nothing and then claims the notifications are back on.
+  // `dbWrite`, deliberately: the client invalidates this query the moment a toggle succeeds, so off
+  // the replica the refetch can return the pre-toggle state — and because the mutation flips from DB
+  // state, the next click then does the opposite of what the label says. `throwIfThreadChainLocked`
+  // reads the primary for the same reason.
+  const [row] = await dbWrite.$queryRaw<
+    {
+      own: boolean | null;
+      ancestor: boolean | null;
+      locked: boolean | null;
+    }[]
+  >`
+    ${Prisma.raw(muteableThreadsCte(String(ownThreadId ?? comment.threadId)))}
+    SELECT
+      bool_or(tm."threadId" IS NOT NULL AND mt."id" = ${ownThreadId}::int) "own",
+      bool_or(tm."threadId" IS NOT NULL AND mt."id" IS DISTINCT FROM ${ownThreadId}::int) "ancestor",
+      bool_or(th.locked) "locked"
+    FROM muteable_threads mt
+    JOIN "Thread" th ON th.id = mt."id"
+    LEFT JOIN "ThreadMute" tm ON tm."threadId" = mt."id" AND tm."userId" = ${userId}
+  `;
+
+  const own = row?.own ?? false;
+  const ancestor = row?.ancestor ?? false;
+  // Muting a comment with no reply thread has to CREATE one, which `throwIfThreadChainLocked`
+  // refuses anywhere in a locked chain. Answered here rather than from the client's `isLocked`,
+  // which is assembled from React nesting and is simply false on a drilled-in or deep-linked
+  // thread — the view a reply notification actually opens.
+  const canMute = !!ownThreadId || !(row?.locked ?? false);
+  return { muted: own || ancestor, viaAncestor: !own && ancestor, canMute };
+}
 
 export const getComment = async ({
   id,

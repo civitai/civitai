@@ -473,6 +473,7 @@ model User {
   questionReactions    QuestionReaction[]
   answerReactions      AnswerReaction[]
   commentV2Reactions   CommentV2Reaction[]
+  threadMutes          ThreadMute[]
   answerVotes          AnswerVote[]
   tagsEngaged          TagEngagement[]
 
@@ -3965,6 +3966,7 @@ model Thread {
   comments       CommentV2[] @relation("thread")
   directChildren Thread[]    @relation("childThread")
   children       Thread[]    @relation("root")
+  mutes          ThreadMute[]
 
   @@unique([comicProjectId, comicChapterPosition])
   @@index([reviewId], type: Hash)
@@ -3974,6 +3976,17 @@ model Thread {
   @@index([articleId], type: Hash)
   @@index([rootThreadId], type: Hash)
   @@index([challengeId], type: Hash)
+}
+
+model ThreadMute {
+  userId   Int
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threadId Int
+  thread   Thread   @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  mutedAt  DateTime @default(now())
+
+  @@id([userId, threadId])
+  @@index([threadId])
 }
 
 model QuestionReaction {

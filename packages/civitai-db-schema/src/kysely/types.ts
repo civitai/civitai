@@ -3906,6 +3906,11 @@ export type Thread = {
   metadata: Generated<unknown>;
   commentCount: Generated<number>;
 };
+export type ThreadMute = {
+  userId: number;
+  threadId: number;
+  mutedAt: Generated<Timestamp>;
+};
 export type TipConnection = {
   transactionId: string;
   entityId: number;
@@ -4572,6 +4577,7 @@ export type DB = {
   TagStat: TagStat;
   Technique: Technique;
   Thread: Thread;
+  ThreadMute: ThreadMute;
   TipConnection: TipConnection;
   Tool: Tool;
   TrustedSpokeDomain: TrustedSpokeDomain;
