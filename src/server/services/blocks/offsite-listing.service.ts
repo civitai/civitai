@@ -22,6 +22,13 @@ import {
   type ListingSourceRepoRead,
 } from '~/server/services/blocks/app-listing-source-repo.service';
 import {
+  assertBetaWritable,
+  betaWriteFragment,
+  readListingBeta,
+  type ListingBetaRead,
+} from '~/server/services/blocks/app-listing-beta.service';
+import {
+  BETA_MESSAGE_MAX,
   OFFSITE_CONTENT_RATINGS,
   OFFSITE_REJECTION_REASON_MAX,
   OFFSITE_REJECTION_REASON_MIN,
@@ -785,6 +792,63 @@ async function closeTerminalListing(
 const MATERIAL_PATCH_FIELDS = MATERIAL_LISTING_PATCH_FIELDS;
 
 /**
+ * The patch keys that carry the AUTHOR'S BETA DECLARATION. ONE definition, read by
+ * {@link splitBetaPatch} and by the tests, so "which keys are beta" cannot be spelled twice.
+ */
+export const BETA_PATCH_FIELDS = ['isBeta', 'betaMessage'] as const;
+
+/**
+ * Split a patch into its BETA half and everything else. PURE.
+ *
+ * 🔴 THIS EXISTS BECAUSE BETA IS NEVER STAGED ON A SHADOW REVISION, which is the single
+ * design decision this feature turns on. Beta is TRIVIAL — an edit applies in place with no
+ * moderator re-review — so a beta write always targets the LIVE listing, even when the rest
+ * of the same patch is being staged on a shadow for review.
+ *
+ * 🔴 THE ALTERNATIVE (letting beta ride the shadow like `sourceRepoUrl` does) IS WRONG IN
+ * THREE SEPARATE WAYS, and it is worth naming all three because the shadow route is the
+ * obvious one:
+ *   1. IT REVERTS THE AUTHOR. A shadow can sit in the review queue for days while the
+ *      author keeps editing the LIVE listing — beta is trivial, so those edits apply
+ *      immediately. `applyApprovedRevision` copies the shadow's scalars UNCONDITIONALLY, so
+ *      approving a week-old revision would restore the beta value as it was when the shadow
+ *      was cloned and silently undo every beta edit since.
+ *   2. IT WOULD BREAK THE ON-SITE NO-OP CLAIM. `applyApprovedRevision`'s on-site branch is
+ *      ASSETS-ONLY, and `revisionApplyScope('onsite') === 'assets-only'` is precisely what
+ *      licenses the review panel's "approving changes nothing" statement. Copying a scalar
+ *      there would make that statement false for every on-site media revision — the exact
+ *      defect `OFFSITE_UNCOMPARED_APPLY_FIELDS` exists to prevent — and the only fix would
+ *      be to withdraw the claim, losing a real moderator signal for a cosmetic label.
+ *   3. IT WOULD PUT A TRIVIAL FIELD IN A REVIEW QUEUE. The product decision is that beta
+ *      needs no review; staging it re-introduces one through the back door, because an
+ *      author whose patch ALSO touches a material field would find their beta toggle
+ *      pending a moderator.
+ *
+ * So: the beta half goes to the parent, the rest routes as it always has, and NEITHER beta
+ * column appears in `applyApprovedRevision`'s copy or in `OFFSITE_UNCOMPARED_APPLY_FIELDS`
+ * (that list names what the apply copies WITHOUT comparing — the apply copies nothing here).
+ */
+export function splitBetaPatch(patch: UpdateListingPatch): {
+  betaPatch: UpdateListingPatch;
+  restPatch: UpdateListingPatch;
+} {
+  const betaPatch: UpdateListingPatch = {};
+  const restPatch: UpdateListingPatch = { ...patch };
+  for (const field of BETA_PATCH_FIELDS) {
+    if (patch[field] === undefined) continue;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (betaPatch as any)[field] = patch[field];
+    delete restPatch[field];
+  }
+  return { betaPatch, restPatch };
+}
+
+/** True when a split half carries at least one key (⇒ there is a write to make). */
+export function patchHasAnyField(patch: UpdateListingPatch): boolean {
+  return Object.keys(patch).length > 0;
+}
+
+/**
  * Validate + normalize an update patch (shared by the in-place + shadow paths).
  * Re-runs the shared URL / category / contentRating validators (this fn is
  * exported + unit-tested directly, so it can't trust the schema boundary) and
@@ -818,9 +882,46 @@ export function buildListingPatchData(
      * can act on beats a 500 they cannot).
      */
     sourceRepoAvailable: boolean;
+    /**
+     * Whether the MANUAL-APPLY `app_listings.is_beta` / `beta_message` columns exist, from
+     * the caller's guarded read (`EditableListing.betaAvailable`).
+     *
+     * 🔴 REQUIRED FOR THE SAME REASON `sourceRepoAvailable` IS, and stated separately
+     * rather than folded into one "migrations applied" flag: the two migrations land
+     * independently, per environment, by hand, so an environment can have one and not the
+     * other. A shared flag would make the source-repo column's presence decide whether the
+     * beta columns may be written, which is a guess dressed as a check.
+     */
+    betaAvailable: boolean;
   }
 ): Prisma.AppListingUpdateInput {
   const data: Prisma.AppListingUpdateInput = {};
+  // Author-declared beta status + note. Gated on the manual-apply columns FIRST, before the
+  // values are looked at, for the same reason the source-repo gate is: an explicit `null`
+  // is as unwritable as a value while the column is missing (Prisma raises the same P2022
+  // for `{betaMessage: null}` as for a string), so BOTH instructions have to be refused,
+  // and refused with a message about the environment rather than about the author's input.
+  if (patch.isBeta !== undefined || patch.betaMessage !== undefined) {
+    assertBetaWritable(opts?.betaAvailable === true);
+  }
+  if (patch.isBeta !== undefined) data.isBeta = patch.isBeta;
+  if (patch.betaMessage !== undefined) {
+    // 🔴 RE-BOUNDED HERE, not only in zod. This function is exported and unit-tested
+    // directly, so it cannot trust the schema boundary — the same defence-in-depth every
+    // other validated field in this builder gets. `BETA_MESSAGE_MAX` is the one shared
+    // number; a second literal is how the two bounds drift apart.
+    if (patch.betaMessage !== null && patch.betaMessage.length > BETA_MESSAGE_MAX) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: `betaMessage must be ≤ ${BETA_MESSAGE_MAX} characters`,
+      });
+    }
+    // An empty / whitespace-only note is stored as NULL rather than as `''`. They render
+    // identically (nothing), so keeping both would give the notice two spellings for one
+    // state and make every "is there a note?" test ambiguous.
+    const trimmed = patch.betaMessage === null ? null : patch.betaMessage.trim();
+    data.betaMessage = trimmed !== null && trimmed.length > 0 ? trimmed : null;
+  }
   if (patch.externalUrl !== undefined) {
     const url = validateExternalUrl(patch.externalUrl);
     if (!url.ok) throw new TRPCError({ code: 'BAD_REQUEST', message: url.error });
@@ -1027,6 +1128,19 @@ type EditableListing = {
   sourceRepoUrl: string | null;
   /** See {@link ListingSourceRepoRead.available} — `false` ⇒ never write the column. */
   sourceRepoAvailable: boolean;
+  /**
+   * The author's beta declaration, resolved SEPARATELY from the select below.
+   *
+   * 🔴 DELIBERATELY NOT IN `editableListingSelect`, for the same reason `sourceRepoUrl` is
+   * not: `is_beta` / `beta_message` are MANUAL-APPLY columns, so naming them in that select
+   * would make every author edit and every `beginListingRevision` throw P2022 until a human
+   * runs the migration — breaking two pre-existing flows for an additive field.
+   * `loadOwnedEditableListing` fills these via the guarded `readListingBeta` instead.
+   */
+  isBeta: boolean;
+  betaMessage: string | null;
+  /** See {@link ListingBetaRead.available} — `false` ⇒ never write the columns. */
+  betaAvailable: boolean;
 };
 
 const editableListingSelect = {
@@ -1123,7 +1237,10 @@ async function loadOwnedEditableListing(
   const listing = (await dbRead.appListing.findUnique({
     where: { id: listingId },
     select: editableListingSelect,
-  })) as Omit<EditableListing, 'sourceRepoUrl' | 'sourceRepoAvailable'> | null;
+  })) as Omit<
+    EditableListing,
+    'sourceRepoUrl' | 'sourceRepoAvailable' | 'isBeta' | 'betaMessage' | 'betaAvailable'
+  > | null;
   if (!listing) {
     throw new OffsiteRequestError('NOT_FOUND', `listing ${listingId} not found`);
   }
@@ -1141,12 +1258,21 @@ async function loadOwnedEditableListing(
   // `sourceRepoUrl` field note on `EditableListing`. Costs one extra round trip on an
   // author edit path (a handful of calls per editing session, not a hot read); the
   // alternative is a select that 500s the whole edit flow until a human runs SQL.
-  const sourceRepo: ListingSourceRepoRead = await readListingSourceRepoUrl(listingId, dbRead);
+  // Both guarded reads issue TOGETHER, so the author edit path costs ONE extra round trip
+  // for the two manual-apply migrations rather than one each. Each degrades independently —
+  // an environment can genuinely have one migration and not the other.
+  const [sourceRepo, beta]: [ListingSourceRepoRead, ListingBetaRead] = await Promise.all([
+    readListingSourceRepoUrl(listingId, dbRead),
+    readListingBeta(listingId, dbRead),
+  ]);
   return {
     ...listing,
     callerRole,
     sourceRepoUrl: sourceRepo.value,
     sourceRepoAvailable: sourceRepo.available,
+    isBeta: beta.isBeta,
+    betaMessage: beta.betaMessage,
+    betaAvailable: beta.available,
   };
 }
 
@@ -1206,10 +1332,21 @@ export async function updateListing(opts: {
   if (effectivePatch.sourceRepoUrl !== undefined) {
     assertSourceRepoWritable(listing.sourceRepoAvailable);
   }
+  // Same hoist, same reasoning, for the second manual-apply migration. Both refusals land
+  // before ANY branch below opens a shadow revision, so neither can leave an orphan draft.
+  if (effectivePatch.isBeta !== undefined || effectivePatch.betaMessage !== undefined) {
+    assertBetaWritable(listing.betaAvailable);
+  }
   const patchOpts = {
     connectAllowedScopes,
     sourceRepoAvailable: listing.sourceRepoAvailable,
+    betaAvailable: listing.betaAvailable,
   };
+  // 🔴 BETA IS NEVER STAGED — see {@link splitBetaPatch}. Only the `approved` + MATERIAL
+  // branch below actually needs the halves apart (it is the one branch whose write target
+  // is a SHADOW rather than the live listing); every other branch writes to the parent
+  // anyway, so it applies the whole patch in one update exactly as before.
+  const { betaPatch, restPatch } = splitBetaPatch(effectivePatch);
 
   switch (listing.status) {
     case 'removed': {
@@ -1332,11 +1469,35 @@ export async function updateListing(opts: {
         return { listingId, status: listing.status, requiresReview: false, shadowId: null };
       }
       // MATERIAL change → stage on a shadow. The parent stays LIVE untouched; the
-      // FULL patch (material + trivial) is written to the shadow. Assets are edited
+      // patch (material + trivial) is written to the shadow. Assets are edited
       // separately against the shadow id, then submitListingRevision re-reviews it.
+      //
+      // 🔴 EXCEPT THE BETA HALF, WHICH GOES TO THE LIVE PARENT — the ONE place in this file
+      // where a single patch produces two writes. Beta is TRIVIAL and is never staged; see
+      // {@link splitBetaPatch} for the three separate ways staging it goes wrong, the
+      // sharpest being that `applyApprovedRevision` would restore the clone-time value and
+      // silently undo every beta edit the author made while the revision sat in the queue.
+      //
+      // 🔴 BOTH WRITES IN ONE TRANSACTION. They touch two different rows, so a failure
+      // between them would leave the author's beta toggle applied while their material edit
+      // was never staged — a state whose only symptom is a change that did not reach review.
       const { shadowId } = await beginListingRevision({ listingId, userId });
-      const data = buildListingPatchData(effectivePatch, patchOpts);
-      await dbWrite.appListing.update({ where: { id: shadowId }, data });
+      const shadowData = buildListingPatchData(restPatch, patchOpts);
+      const betaData = patchHasAnyField(betaPatch)
+        ? buildListingPatchData(betaPatch, patchOpts)
+        : null;
+      // 🔴 THE INTERACTIVE (callback) FORM, deliberately, not `$transaction([...])`. Both
+      // are real Prisma APIs and the array form reads more naturally for two independent
+      // updates — but every other transaction in this file is interactive, and the whole
+      // existing test suite mocks `$transaction` as "call the callback with the client".
+      // Introducing the array form here makes those mocks hand an ARRAY to a parameter typed
+      // as a function, which fails as `TypeError: cb is not a function` in tests that have
+      // nothing to do with this feature. Matching the file's one shape keeps that seam
+      // whole.
+      await dbWrite.$transaction(async (tx) => {
+        await tx.appListing.update({ where: { id: shadowId }, data: shadowData });
+        if (betaData) await tx.appListing.update({ where: { id: listingId }, data: betaData });
+      });
       return { listingId, status: listing.status, requiresReview: true, shadowId };
     }
     default:
@@ -1399,6 +1560,9 @@ export async function beginListingRevision(opts: {
   // It costs one query on a path that already runs a transaction, and only when a shadow
   // is actually being minted (the idempotent-reuse return above is ahead of it).
   const parentSourceRepo = await readListingSourceRepoUrl(listingId, dbWrite);
+  // The parent's beta declaration, read on the PRIMARY alongside the source repo for the
+  // same replica-lag reason. Cloned onto the shadow for DISPLAY ONLY — see the write below.
+  const parentBeta = await readListingBeta(listingId, dbWrite);
 
   const shadowId = newAppListingId();
   // Synthetic, globally-unique slug: the shadow is never public, but slug is
@@ -1437,6 +1601,26 @@ export async function beginListingRevision(opts: {
           // replica-sourced `available: false` paired with a primary-sourced
           // `available: true` at apply time is what silently clears a live link.
           ...sourceRepoWriteFragment(parentSourceRepo),
+          // 🔴 CARRIED ONTO THE SHADOW FOR **DISPLAY**, AND FOR NOTHING ELSE — this is the
+          // one clone here that is NOT part of a round trip, so do not reason about it by
+          // analogy with `sourceRepoUrl` two lines up.
+          //
+          // WHY IT IS CLONED: the moderator review preview
+          // (`getListingPreviewForReview` → `AppListingDetailBody preview`) renders the
+          // SHADOW row, and it deliberately KEEPS the beta notice. Without this the
+          // reviewer would see a beta app stripped of its beta framing — the one piece of
+          // context that explains rough edges in what they are about to approve.
+          //
+          // WHY IT IS NOT A ROUND TRIP: `applyApprovedRevision` copies NEITHER beta column
+          // in EITHER kind branch, so this value is never written back to the parent. That
+          // is what makes it safe for it to go stale — the author keeps editing beta on the
+          // LIVE listing while this shadow sits in the queue (beta is trivial, so those
+          // edits apply in place), and an approve must not resurrect the value as it was at
+          // clone time. See {@link splitBetaPatch}.
+          //
+          // Keys omitted entirely (not defaulted) when the manual-apply columns are absent,
+          // so opening a revision keeps working before the migration lands.
+          ...betaWriteFragment(parentBeta),
           connectClientId: parent.connectClientId,
           // Carry the disclosed OAuth scope subset + justifications onto the shadow so
           // a revision that DOESN'T touch scopes preserves them (and one that does
@@ -1661,6 +1845,14 @@ export type ListingEditScalars = {
    * types into it, so an unreadable column cannot cause a spurious write.
    */
   sourceRepoUrl: string | null;
+  /**
+   * The author's beta declaration. `false` / `null` for "not in beta" AND (indistinguishably,
+   * on purpose) while the manual-apply columns are absent: to the FORM those are the same
+   * state — an unchecked box — and the form's diff only emits these keys when the author
+   * actually changes them, so unreadable columns cannot cause a spurious write.
+   */
+  isBeta: boolean;
+  betaMessage: string | null;
 };
 
 export type ListingEditAsset = { imageId: number | null; url: string | null };
@@ -1757,7 +1949,15 @@ export type GetMyListingForEditResult = {
  * Do NOT route a non-shadow (in-place draft/pending) read to the primary. */
 async function loadListingEditView(
   listingId: string,
-  db: typeof dbRead = dbRead
+  db: typeof dbRead = dbRead,
+  /**
+   * The LIVE parent's id when `listingId` is a shadow revision, else omitted.
+   *
+   * 🔴 ONLY the beta prefill reads it — see the comment at its use. Optional rather than
+   * required because the non-shadow callers genuinely have no separate parent, and an
+   * absent value correctly falls back to `listingId`, which IS the parent in that case.
+   */
+  parentIdForBeta?: string
 ): Promise<{
   scalars: ListingEditScalars;
   assets: GetMyListingForEditResult['assets'];
@@ -1769,6 +1969,15 @@ async function loadListingEditView(
   // to the select below, which would 500 the whole author edit-prefill page until a
   // human runs the migration. Degrades to null; see app-listing-source-repo.service.
   const sourceRepo = await readListingSourceRepoUrl(listingId, db);
+  // 🔴 THE BETA PREFILL IS READ FROM THE **PARENT**, NOT FROM `listingId`, and that is the
+  // one asymmetry in this loader. Every other scalar here comes from the EFFECTIVE source
+  // (the in-progress shadow when there is one), because those are the values under review.
+  // Beta is not staged — it lives on the live listing and is written there directly — so
+  // prefilling it from a shadow would show the author the clone-time snapshot instead of
+  // what their listing says right now, and their next save would diff against the wrong
+  // baseline and either re-send a value they never touched or drop one they did.
+  const betaSourceId = parentIdForBeta ?? listingId;
+  const beta = await readListingBeta(betaSourceId, db);
   const row = (await db.appListing.findUnique({
     where: { id: listingId },
     select: {
@@ -1828,6 +2037,10 @@ async function loadListingEditView(
       contentRating: row.contentRating,
       externalUrl: row.externalUrl,
       sourceRepoUrl: sourceRepo.value,
+      isBeta: beta.isBeta,
+      // Only surfaced when the flag is set, matching the public projections: an author who
+      // switched beta off and back on should not find a note they thought they had removed.
+      betaMessage: beta.isBeta ? beta.betaMessage : null,
     },
     connectRequestedScopes: row.connectRequestedScopes ?? null,
     connectScopeJustifications:
@@ -1942,7 +2155,15 @@ export async function getMyListingForEdit(opts: {
   // 🔴 READ-AFTER-WRITE — same rule as `getMyListingForApp`: a SHADOW target is read
   // from the PRIMARY (it may have been minted microseconds ago by ANY caller), an
   // in-place target from the replica. See `loadListingEditView`.
-  const view = await loadListingEditView(effectiveId, effectiveId !== listingId ? dbWrite : dbRead);
+  // The third argument is the LIVE parent id, and it is only read by the beta prefill —
+  // beta is not staged, so it must be shown from the live listing even when every other
+  // scalar here comes from the shadow. `listingId` IS the parent on both paths (the
+  // non-shadow case makes it a no-op), which is why it can be passed unconditionally.
+  const view = await loadListingEditView(
+    effectiveId,
+    effectiveId !== listingId ? dbWrite : dbRead,
+    listingId
+  );
 
   // Resolve the connect client's CURRENT allowedScopes — this is the derived
   // requested-scope set the edit form displays read-only + re-submits (the server
@@ -2373,11 +2594,33 @@ export async function updateRevisionDraft(opts: {
   if (effectivePatch.sourceRepoUrl !== undefined) {
     assertSourceRepoWritable(shadow.sourceRepoAvailable);
   }
-  const data = buildListingPatchData(effectivePatch, {
+  // Same up-front gate for the beta columns. `shadow.betaAvailable` came from the guarded
+  // read on the SHADOW row, which is the same table and therefore the same columns — the
+  // question is about the schema, not about which row was asked.
+  if (effectivePatch.isBeta !== undefined || effectivePatch.betaMessage !== undefined) {
+    assertBetaWritable(shadow.betaAvailable);
+  }
+  const patchOpts = {
     connectAllowedScopes,
     sourceRepoAvailable: shadow.sourceRepoAvailable,
+    betaAvailable: shadow.betaAvailable,
+  };
+  // 🔴 THE BETA HALF TARGETS THE LIVE PARENT, NOT THIS SHADOW — the same rule
+  // `updateListing`'s approved-material branch applies, and it has to be applied HERE too
+  // because this is the mutation the edit form actually calls for an APPROVED listing.
+  // Writing beta onto the shadow instead would look correct and would be undone at approve:
+  // `applyApprovedRevision` copies no beta column, so the value would simply never reach
+  // the live listing and the author's toggle would appear to do nothing.
+  // `shadow.revisionOfId` is non-null (asserted above) and IS the live parent's id.
+  const { betaPatch, restPatch } = splitBetaPatch(effectivePatch);
+  const shadowData = buildListingPatchData(restPatch, patchOpts);
+  const betaData = patchHasAnyField(betaPatch) ? buildListingPatchData(betaPatch, patchOpts) : null;
+  const parentId = shadow.revisionOfId;
+  // Interactive form for the same reason as `updateListing`'s material branch — see there.
+  await dbWrite.$transaction(async (tx) => {
+    await tx.appListing.update({ where: { id: shadowId }, data: shadowData });
+    if (betaData) await tx.appListing.update({ where: { id: parentId }, data: betaData });
   });
-  await dbWrite.appListing.update({ where: { id: shadowId }, data });
   return { shadowId };
 }
 
@@ -3221,6 +3464,17 @@ async function applyApprovedRevision(opts: {
       // the listing rating stays the app's manifest rating; over-rated media is a
       // mod-reject at review, never an auto-raise. The connect fields are also left
       // untouched (an onsite listing has no OAuth-connect client — always null).
+      //
+      // 🔴 AND THAT INCLUDES THE BETA COLUMNS, WHICH ARE **NOT** COPIED HERE — deliberately,
+      // and not because beta is manifest-governed (it is not; it is listing-native on both
+      // kinds, which is exactly the shape that would otherwise justify a carve-out from the
+      // assets-only rule). The reason is narrower and stronger: beta is never STAGED. Every
+      // beta write in this file targets the LIVE listing, including from
+      // `updateRevisionDraft`, so the shadow's copy is a display snapshot that is allowed to
+      // go stale (see `beginListingRevision`) and copying it back would REVERT the author.
+      // Keeping the branch assets-only is also what preserves
+      // `revisionApplyScope('onsite') === 'assets-only'`, which is the sole thing licensing
+      // the review panel's "approving changes nothing" claim. See {@link splitBetaPatch}.
       await tx.appListing.update({
         where: { id: parentId },
         data: {
@@ -3255,6 +3509,15 @@ async function applyApprovedRevision(opts: {
           // tell a moderator this apply "changes nothing" while it rewrites a public
           // outbound link. Omitted (not null) while the manual-apply column is absent.
           ...sourceRepoWriteFragment(shadowSourceRepo),
+          // 🔴 NO BETA COLUMNS HERE EITHER, and this is the branch where their absence is
+          // easiest to mistake for an omission: everything else the author can edit IS
+          // copied. Beta is the exception because it is never staged — it is written
+          // straight to this parent by `updateListing` / `updateRevisionDraft` the moment
+          // the author toggles it, so the live row is already correct and the shadow's
+          // clone-time snapshot is stale by construction. Copying it would undo every beta
+          // edit made while this revision sat in the review queue. That is also why neither
+          // column belongs in `OFFSITE_UNCOMPARED_APPLY_FIELDS`: that list names fields this
+          // apply COPIES without comparing, and this apply copies neither.
           connectClientId: shadow.connectClientId,
           // Apply the revision's disclosed OAuth scopes + justifications onto the live
           // parent (a scope change is material, so the shadow carries the reviewed set).

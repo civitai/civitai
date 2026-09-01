@@ -1,4 +1,4 @@
-import { Box, useComputedColorScheme } from '@mantine/core';
+import { Alert, Box, useComputedColorScheme } from '@mantine/core';
 import { useEffect, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { recordRecentlyOpenedApp } from '~/components/Apps/recentlyOpenedAppsStore';
@@ -7,7 +7,10 @@ import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
 import { useBlockToken } from '~/components/AppBlocks/useBlockToken';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { BlockInstall, PageContext } from '~/components/AppBlocks/types';
+import { IconFlask } from '@tabler/icons-react';
+import { dbRead } from '~/server/db/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
+import { readListingBetaBySlug } from '~/server/services/blocks/app-listing-beta.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import { Page } from '~/components/AppLayout/Page';
@@ -43,6 +46,16 @@ interface PageProps {
   /** #3/#6: the page manifest's declared scopes, used to compute the actual
    *  granted set (declared − missingScopes) for BLOCK_INIT. */
   scopes: string[];
+  /**
+   * The author's beta declaration for this app's store listing.
+   *
+   * 🔴 FROM `app_listings`, NOT FROM THE BLOCK — this page otherwise touches only
+   * `app_blocks`. Resolved by a guarded, concurrent, slug-keyed read in the resolver above;
+   * `false` / `null` both for "not in beta" and for any state the read could not see, so
+   * this can only ever fail to show the notice, never invent one.
+   */
+  isBeta: boolean;
+  betaMessage: string | null;
 }
 
 export const getServerSideProps = createServerSideProps<PageProps>({
@@ -60,7 +73,27 @@ export const getServerSideProps = createServerSideProps<PageProps>({
 
     // Resolve the approved page app by slug (== block_id). Returns null for a
     // missing / non-approved / non-page app → 404 (never leaks which).
-    const page = await BlockRegistry.resolvePageBlockBySlug(slug, { db: 'read' });
+    //
+    // 🔴 THE BETA READ RUNS **CONCURRENTLY**, NOT AFTER, AND THAT IS THE WHOLE DESIGN OF IT.
+    // This is the app-LAUNCH critical path, so a serial second round trip here would be
+    // added latency on every run of every app. Keying the beta lookup on the SLUG — rather
+    // than on the `appBlockId` this resolve returns — is what removes the dependency: it
+    // needs nothing from the block resolve, so the two issue together and the page waits for
+    // the slower of the two instead of their sum. The key is sound because for an ON-SITE
+    // app the `AppListing.slug` IS the AppBlock's `block_id` (single source:
+    // `app-listing-mapper.ts` → `slug: ab.blockId`, the same fact the recents store below
+    // already relies on), and `AppListing.slug` is `@unique`, so it is one indexed
+    // single-row read.
+    //
+    // 🔴 IT FAILS OPEN TO "NOT BETA", and it must. This page's SSR 404s or 500s the APP
+    // LAUNCH — a failure here does not degrade a badge, it takes the app away. So the read
+    // goes through the guarded reader (which swallows exactly the missing-column error while
+    // the manual-apply migration is outstanding), and a listing row that does not exist at
+    // all resolves to `isBeta: false` rather than throwing.
+    const [page, beta] = await Promise.all([
+      BlockRegistry.resolvePageBlockBySlug(slug, { db: 'read' }),
+      readListingBetaBySlug(slug, dbRead),
+    ]);
     if (!page || !page.iframeSrc) return { notFound: true };
 
     // NSFW-APP-RED-ONLY: a mature (r/x) page app is usable ONLY on a red-capable
@@ -86,14 +119,29 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         trustTier: page.trustTier,
         slug: page.blockId,
         scopes: page.scopes,
+        isBeta: beta.isBeta,
+        // Only carried when the flag is set — the same rule every other projection of these
+        // columns applies, so a stale note cannot reach a page through this one.
+        betaMessage: beta.isBeta ? beta.betaMessage : null,
       },
     };
   },
 });
 
 function AppPage(props: PageProps) {
-  const { appBlockId, blockId, appId, appName, iframeSrc, sandbox, trustTier, slug, scopes } =
-    props;
+  const {
+    appBlockId,
+    blockId,
+    appId,
+    appName,
+    iframeSrc,
+    sandbox,
+    trustTier,
+    slug,
+    scopes,
+    isBeta,
+    betaMessage,
+  } = props;
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
@@ -209,6 +257,30 @@ function AppPage(props: PageProps) {
   return (
     <>
       <Meta title={`${appName} — Civitai Apps`} deIndex />
+      {/* AUTHOR-DECLARED BETA NOTICE, in the page CHROME.
+          🔴 A SIBLING **ABOVE** THE HOST WRAPPER, never inside it. That wrapper is the third
+          leg of this page's layout contract and its style object is pinned verbatim by
+          `pageRunScrollContract.test.ts`; putting a second child inside it would leave
+          `PageBlockHost`'s `flex: 1` sharing a container it is documented to own alone. As a
+          preceding sibling the banner simply takes its own height out of the non-scrolling
+          `<main>` and the host's `flex: 1` resolves against the remainder — no new scroll
+          container, nothing clipped.
+          🔴 PLAIN TEXT, for the same reason as the store detail page: `betaMessage` is
+          unreviewed author copy, so it is rendered as a text node and never as markdown.
+          A dropdown-only notice (`useChromeListingDetail`) would have been cheaper, but it
+          only mounts once a user opens a menu — this has to be visible on arrival. */}
+      {isBeta && (
+        <Alert
+          variant="light"
+          color="violet"
+          icon={<IconFlask size={16} />}
+          radius={0}
+          py="xs"
+          data-testid="apps-run-beta-notice"
+        >
+          {betaMessage ?? 'The developer has marked this app as still in development.'}
+        </Alert>
+      )}
       {/* 🔴 THE THIRD LEG OF THE LAYOUT CONTRACT — not incidental styling. Pinned
           by `pageRunScrollContract.test.ts`, because reverting it passes every
           other assertion in this PR while breaking the page.

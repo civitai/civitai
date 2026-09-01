@@ -2021,6 +2021,8 @@ export interface AppListing {
   contentRating: string | null;
   externalUrl: string | null;
   sourceRepoUrl: string | null;
+  isBeta: boolean;
+  betaMessage: string | null;
   connectClientId: string | null;
   connectClient?: OauthClient | null;
   connectRequestedScopes: number | null;

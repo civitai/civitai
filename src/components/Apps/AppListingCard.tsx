@@ -372,6 +372,23 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
               </Text>
             </Anchor>
             <CreatorChip creator={card.creator} />
+            {/* AUTHOR-DECLARED beta label. Matches the `Incomplete` badge's shape directly
+                below, with two deliberate differences: it is PUBLIC (that one is owner-only
+                — `showOwnerIncomplete`), and it carries no tooltip, because the card DTO
+                carries no `betaMessage` to put in one. The note lives on the detail page,
+                where there is room to read it. `card.isBeta` is `false` both for "not in
+                beta" and while the manual-apply migration is outstanding. */}
+            {card.isBeta && (
+              <Badge
+                color="violet"
+                variant="light"
+                size="xs"
+                style={{ alignSelf: 'flex-start' }}
+                data-testid="apps-listing-card-beta"
+              >
+                Beta
+              </Badge>
+            )}
             {showOwnerIncomplete && (
               <Tooltip
                 label={`Missing ${missingFloorAssets.join(' and ')} — add ${

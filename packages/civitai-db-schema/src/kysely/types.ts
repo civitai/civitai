@@ -404,6 +404,8 @@ export type AppListing = {
   content_rating: string | null;
   external_url: string | null;
   source_repo_url: string | null;
+  is_beta: Generated<boolean>;
+  beta_message: string | null;
   connect_client_id: string | null;
   connect_requested_scopes: number | null;
   connect_scope_justifications: unknown | null;

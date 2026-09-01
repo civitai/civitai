@@ -77,6 +77,13 @@ export type ListingEditContext = {
      * absent reads exactly like "not set" — see {@link editContextToForm}.
      */
     sourceRepoUrl?: string | null;
+    /**
+     * The author's beta declaration. OPTIONAL on this type so every pre-existing edit
+     * context + fixture (all of which predate the field) still type-checks, and absent reads
+     * exactly like "not in beta" — see {@link editContextToForm}.
+     */
+    isBeta?: boolean;
+    betaMessage?: string | null;
   };
   assets: {
     icon: EditAsset;
@@ -282,6 +289,14 @@ export function editContextToForm(ctx: ListingEditContext): OffsiteSubmitFormVal
     name: s.name ?? '',
     externalUrl: s.externalUrl ?? '',
     sourceRepoUrl: s.sourceRepoUrl ?? '',
+    isBeta: s.isBeta === true,
+    // 🔴 `s.isBeta === true &&`, not just `?? ''`. A row can carry a stale note from an
+    // author who turned beta OFF (the server clears the note only on the next write), and
+    // prefilling it would silently re-publish that note the moment they tick the box again.
+    // The server projections apply the same rule; this mirrors it so the form's baseline
+    // and the wire value agree — otherwise `buildScalarPatch` would diff against a note the
+    // author cannot see and emit a spurious clear.
+    betaMessage: s.isBeta === true ? s.betaMessage ?? '' : '',
     tagline: s.tagline ?? '',
     description: s.description ?? '',
     category: (s.category as MarketplaceCategory | null) ?? null,
@@ -418,6 +433,17 @@ export function buildScalarPatch(
   const originalSourceRepoUrl = original.sourceRepoUrl.trim();
   if (sourceRepoUrl !== originalSourceRepoUrl) {
     patch.sourceRepoUrl = sourceRepoUrl.length > 0 ? sourceRepoUrl : null;
+  }
+
+  // Beta status + note. Emitted ONLY when the author actually changed them, which is what
+  // keeps the two columns out of every unrelated patch — load-bearing while the manual-apply
+  // migration is outstanding, since a write naming a missing column would fail the whole
+  // save with a PRECONDITION_FAILED the author did not ask for.
+  if (current.isBeta !== original.isBeta) patch.isBeta = current.isBeta;
+  const betaMessage = current.betaMessage.trim();
+  const originalBetaMessage = original.betaMessage.trim();
+  if (betaMessage !== originalBetaMessage) {
+    patch.betaMessage = betaMessage.length > 0 ? betaMessage : null;
   }
 
   const tagline = current.tagline.trim();

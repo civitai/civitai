@@ -1,0 +1,33 @@
+-- App Store Listings — author-declared "this app is in beta" flag + optional note.
+--
+-- NOT AUTO-APPLIED. Migrations in this repo are run by hand — see CLAUDE.md → Database.
+-- There is no `prisma migrate deploy` path and `_prisma_migrations` is not the source
+-- of truth; a human applies this to the primary, per environment.
+--
+-- 🔴 APPLY THIS **BEFORE** DEPLOYING THE CODE. THERE IS A HARD ORDERING CONSTRAINT, and
+-- it is the SAME one `20260823120000_app_listing_source_repo` learned the expensive way.
+--
+-- Prisma returns the created/updated row, so it emits
+-- `INSERT/UPDATE … RETURNING <every scalar the MODEL declares>`. Both columns below are
+-- declared on the `AppListing` model, so the generated SQL names them whether or not the
+-- keys appear in `data` — and the same is true of any `findUnique` / `findFirst` /
+-- `findMany` / `update` on this model that passes no explicit `select`, which roughly
+-- half the ~92 `appListing.*` query sites do not. Deploying the code first therefore
+-- turns an additive, optional, cosmetic feature into a public-store outage:
+--
+--     HTTP 500 — The column `app_listings.is_beta` does not exist in the current database.
+--
+-- 🔴 NO TEST IN THIS REPO CAN SEE THAT. The suites mock Prisma, so none of them generates
+-- SQL. `app-listing-beta.service.ts` is defence in depth for the paths that DO pass an
+-- explicit select; it is not, and cannot be, a substitute for running this first.
+--
+-- `ADD COLUMN … DEFAULT false NOT NULL` does NOT rewrite the table on PG 11+ (the default
+-- is stored in the catalog and materialised on read), so both statements are catalog-only
+-- and O(1) regardless of row count. Run them outside a long-running transaction so they
+-- cannot queue behind (or in front of) reads.
+--
+-- `IF NOT EXISTS` on both so a re-run, or an environment where a human already applied
+-- one of the two, is a no-op rather than an error.
+
+ALTER TABLE "app_listings" ADD COLUMN IF NOT EXISTS "is_beta" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "app_listings" ADD COLUMN IF NOT EXISTS "beta_message" TEXT;

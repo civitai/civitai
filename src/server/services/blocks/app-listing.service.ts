@@ -26,6 +26,15 @@ import { listingCoverUrl, listingIconUrl } from '~/server/services/blocks/listin
 // The MANUAL-APPLY `source_repo_url` column is read ONLY through this guard — never via
 // `listingHydrateSelect`, which the public `/apps` GRID shares. See its module header.
 import { readListingSourceRepoUrl } from '~/server/services/blocks/app-listing-source-repo.service';
+// The MANUAL-APPLY `is_beta` / `beta_message` columns are read ONLY through this guard —
+// never via `listingHydrateSelect` or `moderationListingSelect`, for the same reason. See
+// its module header.
+import {
+  BETA_NOT_SET,
+  readListingBeta,
+  readListingBetaMany,
+  type ListingBetaRead,
+} from '~/server/services/blocks/app-listing-beta.service';
 import { queryCache } from '~/server/utils/cache-helpers';
 
 /**
@@ -270,10 +279,28 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
   };
 }
 
-/** Project a hydrated listing row → the PUBLIC card DTO (allowlist). */
-export function projectListingCard(row: HydratedListing): ListingCard {
+/**
+ * Project a hydrated listing row → the PUBLIC card DTO (allowlist).
+ *
+ * 🔴 `beta` is passed IN, and it is the SAME manual-apply trap `projectListingDetail`
+ * documents at length — with a wider blast radius, because this projection backs the
+ * public `/apps` GRID. Putting `isBeta: true` into `listingHydrateSelect` (the obvious
+ * implementation, and the select this function's rows come from) makes every store read
+ * that shares it throw P2022 from the moment this deploys until a human runs the SQL. The
+ * caller resolves it through `readListingBetaMany`, which degrades to an empty map, and the
+ * row is not even consulted for it here. It defaults to {@link BETA_NOT_SET} so the many
+ * existing fixtures and call sites that pass one argument keep working unchanged.
+ */
+export function projectListingCard(
+  row: HydratedListing,
+  beta: ListingBetaRead = BETA_NOT_SET
+): ListingCard {
   const recommend = recommendRollup(row.metric);
   return {
+    // Author-declared beta label — resolved by the caller through the manual-apply guard,
+    // never selected on `row`. `false` covers BOTH "not in beta" and "the columns are not
+    // there yet"; the card has no way to render the difference and no reason to.
+    isBeta: beta.isBeta,
     id: row.id,
     slug: row.slug,
     kind: row.kind as ListingKind,
@@ -382,10 +409,20 @@ export async function getListingPreviewForReview(args: {
   // see the source link the apply will publish, and the preview must not 500 while the
   // migration is outstanding. `args.listingId` is the row this preview projects (a
   // shadow id here, deliberately), not its parent.
-  const sourceRepo = await readListingSourceRepoUrl(args.listingId, dbRead);
+  // 🔴 BOTH manual-apply guards, and the beta one is here for a REASON the source-repo one
+  // does not have: `AppListingDetailBody`'s `preview` posture deliberately KEEPS the beta
+  // notice (it is presentational, and a moderator approving a shadow should see the banner
+  // they are approving), so this projection has to carry it or the preview would show a
+  // beta app without its beta framing. `args.listingId` is the row this preview projects (a
+  // shadow id here, deliberately), not its parent — which is exactly why
+  // `beginListingRevision` clones the columns onto the shadow.
+  const [sourceRepo, beta] = await Promise.all([
+    readListingSourceRepoUrl(args.listingId, dbRead),
+    readListingBeta(args.listingId, dbRead),
+  ]);
   return {
-    card: projectListingCard(row),
-    detail: projectListingDetail(row, [], sourceRepo.value),
+    card: projectListingCard(row, beta),
+    detail: projectListingDetail(row, [], sourceRepo.value, beta),
   };
 }
 
@@ -420,10 +457,21 @@ export async function getListingPreviewForReview(args: {
 export function projectListingDetail(
   row: HydratedListing,
   collaborators: Array<{ id: number; username: string | null; image: string | null }> = [],
-  sourceRepoUrl: string | null = null
+  sourceRepoUrl: string | null = null,
+  beta: ListingBetaRead = BETA_NOT_SET
 ): ListingDetail {
   const recommend = recommendRollup(row.metric);
   return {
+    // Author-declared beta label + note. Passed IN for the SAME manual-apply reason as
+    // `sourceRepoUrl` above — the columns are never named in `listingHydrateSelect`.
+    // 🔴 `beta.isBeta`, NOT `beta.betaMessage != null`: an author may declare beta WITHOUT
+    // writing a note, and the badge must still show. Deriving the flag from the message
+    // would make a note the price of the label.
+    isBeta: beta.isBeta,
+    // 🔴 Only carried when the flag is set. A stale note left behind by an author who
+    // turned beta OFF must not reach a public DTO, and clearing it at the write site alone
+    // would leave every row written before that rule existed able to leak one.
+    betaMessage: beta.isBeta ? beta.betaMessage : null,
     collaborators: collaborators
       .map((u) => creatorChip(u))
       .filter((c): c is ListingCreatorChip => c !== null),
@@ -666,11 +714,20 @@ export async function listAvailableListings(
     where: { id: { in: pageIds } },
     select: listingHydrateSelect,
   });
+  // ONE batched guarded read for the whole page's beta declaration — never a column in the
+  // select above, which the public detail read shares. O(1) queries regardless of page
+  // size, and it degrades to an EMPTY map (⇒ every card renders as not-beta) while the
+  // manual-apply migration is outstanding, rather than 500ing the public grid.
+  const betaById = await readListingBetaMany(pageIds, dbRead);
   const byId = new Map(hydrated.map((r: HydratedListing): [string, HydratedListing] => [r.id, r]));
   const items = pageIds
     .map((id: string) => byId.get(id))
     .filter((r): r is HydratedListing => r != null)
-    .map(projectListingCard);
+    // 🔴 `?? BETA_NOT_SET`, not `?? BETA_UNAVAILABLE`: a row present in `hydrated` but
+    // absent from the beta map means the columns WERE readable and that listing simply had
+    // no row when the second query ran. Both project as not-beta, but only the former is an
+    // honest description of what happened.
+    .map((r) => projectListingCard(r, betaById.get(r.id) ?? BETA_NOT_SET));
 
   return { items, nextCursor };
 }
@@ -733,16 +790,18 @@ export async function getListingDetail(
   // a missing one (mirrors the AppBlock detail's red-only 404).
   if (!redCapable && isMatureContentRating(row.contentRating)) return null;
 
-  // Both extras run in PARALLEL with each other, so the public detail read costs one
-  // round trip more than before, not two. Each is separately guarded against its own
-  // manual-apply migration being outstanding — the collaborator TABLE
-  // (`safeCollaboratorQuery` → `[]`) and the source-repo COLUMN
-  // (`readListingSourceRepoUrl` → `{available:false, value:null}`).
-  const [collaborators, sourceRepo] = await Promise.all([
+  // All three extras run in PARALLEL with each other, so the public detail read still costs
+  // ONE round trip more than the bare hydrate, not three. Each is separately guarded
+  // against its own manual-apply migration being outstanding — the collaborator TABLE
+  // (`safeCollaboratorQuery` → `[]`), the source-repo COLUMN (`readListingSourceRepoUrl` →
+  // `{available:false, value:null}`) and the beta COLUMNS (`readListingBeta` →
+  // `BETA_UNAVAILABLE`).
+  const [collaborators, sourceRepo, beta] = await Promise.all([
     loadDisplayedCollaboratorChips(row.id),
     readListingSourceRepoUrl(row.id, dbRead),
+    readListingBeta(row.id, dbRead),
   ]);
-  return projectListingDetail(row, collaborators, sourceRepo.value);
+  return projectListingDetail(row, collaborators, sourceRepo.value, beta);
 }
 
 /**
@@ -859,6 +918,19 @@ export type ModerationListingRow = {
    * Purge action on both. Always `false` for an off-site row (whose requests do carry the FK).
    */
   hasPendingBlockRequest: boolean;
+  /**
+   * The author's beta declaration, so a moderator can SEE it.
+   *
+   * 🔴 A moderator cannot review what the store never shows them. Beta is a TRIVIAL patch
+   * field — an author edits it in place with no re-review — so this table is the only
+   * moderator surface on which the declaration and its free-text note appear at all, and
+   * the delist/takedown actions in this same table are the remedy for an abusive one.
+   *
+   * Both `false`/`null` while the MANUAL-APPLY migration is outstanding — resolved through
+   * the guarded batch read, never named in `moderationListingSelect`.
+   */
+  isBeta: boolean;
+  betaMessage: string | null;
 };
 
 /**
@@ -906,10 +978,16 @@ type HydratedModerationRow = Prisma.AppListingGetPayload<{
  */
 export function projectModerationListing(
   row: HydratedModerationRow,
-  pendingBlockRequestSlugs: ReadonlySet<string> = new Set()
+  pendingBlockRequestSlugs: ReadonlySet<string> = new Set(),
+  beta: ListingBetaRead = BETA_NOT_SET
 ): ModerationListingRow {
   const pending = row.publishRequests[0] ?? null;
   return {
+    // 🔴 The note is carried ONLY when the flag is set — the same rule the public detail
+    // projection applies, and for the same reason: a stale note from an author who turned
+    // beta off is not something this table should show as current.
+    isBeta: beta.isBeta,
+    betaMessage: beta.isBeta ? beta.betaMessage : null,
     hasPendingBlockRequest: row.kind === 'onsite' && pendingBlockRequestSlugs.has(row.slug),
     id: row.id,
     slug: row.slug,
@@ -1030,6 +1108,16 @@ export async function listAllListingsForModeration(
       : []
   );
 
-  const items = page.map((r) => projectModerationListing(r, pendingBlockRequestSlugs));
+  // ONE batched guarded read for this page's beta declaration — never a column in
+  // `moderationListingSelect`, which would 500 the whole mod table until a human runs the
+  // migration. Same O(1)-per-page shape as the on-site pending-request lookup above.
+  const betaById = await readListingBetaMany(
+    page.map((r: { id: string }) => r.id),
+    dbRead
+  );
+
+  const items = page.map((r) =>
+    projectModerationListing(r, pendingBlockRequestSlugs, betaById.get(r.id) ?? BETA_NOT_SET)
+  );
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }

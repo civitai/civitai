@@ -73,6 +73,7 @@ function base(over: Partial<ListingCard>): ListingCard {
     tagline: 'A handy app',
     category: 'utility',
     contentRating: null,
+    isBeta: false,
     iconUrl: null,
     coverUrl: null,
     creator: { id: 5, username: 'alice', image: null },
@@ -1052,5 +1053,44 @@ describe('AppListingCard', () => {
     await label.hover();
     // The Tooltip renders the full username (portal) once the label overflows.
     await expect.element(page.getByText(longName, { exact: true })).toBeInTheDocument();
+  });
+});
+
+/**
+ * The author-declared BETA badge.
+ *
+ * 🔴 EVERY ABSENCE ASSERTION HERE READS `textContent`, NEVER
+ * `expect.element(...).not.toBeInTheDocument()`. That matcher is INERT in this repo
+ * (civitai/civitai#4197) — it passes whether or not the element is there — so an
+ * absence written that way proves nothing. Each absence is also paired with a POSITIVE
+ * CONTROL from the same fixture proving the card rendered at all, so "no Beta" can
+ * never be satisfied by a card that rendered nothing.
+ */
+describe('AppListingCard — the beta badge', () => {
+  test('renders a Beta badge when the listing declares beta', async () => {
+    renderWithProviders(<AppListingCard card={base({ isBeta: true })} canOpenPage />);
+    await expect.element(page.getByTestId('apps-listing-card-beta')).toBeInTheDocument();
+    expect(document.body.textContent).toContain('Beta');
+  });
+
+  test('renders NO Beta badge when the listing does not declare beta', async () => {
+    renderWithProviders(<AppListingCard card={base({ isBeta: false })} canOpenPage />);
+    // Positive control FIRST: the card really did render.
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
+    // Then the absence, read off the text rather than through the inert matcher.
+    expect(document.body.textContent).not.toContain('Beta');
+    expect(document.querySelector('[data-testid="apps-listing-card-beta"]')).toBeNull();
+  });
+
+  test('🔴 the card carries the BADGE only — never the free-text note', async () => {
+    // The note is DETAIL-ONLY by decision (`ListingCard` has no `betaMessage` key at all).
+    // A card is a low-attention surface; unreviewed author prose belongs where there is
+    // room to read it. Written as a test because a future widening of the card DTO would
+    // otherwise be invisible here.
+    const card = base({ isBeta: true }) as Record<string, unknown>;
+    card.betaMessage = 'this must never render on a card';
+    renderWithProviders(<AppListingCard card={card as never} canOpenPage />);
+    await expect.element(page.getByTestId('apps-listing-card-beta')).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('this must never render on a card');
   });
 });

@@ -214,6 +214,12 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
         'creator',
         'iconUrl',
         'id',
+        // 🔴 DELIBERATE ADDITION, not an incidental one. The author-declared beta LABEL is
+        // on the card because a badge is what a grid tile can carry honestly. Its
+        // free-text companion `betaMessage` is NOT — the detail allowlist below asserts
+        // that field's presence and this list asserts its absence, which is the pair that
+        // pins the split.
+        'isBeta',
         'kind',
         'kindData',
         'name',
@@ -225,6 +231,8 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
     );
     expect(card).not.toHaveProperty('status');
     expect(card).not.toHaveProperty('description'); // detail-only
+    // The beta NOTE is detail-only — a card must not carry unreviewed author prose.
+    expect(card).not.toHaveProperty('betaMessage');
   });
 
   it('never leaks internal AppBlock manifest fields onto the card', () => {
@@ -430,6 +438,12 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         // every approved listing by, and `updatedAt` is the direct analogue of the
         // model page's public `Updated: <date>` line.
         'installCount',
+        // 🔴 The author-declared beta pair. `isBeta` is also on the CARD (a badge); the
+        // free-text `betaMessage` is DETAIL-ONLY, for the same reason `sourceRepoUrl` is —
+        // a grid tile has no room for a sentence. The card allowlist above asserts the
+        // note's absence.
+        'betaMessage',
+        'isBeta',
         'kind',
         'kindData',
         'name',
@@ -1067,5 +1081,62 @@ describe('🔴 sourceRepoUrl is a DETAIL field and is NEVER on the card', () => 
     // Explicitly NULL on the wire, not dropped — a client must not have to write `?? null`.
     expect('sourceRepoUrl' in empty).toBe(true);
     expect(empty.sourceRepoUrl).toBeNull();
+  });
+});
+
+describe('the beta projections — flag, note, and the stale-note rule', () => {
+  const BETA = { available: true, isBeta: true, betaMessage: 'rough edges' };
+  const OFF = { available: true, isBeta: false, betaMessage: null };
+  const UNAVAILABLE = { available: false, isBeta: false, betaMessage: null };
+
+  it('projects the flag onto the CARD and the flag + note onto the DETAIL', () => {
+    expect(projectListingCard(hydratedRow() as never, BETA).isBeta).toBe(true);
+    const detail = projectListingDetail(hydratedRow() as never, [], null, BETA);
+    expect(detail.isBeta).toBe(true);
+    expect(detail.betaMessage).toBe('rough edges');
+  });
+
+  it('defaults to NOT beta when no beta read is passed (every pre-existing call site)', () => {
+    expect(projectListingCard(hydratedRow() as never).isBeta).toBe(false);
+    expect(projectListingDetail(hydratedRow() as never).isBeta).toBe(false);
+    expect(projectListingDetail(hydratedRow() as never).betaMessage).toBeNull();
+  });
+
+  it('an UNAVAILABLE read projects exactly like "not in beta"', () => {
+    // The manual-apply window renders identically to the ordinary case — the difference
+    // lives in `available`, which only the WRITE paths consult.
+    expect(projectListingCard(hydratedRow() as never, UNAVAILABLE).isBeta).toBe(false);
+    expect(
+      projectListingDetail(hydratedRow() as never, [], null, UNAVAILABLE).betaMessage
+    ).toBeNull();
+  });
+
+  it('🔴 does NOT project a stale note when the flag is OFF', () => {
+    // A row can hold a note from an author who later unticked the box — the server clears
+    // it only on the next write, and rows written before that rule existed can carry one.
+    // Nulling it at the PROJECTION is what makes that unreachable for every row, not just
+    // for rows written from now on.
+    const stale = { available: true, isBeta: false, betaMessage: 'left over from before' };
+    expect(projectListingDetail(hydratedRow() as never, [], null, stale).betaMessage).toBeNull();
+  });
+
+  it('positive control — the same projection DOES carry a note when the flag is on', () => {
+    // Without this, the assertion above would pass on a projection that nulls the note
+    // unconditionally.
+    expect(projectListingDetail(hydratedRow() as never, [], null, BETA).betaMessage).toBe(
+      'rough edges'
+    );
+  });
+
+  it('a beta listing with no note keeps the FLAG (the note is not the label)', () => {
+    const noNote = { available: true, isBeta: true, betaMessage: null };
+    expect(projectListingDetail(hydratedRow() as never, [], null, noNote).isBeta).toBe(true);
+    expect(projectListingCard(hydratedRow() as never, noNote).isBeta).toBe(true);
+  });
+
+  it('the OFF read and the card default agree', () => {
+    expect(projectListingCard(hydratedRow() as never, OFF).isBeta).toBe(
+      projectListingCard(hydratedRow() as never).isBeta
+    );
   });
 });

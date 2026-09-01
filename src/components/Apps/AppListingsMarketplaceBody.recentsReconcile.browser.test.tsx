@@ -60,6 +60,7 @@ function makeOnsiteCard(args: {
     tagline: null,
     category: null,
     contentRating: null,
+    isBeta: false,
     iconUrl: null,
     coverUrl: null,
     creator: null,
