@@ -404,6 +404,24 @@ export interface PageBlockHostProps {
   /** The `<slug>.civit.ai` bundle URL (manifest.iframe.src), server-resolved. */
   iframeSrc: string;
   /**
+   * `manifest.bootSkeleton` — the app declares that its OWN shipped `index.html`
+   * paints a themed boot state, so the host must stand back and let it show.
+   *
+   * 🔴 This does three things, not one, and all three are required: without any
+   * of them the app's boot state is invisible and the declaration is a lie.
+   *   1. no branded veil (it is opaque, `inset: 0`, until BLOCK_READY);
+   *   2. the iframe is visible from mount rather than `opacity: 0` until ready;
+   *   3. no `translateY` settle on reveal — that IS a layout shift, and the
+   *      point of an app-painted skeleton is that hydration moves nothing.
+   *
+   * The host's own skeleton stays the default for every app that does NOT
+   * declare this: an app with an empty `#root` and no veil is a blank white
+   * iframe for 300-1200ms, which is worse than what we had. The platform build
+   * fails a build that declares this with an empty `#root`, so the claim cannot
+   * rot into that.
+   */
+  bootSkeleton?: boolean;
+  /**
    * Which surface mounted this host. REQUIRED, and passed explicitly by each
    * call site rather than inferred, because it is one of the two axes the
    * init-fragment gate keys on — and the axis that refuses the DEV TUNNEL
@@ -597,6 +615,7 @@ export function PageBlockHost({
   blockInstanceId,
   appName,
   iframeSrc,
+  bootSkeleton = false,
   surface,
   sandbox,
   trustTier,
@@ -3953,15 +3972,32 @@ export function PageBlockHost({
               // cross-fading with the branded overlay below. Under reduced motion
               // `revealMs` is 0 → no transition is emitted and the opacity flip is
               // instantaneous (the pre-animation behaviour).
-              opacity: isReady ? 1 : 0,
-              transform: isReady || revealMs === 0 ? 'none' : 'translateY(8px)',
+              //
+              // 🔴 `bootSkeleton` apps opt OUT of the whole reveal. They paint
+              // their own themed boot state in the HTML they ship, so hiding the
+              // iframe until BLOCK_READY would hide exactly that, and the
+              // translateY settle would move it on arrival — a layout shift, at
+              // the one moment the app is trying not to move. Visible from mount,
+              // no transform, no transition: the app's skeleton is on screen at
+              // first paint and its own React render replaces it in place.
+              // `pointerEvents` is deliberately NOT opted out — a skeleton is not
+              // interactive, and the block must stay inert until it has a token.
+              opacity: bootSkeleton || isReady ? 1 : 0,
+              transform: bootSkeleton || isReady || revealMs === 0 ? 'none' : 'translateY(8px)',
               transition:
-                revealMs === 0
+                bootSkeleton || revealMs === 0
                   ? undefined
                   : `opacity ${revealMs}ms ease-out, transform ${revealMs}ms ease-out`,
             }}
           />
-          {overlayMounted && (
+          {/* 🔴 Suppressed for a `bootSkeleton` app. This veil is opaque and
+              `inset: 0` until BLOCK_READY, so leaving it up would cover the very
+              boot state the app ships — the declaration would be inert and the
+              app author would have no way to tell. For every other app it stays
+              exactly as it was, and it is the reason NOT declaring the field is
+              the safe default: no veil plus an empty `#root` is a blank white
+              iframe. */}
+          {!bootSkeleton && overlayMounted && (
             <Center
               data-testid="app-page-loading"
               // Announce the loading state on the REGION: role="status" +

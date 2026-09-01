@@ -422,6 +422,13 @@ export interface BlockManifest {
   contentRating?: string;
   name?: string;
   renderMode?: 'iframe' | 'inline' | 'hybrid';
+  /**
+   * The app's shipped `index.html` paints its own themed boot state inside
+   * `#root`, so the run host stands down its branded veil and shows the iframe
+   * from mount. Declared here for discoverability — the index signature below
+   * would admit it anyway, which is exactly why it is easy to misspell.
+   */
+  bootSkeleton?: boolean;
   [key: string]: unknown;
 }
 

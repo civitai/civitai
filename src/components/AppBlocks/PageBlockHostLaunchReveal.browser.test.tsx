@@ -243,6 +243,51 @@ describe('PageBlockHost launch reveal — branded loading', () => {
     }
   });
 
+  // `bootSkeleton` stands down THREE separate things, and leaving any one of
+  // them in place makes the app's own boot state invisible — i.e. the flag is
+  // inert and the app author has no way to tell. One test each, so a failure
+  // names WHICH one regressed rather than just "the contract broke".
+  const renderBootSkeletonApp = async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} bootSkeleton onConsentGranted={vi.fn()} />);
+    await expect.element(page.getByTestId('app-page-iframe')).toBeInTheDocument();
+    // Every assertion below is about the PRE-ready window — the one the app
+    // paints its own skeleton in. If this ever went true the tests would be
+    // asserting the post-reveal state and would pass for the wrong reason.
+    expect(iframeEl().getAttribute('data-block-ready')).toBe('false');
+    return iframeEl();
+  };
+
+  test('bootSkeleton: the host renders NO veil over the app', async () => {
+    const frame = await renderBootSkeletonApp();
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+    expect(page.getByTestId('app-page-loading-skeleton').query()).toBeNull();
+    // Still inert until it has a token — a skeleton is not interactive.
+    expect(frame.style.pointerEvents).toBe('none');
+  });
+
+  test('bootSkeleton: the iframe is VISIBLE from mount, not opacity 0', async () => {
+    const frame = await renderBootSkeletonApp();
+    expect(frame.style.opacity).toBe('1');
+  });
+
+  test('bootSkeleton: no translateY settle and no reveal transition', async () => {
+    // The settle would move the app's skeleton on arrival — a layout shift at
+    // the exact moment an app-painted boot state exists to avoid one.
+    const frame = await renderBootSkeletonApp();
+    expect(frame.style.transform).toBe('none');
+    expect(frame.style.transition).toBe('');
+  });
+
+  test('an app that does NOT declare bootSkeleton keeps the veil (safe default)', async () => {
+    // The default matters more than the opt-in: no veil plus an empty #root is a
+    // blank white iframe, which is worse than what the veil was doing.
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-page-loading-skeleton')).toBeInTheDocument();
+    expect(iframeEl().style.opacity).toBe('0');
+  });
+
   test('the branded copy runs appName through the chrome sanitizer (control/bidi stripped)', async () => {
     // Same anti-spoof posture as the existing aria-label test: the publisher
     // controls appName, so every appName-derived string on this surface — now

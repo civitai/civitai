@@ -42,6 +42,8 @@ interface PageProps {
   appName: string;
   pageTitle: string;
   iframeSrc: string;
+  /** manifest.bootSkeleton — the app paints its own boot state; the host stands back. */
+  bootSkeleton: boolean;
   sandbox: string;
   trustTier: 'unverified' | 'verified' | 'internal';
   slug: string;
@@ -122,6 +124,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         appName: page.name,
         pageTitle: page.pageTitle,
         iframeSrc: page.iframeSrc,
+        bootSkeleton: page.bootSkeleton,
         sandbox: page.sandbox,
         trustTier: page.trustTier,
         slug: page.blockId,
@@ -142,6 +145,7 @@ function AppPage(props: PageProps) {
     appId,
     appName,
     iframeSrc,
+    bootSkeleton,
     sandbox,
     trustTier,
     slug,
@@ -343,6 +347,7 @@ function AppPage(props: PageProps) {
           blockInstanceId={blockInstanceId}
           appName={appName}
           iframeSrc={iframeSrc}
+          bootSkeleton={bootSkeleton}
           // The public full-page run surface.
           surface="page-run"
           // 🔴 THE DOUBLE-SCROLLBAR FIX, and it is only half of one — it is

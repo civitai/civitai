@@ -12,10 +12,7 @@ import {
 } from '~/server/services/blocks/checkpoint.service';
 import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import { clampTunnelDeclaredScopes } from '~/server/services/blocks/dev-scoped-mint.service';
-import {
-  newBlockInstanceId,
-  newBlockUserSubscriptionId,
-} from '~/server/utils/app-block-ids';
+import { newBlockInstanceId, newBlockUserSubscriptionId } from '~/server/utils/app-block-ids';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -42,7 +39,10 @@ import {
   invalidateAppCapLimits,
   normalizeCapOverrideInput,
 } from '~/server/services/blocks/app-cap-limits.service';
-import { toPublicBlockManifest, toPublicScreenshots } from '~/server/schema/blocks/subscription.schema';
+import {
+  toPublicBlockManifest,
+  toPublicScreenshots,
+} from '~/server/schema/blocks/subscription.schema';
 import { isLaunchSlot, PAGE_SLOT_ID } from '~/shared/constants/slot-registry';
 import { isMatureContentRating } from '~/server/utils/server-domain';
 
@@ -366,6 +366,13 @@ export interface PageBlockSsr {
    *  column, set on approve). The SSR run-page gate 404s a mature (r/x) page app
    *  when the request host is not red-capable. NULL for pre-feature rows → SFW. */
   contentRating: string | null;
+  /** `manifest.bootSkeleton` — the app's shipped HTML paints its own themed boot
+   *  state, so the run host stands its veil down and shows the iframe from mount.
+   *  Publisher-controlled and read from the APPROVED manifest snapshot, so it is
+   *  as trustworthy as the rest of that snapshot; the blast radius of a false
+   *  declaration is cosmetic (a blank iframe on that app's own page), and the
+   *  platform build refuses a build that declares it with an empty `#root`. */
+  bootSkeleton: boolean;
 }
 
 /**
@@ -1237,9 +1244,7 @@ export class BlockRegistry {
     if (!pinned) return live;
     const manifest = (pinned.manifest ?? {}) as Record<string, unknown>;
     const scopes = Array.isArray((manifest as { scopes?: unknown }).scopes)
-      ? ((manifest as { scopes: unknown[] }).scopes.filter(
-          (s): s is string => typeof s === 'string'
-        ))
+      ? (manifest as { scopes: unknown[] }).scopes.filter((s): s is string => typeof s === 'string')
       : [];
     return { manifest, approvedScopes: scopes };
   }
@@ -1847,9 +1852,10 @@ export class BlockRegistry {
     // gate on `typeof iframe.src === 'string'` was misleading (sandbox presence
     // has nothing to do with src being a string). Harmless before (src/sandbox
     // are written together) but wrong; gate on the field actually being read.
-    const sandbox = typeof iframe === 'object' && iframe !== null
-      ? (iframe as { sandbox?: unknown }).sandbox
-      : '';
+    const sandbox =
+      typeof iframe === 'object' && iframe !== null
+        ? (iframe as { sandbox?: unknown }).sandbox
+        : '';
     const page = (manifest.page ?? {}) as { title?: unknown; icon?: unknown };
     const name = typeof manifest.name === 'string' ? manifest.name : ab.blockId;
     // #3/#6: surface the page's declared scopes so the host can compute the
@@ -1857,15 +1863,16 @@ export class BlockRegistry {
     // IframeHost. Money/spend scopes are rejected at mint for a page, so this is
     // effectively the consent-exempt ambient set (apps:storage:*) once approved.
     const declaredScopes = Array.isArray((manifest as { scopes?: unknown }).scopes)
-      ? ((manifest as { scopes: unknown[] }).scopes.filter(
-          (s): s is string => typeof s === 'string'
-        ))
+      ? (manifest as { scopes: unknown[] }).scopes.filter((s): s is string => typeof s === 'string')
       : [];
     return {
       appBlockId: ab.id,
       blockId: ab.blockId,
       appId: ab.appId,
       iframeSrc,
+      // STRICT `=== true`: the manifest is publisher JSON, so a truthy-but-not-
+      // boolean value ("false", 0, {}) must not enable a host behaviour change.
+      bootSkeleton: (manifest as { bootSkeleton?: unknown }).bootSkeleton === true,
       sandbox: typeof sandbox === 'string' ? sandbox : '',
       // #2: use the COLUMN (authoritative), never `manifest.trustTier`.
       trustTier:
@@ -2269,16 +2276,14 @@ export class BlockRegistry {
     manifest: Record<string, unknown>;
     approvedScopes: string[];
   }): Promise<void> {
-    const { recordScopeGrant, consentGatedScopes } = await import(
-      './blocks/scope-grant.service'
-    );
+    const { recordScopeGrant, consentGatedScopes } = await import('./blocks/scope-grant.service');
     // The app's effective scope set = manifest.scopes ∩ approvedScopes (the
     // moderator-approved snapshot is the ceiling). Grant only the consent-
     // gated subset of that — exempt scopes never need a grant.
     const manifestScopes = Array.isArray((opts.manifest as { scopes?: unknown }).scopes)
-      ? ((opts.manifest as { scopes: unknown[] }).scopes.filter(
+      ? (opts.manifest as { scopes: unknown[] }).scopes.filter(
           (s): s is string => typeof s === 'string'
-        ))
+        )
       : [];
     const approved = new Set(opts.approvedScopes ?? []);
     const effective = manifestScopes.filter((s) => approved.has(s));
@@ -2718,9 +2723,7 @@ export class BlockRegistry {
         row.targetModelIds && row.targetModelIds.length > 0 ? row.targetModelIds : null;
       const pinnedModelNames =
         targetIds !== null
-          ? Object.fromEntries(
-              targetIds.map((id) => [id, modelNameById.get(id) ?? `Model ${id}`])
-            )
+          ? Object.fromEntries(targetIds.map((id) => [id, modelNameById.get(id) ?? `Model ${id}`]))
           : null;
       return {
         id: row.id,
@@ -2928,10 +2931,7 @@ export class BlockRegistry {
    * the row doesn't exist (idempotent for retries) but raises authorization
    * when the row exists and belongs to someone else.
    */
-  static async deleteSubscription(opts: {
-    subscriptionId: string;
-    userId: number;
-  }): Promise<void> {
+  static async deleteSubscription(opts: { subscriptionId: string; userId: number }): Promise<void> {
     const existing = await dbWrite.blockUserSubscription.findUnique({
       where: { id: opts.subscriptionId },
       select: { userId: true },
@@ -2998,9 +2998,7 @@ export class BlockRegistry {
       // nextCursor for a stable keyset scan. Text so one column fits all sorts.
       sort_key: string;
     };
-    const slotFilter = slotId
-      ? `{"targets":[{"slotId":"${slotId}"}]}`
-      : null;
+    const slotFilter = slotId ? `{"targets":[{"slotId":"${slotId}"}]}` : null;
     const queryLike = query ? `%${query.toLowerCase()}%` : null;
     const categoryFilter = category ?? null;
 
@@ -3353,7 +3351,7 @@ export class BlockRegistry {
                install_count DESC,
                ab.id ASC
       LIMIT ${limit}
-    ` ) as Row[];
+    `) as Row[];
     // Project to the SAME public allowlist as listAvailable (no widening).
     return rows.map((r) => ({
       id: r.id,
@@ -3425,17 +3423,12 @@ export class BlockRegistry {
    * Returns the updated MarketplaceMeta. Throws NOT_FOUND for a missing app and
    * BAD_REQUEST for an off-taxonomy category or featuring a non-approved app.
    */
-  static async setMarketplaceMeta(
-    input: SetMarketplaceMetaInput
-  ): Promise<MarketplaceMeta> {
+  static async setMarketplaceMeta(input: SetMarketplaceMetaInput): Promise<MarketplaceMeta> {
     const { appBlockId, category, featured, featuredOrder } = input;
 
     // Taxonomy belt (router already enums it; re-assert so no off-taxonomy value
     // can ever be written by any caller).
-    if (
-      category != null &&
-      !(MARKETPLACE_CATEGORIES as readonly string[]).includes(category)
-    ) {
+    if (category != null && !(MARKETPLACE_CATEGORIES as readonly string[]).includes(category)) {
       throwBadRequestError(`Unknown marketplace category: ${category}`);
     }
 
@@ -3448,9 +3441,7 @@ export class BlockRegistry {
     // Approved-only featuring: refuse to feature anything not approved (it would
     // otherwise appear in the anon-capable featured rail).
     if (featured === true && existing!.status !== 'approved') {
-      throwBadRequestError(
-        `Only an approved app can be featured (status="${existing!.status}").`
-      );
+      throwBadRequestError(`Only an approved app can be featured (status="${existing!.status}").`);
     }
 
     // Build the patch from ONLY the provided fields — an omitted (undefined)
