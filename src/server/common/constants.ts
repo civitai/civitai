@@ -772,6 +772,16 @@ const baseLicenses: Record<string, LicenseDetails> = {
     attribution: 'MiniMax H3',
     poweredBy: 'MiniMax H3',
   },
+  'minimax music 3': {
+    // Permalinked for the same reason as H3 above: section 5.2 lets MiniMax amend
+    // the published text.
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/fbdf52fbaaca799592917417eb05f1899f1255ec/LICENSE',
+    name: 'MiniMax-Music3 Community License',
+    // Section 3.1 demands this exact string on the UI of a commercial product.
+    // Unlike H3's licence this one has no Applicable Territory clause and no
+    // encouraged "Powered by" form, so there is no notice and no poweredBy.
+    attribution: 'MiniMax-Music3',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -855,6 +865,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Seedance: baseLicenses['seedream'],
   'Ideogram 4.0': baseLicenses['ideogram nc'],
   'MiniMax H3': baseLicenses['minimax h3'],
+  'MiniMax Music 3': baseLicenses['minimax music 3'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
