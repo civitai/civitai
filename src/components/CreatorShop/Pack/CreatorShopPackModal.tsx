@@ -42,6 +42,7 @@ import {
   type PackMemberPricing,
 } from '~/server/schema/creator-shop.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -54,8 +55,6 @@ type Bundlable = PackMemberPricing & {
   creatorUsername: string | null;
   acceptsBlueBuzz: boolean;
 };
-
-const MAX_COVER_SIZE = 2 * 1024 * 1024;
 
 const memberUses = (member: Bundlable) => stickerUsesFromCosmeticData(member.data);
 
@@ -186,7 +185,9 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
     setLocalUrl(URL.createObjectURL(file));
     setImageId(null);
     try {
-      const uploaded = await uploadToCF(file);
+      // Explicit, because `uploadToCF` otherwise defaults this to `isModerator` — which
+      // let animated covers through for staff and rejected the same file for creators.
+      const uploaded = await uploadToCF(file, undefined, { allowAnimatedWebP: true });
       setImageId(uploaded.id);
     } catch (error) {
       resetFiles();
@@ -261,7 +262,7 @@ export function CreatorShopPackModal({ item }: { item?: CreatorShopManageItem })
           imageId={imageId}
           uploading={uploading}
           tiles={coverTiles}
-          maxSize={MAX_COVER_SIZE}
+          maxSize={constants.mediaUpload.maxImageFileSize}
           onDrop={handleDrop}
           onClear={() => {
             setImageId(null);
