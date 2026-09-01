@@ -3112,9 +3112,9 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 // upstreams are /api/v1/images and /api/v1/blocks/images, whose zod objects declare neither
 // `hideChallenges` nor `excludedTagIds` and strip unknown keys. Adding either key to those
 // schemas would hand the REST API an unfiltered feed — apply the exclusion here first. Note
-// image-search.service.ts spreads the same `data` into all three branches
-// (getAllImages / getAllImagesIndex / here), so the result wouldn't be uniformly unfiltered:
-// two branches would filter and this one wouldn't, which reads as a caching bug, not a gap.
+// image-search.service.ts spreads the same `data` into both branches (getAllImages / here),
+// so the result wouldn't be uniformly unfiltered: one branch would filter and this one
+// wouldn't, which reads as a caching bug, not a gap.
 export async function getImagesFromFeedSearch(
   input: ImageSearchInput
 ): Promise<GetAllImagesIndexResult> {
@@ -3349,15 +3349,6 @@ import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema'
 // Returns null when the hub resolved to nothing. Callers must return an empty
 // page for null — never fall through unfiltered, which would serve the global
 // feed to someone who asked for their hub.
-// The creator scope a hub represents, or null when it is not purely one. Null means
-// "not a creator scope", which leaves the own-excluded pass alone — never "empty
-// scope", which would exclude the caller from their own feed.
-function hubCreatorScope(sources: ResolvedHubSources | null) {
-  if (!sources || !sources.userIds.length) return null;
-  if (sources.modelVersionIds.length || sources.collectionIds.length) return null;
-  return sources.userIds;
-}
-
 // The two filter builders are mutually exclusive per request and each calls this
 // once, so nothing here needs memoizing. Kept as a helper so both spell the hubId
 // short-circuit and the argument set identically.

@@ -292,7 +292,7 @@ describe('a hub caps its own feed to the level the owner set', () => {
   });
 
   it('the post-filter builder serves nothing on an empty intersection too', async () => {
-    // Covered per builder, not once: the empty-intersection branch is three separate
+    // Covered per builder, not once: the empty-intersection branch is two separate
     // `if (!capped)` lines, and the one that gets deleted is the one nobody tested.
     resolveHubSourcesMock.mockResolvedValue({ ...cappedSources, forcedBrowsingLevel: 4 });
 

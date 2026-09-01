@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from '~/server/createContext';
-import type * as FliptClient from '~/server/flipt/client';
 import type * as ImageService from '~/server/services/image.service';
 
 /**
@@ -11,21 +10,15 @@ import type * as ImageService from '~/server/services/image.service';
  * of the feed" — the first must take the notice down, the second must not.
  */
 
-const { getAllImagesMock, getAllImagesIndexMock, getFliptVariantMock } = vi.hoisted(() => ({
+const { getAllImagesMock, getAllImagesIndexMock } = vi.hoisted(() => ({
   getAllImagesMock: vi.fn(),
   getAllImagesIndexMock: vi.fn(),
-  getFliptVariantMock: vi.fn(),
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   getAllImages: getAllImagesMock,
   getAllImagesIndex: getAllImagesIndexMock,
-}));
-
-vi.mock('~/server/flipt/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof FliptClient>()),
-  getFliptVariant: getFliptVariantMock,
 }));
 
 import { getInfiniteImagesHandler } from '../image.controller';
@@ -65,6 +58,23 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     const result = await getInfiniteImagesHandler({ input: dbBoundInput, ctx });
 
     expect(getAllImagesMock).toHaveBeenCalledTimes(1);
+    expect(result.source).toBe('db');
+  });
+
+  // 🔴 The ONLY test that varies `features.imageIndexFeed`. Every other test in this
+  // file shares one ctx with it hardcoded true, so without this the flag conjunct in
+  // `useIndex` can be deleted outright and nothing in the suite goes red. It replaces
+  // the flag-off test that died with the BitDex routing it was written against.
+  it('reports db when the index feed flag is off and the database serves a broad query', async () => {
+    const flagOffCtx = {
+      ...ctx,
+      features: { ...(ctx as unknown as { features: object }).features, imageIndexFeed: false },
+    } as typeof ctx;
+
+    const result = await getInfiniteImagesHandler({ input: indexBoundInput, ctx: flagOffCtx });
+
+    expect(getAllImagesMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesIndexMock).not.toHaveBeenCalled();
     expect(result.source).toBe('db');
   });
 
