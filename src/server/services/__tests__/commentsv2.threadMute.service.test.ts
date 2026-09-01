@@ -249,6 +249,56 @@ describe('getThreadMuted', () => {
   const walk = (rows: { own: boolean; ancestor: boolean }[]) =>
     dbMock.dbRead.$queryRaw.mockResolvedValue(rows);
 
+  /**
+   * The select is what makes `ownThreadId` reachable at all, and a mocked client ignores it — the
+   * write-side test two describes up exists for exactly this and the read side had no equivalent.
+   */
+  it('reads the child thread the mute is keyed on', async () => {
+    dbMock.dbRead.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: { id: 77 } });
+    walk([{ own: true, ancestor: false }]);
+
+    await getThreadMuted({ commentId: 5, userId: 1 });
+
+    expect(dbMock.dbRead.commentV2.findUnique).toHaveBeenCalledWith({
+      where: { id: 5 },
+      select: { threadId: true, childThread: { select: { id: true } } },
+    });
+  });
+
+  /**
+   * The seed and the `own` operand are separate expressions over the same two ids, so pointing
+   * either at the wrong one is silent. Seeded wrong, a user's own mute is invisible; `own` keyed
+   * wrong, their own mute reports as inherited and the menu refuses to let them unmute it.
+   */
+  it('seeds the walk at the reply thread and keys `own` on it', async () => {
+    dbMock.dbRead.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: { id: 77 } });
+    walk([{ own: true, ancestor: false }]);
+
+    await getThreadMuted({ commentId: 5, userId: 42 });
+
+    const [call] = dbMock.dbRead.$queryRaw.mock.calls;
+    // The CTE arrives as a `Prisma.raw` value rather than in the strings array, so read its own SQL.
+    const [cte, ...values] = call.slice(1) as [{ sql: string }, ...number[]];
+    expect(cte.sql).toContain('SELECT 77 "id", 0 "depth"');
+    expect(values).toEqual([77, 77, 42]);
+  });
+
+  /**
+   * What Postgres actually returns when the caller has muted nothing: one all-NULL row from the
+   * aggregate. Both `?? false` defaults could be flipped to `?? true` with the suite green, and this
+   * is the path nearly every call takes.
+   */
+  it('reports not-muted for the common case of no mute rows at all', async () => {
+    dbMock.dbRead.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: { id: 77 } });
+    walk([{ own: null, ancestor: null } as unknown as { own: boolean; ancestor: boolean }]);
+
+    expect(await getThreadMuted({ commentId: 5, userId: 1 })).toEqual({
+      muted: false,
+      viaAncestor: false,
+      hasOwnThread: true,
+    });
+  });
+
   it('asks about the caller, not the thread', async () => {
     dbMock.dbRead.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: { id: 77 } });
     walk([{ own: true, ancestor: false }]);
@@ -270,6 +320,7 @@ describe('getThreadMuted', () => {
     expect(await getThreadMuted({ commentId: 5, userId: 1 })).toEqual({
       muted: true,
       viaAncestor: false,
+      hasOwnThread: true,
     });
   });
 
@@ -280,6 +331,7 @@ describe('getThreadMuted', () => {
     expect(await getThreadMuted({ commentId: 5, userId: 1 })).toEqual({
       muted: true,
       viaAncestor: true,
+      hasOwnThread: true,
     });
   });
 
@@ -295,6 +347,7 @@ describe('getThreadMuted', () => {
     expect(await getThreadMuted({ commentId: 5, userId: 1 })).toEqual({
       muted: true,
       viaAncestor: true,
+      hasOwnThread: false,
     });
     expect(dbMock.dbRead.$queryRaw).toHaveBeenCalled();
   });
@@ -305,6 +358,7 @@ describe('getThreadMuted', () => {
     expect(await getThreadMuted({ commentId: 5, userId: 1 })).toEqual({
       muted: false,
       viaAncestor: false,
+      hasOwnThread: false,
     });
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
@@ -334,6 +388,16 @@ describe('getSectionMuted', () => {
     expect(await getSectionMuted({ entityType: 'image', entityId: 5, userId: 1 })).toEqual({
       muted: false,
       hasThread: false,
+    });
+  });
+
+  it('reports a section that exists and is not muted', async () => {
+    dbMock.dbRead.thread.findUnique.mockResolvedValue({ id: 42 });
+    dbMock.dbRead.threadMute.findUnique.mockResolvedValue(null);
+
+    expect(await getSectionMuted({ entityType: 'image', entityId: 5, userId: 1 })).toEqual({
+      muted: false,
+      hasThread: true,
     });
   });
 

@@ -73,6 +73,13 @@ export function CreateComment({
   // `protectedProcedure` rather than `guardedProcedure` precisely so that account can silence them —
   // hiding it here would have made that choice unreachable. Read-only is the exception: the write
   // would fail, so the control comes off with everything else.
+  if (isReadonly)
+    return (
+      <Alert color="yellow" icon={<IconLock />}>
+        <Center>Civitai is currently in read-only mode</Center>
+      </Alert>
+    );
+
   if (isLocked || isMuted)
     return (
       <Group align="center" justify="space-between" wrap="nowrap" gap="sm">
@@ -85,13 +92,6 @@ export function CreateComment({
         </Alert>
         {!replyToCommentId && sectionMute.control}
       </Group>
-    );
-
-  if (isReadonly)
-    return (
-      <Alert color="yellow" icon={<IconLock />}>
-        <Center>Civitai is currently in read-only mode</Center>
-      </Alert>
     );
 
   return (
@@ -130,9 +130,12 @@ function useSectionMute({ target, enabled }: { target?: SectionMuteInput; enable
         hasThread: result.threadId !== null,
       });
       showSuccessNotification({
+        // States the action, not the outcome — the same correction the per-comment toast needed. A
+        // sub-thread muted separately keeps suppressing after this, because the walk climbs, so
+        // promising notifications are back on would be false for part of the discussion.
         message: result.muted
           ? "You won't be notified about new comments here"
-          : "You'll be notified about new comments here again",
+          : 'Your mute on this discussion has been removed',
       });
     },
     onError(error) {

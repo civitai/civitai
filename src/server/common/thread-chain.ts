@@ -31,12 +31,16 @@ export const MAX_THREAD_CHAIN_DEPTH = 100;
  * suppressed notification is a control someone else operates on your behalf. (Justin's fleet lead,
  * 2026-08-31. Deriving `parentThreadId` server-side is filed separately.)
  *
- * `UNION ALL`, and the DEPTH CAP is what bounds this — not the dedupe. An earlier version said `UNION`
- * made a corrupted cycle converge; measured on Postgres 16 with a deliberate 2-cycle, `UNION` and
- * `UNION ALL` both produce 101 rows and stop at depth 100, because `depth` is in the projected row so
- * no row is ever a duplicate. The dedupe could never fire, and it cost a hash on every evaluation of
- * a fragment embedded in 13 producer queries. Out-degree here is 1 (`Thread.commentId` is unique and
- * `CommentV2.threadId` is single-valued), so there is nothing to converge in the first place.
+ * `UNION ALL`, and the DEPTH CAP is what bounds this — not the dedupe. An earlier version claimed
+ * `UNION` made a corrupted cycle converge: measured on Postgres 16 with a deliberate 2-cycle, both
+ * forms produce 101 rows and stop at depth 100, because `depth` is in the projected row so no row is
+ * ever a duplicate. `UNION ALL` is used because a dedupe that provably cannot fire is dead weight and
+ * misleads the next reader — NOT because it is faster. Measured on the prod replica, nine interleaved
+ * runs per form at 5,000 evaluations: 112.9ms vs 113.2ms, i.e. no difference.
+ *
+ * Out-degree is 1 because BOTH joins in the recursive term are primary-key equalities (`th.id` and
+ * `pc.id`), so each row yields at most one successor. That does not depend on any constraint anyone
+ * could drop.
  */
 export const muteableThreadsCte = (seedExpression: string) => `WITH RECURSIVE muteable_threads AS (
               SELECT ${seedExpression} "id", 0 "depth"

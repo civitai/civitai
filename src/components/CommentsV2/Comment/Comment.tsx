@@ -102,7 +102,7 @@ export function CommentContent({
   ...groupProps
 }: CommentProps) {
   const { setExpanded, setRootThread, rootEntityType } = useRootThreadContext();
-  const { entityId, entityType, highlighted, level } = useCommentsContext();
+  const { entityId, entityType, highlighted, level, isLocked } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, canPin, badge, canReport } = useCommentV2Context();
 
   const seededThreads = useSeededReplyThreads();
@@ -352,11 +352,18 @@ export function CommentContent({
                   }
                   // Not merely cosmetic: the mutation toggles from DB state, so clicking a control
                   // labelled "Mute" before the query lands UNMUTES an already-muted thread.
-                  disabled={!threadMute || threadMute.viaAncestor || togglingThreadMute}
+                  disabled={
+                    !threadMute ||
+                    threadMute.viaAncestor ||
+                    togglingThreadMute ||
+                    (isLocked && !threadMute.hasOwnThread)
+                  }
                   onClick={() => toggleThreadMute({ commentId: comment.id }).catch(() => null)}
                 >
                   {threadMute?.viaAncestor
                     ? 'Muted with the thread above'
+                    : isLocked && threadMute && !threadMute.hasOwnThread
+                    ? 'Locked — nothing to mute yet'
                     : threadMute?.muted
                     ? 'Unmute this thread'
                     : 'Mute this thread'}

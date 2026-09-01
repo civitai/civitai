@@ -585,7 +585,7 @@ export async function getThreadMuted({
     where: { id: commentId },
     select: { threadId: true, childThread: { select: { id: true } } },
   });
-  if (!comment) return { muted: false, viaAncestor: false };
+  if (!comment) return { muted: false, viaAncestor: false, hasOwnThread: false };
 
   // Seeded from the comment's OWN thread, not its reply thread, so the answer is right before anyone
   // has replied — a reply thread is created lazily, and returning early when it is missing reported
@@ -610,7 +610,11 @@ export async function getThreadMuted({
 
   const own = row?.own ?? false;
   const ancestor = row?.ancestor ?? false;
-  return { muted: own || ancestor, viaAncestor: !own && ancestor };
+  // `hasOwnThread` is what the caller needs to know whether muting is even possible here: without a
+  // reply thread the write has to create one, and `throwIfThreadChainLocked` refuses that inside a
+  // locked chain. Without it the menu offered an enabled control that always threw — on a comment
+  // nobody had replied to, while a sibling that happened to have replies muted fine.
+  return { muted: own || ancestor, viaAncestor: !own && ancestor, hasOwnThread: !!ownThreadId };
 }
 
 export const getComment = async ({
