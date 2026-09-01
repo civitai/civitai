@@ -82,6 +82,7 @@ const INSET_CONSUMERS = [
   'src/components/Consent/ConsentBanner.tsx',
   'src/components/Csam/CsamImageSelection.tsx',
   'src/components/Games/NewOrder/NewOrderImageRatings.tsx',
+  'src/components/Image/DetailV2/ImageDetail2.tsx',
   'src/components/ImageGeneration/GeneratedOutputLightbox.tsx',
   'src/components/IterativeEditor/IterativeImageEditor.module.scss',
   'src/components/Sticker/StickerPlacementTray.tsx',
@@ -578,5 +579,62 @@ describe('the AppFooter / AdhesiveAd bottom-edge handover', () => {
         'ScrollArea, so it is the viewport bottom only when `AdhesiveAd` is not rendering below ' +
         'it — use `--safe-area-inset-bottom-unpaid`, which asks the DOM.'
     ).not.toMatch(/var\(--safe-area-inset-bottom\)/);
+  });
+
+  /**
+   * The same handover asked one level further in. A route that nulls both
+   * `header` and `footer` owns its own bottom edge — but the SAME components
+   * are also reached from routes that keep the chrome, so the payment has to be
+   * conditional there too, and on a WIDER condition: page content is covered by
+   * the ad bar OR the footer bar, where the footer is covered only by the ad.
+   *
+   * 🔴 The asymmetry is the whole reason there are two properties, and it is
+   * the thing most likely to be "simplified" into one. Zeroing `…-unpaid` from
+   * `data-app-footer` would make the footer's own presence the reason it stops
+   * paying — it renders on every route it could pay on, so it would pay on
+   * none. This test pins the asymmetry, not just the existence of the rules.
+   */
+  it('the page-content half zeroes on EITHER bar, and never zeroes the footer on itself', () => {
+    const css = read(GLOBALS_CSS);
+    const footer = stripComments(read(APP_FOOTER));
+
+    expect(
+      footer,
+      '`AppFooter` no longer marks itself with `data-app-footer`, so a chrome-less route cannot ' +
+        'tell whether the footer bar is below its content and will pay an inset the footer is ' +
+        'already paying.'
+    ).toContain('data-app-footer');
+    expect(
+      css,
+      'the `--safe-area-inset-bottom-page` default is gone, so page content on a route that ' +
+        'nulls both header and footer pays nothing and sits under the home indicator.'
+    ).toContain('--safe-area-inset-bottom-page: var(--safe-area-inset-bottom);');
+
+    // Brace-matched so the two `#__next:has(…)` bodies are read whole; a
+    // `[^}]*` match here would stop at the first inner `}` and could not tell
+    // a one-property body from a two-property one, which is the exact
+    // distinction under test.
+    const bodyOf = (selector: string) => {
+      const at = css.indexOf(selector);
+      expect(at, `globals.css has no \`${selector}\` rule at all`).toBeGreaterThan(-1);
+      return braceMatched(css, css.indexOf('{', at));
+    };
+    const adRule = bodyOf('#__next:has([data-adhesive-ad])');
+    const footerRule = bodyOf('#__next:has([data-app-footer])');
+
+    expect(adRule, 'the ad bar is below BOTH, so it must settle both questions.').toContain(
+      '--safe-area-inset-bottom-unpaid: 0px;'
+    );
+    expect(adRule).toContain('--safe-area-inset-bottom-page: 0px;');
+    expect(footerRule, 'the footer bar must stand the page content down.').toContain(
+      '--safe-area-inset-bottom-page: 0px;'
+    );
+    expect(
+      footerRule,
+      'the `data-app-footer` rule also zeroes `--safe-area-inset-bottom-unpaid`. That property ' +
+        "is what tells the FOOTER whether to pay, so this makes the footer's own presence the " +
+        'reason it stops paying — it would then never pay on any route it renders on, and its ' +
+        'links sit under the home indicator for every paid member and every moderator route.'
+    ).not.toContain('--safe-area-inset-bottom-unpaid');
   });
 });

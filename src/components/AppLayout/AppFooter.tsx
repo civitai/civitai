@@ -137,6 +137,12 @@ export function AppFooter() {
       // The bar itself pays instead (see the inner div), and everything that
       // has to agree with the bar's real height reads the SAME expression.
       className="sticky inset-x-0 bottom-0 z-50 mt-3 transition-transform"
+      // 🔴 READ BY CSS, NOT BY JS — the page-content half of the same handover
+      // the ad bar's `data-adhesive-ad` drives. A route whose own markup is the
+      // viewport bottom needs to know whether ANY shell chrome is below it, and
+      // this bar is the other thing that can be. See globals.css for why this
+      // zeroes `--safe-area-inset-bottom-page` and pointedly not `…-unpaid`.
+      data-app-footer=""
       // The hide transform has to travel the bar's REAL height, which is now
       // `--footer-height` plus whatever inset the bar pays. Using
       // `--footer-height` alone leaves the "hidden" footer peeking by up to 34px.

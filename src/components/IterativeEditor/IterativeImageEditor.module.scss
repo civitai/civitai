@@ -15,6 +15,16 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
   @extend .editorContainer;
   max-height: none;
   height: 100%;
+  /* Page mode fills the route, and on `/images/iterate` — one of the two routes
+     that null BOTH `header` and `footer` — that makes its last row the bottom
+     of the layout viewport. On mobile the media query below turns this into the
+     scroll container with `.controlsSidebar` last, so the padding lands at the
+     scroll END, which is where the last control actually is.
+
+     `…-page` and not the raw inset because this component has a SECOND consumer,
+     `src/pages/comics/project/[id]/iterate.tsx`, which keeps the site footer and
+     therefore is not the viewport bottom. The property resolves to 0 there. */
+  padding-bottom: var(--safe-area-inset-bottom-page);
 }
 
 .chatArea {
@@ -403,7 +413,8 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
 }
 
 @keyframes skeletonPulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 1;
   }
   50% {
@@ -416,7 +427,8 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
 }
 
 @keyframes textPulse {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.5;
   }
   50% {

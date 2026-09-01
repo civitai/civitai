@@ -87,13 +87,38 @@
      never content under system UI. Do NOT invert this into a
      `--…-paid`-style property that has to be switched ON to be correct. */
   --safe-area-inset-bottom-unpaid: var(--safe-area-inset-bottom);
+
+  /* The same question asked one level further in, by a PAGE rather than by the
+     shell's own footer: "is anything below MY content paying the bottom inset?"
+
+     For page content the answer is yes if EITHER the ad bar or the footer bar
+     is rendering, which is why this needs its own name — `…-unpaid` cannot
+     serve both, because the footer is one of the things that answers this one
+     and it obviously cannot be told to stand down by its own presence.
+
+     The consumer is a route that renders no site chrome at all: of the ten
+     routes that null part of the shell, `src/pages/images/iterate.tsx` and
+     `src/pages/images/[imageId].tsx` are the two that null BOTH `header` and
+     `footer`, so their own markup is the viewport edge at both ends. Every
+     other route inherits 0 here and pays nothing, which is correct. */
+  --safe-area-inset-bottom-page: var(--safe-area-inset-bottom);
 }
 
 /* `data-adhesive-ad` is on the ad BAR itself (src/components/Ads/AdhesiveAd.tsx),
    not on a wrapper, so this matches only when the bar is really rendered and
-   really paying. */
+   really paying. The ad bar is BELOW the footer, so it settles both questions. */
 #__next:has([data-adhesive-ad]) {
   --safe-area-inset-bottom-unpaid: 0px;
+  --safe-area-inset-bottom-page: 0px;
+}
+
+/* The footer bar answers the page's question only. Deliberately NOT
+   `--safe-area-inset-bottom-unpaid` as well: that property is what tells the
+   footer whether to pay, and zeroing it here would make the footer's own
+   presence the reason it stops paying — the bar would never pay on any route
+   that has one, which is every route it renders on. */
+#__next:has([data-app-footer]) {
+  --safe-area-inset-bottom-page: 0px;
 }
 
 @layer tailwind-preflight {
@@ -114,10 +139,13 @@ body {
   overflow: hidden;
 }
 
-button, input, optgroup, select, textarea {
+button,
+input,
+optgroup,
+select,
+textarea {
   font-family: inherit !important;
 }
-
 
 #uniconsent-config {
   display: none;
@@ -284,7 +312,8 @@ button, input, optgroup, select, textarea {
 }
 
 @layer theme {
-  button, a {
+  button,
+  a {
     pointer-events: auto;
   }
 
@@ -637,8 +666,13 @@ iframe {
    so it must be a global keyframes. Moved here from ProjectWorkspace.module.scss
    because Turbopack does not support the `:global { @keyframes }` block form. */
 @keyframes pulse-outline {
-  0%, 100% { outline-color: var(--mantine-color-yellow-6); }
-  50% { outline-color: var(--mantine-color-yellow-3); }
+  0%,
+  100% {
+    outline-color: var(--mantine-color-yellow-6);
+  }
+  50% {
+    outline-color: var(--mantine-color-yellow-3);
+  }
 }
 
 @keyframes rotate {
@@ -687,7 +721,7 @@ ol {
     box-shadow: inset 0 2px theme('colors.gray.2');
   }
 
-  [data-mantine-color-scheme="dark"] .shadow-topper {
+  [data-mantine-color-scheme='dark'] .shadow-topper {
     box-shadow: inset 0 2px theme('colors.dark.4');
   }
 
@@ -699,7 +733,7 @@ ol {
     @apply absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2;
   }
 
-  [data-mantine-color-scheme="dark"] .card {
+  [data-mantine-color-scheme='dark'] .card {
     @apply bg-dark-6 shadow-dark-8 border-dark-4;
   }
 
@@ -809,7 +843,6 @@ div[id*='google_ads_iframe'][id$='outstream_0__container__'] {
   width: 0;
 }
 
-
 .kontext-a {
-  @apply text-blue-600 dark:text-blue-500 hover:underline
+  @apply text-blue-600 dark:text-blue-500 hover:underline;
 }
