@@ -13,9 +13,11 @@ for every SvelteKit app here (runes, derive-the-promise, keyed loops, form actio
 `text-dark-2`, placement, comments, the three review agents).
 
 The Training Studio is the LoRA training UI — a slicker replacement for the in-app trainer
-(`src/components/Training/**`), built as a **separate app** that can be extracted later. Its data comes
-from the orchestrator, not the repo DB, so this app pulls only `@civitai/auth` (session gate) and
-`@civitai/brand` (favicon) — no `@civitai/db`, `@civitai/redis` or `@civitai/clickhouse`.
+(`src/components/Training/**`), built as a **separate app** that can be extracted later. Its training
+**data** comes from the orchestrator, not the repo DB. It follows the moderator app's spoke shape:
+`@civitai/auth` (session gate), `@civitai/brand` (favicon), plus `@civitai/db` + `@civitai/redis` used
+for ONE thing — minting the user's short-lived orchestrator token in-app (a `System` `ApiKey` row +
+a redis get-or-mint cache; see `src/lib/server/{db,redis,orchestrator-token}.ts`). No `@civitai/clickhouse`.
 
 ## The flow (build to this)
 
@@ -40,8 +42,10 @@ enters the flow.
 
 ## Architecture decisions (settled 2026-08-27 team review — don't re-litigate)
 
-- **No database. Orchestrator is the source of truth.** Draft workflows (30-day TTL, per-user gated)
-  hold the in-progress dataset/captions/settings; Start turns the draft into a real workflow.
+- **No database for training DATA. Orchestrator is the source of truth.** Draft workflows (30-day TTL,
+  per-user gated) hold the in-progress dataset/captions/settings; Start turns the draft into a real
+  workflow. (The `@civitai/db` dep is ONLY for minting the orchestrator token — an `ApiKey` row — never
+  for training state.)
 - **Per-blob upload, no zip.** Scan on upload (same policy as generation). Auto-label over signals.
 - **Live training over signals** (step/checkpoint; near-real-time possible). Generate/Publish operate
   off the **workflow ID / AIR**, not a `ModelVersion`.

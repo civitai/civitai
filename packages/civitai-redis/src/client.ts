@@ -1805,6 +1805,10 @@ export const REDIS_SYS_KEYS = {
     WORKFLOWS: 'generation:workflows',
     ENGINES: 'generation:engines',
     TOKENS: 'generation:tokens',
+    // The training-studio app's own per-user orchestrator-token cache (packed hash, field=userId).
+    // Distinct from TOKENS (the main app's raw-string hash) so its wrapper-packed writes can't corrupt
+    // the main app's raw reads of the same field.
+    ORCHESTRATOR_TOKENS: 'packed:generation:orchestrator-tokens',
     CUSTOM_CHALLENGE: 'generation:custom-challenge',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     REMIX_AUDIT_CHECKED: 'generation:remix-audit-checked',

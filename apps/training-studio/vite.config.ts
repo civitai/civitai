@@ -12,9 +12,20 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [tailwindcss(), sveltekit()],
 
-    // @civitai/* packages ship raw TS (main: ./src/index.ts) — let Vite transpile them.
+    // The workspace @civitai/* packages ship raw TS (main: ./src/index.ts). @civitai/client is a
+    // built ESM package whose index.js bare-re-exports a directory (`export * from './generated'`)
+    // with no `exports` map, which Node's SSR resolver rejects (ERR_UNSUPPORTED_DIR_IMPORT). Both
+    // need Vite to bundle them rather than hand them to Node.
     ssr: {
-      noExternal: ['@civitai/auth', '@civitai/brand', '@civitai/ui'],
+      noExternal: [
+        '@civitai/auth',
+        '@civitai/brand',
+        '@civitai/client',
+        '@civitai/db',
+        '@civitai/db-schema',
+        '@civitai/redis',
+        '@civitai/ui',
+      ],
     },
   };
 });

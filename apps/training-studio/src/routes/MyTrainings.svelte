@@ -2,27 +2,13 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import GradientTile from '$lib/components/GradientTile.svelte';
+  import type { RunState, TrainingRow } from '$lib/data/trainingRows';
 
-  let { onNew, onOpen }: { onNew: () => void; onOpen: (name: string) => void } = $props();
-
-  type RunState = 'ready' | 'training' | 'published' | 'failed';
-  interface TrainingRow {
-    name: string;
-    base: string;
-    code: string;
-    state: RunState;
-    sub: string;
-    pct: number;
-    progress: string;
-  }
-
-  // Sample data — wire to the user's training workflows (tagged, from the orchestrator) later.
-  const rows: TrainingRow[] = [
-    { name: 'my_character', base: 'Flux · Dev', code: 'FL', state: 'ready', sub: '12 images · character', pct: 0, progress: '' },
-    { name: 'ink_wash_style', base: 'SDXL · Standard', code: 'XL', state: 'training', sub: '28 images · style', pct: 62, progress: 'step 5,120 / 8,400 · checkpoint 6/10' },
-    { name: 'chibi_pack', base: 'SDXL · Pony', code: 'XL', state: 'published', sub: '40 images · 1.2k downloads', pct: 0, progress: '' },
-    { name: 'retro_poster', base: 'SDXL · Illustrious', code: 'XL', state: 'failed', sub: 'refunded ⚡ 1,750', pct: 0, progress: '' },
-  ];
+  let {
+    rows,
+    onNew,
+    onOpen,
+  }: { rows: TrainingRow[]; onNew: () => void; onOpen: (name: string) => void } = $props();
 
   const status: Record<RunState, { label: string; cls: string; dot: string }> = {
     ready: { label: 'Ready', cls: 'text-emerald-400 bg-emerald-500/15', dot: 'bg-emerald-400' },
@@ -44,8 +30,14 @@
     <Button onclick={onNew}>+ New training</Button>
   </div>
 
+  {#if rows.length === 0}
+    <div class="rounded-md border border-dashed border-dark-4 bg-dark-6 p-10 text-center">
+      <p class="text-sm text-dark-2">No trainings yet.</p>
+      <Button class="mt-3" onclick={onNew}>+ Start your first training</Button>
+    </div>
+  {:else}
   <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-    {#each rows as r (r.name)}
+    {#each rows as r (r.workflowId ?? r.name)}
       <div class="overflow-hidden rounded-md border border-dark-4 bg-dark-6">
         <div class="flex items-center gap-3 border-b border-dark-4 p-3.5">
           <ModelCodeBadge code={r.code} size="lg" />
@@ -61,7 +53,11 @@
         <div class="p-3.5">
           {#if r.state === 'training'}
             <div class="h-1.5 overflow-hidden rounded-full bg-dark-7">
-              <div class="h-full bg-[#f59f00]" style={`width:${r.pct}%`}></div>
+              {#if r.pct > 0}
+                <div class="h-full bg-[#f59f00]" style={`width:${r.pct}%`}></div>
+              {:else}
+                <div class="h-full w-1/3 animate-pulse bg-[#f59f00]/60"></div>
+              {/if}
             </div>
             <div class="mt-2 font-mono text-[11px] text-dark-2">{r.progress}</div>
           {:else}
@@ -91,4 +87,5 @@
       </div>
     {/each}
   </div>
+  {/if}
 </section>

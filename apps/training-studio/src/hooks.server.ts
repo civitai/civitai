@@ -27,6 +27,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   if (DEV_LOGIN) {
     event.locals.user = DEV_USER;
+    event.locals.devPreview = true;
     return resolve(event);
   }
 
