@@ -1,13 +1,13 @@
 import { Button, Group, Radio, Stack, Textarea, Modal } from '@mantine/core';
 import React, { useState } from 'react';
 
-import type { UnpublishReason } from '~/server/common/moderation-helpers';
-import { unpublishReasons } from '~/server/common/moderation-helpers';
+import type { ArticleUnpublishReason } from '~/server/common/moderation-helpers';
+import { articleUnpublishReasons } from '~/server/common/moderation-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
-const reasonOptions = Object.entries(unpublishReasons).map(([key, { optionLabel }]) => ({
+const reasonOptions = Object.entries(articleUnpublishReasons).map(([key, { optionLabel }]) => ({
   value: key,
   label: optionLabel,
 }));
@@ -16,7 +16,7 @@ export default function ArticleUnpublishModal({ articleId }: { articleId: number
   const dialog = useDialogContext();
 
   const queryUtils = trpc.useUtils();
-  const [reason, setReason] = useState<UnpublishReason | undefined>();
+  const [reason, setReason] = useState<ArticleUnpublishReason | undefined>();
   const [customMessage, setCustomMessage] = useState<string>('');
   const [error, setError] = useState<string>('');
 
@@ -48,9 +48,12 @@ export default function ArticleUnpublishModal({ articleId }: { articleId: number
   const loading = unpublishArticleMutation.isPending;
 
   return (
-    <Modal {...dialog} title="Unpublish as Violation">
+    <Modal {...dialog} title="Unpublish Article">
       <Stack>
-        <Radio.Group value={reason} onChange={(value) => setReason(value as UnpublishReason)}>
+        <Radio.Group
+          value={reason}
+          onChange={(value) => setReason(value as ArticleUnpublishReason)}
+        >
           <Stack>
             {reasonOptions.map((reason) => (
               <Radio key={reason.value} value={reason.value} label={reason.label} />

@@ -62,7 +62,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { unpublishReasons, type UnpublishReason } from '~/server/common/moderation-helpers';
+import { getArticleUnpublishReason } from '~/server/common/moderation-helpers';
 import { isArticlePublished } from '~/server/services/article.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
@@ -207,8 +207,10 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isModerator = currentUser?.isModerator ?? false;
   const isActualOwner = currentUser?.id === article?.user?.id;
   const isOwner = isActualOwner || isModerator;
+  const unpublishedReason = article?.metadata?.unpublishedReason
+    ? getArticleUnpublishReason(article.metadata.unpublishedReason)
+    : undefined;
 
-  // boolean value that allows us to disable articles via feature flags and still allow us to show articles created by moderators
   const disableArticles = !features.articles && !article?.user.isModerator;
 
   const queryUtils = trpc.useUtils();
@@ -442,21 +444,23 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             </AlertWithIcon>
           )}
           {article.status === ArticleStatus.UnpublishedViolation && (
-            <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="red" iconColor="red">
+            <AlertWithIcon
+              size="lg"
+              icon={<IconAlertCircle />}
+              color={unpublishedReason?.type === 'quality' ? 'yellow' : 'red'}
+              iconColor={unpublishedReason?.type === 'quality' ? 'yellow' : 'red'}
+            >
               <div>
                 <Text weight={600} size="lg" mb="xs">
-                  This article has been unpublished due to a Terms of Service violation
+                  {unpublishedReason?.type === 'quality'
+                    ? `This article has been unpublished: ${unpublishedReason.optionLabel}`
+                    : 'This article has been unpublished due to a Terms of Service violation'}
                 </Text>
-                {article.metadata?.unpublishedReason &&
-                  article.metadata.unpublishedReason !== 'other' && (
-                    <Text>
-                      <strong>Reason:</strong>{' '}
-                      {
-                        unpublishReasons[article.metadata.unpublishedReason as UnpublishReason]
-                          ?.notificationMessage
-                      }
-                    </Text>
-                  )}
+                {unpublishedReason?.notificationMessage && (
+                  <Text>
+                    <strong>Reason:</strong> {unpublishedReason.notificationMessage}
+                  </Text>
+                )}
                 {article.metadata?.customMessage && (
                   <Text>
                     <strong>Additional details:</strong> {article.metadata.customMessage}

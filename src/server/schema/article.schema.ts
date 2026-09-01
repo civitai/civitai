@@ -15,11 +15,14 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { imageSchema } from '~/server/schema/image.schema';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { isBetweenToday } from '~/utils/date-helpers';
-import type { UnpublishReason } from '~/server/common/moderation-helpers';
-import { unpublishReasons } from '~/server/common/moderation-helpers';
+import type { ArticleUnpublishReason } from '~/server/common/moderation-helpers';
+import { articleUnpublishReasons } from '~/server/common/moderation-helpers';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 
-const UnpublishReasons = Object.keys(unpublishReasons) as [UnpublishReason, ...UnpublishReason[]];
+const UnpublishReasons = Object.keys(articleUnpublishReasons) as [
+  ArticleUnpublishReason,
+  ...ArticleUnpublishReason[]
+];
 
 export const articleRateLimits: RateLimit[] = [
   {
@@ -147,7 +150,9 @@ export type ArticleMetadata = {
 
 export const unpublishArticleSchema = z.object({
   id: z.number(),
-  reason: z.custom<UnpublishReason>((x) => UnpublishReasons.includes(x as any)).optional(),
+  reason: z
+    .custom<ArticleUnpublishReason>((x) => UnpublishReasons.includes(x as ArticleUnpublishReason))
+    .optional(),
   customMessage: z.string().optional(),
 });
 
