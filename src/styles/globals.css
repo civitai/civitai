@@ -36,7 +36,8 @@
      (1) a test can OVERRIDE these on `:root` and measure that a component's
      computed padding actually responds, which is impossible with `env()`
      because no headless browser reports a cutout; that is what
-     `safe-area-insets.browser.test.tsx` does. (2) they are picked up
+     `src/components/AppLayout/__tests__/safeAreaInsets.browser.test.tsx`
+     does. (2) they are picked up
      automatically by the `:root` extraction in `test/component-setup.tsx`, so
      every component test resolves them instead of computing against an invalid
      declaration.
@@ -48,6 +49,51 @@
   --safe-area-inset-right: env(safe-area-inset-right, 0px);
   --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
   --safe-area-inset-left: env(safe-area-inset-left, 0px);
+
+  /* The bottom inset AS SEEN BY THE SHELL'S STICKY FOOTER — i.e. how much of it
+     is still unpaid at the point `AppFooter` renders.
+
+     Two boxes in the shell column can be the viewport's bottom edge and only
+     ONE of them is, at any moment:
+
+       #__next
+         └ AppLayout column
+             ├ …ScrollArea… └ AppFooter   `sticky bottom-0` — pins to the
+             │                            SCROLLPORT's bottom, which is the
+             │                            viewport bottom only when nothing
+             │                            follows it in the column.
+             └ AdhesiveAd                 the last in-flow child when it renders,
+                                          and it pays the inset itself.
+
+     So whenever the ad bar is in the DOM, `AppFooter` paying as well is a
+     34px gap that did not exist before this change — over-payment is a defect
+     in exactly the same way under-payment is.
+
+     🔴 THIS IS OBSERVATIONAL, NOT PREDICTIVE, AND THAT IS THE WHOLE POINT. The
+     obvious spelling is a boolean derived from the same condition `AppLayout`
+     uses to render the ad (`isPaidMember || /moderator`). That condition is
+     NECESSARY but not SUFFICIENT: `AdhesiveAd` also returns null when the user
+     closes the bar, and `AdUnitRenderable` renders nothing when the unit is
+     unavailable. A role-derived boolean says "ad below me" in all three of
+     those cases and the footer would then NOT pay — leaving its links under
+     the home indicator, which is the failure this PR exists to prevent.
+     `:has()` asks the DOM instead, so it tracks the bar appearing and
+     disappearing at runtime.
+
+     🔴 IT ALSO FAILS IN THE SAFE DIRECTION. If this selector stops matching —
+     the attribute is renamed, the ad moves out of `#__next`, or the UA has no
+     `:has()` (pre-15.4 Safari / pre-105 Chrome) — the override is simply not
+     applied and the footer pays. The cost of the failure is the cosmetic gap,
+     never content under system UI. Do NOT invert this into a
+     `--…-paid`-style property that has to be switched ON to be correct. */
+  --safe-area-inset-bottom-unpaid: var(--safe-area-inset-bottom);
+}
+
+/* `data-adhesive-ad` is on the ad BAR itself (src/components/Ads/AdhesiveAd.tsx),
+   not on a wrapper, so this matches only when the bar is really rendered and
+   really paying. */
+#__next:has([data-adhesive-ad]) {
+  --safe-area-inset-bottom-unpaid: 0px;
 }
 
 @layer tailwind-preflight {
@@ -85,6 +131,51 @@ button, input, optgroup, select, textarea {
   width: 100%;
   display: flex;
   flex-direction: column;
+
+  /* THE TOP INSET IS PAID ONCE, HERE, FOR THE WHOLE IN-FLOW TREE.
+
+     `html`/`body` are `block-size: 100%; overflow: hidden`, so there is no
+     document scroll and this element IS the layout viewport. Under the global
+     `box-sizing: border-box` (below) this padding shrinks the flex column by
+     the cutout instead of moving it, so every in-flow descendant — the header
+     on the ~140 routes that keep it, and the page's own first element on the
+     two that pass `header: null` — clears the status bar without any of them
+     naming an inset.
+
+     🔴 WHY HERE RATHER THAN ON `AppHeader`. Insetting the header covers only
+     the routes that HAVE one. `src/pages/images/[imageId].tsx` and
+     `src/pages/images/iterate.tsx` both pass `header: null`, so their own
+     markup is the top edge — on `[imageId]` that is the close / share / report
+     / download row, 12px from the layout viewport top. A header-local fix
+     cannot reach them, and neither can the "it resolves against the ScrollArea"
+     argument that rules out the other `sticky top-0` elements: on
+     `images/iterate.tsx` the shell's `SubNav` (AppLayout.tsx) genuinely is at
+     the viewport top, because that route nulls `header` but NOT `subNav`.
+
+     It also costs nothing elsewhere: `HEADER_HEIGHT_PX` and its 33 consumers,
+     and the `height: HEADER_HEIGHT_PX` pin that `pageRunScrollContract.test.ts`
+     asserts verbatim, are all untouched — this is not a `--header-height`
+     change.
+
+     🔴 WHAT IT DOES NOT REACH, both by design and unavoidably:
+     · `position: fixed` descendants resolve against the viewport, not against
+       this padding box, so they are unaffected — which is correct, they pay
+       their own inset (ConsentBanner, StickerPlacementTray) or are portaled to
+       `<body>` entirely (every Mantine Drawer/Modal; see the rules below).
+     · A `100dvh`-sized in-flow box is now `--safe-area-inset-top` TALLER than
+       the slot it sits in, because `dvh` measures the cover viewport while its
+       container measures the safe one. The live instance is
+       `PageBlockHost`'s `min-height: calc(100dvh - HEADER_HEIGHT_PX)`, whose
+       guard asserts that exact substring; the effect is that the app-block run
+       page can scroll by the inset. Traded deliberately against a header under
+       the status bar on every route.
+
+     🔴 NOT MIRRORED ON THE BOTTOM. The bottom edge has a live owner that
+     already pays — `AdhesiveAd` or the `AppFooter` bar — and it pays as
+     padding on its own background so the bar extends through the strip rather
+     than leaving a band of page behind it. Adding padding here would be a
+     third payment on top of those two. */
+  padding-top: var(--safe-area-inset-top);
 }
 
 @layer theme {

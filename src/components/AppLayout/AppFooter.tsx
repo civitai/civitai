@@ -125,20 +125,35 @@ export function AppFooter() {
   return (
     <footer
       ref={footerRef}
-      // `pb-[…]` extends the bar's own background down through the home-indicator
-      // strip that `viewport-fit=cover` added to the layout viewport, so the
-      // footer's links sit exactly where they sat before the viewport changed.
-      className="sticky inset-x-0 bottom-0 z-50 mt-3 pb-[var(--safe-area-inset-bottom)] transition-transform"
-      // The hide transform has to travel the bar's REAL height. It was
-      // `--footer-height`, which is now short by the inset it pays — leaving the
-      // "hidden" footer peeking by up to 34px on a notched phone.
+      // 🔴 THE PADDING IS NOT HERE, AND THAT IS THE POINT. `<footer>` has no
+      // background of its own — the bar below does — so `pb-[…]` on this element
+      // buys a TRANSPARENT strip that the page scrolls through, with the home
+      // indicator over page content rather than over the bar. It also silently
+      // relocates the absolutely-positioned cluster below: `sticky` makes this
+      // element the containing block, and an absolute box resolves its offsets
+      // against the containing block's PADDING box, so padding here moves the
+      // Scroll-to-top and Assistant buttons down by exactly the inset.
+      //
+      // The bar itself pays instead (see the inner div), and everything that
+      // has to agree with the bar's real height reads the SAME expression.
+      className="sticky inset-x-0 bottom-0 z-50 mt-3 transition-transform"
+      // The hide transform has to travel the bar's REAL height, which is now
+      // `--footer-height` plus whatever inset the bar pays. Using
+      // `--footer-height` alone leaves the "hidden" footer peeking by up to 34px.
       style={
         !showFooter
-          ? { transform: 'translateY(calc(var(--footer-height) + var(--safe-area-inset-bottom)))' }
+          ? {
+              transform:
+                'translateY(calc(var(--footer-height) + var(--safe-area-inset-bottom-unpaid)))',
+            }
           : undefined
       }
     >
-      <div className="absolute bottom-[var(--footer-height)] right-2 group-[.no-scroll]:right-4">
+      {/* Absolute inside the sticky `<footer>`, so this offset is measured from
+          the footer's PADDING box — i.e. from the bottom of the strip the bar
+          now pays, not from the bottom of the bar. It has to grow by the same
+          inset or the cluster lands inside the bar. */}
+      <div className="absolute bottom-[calc(var(--footer-height)+var(--safe-area-inset-bottom-unpaid))] right-2 group-[.no-scroll]:right-4">
         <div className="relative mb-2  flex gap-2 group-[.no-scroll]:mb-3">
           <Button
             px="xs"
@@ -152,9 +167,22 @@ export function AppFooter() {
           <AssistantButton />
         </div>
       </div>
+      {/* THIS is the box that carries the background, so this is the box that
+          pays. Height and padding grow by the SAME term under the global
+          `box-sizing: border-box`: padding alone would eat the bar's own 45px,
+          squashing the links; growing the height alone would leave a 34px band
+          of bar with nothing keeping content out of it. Together they keep the
+          content box at 45−4−4=37px and put it exactly where it was, with the
+          bar's own background extending down through the home-indicator strip.
+
+          `--safe-area-inset-bottom-unpaid` rather than
+          `--safe-area-inset-bottom`: this bar is `sticky bottom-0` inside the
+          ScrollArea, so it is the VIEWPORT bottom only when `AdhesiveAd` is not
+          rendering below it. See globals.css for why that question is asked of
+          the DOM instead of being derived from the user's role. */}
       <div
         className={clsx(
-          ' relative flex h-[var(--footer-height)] w-full items-center gap-2  overflow-x-auto bg-gray-0 p-1 px-2 @sm:gap-3 dark:bg-dark-7',
+          ' relative flex h-[calc(var(--footer-height)+var(--safe-area-inset-bottom-unpaid))] w-full items-center gap-2 overflow-x-auto bg-gray-0 p-1 px-2 pb-[calc(0.25rem+var(--safe-area-inset-bottom-unpaid))] @sm:gap-3 dark:bg-dark-7',
           {
             ['border-t border-gray-3 dark:border-dark-4']: !features.isRed,
             [`border-red-8 border-t-[3px]`]: features.isRed,

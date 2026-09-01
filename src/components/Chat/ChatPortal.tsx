@@ -16,7 +16,16 @@ export function ChatPortal({ showFooter }: { showFooter: boolean }) {
 
   if (!open)
     return isClient && !isMobile ? (
-      <div className="absolute bottom-[var(--footer-height)] left-2 mb-2">
+      // Same idiom, same correction, same reason as `AppFooter`'s floating
+      // cluster: `bottom: var(--footer-height)` is an offset chosen to clear
+      // the footer BAR, and the bar is now `--footer-height` plus whatever
+      // inset it pays. Left at 45px it lands inside the bar. `…-unpaid`
+      // rather than the raw inset so the two agree in both arms — when
+      // `AdhesiveAd` is below, the bar pays nothing and this stays put.
+      //
+      // Reached only on `!isMobile`, which is exactly where this was easy to
+      // miss: a Face-ID iPad is not "mobile" here and does have insets.
+      <div className="absolute bottom-[calc(var(--footer-height)+var(--safe-area-inset-bottom-unpaid))] left-2 mb-2">
         <AdUnitOutstreamWithCloseButton />
       </div>
     ) : null;

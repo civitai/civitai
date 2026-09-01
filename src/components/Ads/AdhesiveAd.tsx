@@ -39,6 +39,15 @@ function AdhesiveAdContent({
     <AdUnitRenderable>
       <div
         className="relative flex justify-center border-t border-gray-3 bg-gray-2 dark:border-dark-4 dark:bg-dark-9"
+        // 🔴 READ BY CSS, NOT BY JS. `globals.css` keys
+        // `#__next:has([data-adhesive-ad])` off this attribute to zero
+        // `--safe-area-inset-bottom-unpaid`, which is how `AppFooter` knows that
+        // something below it is already paying. It has to sit on the BAR — the
+        // element that actually pays — rather than on a wrapper, so that it
+        // appears and disappears with the payment it stands for. Renaming it
+        // silently returns the footer to paying as well (a 34px gap); the
+        // ledger in viewport-fit-cover.test.ts pins the pair.
+        data-adhesive-ad=""
         // This bar is the LAST flex child of the 100%-height `#__next` column, so
         // for every logged-out / free user it defines the viewport's bottom edge —
         // and it is not `position: fixed`, so no fixed/sticky audit finds it.
