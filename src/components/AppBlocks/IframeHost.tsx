@@ -1,10 +1,11 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActionIcon, Avatar, Box, Group, Menu, Text } from '@mantine/core';
+import { ActionIcon, Avatar, Box, Group, Text } from '@mantine/core';
 import {
   IconApps,
   IconBuildingStore,
+  IconChevronLeft,
   IconDots,
   IconEyeOff,
   IconGavel,
@@ -20,6 +21,13 @@ import { selectChromeRecentApps } from '~/components/Apps/recentAppsRail';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { AppNameCrumb } from './AppNameCrumb';
+import {
+  ChromeSurface,
+  ChromeSurfaceGroup,
+  ChromeSurfaceItem,
+  ChromeSurfaceLabel,
+} from './ChromeSurface';
+import type { ChromeSurfaceControl } from './ChromeSurface';
 import { ChromeReviewMenuItem } from './ChromeReviewEntry';
 import { ReviewListingModal } from '~/components/Apps/ReviewListingButton';
 import { AppPermissionsActivityDrawer } from './AppPermissionsActivityDrawer';
@@ -33,6 +41,7 @@ import { hideBlock } from './hiddenBlocks';
 import { isPageSlot } from '~/shared/constants/slot-registry';
 import { sanitizeAppChromeName } from './appChromeName';
 import { resolveChromeGeometry } from './chromeGeometry';
+import type { ChromeGeometry } from './chromeGeometry';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { sendBlockRender } from './sendBlockRender';
 import { effectiveSandboxIsOpaque, intersectSandbox } from './sandbox';
@@ -294,8 +303,18 @@ export function AppBlockChrome({
   // platform-nav menu, and the ⋮ overflow menu — same component, same iframe —
   // silently shipped without it and was stuck open for exactly that reason. A
   // predicate open-coded at one site is how the second site is born wrong; the
-  // ledger in `__tests__/iframeAwareMenu.test.ts` now fails if a `<Menu>` appears
-  // in this chrome that is not on the hook.
+  // ledger in `__tests__/iframeAwareMenu.test.ts` now fails if a floating surface
+  // appears in this chrome that is not on the hook.
+  //
+  // 🔴 F3 MOVED THE ACTUAL `<Menu>` / `<Popover>` / `<Drawer>` INTO
+  // `ChromeSurface`, AND THE HOOK STAYED HERE. That split is deliberate: the
+  // primitive owns the RENDERING (which of the three a given bar width gets), the
+  // chrome owns the STATE (one control per trigger). Keeping the hook at the call
+  // site is what stops two surfaces from sharing one `opened` flag, which is the
+  // failure a primitive that owned its own state would make easy. Below `sm` the
+  // platform-nav control is simply unused — its trigger is not rendered, because
+  // the nav folds into the ⋮ sheet — and calling the hook unconditionally is the
+  // rules-of-hooks-legal way to say that.
   //
   // The platform-nav menu's own extra: on the transition to OPEN it re-reads the
   // recents store, so the "Recently run" list is fresh within an SPA session.
@@ -359,6 +378,181 @@ export function AppBlockChrome({
   });
   const geometry = resolveChromeGeometry(chromeWidth);
 
+  // 🔴 F3 — THE MOBILE SHELL, AND THE `isPage` TERM IS NOT A HEDGE. Below the `sm`
+  // breakpoint the page-surface chrome stops being a breadcrumb bar and becomes a
+  // native mobile shell: a back chevron to the Marketplace, the app name centered and
+  // tappable, and a ⋮ that carries the platform nav folded into it. It is gated on the
+  // PAGE surface because that is the only surface that HAS a breadcrumb to replace —
+  // the model-slot chrome is a badge and a ⋮ menu with no trail, and "back to the
+  // Marketplace" is not a meaningful action from a model page you did not arrive at
+  // through the store. A narrow model sidebar therefore resolves `geometry.compact`
+  // TRUE (it is genuinely narrow) and still renders exactly the chrome it always has.
+  const compact = isPage && geometry.compact;
+  // The platform-nav destinations, authored ONCE and rendered into whichever surface
+  // is carrying them: their own dropdown on a desktop-width bar, the ⋮ sheet below
+  // `sm`. `ChromeSurfaceItem` is what makes one authoring serve both — see its header
+  // for why a `Menu.Item` cannot simply be re-parented into a Drawer.
+  //
+  // 🔴 DEFINED BEFORE `appMenuItems` ON PURPOSE. `__tests__/chromeNavAlignsWithSubNav.ts`
+  // slices this section out by anchoring on the `Civitai Apps` label and stopping at the
+  // NEXT `<ChromeSurfaceLabel>`, so that the ⋮ menu's own `/apps/installed` item is not
+  // keyed onto the platform nav's. Reordering these two consts silently widens that
+  // slice.
+  const platformNavItems = (
+    <>
+      <ChromeSurfaceLabel>Civitai Apps</ChromeSurfaceLabel>
+      {/* 🔴 THE ICONS AND THE "Marketplace" LABEL ARE MIRRORED FROM THE STORE
+          SUBNAV, WHICH IS THE SOURCE OF TRUTH — `SUB_NAV_LINKS` in
+          `~/components/Apps/AppsSubNav`. This section and that tab bar are two
+          renderings of ONE platform navigation: a user who opens an app from the
+          store and then reaches for this menu is looking for the same four
+          destinations they just left, and until now every shared concept was drawn
+          with a DIFFERENT glyph here (grid vs storefront, apps vs plug, upload vs
+          apps, shield vs gavel) — four out of four, so the disagreement was the
+          rule rather than an oversight.
+
+          When you add or re-icon an entry here, change `SUB_NAV_LINKS` first (or
+          confirm it already says what you are about to write) and follow it. The
+          alignment is pinned by `__tests__/chromeNavAlignsWithSubNav.test.ts`,
+          which reads BOTH tables and fails when they drift — including when the
+          subnav changes and this menu does not.
+
+          The LABELS are deliberately NOT all identical: the subnav's tabs sit under
+          an "Apps" heading and can afford one-word labels ("Installed", "Review"),
+          whereas these items stand alone over a running app and need the noun
+          ("Installed apps"). "Marketplace" is the one label that is shared verbatim,
+          because "Apps home" named a destination the store itself stopped calling
+          that. */}
+      <ChromeSurfaceItem href="/apps" leftSection={<IconBuildingStore size={14} stroke={1.5} />}>
+        Marketplace
+      </ChromeSurfaceItem>
+      <ChromeSurfaceItem
+        href="/apps/installed"
+        leftSection={<IconPlugConnected size={14} stroke={1.5} />}
+      >
+        Installed apps
+      </ChromeSurfaceItem>
+      <ChromeSurfaceItem href="/apps/mine" leftSection={<IconApps size={14} stroke={1.5} />}>
+        My apps
+      </ChromeSurfaceItem>
+      {isModerator && (
+        <ChromeSurfaceItem href="/apps/review" leftSection={<IconGavel size={14} stroke={1.5} />}>
+          Review
+        </ChromeSurfaceItem>
+      )}
+      {/* "Recently run" — a 1-click return to apps the viewer recently ran,
+          sourced from the client-only localStorage recents store (read
+          after mount so SSR + first client render match). Excludes the app
+          currently being viewed and the whole label+section is omitted when
+          there's nothing else to show (a first-time / single-app viewer).
+          Each item shows the app icon (persisted `iconUrl`, else a generic
+          app icon) + name, linking to the full-page run route. */}
+      {recentApps.length > 0 && (
+        <ChromeSurfaceGroup data-testid="app-recently-run">
+          <ChromeSurfaceLabel>Recently run</ChromeSurfaceLabel>
+          {recentApps.map((r) => (
+            <ChromeSurfaceItem
+              key={r.id}
+              // Non-null by `selectChromeRecentApps` (ChromeRecentApp).
+              href={`/apps/run/${r.blockId}`}
+              data-testid="app-recently-run-item"
+              leftSection={
+                r.iconUrl ? (
+                  <Avatar src={r.iconUrl} size={16} radius="sm" alt="" />
+                ) : (
+                  <IconApps size={14} stroke={1.5} />
+                )
+              }
+            >
+              {/* The persisted `name` is the SAME publisher-controlled string
+                  the trust label above laundered through localStorage — so
+                  route it through the identical sanitizer (strips bidi
+                  RLO/LRO overrides, zero-width/format + control chars, caps
+                  Zalgo combining runs, bounds length). `||` (not `??`) so an
+                  empty/whitespace sanitized result falls back to the blockId
+                  handle. */}
+              {sanitizeAppChromeName(r.name) || r.blockId}
+            </ChromeSurfaceItem>
+          ))}
+        </ChromeSurfaceGroup>
+      )}
+    </>
+  );
+  // The ⋮ overflow's own items — the actions that are about the RUNNING app rather
+  // than about the platform. Unchanged in content from what shipped; only the element
+  // that renders them moved.
+  const appMenuItems = (
+    <>
+      <ChromeSurfaceLabel>App</ChromeSurfaceLabel>
+      {/* 🔴 SAME ROUTE ⇒ SAME ICON, ACROSS BOTH SURFACES. This item and the
+          platform nav's "Installed apps" are different WORDS for the same
+          destination (`/apps/installed`), so they must not be different
+          PICTURES: on a desktop bar the two dropdowns open a few pixels apart, and
+          below `sm` they are literally rows of ONE sheet — a user who sees a plug in
+          one and a grid in the other has to work out whether they lead to the same
+          place. The glyph comes from the store subnav's row for this route
+          (`SUB_NAV_LINKS`), exactly as the platform nav's does — the labels stay
+          different on purpose ("Manage apps" is the action from inside a running app;
+          "Installed apps" is the destination), because the rule is about the ROUTE,
+          not the copy.
+
+          Pinned by `__tests__/chromeNavAlignsWithSubNav.test.ts`, which checks
+          EVERY literal-href item in the whole chrome, not just the platform-nav
+          section — this item is the reason that check is repo-wide rather than
+          scoped, since scoping it to one dropdown is what let this site drift. */}
+      <ChromeSurfaceItem
+        href="/apps/installed"
+        leftSection={<IconPlugConnected size={14} stroke={1.5} />}
+      >
+        Manage apps
+      </ChromeSurfaceItem>
+      {/* F4 — the permanent review entry point. An ACTION, not a route link:
+          it carries no `href`, so the ONE ROUTE, ONE ICON guard in
+          `__tests__/chromeNavAlignsWithSubNav.test.ts` (which extracts only
+          literal-href items) correctly does not treat it as a destination the
+          store subnav must also list.
+
+          Placed directly under "Manage apps" so the two whole-app actions that
+          are ALWAYS about the running app ("rate it", "see what it can do") sit
+          together above the dismissal, and "Hide app" stays last.
+
+          🔴 THE ITEM RENDERS ITS OWN GATES AND MAY RETURN NULL. It is offered
+          only to a viewer the server would accept: signed in, not the owner,
+          holding a store scope that admits this listing's kind, and with store
+          access at all (`hasAppsStoreAccess`). Offering a control whose submit
+          403s is the anti-goal `useCanReviewListing` exists to prevent, so the
+          gate is IMPORTED from the review module rather than re-derived here.
+          The query behind it is mounted only while this surface is open — in a
+          dropdown AND in the sheet, since Mantine unmounts a closed `Drawer`'s
+          children exactly as it unmounts a closed `Menu.Dropdown`'s. */}
+      <ChromeReviewMenuItem slug={slug} onOpenReview={setReviewListingId} />
+      {appBlockId && (
+        <ChromeSurfaceItem
+          leftSection={<IconShieldLock size={14} stroke={1.5} />}
+          onClick={() => setPermsOpen(true)}
+        >
+          Permissions & activity
+        </ChromeSurfaceItem>
+      )}
+      {showHide && (
+        <ChromeSurfaceItem
+          leftSection={<IconEyeOff size={14} stroke={1.5} />}
+          onClick={() =>
+            hideBlock({
+              blockInstanceId,
+              appName,
+              modelId,
+              modelName,
+              hiddenAt: Date.now(),
+            })
+          }
+        >
+          Hide app
+        </ChromeSurfaceItem>
+      )}
+    </>
+  );
+
   return (
     <>
     <Group
@@ -381,11 +575,191 @@ export function AppBlockChrome({
       // Machine-readable resolved tier, so a test can assert the decision rather
       // than re-deriving it from pixels.
       data-chrome-tier={geometry.tier}
+      // …and the F3 shell decision, for the same reason. `compact` is NOT derivable
+      // from the tier alone (a model sidebar is `base` and never compact), so a test
+      // that read the tier would be asserting a different question.
+      data-chrome-compact={compact ? 'true' : 'false'}
       style={{
         borderBottom: '1px solid var(--mantine-color-default-border)',
         background: 'var(--mantine-color-default-hover)',
       }}
     >
+      {compact ? (
+        <>
+          {/* F3 — the back affordance. It REPLACES the breadcrumb rather than
+              shrinking it: a two-crumb trail costs ~90px of a 360px bar to say one
+              thing, and the thing it says ("up to the Marketplace") is exactly what a
+              back chevron says in a third of the space. It is a real anchor
+              (`NextLink`), so middle-click / long-press / keyboard all behave, and it
+              points at the SAME `/apps` the crumb did — the destination did not move,
+              only its rendering.
+
+              `ActionIcon size="sm"` is not a style choice here: it is what keeps the
+              row at its pinned 31px resting height (`CHROME_BAR_PX`), the same as the
+              icon buttons the desktop bar has always used. */}
+          <ActionIcon
+            component={Link}
+            href="/apps"
+            variant="subtle"
+            color="gray"
+            size="sm"
+            aria-label="Back to Marketplace"
+            data-testid="app-block-back"
+            style={{ flexShrink: 0 }}
+          >
+            <IconChevronLeft size={16} stroke={1.5} />
+          </ActionIcon>
+          {/* The centered app name. `flex: 1 1 auto` between two 22px icon buttons is
+              what centers it, and `minWidth: 0` is what lets the name truncate rather
+              than push a control off the row.
+
+              The provenance icon rides along rather than being dropped with the
+              platform-nav trigger it used to live in. That trigger is GONE on this
+              surface (the nav folded into ⋮), and it was the only thing carrying the
+              "App" accessible name — losing it would have quietly removed the
+              spoof-proof signal this whole bar exists for. */}
+          <Group gap={6} wrap="nowrap" justify="center" style={{ minWidth: 0, flex: '1 1 auto' }}>
+            <IconApps
+              size={14}
+              stroke={1.5}
+              role="img"
+              aria-label="App"
+              style={{ flexShrink: 0 }}
+            />
+            <AppNameCrumb
+              name={label}
+              slug={slug}
+              maxWidth={geometry.nameMaxWidth}
+              onOpenReview={setReviewListingId}
+              compact
+            />
+          </Group>
+        </>
+      ) : (
+        <ChromeDesktopLeadingGroup
+          geometry={geometry}
+          platformNavMenu={platformNavMenu}
+          platformNavItems={platformNavItems}
+          iconProvenance={iconProvenance}
+          showBadgeName={showBadgeName}
+          label={label}
+          isPage={isPage}
+          slug={slug}
+          onOpenReview={setReviewListingId}
+        />
+      )}
+      {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
+          was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
+          because the mobile bar has no second trigger to hang that behind — the
+          operator's call, and the reason `platformNavItems` is authored as a fragment
+          rather than inline in its own dropdown.
+
+          Order: the running app's own actions first (that is what ⋮ has always
+          meant), then the platform destinations. The back chevron already covers the
+          most common of those, so the folded-in nav is the secondary half of the
+          sheet, not its headline. */}
+      <ChromeSurface
+        compact={compact}
+        kind="menu"
+        control={overflowMenu}
+        title="App menu"
+        width={180}
+        position="bottom-end"
+        dropdownTestId="app-block-menu-dropdown"
+        target={
+          /* `data-testid` alongside the accessible name: the sibling controls in
+             this chrome (`app-block-back`, `app-block-name`, `app-block-breadcrumb*`)
+             are all addressable that way, and a test reaching this trigger by
+             accessible name alone breaks on a copy change that is not a behaviour
+             change. */
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size="sm"
+            aria-label="App menu"
+            data-testid="app-block-menu-trigger"
+            // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
+            // Without this the ⋯ trigger is a shrinkable flex item and a long name
+            // at a narrow width can squeeze it below its resting `ActionIcon
+            // size="sm"` (22px in @mantine/core 7.17.8); its sibling on the left
+            // has carried `flexShrink: 0` all along.
+            style={{ flexShrink: 0 }}
+          >
+            <IconDots size={16} stroke={1.5} />
+          </ActionIcon>
+        }
+      >
+        {appMenuItems}
+        {compact && platformNavItems}
+      </ChromeSurface>
+    </Group>
+    {/* Per-app transparency drawer (Part B). Rendered only when the caller
+        threaded an appBlockId; the body's queries fire only once opened. */}
+    {appBlockId && (
+      <AppPermissionsActivityDrawer
+        appBlockId={appBlockId}
+        appName={sanitizedName ?? undefined}
+        opened={permsOpen}
+        onClose={() => setPermsOpen(false)}
+      />
+    )}
+    {/* F4 — the review form, mounted OUTSIDE every floating surface (see
+        `reviewListingId` above for why that is forced rather than tidy). Mounted only
+        once an entry point has handed up a listing id, so a chrome nobody has asked
+        to review issues no `getMyReview` and renders no modal DOM. The modal applies
+        no eligibility gate of its own by design — the entry points did, and
+        duplicating the rule would put it in two places.
+
+        🔴 IT ALREADY GOES FULL-SCREEN ON A PHONE AND THAT IS NOT THIS COMPONENT'S
+        DECISION: `ReviewListingModal` sets `fullScreen={isMobile}` from a VIEWPORT
+        media query of its own. That is the right box for a modal (a modal IS the
+        viewport, unlike this bar, which can be 320px wide inside a 2560px window), so
+        it is deliberately NOT re-derived from `geometry.compact` here — two mechanisms
+        answering one question is how they come to disagree. */}
+    {reviewListingId && (
+      <ReviewListingModal
+        appListingId={reviewListingId}
+        opened
+        onClose={() => setReviewListingId(null)}
+      />
+    )}
+    </>
+  );
+}
+
+/**
+ * The desktop bar's leading cluster: the platform-nav trigger, the badge app name and
+ * the `Marketplace / <app name>` breadcrumb.
+ *
+ * 🔴 EXTRACTED PURELY TO KEEP THE COMPACT/DESKTOP BRANCH READABLE — every element
+ * inside it is byte-for-byte what shipped, including the testids, the ARIA and the
+ * responsive caps. F3 changes what renders BELOW `sm` on the page surface; above it,
+ * and on the model surface at every width, this is the whole chrome and it is
+ * untouched.
+ */
+function ChromeDesktopLeadingGroup({
+  geometry,
+  platformNavMenu,
+  platformNavItems,
+  iconProvenance,
+  showBadgeName,
+  label,
+  isPage,
+  slug,
+  onOpenReview,
+}: {
+  geometry: ChromeGeometry;
+  platformNavMenu: ChromeSurfaceControl;
+  platformNavItems: ReactNode;
+  iconProvenance: boolean;
+  showBadgeName: boolean;
+  label: string;
+  isPage: boolean;
+  slug: string | undefined;
+  onOpenReview: (appListingId: string) => void;
+}) {
+  return (
+    <>
       {/* minWidth:0 lets the truncating name shrink instead of pushing the
           ⋯ menu out of the narrow sidebar layout; `flex: 1 1 auto` lets it CLAIM
           the row's slack on a wide surface, which is what makes an uncapped name
@@ -399,18 +773,22 @@ export function AppBlockChrome({
             (role="img" + aria-label "App") — required so a bare tabler <svg>'s
             label is announced; on the fallback the visible "App" Text carries
             provenance instead, so the icon is marked decorative there. */}
-        <Menu
-          position="bottom-start"
-          shadow="md"
+        <ChromeSurface
+          compact={false}
+          kind="menu"
+          control={platformNavMenu}
+          // Never reached: this surface renders only on the non-compact branch, so
+          // `compact` is hard-false and the sheet's header text is dead. Passed
+          // because the prop is required — one primitive, one contract.
+          title="Civitai Apps"
           // Responsive: this dropdown renders publisher-controlled app names in
           // its "Recently run" section, so its useful width tracks the surface.
-          // (The ⋮ overflow menu below keeps a fixed width on purpose — every
-          // label in it is short, fixed and host-authored.)
+          // (The ⋮ overflow keeps a fixed width on purpose — every label in it is
+          // short, fixed and host-authored.)
           width={geometry.navMenuWidth}
-          opened={platformNavMenu.opened}
-          onChange={platformNavMenu.onChange}
-        >
-          <Menu.Target>
+          position="bottom-start"
+          dropdownTestId="app-platform-nav-dropdown"
+          target={
             <ActionIcon
               variant="subtle"
               color="gray"
@@ -427,103 +805,10 @@ export function AppBlockChrome({
                 aria-hidden={iconProvenance ? undefined : true}
               />
             </ActionIcon>
-          </Menu.Target>
-          <Menu.Dropdown>
-            <Menu.Label>Civitai Apps</Menu.Label>
-            {/* 🔴 THE ICONS AND THE "Marketplace" LABEL ARE MIRRORED FROM THE STORE
-                SUBNAV, WHICH IS THE SOURCE OF TRUTH — `SUB_NAV_LINKS` in
-                `~/components/Apps/AppsSubNav`. This dropdown and that tab bar are two
-                renderings of ONE platform navigation: a user who opens an app from the
-                store and then reaches for this menu is looking for the same four
-                destinations they just left, and until now every shared concept was drawn
-                with a DIFFERENT glyph here (grid vs storefront, apps vs plug, upload vs
-                apps, shield vs gavel) — four out of four, so the disagreement was the
-                rule rather than an oversight.
-
-                When you add or re-icon an entry here, change `SUB_NAV_LINKS` first (or
-                confirm it already says what you are about to write) and follow it. The
-                alignment is pinned by `__tests__/chromeNavAlignsWithSubNav.test.ts`,
-                which reads BOTH tables and fails when they drift — including when the
-                subnav changes and this menu does not.
-
-                The LABELS are deliberately NOT all identical: the subnav's tabs sit under
-                an "Apps" heading and can afford one-word labels ("Installed", "Review"),
-                whereas these menu items stand alone in a dropdown over a running app and
-                need the noun ("Installed apps"). "Marketplace" is the one label that is
-                shared verbatim, because "Apps home" named a destination the store itself
-                stopped calling that. */}
-            <Menu.Item
-              component={Link}
-              href="/apps"
-              leftSection={<IconBuildingStore size={14} stroke={1.5} />}
-            >
-              Marketplace
-            </Menu.Item>
-            <Menu.Item
-              component={Link}
-              href="/apps/installed"
-              leftSection={<IconPlugConnected size={14} stroke={1.5} />}
-            >
-              Installed apps
-            </Menu.Item>
-            <Menu.Item
-              component={Link}
-              href="/apps/mine"
-              leftSection={<IconApps size={14} stroke={1.5} />}
-            >
-              My apps
-            </Menu.Item>
-            {isModerator && (
-              <Menu.Item
-                component={Link}
-                href="/apps/review"
-                leftSection={<IconGavel size={14} stroke={1.5} />}
-              >
-                Review
-              </Menu.Item>
-            )}
-            {/* "Recently run" — a 1-click return to apps the viewer recently ran,
-                sourced from the client-only localStorage recents store (read
-                after mount so SSR + first client render match). Excludes the app
-                currently being viewed and the whole label+section is omitted when
-                there's nothing else to show (a first-time / single-app viewer).
-                Each item shows the app icon (persisted `iconUrl`, else a generic
-                app icon) + name, linking to the full-page run route. */}
-            {recentApps.length > 0 && (
-              <div data-testid="app-recently-run">
-                <Menu.Label>Recently run</Menu.Label>
-                {recentApps.map((r) => (
-                  <Menu.Item
-                    key={r.id}
-                    component={Link}
-                    // Non-null by `selectChromeRecentApps` (ChromeRecentApp).
-                    href={`/apps/run/${r.blockId}`}
-                    data-testid="app-recently-run-item"
-                    leftSection={
-                      r.iconUrl ? (
-                        <Avatar src={r.iconUrl} size={16} radius="sm" alt="" />
-                      ) : (
-                        <IconApps size={14} stroke={1.5} />
-                      )
-                    }
-                  >
-                    {/* The persisted `name` is the SAME publisher-controlled string
-                        the trust label above laundered through localStorage — so
-                        route it through the identical sanitizer (strips bidi
-                        RLO/LRO overrides, zero-width/format + control chars, caps
-                        Zalgo combining runs, bounds length). `||` (not `??`) so an
-                        empty/whitespace sanitized result falls back to the blockId
-                        handle. `lineClamp={1}` keeps a pathologically long name
-                        from blowing out the dropdown at ANY of its widths. */}
-                    <Text size="sm" lineClamp={1}>
-                      {sanitizeAppChromeName(r.name) || r.blockId}
-                    </Text>
-                  </Menu.Item>
-                ))}
-              </div>
-            )}
-          </Menu.Dropdown>
-        </Menu>
+          }
+        >
+          {platformNavItems}
+        </ChromeSurface>
         {/* Host-rendered (spoof-proof) app-name label. Truncates with an
             ellipsis so a long name never wraps or shoves the menu off the row in
             the narrow model.sidebar_top slot. The cap is now RESPONSIVE to the
@@ -598,139 +883,16 @@ export function AppBlockChrome({
               name={label}
               slug={slug}
               maxWidth={geometry.nameMaxWidth}
-              onOpenReview={setReviewListingId}
+              onOpenReview={onOpenReview}
+              compact={false}
             />
           </Group>
         )}
       </Group>
-      {/* The ⋮ overflow menu. CONTROLLED via the same `useIframeAwareMenu` the
-          platform-nav menu uses — see the hook call above for why this is shared
-          rather than a second copy of the effect. Without it a click into the app
-          leaves this dropdown open on top of the app. */}
-      <Menu
-        position="bottom-end"
-        shadow="md"
-        width={180}
-        opened={overflowMenu.opened}
-        onChange={overflowMenu.onChange}
-      >
-        <Menu.Target>
-          {/* `data-testid` alongside the accessible name: the sibling controls in
-              this chrome (`app-platform-nav-trigger`, `app-block-name`,
-              `app-block-breadcrumb*`) are all addressable that way, and a test
-              reaching this trigger by accessible name alone breaks on a copy
-              change that is not a behaviour change. */}
-          <ActionIcon
-            variant="subtle"
-            color="gray"
-            size="sm"
-            aria-label="App menu"
-            data-testid="app-block-menu-trigger"
-            // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
-            // Without this the ⋯ trigger is a shrinkable flex item and a long name
-            // at a narrow width can squeeze it below its resting `ActionIcon
-            // size="sm"` (22px in @mantine/core 7.17.8); its sibling on the left
-            // has carried `flexShrink: 0` all along.
-            style={{ flexShrink: 0 }}
-          >
-            <IconDots size={16} stroke={1.5} />
-          </ActionIcon>
-        </Menu.Target>
-        <Menu.Dropdown>
-          <Menu.Label>App</Menu.Label>
-          {/* 🔴 SAME ROUTE ⇒ SAME ICON, ACROSS BOTH MENUS. This item and the
-              platform nav's "Installed apps" are different WORDS for the same
-              destination (`/apps/installed`), so they must not be different
-              PICTURES: the two dropdowns open a few pixels apart in one bar, and a
-              user who sees a plug in one and a grid in the other has to work out
-              whether they lead to the same place. The glyph comes from the store
-              subnav's row for this route (`SUB_NAV_LINKS`), exactly as the platform
-              nav's does — the labels stay different on purpose ("Manage apps" is
-              the action from inside a running app; "Installed apps" is the
-              destination), because the rule is about the ROUTE, not the copy.
-
-              Pinned by `__tests__/chromeNavAlignsWithSubNav.test.ts`, which checks
-              EVERY literal-href item in the whole chrome, not just the platform-nav
-              dropdown — this item is the reason that check is repo-wide rather than
-              scoped, since scoping it to one dropdown is what let this site drift. */}
-          <Menu.Item
-            component={Link}
-            href="/apps/installed"
-            leftSection={<IconPlugConnected size={14} stroke={1.5} />}
-          >
-            Manage apps
-          </Menu.Item>
-          {/* F4 — the permanent review entry point. An ACTION, not a route link:
-              it carries no `href`, so the ONE ROUTE, ONE ICON guard in
-              `__tests__/chromeNavAlignsWithSubNav.test.ts` (which extracts only
-              literal-href items) correctly does not treat it as a destination the
-              store subnav must also list.
-
-              Placed directly under "Manage apps" so the two whole-app actions that
-              are ALWAYS about the running app ("rate it", "see what it can do") sit
-              together above the dismissal, and "Hide app" stays last.
-
-              🔴 THE ITEM RENDERS ITS OWN GATES AND MAY RETURN NULL. It is offered
-              only to a viewer the server would accept: signed in, not the owner,
-              holding a store scope that admits this listing's kind, and with store
-              access at all (`hasAppsStoreAccess`). Offering a control whose submit
-              403s is the anti-goal `useCanReviewListing` exists to prevent, so the
-              gate is IMPORTED from the review module rather than re-derived here.
-              The query behind it is mounted only while this dropdown is open. */}
-          <ChromeReviewMenuItem slug={slug} onOpenReview={setReviewListingId} />
-          {appBlockId && (
-            <Menu.Item
-              leftSection={<IconShieldLock size={14} stroke={1.5} />}
-              onClick={() => setPermsOpen(true)}
-            >
-              Permissions & activity
-            </Menu.Item>
-          )}
-          {showHide && (
-            <Menu.Item
-              leftSection={<IconEyeOff size={14} stroke={1.5} />}
-              onClick={() =>
-                hideBlock({
-                  blockInstanceId,
-                  appName,
-                  modelId,
-                  modelName,
-                  hiddenAt: Date.now(),
-                })
-              }
-            >
-              Hide app
-            </Menu.Item>
-          )}
-        </Menu.Dropdown>
-      </Menu>
-    </Group>
-    {/* Per-app transparency drawer (Part B). Rendered only when the caller
-        threaded an appBlockId; the body's queries fire only once opened. */}
-    {appBlockId && (
-      <AppPermissionsActivityDrawer
-        appBlockId={appBlockId}
-        appName={sanitizedName ?? undefined}
-        opened={permsOpen}
-        onClose={() => setPermsOpen(false)}
-      />
-    )}
-    {/* F4 — the review form, mounted OUTSIDE both floating surfaces (see
-        `reviewListingId` above for why that is forced rather than tidy). Mounted only
-        once an entry point has handed up a listing id, so a chrome nobody has asked
-        to review issues no `getMyReview` and renders no modal DOM. The modal applies
-        no eligibility gate of its own by design — the entry points did, and
-        duplicating the rule would put it in two places. */}
-    {reviewListingId && (
-      <ReviewListingModal
-        appListingId={reviewListingId}
-        opened
-        onClose={() => setReviewListingId(null)}
-      />
-    )}
     </>
   );
 }
+
 
 export function IframeHost({
   install,

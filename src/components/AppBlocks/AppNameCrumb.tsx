@@ -1,19 +1,11 @@
-import {
-  Button,
-  Divider,
-  Group,
-  Loader,
-  Popover,
-  Stack,
-  Text,
-  UnstyledButton,
-} from '@mantine/core';
+import { Button, Divider, Group, Loader, Stack, Text, UnstyledButton } from '@mantine/core';
 import { IconBuildingStore } from '@tabler/icons-react';
 import { getListingDetailHref, getRecommendLabel } from '~/components/Apps/appListingCardView';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { ChromeReviewPopoverAction } from './ChromeReviewEntry';
+import { ChromeSurface } from './ChromeSurface';
 import { useChromeListingDetail } from './useChromeListingDetail';
 import { useIframeAwareMenu } from './useIframeAwareMenu';
 
@@ -62,19 +54,29 @@ import { useIframeAwareMenu } from './useIframeAwareMenu';
  * here as well as in the chrome, so a fourth floating surface cannot be added
  * without wiring it.
  *
- * 🔴 A CONTROLLED `Popover.Target` GETS NO `onClick` FROM MANTINE — the toggle
- * below is REQUIRED, not belt-and-braces. `PopoverTarget` clones its child with
+ * 🔴 A CONTROLLED `Popover.Target` GETS NO `onClick` FROM MANTINE — the toggle is
+ * REQUIRED, not belt-and-braces. `PopoverTarget` clones its child with
  * `...(!ctx.controlled ? { onClick: ctx.onToggle } : null)`
  * (@mantine/core 7.17.8, `Popover/PopoverTarget/PopoverTarget.mjs`), so passing
  * `opened` — which is what putting it on the hook does — silently removes the
- * click handler Mantine would otherwise attach. Dropping our own `onClick` leaves a
- * button that looks right, carries every ARIA attribute, and opens nothing.
+ * click handler Mantine would otherwise attach. Dropping it leaves a button that
+ * looks right, carries every ARIA attribute, and opens nothing. F3 moved that
+ * handler into `ChromeSurface` (which clones the target in `popover` AND `sheet`
+ * mode for the same reason); the hazard did not go away, it acquired one owner.
+ *
+ * 🔴 F3 — BELOW `sm` THE POPOVER BECOMES A BOTTOM SHEET, AND NOTHING ELSE ABOUT
+ * THIS COMPONENT CHANGES. The gate, the lazy card, the rollup, "View in App Store"
+ * and the review action are all rendered into whichever surface `ChromeSurface`
+ * resolved — they do not know which one they are in, which is the property that
+ * makes F2 and F4 keep working on the mobile shell without being re-implemented
+ * for it.
  */
 export function AppNameCrumb({
   name,
   slug,
   maxWidth,
   onOpenReview,
+  compact,
 }: {
   /**
    * The app's display name, ALREADY SANITIZED by the caller
@@ -106,6 +108,13 @@ export function AppNameCrumb({
    * popover (the crumb keeps doing everything else it did).
    */
   onOpenReview?: (appListingId: string) => void;
+  /**
+   * F3 — render the store card as a BOTTOM SHEET rather than a popover. Resolved by
+   * the chrome from `chromeGeometry.compact` (the bar's own measured inline size), and
+   * passed down rather than re-derived here for the reason the chrome's own comment
+   * gives: two mechanisms answering "is this narrow?" is how they come to disagree.
+   */
+  compact: boolean;
 }) {
   const features = useOptionalFeatureFlags();
   const canSeeStore = hasAppsStoreAccess(features);
@@ -138,28 +147,30 @@ export function AppNameCrumb({
   }
 
   return (
-    <Popover
+    <ChromeSurface
+      compact={compact}
+      kind="popover"
+      control={popover}
+      // Host-authored, and deliberately NOT the app's name: the sheet's BODY already
+      // renders the full publisher-controlled name as its heading (that is the whole
+      // reason to open it), so putting it in the header too would say it twice and put
+      // an untrusted string in a second place.
+      title="App details"
       width={260}
       position="bottom-start"
-      shadow="md"
-      withArrow
-      opened={popover.opened}
-      onChange={popover.onChange}
-    >
-      <Popover.Target>
-        {/* `UnstyledButton` renders a real `<button type="button">` with Mantine's
-            `focusable` styles applied, so the control is keyboard-operable (Enter /
-            Space fire `click` natively) and carries a VISIBLE focus ring via the
-            `mantine-focus-auto` class rather than a suppressed outline. A `div` with
-            an `onClick` — the shape this deliberately is not — would have neither.
-            `Popover.Target` adds `aria-haspopup="dialog"`, `aria-expanded` and
-            `aria-controls` on top (`withRoles` is on by default). */}
+      dropdownTestId="app-block-name-popover"
+      target={
+        /* `UnstyledButton` renders a real `<button type="button">` with Mantine's
+           `focusable` styles applied, so the control is keyboard-operable (Enter /
+           Space fire `click` natively) and carries a VISIBLE focus ring via the
+           `mantine-focus-auto` class rather than a suppressed outline. A `div` with
+           an `onClick` — the shape this deliberately is not — would have neither.
+           `Popover.Target` adds `aria-haspopup="dialog"`, `aria-expanded` and
+           `aria-controls` on top (`withRoles` is on by default); in sheet mode
+           `ChromeSurface` sets the first two itself, since there is no Mantine
+           target wrapper there to do it. */
         <UnstyledButton
           data-testid="app-block-breadcrumb-name"
-          // See the 🔴 note in the component header: a CONTROLLED Popover.Target is
-          // cloned WITHOUT Mantine's own onClick, so this is the only thing that
-          // opens the popover.
-          onClick={() => popover.onChange(!popover.opened)}
           style={{
             // The crumb is a flex item in a `nowrap` row that must stay one line
             // (`CHROME_BAR_PX`); `minWidth: 0` lets the truncating child actually
@@ -172,32 +183,32 @@ export function AppNameCrumb({
         >
           {crumbText}
         </UnstyledButton>
-      </Popover.Target>
-      <Popover.Dropdown data-testid="app-block-name-popover">
-        {/* Mantine mounts a dropdown's children only while it is OPEN (`keepMounted`
-            is off by default), so putting the query inside this child is what makes
-            the fetch lazy — STRUCTURALLY, not via an `enabled` flag that has to be
-            kept correct. See the card's own header for why that distinction earned
-            its own component. */}
-        <AppNameCrumbCard
-          name={name}
-          slug={slug}
-          // 🔴 THE POPOVER CLOSES BEFORE THE MODAL OPENS, AND THE CLOSE IS EXPLICIT.
-          // A `Popover` has no `closeOnItemClick` equivalent, so nothing closes it
-          // for us; leaving it open would park a dropdown behind a focus-trapping
-          // modal with `aria-expanded="true"` still on the crumb. Order matters only
-          // in the sense that both happen in one handler — React batches them into a
-          // single commit.
-          onOpenReview={
-            onOpenReview &&
-            ((appListingId: string) => {
-              popover.onChange(false);
-              onOpenReview(appListingId);
-            })
-          }
-        />
-      </Popover.Dropdown>
-    </Popover>
+      }
+    >
+      {/* Mantine mounts a floating surface's children only while it is OPEN
+          (`keepMounted` is off by default on BOTH `Popover` and `Drawer`), so putting
+          the query inside this child is what makes the fetch lazy — STRUCTURALLY, not
+          via an `enabled` flag that has to be kept correct. That property survives the
+          F3 swap precisely because both renderings share the default. See the card's
+          own header for why the distinction earned its own component. */}
+      <AppNameCrumbCard
+        name={name}
+        slug={slug}
+        // 🔴 THE SURFACE CLOSES BEFORE THE MODAL OPENS, AND THE CLOSE IS EXPLICIT.
+        // Neither a `Popover` nor a `Drawer` has a `closeOnItemClick` equivalent, so
+        // nothing closes it for us; leaving it open would park a dropdown — or, on a
+        // phone, a full bottom sheet — behind a focus-trapping modal with
+        // `aria-expanded="true"` still on the crumb. Order matters only in the sense
+        // that both happen in one handler; React batches them into a single commit.
+        onOpenReview={
+          onOpenReview &&
+          ((appListingId: string) => {
+            popover.onChange(false);
+            onOpenReview(appListingId);
+          })
+        }
+      />
+    </ChromeSurface>
   );
 }
 
