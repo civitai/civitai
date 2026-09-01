@@ -376,11 +376,67 @@ describe('the safe-area custom-property layer', () => {
 describe('the stylesheets that actually run, enumerated rather than asserted', () => {
   const APP_TSX = path.join(REPO_ROOT, 'src/pages/_app.tsx');
 
-  /** `import 'x.css';` — the side-effect form. A `import x from 'y.module.css'`
-   *  is a CSS Module, scoped to one component and inside `@layer modules`; it
-   *  is not part of this population. */
+  /**
+   * Every way a stylesheet can be made to RUN: the static side-effect
+   * `import 'x.css'`, `require('x.css')`, and a dynamic `import('x.css')`.
+   *
+   * 🔴 THE LAST TWO EXIST NOWHERE IN THE TREE TODAY, WHICH IS PRECISELY WHY
+   * THEY ARE IN THE PATTERN. Swept 2026-08-31 over every `.ts`/`.tsx` under
+   * `src/`: zero `require(…css|scss)`, zero `import(…css|scss)`. A pattern
+   * that only knows the form currently in use reports NO GROWTH for the first
+   * one anybody adds — a stylesheet running unswept while the ledger says the
+   * population is unchanged, which is the exact failure this ledger exists to
+   * prevent. The extractor therefore has its own positive control below,
+   * because the two ledger tests are both ABSENCE tests and a branch that
+   * matches nothing returns the expected answer on today's tree.
+   *
+   * `import x from 'y.module.css'` is a CSS Module — scoped to one component,
+   * inside `@layer modules` — and is not part of this population; the static
+   * branch excludes it by requiring the quote to follow `import` directly.
+   * The `require`/dynamic-`import` branches deliberately do NOT try to make
+   * that distinction (`const s = require('x.css')` matches). Over-including
+   * costs one deliberate review; under-including is the hole above.
+   */
   const sideEffectStylesheets = (src: string) =>
-    [...src.matchAll(/^\s*import\s+['"]([^'"]+\.(?:css|scss))['"]/gm)].map((m) => m[1]);
+    [
+      ...src.matchAll(
+        /(?:^\s*import\s+|\brequire\s*\(\s*|\bimport\s*\(\s*)['"]([^'"]+\.(?:css|scss))['"]/gm
+      ),
+    ].map((m) => m[1]);
+
+  /**
+   * 🔴 POSITIVE CONTROL FOR THE EXTRACTOR, AND IT HAS TO BE A FIXTURE. Both
+   * ledger tests below assert that nothing UNEXPECTED was found, so a broken
+   * branch — one that can no longer match its form — produces exactly the
+   * passing answer on a tree that contains none of that form. Only a string
+   * that definitely contains all three can tell a working branch from a dead
+   * one. Each expected value is distinct, so dropping any single branch
+   * changes the result.
+   */
+  it('the stylesheet extractor sees all three ways a stylesheet can be made to run', () => {
+    const fixture = [
+      `import '~/styles/globals.css';`,
+      `import classes from './scoped.module.css';`,
+      `require('legacy/theme.css');`,
+      `const t = require("legacy/other.scss");`,
+      `await import('./lazy-widget.css');`,
+      `void import("./lazy-two.scss");`,
+      `import { Something } from './not-a-stylesheet';`,
+    ].join('\n');
+    expect(
+      sideEffectStylesheets(fixture),
+      'the stylesheet extractor stopped recognising one of the three forms (or started ' +
+        'claiming a CSS Module is a global stylesheet). Until this passes, both ledger tests ' +
+        'below are reading the tree with a pattern that cannot see part of the population, ' +
+        'and every "no growth" verdict they give is void.'
+    ).toEqual([
+      '~/styles/globals.css',
+      'legacy/theme.css',
+      'legacy/other.scss',
+      './lazy-widget.css',
+      './lazy-two.scss',
+    ]);
+  });
 
   /**
    * The eight global stylesheets `_app.tsx` loads, in its own order. Order
@@ -427,7 +483,10 @@ describe('the stylesheets that actually run, enumerated rather than asserted', (
   ];
 
   it('_app.tsx loads exactly the stylesheets that were swept, in the recorded order', () => {
-    const found = sideEffectStylesheets(read(APP_TSX));
+    // Comment-stripped for the same reason the sweep below is: the widened
+    // pattern matches `require(…)`/`import(…)` ANYWHERE on a line, so a
+    // commented-out one would otherwise be counted as a running stylesheet.
+    const found = sideEffectStylesheets(stripComments(read(APP_TSX)));
     expect(
       found,
       'the set of global stylesheets changed. GREW: a package stylesheet was added and nobody ' +

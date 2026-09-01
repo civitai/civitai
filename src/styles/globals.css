@@ -440,17 +440,48 @@ textarea {
      than there is room for — so a `centered` modal at max height overhangs by
      ~8.4px at each end, putting its top back under the island.
 
-     The correction is the same two `max()` terms the padding uses, so the two
-     cannot drift: content may be as tall as the viewport minus the padding
-     that is actually applied. At inset 0 both terms collapse to
-     `var(--modal-y-offset)` and the expression is `calc(100dvh - offset -
-     offset)` — Mantine's own value, exactly.
+     The correction reuses the same two `max()` terms the padding above uses,
+     so THOSE two cannot drift from each other: content may be as tall as the
+     viewport minus the padding that is actually applied. At inset 0 both terms
+     collapse to `var(--modal-y-offset)` and the expression is
+     `calc(100dvh - offset - offset)` — Mantine's own value, exactly.
+
+     🔴 THERE IS A THIRD TERM, AND THIS RULE CANNOT REACH IT. `ModalContent`
+     inline-styles the element it wraps the children in with
+     `maxHeight: calc(100dvh - (yOffset * 2))`
+     (`@mantine/core/esm/components/Modal/ModalContent.mjs:47`) — an inline
+     style, so no custom property and no stylesheet can touch it. By DEFAULT it
+     is inert: that element is `NativeScrollArea`, which is
+     `({ children }) => <>{children}</>` and drops the `style` prop on the
+     floor (`…/ModalBase/NativeScrollArea.mjs:4`). It becomes real only where a
+     call site passes `scrollAreaComponent`, and TWO do — both non-fullScreen,
+     i.e. both in this rule's scope:
+     `src/components/Apps/AppSettingsModal.tsx:295` and
+     `src/components/User/UserTrainingModels.tsx:986`, each passing
+     `ScrollArea.Autosize`, which forwards `style` onto a real `overflow: auto`
+     Box. There the inner box is allowed 759.6px (the worked case above) inside
+     a content box this rule caps at 742.8px, so it renders a nested scrollbar
+     ~16.8px tall. Cosmetic, confined to those two modals, and it collapses to
+     nothing at inset 0 where both expressions are the same number. NOT FIXED
+     HERE — fixing it means changing a call site or a Mantine prop, not this
+     declaration, and it is out of scope for a safe-area change.
 
      Set as `--modal-content-max-height` rather than as a `max-height`
      declaration because that property is Mantine's own documented override
-     point for this value and nothing in `@mantine/core` or in `src/` sets it
-     (checked), so this is the cheapest place to intervene that a call site can
-     still beat with an inline `styles={{ content: { maxHeight } }}`. */
+     point for this value, so this is the cheapest place to intervene that a
+     call site can still beat with an inline
+     `styles={{ content: { maxHeight } }}`.
+
+     🔴 Mantine DOES set this property itself — `--modal-content-max-height:
+     auto`, on the content slot of a `[data-full-screen]` root
+     (`@mantine/core/styles.layer.css:4464`, same line in `styles.css`).
+     Nothing in `src/` sets it (checked 2026-08-31). There is no collision:
+     that declaration is scoped to fullscreen and this one is scoped to
+     `:not([data-full-screen])`, so the two selectors cannot both match one
+     modal. Were that `:not()` ever dropped, they WOULD both match, and
+     Mantine's would win regardless of source order — it sets the property on
+     the content element, while this sets it on the root for the content to
+     inherit. Keep the `:not()`. */
   .mantine-Modal-root:not([data-full-screen]) {
     --modal-content-max-height: calc(
       100dvh - max(var(--modal-y-offset), var(--safe-area-inset-top)) -
