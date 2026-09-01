@@ -140,6 +140,8 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
     expect(files.length, 'the src/ walk matched no stylesheets or TS files').toBeGreaterThan(1000);
 
     const decls: { file: string; value: string }[] = [];
+    /** Declarations that sit under a `[data-block-id=…]` selector — the opt-out ledger. */
+    const ledgerOverrides: { file: string; value: string }[] = [];
     for (const file of files) {
       // 🔴 TEST FILES ARE OUT OF SCOPE, AND THE CLAIM IS NARROWED TO MATCH —
       // this counts declarations in SHIPPED source, not every occurrence under
@@ -162,20 +164,45 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
       ];
       for (const re of patterns) {
         for (const m of src.matchAll(re)) {
-          decls.push({
+          // 🔴 A LEDGER OVERRIDE IS NOT A DUPLICATE DEFAULT, and an earlier
+          // version of this guard could not tell them apart — it counted every
+          // declaration and demanded exactly one, so the FIRST real opt-out
+          // entry would have failed it. That is a guard that forbids the feature
+          // it is guarding, and it would have been discovered by whoever added
+          // the entry rather than by whoever wrote the guard.
+          //
+          // The discriminator is the SELECTOR this declaration sits under: read
+          // back to the nearest `{`, and the text between the previous `}` (or
+          // the start of file) and it is that rule's selector. A ledger entry is
+          // keyed on `[data-block-id=…]`; the default is on `:root`. Kept to a
+          // slice-and-look rather than a CSS parser deliberately — every
+          // declaration of this property lives in one flat, top-level region of
+          // globals.css, and the `--header-height` guard's own history records
+          // five audit rounds in which each parser added to close a hole shipped
+          // a new false PASS. If this property ever gains a declaration nested
+          // inside an at-rule, this needs revisiting rather than extending.
+          const before = src.slice(0, m.index ?? 0);
+          const open = before.lastIndexOf('{');
+          const selector = open === -1 ? '' : before.slice(before.lastIndexOf('}', open) + 1, open);
+          const entry = {
             file: repoPath(file),
             value: m[1].trim().replace(/^['"`]|['"`]$/g, ''),
-          });
+          };
+          if (/\[data-block-id\s*[=~|^$*]?=/.test(selector)) ledgerOverrides.push(entry);
+          else decls.push(entry);
         }
       }
     }
 
     expect(
       decls.map((d) => `${d.file}: ${d.value}`),
-      'expected exactly ONE `--app-page-max-width` declaration in shipped src/ (test files excluded). Zero means it was ' +
-        'renamed, removed or commented out — the host then falls back to its inline literal and ' +
-        'the documented CSS opt-out is inert. More than one means the cap is conditional or ' +
-        'duplicated, and binding it to a single TS constant is no longer a truthful claim.'
+      'expected exactly ONE DEFAULT `--app-page-max-width` declaration in shipped src/ (test ' +
+        'files excluded, and `[data-block-id=…]` ledger overrides excluded — those are the ' +
+        'documented opt-out and are counted separately below). Zero means it was renamed, ' +
+        'removed or commented out — the host then falls back to its inline literal and every ' +
+        'ledger rule overrides a property nothing else sets. More than one means the DEFAULT cap ' +
+        'is conditional or duplicated, and binding it to a single TS constant is no longer a ' +
+        'truthful claim.'
     ).toHaveLength(1);
     expect(decls[0].file, 'the `--app-page-max-width` declaration moved out of globals.css').toBe(
       'src/styles/globals.css'
@@ -186,6 +213,52 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
         'changed). The custom property is what actually ships; the constant is only the `var()` ' +
         'fallback, so a divergence means the code documents a cap the site does not use.'
     ).toBe(`${declared}px`);
+
+    // Every ledger override must live in globals.css beside the default. A rule
+    // of this shape in a CSS Module or a component stylesheet would work, but it
+    // would put the opt-out somewhere no one reviewing the ledger would look.
+    expect(
+      [...new Set(ledgerOverrides.map((d) => d.file))],
+      'a `[data-block-id=…]` override of `--app-page-max-width` was found outside globals.css. ' +
+        'The full-bleed ledger is meant to be one reviewable list; an entry elsewhere is invisible ' +
+        'to everyone reading it.'
+    ).toEqual(ledgerOverrides.length === 0 ? [] : ['src/styles/globals.css']);
+  });
+
+  /**
+   * 🔴 THE FULL-BLEED LEDGER IS A MEMBERSHIP LIST, AND BOTH DIRECTIONS ARE THE
+   * POINT — it fails when the set GROWS (an app was excused from the cap without
+   * anyone reading the criteria) and when it SHRINKS (an entry was dropped during
+   * an unrelated change and an app that needs full bleed is quietly letterboxed
+   * again). Modelled on the `fill` opt-in ledger in `pageRunScrollContract.test.ts`.
+   *
+   * 🔴 IT IS EMPTY TODAY, AND THAT IS A REAL ASSERTION, NOT A PLACEHOLDER. An
+   * empty expectation is exactly what makes the FIRST entry a deliberate,
+   * reviewed act: adding a rule to globals.css fails this test until someone
+   * writes the block id here too, with a reason. Adding a row is the intended
+   * maintenance path — deleting the assertion is not.
+   *
+   * The ids are read from the SELECTORS, not from a hand-kept list elsewhere, so
+   * a rule nobody told this test about is what it notices. `code()` strips
+   * comments first, so the template rule inside the ledger's own doc comment is
+   * not a member.
+   */
+  it('the full-bleed opt-out ledger — membership is explicit, and fails on growth AND shrink', () => {
+    const css = code(read(GLOBALS_CSS));
+    const members = [...css.matchAll(/\[data-block-id\s*=\s*['"]([^'"]+)['"]\]/g)]
+      .map((m) => m[1])
+      .sort();
+
+    expect(
+      members,
+      'the full-bleed opt-out ledger in src/styles/globals.css has changed. If you ADDED an ' +
+        'entry, add its block id to this expectation in the same commit, and make sure the ' +
+        "id is the app's `app_blocks.block_id` (what `PageBlockHost` stamps as `data-block-id`) " +
+        'rather than a listing slug — for an on-site app they are identical by construction ' +
+        '(`app-listing-mapper.ts` sets `slug: ab.blockId`), which is exactly the condition under ' +
+        'which the wrong one goes unnoticed. If you REMOVED one, an app that needed full bleed is ' +
+        'now capped again — confirm that is intended.'
+    ).toEqual([]);
   });
 
   /**

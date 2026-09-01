@@ -355,13 +355,29 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * Concretely it holds five columns of a `minmax(300px, 1fr)` grid (1288 holds
  * four, 1920 holds six).
  *
- * 🔴 THE ONE APP THIS IS WRONG FOR, and it is why the opt-out ships with the cap
- * rather than after it: Playable Collections in PLAYER mode returns early past
- * its own 960px well and renders a `100dvh` slideshow whose media is
- * `object-fit: contain` — a centred column shrinks the player. That is exactly
- * the shape the ledger on `--app-page-max-width` is for. No ledger entry is
- * written today: the entry has to name a block id, and inventing one produces a
- * rule that matches nothing and looks like protection.
+ * 🔴 THE APP THIS IS PROBABLY WRONG FOR, and why the opt-out ships WITH the cap
+ * rather than after it: Playable Collections. Re-read at its DEPLOYED ref
+ * (`sync/deployed-0.2.2`, manifest `blockId: "playable-collections"`), because an
+ * earlier reading of this — that only its "player mode" is affected, the rest
+ * being governed by the app's own 960px well — is WRONG, and wrong in the
+ * direction that makes the opt-out look smaller than it is:
+ *
+ *   · the 960 well is `contentStyle` in `App.tsx:972`, applied at `App.tsx:789`
+ *     to the BROWSE shell only;
+ *   · opening a collection early-returns at `App.tsx:733` past that wrapper into
+ *     `CollectionViewer`, whose root (`CollectionViewer.tsx:582`) is
+ *     `width: 100%; min-height: 100dvh` with NO max-width;
+ *   · and that root serves THREE view modes — classic (`Player`), plus
+ *     continuous-horizontal and continuous-vertical (`ContinuousView`) — with an
+ *     ambient "cast" state on top. None of them is capped by the app.
+ *
+ * So an opt-out here is per-APP and would unbound all three modes, not tidy up
+ * one. That may well be right — a ticker and a wall want width, and the player's
+ * media is `object-fit: contain` so a centred column simply shrinks it — but it
+ * is a bigger product call than "the app already governs this", and it is not
+ * mine to make. NO LEDGER ENTRY IS WRITTEN TODAY, and the ledger's expected set
+ * in `__tests__/pageBlockHostMaxWidth.test.ts` is `[]` so that the first one has
+ * to be added deliberately.
  *
  * 🔴 STATE THE COST HONESTLY: this binds on a maximised browser on a 1080p
  * monitor (~1905 CSS px of viewport), not only on ultrawides — that is a common
