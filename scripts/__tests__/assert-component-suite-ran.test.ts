@@ -316,7 +316,8 @@ describe('the on-disk ledger — a file that stops being COLLECTED', () => {
     );
     const { code, out } = runGateAt(report, tree);
     expect(out).toContain('ABSENT FROM THE RUN');
-    expect(out).toContain('Deep/C.browser.test.tsx');
+    // The gate names the missing file by its on-disk path, so the separator is the platform's.
+    expect(out).toContain(join('Deep', 'C.browser.test.tsx'));
     expect(out).not.toContain('EXECUTED ONLY');
     expect(code).toBe(1);
   });
