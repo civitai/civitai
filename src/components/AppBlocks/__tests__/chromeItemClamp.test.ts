@@ -18,7 +18,9 @@ import { describe, expect, it } from 'vitest';
  * ANY of its widths". The consolidation dropped it on the desktop path only, and
  * nothing noticed: the whole gating tier and all seven touched browser suites stayed
  * green. Measured at 1440×900 with a 63-char name (`APP_CHROME_NAME_MAX` is 64), the
- * row went 33.6px → 56.7px, ×`RECENTLY_RUN_LIMIT` = 5.
+ * row went 35px → 78px — three lines — ×`RECENTLY_RUN_LIMIT` = 5. (The audit reported
+ * 33.6 → 56.7 for the same defect with a shorter fixture; the gap is the name length,
+ * not a disagreement.)
  *
  * 🔴 THE RULE IS KEYED ON THE DATA, NOT ON A LAYOUT PREFERENCE, AND THAT IS WHAT MAKES
  * IT A RELATIONSHIP RATHER THAN A SPELLING. `sanitizeAppChromeName` is this repo's
@@ -154,7 +156,9 @@ describe('a publisher-controlled chrome row is clamped to one line', () => {
     for (const item of plain) {
       expect(
         item.head.replace(/\s+/g, ' '),
-        `a host-authored row gained \`clamp\`: ${item.children.trim().slice(0, 40)}. Those labels ` +
+        `a host-authored row gained \`clamp\`: ${item.children
+          .trim()
+          .slice(0, 40)}. Those labels ` +
           'are short, fixed and were raw children before `ChromeSurface` existed; wrapping them ' +
           'in a `Text` changes the desktop dropdown for no reason.'
       ).not.toMatch(/(^|\s)clamp(\s|>|=)/);

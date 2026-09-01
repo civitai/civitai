@@ -11,10 +11,10 @@
  * browser suites were green with the defect present — because every existing test
  * either uses a short fixture name or asserts attributes rather than geometry.
  *
- * So the guard is a MEASUREMENT, not a source-text pin. `__tests__/chromeItemClamp.ts`
- * carries the structural half in the gating node tier; this is the half that would
- * still fail if `clamp` were threaded correctly and rendered something that does not
- * actually clamp.
+ * So the guard is a MEASUREMENT, not a source-text pin.
+ * `__tests__/chromeItemClamp.test.ts` carries the structural half in the gating node
+ * tier; this is the half that would still fail if `clamp` were threaded correctly and
+ * rendered something that does not actually clamp.
  *
  * 🔴 THE ASSERTION IS RELATIONAL, AND NOT A PIXEL LITERAL. "The long name renders on
  * one line" is really "this row is the same height as a row that cannot wrap", so the
@@ -68,8 +68,10 @@ describe('the desktop "Recently run" row does not wrap', () => {
     // That three-way matrix is the point and it is stronger than a normal red/green
     // pair: `origin/main` passes because the pre-primitive chrome carried the clamp,
     // so this test is pinning RESTORED PARITY rather than new behaviour. The failing
-    // assertion at the PR tip is the height comparison below — measured 56.69px
-    // against the reference row's 33.61px.
+    // assertion at the PR tip is the height comparison below — measured HERE as 78px
+    // against the reference row's 35px, i.e. three lines. (The audit reported 56.7 vs
+    // 33.6 for the same defect; the gap is the fixture, not a disagreement — this file
+    // uses a 63-char name where the audit used a shorter one. Both are the same bug.)
     await page.viewport(...DESKTOP);
     // `null` owner: `useCurrentUser` is mocked to null above, so this is the bucket
     // the chrome will read back (the store is keyed per account, #4048).
@@ -96,8 +98,7 @@ describe('the desktop "Recently run" row does not wrap', () => {
     // Guard-the-guard: without the stylesheet `lineClamp` is inert and BOTH arms
     // measure the same wrapped height, so this test would pass against the defect.
     expect(
-      getComputedStyle(recents).display === 'flex' ||
-        getComputedStyle(recents).display === 'block',
+      getComputedStyle(recents).display === 'flex' || getComputedStyle(recents).display === 'block',
       '@mantine/core/styles.css must be loaded — a Menu.Item with no stylesheet is not laid out'
     ).toBe(true);
 
@@ -143,7 +144,10 @@ describe('the desktop "Recently run" row does not wrap', () => {
     // And the dropdown as a whole did not grow. Stated separately because the row
     // equality above could in principle hold while some other box absorbed the height.
     const dropdown = document.querySelector('.mantine-Menu-dropdown') as HTMLElement | null;
-    expect(dropdown, 'the platform-nav dropdown must be in the document once opened').not.toBeNull();
+    expect(
+      dropdown,
+      'the platform-nav dropdown must be in the document once opened'
+    ).not.toBeNull();
     expect(
       Math.round(rect(dropdown as HTMLElement).height),
       'the dropdown must not be taller than the sum of one-line rows plus its two labels'
