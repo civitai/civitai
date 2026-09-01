@@ -222,6 +222,58 @@ textarea {
    would say so. These four rules pay at the library seam instead, so a new
    drawer is covered on the day it is written.
 
+   🔴 WHAT "THE LIBRARY SEAM" MEANS HERE, STATED AS COVERAGE RATHER THAN AS AN
+   INTENTION. An earlier revision of this comment said the fixed/sticky sweep
+   had covered "every stylesheet that runs". It had not — it had covered
+   `@mantine/core`, and a review found two unpaid surfaces in OTHER already-
+   loaded packages. The sweep was redone as an ENUMERATION, and the enumeration
+   itself is now a test rather than a sentence: `viewport-fit-cover.test.ts`
+   reads the side-effect stylesheet imports out of `src/pages/_app.tsx` and
+   fails when that set grows or shrinks. The set, and the verdict on each:
+
+     · `~/styles/globals.css`          this file — the declaration site.
+     · `@mantine/core`                 8 fixed + 3 sticky. Paid: ModalBase
+                                       `inner` (Drawer + Modal, the rules
+                                       below). Reviewed and deliberately NOT
+                                       paid: Overlay/Popover/Tooltip
+                                       `[data-fixed]` and Popover's
+                                       `fixed; inset: 0` (scrims and floating
+                                       boxes — a scrim SHOULD cover the
+                                       cutout, a dropdown is anchored to its
+                                       target, not to an edge); ModalBase's
+                                       sticky header (inside the padded
+                                       content box already); Table's sticky
+                                       header (inside its own scroll box).
+                                       Affix and AppShell are viewport-edge
+                                       surfaces and are UNUSED — 0 call sites.
+     · `@mantine/dates`                0 fixed, 0 sticky.
+     · `@mantine/dropzone`             1 fixed (`Dropzone.FullScreen`,
+                                       `inset: 0`) — 0 call sites.
+     · `@mantine/notifications`        1 fixed. PAID below — the container is
+                                       pinned 16px off the edge it is placed
+                                       against, which is less than either
+                                       cutout.
+     · `@mantine/nprogress`            1 fixed, `top: 0`, a few px tall, and
+                                       `RouterTransition` renders it on EVERY
+                                       route. Paid at its single call site
+                                       (`RouterTransition.tsx`) rather than
+                                       here: its static class is
+                                       `mantine-Progress-root`, which every
+                                       other `<Progress>` in the app shares.
+     · `@mantine/tiptap`               1 sticky (`RichTextEditor.Toolbar`
+                                       `[data-sticky]`), which sticks to the
+                                       editor's scrollport, not the viewport.
+     · `mantine-react-table`           1 fixed + 9 sticky. The fullscreen
+                                       bottom toolbar is the viewport bottom
+                                       edge — PAID, in the UNLAYERED block
+                                       further down, because this package
+                                       ships UNLAYERED CSS and a layered rule
+                                       loses to it no matter how specific.
+
+   One more entry point exists and is not in `_app.tsx`:
+   `draft-js/dist/Draft.css`, imported by `TrainingImagesCaptionViewer`. 0
+   fixed, 0 sticky. The test enumerates that one too.
+
    🔴 WHY THESE SELECTORS ARE SAFE TO KEY ON. They are not the hashed classes.
    `MantineProvider` defaults to `withStaticClasses: true` and
    `classNamesPrefix: "mantine"` (and this app overrides neither), so
@@ -248,12 +300,25 @@ textarea {
   /* Shrinking the fixed box from the top, rather than padding the sheet, is
      what makes one rule right for every drawer position. `inner` is
      `position: fixed; top: 0; bottom: 0`, and the content inside it is sized
-     against it: a full-height drawer (`left`/`right`, or `bottom` at
-     `size="100dvh"` as NotificationsDrawer is on a phone) is `height: 100%` of
-     inner, so it now starts below the status bar; a partial-height bottom
-     sheet is `flex-end`-aligned against inner's UNMOVED bottom, so it does not
-     move at all and gains no spurious gap. A selector-based rule could not
-     have told those two cases apart.
+     against it. Two cases, and the mechanism is NOT the same one in both:
+
+     · `left` / `right`: Mantine leaves `--drawer-height` unset, so content
+       falls back to `height: calc(100% - var(--drawer-offset) * 2)` — 100% OF
+       INNER. Shrinking inner shrinks the sheet, so it starts below the status
+       bar.
+     · `bottom` at `size="100dvh"` (NotificationsDrawer on a phone): here
+       content is NOT `height: 100%`. Mantine sets `--drawer-height:
+       var(--drawer-size)`, i.e. a literal `100dvh`, which measures the COVER
+       viewport and is therefore taller than inner. What produces the right
+       outcome is the sibling declaration `max-height: calc(100% - offset * 2)`
+       CLAMPING it back to inner's height. (Stated because the obvious reading
+       — "it is 100% of inner" — is wrong, and a later edit that removed the
+       clamp on that belief would silently push the sheet's bottom under the
+       home indicator.)
+     · a partial-height bottom sheet is `flex-end`-aligned against inner's
+       UNMOVED bottom, so it does not move at all and gains no spurious gap.
+
+     A selector-based rule could not have told those cases apart.
 
      Doubled class for specificity only: Mantine's own `top: 0` sits in this
      same layer and, because globals.css is imported BEFORE
@@ -275,7 +340,29 @@ textarea {
      asks for `padding: 0`). Paying one box further out also composes CORRECTLY
      with those 16px rather than swallowing them: the design padding then
      applies inside the safe area, instead of `max(16px, 34px)` leaving the
-     last row flush against the strip with no breathing room at all. */
+     last row flush against the strip with no breathing room at all.
+
+     🔴 KNOWN OVER-PAYMENT, BOUNDED AND DELIBERATE: the two INLINE insets are
+     unconditional, and on a `left` or `right` drawer only ONE of the two edges
+     is a viewport edge — the other is mid-screen. So a `right` drawer carries
+     up to `--safe-area-inset-left` of spurious padding at its inner edge, and
+     a `left` drawer the mirror of that. Bound: both inline insets are 0px in
+     portrait on every current device, so this is a LANDSCAPE-only cost of up
+     to ~47px of inner padding, on the 5 drawers that are not `bottom` (2
+     `position="right"`, 3 defaulting to `left`, per the ledger in
+     `viewport-fit-cover.test.ts`). Content is not clipped — the sheet scrolls.
+
+     🔴 AND IT CANNOT BE FIXED BY A SELECTOR, WHICH IS WHY IT IS DOCUMENTED
+     RATHER THAN GUARDED. `DrawerRoot`'s varsResolver encodes position as
+     INLINE CUSTOM-PROPERTY VALUES on the root (`--drawer-justify: flex-end`
+     for `right`, `--drawer-align` + `--drawer-flex` + `--drawer-height` for
+     `top`/`bottom`, nothing at all for `left`). CSS cannot branch on a custom
+     property's value, and the only spellings that come close — an
+     `[style*="--drawer-justify"]` substring match, or a space-toggle built on
+     an invalid-at-computed-value fallback — are both guessing at serialisation
+     rather than reading a contract. The block-axis mirror of this case IS
+     guarded, because it is a call-site fact rather than a library one: no
+     `position="top"` drawer exists, and a test fails if one is added. */
   .mantine-Drawer-content {
     padding-bottom: var(--safe-area-inset-bottom);
     padding-inline-start: var(--safe-area-inset-left);
@@ -285,12 +372,43 @@ textarea {
   /* A `fullScreen` Modal's content IS the viewport box — Mantine zeroes the
      inner offsets and gives content `height: 100dvh` — so all four edges are
      its own. Under `box-sizing: border-box` this shrinks the content box
-     rather than growing the modal past the screen. */
+     rather than growing the modal past the screen.
+
+     The bottom edge goes through `--safe-area-inset-bottom-modal` rather than
+     the raw inset for the reason the rule below it gives. */
   .mantine-Modal-content[data-full-screen] {
+    --safe-area-inset-bottom-modal: var(--safe-area-inset-bottom);
+
     padding-top: var(--safe-area-inset-top);
-    padding-bottom: var(--safe-area-inset-bottom);
+    padding-bottom: var(--safe-area-inset-bottom-modal);
     padding-inline-start: var(--safe-area-inset-left);
     padding-inline-end: var(--safe-area-inset-right);
+  }
+
+  /* THE THIRD SITE OF THE SAME HANDOVER, and the one that bites the highest-
+     traffic mobile surface in the app: tap any image in a gallery and
+     `ImageDetailModal` renders a `fullScreen` `PageModal` whose LAST in-flow
+     child is its own `<AdhesiveAd>` (ImageDetail2.tsx). The ad bar pays the
+     bottom inset itself — `minHeight: calc(50px + inset)` plus
+     `paddingBottom: inset` — so with the rule above ALSO paying, the bar
+     detaches ~34px from the physical edge with bare modal background beneath
+     it.
+
+     🔴 SCOPED TO THE MODAL CONTENT, NOT TO `#__next`, AND THAT SCOPE IS THE
+     WHOLE CORRECTNESS ARGUMENT. `#__next:has([data-adhesive-ad])` already
+     matches here (this modal is `withinPortal={false}`, so it is inside
+     `#__next`), which is why the collapsed strip and `AppFooter` correctly
+     stand down. But that selector cannot serve this rule: the SHELL's ad bar
+     also matches it while sitting BEHIND a fullScreen modal that covers the
+     viewport, and in that case the modal is still the bottom edge and must
+     pay. Asking `:has()` of the modal's OWN subtree distinguishes the two.
+
+     Same failure direction as the rest of the handover: if this stops matching
+     — the attribute is renamed, the ad moves, the UA has no `:has()` — the
+     override is simply not applied and the modal pays, i.e. the cosmetic gap
+     comes back and nothing lands under the home indicator. */
+  .mantine-Modal-content[data-full-screen]:has([data-adhesive-ad]) {
+    --safe-area-inset-bottom-modal: 0px;
   }
 
   /* A NON-fullScreen modal is already held off the edges by Mantine's own
@@ -309,6 +427,118 @@ textarea {
     padding-inline-start: max(var(--modal-x-offset), var(--safe-area-inset-left));
     padding-inline-end: max(var(--modal-x-offset), var(--safe-area-inset-right));
   }
+
+  /* …AND THE CONTENT'S OWN CEILING HAS TO AGREE WITH THAT PADDING, or a modal
+     that saturates it straddles both edges.
+
+     Mantine sizes content with
+     `max-height: var(--modal-content-max-height, calc(100dvh - var(--modal-y-offset) * 2))`
+     — an allowance derived from the offset the rule above has just RAISED.
+     Worked case, iPhone 14 Pro in portrait (844px viewport, 59px island, 34px
+     indicator): the rule above makes inner's padding 59 + 42.2 = 101.2px while
+     the allowance stays 844 − 42.2 × 2 = 759.6px, which is 16.8px more box
+     than there is room for — so a `centered` modal at max height overhangs by
+     ~8.4px at each end, putting its top back under the island.
+
+     The correction is the same two `max()` terms the padding uses, so the two
+     cannot drift: content may be as tall as the viewport minus the padding
+     that is actually applied. At inset 0 both terms collapse to
+     `var(--modal-y-offset)` and the expression is `calc(100dvh - offset -
+     offset)` — Mantine's own value, exactly.
+
+     Set as `--modal-content-max-height` rather than as a `max-height`
+     declaration because that property is Mantine's own documented override
+     point for this value and nothing in `@mantine/core` or in `src/` sets it
+     (checked), so this is the cheapest place to intervene that a call site can
+     still beat with an inline `styles={{ content: { maxHeight } }}`. */
+  .mantine-Modal-root:not([data-full-screen]) {
+    --modal-content-max-height: calc(
+      100dvh - max(var(--modal-y-offset), var(--safe-area-inset-top)) -
+        max(var(--modal-y-offset), var(--safe-area-inset-bottom))
+    );
+  }
+
+  /* `@mantine/notifications`: the container is `position: fixed`, placed
+     `var(--mantine-spacing-md)` (16px) off whichever edge its position names —
+     less than a 47–59px notch and less than a 34px home indicator, so a toast
+     lands under system UI at both ends.
+
+     🔴 AT THE SEAM AND NOT AT THE CALL SITE, because there are THREE
+     `<Notifications />` in the tree (`ThemeProvider`, `ImageDetailByProps`,
+     `bounties/[id]/entries/[entryId]`) and the obvious fix — a `style` prop —
+     reaches only the one you edit. It is also blind on one axis by
+     construction: `Notifications` renders all SIX position containers and
+     spreads the same props onto every one, so a `style` that is right for
+     `bottom-*` is wrong for `top-*`. CSS can branch on `data-position`, which
+     Mantine really does emit, so each container pays only the edge it is
+     actually placed against.
+
+     MARGIN rather than `top`/`bottom`/`inset-inline`: it composes with
+     Mantine's 16px instead of replacing it, and it is the axis-neutral
+     spelling — `margin-block-end` moves a box placed by `bottom` and does
+     nothing to one placed by `top`, so a rule that got the branch wrong would
+     be inert rather than wrong. `top-center` / `bottom-center` are placed with
+     `left: 50%` + a transform and have no inline edge to pay. */
+  .mantine-Notifications-root[data-position^='top-'] {
+    margin-block-start: var(--safe-area-inset-top);
+  }
+
+  .mantine-Notifications-root[data-position^='bottom-'] {
+    margin-block-end: var(--safe-area-inset-bottom);
+  }
+
+  .mantine-Notifications-root[data-position$='-left'] {
+    margin-inline-start: var(--safe-area-inset-left);
+  }
+
+  .mantine-Notifications-root[data-position$='-right'] {
+    margin-inline-end: var(--safe-area-inset-right);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   `mantine-react-table`'s FULLSCREEN SURFACE
+
+   🔴 UNLAYERED ON PURPOSE, AND NOT A STYLE CHOICE. `mantine-react-table` ships
+   `styles.css`, not `styles.layer.css` — grep it: zero `@layer` at-rules. An
+   unlayered declaration beats EVERY layered one regardless of specificity, so
+   the `@layer mantine` block above cannot reach these boxes at all. Moving
+   these two rules up there makes them silently inert.
+
+   The surface: `enableFullScreenToggle` is Mantine-default-ON and is disabled
+   at exactly one of the six MRT call sites (`UserTrainingModels.tsx`), so the
+   moderator tables (`moderator/tags`, `moderator/strikes`, `moderator/csam`,
+   `moderator/minor-hash-matches`, `FlaggedModelsList`) all have the button. In
+   fullscreen MRT INLINE-styles the Paper `position: fixed; inset: 0;
+   height: 100vh; width: 100vw; padding: 0` — its own comment calls this a
+   "rare case where we should use inline styles to guarantee highest
+   specificity" — and separately pins the bottom toolbar (the pagination row)
+   `position: fixed !important; bottom: 0`.
+
+   🔴 `!important` ON THE PAPER FOR THE SAME REASON: the `padding: 0` it is
+   overriding is an INLINE style, which no ordinary stylesheet rule can beat.
+   The declarations still collapse to `padding: 0px` at inset 0, i.e. to
+   exactly the inline value they displace, so on every device without a cutout
+   this rule changes nothing.
+
+   The class names are MRT's own stable, unhashed ones (`mrt-table-paper-
+   fullscreen`, `mrt-bottom-toolbar` — string literals in its bundle, applied
+   alongside the hashed CSS-module classes), pinned against the installed
+   package by `viewport-fit-cover.test.ts`.
+
+   The bottom toolbar needs its own declaration because it is `position: fixed`
+   and therefore resolves against the VIEWPORT, escaping the Paper's padding
+   box entirely. It pays as padding on its own background, like every other bar
+   in this file: the row still reaches the physical edge, the pagination
+   controls move out of the home-indicator strip. */
+.mrt-table-paper-fullscreen {
+  padding-top: var(--safe-area-inset-top) !important;
+  padding-inline-start: var(--safe-area-inset-left) !important;
+  padding-inline-end: var(--safe-area-inset-right) !important;
+}
+
+.mrt-table-paper-fullscreen .mrt-bottom-toolbar {
+  padding-bottom: var(--safe-area-inset-bottom);
 }
 
 @layer theme {

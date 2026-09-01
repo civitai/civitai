@@ -22,7 +22,16 @@ import { GenerationFormProvider } from '~/components/generation_v2/GenerationFor
 
 function DataGraphV2Demo() {
   return (
-    <Container size="xs" className="h-screen max-h-screen w-full overflow-hidden px-0 py-3">
+    // 🔴 `min-h-0 flex-1`, not `h-screen max-h-screen`. `standalone` pages are
+    // rendered directly into `#__next`, which is a `height: 100%` flex column
+    // that now carries `padding-top: var(--safe-area-inset-top)` — so its
+    // CONTENT box is the cover viewport minus the top inset, while `h-screen`
+    // still measures the whole cover viewport. Combined with `overflow-hidden`
+    // on this very element, the excess is CLIPPED rather than scrolled: the
+    // bottom of the generation form becomes unreachable on a notched phone.
+    // Sizing to the slot is the same remedy `images/iterate.tsx` uses, and it
+    // is exact on every device rather than approximately right on one.
+    <Container size="xs" className="min-h-0 w-full flex-1 overflow-hidden px-0 py-3">
       <IsClient>
         <GenerationFormProvider debug>
           <GenerationForm />
