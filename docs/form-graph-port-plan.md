@@ -310,8 +310,48 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 
 | Family | Ported | Differential green | Notes |
 | --- | --- | --- | --- |
-| video: wan | ☐ | ☐ | LIVE HAS v3.0, reference does not — shape guide: C:\work\form-graph\src\v1\ports\wan.ts |
-| video: ltx | ☐ | ☐ | shape guide: ltx.ts (versions match live) |
-| video hub | ☐ | ☐ | shape guide: video-hub.ts |
+| video: wan (all 6 versions incl. v3.0) | DONE | DONE | LIVE HAS v3.0, reference does not — shape guide: C:\work\form-graph\src\v1\ports\wan.ts |
+| video: ltx (v2/v23/v25) | DONE | DONE | shape guide: ltx.ts (versions match live) |
+| video hub (workflow/ecosystem/quantity) | DONE | DONE | shape guide: video-hub.ts |
 | flux | ☐ | ☐ | corpus sample: C:\work\form-graph\src\lib\generation\flux.ts |
 | _…add a row per `*-graph.ts` file during Phase 2 inventory…_ | | | |
+
+---
+
+## 8. Mapping rules proven in Phase 1 (apply these in Phase 2)
+
+The video slice reached full differential parity (936 generated cases). These
+are the data-graph -> form-graph correspondences it established; use them
+rather than re-deriving, and add to the list when a family teaches something new.
+
+| data-graph | form-graph | note |
+| --- | --- | --- |
+| `.node(key, {...})` | `.field(key, def)` | `defaultValue` -> `default` |
+| `.node(key, (ctx, ext) => ({...}))` | `.field(key, ({ prior, _ext }) => def)` | destructure what you read |
+| `when: false` on a node | return `null` from the field fn | key goes optional |
+| `.computed(k, fn, deps)` | `.computed(k, fn)` | deps are the chain |
+| `.discriminator(k, {...})` after `.computed(k, ...)` | `branch(k, pick, members)` | TAGGED: stamps k into state |
+| `.merge(subgraph)` | `.use(graph)` | needs are the child's Ext |
+| node `transform` | `correct` policy | runs in resolution, records a note |
+| **effect that is a pure function of resolved fields** | **`correct` on the field it changes** | 🔴 NOT `.effect` — see below |
+| effect reacting to a USER edit | `.effect({ trigger: ... })` | set()-time only |
+
+🔴 **The single most important finding:** data-graph runs effects during
+`safeParse`; form-graph runs rules on `set()` only. Any effect whose outcome is
+a deterministic function of other resolved fields MUST become a `correct`
+policy, or server-side parse will diverge from the client. The video port hit
+this with Wan's workflow->ecosystem sync; every family with cross-node effects
+will hit it too.
+
+**When two fields are mutually dependent** (Wan 2.1: `ecosystem` needs
+`resolution`, which resolves after it), form-graph's single pass cannot express
+it — data-graph iterates to a fixed point. Make the iteration explicit at the
+call site, as `parseVideo` does in `video/hub.ts`: re-resolve feeding the
+previous pass's value back through ext, and stop when the output stops moving.
+Keep it bounded and assert convergence.
+
+**Watch for text editors that are plain nodes.** `createTextEditorGraph`
+registers its key in `snippets.targets`; a plain `negativePromptNode()` does
+not (Wan 2.7). The snippets VALUE differs, so the differential catches it —
+but only if the case list turns the `wildcards` flag on. Include a
+wildcards-on context in every family's matrix.

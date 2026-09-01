@@ -1,14 +1,8 @@
-import { z } from 'zod';
+import type { z } from 'zod';
 import { defineGraph } from 'form-graph';
 import { MAX_NEGATIVE_PROMPT_LENGTH } from '~/shared/data-graph/generation/common';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import {
-  SNIPPETS,
-  textDef,
-  type ImageEntry,
-  type ResourceData,
-  type SnippetsValue,
-} from './defs';
+import { SNIPPETS, textDef, type ImageEntry, type ResourceData, type SnippetsValue } from './defs';
 
 /** Hub facts every video family reads: what the outer graph already resolved. */
 export type VideoHubCtx = { workflow: string; ecosystem: string };

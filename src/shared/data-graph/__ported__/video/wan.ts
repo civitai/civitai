@@ -15,6 +15,7 @@ import {
   wanDurations,
   wanInterpolatorModels,
 } from '~/shared/data-graph/generation/wan-graph';
+import type { AspectRatioOption } from '~/shared/data-graph/generation/common';
 import { checkpointDef } from './checkpoint';
 import {
   SEED,
@@ -43,12 +44,20 @@ const versionOf = (ecosystem: string) => ecosystemToVersionDef.get(ecosystem)?.v
 
 // Lists that wan-graph.ts keeps module-local; the option tables they build are
 // re-derived here from the same shared helper, and pinned by the differential.
-const wan22AspectRatioList: GenerationAspectRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16', '5:4', '4:5'];
+const wan22AspectRatioList: GenerationAspectRatio[] = [
+  '16:9',
+  '4:3',
+  '1:1',
+  '3:4',
+  '9:16',
+  '5:4',
+  '4:5',
+];
 const wan27AspectRatioList: GenerationAspectRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 const wan30AspectRatioList: GenerationAspectRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
 const arByResolution = (
-  table: Record<string, ReturnType<typeof getAspectRatioOptions>>,
+  table: Record<string, AspectRatioOption[]>,
   fallback: string,
   dflt: string
 ) =>
@@ -130,8 +139,7 @@ const shared = defineGraph<VideoExt>()
     const version = versionOf(_ext.ecosystem);
     const isV27 = version === 'v2.7';
     const isRef2vid = _ext.workflow === 'img2vid:ref2vid';
-    const isImg2vid =
-      _ext.workflow === 'img2vid' || _ext.workflow === 'img2vid:first-last';
+    const isImg2vid = _ext.workflow === 'img2vid' || _ext.workflow === 'img2vid:first-last';
     const isEditVideo = _ext.workflow.startsWith('vid2vid');
 
     // v3.0 takes startImage + optional endImage, same slot shape as v2.7.
@@ -221,8 +229,7 @@ const v27 = defineGraph<VideoExt>()
     noImages(images as ImageEntry[] | undefined) && !video?.url ? AR_27(resolution) : null
   )
   .field('duration', ({ _ext }) => {
-    const max =
-      _ext.workflow === 'img2vid:ref2vid' || _ext.workflow === 'vid2vid:edit' ? 10 : 15;
+    const max = _ext.workflow === 'img2vid:ref2vid' || _ext.workflow === 'vid2vid:edit' ? 10 : 15;
     return {
       ...sliderDef({ min: 2, max, step: 1, default: 5 }),
       correct: (value: number) => {
