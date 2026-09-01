@@ -459,3 +459,61 @@ describe('observeAppBlockLaunch — initPosts', () => {
     ).not.toThrow();
   });
 });
+
+/**
+ * 🔴 THE DENOMINATOR GUARD — the headline statistic's divisor, pinned.
+ *
+ * `civitai_app_block_launch_init_posts` is read as a SHARE at `le=1`. Which
+ * series you divide by decides the answer, and the two candidates DIVERGE:
+ * a launch is counted in `launch_total_seconds` but NOT here whenever its post
+ * count is unusable — a block that acks before the host ever posted an init
+ * (count 0), or a manual-retry storm past the cap.
+ *
+ * The first case is FAST, no-quantization traffic. Dividing by the larger
+ * `launch_total_seconds_count` therefore removes it from the numerator but not
+ * the denominator and UNDERSTATES the `le=1` share — making the data look more
+ * quantized than it is, which is precisely the direction that flatters the
+ * cadence change this metric exists to evaluate. An instrument must not be
+ * biased toward its author's hypothesis.
+ *
+ * This test exists so the divergence is a PINNED PROPERTY rather than a
+ * surprise, and so nobody "simplifies" the help text back to the wrong divisor.
+ */
+describe('launch_init_posts: the denominator is its OWN _count', () => {
+  it('🔴 the two histograms’ _count series genuinely diverge', async () => {
+    const app = 'apb_denominator_guard';
+    const t0 = await readHist(TOTAL_METRIC, '_count', { app_block_id: app });
+    const i0 = await readHist(INIT_POSTS_METRIC, '_count', {});
+
+    // (a) acked before any BLOCK_INIT was posted — count 0, dropped.
+    observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 400 });
+    // (b) manual-retry storm past the cap — dropped, never clamped.
+    observeAppBlockLaunch(app, {
+      totalMs: 51_000,
+      initWaitMs: 50_000,
+      initPosts: MAX_APP_BLOCK_LAUNCH_INIT_POSTS + 17,
+    });
+    // (c) an ordinary launch — observed by both.
+    observeAppBlockLaunch(app, { totalMs: 500, initWaitMs: 200, initPosts: 1 });
+
+    const dTotal = (await readHist(TOTAL_METRIC, '_count', { app_block_id: app })) - t0;
+    const dPosts = (await readHist(INIT_POSTS_METRIC, '_count', {})) - i0;
+
+    // 3 launches reached the total histogram; only 1 reached this one.
+    expect(dTotal).toBe(3);
+    expect(dPosts).toBe(1);
+    // Stated as the inequality a reader would rely on, not just two numbers.
+    expect(dPosts).toBeLessThan(dTotal);
+  });
+
+  it('🔴 the help text names the correct divisor and warns off the wrong one', async () => {
+    const metric = client.register.getSingleMetric(INIT_POSTS_METRIC);
+    const help = (metric as unknown as { help: string }).help;
+    // Pin the WHOLE claim, not a keyword: a guard on a word is walkable by
+    // rewording, and this text is the only thing standing between a reader and
+    // a systematically understated share.
+    expect(help).toContain('civitai_app_block_launch_init_posts_count');
+    expect(help).toContain('NEVER `launch_total_seconds_count`');
+    expect(help).toContain('UNDERSTATES');
+  });
+});

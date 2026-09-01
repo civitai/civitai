@@ -694,7 +694,22 @@ export function worstReachableLaunchMs(): number {
 }
 
 /**
- * The most BLOCK_INIT posts one successful launch can legitimately make.
+ * The most BLOCK_INIT posts one successful launch can make **via the bounded
+ * AUTOMATIC retry path**.
+ *
+ * 🔴 THAT QUALIFIER IS LOAD-BEARING — this is NOT an absolute maximum, and an
+ * earlier revision of this docstring wrongly claimed it was. A MANUAL retry is
+ * deliberately uncapped (`handleRetry` spends no automatic budget), and
+ * `performRetry` resets neither the launch marks nor `blockRenderEmittedRef`.
+ * So a user who clicks Retry repeatedly *inside the auto-retry backoff window*
+ * keeps `autoRetryBudget.attempts` at 0, emits no beacon yet, and accumulates
+ * posts across unboundedly many attempts into ONE launch sample.
+ *
+ * The consequence is bounded and lands in the safe direction: past
+ * `MAX_LAUNCH_INIT_POSTS` the count is DROPPED, never clamped, so no wrong value
+ * is ever published. What it does cost is a launch counted in
+ * `launch_total_seconds` but absent from `launch_init_posts` — which is exactly
+ * why the histogram's help text insists on its OWN `_count` as the denominator.
  *
  * 🔴 THE POST-COUNT SIBLING OF `worstReachableLaunchMs`, and it exists for the
  * identical reason: `boundedInitPosts` DROPS anything past `MAX_LAUNCH_INIT_POSTS`,

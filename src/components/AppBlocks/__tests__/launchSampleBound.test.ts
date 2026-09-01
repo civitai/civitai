@@ -128,10 +128,35 @@ describe('launch-sample cap vs the auto-retry bound', () => {
  * being read. Deriving it is what makes that a red test instead.
  */
 describe('init-post cap vs the re-post schedule', () => {
-  it('🔴 both caps exceed the worst reachable post count', () => {
+  it('🔴 both caps exceed the worst reachable post count on the AUTOMATIC retry path', () => {
     const worst = worstReachableInitPosts();
     expect(MAX_LAUNCH_INIT_POSTS).toBeGreaterThan(worst);
     expect(MAX_APP_BLOCK_LAUNCH_INIT_POSTS).toBeGreaterThan(worst);
+  });
+
+  /**
+   * 🔴 THE BOUND IS NOT ABSOLUTE, AND THE TEST NAME MUST NOT IMPLY IT IS.
+   *
+   * A MANUAL retry is uncapped: `handleRetry` spends none of the automatic
+   * budget, and `performRetry` resets neither the launch marks nor the
+   * emit-once beacon latch. Clicking Retry inside the auto-retry backoff window
+   * therefore accumulates posts across unboundedly many attempts into ONE
+   * sample, with `autoRetryBudget.attempts` still 0 and no beacon emitted yet.
+   *
+   * This asserts the SHAPE of that exposure rather than pretending it away: the
+   * per-attempt maximum times a handful of manual attempts already clears the
+   * cap, so the cap is a DROP boundary, not a proof of unreachability. Dropping
+   * is the safe direction — no wrong value is ever published — but it does mean
+   * the two launch histograms' `_count` series can disagree.
+   */
+  it('🔴 a manual-retry storm can exceed the cap — so the cap is a DROP, not a proof', () => {
+    const perAttempt = maxInitPostsWithin(BLOCK_READY_TIMEOUT_MS) + 1;
+    // Five manual attempts is already past the cap; four is not. Both pinned so
+    // a schedule change that moves this boundary is visible in this diff.
+    expect(4 * perAttempt).toBeLessThanOrEqual(MAX_LAUNCH_INIT_POSTS);
+    expect(5 * perAttempt).toBeGreaterThan(MAX_LAUNCH_INIT_POSTS);
+    // …and the automatic path alone genuinely cannot get there.
+    expect(worstReachableInitPosts()).toBeLessThan(MAX_LAUNCH_INIT_POSTS);
   });
 
   it('🔴 the client and server caps agree (a split would drop samples on one side only)', () => {
