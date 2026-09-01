@@ -27,6 +27,7 @@ vi.mock('~/server/redis/client', () => ({
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
 
 import { trackRouter } from '../track.router';
+import { blockRenderSchema } from '~/server/schema/track.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const mockBlockRender = vi.fn();
@@ -193,6 +194,57 @@ describe('track.blockRender', () => {
     expect(arg).not.toHaveProperty('timings');
     // Byte-identical to a timing-less beacon: the CH row is unchanged.
     expect(arg).toEqual({ ...validInput(), isAnon: false });
+  });
+
+  /**
+   * 🔴 THE HALF-FIX HAZARD, FOR THE NEW `initPosts` FIELD — the single most
+   * valuable assertion added by this change, and it has a SIBLING that must be
+   * kept in step: the same claim against the REST writer, in
+   * `src/tests/api/track/block-render.test.ts`. There are exactly two writers of
+   * the `blockRenders` table, and a field stripped in one and not the other
+   * lands in that other's insert with NOTHING failing — not TypeScript (the
+   * dispatch is a spread, and spread properties are exempt from
+   * excess-property checking), not the schema, not any existing test.
+   *
+   * 🔴 IT IS ALSO A GUARD ON A STRUCTURE, NOT A FIELD LIST. Today the strip is
+   * `blockRenderTrackerPayload`, an ALLOWLIST naming the three real columns, so
+   * `initPosts` cannot reach ClickHouse by construction. That is exactly why the
+   * assertion is written as an EXACT payload equality rather than a
+   * `not.toHaveProperty('initPosts')`: converting the allowlist back into a
+   * `const { …, ...rest } = input` DENYLIST would silently re-open the whole
+   * class for every future field, and only a "these three keys and no others"
+   * assertion sees that.
+   *
+   * The FIRST assertion is the one that would be red before this change: the
+   * schema has to ACCEPT `initPosts` for the strip to be about anything.
+   *
+   * MUTATION-CHECKED: adding `initPosts: input.timings?.initPosts` to
+   * `blockRenderTrackerPayload` fails this with
+   * `expected { …, initPosts: 4 } to deeply equal { … }` — this test's own
+   * assertion, not another guard's error.
+   */
+  it('🔴 accepts `initPosts` on the beacon and keeps it out of the ClickHouse payload', async () => {
+    const parsed = blockRenderSchema.parse({
+      ...validInput(),
+      timings: { totalMs: 1_100, initWaitMs: 700, initPosts: 4 },
+    });
+    // Red before the schema carried the field: zod strips unknown keys, so this
+    // would be `undefined` and the strip below would be about nothing.
+    expect(parsed.timings?.initPosts).toBe(4);
+
+    const caller = trackRouter.createCaller(fakeCtx({ id: 5 }) as never);
+    await caller.blockRender({
+      ...validInput(),
+      timings: { totalMs: 1_100, initWaitMs: 700, initPosts: 4 },
+    } as never);
+
+    expect(mockBlockRender).toHaveBeenCalledTimes(1);
+    const arg = mockBlockRender.mock.calls[0][0];
+    // EXACT equality — the CH row must be byte-identical to a beacon that never
+    // carried timings at all. `not.toHaveProperty('initPosts')` would pass a
+    // denylist regression that leaks every FUTURE field.
+    expect(arg).toEqual({ ...validInput(), isAnon: false });
+    expect(Object.keys(arg).sort()).toEqual(['appBlockId', 'blockInstanceId', 'isAnon', 'slotId']);
   });
 
   /**

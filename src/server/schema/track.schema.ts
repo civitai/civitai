@@ -153,6 +153,24 @@ export const blockRenderSchema = z.object({
       totalMs: z.number().finite().nonnegative().max(600_000),
       tokenMintMs: z.number().finite().nonnegative().max(600_000).optional(),
       initWaitMs: z.number().finite().nonnegative().max(600_000).optional(),
+      // 🔴 A COUNT, NOT A DURATION — how many BLOCK_INIT posts the host made
+      // before the block acked. It is what discriminates the two mutually
+      // exclusive explanations for `init_wait`'s 0.4-0.6s mode: re-post
+      // quantization (>=2 posts) vs. a block that simply boots that slowly
+      // (1 post). Without it the histogram cannot say which, and cannot show
+      // whether tuning the re-post cadence changed anything.
+      //
+      // 🔴 DELIBERATELY LOOSE HERE, exactly like the durations above: no
+      // `.int()`, and a coarse `max`. This object carries `.catch(undefined)`,
+      // so a STRICT rule here would let one malformed count discard the whole
+      // `timings` object — the client's own bug would silently delete the
+      // DURATION samples too. The real gate is `launchInitPostsSample`
+      // server-side (integer, >0, <= MAX_APP_BLOCK_LAUNCH_INIT_POSTS, DROPPED
+      // not clamped), mirrored client-side by `boundedInitPosts`.
+      //
+      // Still a NUMBER, so like every field here it can never become a prom
+      // label — the histogram it feeds carries no labels at all.
+      initPosts: z.number().finite().nonnegative().max(100_000).optional(),
     })
     .optional()
     .catch(undefined),

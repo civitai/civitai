@@ -17,6 +17,26 @@
 //      NOT published (npm latest is still `@civitai/app-sdk@0.30.0`). So the
 //      fast path currently buys exactly nothing, and "zero benefit" is the
 //      decisive argument, not the risk level.
+//
+//      🔴 THE `BLOCK_HELLO` HALF OF THAT COUNT IS STALE — RE-MEASURED
+//      2026-08-31 AGAINST THE DEPLOYED FLEET: 4 of 23 deployed blocks now ship
+//      the accelerator (`custom-generators`, `df-qwen-canvas`,
+//      `model-benchmarking`, `sensei`). It is no longer x0. Read the 2026-08-05
+//      line above as a dated historical measurement, not as current state.
+//
+//      🔴 THIS DOES NOT REOPEN THE FRAGMENT FAST PATH. The two counts are
+//      independent: `BLOCK_HELLO` is a runtime postMessage the SDK sends, while
+//      `civitai-block=v1` is a URL-fragment payload a block must DECODE, and
+//      nothing here re-measured the fragment half. The gate stays an empty
+//      opt-in allowlist until someone measures THAT.
+//
+//      🔴 AND IT IS A DATED MEASUREMENT, NOT A FACT. Blocks are rebuilt and
+//      re-approved continuously, so both numbers move on their own. The reason
+//      it is worth stating: 19 of 23 blocks still lack the accelerator, and
+//      closing that gap is 19 rebuild-and-moderator-approve cycles — which is
+//      why the host-side re-post cadence (`INIT_RETRY_BACKOFF_MS` in
+//      `iframeInitController.ts`) is the only launch-latency lever that reaches
+//      every deployed app at once.
 //   2. 🔴 THE `iframe.src` NO-STOMP GUARD PROTECTS AN EMPTY SET.
 //      `stampCanonicalIframeSrc` (server-side) UNCONDITIONALLY overwrites
 //      `manifest.iframe.src` with `https://<slug>.<appsDomain>/`, and the
