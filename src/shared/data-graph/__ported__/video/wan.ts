@@ -169,7 +169,7 @@ const v21 = defineGraph<VideoExt>()
   .use(shared)
   .field('resolution', RES_21)
   .field('aspectRatio', ({ images, resolution }) =>
-    noImages(images as ImageEntry[] | undefined) ? AR_21(resolution) : null
+    noImages(images) ? AR_21(resolution) : null
   )
   .field('duration', DURATION_WAN)
   .field('resources', ({ _ext }) => RESOURCES(_ext.limits.maxResources))
@@ -181,7 +181,7 @@ const v22 = defineGraph<VideoExt>()
   .use(makeTextBlock())
   .field('resolution', RES_22)
   .field('aspectRatio', ({ images, resolution, _ext }) =>
-    noImages(images as ImageEntry[] | undefined)
+    noImages(images)
       ? (_ext.flags?.wan22MultiStep ? AR_22_MULTISTEP : AR_25)(resolution)
       : null
   )
@@ -196,7 +196,7 @@ const v22 = defineGraph<VideoExt>()
 const v5b = defineGraph<VideoExt>()
   .use(shared)
   .field('aspectRatio', ({ images }) =>
-    noImages(images as ImageEntry[] | undefined) ? AR_5B : null
+    noImages(images) ? AR_5B : null
   )
   .use(makeTextBlock())
   .field('resolution', RES_5B)
@@ -210,7 +210,7 @@ const v25 = defineGraph<VideoExt>()
   .use(makeTextBlock())
   .field('resolution', RES_25)
   .field('aspectRatio', ({ images, resolution }) =>
-    noImages(images as ImageEntry[] | undefined) ? AR_25(resolution) : null
+    noImages(images) ? AR_25(resolution) : null
   )
   .field('duration', DURATION_25);
 
@@ -226,7 +226,7 @@ const v27 = defineGraph<VideoExt>()
   )
   .field('resolution', RES_27)
   .field('aspectRatio', ({ images, video, resolution }) =>
-    noImages(images as ImageEntry[] | undefined) && !video?.url ? AR_27(resolution) : null
+    noImages(images) && !video?.url ? AR_27(resolution) : null
   )
   .field('duration', ({ _ext }) => {
     const max = _ext.workflow === 'img2vid:ref2vid' || _ext.workflow === 'vid2vid:edit' ? 10 : 15;
@@ -249,7 +249,7 @@ const v30 = defineGraph<VideoExt>()
   .use(makeTextBlock())
   .field('resolution', RES_30)
   .field('aspectRatio', ({ images, resolution }) =>
-    noImages(images as ImageEntry[] | undefined) ? AR_30(resolution) : null
+    noImages(images) ? AR_30(resolution) : null
   )
   .field('duration', DURATION_30)
   .field('enablePromptEnhancer', boolDef(false))
