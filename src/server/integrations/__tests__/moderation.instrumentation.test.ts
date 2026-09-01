@@ -268,37 +268,48 @@ describe('moderatePrompt instrumentation — failure paths', () => {
   });
 });
 
-describe('a FIRED deadline is observed ABOVE the bucket boundary that equals the deadline', () => {
+describe('a call cut by the REAL abort deadline, at the production default', () => {
+  /** The production default deadline, in seconds (`EXTERNAL_MODERATION_TIMEOUT_MS` = 5000). */
+  const CAP_SECONDS = 5;
+
   /**
-   * 🔴 THE ONE CLAIM THE BUCKET SET IS DESIGNED AROUND, DRIVEN END TO END.
+   * 🔴 WHAT THIS CASE PINS, AND THE CLAIM IT USED TO PIN AND NO LONGER DOES.
    *
-   * `external-moderation.metrics.test.ts` pins that the boundaries `5` and `7.5` both exist and
-   * that a 4.9 s and a 5.02 s observation land on opposite sides of `le=5`. But it hand-feeds those
-   * two numbers to `observeExternalModeration`, so it never runs the code that PRODUCES the number
-   * and cannot see a regression that makes a real fired deadline observe at or below 5 s. Every
-   * operator-facing sentence about this family — the help text's "those observations land just above
-   * the cap (le=7.5 at the 5s default), never in le=5" — is a claim about the produced value, not
-   * about the bucket list.
+   * It used to assert "a real 5s abort lands strictly above le=5, never in it" — i.e. that a capped
+   * call is identifiable by which BUCKET it falls in. That assertion is deleted because the claim is
+   * FALSE, not because it was inconvenient. Measured at the commit that introduced it, isolated and
+   * unloaded, it failed 2 of 8 and 2 of 10 runs, with wall time identical (5.23-5.27 s) across
+   * passing and failing runs — a boundary problem, not a load flake.
    *
-   * WHY IT HOLDS TODAY, mechanically: `start` is taken in `moderatePrompt` BEFORE `withSpan`, and
-   * `AbortSignal.timeout(EXTERNAL_MODERATION_TIMEOUT_MS)` is constructed later, inside the callback.
-   * The deadline therefore starts counting strictly AFTER `start`, so elapsed-at-record is strictly
-   * greater than the deadline. Reorder those two — or clamp the recorded duration to the deadline,
-   * or start the timer inside the callback — and a capped call starts landing in `le=5`,
-   * indistinguishable from a gateway that answered just in time. That is the exact distinction the
-   * `timeout` outcome and the 5/7.5 boundary pair exist to draw.
+   * THE MECHANISM. `le` is INCLUSIVE. `AbortSignal.timeout()` fires off a libuv timer while the
+   * recorded duration is a `performance.now()` delta, and those two clocks disagree by a small fixed
+   * offset — so the elapsed time measured at the moment the deadline fires can land just BELOW the
+   * deadline and be counted in `le=5`. Directly measured on one host: 3/60 samples at a 100 ms
+   * deadline and 3/8 at 5000 ms came in EARLY, worst case 0.63 ms; the same magnitude at both
+   * deadlines, i.e. a constant offset rather than a clock-rate difference. Taking `start` before the
+   * `AbortSignal` is constructed (which `moderatePrompt` does) biases the other way by a few
+   * microseconds — nowhere near enough to win that race.
    *
-   * 🔴 THE WALL TIME IS THE POINT, AND IS PAID DELIBERATELY. `AbortSignal.timeout` is a Node-native
-   * timer that vitest's fake timers do not drive, and running this at a shortened deadline would
-   * test a boundary pair (`le=3`/`le=5`) that no deployment uses — the claim in the help text is
-   * about the 5 s DEFAULT. So this case really does park for ~5 s. It is one test.
+   * AND IT IS NOT FIXABLE BY MOVING THE BOUNDARY. Two calls, one that answered a microsecond under
+   * the cap and one cut BY the cap, are arbitrarily close in duration; no bucket edge lies between
+   * them. The deadline is env-tunable (`.min(100).max(60000)`), so no fixed bucket set can hold any
+   * boundary relationship to it across deployments either. `outcome="timeout"` separates the two
+   * populations perfectly and deterministically — it is a branch on the abort error
+   * (`isAbortDeadlineError`), never on the duration — and it always did. The bucket boundary was
+   * never load-bearing for that question, which is why the help text no longer claims it is.
    *
-   * The assertion is written as `le=5 is EMPTY` rather than `le=7.5 is 1` on purpose: a loaded
-   * runner can stretch the observation past 7.5, which would make the tighter form flaky without
-   * making it stronger. "Never counted as sub-cap" is the whole property.
+   * SO WHAT IS LEFT HERE IS WHAT IS ACTUALLY TRUE AND STABLE: a call cut by the deadline is recorded
+   * exactly once, classified `timeout` (not `error`), carrying the real parked wall time, in a
+   * FINITE bucket. `external-moderation.metrics.test.ts` pins the bucket SET by hand-feeding numbers
+   * and so cannot see any of this; the two files together are the claim.
+   *
+   * 🔴 THE WALL TIME IS THE POINT AND IS PAID DELIBERATELY. `AbortSignal.timeout` is a Node-native
+   * timer that vitest's fake timers do not drive, so the park is real. Running it at a shortened
+   * deadline would exercise a value no deployment uses; at 5000 it drives the configured production
+   * default, which is what makes the finite-bucket assertion below meaningful. It is one test.
    */
-  it('a real 5s abort lands strictly above le=5, never in it', async () => {
-    env.EXTERNAL_MODERATION_TIMEOUT_MS = 5000; // the production default, explicitly
+  it('is recorded once as outcome=timeout, with the real parked duration, in a finite bucket', async () => {
+    env.EXTERNAL_MODERATION_TIMEOUT_MS = CAP_SECONDS * 1000; // the production default, explicitly
     // A gateway that never answers: only the abort can settle this promise.
     vi.stubGlobal('fetch', (_url: string, opts: RequestInit) => {
       return new Promise((_resolve, reject) => {
@@ -310,29 +321,48 @@ describe('a FIRED deadline is observed ABOVE the bucket boundary that equals the
 
     await expect(extModeration.moderatePrompt('a hanging prompt', 'generate')).rejects.toBeTruthy();
 
-    // Preconditions — without these the bucket assertion below could pass vacuously by observing
-    // nothing at all, or by landing on a different series.
+    // 🔴 THE CLASSIFICATION IS THE WHOLE SEPARATOR NOW, so it is pinned from both sides: the
+    // timeout series moved, and the error series did not. Asserting only the first would still pass
+    // if a fired deadline were ALSO counted as an error.
     expect(
       await histCount('generate', 'timeout'),
-      'the fired deadline must be recorded exactly once, as outcome=timeout'
+      'a call cut by the abort deadline must be recorded exactly once as outcome=timeout — that ' +
+        'label is the only thing that distinguishes a capped call from a slow one, since their ' +
+        'durations are arbitrarily close and no bucket edge separates them'
     ).toBe(1);
-    expect(await histTotalCount()).toBe(1);
-
-    // 🔴 THE PIN. le is INCLUSIVE, so a duration of exactly 5.000 would count here.
     expect(
-      await histBucket('generate', 'timeout', 5),
-      'a call cut by the 5s deadline must NOT be counted at or below le=5. If it is, a capped ' +
-        "call and a call that answered just under the cap share a bucket, the help text's " +
-        '"never in le=5" becomes false, and "is the gateway slow or are we cutting it off?" ' +
-        'stops being answerable — check that `start` is still taken BEFORE the AbortSignal is ' +
-        'constructed, and that the recorded duration is the real elapsed time, unclamped.'
+      await histCount('generate', 'error'),
+      'a fired deadline must NOT also land on outcome=error: the two call for opposite responses ' +
+        '(re-size the deadline vs. fix the gateway), so merging them makes the label useless'
     ).toBe(0);
     expect(
-      await histSum('generate', 'timeout'),
-      'the recorded duration must be the real elapsed wall time, which exceeds the deadline'
-    ).toBeGreaterThan(5);
-    // …and it must still land in a FINITE bucket rather than being swallowed by +Inf, which is
-    // the other half of why the top boundary sits at 20 and not at the cap.
+      await histTotalCount(),
+      'exactly one observation across EVERY series — a fired deadline reaches the recorder through ' +
+        'the catch path only, never additionally through a finally'
+    ).toBe(1);
+
+    // The recorded duration must be the REAL parked wall time. Expressed as a band around the
+    // deadline rather than a strict `> CAP`: the clock offset documented above means a genuine
+    // fired deadline legitimately measures a fraction of a millisecond short, so `> 5` is the
+    // flaky assertion this case used to carry, in another spelling. The floor is 50 ms of slack —
+    // ~80x the worst offset measured (0.63 ms), and load can only push this number UP (a jammed
+    // event loop makes the abort land late, never early), so the floor is not load-exposed.
+    const seconds = await histSum('generate', 'timeout');
+    expect(
+      seconds,
+      `the recorded duration must be the real elapsed wall time of the full ${CAP_SECONDS}s park; ` +
+        'a placeholder, a zero, or a timer started after the request was issued reads far below this'
+    ).toBeGreaterThanOrEqual(CAP_SECONDS - 0.05);
+    expect(
+      seconds,
+      'the duration must be recorded in SECONDS, not milliseconds — a ms-valued observation reads ' +
+        `~${CAP_SECONDS * 1000} here and would silently place every call in +Inf`
+    ).toBeLessThan(CAP_SECONDS * 2);
+
+    // 🔴 THE BUCKET PROPERTY THAT IS SOUND, driven end to end at the real cap: a capped call must
+    // land in a FINITE bucket. This one does not depend on any clock — it is why the top finite
+    // boundary sits at 20 and not at the deadline. If it ever fails, every capped call is in +Inf
+    // alongside every pathological one and the tail is unreadable.
     expect(
       await histBucket('generate', 'timeout', 20),
       'a capped call must land in a finite bucket, not in +Inf alongside pathological ones'

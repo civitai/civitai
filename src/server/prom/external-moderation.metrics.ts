@@ -168,22 +168,46 @@ export function isAbortDeadlineError(e: unknown): boolean {
  * that size, so a bucket set whose first boundary sat at 0.5 s would put the entire healthy
  * population in one bucket and answer nothing.
  *
- * 🔴 THE TOP END IS THE PART THAT IS EASY TO GET WRONG, AND `5` IS NOT THE TOP. A boundary is
- * inclusive (`le`), and `AbortSignal.timeout(5000)` fires AT 5000 ms — so an aborted call is observed
- * at slightly MORE than 5 s and lands in `le=7.5`, while a call that answered just under the deadline
- * lands in `le=5`. Those two are the distinction this metric exists to draw ("is the gateway slow, or
- * are we cutting it off?"), and they are only distinguishable because a finite boundary sits ABOVE
- * the cap. A family whose top finite bucket sat AT the cap would drop every capped call into `+Inf`
- * together with every pathological one, saturating exactly the region being asked about — the
- * boundary a bucket-based quantile cannot see past.
+ * 🔴 THE TOP END IS THE PART THAT IS LOAD-BEARING: the top finite boundary must sit ABOVE the
+ * configured deadline. A family whose top finite bucket sat AT or below the cap would drop every
+ * capped call into `+Inf` together with every pathological one, saturating exactly the region being
+ * asked about — the boundary a bucket-based quantile cannot see past. `10` and `20` carry two
+ * further things: the deadline is an env knob that can be re-tuned upward, so the tail keeps some
+ * resolution if it is; and under the default cap a NON-EMPTY `+Inf` is itself a finding (nothing
+ * should ever exceed the deadline by 15 s — that would mean the abort did not take effect), which a
+ * bucket set stopping at the cap could not express. `external-moderation.metrics.test.ts` pins this.
  *
- * `10` and `20` carry two further things: the deadline is an env knob that can be re-tuned upward, so
- * the tail keeps some resolution if it is; and under the default cap a NON-EMPTY `+Inf` is itself a
- * finding (nothing should ever exceed the deadline by 15 s — that would mean the abort did not take
- * effect), which a bucket set stopping at the cap could not express.
+ * 🔴 NO BOUNDARY SEPARATES A CAPPED CALL FROM ONE THAT ANSWERED JUST UNDER THE CAP, AND NONE CAN.
+ * This comment and the help text below used to claim the opposite — that a fired deadline is observed
+ * at slightly MORE than 5 s and so lands in `le=7.5` while a sub-cap call lands in `le=5`, "adjacent
+ * but separate". That is FALSE, and it was measurable:
+ *   · `le` is INCLUSIVE, `AbortSignal.timeout()` fires off a libuv timer, and the recorded duration
+ *     is a `performance.now()` delta. Those two clocks disagree by a small fixed offset, so the
+ *     elapsed time measured when the deadline fires can land just BELOW the deadline. Measured on one
+ *     host: 3/60 samples at a 100 ms deadline and 3/8 at a 5000 ms deadline came in EARLY, worst case
+ *     0.63 ms — the same magnitude at both, i.e. a constant offset, not a clock-rate difference. The
+ *     end-to-end test asserting "never in le=5" therefore failed ~20-25% of the time.
+ *   · Perfect clocks would not rescue it either: a call that answered a microsecond under the cap and
+ *     one cut BY the cap are arbitrarily close in duration, so no bucket edge can lie between them.
+ *   · And the deadline is an env knob (`.min(100).max(60000)`), so NO FIXED BUCKET SET can guarantee
+ *     any boundary relationship to it across deployments.
+ * `outcome="timeout"` separates those two populations, deterministically, and always did: it is a
+ * branch on the abort error (`isAbortDeadlineError`), not a race between two clocks. Classify by that
+ * label. The bucket set's job is resolution, not classification.
+ *
+ * 🔴 WHY `4.5` AND NOT `5` — this set used to carry `5`, exactly the default deadline in seconds.
+ * Given the above, a boundary sitting on the deadline buys nothing, and it costs something: it splits
+ * the single `outcome="timeout"` mode across `le=5` and `le=7.5` on that same sub-millisecond coin
+ * flip, so a dashboard renders one population as two. `4.5` is deliberately OFF-ROUND — configured
+ * deadlines are round millisecond values (5000, 3000, 10000), so a non-round second boundary cannot
+ * coincide with one — and it sits 500 ms clear of the default cap, ~800x the measured clock offset,
+ * so nothing races it. This is a MITIGATION, NOT A GUARANTEE: a deployment that sets 4500 ms puts the
+ * boundary back on its own cap, and there only `outcome` remains correct. That is precisely why
+ * correctness rests on `outcome` and not on this number. Only this one boundary moved; the rest of
+ * the set is unchanged, because nothing else about it was wrong.
  */
 const EXTERNAL_MODERATION_BUCKETS = [
-  0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 7.5, 10, 20,
+  0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 4.5, 7.5, 10, 20,
 ] as const;
 
 const durationHistogram = registerHistogram({
@@ -194,8 +218,10 @@ const durationHistogram = registerHistogram({
     'source (generate|preset|remixAudit|other) + outcome (ok|error|timeout). The call sits inline and ' +
     'serially on the generation submission path and is FAIL-SOFT, so a rising error rate here is ' +
     'invisible to every user-facing signal — it means prompts are being generated with only the local ' +
-    'regex gate applied. outcome=timeout is the EXTERNAL_MODERATION_TIMEOUT_MS deadline firing; those ' +
-    'observations land just above the cap (le=7.5 at the 5s default), never in le=5. Filter on source ' +
+    'regex gate applied. outcome=timeout is the EXTERNAL_MODERATION_TIMEOUT_MS deadline firing, ' +
+    'branched off the abort error rather than off the duration: IDENTIFY CAPPED CALLS BY THAT LABEL, ' +
+    'never by which bucket they land in — a capped call and one that answered a hair under the cap are ' +
+    'arbitrarily close in duration, so no bucket edge separates them. Filter on source ' +
     'before attributing a figure to a procedure: source=generate is the orchestrator.generateFromGraph ' +
     'prompt gate for EVERY surface except preset — onsite, api AND block (App Blocks), so it is not ' +
     'on-site-only — while remixAudit is batch work with nobody waiting.',

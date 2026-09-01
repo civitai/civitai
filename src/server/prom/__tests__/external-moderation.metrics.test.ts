@@ -5,9 +5,12 @@
  *   1. the `source` label is CLOSED at runtime, not just in the type system — an options object
  *      built by spread can carry any string, and an unbounded label on a hot-path histogram is a
  *      cardinality incident, not a cosmetic bug;
- *   2. the BUCKET BOUNDARIES actually resolve the `EXTERNAL_MODERATION_TIMEOUT_MS` deadline — a
- *      call cut at the 5 s cap must land in a DIFFERENT bucket from one that answered just under
- *      it, which is the whole question ("slow gateway, or are we cutting it off?");
+ *   2. the BUCKET BOUNDARIES keep the deadline region readable — a finite boundary sits ABOVE the
+ *      `EXTERNAL_MODERATION_TIMEOUT_MS` cap so a capped call is not swallowed by `+Inf`, and NO
+ *      finite boundary sits ON the default cap, which would split the one `outcome=timeout`
+ *      population across two buckets. ⚠️ NOT that a boundary tells a capped call apart from one that
+ *      answered just under the cap — it cannot, and this file used to assert that it did; the
+ *      separator is the `outcome` label. See the block comment above that describe;
  *   3. the not-configured short-circuit is counted SEPARATELY and never lands on the duration
  *      histogram, so it cannot drag the latency distribution toward zero.
  *
@@ -59,19 +62,11 @@ async function histSum(source: string, outcome: string) {
   );
 }
 
-/** Cumulative bucket value at boundary `le` (prom histogram buckets are cumulative). */
-async function histBucket(source: string, outcome: string, le: number) {
-  const vals = await samples(HIST);
-  return (
-    vals.find(
-      (v) =>
-        v.metricName === `${HIST}_bucket` &&
-        v.labels.source === source &&
-        v.labels.outcome === outcome &&
-        Number(v.labels.le) === le
-    )?.value ?? 0
-  );
-}
+// NOTE: no `histBucket` helper here any more. Reading a single named boundary was only ever needed
+// by the removed "a bucket edge separates a capped call from a sub-cap one" case; what survives
+// reads the whole boundary LIST off the registry instead (see `finiteBoundaries` below). The
+// per-boundary helper still lives in `moderation.instrumentation.test.ts`, which needs it to assert
+// that a real capped call lands in a finite bucket rather than in `+Inf`.
 
 async function skippedCount(source: string) {
   const vals = await samples(SKIPPED);
@@ -182,44 +177,38 @@ describe('observeExternalModeration', () => {
 });
 
 /**
- * ⚠️ WHAT THIS BLOCK DOES AND DOES NOT COVER — the description used to overstate it.
+ * ⚠️ WHAT THIS BLOCK DOES AND DOES NOT COVER — the description has now overstated it twice.
  *
  * These cases hand `observeExternalModeration` its numbers directly, so what they pin is the BUCKET
- * SET: that boundaries exist on both sides of the cap, that they are far enough apart to separate a
- * capped call from a sub-cap one, and that the sub-second population is resolved. They never run the
- * code that PRODUCES a duration, so no regression that makes a fired deadline observe at or below
- * 5 s is visible from here — a guard reading as coverage while providing none is worse than none.
+ * SET: that a finite boundary sits above the cap, that no finite boundary sits ON the default cap,
+ * and that the sub-second population is resolved. They never run the code that PRODUCES a duration.
  *
- * That other half — a real `AbortSignal.timeout` firing and landing strictly above `le=5` — is
- * driven end to end in
- * `src/server/integrations/__tests__/moderation.instrumentation.test.ts`
- * ("a real 5s abort lands strictly above le=5, never in it"). The two together are the claim; keep
- * them together if either moves.
+ * 🔴 WHAT THIS BLOCK USED TO ASSERT AND NO LONGER DOES: that a bucket edge tells a capped call apart
+ * from one that answered just under the cap. It cannot. `le` is inclusive, the deadline fires off a
+ * libuv timer while the duration is a `performance.now()` delta, and the two clocks disagree by a
+ * small fixed offset — so a real fired 5 s deadline lands at or below 5.000 s a fair fraction of the
+ * time (measured: worst case 0.63 ms early; the end-to-end test asserting otherwise failed ~20-25%
+ * of runs). Even with perfect clocks the two populations are arbitrarily close in duration, and the
+ * deadline is env-tunable, so no fixed bucket set can separate them for every deployment. The
+ * separator is `outcome="timeout"`, which is a branch on the abort error, not on the duration.
+ *
+ * The end-to-end half — a real `AbortSignal.timeout` firing, classified `timeout`, recorded with the
+ * real parked duration, landing in a FINITE bucket — is driven in
+ * `src/server/integrations/__tests__/moderation.instrumentation.test.ts`. The two together are the
+ * claim; keep them together if either moves.
  */
-describe('the bucket SET straddles the EXTERNAL_MODERATION_TIMEOUT_MS deadline', () => {
+describe('the bucket SET keeps the EXTERNAL_MODERATION_TIMEOUT_MS deadline region readable', () => {
   // The default deadline, in seconds (env: EXTERNAL_MODERATION_TIMEOUT_MS, default 5000).
   const CAP_SECONDS = 5;
 
-  it('separates a call cut AT the deadline from one that answered just under it', async () => {
-    observeExternalModeration('generate', 'ok', 4.9); // answered just under the cap
-    observeExternalModeration('generate', 'ok', 5.02); // cut by the abort, observed just over
-
-    // Buckets are cumulative: le=5 holds only the sub-cap call.
-    expect(await histBucket('generate', 'ok', CAP_SECONDS)).toBe(1);
-    // The next finite boundary above the cap holds both — i.e. exactly one landed between them.
-    expect(await histBucket('generate', 'ok', 7.5)).toBe(2);
-    expect(
-      (await histBucket('generate', 'ok', 7.5)) - (await histBucket('generate', 'ok', CAP_SECONDS))
-    ).toBe(1);
-  });
-
-  it('has a finite boundary ABOVE the deadline, so a capped call is not swallowed by +Inf', async () => {
+  /** The finite boundaries actually registered, read back off the REGISTRY that gets scraped. */
+  async function finiteBoundaries() {
     // prom-client only emits bucket samples for label sets that have an observation, so materialise
     // the series first. Reading the boundaries back off the REGISTRY (rather than off an exported
     // constant) is deliberate: it is the set that will actually be scraped.
     observeExternalModeration('generate', 'ok', 0.001);
     const vals = await samples(HIST);
-    const boundaries = [
+    return [
       ...new Set(
         vals
           .filter((v) => v.metricName === `${HIST}_bucket`)
@@ -227,31 +216,55 @@ describe('the bucket SET straddles the EXTERNAL_MODERATION_TIMEOUT_MS deadline',
           .filter((n) => Number.isFinite(n))
       ),
     ].sort((a, b) => a - b);
+  }
+
+  it('puts NO finite boundary on the default deadline, so one timeout mode is not split in two', async () => {
+    const boundaries = await finiteBoundaries();
 
     expect(boundaries.length).toBeGreaterThan(0);
-    // This is the failure the family was designed against: a top finite bucket at or below the cap
-    // drops every capped call into +Inf alongside every pathological one, saturating precisely the
-    // region the metric was added to read.
-    expect(Math.max(...boundaries)).toBeGreaterThan(CAP_SECONDS);
+    expect(
+      boundaries.filter((b) => b === CAP_SECONDS),
+      `a boundary sitting exactly on the ${CAP_SECONDS}s default deadline splits the single ` +
+        'outcome=timeout population across two buckets by a sub-millisecond clock race, so a ' +
+        'dashboard renders one mode as two. Boundaries near the cap are deliberately OFF-ROUND ' +
+        '(4.5, 7.5) because configured deadlines are round millisecond values. This is a ' +
+        'dashboard-readability guard ONLY: it cannot hold for an arbitrary env-tuned deadline, and ' +
+        'nothing about CLASSIFYING a capped call depends on it — that is the outcome label.'
+    ).toEqual([]);
+  });
+
+  it('has a finite boundary ABOVE the deadline, so a capped call is not swallowed by +Inf', async () => {
+    const boundaries = await finiteBoundaries();
+
+    expect(boundaries.length).toBeGreaterThan(0);
+    // 🔴 THE PROPERTY THAT IS SOUND AND STAYS SOUND. Unlike the separate-the-two-populations claim
+    // this file used to make, this one does not depend on any clock: a top finite bucket at or below
+    // the cap drops EVERY capped call into +Inf alongside every pathological one, saturating
+    // precisely the region the metric was added to read, whatever the durations happen to be.
+    expect(
+      Math.max(...boundaries),
+      `the top finite boundary must exceed the ${CAP_SECONDS}s deadline, or every capped call is ` +
+        'swallowed by +Inf together with every pathological one and the tail becomes unreadable'
+    ).toBeGreaterThan(CAP_SECONDS);
     // …and there must be a boundary strictly between the cap and the top, or "capped" and
     // "pathologically over the cap" still share a bucket.
-    expect(boundaries.filter((b) => b > CAP_SECONDS).length).toBeGreaterThanOrEqual(2);
+    expect(
+      boundaries.filter((b) => b > CAP_SECONDS).length,
+      'at least two finite boundaries must sit above the deadline, or a capped call and a ' +
+        'pathologically-over-the-cap call share the last finite bucket'
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it('resolves the healthy sub-second population instead of collapsing it into one bucket', async () => {
-    observeExternalModeration('generate', 'ok', 0.001);
-    const vals = await samples(HIST);
-    const boundaries = [
-      ...new Set(
-        vals
-          .filter((v) => v.metricName === `${HIST}_bucket`)
-          .map((v) => Number(v.labels.le))
-          .filter((n) => Number.isFinite(n))
-      ),
-    ];
+    const boundaries = await finiteBoundaries();
+
     // A single outbound HTTPS POST lives in tens-to-hundreds of ms; apportioning a per-call budget
     // of that size needs boundaries below 100ms, not a first boundary at half a second.
-    expect(boundaries.filter((b) => b <= 0.1).length).toBeGreaterThanOrEqual(3);
+    expect(
+      boundaries.filter((b) => b <= 0.1).length,
+      'at least three boundaries must sit at or below 100ms, or the healthy tens-to-hundreds-of-ms ' +
+        'population collapses into one bucket and the metric cannot apportion a per-call budget'
+    ).toBeGreaterThanOrEqual(3);
   });
 });
 
