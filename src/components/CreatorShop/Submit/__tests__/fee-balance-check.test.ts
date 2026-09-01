@@ -18,9 +18,11 @@ import { describe, expect, it } from 'vitest';
  * their green balance, and is told to buy Buzz they already have.
  *
  * `CreatorShopPackModal` was fixed when packs shipped and carries a comment saying
- * why. `CreatorShopSubmitModal` kept the bare prop, and the pack's own guard could
- * not see it because that guard reads only the pack file. Hence this one, which
- * reads both.
+ * why; `CreatorShopSubmitModal` kept the bare prop, and nothing was watching it.
+ * This file exists for the Submit modal. The pack arm duplicates
+ * `Pack/__tests__/pack-fee-currency.test.ts`, which already covers the pack file
+ * — kept so the invariant has one statement covering every fee button rather than
+ * one per modal, at the cost of a pack regression reddening two files.
  *
  * 🔴 IF YOU ARE HERE TO DELETE THIS: `exactAccountTypes` is deliberate at both call
  * sites. The fee is charged with `fromAccountType: buzzType` and nothing else
