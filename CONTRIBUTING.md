@@ -140,13 +140,19 @@ through otherwise.
 
 Three things to know before you run it with arguments:
 
-- **A narrowed run skips checks 2 and 3. Check 1 always applies.** A file argument,
-  `-t`, `--shard`, `--changed`, `--exclude`, `--dir`, `--root` and `--config` all
-  count as narrowing, because each legitimately changes what gets collected.
+- **Any argument at all skips checks 2 and 3. Check 1 always applies.** Passing
+  *anything* — a filename, `--shard`, even `--max-workers 4` — means what the run
+  should have collected is not knowable from the arguments, so the floor and the file
+  ledger are not asserted. Run with **no arguments** to get all three; that is what CI
+  does. To size a run without giving up the checks, use the environment instead:
+  `VITEST_MAX_WORKERS=4 pnpm test:component`.
+  (This is deliberately not a parser. Deciding which vitest flags consume the next
+  token was tried twice and lost twice — measured against vitest's real option table,
+  a hand-maintained flag list was wrong on 73 options and the shape heuristic that
+  replaced it was wrong on 74. The rule above cannot be wrong about any of them.)
 - **`--outputFile` is refused** (exit 2), in every spelling that would collide with
   the report the gate reads. Run `pnpm exec vitest run --project component` directly
   if you want your own report.
-- Flag values are consumed, so `--max-workers 1` is not mistaken for a filename.
 
 Why it exists: a `vi.mock` factory that throws is resolved inside a Playwright
 route handler that does not catch, so the rejection escapes as an

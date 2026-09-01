@@ -26,129 +26,64 @@ const GATE = resolve(repoRoot, 'scripts/ci/assert-component-suite-ran.mjs');
 const args = process.argv.slice(2);
 
 /**
- * A vitest flag's CANONICAL PATH: leading dashes off, `=value` off, every dot-segment kebab
- * camelCased. `--output-file` and `--outputFile` both give `outputFile`; `--outputFile.json=x`
- * gives `outputFile.json`; `--coverage.enabled` gives `coverage.enabled`.
+ * A vitest flag's CANONICAL PATH: leading dashes off, `=value` off, the FIRST dot-segment kebab
+ * camelCased and later segments left verbatim — which is exactly cac's own
+ * `camelcaseOptionName`, `name.split(".").map((v,i) => i===0 ? camelcase(v) : v).join(".")`.
+ * `--output-file` and `--outputFile` both give `outputFile`; `--outputFile.json=x` gives
+ * `outputFile.json`.
  *
- * 🔴 KEBAB AND CAMEL ARE THE SAME FLAG TO VITEST, so a set that holds one spelling and not the
- * other has a hole in it. cac camelCases every parsed option key before matching
- * (`vitest/dist/chunks/cac.*.js`, `camelcaseOptionName` inside `parse`) — which is exactly why
- * `--max-workers` and `--maxWorkers` both work. Listing spellings by hand got
- * `--max-workers`/`--maxWorkers` right and `--test-timeout`/`--testTimeout` wrong, so the
- * spellings are normalised here instead of enumerated below.
- *
- * 🔴 THE `.subkey` IS KEPT, NOT STRIPPED, AND THAT DISTINCTION IS A FIX. Collapsing
- * `--coverage.enabled` onto `coverage` made every dot-subkey inherit its parent's
- * value-consuming behaviour — and `--coverage` itself is BOOLEAN (`argument: ""` in vitest's
- * `cliOptionsConfig`), so `pnpm test:component --coverage <file>` swallowed the FILE as
- * `--coverage`'s value. The run then scored as a full one, and an 18/18 green single-file run
- * failed naming ~200 files as absent, telling the reader not to narrow the walk. That is the
- * same loud-and-misdirecting shape the `--exclude`/`--dir`/`--root` fix existed to remove,
- * re-introduced by the mechanism that fixed it. Matching on the full PATH means a subkey is
- * value-taking only if it is listed as one.
+ * Kebab and camel are the same flag to vitest, which is why `--max-workers` and `--maxWorkers`
+ * both work — so anything comparing a flag by name has to normalise rather than enumerate
+ * spellings. Used ONLY by `conflictingOutputFile`, which needs to recognise one specific flag.
+ * Nothing here tries to decide whether a flag takes a value; see `narrowingReason` for why.
  */
 export function canonicalFlag(arg) {
   if (!arg.startsWith('-')) return null;
   const stripped = arg.replace(/^--?/, '').split('=')[0];
-  // 🔴 FIRST SEGMENT ONLY, matching cac's own `camelcaseOptionName`, which is
-  // `name.split(".").map((v, i) => (i === 0 ? camelcase(v) : v)).join(".")` — segments after
-  // the first are left VERBATIM. Camel-casing all of them would make this accept a spelling
-  // vitest does not (`--coverage.reports-directory`), so the wrapper and vitest would disagree
-  // about what the next token is.
   const [head, ...rest] = stripped.split('.');
   return [head.replace(/-+([a-zA-Z0-9])/g, (_, c) => c.toUpperCase()), ...rest].join('.');
 }
 
 /**
- * Flags that narrow the run outright, so neither the file ledger nor the floor can mean
- * anything. Each of these fails LOUDLY if omitted, which is why they are named rather than
- * inferred:
- *  - `--shard=1/4` executes about a quarter of 2254, i.e. under the floor, so the gate would
- *    fail a healthy sharded run while telling the reader "Do NOT lower the floor to make this
- *    green". Sharding is the obvious next lever for a 201-file browser suite.
- *  - `--exclude`, `--dir` and `--root` genuinely SHRINK the collected file set, which the
- *    on-disk ledger reports as up to 200 files "absent", asserting the include broke or the
- *    run died. `pnpm test:component --exclude 'src/tests/**'` is a legitimate invocation.
- *  - `--config` can replace the `component` project's `include` outright, which is the
- *    assumption the walk is built on.
- */
-const NARROWING_FLAGS = new Set([
-  'shard',
-  'changed',
-  'exclude',
-  'dir',
-  'root',
-  'r',
-  'config',
-  'c',
-  't',
-  'testNamePattern',
-]);
-
-/**
- * The few flags whose VALUE is itself a path, so path-shape cannot tell it from a filter.
- * Everything else is handled by shape alone — see `narrowingReason`. Kept deliberately tiny:
- * most path-valued vitest flags (`--config`, `--root`, `--dir`, `--exclude`) are narrowing
- * anyway and return before this is consulted.
- */
-const PATH_VALUE_FLAGS = new Set([
-  'outputFile',
-  'coverage.reportsDirectory',
-  'coverage.customProviderModule',
-  'coverage.include',
-  'coverage.exclude',
-]);
-
-/** A positional that looks like a path INTO the repo, i.e. a vitest file filter. */
-function looksLikePath(a) {
-  return a.includes('/') || /\.[cm]?[jt]sx?$/.test(a);
-}
-
-/**
  * WHY this run counts as narrowed, or `null` for a full run.
  *
- * 🔴 SHAPE, NOT A FLAG LIST — because the list cannot be kept right. Two rounds of audit were
- * spent on it: enumerating flag NAMES missed `--test-timeout` next to `--testTimeout`;
- * canonicalising spellings then made `--coverage <file>` swallow the file; and splitting
- * `coverage` into subkeys left 25 value-taking paths (`--retry.count 2`,
- * `--browser.name chromium`, sixteen more `coverage.*`) reading their VALUE as a filename and
- * silently switching both checks off. vitest 4.1.11 has a 164-path option tree; a
- * hand-maintained copy of it is wrong the day it is written.
+ * 🔴 ANY ARGUMENT AT ALL MEANS NARROWED. THIS IS DELIBERATELY NOT A PARSER, AND FIVE ROUNDS OF
+ * AUDIT ARE THE REASON.
  *
- * So the rule is about the ARGUMENT rather than the flag: a positional is a file filter if it
- * looks like a path, or if nothing before it could have been expecting a value. A non-path
- * token straight after a flag is that flag's value, whatever the flag is — which is right for
- * every one of the 73 value-taking options without naming any of them.
+ * The question "does this flag consume the next token?" was attacked twice and lost twice.
+ * Measured against vitest 4.1.11's REAL option table — enumerated by calling `createCLI()` and
+ * reading each cac option's `isBoolean`: 170 long options, 74 boolean, 96 value-taking:
  *
- * 🔴 AND THE DECISION IS RETURNED AS A SENTENCE, not a boolean, so that turning the checks off
- * can never be the QUIET outcome. Whichever way this rule is wrong, the reader is told which
- * token caused it.
+ *   - a hand-maintained list of value-taking flags was wrong on 73 of them (every value-taking
+ *     option), reading a flag's VALUE as a filename — the QUIET direction, both checks silently
+ *     off;
+ *   - replacing it with a shape heuristic ("is the token path-like?") was wrong on 74 (every
+ *     BOOLEAN option), reading a real filter as a value — the LOUD direction, so
+ *     `pnpm test:component --coverage AppNameCrumb` ran one test and then failed it against the
+ *     1240 floor and the on-disk ledger with "the include broke or the run died".
+ *
+ * 73 versus 74. The heuristic did not beat the list; it moved the wrongness off one set of
+ * options and onto the other. That is a mis-posed question, not one needing a better answer, so
+ * it is no longer asked.
+ *
+ * 🔴 WHAT THIS COSTS, STATED PLAINLY: an arg-ful run does not get the floor or the on-disk
+ * ledger, even when the argument was only `--max-workers 4` and the run really was full. That
+ * is affordable for exactly one reason, and it is a measured one rather than an assumption —
+ * `pr-preview-pipeline.yaml` invokes `pnpm run test:component` with NO arguments, so CI is the
+ * `argv.length === 0` path and always gets both checks. What is given up is enforcing a floor
+ * on an ad-hoc local run, which nobody needs.
+ *
+ * 🔴 AND THE ZERO-COLLECTED CHECK IS NOT SKIPPED — not here, not ever. `--narrowed` disables the
+ * floor and the ledger only. The failure this whole change exists for (a run that aborts having
+ * collected nothing) is caught on every invocation, including a single-file one, which is the
+ * cheapest reproduction of it and precisely when someone is debugging it.
  */
 export function narrowingReason(argv) {
-  let pendingFlag = null; // the canonical name of the immediately preceding flag, if any
-  for (const a of argv) {
-    if (a === '--') {
-      pendingFlag = null;
-      continue;
-    }
-    const name = canonicalFlag(a);
-    if (name !== null) {
-      if (NARROWING_FLAGS.has(name)) return `\`${a}\` narrows which tests run`;
-      pendingFlag = a.includes('=') ? null : name;
-      continue;
-    }
-    // A positional. Three ways it is NOT a filter, all of them "it is a flag's value":
-    if (pendingFlag !== null && PATH_VALUE_FLAGS.has(pendingFlag)) {
-      pendingFlag = null;
-      continue;
-    }
-    if (pendingFlag !== null && !looksLikePath(a)) {
-      pendingFlag = null;
-      continue;
-    }
-    return `\`${a}\` was read as a file filter`;
-  }
-  return null;
+  if (argv.length === 0) return null;
+  return (
+    `arguments were passed (${argv.map((a) => `\`${a}\``).join(' ')}), so what this run SHOULD ` +
+    'have collected is not knowable from here'
+  );
 }
 
 /**
@@ -355,9 +290,9 @@ export async function main({
   const reason = narrowingReason(argv);
   if (reason) {
     log(
-      `\ntest:component: NARROWED — ${reason}, so the file ledger and the floor are skipped ` +
-        '(the zero-collected check still applies). If that reading is wrong, the checks you ' +
-        'wanted are not running.'
+      `\ntest:component: NARROWED — ${reason}, so the file ledger and the floor are skipped. ` +
+        'The zero-collected check still applies. Run with NO arguments to get all three — that ' +
+        'is what CI does.'
     );
   }
 
