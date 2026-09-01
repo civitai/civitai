@@ -156,7 +156,14 @@ describe('auto-feature-health-check reads state the producer does not have to be
     // Removal sets status REJECTED and stamps reviewedAt = now(), keeping addedById and the note.
     // Without this filter a moderator clearing stale features — what someone does precisely while
     // the pipeline is dry — moves lastRow to the present and silences the check for good.
-    expect(rowQuery().sql).toMatch(/ci\.status = 'ACCEPTED'::"CollectionItemStatus"/);
+    // The operator is part of the assertion. Without `AND`, mutating it to `OR` matches this regex
+    // just as well while `max(...)` starts ranging over rows outside the collection and attribution
+    // filters — green, silent, and defeating the very thing this test is named for.
+    expect(rowQuery().sql).toMatch(/AND\s+ci\.status = 'ACCEPTED'::"CollectionItemStatus"/);
+    // Asserted as text, not via the binds: `LIKE` -> `NOT LIKE` leaves the bound values identical,
+    // so the ordered bind check below cannot see it, and `lastRow` would silently become the newest
+    // CURATOR row instead. With `$queryRaw` mocked, the emitted SQL is the only observable there is.
+    expect(rowQuery().sql).toMatch(/AND\s+ci\.note LIKE /);
   });
 
   it('derives the threshold from the configured interval rather than a constant', async () => {
@@ -182,7 +189,10 @@ describe('auto-feature-health-check reads state the producer does not have to be
     // Derived from the schema rather than written as 13: the fallback claims to match the cadence
     // the job would itself have run at, and asserting a literal here cannot see the schema default
     // moving out from under it — which is the only way that claim can become false.
-    const schemaDefault = autoFeatureSchema.parse({ collectionId: 1 }).intervalHours;
+    // Per-field, matching the 🔴 in `auto-feature.ts`: parsing the whole schema to read one default
+    // couples this assertion to all thirteen fields and reddens here, blaming the health check, the
+    // moment any of them gains a requirement.
+    const schemaDefault = autoFeatureSchema.shape.intervalHours.parse(undefined);
     expect(result).toMatchObject({ healthy: false, staleAfterHours: schemaDefault * 2 + 1 });
   });
 });
@@ -278,6 +288,12 @@ describe('auto-feature-health-check alerting', () => {
     // keeps running, or stays noisy while the producer is off — and every other assertion in this
     // file passes either way, because the mock ignores its argument.
     expect(mocks.isFlipt).toHaveBeenCalledWith('auto-feature-images');
+
+    // One side only is not enough — the same asymmetry the KeyValue-key test above closes. Gate the
+    // PRODUCER on a different flag and this check goes silent while the job keeps running, or stays
+    // noisy while it is off, with every assertion in this file still green.
+    const producer = readFileSync(resolve(__dirname, '../auto-feature-images.ts'), 'utf-8');
+    expect(producer).toMatch(/isFlipt\(\s*FLIPT_FEATURE_FLAGS\.AUTO_FEATURE_IMAGES\s*\)/);
   });
 
   it('sends the page to the webhook, with the failure in the body', async () => {
@@ -409,7 +425,10 @@ describe('auto-feature-health-check heartbeat parsing', () => {
 });
 
 describe('evaluateAutoFeatureHealth boundary', () => {
-  const base = { staleAfterHours: 13, dryRun: false, collectionId: 107 };
+  // `rowsReadable` is required by AutoFeatureHealth and was missing — nothing catches that, because
+  // tsconfig excludes `__tests__`. Its absence made the record branch unreachable here, so `record`
+  // severity had no boundary test at all.
+  const base = { staleAfterHours: 13, dryRun: false, collectionId: 107, rowsReadable: true };
 
   it('is quiet at the threshold and fires one hour past it', () => {
     const at = evaluateAutoFeatureHealth(
@@ -423,5 +442,22 @@ describe('evaluateAutoFeatureHealth boundary', () => {
 
     expect(at).toHaveLength(0);
     expect(past.map((a) => a.severity)).toEqual(['page']);
+  });
+
+  it('records, and does not page, when only the rows are stale', () => {
+    // The record branch has its own boundary and nothing exercised it: the fixture used to omit
+    // `rowsReadable`, so this arm was unreachable and `record` severity was covered only by the
+    // coarse 40h case elsewhere.
+    const at = evaluateAutoFeatureHealth(
+      { ...base, lastRun: hoursBefore(1), lastRow: hoursBefore(13) },
+      NOW
+    );
+    const past = evaluateAutoFeatureHealth(
+      { ...base, lastRun: hoursBefore(1), lastRow: hoursBefore(14) },
+      NOW
+    );
+
+    expect(at).toHaveLength(0);
+    expect(past.map((a) => a.severity)).toEqual(['record']);
   });
 });
