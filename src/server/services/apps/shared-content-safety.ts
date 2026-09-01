@@ -117,6 +117,7 @@ export async function assertSharedTextSafe(
     // across the seam between two independent fields. Handing it the joined string reintroduces
     // exactly the false positive that separation exists to prevent.
     await throwOnBlockedUserContent([title, body], {
+      isModerator,
       surface: 'appListing',
       onBlocked: (kind) => {
         throw kind === 'link'

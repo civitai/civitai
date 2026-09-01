@@ -534,25 +534,17 @@ export const upsertModelVersion = async ({
    */
   licensingSourceCoercedReason?: LicensingSourceRejection;
 }) => {
-  // Description only, deliberately NOT `data.name`. `requestReviewHandler` and
-  // `declineReviewHandler` replay the STORED row through this function and pass no moderator flag,
-  // so scanning the name would check text the actor never submitted and cannot edit — a version
-  // whose name trips a list could then never be declined or resubmitted, which is worse than the
-  // name going unscanned.
-  //
-  // 🔴 So a version name is scanned NOWHERE. That is a known gap, not a rule: the model name IS
-  // scanned in `upsertModel`, and nothing makes versions different except this replay. Closing it
-  // needs a way to tell a user edit from a replay — do not "fix" it by adding `data.name` here,
-  // which reintroduces the version that cannot be declined.
   // Description only. `data.name` and `data.trainedWords` are both deliberately absent, for one
   // reason: `requestReviewHandler` and `declineReviewHandler` select BOTH and replay the stored row
   // through here with no moderator flag. The link half never exempts moderators and is not behind
   // the enforcement flag, so scanning either field would let a version that trips a list become
   // impossible to decline or resubmit — the guard would block the remedy for the abuse it found.
   //
-  // 🔴 Adding `trainedWords` here looks obviously right and was tried; it is tracked on 868kz1yt1
-  // with the rest. Closing it needs the replay callers to say they are replaying, not a wider
-  // argument list.
+  // So a version's name and trained words are scanned NOWHERE, while a model's name IS scanned in
+  // `upsertModel`. That is a known gap rather than a rule, tracked on 868kz1yt1.
+  //
+  // 🔴 Adding either field here looks obviously right and was tried. Closing it needs the replay
+  // callers to say they are replaying, not a wider argument list.
   await throwOnBlockedUserContent(data.description, {
     isModerator,
     surface: 'modelVersion',

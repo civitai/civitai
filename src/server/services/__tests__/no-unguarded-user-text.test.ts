@@ -157,7 +157,11 @@ function parse(rel: string) {
  * either half of this. `import { throwOnBlockedLinkDomain as check }` is a one-line edit that a
  * grep for the symbol reports as clean.
  */
-function importedNames(source: ts.SourceFile, exported: string): string[] {
+function importedNames(
+  source: ts.SourceFile,
+  exported: string,
+  kind: 'all' | 'named' | 'namespace' = 'all'
+): string[] {
   const names: string[] = [];
   source.forEachChild((node) => {
     if (!ts.isImportDeclaration(node)) return;
@@ -173,10 +177,11 @@ function importedNames(source: ts.SourceFile, exported: string): string[] {
     // listed — for a LISTED file it fails closed, but the sweep below would pass it silently.
     // Recorded as `<ns>.<export>` so `countCalls` can still be told what to look for.
     if (ts.isNamespaceImport(bindings)) {
-      names.push(`${bindings.name.text}.${exported}`);
+      if (kind !== 'named') names.push(`${bindings.name.text}.${exported}`);
       return;
     }
     if (!ts.isNamedImports(bindings)) return;
+    if (kind === 'namespace') return;
 
     for (const element of bindings.elements) {
       const importedName = (element.propertyName ?? element.name).text;
@@ -275,10 +280,21 @@ function sweptFiles(): string[] {
  * accusation carrying a misleading remedy — while the sweep would be firing on the import form
  * rather than on the dodge it exists to catch. Asking whether the call happens answers both.
  */
-function bannedCalls(rel: string): string[] {
+function bannedUsage(rel: string): string[] {
   const source = parse(rel);
-  const names = importedNames(source, BANNED);
-  return [...callsByFunction(source, names).keys()];
+
+  // A NAMED import is enough on its own. The local name it is bound to proves nothing — the dodge
+  // is `const check = throwOnBlockedLinkDomain`, which no call-site name can distinguish from any
+  // other local. Requiring a call here is a strict weakening, and it shipped as one: a probe file
+  // using that alias FAILED this guard at 2bcf16ace4 and PASSED at 557cf2e037.
+  const named = importedNames(source, BANNED, 'named');
+  if (named.length) return named;
+
+  // A NAMESPACE import binds every export, so the import alone says nothing about which one is
+  // used. Only here does the call have to be found — otherwise a file that namespace-imports and
+  // calls only the shared guard is accused of falling back to the weaker one.
+  const namespaced = importedNames(source, BANNED, 'namespace');
+  return callsByFunction(source, namespaced).size > 0 ? namespaced : [];
 }
 
 describe('no unguarded user-authored text', () => {
@@ -308,7 +324,7 @@ describe('no unguarded user-authored text', () => {
 
   it.each(Object.keys(SURFACES))('%s does not fall back to the link-only check', (rel) => {
     expect(
-      bannedCalls(rel),
+      bannedUsage(rel),
       `${rel} imports ${BANNED}. That check reads one of the two lists, over the raw string only — swapping ${REQUIRED} for it is the revert this guard exists to catch`
     ).toEqual([]);
   });
@@ -320,7 +336,7 @@ describe('no unguarded user-authored text', () => {
    */
   it('nothing outside the stated exceptions still uses the link-only check', () => {
     const offenders = sweptFiles().filter(
-      (rel) => !(rel in LINK_ONLY_ALLOWED) && bannedCalls(rel).length > 0
+      (rel) => !(rel in LINK_ONLY_ALLOWED) && bannedUsage(rel).length > 0
     );
 
     expect(
@@ -335,7 +351,7 @@ describe('no unguarded user-authored text', () => {
    */
   it('every stated exception is still real', () => {
     const stale = Object.keys(LINK_ONLY_ALLOWED).filter(
-      (rel) => rel !== 'src/server/services/blocklist.service.ts' && bannedCalls(rel).length === 0
+      (rel) => rel !== 'src/server/services/blocklist.service.ts' && bannedUsage(rel).length === 0
     );
 
     expect(
