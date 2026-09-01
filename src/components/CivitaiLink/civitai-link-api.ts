@@ -80,9 +80,13 @@ export const getCivitaiLinkBaseUrl = (): string | undefined => {
     // Defence in depth on a branch that should be UNREACHABLE: `~/env/client`
     // parses this var with `z.url()` and throws on failure in EVERY environment
     // (the dev schema's `.optional()` widens presence, not format), and zod's
-    // `z.url()` is itself `new URL(...)` — the same constructor as here. So any
-    // value that reaches this line has already been proven to parse, and the
-    // `.civitai.com`→`.civitai.red` substitution cannot invalidate it.
+    // `z.url()` is itself `new URL(...)` — the same constructor as here. The
+    // load-bearing step is that zod validates the TRIMMED string and writes that
+    // trimmed value BACK, so what lands in `env` is exactly the string it
+    // proved; without the write-back a leading NBSP or BOM would pass `z.url()`
+    // and still throw here. The `.civitai.com`→`.civitai.red` substitution
+    // cannot invalidate it either. KEEP THE CATCH: "unreachable" rests on that
+    // zod behaviour, not on anything this file controls.
     // Deliberately no special-case reporting here: an earlier revision logged a
     // "config error" on the theory that dev skips URL validation, which is
     // false, so the log could never fire.
