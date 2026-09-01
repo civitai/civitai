@@ -17,6 +17,8 @@ import {
   Menu,
   TextInput,
 } from '@mantine/core';
+import clsx from 'clsx';
+import classes from './civitai-link.module.scss';
 import { AppRow } from '~/components/CivitaiLink/CivitaiLinkAppRow';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification } from '@mantine/notifications';
@@ -142,9 +144,16 @@ function SupporterHelp() {
 
 function Chip({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
-    <Group gap={6} wrap="nowrap" px={10} py={6} bg="dark.6" style={{ borderRadius: 999 }}>
+    <Group
+      gap={6}
+      wrap="nowrap"
+      px={10}
+      py={6}
+      className={classes.surface}
+      style={{ borderRadius: 999 }}
+    >
       {icon}
-      <Text fz={11} fw={500} c="dark.0">
+      <Text fz={11} fw={500} c="var(--mantine-color-text)">
         {label}
       </Text>
     </Group>
@@ -160,15 +169,20 @@ function LinkPitchArt() {
         bg="var(--mantine-color-blue-light)"
         style={{ borderRadius: 'var(--mantine-radius-md)' }}
       >
-        <IconWorld size={24} className="text-blue-3" />
+        <IconWorld size={24} className={classes.accentIcon} />
       </Center>
       <Group gap={5}>
         {Array.from({ length: 5 }, (_, i) => (
-          <div key={i} className="size-1 rounded-full bg-dark-3" />
+          <div key={i} className={clsx('size-1 rounded-full', classes.dot)} />
         ))}
       </Group>
-      <Center w={52} h={52} bg="dark.6" style={{ borderRadius: 'var(--mantine-radius-md)' }}>
-        <IconDeviceDesktop size={24} className="text-dark-0" />
+      <Center
+        w={52}
+        h={52}
+        className={classes.surface}
+        style={{ borderRadius: 'var(--mantine-radius-md)' }}
+      >
+        <IconDeviceDesktop size={24} className={classes.neutralIcon} />
       </Center>
     </Group>
   );
@@ -187,11 +201,11 @@ function LinkPitch({ children }: { children?: React.ReactNode }) {
       </Text>
       <Group gap={8} justify="center" mt={4}>
         <Chip
-          icon={<IconBoxMultiple size={13} className="text-dark-2" />}
+          icon={<IconBoxMultiple size={13} className={classes.dimIcon} />}
           label="ComfyUI node pack"
         />
         <Chip
-          icon={<IconDeviceDesktop size={13} className="text-dark-2" />}
+          icon={<IconDeviceDesktop size={13} className={classes.dimIcon} />}
           label="Link desktop app"
         />
       </Group>
@@ -478,7 +492,7 @@ function GetReconnected() {
         bg="var(--mantine-color-yellow-light)"
       >
         <IconAlertTriangle size={15} className="mt-0.5 shrink-0 text-yellow-6" />
-        <Text fz={11} c="dark.0" lh={1.5}>
+        <Text fz={11} c="var(--mantine-color-text)" lh={1.5}>
           {`${instance?.name ?? 'This app'} hasn't checked in. Sending is paused until it's back.`}
         </Text>
       </Group>
@@ -611,17 +625,17 @@ function LinkActivity({ id, ...props }: { id: string } & GroupProps) {
       <Center
         w={40}
         h={40}
-        bg="dark.5"
+        className={classes.surfaceRaised}
         style={{ borderRadius: 'var(--mantine-radius-sm)', flexShrink: 0 }}
       >
         {isAdd ? (
-          <IconDownload size={16} className="text-dark-2" />
+          <IconDownload size={16} className={classes.dimIcon} />
         ) : (
-          <IconTrash size={16} className="text-dark-2" />
+          <IconTrash size={16} className={classes.dimIcon} />
         )}
       </Center>
       <Stack style={{ flex: 1, minWidth: 0 }} gap={5}>
-        <Text lineClamp={1} fz="sm" fw={500} c="white">
+        <Text lineClamp={1} fz="sm" fw={500} c="var(--mantine-color-bright)">
           {activity.resource.modelName || (isAdd ? activity.resource.name : undefined)}
         </Text>
         {isAdd && activity.status === 'processing' ? (

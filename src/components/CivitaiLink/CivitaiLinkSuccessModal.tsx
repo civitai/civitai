@@ -45,7 +45,12 @@ export default function CivitaiLinkSuccessModal() {
           </Center>
 
           <Stack gap={6} align="center">
-            <Text fz={24} fw={700} c="white" ta="center">{`You're connected`}</Text>
+            <Text
+              fz={24}
+              fw={700}
+              c="var(--mantine-color-bright)"
+              ta="center"
+            >{`You're connected`}</Text>
             <Text fz="sm" c="dimmed" ta="center" lh={1.5}>
               This machine can now receive models straight from Civitai.
             </Text>

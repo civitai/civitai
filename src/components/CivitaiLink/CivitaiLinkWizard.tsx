@@ -40,7 +40,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { fetchLinkReleases } from '~/utils/fetch-link-releases';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
 import clsx from 'clsx';
-import classes from './CivitaiLinkWizard.module.scss';
+import classes from './civitai-link.module.scss';
 
 const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal'),
@@ -96,8 +96,10 @@ function PathCard({
       onClick={onSelect}
       radius="md"
       p="lg"
-      bg="dark.6"
-      className="flex flex-1 cursor-pointer flex-col justify-start text-left"
+      className={clsx(
+        'flex flex-1 cursor-pointer flex-col justify-start text-left',
+        classes.surface
+      )}
       // Tailwind's preflight zeroes `border` on `button`, which beats Mantine's
       // `withBorder`. Set the border here so the selected state is visible.
       style={{
@@ -112,15 +114,14 @@ function PathCard({
           <Center
             w={38}
             h={38}
+            className={clsx(!selected && classes.surfaceRaised)}
             style={{
               borderRadius: 'var(--mantine-radius-sm)',
-              background: selected
-                ? 'var(--mantine-color-blue-light)'
-                : 'var(--mantine-color-dark-5)',
+              background: selected ? 'var(--mantine-color-blue-light)' : undefined,
               flexShrink: 0,
             }}
           >
-            <Icon size={20} className={selected ? 'text-blue-3' : 'text-dark-0'} />
+            <Icon size={20} className={selected ? classes.accentIcon : classes.neutralIcon} />
           </Center>
           {path.badge && (
             <Badge variant="light" color="blue" radius="xl" tt="none" fz={11} fw={700} px={9}>
@@ -128,7 +129,7 @@ function PathCard({
             </Badge>
           )}
         </Group>
-        <Text fz="md" fw={600} c="white">
+        <Text fz="md" fw={600} c="var(--mantine-color-bright)">
           {path.label}
         </Text>
         <Text fz={13} c="dimmed" lh={1.5}>
@@ -150,13 +151,18 @@ function NumberedStep({
 }) {
   return (
     <Group align="flex-start" wrap="nowrap" gap={12}>
-      <Center w={22} h={22} bg="dark.5" style={{ borderRadius: 999, flexShrink: 0 }}>
-        <Text fz={11} fw={700} c="dark.0">
+      <Center
+        w={22}
+        h={22}
+        className={classes.surfaceRaised}
+        style={{ borderRadius: 999, flexShrink: 0 }}
+      >
+        <Text fz={11} fw={700} c="var(--mantine-color-text)">
           {index}
         </Text>
       </Center>
       <Stack gap={2} pt={2}>
-        <Text fz="sm" fw={500} c="dark.0" lh={1.45}>
+        <Text fz="sm" fw={500} c="var(--mantine-color-text)" lh={1.45}>
           {children}
         </Text>
         {caption && (
@@ -176,10 +182,10 @@ function NoteStrip({ children, icon }: { children: React.ReactNode; icon?: React
       wrap="nowrap"
       gap={10}
       p={12}
-      bg="dark.6"
+      className={classes.surface}
       style={{ borderRadius: 'var(--mantine-radius-sm)' }}
     >
-      {icon ?? <IconInfoCircle size={15} className="mt-0.5 shrink-0 text-dark-2" />}
+      {icon ?? <IconInfoCircle size={15} className={clsx('mt-0.5 shrink-0', classes.dimIcon)} />}
       <Text fz="xs" c="dimmed" lh={1.5}>
         {children}
       </Text>
@@ -258,7 +264,7 @@ export default function CivitaiLinkWizardModal() {
       {active === 0 && (
         <Stack gap="lg">
           <Stack gap={4}>
-            <Text fz={24} fw={700} c="white" lh={1.25}>
+            <Text fz={24} fw={700} c="var(--mantine-color-bright)" lh={1.25}>
               How do you want to connect?
             </Text>
             <Text fz="sm" c="dimmed" lh={1.55}>
@@ -298,7 +304,7 @@ export default function CivitaiLinkWizardModal() {
           {isNodePack ? (
             <>
               <Stack gap={4}>
-                <Text fz={24} fw={700} c="white" lh={1.25}>
+                <Text fz={24} fw={700} c="var(--mantine-color-bright)" lh={1.25}>
                   Install the Civitai node pack
                 </Text>
                 <Text fz="sm" c="dimmed" lh={1.55}>
@@ -348,7 +354,7 @@ export default function CivitaiLinkWizardModal() {
           ) : (
             <>
               <Stack gap={4}>
-                <Text fz={24} fw={700} c="white" lh={1.25}>
+                <Text fz={24} fw={700} c="var(--mantine-color-bright)" lh={1.25}>
                   Install the Link desktop app
                 </Text>
                 <Text fz="sm" c="dimmed" lh={1.55}>
@@ -438,7 +444,7 @@ export default function CivitaiLinkWizardModal() {
       {active === 2 && (
         <Stack gap="lg">
           <Stack gap={4}>
-            <Text fz={24} fw={700} c="white" lh={1.25}>
+            <Text fz={24} fw={700} c="var(--mantine-color-bright)" lh={1.25}>
               Sign in from the app
             </Text>
             <Text fz="sm" c="dimmed" lh={1.55}>
@@ -454,14 +460,13 @@ export default function CivitaiLinkWizardModal() {
               <Center
                 w={66}
                 h={66}
-                bg="dark.5"
-                className="relative"
+                className={clsx('relative', classes.surfaceRaised)}
                 style={{ borderRadius: 999, border: '2px solid var(--mantine-color-blue-6)' }}
               >
                 <IconLink size={26} className="text-blue-6" />
               </Center>
             </div>
-            <Text fz="lg" fw={600} c="white" mt="xs">
+            <Text fz="lg" fw={600} c="var(--mantine-color-bright)" mt="xs">
               Pair with this code
             </Text>
             {instance?.key ? (
@@ -505,7 +510,11 @@ export default function CivitaiLinkWizardModal() {
               if (e.key === 'Enter') commitName();
             }}
           />
-          <NoteStrip icon={<IconAlertTriangle size={15} className="mt-0.5 shrink-0 text-dark-2" />}>
+          <NoteStrip
+            icon={
+              <IconAlertTriangle size={15} className={clsx('mt-0.5 shrink-0', classes.dimIcon)} />
+            }
+          >
             Nothing after a minute? Make sure the app is running, then reload this page.
           </NoteStrip>
           <WizardFooter

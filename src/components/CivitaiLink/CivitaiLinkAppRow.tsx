@@ -1,5 +1,7 @@
 import { Center, Group, Stack, Text } from '@mantine/core';
 import { IconBoxMultiple } from '@tabler/icons-react';
+import clsx from 'clsx';
+import classes from './civitai-link.module.scss';
 
 export function StatusBadge({ connected }: { connected: boolean }) {
   return (
@@ -8,7 +10,8 @@ export function StatusBadge({ connected }: { connected: boolean }) {
       wrap="nowrap"
       px={10}
       py={4}
-      bg={connected ? 'var(--mantine-color-success-light)' : 'dark.5'}
+      className={clsx(!connected && classes.surfaceRaised)}
+      bg={connected ? 'var(--mantine-color-success-light)' : undefined}
       style={{ borderRadius: 999, flexShrink: 0 }}
     >
       <div
@@ -43,20 +46,20 @@ export function AppRow({
       wrap="nowrap"
       px={14}
       py={12}
-      bg="dark.6"
+      className={classes.surface}
       style={{ borderRadius: 'var(--mantine-radius-sm)', cursor: onClick ? 'pointer' : undefined }}
       onClick={onClick}
     >
       <Center
         w={34}
         h={34}
-        bg="dark.5"
+        className={classes.surfaceRaised}
         style={{ borderRadius: 'var(--mantine-radius-sm)', flexShrink: 0 }}
       >
-        <IconBoxMultiple size={18} className="text-dark-0" />
+        <IconBoxMultiple size={18} className={classes.neutralIcon} />
       </Center>
       <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-        <Text fz="sm" fw={500} c="white" lineClamp={1}>
+        <Text fz="sm" fw={500} c="var(--mantine-color-bright)" lineClamp={1}>
           {name}
         </Text>
         {meta && (
