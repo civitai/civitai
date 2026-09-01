@@ -1,4 +1,4 @@
-import { Avatar, Box, Center, Loader, Stack, Text } from '@mantine/core';
+import { Avatar, Box, Center, Skeleton, Stack, Text } from '@mantine/core';
 import { useReducedMotion } from '@mantine/hooks';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
@@ -3541,7 +3541,7 @@ export function PageBlockHost({
   }, [onMessage, send, resolveWildcardPackMutation, reviewMode]);
 
   // ONE sanitized label for the whole launch surface — the avatar initial, the
-  // Loader's accessible name and the visible "Starting …" copy all derive from
+  // loading skeleton's accessible name and the visible "Starting …" copy all derive from
   // this, so they can never disagree about the fallback. Same sanitizer the
   // visible chrome uses (anti-spoof: strips control/bidi/zalgo from a
   // publisher-controlled name); 'app' when nothing legible remains.
@@ -3735,7 +3735,8 @@ export function PageBlockHost({
         // The iframe fills the remaining viewport. While the block is still
         // handshaking (status === 'loading', before BLOCK_READY), the surface
         // would otherwise be blank — the iframe is mounted but visually empty and
-        // non-interactive (pointerEvents:none). Overlay a centered Loader on top
+        // non-interactive (pointerEvents:none). Overlay a centered branded
+        // launch state (app initial + a content-shaped skeleton) on top
         // so the user sees a loading state instead of a blank page. The overlay
         // is gated purely on `status === 'loading'`: it unmounts the instant the
         // status machine leaves loading — on BLOCK_READY (→ ready) AND on every
@@ -3803,7 +3804,7 @@ export function PageBlockHost({
               // Announce the loading state on the REGION, not just the graphic:
               // role="status" + aria-busy mark the overlay container as a live
               // busy region so a screen reader announces "loading" when it
-              // appears (the bare <Loader> below only exposes a labeled graphic).
+              // appears (the skeleton group below only exposes a labeled graphic).
               // Once the block IS ready the overlay is a purely decorative
               // fading-out veil, so it drops the live-region roles and hides from
               // the a11y tree instead of announcing a stale "loading".
@@ -3843,7 +3844,6 @@ export function PageBlockHost({
                       visible copy below so the two can't disagree. */}
                   {(Array.from(launchName)[0] ?? '').toUpperCase()}
                 </Avatar>
-                <Loader size="sm" aria-label={`Loading ${launchName}`} />
                 <Text size="sm" c="dimmed">
                   {/* IN-PROGRESS FEEDBACK. `reloadNonce` counts re-attempts
                       (manual AND automatic — both go through performRetry), so
@@ -3865,6 +3865,49 @@ export function PageBlockHost({
                       only has to say that something is happening again. */}
                   {reloadNonce > 0 ? `Retrying ${launchName}…` : `Starting ${launchName}…`}
                 </Text>
+                {/* CONTENT-SHAPED LOADING STATE, not a spinner.
+                    A spinner says "busy"; a skeleton says "content is coming and
+                    this is roughly its shape", which is what the sidebar slot
+                    already gets for free — `IframeHost` renders BlockFallback's
+                    <Skeleton> while its block is loading. This page was the only
+                    block surface still showing a bare spinner, so the two hosts
+                    disagreed about what a loading app looks like.
+
+                    🔴 Why it lives HERE and not in the block's own index.html:
+                    this overlay is `inset: 0` at `opacity: 1` over the entire
+                    iframe until BLOCK_READY, so ANYTHING a block paints before
+                    then — including a static skeleton shipped in its own HTML —
+                    is behind an opaque veil and never seen. Putting it in the
+                    host is also what makes it free for every app: no per-app
+                    change, no rebuild, no SDK bump.
+
+                    Deliberately GENERIC bars, not a mimic of any one app's
+                    layout: this renders for every app in the store, so a shape
+                    borrowed from one of them would be wrong for the rest.
+
+                    Labelled `role="img"` + aria-label rather than left bare: it
+                    replaces the <Loader> that used to carry the accessible name,
+                    and dropping that would have quietly removed the labelled
+                    graphic from the a11y tree. The container's role="status" /
+                    aria-busy and the visible copy above are unchanged. */}
+                <Box
+                  role="img"
+                  aria-label={`Loading ${launchName}`}
+                  w="100%"
+                  maw={420}
+                  px="md"
+                  data-testid="app-page-loading-skeleton"
+                >
+                  <Stack gap="xs">
+                    {/* `animate={!reduceMotion}` — same call the fallback makes.
+                        Under prefers-reduced-motion the bars stay as static
+                        placeholder boxes instead of shimmering. */}
+                    <Skeleton h={12} w="55%" radius="sm" animate={!reduceMotion} />
+                    <Skeleton h={12} w="35%" radius="sm" animate={!reduceMotion} />
+                    <Skeleton h={32} radius="sm" animate={!reduceMotion} mt={6} />
+                    <Skeleton h={40} radius="sm" animate={!reduceMotion} mt={4} />
+                  </Stack>
+                </Box>
               </Stack>
             </Center>
           )}

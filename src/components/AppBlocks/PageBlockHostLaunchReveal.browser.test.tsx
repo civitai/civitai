@@ -182,6 +182,46 @@ describe('PageBlockHost launch reveal — branded loading', () => {
     await expect.element(page.getByLabelText('Loading Budgeted Generator')).toBeInTheDocument();
   });
 
+  test('the launch state is a content-shaped SKELETON, not a spinner', async () => {
+    // The sidebar slot already gets this for free — `IframeHost` renders
+    // BlockFallback's <Skeleton> while its block loads. This page was the only
+    // block surface still showing a bare spinner, so the two hosts disagreed
+    // about what a loading app looks like. Pinning the shape, not the styling:
+    // a spinner reappearing here is the regression this catches.
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    await expect.element(page.getByTestId('app-page-loading-skeleton')).toBeInTheDocument();
+    const group = page.getByTestId('app-page-loading-skeleton').element();
+    // Mantine's Skeleton is the shared primitive both hosts use; asserting the
+    // rendered elements rather than a class keeps this about "there are
+    // placeholder bars", not about Mantine's internals.
+    const bars = group.querySelectorAll('.mantine-Skeleton-root');
+    expect(bars.length).toBeGreaterThan(1);
+
+    // …and the spinner it replaced is GONE. Without this the test passes with
+    // BOTH rendered, which is the half-done state a partial revert produces.
+    expect(overlayEl().querySelector('.mantine-Loader-root')).toBeNull();
+  });
+
+  test('the skeleton stops shimmering under prefers-reduced-motion', async () => {
+    // Same call the fallback makes (`animate={!reduceMotion}`). An overlay that
+    // keeps shimmering under reduce-motion is a real a11y defect, and it is
+    // invisible to every other test here because they all run with it false.
+    mocks.reduceMotion = true;
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    await expect.element(page.getByTestId('app-page-loading-skeleton')).toBeInTheDocument();
+    const group = page.getByTestId('app-page-loading-skeleton').element();
+    const bars = Array.from(group.querySelectorAll('.mantine-Skeleton-root'));
+    expect(bars.length).toBeGreaterThan(1);
+    // Mantine renders `data-animate="true"` when animating and omits the
+    // attribute entirely when not (confirmed against the rendered DOM, not
+    // assumed — the shimmering case is pinned in the test above).
+    for (const bar of bars) {
+      expect(bar.getAttribute('data-animate')).toBeNull();
+    }
+  });
+
   test('the branded copy runs appName through the chrome sanitizer (control/bidi stripped)', async () => {
     // Same anti-spoof posture as the existing aria-label test: the publisher
     // controls appName, so every appName-derived string on this surface — now
