@@ -20,12 +20,18 @@ export function RouterTransition() {
     // shared with every ordinary progress bar in the app. There is no selector
     // that means "the navigation progress bar" and is not a content hash, and
     // there is exactly ONE call site, so the call site is the honest place.
-    // `...others` on `NavigationProgress` spreads onto the `Progress` root, and
-    // an inline `top` beats the stylesheet's `top: 0` without `!important`.
-    // Collapses to `top: 0px` on any device without a cutout.
+    // 🔴 A `className`, NOT `style` — and that is a type fact, not taste.
+    // `NavigationProgressProps extends ElementProps<'div'>`, and Mantine's
+    // `ElementProps` OMITS `style` (its components normally take it via
+    // `BoxProps`, which this one does not extend). So `style` is a compile
+    // error here even though `...others` would forward it fine at runtime;
+    // `className` is in the type and reaches the `Progress` root the same way.
+    // The Tailwind arbitrary utility is UNLAYERED, so it beats the stylesheet's
+    // `top: 0` in `@layer mantine` whatever the specificity, with no
+    // `!important`. Collapses to `top: 0px` on any device without a cutout.
     <NavigationProgress
       aria-label="Page loading progress"
-      style={{ top: 'var(--safe-area-inset-top)' }}
+      className="top-[var(--safe-area-inset-top)]"
     />
   );
 }
