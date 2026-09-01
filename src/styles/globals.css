@@ -178,6 +178,111 @@ button, input, optgroup, select, textarea {
   padding-top: var(--safe-area-inset-top);
 }
 
+/* ---------------------------------------------------------------------------
+   MANTINE'S OWN VIEWPORT-EDGE SURFACES
+
+   Every `Drawer` and `Modal` in the app is placed by `@mantine/core`'s
+   stylesheet, in node_modules — `position: fixed` lives on ModalBase's `inner`
+   slot, not in any file under `src/`. So no sweep of app source finds them,
+   and `#__next`'s padding above cannot reach them either: they default to
+   `withinPortal`, which mounts them on `<body>`, outside `#__next` entirely.
+
+   The population is 31 Drawers (26 of them `position="bottom"`, incl. two
+   written as `mobile ? 'bottom' : 'right'`) and 17 `fullScreen` Modals, of
+   which exactly ONE paid anything before this block. Forty-one individual
+   edits would be the wrong fix: the 42nd drawer would ship unpaid and nothing
+   would say so. These four rules pay at the library seam instead, so a new
+   drawer is covered on the day it is written.
+
+   🔴 WHY THESE SELECTORS ARE SAFE TO KEY ON. They are not the hashed classes.
+   `MantineProvider` defaults to `withStaticClasses: true` and
+   `classNamesPrefix: "mantine"` (and this app overrides neither), so
+   `getStaticClassNames` emits `mantine-<Component>-<slot>` alongside every
+   hash. That is the same contract the existing "Mantine overrides" block below
+   already relies on (`.mantine-Badge-label`, `.mantine-Accordion-label`, …).
+   `data-full-screen` is likewise a real attribute, set by `ModalRoot` on the
+   root and by `ModalContent` on the content.
+
+   🔴 WHY `@layer mantine` RATHER THAN THE UNLAYERED BLOCK BELOW. This is a
+   FLOOR, not an override. Declared here it beats Mantine's own rules but still
+   loses to `@layer modules` (a component's `.module.scss`) and to a per-call
+   inline `styles` prop — so a surface that has deliberately reasoned about its
+   own geometry keeps control, and `NotificationsDrawer.module.scss`'s
+   `.inner { top: var(--header-height) }` at ≥xs still wins. Moving these to the
+   unlayered block would silently take that away from every such component.
+
+   🔴 WHY `position="bottom"` IS NOT SELECTED FOR, AND WHY IT DOES NOT MATTER.
+   Mantine emits NO `data-position` on a Drawer; position is resolved in JS
+   into inline `--drawer-align` / `--drawer-flex` custom properties, which CSS
+   cannot branch on. The rules below are therefore unconditional — and they are
+   correct unconditionally, because of WHICH box each one touches. See each. */
+@layer mantine {
+  /* Shrinking the fixed box from the top, rather than padding the sheet, is
+     what makes one rule right for every drawer position. `inner` is
+     `position: fixed; top: 0; bottom: 0`, and the content inside it is sized
+     against it: a full-height drawer (`left`/`right`, or `bottom` at
+     `size="100dvh"` as NotificationsDrawer is on a phone) is `height: 100%` of
+     inner, so it now starts below the status bar; a partial-height bottom
+     sheet is `flex-end`-aligned against inner's UNMOVED bottom, so it does not
+     move at all and gains no spurious gap. A selector-based rule could not
+     have told those two cases apart.
+
+     Doubled class for specificity only: Mantine's own `top: 0` sits in this
+     same layer and, because globals.css is imported BEFORE
+     `@mantine/core/styles.layer.css`, would win a source-order tie. Written
+     as a self-contained selector rather than `.mantine-Drawer-root .…-inner`
+     so it does not depend on the two staying nested. */
+  .mantine-Drawer-inner.mantine-Drawer-inner {
+    top: var(--safe-area-inset-top);
+  }
+
+  /* The sheet keeps its full-bleed background and insets its CONTENTS, which
+     is what a bottom sheet should do — the panel still reaches the physical
+     edge, the last option no longer sits in the home-indicator strip.
+
+     Deliberately the `content` slot and not `body`: `body` is where ~20 filter
+     drawers set `padding: 16` as an INLINE style, which beats any stylesheet
+     rule without `!important`, and forcing it with `!important` would flatten
+     the sites that legitimately want something else (`NotificationsDrawer`
+     asks for `padding: 0`). Paying one box further out also composes CORRECTLY
+     with those 16px rather than swallowing them: the design padding then
+     applies inside the safe area, instead of `max(16px, 34px)` leaving the
+     last row flush against the strip with no breathing room at all. */
+  .mantine-Drawer-content {
+    padding-bottom: var(--safe-area-inset-bottom);
+    padding-inline-start: var(--safe-area-inset-left);
+    padding-inline-end: var(--safe-area-inset-right);
+  }
+
+  /* A `fullScreen` Modal's content IS the viewport box — Mantine zeroes the
+     inner offsets and gives content `height: 100dvh` — so all four edges are
+     its own. Under `box-sizing: border-box` this shrinks the content box
+     rather than growing the modal past the screen. */
+  .mantine-Modal-content[data-full-screen] {
+    padding-top: var(--safe-area-inset-top);
+    padding-bottom: var(--safe-area-inset-bottom);
+    padding-inline-start: var(--safe-area-inset-left);
+    padding-inline-end: var(--safe-area-inset-right);
+  }
+
+  /* A NON-fullScreen modal is already held off the edges by Mantine's own
+     `--modal-y-offset: 5dvh` / `--modal-x-offset: 5vw`. That is not an
+     inset-payback problem, it is a "is the existing offset big enough"
+     problem — and on an 844px-tall phone 5dvh is 42px against a 59px Dynamic
+     Island, so it is not. `max()` raises it only where the cutout is larger
+     and leaves every other device on the design value.
+
+     Excluded from the fullScreen rule above by `:not([data-full-screen])`,
+     because there Mantine sets `--modal-inner-y-offset: 0` on purpose and
+     padding here would push a `100dvh` content box off the bottom. */
+  .mantine-Modal-root:not([data-full-screen]) .mantine-Modal-inner {
+    padding-top: max(var(--modal-y-offset), var(--safe-area-inset-top));
+    padding-bottom: max(var(--modal-y-offset), var(--safe-area-inset-bottom));
+    padding-inline-start: max(var(--modal-x-offset), var(--safe-area-inset-left));
+    padding-inline-end: max(var(--modal-x-offset), var(--safe-area-inset-right));
+  }
+}
+
 @layer theme {
   button, a {
     pointer-events: auto;

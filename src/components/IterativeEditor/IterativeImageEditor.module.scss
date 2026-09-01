@@ -514,7 +514,15 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
   align-items: center;
   justify-content: center;
   cursor: zoom-out;
-  padding: 24px;
+  /* `position: fixed; inset: 0` makes this the viewport on all four edges, and
+     it is reached from `/images/iterate` — one of only two routes that pass
+     both `header: null` and `footer: null`, so nothing else on that page is
+     insetting anything. 24px does not clear a 34px home indicator or a ~47px
+     landscape cutout, so `max()` keeps the design padding everywhere else and
+     wins only where the cutout is larger. The scrim itself still covers the
+     whole screen; only the image inside is held out of the strips. */
+  padding: max(24px, var(--safe-area-inset-top)) max(24px, var(--safe-area-inset-right))
+    max(24px, var(--safe-area-inset-bottom)) max(24px, var(--safe-area-inset-left));
 }
 
 .lightboxImage {

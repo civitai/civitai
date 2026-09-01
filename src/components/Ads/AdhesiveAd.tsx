@@ -66,8 +66,11 @@ function AdhesiveAdContent({
         {canClose && onClose && (
           <button
             // `inset-y-0` would stretch the close button through the padding and
-            // put its tap target under the home indicator.
-            className="absolute bottom-[var(--safe-area-inset-bottom)] right-0 top-0 flex w-9 items-center justify-center bg-gray-0/50 dark:bg-dark-6/50"
+            // put its tap target under the home indicator. `right-0` is the same
+            // mistake on the other axis: the bar spans the full width, so in
+            // landscape this 36px-wide button sits entirely inside the ~47px
+            // right cutout strip.
+            className="absolute bottom-[var(--safe-area-inset-bottom)] right-[var(--safe-area-inset-right)] top-0 flex w-9 items-center justify-center bg-gray-0/50 dark:bg-dark-6/50"
             onClick={onClose}
             aria-label="Close ad"
           >

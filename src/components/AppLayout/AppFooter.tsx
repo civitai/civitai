@@ -152,8 +152,13 @@ export function AppFooter() {
       {/* Absolute inside the sticky `<footer>`, so this offset is measured from
           the footer's PADDING box — i.e. from the bottom of the strip the bar
           now pays, not from the bottom of the bar. It has to grow by the same
-          inset or the cluster lands inside the bar. */}
-      <div className="absolute bottom-[calc(var(--footer-height)+var(--safe-area-inset-bottom-unpaid))] right-2 group-[.no-scroll]:right-4">
+          inset or the cluster lands inside the bar.
+
+          `right-2` grows too: in landscape on a notched phone the right inset
+          is ~47px, so an 8px offset puts the Assistant button's tap target
+          inside the cutout strip. Both the base and the `no-scroll` variant
+          are offsets from the same edge, so both pay. */}
+      <div className="absolute bottom-[calc(var(--footer-height)+var(--safe-area-inset-bottom-unpaid))] right-[calc(0.5rem+var(--safe-area-inset-right))] group-[.no-scroll]:right-[calc(1rem+var(--safe-area-inset-right))]">
         <div className="relative mb-2  flex gap-2 group-[.no-scroll]:mb-3">
           <Button
             px="xs"
