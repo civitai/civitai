@@ -35,6 +35,7 @@ import {
   isWorkflowAvailable,
   getEcosystemsForWorkflow,
   getOutputTypeForWorkflow,
+  getStoredOutputScope,
 } from '~/shared/data-graph/generation/config/workflows';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 import {
@@ -336,17 +337,10 @@ function InnerProvider({
       if (!storedWorkflow) return;
 
       // 3D-model workflows pick their (resource-less) ecosystem explicitly via
-      // the inline picker; there's no silent auto-correction to surface. They're
-      // also output-type `model3d`, which the image/video heuristic below
-      // misclassifies as `image` — that reads the wrong stored ecosystem scope,
-      // sees a guaranteed mismatch vs the resolved 3D ecosystem, and (now that
-      // img2model3d exposes multiple ecosystems) spuriously fires the
-      // compatibility modal on panel open. Skip 3D entirely.
+      // the inline picker; there's no silent auto-correction to surface.
       if (workflowConfigByKey.get(storedWorkflow)?.category === 'model3d') return;
 
-      // Determine the output type from the stored workflow key prefix
-      // (can't use getOutputTypeForWorkflow — it falls back to 'image' for unknown workflows)
-      const storedOutputType = storedWorkflow.includes('2vid') ? 'video' : 'image';
+      const storedOutputType = getStoredOutputScope(storedWorkflow);
 
       // Read the stored ecosystem from the output-scoped storage
       const outputStored = localStorage.getItem(`${STORAGE_KEY}.output.${storedOutputType}`);
