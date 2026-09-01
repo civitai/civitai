@@ -135,9 +135,9 @@ model StorageObjectDeleteQueue {   // name TBD
 
 All of these stop touching S3 and rely on the trigger+job instead:
 
-- Images: `deleteImageFromS3` and its callers — [image.service.ts:431](../src/server/services/image.service.ts#L431)
-  (`deleteImageById`), [:488](../src/server/services/image.service.ts#L488) (`deleteImages`),
-  [post.service.ts:1008](../src/server/services/post.service.ts#L1008), the blocked-image path in
+- Images: `deleteImageFromS3` and its callers — `deleteImageById` and `deleteImages` in
+  [image.service.ts](../src/server/services/image.service.ts), the S3 loop at the end of `deletePost` in
+  [post.service.ts](../src/server/services/post.service.ts), the blocked-image path in
   [image-ingestion.ts](../src/server/jobs/image-ingestion.ts).
 - Model files: `deleteModelFileObject(s)` — [model-file.service.ts:172](../src/server/services/model-file.service.ts#L172),
   [:256](../src/server/services/model-file.service.ts#L256),

@@ -579,6 +579,13 @@ export const deleteChallengeSchema = z.object({
   id: z.number(),
 });
 
+// Separate from `deleteChallengeSchema` because that one is also the event-delete input, which has
+// no notion of force and should not accept a parameter it ignores.
+export type ModeratorDeleteChallengeInput = z.infer<typeof moderatorDeleteChallengeSchema>;
+export const moderatorDeleteChallengeSchema = deleteChallengeSchema.extend({
+  force: z.boolean().optional(),
+});
+
 // Moderator: Quick actions
 export type ChallengeQuickActionInput = z.infer<typeof challengeQuickActionSchema>;
 export const challengeQuickActionSchema = z.object({

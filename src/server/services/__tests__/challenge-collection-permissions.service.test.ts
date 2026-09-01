@@ -96,6 +96,23 @@ describe('challenge collection permissions', () => {
     expect(mockDbWrite.collection.delete).not.toHaveBeenCalled();
   });
 
+  it('detaches entrant posts before dropping the collection', async () => {
+    // The generic path every contest collection is actually deleted through; `deleteChallenge` is
+    // the narrow one.
+    mockDbRead.collection.findFirstOrThrow.mockResolvedValue({ id: COLLECTION_ID, mode: 'Contest' });
+
+    await deleteCollectionById({ id: COLLECTION_ID, userId: JUDGE_USER_ID, isModerator: true });
+
+    const [strings, ...values] = mockDbWrite.$executeRaw.mock.calls[0];
+    expect(strings.join('?')).toMatch(
+      /UPDATE "Post" SET "collectionId" = NULL\s+WHERE id IN \(\s*SELECT id FROM "Post" WHERE "collectionId" = \?/
+    );
+    expect(values[0]).toBe(COLLECTION_ID);
+    expect(mockDbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDbWrite.collection.delete.mock.invocationCallOrder[0]
+    );
+  });
+
   it('rejects the creator editing collection settings', async () => {
     await expect(
       upsertCollection({
