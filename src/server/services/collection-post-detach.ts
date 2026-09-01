@@ -17,9 +17,10 @@ async function detachInBatches(nextBatch: () => Promise<number>) {
 }
 
 /**
- * `Post.collectionId` is ON DELETE CASCADE and `Image.postId` is ON DELETE SET NULL, so deleting a
- * collection deletes every post created into it — including every entrant's — and leaves their
- * images alive with no post, still served by the feed's search index.
+ * Kept after the `Post_collectionId_fkey` -> SET NULL migration, not superseded by it. Migrations
+ * here are applied by hand per environment, so this is what protects an environment the migration
+ * has not reached yet; and by emptying the collection first it leaves the DELETE with no rows to
+ * re-parent, instead of the FK doing all ~23k in one statement inside the delete.
  *
  * Must run OUTSIDE the deleting transaction: the largest collection takes ~25s, past Prisma's 5s
  * interactive default. A partial detach is safe to retry — those posts have merely left a

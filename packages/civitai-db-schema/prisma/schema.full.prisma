@@ -1692,7 +1692,11 @@ model Post {
   metadata       Json?
   tosViolation   Boolean       @default(false)
   collectionId   Int?
-  collection     Collection?   @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  // SetNull, not Cascade: this is a back-reference recording where the post was created, not
+  // ownership. `CollectionItem` is the membership join and cascades correctly; cascading here
+  // deleted the posts of everyone who entered a contest or contributed to a collaborative
+  // collection, and `Image.postId` (SET NULL) then left their images alive with no post.
+  collection     Collection?   @relation(fields: [collectionId], references: [id], onDelete: SetNull)
   unlisted       Boolean       @default(false)
   availability   Availability  @default(Public)
   nsfwLevel      Int           @default(0)
