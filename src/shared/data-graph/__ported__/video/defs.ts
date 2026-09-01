@@ -155,12 +155,12 @@ export interface TextMeta {
  * (prompt is required only when no images are attached), so it lives at the
  * call site as an output spread — this definition carries the unconditional part.
  */
-export function textDef(name: string, maxLength = MAX_PROMPT_LENGTH): FieldDef<string> {
+export function textDef(name: string, maxLength = MAX_PROMPT_LENGTH) {
   return {
     input: z.string().optional(),
     output: z.string().trim().max(maxLength, `${name} is too long`),
     default: '',
-  };
+  } satisfies FieldDef<string>;
 }
 
 // --- snippets ------------------------------------------------------------------

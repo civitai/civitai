@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { branch, defFamily, defineGraph } from 'form-graph';
+import { branch, defFamily, defineGraph, parseFixpoint } from 'form-graph';
 import { VID_QUANTITY_ECOSYSTEMS } from '~/shared/constants/generation.constants';
 import {
   getInputTypeForWorkflow,
@@ -154,26 +154,13 @@ export const videoHub = defineGraph<VideoHubExt>()
 export type VideoState = ReturnType<typeof videoHub.resolve>;
 
 /**
- * The video graph's parse entry point: resolve, feed the resolved `resolution`
- * back, and resolve again until the output stops moving. That is data-graph's
- * fixed-point evaluation made explicit — bounded, and it returns as soon as a
- * pass changes nothing rather than iterating on faith.
- *
- * Only Wan 2.1's ecosystem<->resolution coupling needs a second pass today;
- * everything else converges immediately, so the loop costs one extra compare.
+ * Parse entry point: form-graph's `parseFixpoint` supplies the bounded
+ * fixed-point that Wan 2.1's ecosystem<->resolution coupling needs — the
+ * resolved resolution feeds back through ext until a pass changes nothing.
  */
 export function parseVideo(raw: Record<string, unknown>, ctx: GenerationCtx) {
-  let result = videoHub.parse(raw, ctx);
-  let previous = JSON.stringify(result.success ? result.data : result.errors);
-  for (let pass = 0; pass < 4; pass++) {
-    if (!result.success) return result;
-    const resolvedResolution = (result.state as { resolution?: string }).resolution;
-    if (resolvedResolution === undefined) return result;
-    const next = videoHub.parse(raw, { ...ctx, resolvedResolution });
-    const serialized = JSON.stringify(next.success ? next.data : next.errors);
-    if (serialized === previous) return next;
-    result = next;
-    previous = serialized;
-  }
-  return result;
+  return parseFixpoint(videoHub, raw, ctx as VideoHubExt, (state) => {
+    const resolution = (state as { resolution?: string }).resolution;
+    return resolution !== undefined ? { resolvedResolution: resolution } : null;
+  });
 }

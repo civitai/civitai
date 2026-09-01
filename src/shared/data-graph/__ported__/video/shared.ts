@@ -93,7 +93,7 @@ export function makeTextBlock(
       return required
         ? {
             ...base,
-            output: (base.output as z.ZodType<string>).refine((v) => v.trim().length > 0, {
+            output: base.output.refine((v) => v.trim().length > 0, {
               message: 'Prompt is required',
             }),
           }
