@@ -199,11 +199,21 @@ export const ShopItem = ({
             <div className={classes.cardHeader}>
               <div className={clsx(classes.sampleWrapper, outOfStock && classes.dim)}>
                 {/*
-                  Every shop grid renders this card unvirtualised — the largest live section
-                  is 94 items — so without `lazy` the whole section's artwork is fetched on
-                  first paint. Animated cosmetics and covers are the expensive ones: measured
-                  2026-09-01, an animated cover is 1.7-4.6 MB at width=450 against 43.8 KB for
-                  a static one, because resizing an animated WebP barely compresses it.
+                  Shop grids render this card unvirtualised, so every card they paint fetches
+                  its `<img>` up front. Bounded, though — `COSMETIC_SHOP_PAGE_SIZES` pages
+                  /shop and the storefront cosmetics grid at 24, featured sections cap at 6,
+                  and the homepage block slices to `maxItems` (6 over a 4-item section,
+                  measured 2026-09-01). So this is worth ~24 cards at a time, not a whole
+                  94-row section.
+
+                  Animated artwork is what makes even 24 expensive: measured 2026-09-01, an
+                  animated cover is 1.7-4.6 MB at width=450 against 43.8 KB for a static one,
+                  because resizing an animated WebP barely compresses it.
+
+                  Covers the `<img>` branches only. A ContentDecoration paints its artwork as
+                  a CSS `background-image` (TwCosmeticWrapper's `--bgImage`), which no
+                  `loading` attribute can defer — measured 2026-09-01, 0 of the 92 placed
+                  ContentDecoration items carry a `texture.url`, so today that costs nothing.
                 */}
                 {cosmetic ? (
                   <CosmeticSample cosmetic={cosmetic} size="lg" lazy />

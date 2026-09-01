@@ -111,6 +111,9 @@ export const CosmeticSample = ({
             type={backgroundData.type}
             anim={true}
             width={450}
+            // Inert when `type` is video: EdgeMedia spreads imgProps into EdgeImage only, so
+            // EdgeVideo never sees this. The video itself is already preload="none"; its
+            // poster stays eager. 17 of 24 live ProfileBackgrounds are video-typed.
             loading={loading}
             style={{
               objectFit: 'cover',
