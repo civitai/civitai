@@ -64,7 +64,7 @@ export const updateEntityMetric = async ({
   // (v5.0.1871). It wrote the in-app `entitymetric:Image:*` Redis cache, which
   // nothing reads anymore — image metric reads go through the watcher-fed
   // `metrics:*` cache via MetricService (`getImageMetricsObject`,
-  // an internal stats endpoint). Comics no longer use this path either: every comic counter
+  // Comics no longer use this path either: every comic counter
   // (incl. reads) is now Postgres-owned via `ComicProjectMetric`, and the old
   // `entitymetric:Comic:*` Redis cache + its populator were removed.
   //

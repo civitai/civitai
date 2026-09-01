@@ -3,15 +3,10 @@ import type { SessionUser } from '~/types/session';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
-import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
-import {
-  getAllImages,
-  getAllImagesIndex,
-  getImagesFromFeedSearch,
-} from '~/server/services/image.service';
+import { getAllImages, getImagesFromFeedSearch } from '~/server/services/image.service';
 import { imageMetaCache } from '~/server/redis/caches';
-import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import {
   getNsfwLevelDeprecatedReverseMapping,
   NsfwLevelDeprecated,

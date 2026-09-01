@@ -44,7 +44,7 @@ import {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { withSpan, withDetachedSpan } from '~/server/utils/otel-helpers';
+import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import {
   FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
@@ -227,8 +227,7 @@ import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant, isFlipt } from '../flipt/client';
-import { buildFliptContext } from '~/server/services/feature-flags.service';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '../flipt/client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
@@ -2862,15 +2861,11 @@ export const getAllImagesIndex = async (
 
   // Visibility-check the RAW `model3dId` carried on the search docs (indexed
   // from `Post.model3dId`) before it reaches the client — same no-leak bar as
-  // the raw-SQL feed path and `image.get`. Meili docs carry it; raw-SQL rows do
-  // NOT (the field is left `undefined` there → the chip falls back to the
-  // postId lookup, the documented self-healing path). Only the non-null few
-  // are resolved, in ONE batched query (no per-image N+1).
+  // the raw-SQL feed path and `image.get`. Only the non-null few are resolved,
+  // in ONE batched query (no per-image N+1).
   const rawIndexModel3dIds = [
     ...new Set(
       searchResults
-        // model3dId is present on Meili docs (which the
-        // search-result union also covers) — read it defensively.
         .map((sr) => (sr as { model3dId?: number }).model3dId)
         .filter((id): id is number => typeof id === 'number')
     ),
@@ -2900,6 +2895,9 @@ export const getAllImagesIndex = async (
       //  - Meili doc, no link           → null (resolved-absent → chip renders
       //                                   nothing AND does NOT fall back, the
       //                                   durable elimination of getByPostId)
+      // 🔴 That `null` is only correct while ONE backend serves this path. A
+      // second source that does not index `model3dId` needs its own arm
+      // returning `undefined`, or its chips silently stop appearing.
       const rawModel3dId = (sr as { model3dId?: number }).model3dId;
       const model3dId =
         typeof rawModel3dId === 'number'
@@ -3043,10 +3041,6 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   blockedFor?: string[];
   signal?: AbortSignal;
   actor?: string;
-  // Per-request memo of `resolveHubSources`, set by `resolvedHubSources` below.
-  // `undefined` means "not resolved yet"; `null` is a resolved answer meaning the
-  // hub is not the viewer's, which callers must serve as nothing.
-  resolvedHub?: ResolvedHubSources | null;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -3092,17 +3086,6 @@ export function redactSearchInputForLog<T extends Record<string, unknown>>(input
  * request B's drops. A number whose value cannot be attributed to a request is
  * not a measurement, and this counter exists precisely to attribute something.
  */
-type PostFilterStats = {
-  /** Documents held back by the publication test, for any of its reasons. */
-  publicationHolds: number;
-  /**
-   * Distinct ids held back on `sortAt` alone — their own `publishedAt` was
-   * already past. Tracked separately because that is the half that can hide
-   * genuinely published content, and by ID because the same document can be
-   * tested twice (main pass, then the own-excluded merge).
-   */
-  sortAtOnlyIds: Set<number>;
-};
 
 export async function getImagesFromSearch(input: ImageSearchInput) {
   let searchFn = getImagesFromSearchPreFilter;
@@ -3375,22 +3358,17 @@ function hubCreatorScope(sources: ResolvedHubSources | null) {
   return sources.userIds;
 }
 
-// One resolution per request, memoized on the input object itself. A hub feed page
-// rebuilt the whole filter on every pass — several resolutions of the same hub, at 3 SQL
-// statements each. The memo is per-request state, not a cache: nothing outlives the
-// object, so there is no TTL, no invalidation, and no way to serve one viewer's hub
-// resolution to another.
+// The two filter builders are mutually exclusive per request and each calls this
+// once, so nothing here needs memoizing. Kept as a helper so both spell the hubId
+// short-circuit and the argument set identically.
 async function resolvedHubSources(input: ImageSearchInput) {
   if (!input.hubId) return null;
-  if (input.resolvedHub !== undefined) return input.resolvedHub;
-  const sources = await resolveHubSources({
+  return resolveHubSources({
     hubId: input.hubId,
     userId: input.currentUserId,
     isModerator: input.isModerator,
     excludedSources: input.hubExcludedSources,
   });
-  input.resolvedHub = sources;
-  return sources;
 }
 
 type HubFilterArm = { field: MetricsImageFilterableAttribute; ids: number[] };

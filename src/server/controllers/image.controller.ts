@@ -56,8 +56,6 @@ import {
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
-import { buildFliptContext } from '~/server/services/feature-flags.service';
 import type {
   GetEntitiesCoverImage,
   GetImageInput,

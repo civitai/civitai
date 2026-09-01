@@ -11,7 +11,6 @@ import { Flags } from '~/shared/utils/flags';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { SearchRetryBanner } from '~/components/EndOfFeed/SearchRetryBanner';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
-import { FeedbackPrompt } from '~/components/Feedback/FeedbackPrompt';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
 import { ImagesCardMemoized } from '~/components/Image/Infinite/ImagesCard';
@@ -48,7 +47,6 @@ type ImagesInfiniteProps = {
    * add-content modal, challenge submission). Those are index-served too, but a
    * "tell us if the feed looks off" box does not belong above a picker.
    */
-  showFeedbackPrompt?: boolean;
 } & Pick<ImagesContextState, 'collectionId' | 'judgeInfo' | 'judgingCategories'>;
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {
@@ -68,7 +66,6 @@ export function ImagesInfiniteContent({
   showAds,
   showEmptyCta,
   disableStoreFilters = false,
-  showFeedbackPrompt = false,
   ...imageProviderProps
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
@@ -105,7 +102,6 @@ export function ImagesInfiniteContent({
     isError,
     debugRetryActive,
     debugDelayMs,
-    feedSnapshot,
   } = useQueryImages(
     { ...filters, browsingLevel, include: ['cosmetics'] },
     { keepPreviousData: true }
