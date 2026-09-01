@@ -15,11 +15,13 @@ export type CivitaiLinkInstance = {
  *
  * This is a COMPARISON KEY for "would one host's cookie reach the other?", not a
  * cookie Domain, and it deliberately does NOT mirror `cookieDomainForHost`
- * (`~/server/auth/civ-cookie`): that returns undefined (host-only cookie) for
- * `localhost` and bare IPv4, where this returns the last two labels. Safe here
- * because BOTH sides of the comparison go through this same function, so an
- * identical host still compares equal and a host-only cookie is still shared —
- * `localhost` page + `http://localhost:3000` Link host resolves normally.
+ * (`~/server/auth/civ-cookie`). That function returns undefined (host-only
+ * cookie) for `localhost`, for bare IPv4, and for ANY single-label host; this
+ * one returns the last two labels, or the whole thing when there are fewer than
+ * two. Safe here because BOTH sides of the comparison go through this same
+ * function, so an identical host still compares equal and a host-only cookie is
+ * still shared — `localhost` page + `http://localhost:3000` Link host resolves
+ * normally.
  *
  * Known imprecision, deliberately not fixed: two DIFFERENT private IPv4 hosts
  * (`10.0.0.1`, `192.168.0.1`) both key to `0.1` and so compare equal. That is a
@@ -75,11 +77,15 @@ export const getCivitaiLinkBaseUrl = (): string | undefined => {
   try {
     resolvedHost = new URL(resolved).hostname.toLowerCase();
   } catch {
-    // A malformed NEXT_PUBLIC_CIVITAI_LINK is a CONFIG error, but it lands the
-    // caller in the same `undefined` branch as an unreachable domain and so gets
-    // reported as "not available on this domain". Say which it really is — the
-    // env var is only schema-validated as a URL in prod, so dev can hit this.
-    console.error(`Civitai Link: NEXT_PUBLIC_CIVITAI_LINK is not a valid URL (${base})`);
+    // Defence in depth on a branch that should be UNREACHABLE: `~/env/client`
+    // parses this var with `z.url()` and throws on failure in EVERY environment
+    // (the dev schema's `.optional()` widens presence, not format), and zod's
+    // `z.url()` is itself `new URL(...)` — the same constructor as here. So any
+    // value that reaches this line has already been proven to parse, and the
+    // `.civitai.com`→`.civitai.red` substitution cannot invalidate it.
+    // Deliberately no special-case reporting here: an earlier revision logged a
+    // "config error" on the theory that dev skips URL validation, which is
+    // false, so the log could never fire.
     return undefined;
   }
   if (registrableDomain(host) !== registrableDomain(resolvedHost)) return undefined;

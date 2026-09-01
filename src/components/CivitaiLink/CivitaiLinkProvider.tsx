@@ -262,7 +262,11 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
       return { promise: Promise.resolve(undefined), id: payload.id, cancel: () => {} };
     }
 
-    // Setup promise for later resolution
+    // Setup promise for later resolution. Note the `timeout` clock now arms
+    // AFTER the worker is ready rather than before it — `getWorker()` above is
+    // the wait that moved. Unobservable today (`timeout` is not on the context
+    // type and no caller passes one), but it is the semantics whoever first
+    // passes a timeout will get.
     const promise = new Promise((resolve, reject) => {
       commandPromises[payload.id] = { resolve, reject };
       if (timeout <= 0) return;
@@ -273,7 +277,12 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
       }, timeout);
     });
 
-    worker.port.postMessage({ type: 'command', payload });
+    // Deliberately still routed through `workerReq`, not a direct
+    // `worker.port.postMessage(...)`: `postMessage` takes `any`, so posting
+    // directly drops the `WorkerIncomingMessage` check on the one message that
+    // carries every resource add/remove/cancel. `getWorker()` is idempotent, so
+    // the second call here is just the cached promise.
+    await workerReq({ type: 'command', payload });
     const cancel = () => {
       if (!commandPromises[payload.id]) return;
       runCommand({ type: 'activities:cancel', activityId: payload.id });
