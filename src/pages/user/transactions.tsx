@@ -303,7 +303,7 @@ export default function UserTransactions() {
                     {fromUser && fromUser.id !== currentUser?.id && (
                       <Text c="dimmed">
                         <Group gap={4}>
-                          {isDebit ? 'To: ' : 'From: '}
+                          {'From: '}
                           <Text fw="500" span>
                             {fromUser.username}
                           </Text>
@@ -313,7 +313,7 @@ export default function UserTransactions() {
                     {toUser && toUser.id !== currentUser?.id && (
                       <Text c="dimmed">
                         <Group gap={4}>
-                          {isDebit ? 'From: ' : 'To: '}
+                          {'To: '}
                           <Text fw="500" span>
                             {toUser.username}
                           </Text>
