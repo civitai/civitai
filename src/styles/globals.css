@@ -530,7 +530,18 @@ textarea {
    and therefore resolves against the VIEWPORT, escaping the Paper's padding
    box entirely. It pays as padding on its own background, like every other bar
    in this file: the row still reaches the physical edge, the pagination
-   controls move out of the home-indicator strip. */
+   controls move out of the home-indicator strip.
+
+   🔴 WHAT THIS DOES NOT FIX, said rather than implied: MRT pins the table
+   container to `max-height: calc(100vh - top-toolbar-height) !important`, an
+   allowance derived from the UNPADDED Paper, so the last `--safe-area-inset-
+   top` px of that container now falls outside the Paper's `overflow: hidden`
+   box. The container is `overflow: auto`, so every row stays reachable by
+   scrolling — the visible area shrinks by the cutout, which is what paying it
+   means. The container also does not pay the INLINE insets, so in landscape
+   the table body can run under the notch; it scrolls horizontally, so again
+   nothing is unreachable. Both are cosmetic and moderator-only; neither is
+   worth a third `!important` against a `calc(…) !important` we do not own. */
 .mrt-table-paper-fullscreen {
   padding-top: var(--safe-area-inset-top) !important;
   padding-inline-start: var(--safe-area-inset-left) !important;
