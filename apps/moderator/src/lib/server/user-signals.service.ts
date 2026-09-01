@@ -370,12 +370,26 @@ export async function getBlockedPrompts(
   };
 }
 
-/** Generation jobs in the last 24h — the rate-limit signal. Bounded to stay on the sort key. */
+/**
+ * Generation jobs in the last 24h — the rate-limit signal. Bounded to stay on the sort key.
+ *
+ * `orchestration.textToImageJobs` stopped being written on 2025-06-13, so this returned 0 for every
+ * account for over a year — a dead read that looks exactly like an idle account, which is why nobody
+ * noticed. `orchestration.jobs` is the live table and covers every engine, Comfy Cloud's `customComfy`
+ * included, so the count now spans what the account actually ran rather than one legacy job type.
+ *
+ * No `jobType` allowlist is needed: the platform's own work (`ConvertImage`, `MediaHash`, `WDTagging`,
+ * `CivitaiMediaRating`, `chatCompletion`) is booked to `userId = 0`, verified as exactly one distinct
+ * user per type, so scoping to a real account already excludes it.
+ */
 export async function getRecentGenerations(userId: number): Promise<number> {
   const rows = await getClickhouse().$query<{ count: string }>(`
     SELECT count() AS count
-    FROM orchestration.textToImageJobs
+    FROM orchestration.jobs
     WHERE createdAt > now() - INTERVAL 24 HOUR
+      -- The table holds a hundred rows dated centuries ahead, 86 of them on real accounts. Unbounded,
+      -- "since 24 hours ago" swallows every one of them and that account's count never drops.
+      AND createdAt <= now()
       AND userId = ${userId}
   `);
   return Number(rows[0]?.count ?? 0);
