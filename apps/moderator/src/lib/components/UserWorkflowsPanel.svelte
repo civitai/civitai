@@ -3,17 +3,29 @@
   import { browser } from '$app/environment';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import { dateTime, num } from '$lib/format';
-  import type { GeneratedWorkflowPage } from '$lib/server/user-workflows.service';
+  import type { GeneratedWorkflowPage, WorkflowSource } from '$lib/server/user-workflows.service';
 
-  // Collapsed until asked for: the orchestrator round trip costs a page load, and most rulings do not
-  // need it.
+  const SOURCES: { value: WorkflowSource; label: string }[] = [
+    { value: 'onsite', label: 'On-site generator' },
+    { value: 'comfy', label: 'Comfy Cloud' },
+  ];
+
   let {
     userId,
     title = 'Previous generations',
-  }: { userId: number; title?: string } = $props();
+    // Collapsed by default: the orchestrator round trip costs a page load, and most rulings do not need
+    // it. A page whose whole purpose is this panel passes `open`.
+    open = false,
+  }: { userId: number; title?: string; open?: boolean } = $props();
 
-  let shown = $state(false);
+  // `null` while the toggle has not been touched, so a change to `open` still reaches the panel rather
+  // than being frozen at whatever the prop was on the first render.
+  let toggled = $state<boolean | null>(null);
+  const shown = $derived(toggled ?? open);
+
+  let source = $state<WorkflowSource>('onsite');
 
   // A stack of the cursors walked so far, so Previous is an index move rather than a second query the
   // orchestrator cannot answer (its paging is forward-only). `''` is the first page.
@@ -25,16 +37,26 @@
   $effect(() => {
     userId;
     untrack(() => {
+      toggled = null;
+      source = 'onsite';
+    });
+  });
+
+  // A cursor belongs to one tag-filtered query, so a tab switch restarts the walk rather than handing
+  // the new query the other tab's token.
+  $effect(() => {
+    userId;
+    source;
+    untrack(() => {
       cursors = [''];
       index = 0;
-      shown = false;
     });
   });
 
   const page = $derived(
     browser && shown
       ? fetch(
-          `/api/user-workflows/${userId}?take=20${
+          `/api/user-workflows/${userId}?take=20&source=${source}${
             cursors[index] ? `&cursor=${encodeURIComponent(cursors[index])}` : ''
           }`
         ).then(async (r): Promise<GeneratedWorkflowPage> => {
@@ -54,7 +76,7 @@
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
   <div class="flex flex-wrap items-center justify-between gap-2">
     <h3 class="text-sm font-semibold text-white">{title}</h3>
-    <Button size="xs" variant="outline" onclick={() => (shown = !shown)}>
+    <Button size="xs" variant="outline" onclick={() => (toggled = !shown)}>
       {shown ? 'Hide' : 'Show'}
     </Button>
   </div>
@@ -64,13 +86,34 @@
   </p>
 
   {#if shown}
+    <Tabs
+      value={source}
+      onValueChange={(v) => v && (source = v as WorkflowSource)}
+      class="mt-3"
+    >
+      <TabsList>
+        {#each SOURCES as s (s.value)}
+          <TabsTrigger value={s.value}>{s.label}</TabsTrigger>
+        {/each}
+      </TabsList>
+    </Tabs>
+
+    {#if source === 'comfy'}
+      <!-- Comfy Cloud submits no generation params, so the rows below carry media and nothing else.
+           Saying so beats an empty prompt line reading as an account that prompted nothing. -->
+      <p class="mt-2 text-xs text-dark-2">
+        Comfy Cloud sends no prompt or model with a workflow — only its outputs are recorded.
+      </p>
+    {/if}
+
     {#await page}
       <p class="mt-3 text-sm text-dark-2">Loading generations…</p>
     {:then result}
       {#if result}
         {#if result.items.length === 0}
           <p class="mt-3 text-sm text-dark-2">
-            No successful generations on record for this account.
+            No successful generations on record for this account
+            {source === 'comfy' ? ' in Comfy Cloud' : ' on-site'}.
           </p>
         {:else}
           <ul class="mt-3 space-y-3">

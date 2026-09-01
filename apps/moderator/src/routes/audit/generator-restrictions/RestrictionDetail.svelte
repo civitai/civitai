@@ -9,7 +9,7 @@
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import type { RestrictionRow } from '$lib/server/user-restriction.service';
-  import UserWorkflowsPanel from './UserWorkflowsPanel.svelte';
+  import UserWorkflowsPanel from '$lib/components/UserWorkflowsPanel.svelte';
   import TriggerCard from './TriggerCard.svelte';
   import StatusBadge from './StatusBadge.svelte';
 
