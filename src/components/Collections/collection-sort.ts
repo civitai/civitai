@@ -50,9 +50,7 @@ export const resolveImageCollectionSort = ({
   isContest?: boolean;
 }): ImageSort => {
   if (isContest) return ImageSort.Random;
-  return querySort && imageCollectionSortOptions.includes(querySort)
-    ? querySort
-    : ImageSort.Newest;
+  return querySort && imageCollectionSortOptions.includes(querySort) ? querySort : ImageSort.Newest;
 };
 
 export const contestModelSorts = visible(Object.values(ModelSort), ModelSortHidden);
