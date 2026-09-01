@@ -101,6 +101,37 @@ const sourceImageIdsSql = (alias = 'i') => {
 };
 
 /**
+ * The old-standard provenance field, as an int, or NULL when it is not one.
+ *
+ * `sanitizeProvenance` strips `provenance` and `sourceImageIds` from `meta.extra`
+ * but carries `remixOfId` through from client-authored meta unchanged, so a bare
+ * `::int` raises `invalid input syntax for type integer` on any non-numeric value
+ * and 500s whatever read it before a single refusal runs. Junk must read as no
+ * old-standard source.
+ *
+ * Parameterised by alias rather than written twice, for the same reason
+ * `sourceImageIdsSql` is: this guard existed in one of its two readers for a
+ * while, and a hand-written duplicate is exactly the shape that drifts.
+ */
+const remixOfIdSql = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  const raw = Prisma.sql`${t}.meta -> 'extra' ->> 'remixOfId'`;
+  // Digits alone are not enough. '99999999999' matches ^[0-9]+$ and then raises
+  // `value out of range for type integer`, which is the same 500 by a different
+  // route. Ranged through bigint rather than by digit count, so a legitimate id
+  // near the int ceiling is never silently dropped to NULL.
+  //
+  // 🔴 NESTED, not `AND`. Postgres does not guarantee short-circuit evaluation of
+  // AND and may evaluate either side first, so the bigint cast could still run on
+  // non-numeric text. CASE does guarantee its conditions are evaluated in order,
+  // which is the only reason the inner cast is safe.
+  return Prisma.sql`CASE
+    WHEN ${raw} ~ '^[0-9]+$' THEN
+      CASE WHEN (${raw})::bigint <= 2147483647 THEN (${raw})::int END
+  END`;
+};
+
+/**
  * The submitted image, from the primary, with everything the refusals need.
  *
  * `dbWrite` rather than a replica for the same reason `assertCanPlace` uses it:
@@ -112,15 +143,7 @@ async function loadSubmissionImage(imageId: number): Promise<SubmissionImage> {
     SELECT i.id, i."userId", i."nsfwLevel", i.minor, i.poi, i."tosViolation",
            i.ingestion::text AS ingestion, i."needsReview",
            p."publishedAt",
-           -- Guarded cast, for the same reason getRemixSourcesForImage guards
-           -- its own: sanitizeProvenance carries remixOfId through from
-           -- client-authored meta unchanged, so a non-numeric value raises
-           -- invalid input syntax for type integer and 500s the mutation before
-           -- any refusal runs. Junk must read as no old-standard source.
-           CASE
-             WHEN i.meta -> 'extra' ->> 'remixOfId' ~ '^[0-9]+$'
-             THEN (i.meta -> 'extra' ->> 'remixOfId')::int
-           END AS "remixOfId",
+           ${remixOfIdSql()} AS "remixOfId",
            ${sourceImageIdsSql()} AS "sourceImageIds"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
@@ -346,7 +369,7 @@ export async function createRemixGallerySubmission({
       targetId: hostImageId,
       placerId,
       data,
-    });
+    }).catch(asDuplicateRefusal);
 
   // Every rule from here down is the paid path's, which is why none of them is
   // reached above. The floor in particular exists because the price is this
@@ -383,12 +406,6 @@ export async function createRemixGallerySubmission({
       'remix gallery: you already have the maximum submissions waiting with this creator'
     );
 
-  // `assertNotAlreadySubmitted` above is a read, and the insert is five
-  // statements later with no transaction and no lock between them — so two
-  // concurrent submits of the same image both pass it. The unique partial index
-  // `Placement_surface_target_image_live_key` is what actually enforces the rule;
-  // this catch only restores the message the read-side guard would have given,
-  // so a lost race reads as the refusal it is rather than a 500.
   const placement = await dbWrite.placement
     .create({
       data: {
@@ -406,11 +423,7 @@ export async function createRemixGallerySubmission({
       },
       select: { id: true },
     })
-    .catch((error) => {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
-        throw throwBadRequestError('remix gallery: that image is already in this gallery');
-      throw error;
-    });
+    .catch(asDuplicateRefusal);
 
   try {
     await holdPlacementEscrow({
@@ -444,6 +457,23 @@ export async function createRemixGallerySubmission({
  * rotation — and, on decline, the cheapest way to hand the owner repeated fees
  * for the same decision.
  */
+/**
+ * `assertNotAlreadySubmitted` is a READ, and both inserts below it happen later
+ * with nothing holding the gap — so two concurrent submits of the same image both
+ * pass it. The unique partial index `Placement_surface_target_image_live_key` is
+ * what actually enforces the rule. This only restores the message that guard
+ * would have given, so a lost race reads as the refusal it is rather than a 500.
+ *
+ * 🔴 Both writers need it, not just the paid one. The free path inserts through
+ * `createFreePlacement`, whose advisory locks are per placer and per target and
+ * therefore do not re-check THIS rule inside the transaction.
+ */
+function asDuplicateRefusal(error: unknown): never {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
+    throw throwBadRequestError('remix gallery: that image is already in this gallery');
+  throw error;
+}
+
 async function assertNotAlreadySubmitted({
   hostImageId,
   imageId,
@@ -1813,15 +1843,7 @@ export async function getRemixSourcesForImage({
     { userId: number; sourceImageIds: number[] | null; remixOfId: number | null }[]
   >`
     SELECT i."userId",
-           -- Guarded cast. sanitizeProvenance strips provenance and
-           -- sourceImageIds from extra but carries remixOfId through from
-           -- client-authored meta unchanged, so a non-numeric value raises
-           -- invalid input syntax for type integer and 500s the card for that
-           -- image. Junk must read as no old-standard source, not as a crash.
-           CASE
-             WHEN i.meta -> 'extra' ->> 'remixOfId' ~ '^[0-9]+$'
-             THEN (i.meta -> 'extra' ->> 'remixOfId')::int
-           END AS "remixOfId",
+           ${remixOfIdSql()} AS "remixOfId",
            ${sourceImageIdsSql()} AS "sourceImageIds"
     FROM "Image" i
     WHERE i.id = ${imageId}
@@ -2175,12 +2197,17 @@ export async function startReadyRemixSubmissionClocks({ limit = 200 }: { limit?:
     ORDER BY pl.id ASC
     LIMIT ${limit}
   `;
-  if (!actionable.length) return { considered: 0, started: 0, refunded: 0 };
+  if (!actionable.length) return { considered: 0, started: 0, refunded: 0, marked: 0 };
 
   const config = await getPlacementConfig();
   const expiryHours = config.expiryHours(SURFACE);
   let started = 0;
   let refunded = 0;
+  // Counted because a marked row LEAVES the selection set: the WHERE excludes
+  // `needsReview` rows that already carry the marker. `drain` decides whether to
+  // keep going from rows that left, so leaving this out stops the pass after one
+  // batch whenever any row took this branch, which is the common outcome for them.
+  let marked = 0;
 
   for (const row of actionable) {
     // Deleted outright, or a moderation verdict landed. Neither resolves by
@@ -2215,15 +2242,19 @@ export async function startReadyRemixSubmissionClocks({ limit = 200 }: { limit?:
       // every tick because selection is `ORDER BY pl.id ASC`, so one transient
       // failure wedges everything behind it permanently.
       if (!row.data.undeliverable)
-        await markUndeliverable(row.id, row.data).catch((error) =>
-          logToAxiom({
-            name: 'remix-gallery',
-            type: 'error',
-            message: 'marking a review-blocked submission undeliverable failed',
-            placementId: row.id,
-            error: (error as Error).message,
-          }).catch(() => null)
-        );
+        await markUndeliverable(row.id, row.data)
+          .then(() => {
+            marked++;
+          })
+          .catch((error) =>
+            logToAxiom({
+              name: 'remix-gallery',
+              type: 'error',
+              message: 'marking a review-blocked submission undeliverable failed',
+              placementId: row.id,
+              error: (error as Error).message,
+            }).catch(() => null)
+          );
       continue;
     }
 
@@ -2299,7 +2330,7 @@ export async function startReadyRemixSubmissionClocks({ limit = 200 }: { limit?:
     if (claimed.count) started++;
   }
 
-  return { considered: actionable.length, started, refunded };
+  return { considered: actionable.length, started, refunded, marked };
 }
 
 /**

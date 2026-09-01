@@ -74,19 +74,23 @@ export const startReadyRemixSubmissionClocksJob = createJob(
       jobContext,
       () => startReadyRemixSubmissionClocks({ limit: BATCH }),
       // Drains on rows that LEFT the set, not on rows that were selected — the
-      // same rule `sweepDeletedRemixGallerySubmissionsJob` below states. A row
-      // leaves only by having its clock started or its escrow settled; a failed
-      // settle is caught and stepped over, and a review-blocked row is marked
-      // and stepped over. Draining on `considered` re-reads the identical
-      // lowest-100 ids on all ten passes whenever settlement is down, burning
-      // the cap without ever reaching row 101.
-      (result) => result.started + result.refunded
+      // same rule `sweepDeletedRemixGallerySubmissionsJob` below states.
+      //
+      // There are THREE ways out, and all three have to be counted. Clock
+      // started, escrow settled, and MARKED undeliverable: the selection SQL
+      // excludes a needsReview row once it carries the marker, so a marked row
+      // has left the set too. Draining on `considered` re-reads the identical
+      // lowest-100 ids on all ten passes whenever settlement is down; omitting
+      // `marked` fails the other way, stopping after one batch whenever any row
+      // took the review branch, which is the common outcome for those rows.
+      (result) => result.started + result.refunded + result.marked
     );
 
     return {
       considered: sum(runs, (run) => run.considered),
       started: sum(runs, (run) => run.started),
       refunded: sum(runs, (run) => run.refunded),
+      marked: sum(runs, (run) => run.marked),
       hitCap,
     };
   },

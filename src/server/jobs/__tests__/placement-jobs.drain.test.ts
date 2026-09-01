@@ -68,9 +68,10 @@ describe('the readiness job drains on rows that left the set', () => {
       considered: BATCH,
       started: 0,
       refunded: 0,
+      marked: 0,
     });
 
-    await runJob();
+    await expect(runJob()).resolves.toMatchObject({ hitCap: false });
 
     expect(
       startReadyRemixSubmissionClocks,
@@ -81,13 +82,34 @@ describe('the readiness job drains on rows that left the set', () => {
   it('keeps draining while a full batch is actually clearing', async () => {
     // The property the drain exists for, so the fix above cannot be "return 0".
     startReadyRemixSubmissionClocks
-      .mockResolvedValueOnce({ considered: BATCH, started: BATCH, refunded: 0 })
-      .mockResolvedValueOnce({ considered: BATCH, started: BATCH - 1, refunded: 1 })
-      .mockResolvedValue({ considered: 3, started: 3, refunded: 0 });
+      .mockResolvedValueOnce({ considered: BATCH, started: BATCH, refunded: 0, marked: 0 })
+      .mockResolvedValueOnce({ considered: BATCH, started: BATCH - 1, refunded: 1, marked: 0 })
+      .mockResolvedValue({ considered: 3, started: 3, refunded: 0, marked: 0 });
 
     await runJob();
 
     expect(startReadyRemixSubmissionClocks).toHaveBeenCalledTimes(3);
+  });
+
+  /**
+   * 🔴 The third way out, and the one a fix round got wrong. A `needsReview` row
+   * is neither started nor refunded — it is MARKED undeliverable, and the
+   * selection SQL then excludes it. Counting only the first two stops the drain
+   * after one batch whenever any row took that branch, which the service's own
+   * measurement calls the common outcome for those rows. Rows 101+ are reachable
+   * and never reached.
+   */
+  it('keeps draining when a full batch left the set by being marked', async () => {
+    startReadyRemixSubmissionClocks
+      .mockResolvedValueOnce({ considered: BATCH, started: 0, refunded: 0, marked: BATCH })
+      .mockResolvedValue({ considered: 2, started: 0, refunded: 0, marked: 2 });
+
+    await runJob();
+
+    expect(
+      startReadyRemixSubmissionClocks,
+      'a batch cleared entirely by marking must not end the drain'
+    ).toHaveBeenCalledTimes(2);
   });
 
   it('never exceeds the batch cap even if every pass stays full', async () => {
@@ -95,9 +117,12 @@ describe('the readiness job drains on rows that left the set', () => {
       considered: BATCH,
       started: BATCH,
       refunded: 0,
+      marked: 0,
     });
 
-    await runJob();
+    // `hitCap` too: the cap's only operator-visible signal is that flag and the
+    // warning beside it, and both are separately deletable from the call count.
+    await expect(runJob()).resolves.toMatchObject({ hitCap: true });
 
     expect(startReadyRemixSubmissionClocks).toHaveBeenCalledTimes(MAX_BATCHES);
   });

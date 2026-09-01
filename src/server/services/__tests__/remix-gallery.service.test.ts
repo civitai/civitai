@@ -128,10 +128,13 @@ const placementFindMany = forwardTo(
 // the service only ever passes it an array, which the default resolves with `Promise.all`,
 // and nothing reads what it returns.
 const placementCreate = dbMock.dbWrite.placement.create;
-placementCreate.mockImplementation(async () => {
-  calls.push('create');
-  return { id: PLACEMENT };
-});
+/** Re-applied in `beforeEach` after a `mockReset`, which clears implementations. */
+const primePlacementCreate = () =>
+  placementCreate.mockImplementation(async () => {
+    calls.push('create');
+    return { id: PLACEMENT };
+  });
+primePlacementCreate();
 const placementCount = dbMock.dbWrite.placement.count;
 const placementFindFirst = dbMock.dbWrite.placement.findFirst;
 // `declineOutOfBand` re-reads each row by id, so one of the cases below answers per-placement
@@ -254,6 +257,13 @@ function primeQueries({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` is mockClear, which does NOT drain a queued `...Once`. Every
+  // `mockRejectedValueOnce` here is consumed today, but this file just gained a
+  // refusal ABOVE the insert - the day another one lands, an unconsumed rejection
+  // survives into the next test and reddens something unrelated.
+  placementCreate.mockReset();
+  primePlacementCreate();
+  placementUpdate.mockReset();
   calls.length = 0;
   resolvePlacementSpaceFor.mockResolvedValue(openSpace);
   placementCount.mockResolvedValue(0);
@@ -636,6 +646,15 @@ describe('submission refusals', () => {
     primeQueries({ submission: { ...goodSubmission, ingestion: 'Pending' } });
     await expect(submit()).resolves.toBeTruthy();
 
+    // 🔴 The MARKER, not just the acceptance. `pendingReadiness` has two arms and
+    // the unpublished test above pins only the first, so dropping the ingestion
+    // arm leaves a still-scanning image charged with no marker: the readiness
+    // pass selects on `awaitingReadiness = 'true'` and never sees it, the owner's
+    // clock never starts, and the deadline counts down the drafting window. Same
+    // shape as the Blocked bug, one ingestion value over.
+    const [scanning] = placementCreate.mock.calls.at(-1) as [{ data: MixedObject }];
+    expect(scanning.data.data).toMatchObject({ awaitingReadiness: true });
+
     // `needsReview` on a SCANNED image is a verdict, not pending work, so it
     // refuses exactly as before. Waiting cannot turn it into a pass.
     primeQueries({ submission: { ...goodSubmission, needsReview: 'minor' } });
@@ -692,6 +711,9 @@ describe('submission refusals', () => {
     await submit();
 
     const [args] = placementCreate.mock.calls.at(-1) as [{ data: MixedObject }];
+    // Positive control first: `not.toHaveProperty` passes just as happily against
+    // an undefined payload, so this asserts the payload was written at all.
+    expect(args.data.data).toMatchObject({ imageId: REMIX_IMAGE });
     expect(args.data.data).not.toHaveProperty('awaitingReadiness');
   });
 
@@ -726,6 +748,25 @@ describe('submission refusals', () => {
     expect(holdPlacementEscrow).not.toHaveBeenCalled();
   });
 
+  /**
+   * 🔴 The FREE path inserts too, through `createFreePlacement`, and the index is
+   * not scoped to paid rows. Its advisory locks are per placer and per target, so
+   * they do not re-check this rule inside the transaction — the free writer can
+   * lose the same race, and without the mapping the submitter gets a 500 where the
+   * paid writer gets a sentence.
+   */
+  it('maps the free path unique-violation to the same refusal', async () => {
+    primeQueries({ submission: verifiedSubmission });
+    createFreePlacement.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      })
+    );
+
+    await expect(submit({ free: true })).rejects.toThrow(/already in this gallery/i);
+  });
+
   it('looks for the duplicate among live entries as well as pending ones', async () => {
     // A fake that answers regardless of the `where` cannot tell a narrowed
     // status filter from a correct one, so the filter is asserted directly.
@@ -734,7 +775,11 @@ describe('submission refusals', () => {
     // to a picture that is already live.
     await submit();
     const where = placementFindFirst.mock.calls[0][0].where;
-    expect(where.status.in).toEqual(expect.arrayContaining(['pending', 'approved']));
+    // Exact, not a subset. The unique partial index
+    // `Placement_surface_target_image_live_key` is scoped to these two statuses,
+    // so a third status added here alone puts the guard and the database out of
+    // step, and `arrayContaining` would not notice.
+    expect(where.status.in).toEqual(['pending', 'approved']);
     expect(where.data).toEqual({ path: ['imageId'], equals: REMIX_IMAGE });
     expect(where.targetId).toBe(HOST_IMAGE);
   });
@@ -754,6 +799,10 @@ describe('submission refusals', () => {
     expect(sql, 'the remixOfId cast must be guarded by a numeric test').toMatch(
       /remixOfId'\s*~\s*'\^\[0-9\]\+\$'/
     );
+    // Digits alone are not enough: '99999999999' passes that regex and then
+    // raises `value out of range for type integer`, which is the same 500 by a
+    // different route.
+    expect(sql, 'the cast must also be bounded to the int range').toContain('2147483647');
   });
 
   it('refuses past the pending cap for one owner', async () => {
@@ -1688,6 +1737,10 @@ describe('startReadyRemixSubmissionClocks', () => {
     expect(result, 'a needsReview image must not start its clock').toMatchObject({
       started: 0,
       refunded: 0,
+      // It DID leave the selection set though — the WHERE excludes a needsReview
+      // row once it carries the marker — so the job has to report it or the drain
+      // stops a batch early.
+      marked: 1,
     });
     expect(settlePlacement).not.toHaveBeenCalled();
   });
@@ -1727,7 +1780,17 @@ describe('startReadyRemixSubmissionClocks', () => {
 
     expect(result, 'the row behind a failed marker must still start').toMatchObject({
       started: 1,
+      // A failed marker must not be counted as a row that left the set, and must
+      // not be turned into a refund either.
+      refunded: 0,
+      marked: 0,
     });
+    expect(
+      loggingMock.logToAxiom,
+      'a swallowed marker write leaves the log as the only signal'
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringMatching(/undeliverable/i) })
+    );
   });
 
   /**
