@@ -1,4 +1,4 @@
-import { Button, Menu } from '@mantine/core';
+import { Button } from '@mantine/core';
 import { IconThumbUp } from '@tabler/icons-react';
 
 import { useCanReviewListing } from '~/components/Apps/ReviewListingButton';
@@ -6,6 +6,7 @@ import { useOptionalFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ListingDetail } from '~/server/schema/blocks/app-listing-read.schema';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
+import { ChromeSurfaceItem } from './ChromeSurface';
 import { useChromeListingDetail } from './useChromeListingDetail';
 
 /**
@@ -40,6 +41,15 @@ import { useChromeListingDetail } from './useChromeListingDetail';
  * `Menu/MenuItem/MenuItem.mjs` and pinned behaviourally in
  * `ChromeReviewEntry.browser.test.tsx`); the popover action has no such default and
  * closes itself explicitly.
+ *
+ * 🔴 F3 — THE ⋮ ITEM IS A `ChromeSurfaceItem`, NOT A `Menu.Item`, AND THAT IS WHAT
+ * MAKES IT WORK ON THE MOBILE SHELL. Below `sm` the ⋮ overflow is a bottom sheet, and
+ * a `Menu.Item` calls `useMenuContext()` — which THROWS outside a `<Menu>`. So this
+ * item could not simply be re-parented; the primitive renders a `Menu.Item` in a
+ * dropdown and a sheet row otherwise, and supplies the close on the sheet side that
+ * Mantine supplies on the menu side. Nothing about the GATES moved: the same
+ * `hasAppsStoreAccess` + `useCanReviewListing` chain decides whether this renders at
+ * all, in both surfaces.
  */
 
 /**
@@ -125,13 +135,13 @@ function ChromeReviewMenuItemLabelled({
 }) {
   const label = useChromeReviewLabel(appListingId);
   return (
-    <Menu.Item
+    <ChromeSurfaceItem
       leftSection={<IconThumbUp size={14} stroke={1.5} />}
       onClick={() => onOpenReview(appListingId)}
       data-testid="app-block-review-menu-item"
     >
       {label}
-    </Menu.Item>
+    </ChromeSurfaceItem>
   );
 }
 

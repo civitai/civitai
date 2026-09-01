@@ -30,6 +30,30 @@ import {
 // eslint-disable-next-line import/first
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 
+/**
+ * 🔴 THIS FILE PINS A DESKTOP VIEWPORT, AND UNTIL F3 IT PINNED NONE — WHICH MEANT
+ * IT HAD BEEN RUNNING ON A PHONE ALL ALONG WITHOUT SAYING SO.
+ *
+ * `test/component-setup.tsx` sets no viewport, so every test here inherited Vitest's
+ * default of **414×896** (`resolved.browser.viewport.width ??= 414` in
+ * `vitest/dist/chunks/coverage.*.js`). Nothing depended on that while the chrome was
+ * width-blind, so nothing said which width these claims were about. F3 makes the
+ * page-surface chrome swap its whole structure below the `sm` breakpoint (768), and
+ * 414 is below it — so the breadcrumb, the platform-nav trigger and the ⋮ DROPDOWN
+ * that this file asserts are, at the inherited viewport, the mobile shell's back
+ * chevron, folded nav and bottom SHEET instead.
+ *
+ * Every assertion in this file is about the DESKTOP chrome, so it says so now. The
+ * mobile shell has its own suite (`AppBlockChromeMobileShell.browser.test.tsx`) that
+ * names its viewport in the same way. Naming the viewport is the fix; leaving it
+ * unnamed and adjusting the assertions to whatever 414 produces would have quietly
+ * moved this file's subject.
+ */
+const DESKTOP: [number, number] = [1440, 900];
+beforeEach(async () => {
+  await page.viewport(...DESKTOP);
+});
+
 // H2: the host-rendered "trust frame" around an in-model app block must NAME the
 // app (host-side, spoof-proof) — not just carry it in the invisible iframe
 // `title`. `AppBlockChrome` is exported from IframeHost solely so this renders in

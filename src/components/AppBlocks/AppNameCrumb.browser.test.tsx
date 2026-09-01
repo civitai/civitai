@@ -373,7 +373,10 @@ describe("F1's responsive geometry is threaded through the control, not dropped"
     // did" — so the reference node is what the assertion should be against.
     renderWithProviders(
       <>
-        <AppNameCrumb name={APP_NAME} slug={SLUG} maxWidth={240} />
+        {/* `compact={false}` — this pair is about the DESKTOP crumb's width cap. The
+            mobile shell's own geometry is covered in
+            `AppBlockChromeMobileShell.browser.test.tsx`. */}
+        <AppNameCrumb name={APP_NAME} slug={SLUG} maxWidth={240} compact={false} />
         <Text data-testid="ref-cap-240" truncate maw={240} />
         <Text data-testid="ref-cap-560" truncate maw={560} />
       </>
@@ -395,7 +398,9 @@ describe("F1's responsive geometry is threaded through the control, not dropped"
   });
 
   test('an UNCAPPED tier (xl) sets no max-width — the wide bar is not re-capped', async () => {
-    renderWithProviders(<AppNameCrumb name={APP_NAME} slug={SLUG} maxWidth={undefined} />);
+    renderWithProviders(
+      <AppNameCrumb name={APP_NAME} slug={SLUG} maxWidth={undefined} compact={false} />
+    );
     const inner = (await trigger()).querySelector('[data-truncate]') as HTMLElement | null;
     expect(inner).not.toBeNull();
     expect((inner as HTMLElement).style.maxWidth).toBe('');
