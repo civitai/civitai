@@ -747,6 +747,37 @@ describe('AppListingDetailBody', () => {
     expect(rail.textContent).not.toContain('Body');
   });
 
+  // ── Action-card header ─────────────────────────────────────────────────────
+
+  test('🔴 the action card is headed "Use this app"', async () => {
+    const { container, within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await expect.element(within.getByText('My App')).toBeInTheDocument();
+
+    // Anchored to the CARD, never a loose page-wide text match — the CTA button
+    // labels below this header live in the same card and change independently
+    // (`getDetailPrimaryAction`), so a free-floating text query would drift onto
+    // them.
+    const card = container.querySelector(
+      '[data-testid="apps-listing-action-card"]'
+    ) as HTMLElement | null;
+    // Positive control: without the card the header assertion below would be a
+    // claim about nothing, and a `toBeNull`-style guard on an absent element
+    // passes vacuously.
+    expect(card, 'the action card must render in the non-preview arm').not.toBeNull();
+
+    // The header is the card's first section. Pin the WHOLE normalised string,
+    // not a substring — a substring guard is walkable by rewording ("Get this app
+    // to use it" would satisfy `toContain('Use this app')`).
+    const header = card!.firstElementChild as HTMLElement | null;
+    expect(header).not.toBeNull();
+    expect(header!.textContent?.trim()).toBe('Use this app');
+
+    // …and the superseded label is gone from the card entirely. Plain `toContain`
+    // on `textContent`, because `expect.element(...).not.toBeInTheDocument()` is
+    // inert in this repo (#4197) and passes for any string whatsoever.
+    expect(card!.textContent).not.toContain('Get this app');
+  });
+
   // ── Creator card ───────────────────────────────────────────────────────────
 
   test('🔴 the SmartCreatorCard renders in the rail, keyed only on the creator id', async () => {
