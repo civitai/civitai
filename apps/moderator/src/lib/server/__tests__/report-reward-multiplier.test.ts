@@ -269,6 +269,16 @@ describe('rewardReportReporters multiplier', () => {
     expect(row.multiplier).toBe(5);
   });
 
+  it('treats a tier whose PRODUCT overflows as a fallback, not as a clamp', async () => {
+    // Both factors are finite here — the guard is not about a non-finite tier, which is already
+    // rejected where the tier is read. 1e308 x 5 is Infinity, and calling that a clamp writes
+    // `{"multiplierRaw":null}` and alerts on a ceiling nothing came near.
+    const row = await rowFor({ tier: cached(1e308), storedBonus: 50 });
+    expect(row.multiplier).toBe(1);
+    expect(row.transactionDetails).toBe('{}');
+    expect(axiom).not.toHaveBeenCalled();
+  });
+
   it('records a failed write as a findable event rather than swallowing it', async () => {
     // Nothing retries this: reports.service marks the report Actioned BEFORE calling, and its
     // guarded UPDATE matches nothing on a second attempt. The Axiom line is the only trace that
@@ -285,6 +295,10 @@ describe('rewardReportReporters multiplier', () => {
 
     expect(axiom).toHaveBeenCalledTimes(1);
     const payload = axiom.mock.calls[0][0];
+    // `type` is the queryable discriminator, and `extra` spreads AFTER it inside logAxiomError —
+    // so a caller passing `type` in extra unfindables its own event, one key over from the clobber
+    // this test exists for.
+    expect(payload.type).toBe('error');
     expect(payload.event).toBe('reportAccepted rewards write failed');
     expect(payload.reportId).toBe(91234);
     expect(payload.reporterIds).toEqual([42, 7]);

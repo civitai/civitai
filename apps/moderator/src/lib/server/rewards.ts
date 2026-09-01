@@ -27,7 +27,11 @@ export async function rewardReportReporters(input: {
         const base = ineligible.has(reporterId) ? 0 : await getBaseRewardsMultiplier(reporterId);
         const raw = base * globalBonus;
         const multiplier = clampBuzzEventMultiplier(raw);
-        const wasClamped = multiplier !== raw;
+        // Both factors are finite, but their PRODUCT need not be: a cached tier near Number.MAX_VALUE
+        // times the bonus overflows to Infinity, which the clamp turns into the base multiplier.
+        // That is a fallback, not an overflow of the column, and reporting it as a clamp writes
+        // `{"multiplierRaw":null}` as the audit trail and fires an alert naming a ceiling nothing hit.
+        const wasClamped = Number.isFinite(raw) && multiplier !== raw;
         if (wasClamped) clamped.push(raw);
         // toUserId === byUserId (an accepted report rewards its reporter); ip omitted for localhost/empty
         // so the ClickHouse column falls back to its '' default.
