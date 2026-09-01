@@ -349,7 +349,7 @@ export const bitdexAuditStratumFailedCounter = registerCounterWithLabels({
 });
 export const bitdexAuditRunsCounter = registerCounter({
   name: 'bitdex_audit_runs_total',
-  help: 'BitDex consistency audit runs that completed SUCCESSFULLY (success-only; the liveness signal behind a mismatch alert being trustworthy)',
+  help: 'BitDex consistency audit runs that completed — the liveness signal. ⚠️ A run counts here even when ONE stratum failed and was caught, because it did complete for the others: pair it with stratum_failed_total before trusting a per-stratum zero',
 });
 export const bitdexAuditErrorsCounter = registerCounter({
   name: 'bitdex_audit_errors_total',

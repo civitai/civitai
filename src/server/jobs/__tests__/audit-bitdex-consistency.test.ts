@@ -509,6 +509,59 @@ describe('compareStratum — basemodel (868ktxe1r / 868ku8x8k)', () => {
 describe('baseModelDenominators', () => {
   // What makes the mismatch count readable. A run that compared nothing produces the
   // same zero as a run that agreed on everything.
+  // 🔴 The four numbers must be DISTINCT in at least one fixture, or nothing tells them
+  // apart. Round 3 shipped a denominator that equalled its own numerator and round 4
+  // shipped assertions that could not have caught it, because every fixture made
+  // checked = comparedDocs = withCheckpoint = withDocValue = 1. Keep them different.
+  it('produces four distinct numbers, so no two can be swapped undetected', () => {
+    const rows = [
+      // compared, checkpoint + value
+      row({ imageId: 1, expectedBaseModels: ['Pony'] }),
+      // compared, checkpoint only
+      row({ imageId: 2, expectedBaseModels: ['Anima'] }),
+      // compared, value only
+      row({ imageId: 3, expectedBaseModels: [] }),
+      // compared, neither
+      row({ imageId: 4, expectedBaseModels: [] }),
+      // NOT compared — document unpublished
+      row({ imageId: 5, expectedBaseModels: ['Pony'] }),
+      // NOT compared — no document
+      row({ imageId: 6, expectedBaseModels: ['Pony'] }),
+    ];
+    const docs = [
+      { id: 1, isPublished: true, baseModel: 'Pony' },
+      { id: 2, isPublished: true },
+      { id: 3, isPublished: true, baseModel: 'Illustrious' },
+      { id: 4, isPublished: true },
+      { id: 5, isPublished: false, baseModel: 'Pony' },
+    ];
+    expect(baseModelDenominators(rows as never, docs as never)).toEqual({
+      comparedDocs: 4,
+      withCheckpoint: 2,
+      withDocValue: 2,
+    });
+  });
+
+  // …and they must count DIFFERENT documents, not merely land on the same total. Swapping
+  // the two accumulators passes any fixture where the counts happen to be equal.
+  it('does not confuse the checkpoint side with the value side', () => {
+    const rows = [
+      row({ imageId: 1, expectedBaseModels: ['Pony'] }),
+      row({ imageId: 2, expectedBaseModels: ['Pony'] }),
+      row({ imageId: 3, expectedBaseModels: [] }),
+    ];
+    const docs = [
+      { id: 1, isPublished: true },
+      { id: 2, isPublished: true },
+      { id: 3, isPublished: true, baseModel: 'Illustrious' },
+    ];
+    expect(baseModelDenominators(rows as never, docs as never)).toEqual({
+      comparedDocs: 3,
+      withCheckpoint: 2,
+      withDocValue: 1,
+    });
+  });
+
   it('counts only documents that were actually comparable', () => {
     const rows = [
       row({ imageId: 1, expectedBaseModels: ['Pony'] }),
@@ -542,13 +595,12 @@ describe('baseModelDenominators', () => {
   // The `not_checkpoint` arm's zero needs its own denominator: a sample where every
   // compared document carried NO value can only produce `basemodel_missing`, so a zero
   // on the other arm says nothing. One number covering both arms would hide that.
-  // 🔴 The marginals are IDENTICAL to the case above — same comparedDocs, withCheckpoint
-  // and withDocValue — while the comparison work is completely different: there, one
-  // image with both and one with neither, so only the leak arm could fire; here, one
-  // image with a checkpoint and no value and one with a value and no checkpoint, so BOTH
-  // arms could. Marginals cannot tell those apart, which is why the per-arm opportunity
-  // counts exist. If you are tempted to merge these two tests, that is the reason not to.
-  it('counts the two arms with separate opportunity denominators', () => {
+  // The two arms' denominators come apart here: one image has a checkpoint and no value
+  // (only `basemodel_missing` can fire on it) and the other has a value and no checkpoint
+  // (only the value-side arms can). `withCheckpoint` and `withDocValue` are each 1 and
+  // count DIFFERENT documents, which is what makes them denominators rather than one
+  // number wearing two names.
+  it('counts each arm against the documents that arm could fire on', () => {
     const rows = [
       row({ imageId: 1, expectedBaseModels: ['Pony'] }),
       row({ imageId: 2, expectedBaseModels: [] }),
@@ -610,7 +662,10 @@ describe('auditBitdexConsistency job body', () => {
     expect(mockCounters.checked.inc).toHaveBeenCalledWith({ stratum: 'scheduled' }, 1);
     expect(mockCounters.checked.inc).toHaveBeenCalledWith({ stratum: 'published_recent' }, 1);
     expect(mockCounters.checked.inc).toHaveBeenCalledWith({ stratum: 'basemodel' }, 1);
-    expect(mockCounters.mismatch.inc).not.toHaveBeenCalled();
+    // The basemodel kinds are SEEDED with zero every run so the mismatch/opportunity
+    // ratio is not an empty vector on a healthy system, so "no mismatches" is now "no
+    // inc with a nonzero amount", not "never called".
+    for (const [, amount] of mockCounters.mismatch.inc.mock.calls) expect(amount).toBe(0);
     expect(mockCounters.runs.inc).toHaveBeenCalledTimes(1);
     expect(mockHistogram.observe).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
@@ -671,41 +726,60 @@ describe('auditBitdexConsistency job body', () => {
   // `checked_total` counts rows SAMPLED; a row whose document is absent is skipped before
   // any comparison, so without these a stratum that compared nothing emits the same
   // mismatch zero as perfect agreement.
+  // 🔴 Every number in this fixture is DIFFERENT — checked 4, compared 3, withCheckpoint
+  // 2, withDocValue 1 — because the previous version made them all 1, and a fixture where
+  // every quantity is 1 cannot catch a denominator wired to the wrong quantity. Two
+  // mutations that swap them passed 67/67 against that fixture. If you simplify this,
+  // that hole comes back.
   it('emits the compared and per-arm opportunity counts to prometheus', async () => {
     mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.$queryRaw
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
-      .mockResolvedValueOnce(baseModelRows);
-    mockFetchDocs.mockResolvedValueOnce(baseModelDocs);
+      .mockResolvedValueOnce([
+        row({ imageId: 3, postId: 30, expectedBaseModels: ['Pony'] }), // checkpoint, no value
+        row({ imageId: 4, postId: 30, expectedBaseModels: ['Anima'] }), // checkpoint, no value
+        row({ imageId: 5, postId: 30, expectedBaseModels: [] }), // value, no checkpoint
+        row({ imageId: 6, postId: 30, expectedBaseModels: ['Pony'] }), // not compared
+      ]);
+    mockFetchDocs.mockResolvedValueOnce([
+      { id: 3, isPublished: true },
+      { id: 4, isPublished: true },
+      { id: 5, isPublished: true, baseModel: 'Illustrious' },
+      { id: 6, isPublished: false },
+    ]);
 
     await runJob();
 
-    expect(mockCounters.compared.inc).toHaveBeenCalledWith({ stratum: 'basemodel' }, 1);
-    expect(mockCounters.opportunity.inc).toHaveBeenCalledWith(
-      { stratum: 'basemodel', kind: 'basemodel_not_checkpoint' },
-      1
-    );
-    expect(mockCounters.opportunity.inc).toHaveBeenCalledWith(
-      { stratum: 'basemodel', kind: 'basemodel_unfilterable' },
-      1
-    );
-    // 🔴 The missing arm's denominator is compared-docs-WITH-a-checkpoint, not the count
-    // of documents missing a value — that second thing is the arm's own NUMERATOR, and a
-    // previous round shipped it as the denominator, giving a ratio of permanently 1 or
-    // 0/0. This fixture has one compared document that has both a checkpoint and a value,
-    // so the denominator is 1 while the arm cannot fire.
+    expect(mockCounters.checked.inc).toHaveBeenCalledWith({ stratum: 'basemodel' }, 4);
+    expect(mockCounters.compared.inc).toHaveBeenCalledWith({ stratum: 'basemodel' }, 3);
+    // The value-side arms are denominated by documents that CARRY a value: 1 here, which
+    // is neither `checked` (4) nor `comparedDocs` (3) nor `withCheckpoint` (2).
+    for (const kind of ['basemodel_not_checkpoint', 'basemodel_unfilterable'])
+      expect(mockCounters.opportunity.inc).toHaveBeenCalledWith({ stratum: 'basemodel', kind }, 1);
+    // 🔴 The missing arm's denominator is compared-docs-WITH-a-checkpoint — 2 — not the
+    // count of documents missing a value, which is that arm's own NUMERATOR and was
+    // shipped as its denominator in an earlier round, giving a ratio of permanently 1
+    // or 0/0.
     expect(mockCounters.opportunity.inc).toHaveBeenCalledWith(
       { stratum: 'basemodel', kind: 'basemodel_missing' },
-      1
+      2
     );
+
+    // The NUMERATOR is seeded too. Without it, mismatch/opportunity divides an absent
+    // series on a healthy system and renders as "No data" — the same ambiguity the
+    // denominators were added to remove, one level along.
+    for (const kind of ['basemodel_not_checkpoint', 'basemodel_missing', 'basemodel_unfilterable'])
+      expect(mockCounters.mismatch.inc).toHaveBeenCalledWith({ stratum: 'basemodel', kind }, 0);
   });
 
-  // The catch is for ONE failure, not for any failure. `fetchBitdexDocuments` throws on
-  // every error precisely so an unreachable index cannot be mistaken for a clean audit;
-  // swallowing that here would report a BitDex outage as a caught stratum failure on a
-  // run recorded as successful — the silent pass its contract forbids.
-  it('does not swallow a BitDex fetch failure in the baseModel stratum', async () => {
+  // A BitDex outage in stratum C is CAUGHT — the other two strata must keep reporting,
+  // and gating the catch on one error class meant a Postgres error took them down with
+  // it. What the contract forbids is a SILENT pass, and this is not silent: the failure
+  // is labelled at the source, counted as an error, and named on the run. The denominator
+  // still goes out as zero, so the stratum reports "compared nothing" rather than
+  // "found nothing wrong".
+  it('reports a BitDex fetch failure in stratum C loudly, without taking A and B down', async () => {
     mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.$queryRaw
       .mockResolvedValueOnce(scheduledRows)
@@ -716,8 +790,35 @@ describe('auditBitdexConsistency job body', () => {
       .mockResolvedValueOnce([{ id: 2, isPublished: true, sortAt: NOW }])
       .mockRejectedValueOnce(new Error('BitDex documents fetch failed 503'));
 
-    await expect(runJob()).rejects.toThrow(/503/);
-    expect(mockCounters.runs.inc).not.toHaveBeenCalled();
+    const result = (await runJob()) as Record<string, unknown>;
+
+    expect(mockCounters.checked.inc).toHaveBeenCalledWith({ stratum: 'scheduled' }, 1);
+    expect(mockCounters.checked.inc).toHaveBeenCalledWith({ stratum: 'published_recent' }, 1);
+    // Labelled at the source, so it fires for a fetch failure and not only for the
+    // column-shape guard — incrementing it in the caller's catch missed exactly this.
+    expect(mockCounters.stratumFailed.inc).toHaveBeenCalledWith({ stratum: 'basemodel' }, 1);
+    expect(mockCounters.errors.inc).toHaveBeenCalledTimes(1);
+    expect(result.baseModelError).toMatch(/503/);
+    expect(mockCounters.compared.inc).toHaveBeenCalledWith({ stratum: 'basemodel' }, 0);
+  });
+
+  // The same for a Postgres error, which is the LIKELIER spelling of "the sample query is
+  // not delivering the column" and which a class-based catch let through.
+  it('keeps A and B reporting when stratum C hits a database error', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockDbWrite.$queryRaw
+      .mockResolvedValueOnce(scheduledRows)
+      .mockResolvedValueOnce(publishedRows)
+      .mockRejectedValueOnce(new Error('column "expectedBaseModels" does not exist'));
+    mockFetchDocs
+      .mockResolvedValueOnce([{ id: 1, isPublished: false }])
+      .mockResolvedValueOnce([{ id: 2, isPublished: true, sortAt: NOW }]);
+
+    const result = (await runJob()) as Record<string, unknown>;
+
+    expect(mockCounters.checked.inc).toHaveBeenCalledWith({ stratum: 'scheduled' }, 1);
+    expect(mockCounters.stratumFailed.inc).toHaveBeenCalledWith({ stratum: 'basemodel' }, 1);
+    expect(result.baseModelError).toMatch(/does not exist/);
   });
 
   // Split because `basemodel_unfilterable` is expected to be nonzero on a healthy system:

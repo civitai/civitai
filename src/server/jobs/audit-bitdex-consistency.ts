@@ -63,12 +63,17 @@ const DEFAULT_BASEMODEL_SETTLE_SECS = 15 * 60;
 
 // Doc fields the comparison reads.
 //
-// ⚠️ `publishedAt` is requested but is NOT a document field: the metrics indexer
+// ⚠️ `publishedAt` is requested and is NOT a field of the MEILI document: the metrics indexer
 // destructures it out of the record and emits `publishedAtUnix` instead
 // (metrics-images.search-index.ts). So the "publishedAt carries the same fact if the
 // boolean is missing" fallback this list used to claim is inert, and `sortAt` is the
-// only independent witness that a document exists at all. Keep it in every field list
-// for that reason, not for the value.
+// only independent witness that a document exists at all. Keep `sortAt` in every field
+// list for that reason.
+//
+// `publishedAt` stays too: these strata read BITDEX documents, and BitDex's document
+// shape is not in this repo, so the Meili evidence above does not establish that the key
+// is absent there. Requesting a field that does not exist costs nothing; dropping one
+// that does would silently remove a witness.
 const AUDIT_DOC_FIELDS = ['id', 'isPublished', 'publishedAt', 'sortAt'];
 
 // The baseModel stratum needs the publication fields too, because a document that is
@@ -443,6 +448,14 @@ export function compareStratum(
   return mismatches;
 }
 
+// The three kinds this stratum can report. Named so the seeding loop and the reader
+// cannot drift from the `MismatchKind` union.
+const BASEMODEL_KINDS = [
+  'basemodel_not_checkpoint',
+  'basemodel_missing',
+  'basemodel_unfilterable',
+] as const satisfies readonly MismatchKind[];
+
 const countUnfilterable = (m: AuditMismatch[]) =>
   m.filter((x) => x.kind === 'basemodel_unfilterable').length;
 const countAlerting = (m: AuditMismatch[]) =>
@@ -525,6 +538,23 @@ async function auditStratum(
   config: AuditConfig,
   docFields: string[] = AUDIT_DOC_FIELDS
 ): Promise<AuditScopeResult> {
+  try {
+    return await auditStratumInner(stratum, query, config, docFields);
+  } catch (e) {
+    // Labelled at the SOURCE, so it fires however the stratum died — a BitDex outage, a
+    // Postgres error on the sample, or the column-shape guard. Incrementing it only in
+    // the caller's catch missed every failure the caller rethrows, which is most of them.
+    bitdexAuditStratumFailedCounter?.inc({ stratum }, 1);
+    throw e;
+  }
+}
+
+async function auditStratumInner(
+  stratum: AuditStratum,
+  query: Prisma.Sql,
+  config: AuditConfig,
+  docFields: string[] = AUDIT_DOC_FIELDS
+): Promise<AuditScopeResult> {
   // Primary, not the replica: this job's whole output is "PG and BitDex disagree",
   // and replica lag would manufacture exactly that disagreement. 100 sampled rows
   // every 10 minutes is nothing against the primary, and it removes a false-positive
@@ -578,14 +608,22 @@ export async function runAudit(config: AuditConfig): Promise<AuditResult> {
       BASEMODEL_DOC_FIELDS
     );
   } catch (e) {
-    // ONLY the column-shape failure is survivable here. `fetchBitdexDocuments` throws on
-    // any failure precisely so an unreachable index can never be mistaken for a clean
-    // audit (bitdex/client.ts), and a swallowed 401 or timeout would be exactly that —
-    // reported as a caught stratum failure while the run records itself successful.
-    if (!(e instanceof MissingExpectedBaseModelsError)) throw e;
-    baseModelError = e.message;
-    // checked stays 0 and the denominators stay undefined: a failed stratum must not
-    // contribute a zero that reads as agreement.
+    // EVERY stratum-C failure is caught, not just the column-shape one. Gating on that
+    // single class meant the likelier spelling of the same problem — a renamed column, a
+    // missing migration, anything Postgres reports rather than JS — rethrew and discarded
+    // the two already-computed results, silencing the detector for the 2026-08-06
+    // incident class on every run.
+    //
+    // This does NOT recreate the silent pass `fetchBitdexDocuments` throws to prevent.
+    // The failure is loud on three surfaces: `stratum_failed_total{stratum="basemodel"}`
+    // (labelled, incremented at the source), `errors_total`, and `baseModelError` on the
+    // run. What it must never do is report zero mismatches with nothing to say — and it
+    // does not, because a failed stratum still emits its denominators as zero, and a
+    // zero denominator beside a zero numerator is not agreement.
+    baseModelError = e instanceof Error ? e.message : String(e);
+    // checked stays 0 and the denominators are emitted as zero below — deliberately.
+    // An ABSENT series is worse than a zero one: `increase(...) == 0` over a series that
+    // does not exist returns an empty vector, so the alert silently never fires.
     baseModel = { stratum: 'basemodel', checked: 0, mismatches: [] };
   }
   return { scheduled, publishedRecent, baseModel, baseModelError };
@@ -615,10 +653,7 @@ export const auditBitdexConsistency = createJob(
     // cannot say WHICH stratum died — and `runs_total` still ticks, correctly, because
     // the run did complete for the other two. The labelled series is the one an alert
     // can use to notice that this stratum has been dead for a week.
-    if (result.baseModelError) {
-      bitdexAuditErrorsCounter?.inc();
-      bitdexAuditStratumFailedCounter?.inc({ stratum: 'basemodel' }, 1);
-    }
+    if (result.baseModelError) bitdexAuditErrorsCounter?.inc();
 
     const durationSec = (Date.now() - start) / 1000;
 
@@ -653,6 +688,15 @@ export const auditBitdexConsistency = createJob(
             { stratum: scope.stratum, kind },
             scope.withDocValue ?? 0
           );
+
+        // The NUMERATOR needs seeding for the same reason the denominator does. The ratio
+        // these counts exist to enable is mismatch/opportunity, and on a healthy system
+        // the mismatch series has never been inc'd — so the division returns an empty
+        // vector and Grafana renders "No data", which is the ambiguity being fixed rather
+        // than the answer "none". Seeding with zero costs nothing and makes the healthy
+        // case read as zero.
+        for (const kind of BASEMODEL_KINDS)
+          bitdexAuditMismatchCounter?.inc({ stratum: scope.stratum, kind }, 0);
       }
     }
 
