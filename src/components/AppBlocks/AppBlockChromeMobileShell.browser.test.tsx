@@ -346,9 +346,7 @@ describe('AppBlockChrome mobile shell', () => {
     // full-page surface has. See `chromeGeometry.ts`'s `compact` doc comment.
     await page.viewport(...PHONE);
     // No `slotId` → the model surface (the chrome's documented back-compat default).
-    renderWithProviders(
-      <AppBlockChrome blockInstanceId="inst-model-narrow" appName={APP_NAME} />
-    );
+    renderWithProviders(<AppBlockChrome blockInstanceId="inst-model-narrow" appName={APP_NAME} />);
     await expect.element(page.getByTestId('app-block-chrome')).toBeInTheDocument();
     const root = page.getByTestId('app-block-chrome').element() as HTMLElement;
     // Let the ResizeObserver measure and commit, so this is a claim about the SETTLED
@@ -494,7 +492,10 @@ describe('AppBlockChrome mobile shell', () => {
         'disagree about one app'
     ).toContain('90%');
     const storeLink = q('[data-testid="app-block-name-popover-store-link"]');
-    expect(storeLink, 'the "View in App Store" action must survive inside the sheet').not.toBeNull();
+    expect(
+      storeLink,
+      'the "View in App Store" action must survive inside the sheet'
+    ).not.toBeNull();
     expect((storeLink as HTMLElement).getAttribute('href')).toContain(SLUG);
   });
 
@@ -598,7 +599,10 @@ describe('AppBlockChrome mobile shell', () => {
         for (const rule of Array.from(rules)) {
           if (rule instanceof CSSStyleRule) {
             if (rule.selectorText.includes('.mantine-Drawer-content')) found.push(rule.cssText);
-          } else if (typeof CSSLayerBlockRule !== 'undefined' && rule instanceof CSSLayerBlockRule) {
+          } else if (
+            typeof CSSLayerBlockRule !== 'undefined' &&
+            rule instanceof CSSLayerBlockRule
+          ) {
             // `@layer` only orders the cascade — descend. `@media`/`@supports` are
             // conditional and are deliberately not descended into: a rule that only
             // applies under a condition is not evidence of an unconditional payment.
@@ -607,7 +611,9 @@ describe('AppBlockChrome mobile shell', () => {
         }
       };
       walk(sheet.cssRules);
-      const paying = found.filter((t) => /padding-bottom:\s*var\(--safe-area-inset-bottom\)/.test(t));
+      const paying = found.filter((t) =>
+        /padding-bottom:\s*var\(--safe-area-inset-bottom\)/.test(t)
+      );
       if (paying.length === 0) {
         throw new Error(
           'src/styles/globals.css no longer pays `padding-bottom: var(--safe-area-inset-bottom)` ' +

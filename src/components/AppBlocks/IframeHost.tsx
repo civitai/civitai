@@ -13,10 +13,7 @@ import {
   IconShieldLock,
 } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import {
-  getRecentlyOpenedApps,
-  type RecentApp,
-} from '~/components/Apps/recentlyOpenedAppsStore';
+import { getRecentlyOpenedApps, type RecentApp } from '~/components/Apps/recentlyOpenedAppsStore';
 import { selectChromeRecentApps } from '~/components/Apps/recentAppsRail';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
@@ -555,38 +552,38 @@ export function AppBlockChrome({
 
   return (
     <>
-    <Group
-      ref={chromeRef}
-      justify="space-between"
-      gap="xs"
-      px="xs"
-      py={4}
-      // 🔴 `nowrap` STAYS, and it is not the breakpoint-blind bit. The bar's
-      // resting height is a pinned contract — `CHROME_BAR_PX = 35` in
-      // `slotReservation.ts`, the model slot's CLS reservation — and letting this
-      // row wrap to a second line at a narrow width would break it on exactly the
-      // surface the reservation exists for. The fix for narrow widths is that both
-      // flex children can SHRINK (`minWidth: 0` on the growing side, an explicit
-      // `flexShrink: 0` on each icon button so the controls are never crushed),
-      // which keeps the row one line tall at every width. This change is
-      // width-only; `CHROME_BAR_PX` is unchanged.
-      wrap="nowrap"
-      data-testid="app-block-chrome"
-      // Machine-readable resolved tier, so a test can assert the decision rather
-      // than re-deriving it from pixels.
-      data-chrome-tier={geometry.tier}
-      // …and the F3 shell decision, for the same reason. `compact` is NOT derivable
-      // from the tier alone (a model sidebar is `base` and never compact), so a test
-      // that read the tier would be asserting a different question.
-      data-chrome-compact={compact ? 'true' : 'false'}
-      style={{
-        borderBottom: '1px solid var(--mantine-color-default-border)',
-        background: 'var(--mantine-color-default-hover)',
-      }}
-    >
-      {compact ? (
-        <>
-          {/* F3 — the back affordance. It REPLACES the breadcrumb rather than
+      <Group
+        ref={chromeRef}
+        justify="space-between"
+        gap="xs"
+        px="xs"
+        py={4}
+        // 🔴 `nowrap` STAYS, and it is not the breakpoint-blind bit. The bar's
+        // resting height is a pinned contract — `CHROME_BAR_PX = 35` in
+        // `slotReservation.ts`, the model slot's CLS reservation — and letting this
+        // row wrap to a second line at a narrow width would break it on exactly the
+        // surface the reservation exists for. The fix for narrow widths is that both
+        // flex children can SHRINK (`minWidth: 0` on the growing side, an explicit
+        // `flexShrink: 0` on each icon button so the controls are never crushed),
+        // which keeps the row one line tall at every width. This change is
+        // width-only; `CHROME_BAR_PX` is unchanged.
+        wrap="nowrap"
+        data-testid="app-block-chrome"
+        // Machine-readable resolved tier, so a test can assert the decision rather
+        // than re-deriving it from pixels.
+        data-chrome-tier={geometry.tier}
+        // …and the F3 shell decision, for the same reason. `compact` is NOT derivable
+        // from the tier alone (a model sidebar is `base` and never compact), so a test
+        // that read the tier would be asserting a different question.
+        data-chrome-compact={compact ? 'true' : 'false'}
+        style={{
+          borderBottom: '1px solid var(--mantine-color-default-border)',
+          background: 'var(--mantine-color-default-hover)',
+        }}
+      >
+        {compact ? (
+          <>
+            {/* F3 — the back affordance. It REPLACES the breadcrumb rather than
               shrinking it: a two-crumb trail costs ~90px of a 360px bar to say one
               thing, and the thing it says ("up to the Marketplace") is exactly what a
               back chevron says in a third of the space. It is a real anchor
@@ -597,19 +594,19 @@ export function AppBlockChrome({
               `ActionIcon size="sm"` is not a style choice here: it is what keeps the
               row at its pinned 31px resting height (`CHROME_BAR_PX`), the same as the
               icon buttons the desktop bar has always used. */}
-          <ActionIcon
-            component={Link}
-            href="/apps"
-            variant="subtle"
-            color="gray"
-            size="sm"
-            aria-label="Back to Marketplace"
-            data-testid="app-block-back"
-            style={{ flexShrink: 0 }}
-          >
-            <IconChevronLeft size={16} stroke={1.5} />
-          </ActionIcon>
-          {/* The centered app name. `flex: 1 1 auto` between two 22px icon buttons is
+            <ActionIcon
+              component={Link}
+              href="/apps"
+              variant="subtle"
+              color="gray"
+              size="sm"
+              aria-label="Back to Marketplace"
+              data-testid="app-block-back"
+              style={{ flexShrink: 0 }}
+            >
+              <IconChevronLeft size={16} stroke={1.5} />
+            </ActionIcon>
+            {/* The centered app name. `flex: 1 1 auto` between two 22px icon buttons is
               what centers it, and `minWidth: 0` is what lets the name truncate rather
               than push a control off the row.
 
@@ -618,37 +615,37 @@ export function AppBlockChrome({
               surface (the nav folded into ⋮), and it was the only thing carrying the
               "App" accessible name — losing it would have quietly removed the
               spoof-proof signal this whole bar exists for. */}
-          <Group gap={6} wrap="nowrap" justify="center" style={{ minWidth: 0, flex: '1 1 auto' }}>
-            <IconApps
-              size={14}
-              stroke={1.5}
-              role="img"
-              aria-label="App"
-              style={{ flexShrink: 0 }}
-            />
-            <AppNameCrumb
-              name={label}
-              slug={slug}
-              maxWidth={geometry.nameMaxWidth}
-              onOpenReview={setReviewListingId}
-              compact
-            />
-          </Group>
-        </>
-      ) : (
-        <ChromeDesktopLeadingGroup
-          geometry={geometry}
-          platformNavMenu={platformNavMenu}
-          platformNavItems={platformNavItems}
-          iconProvenance={iconProvenance}
-          showBadgeName={showBadgeName}
-          label={label}
-          isPage={isPage}
-          slug={slug}
-          onOpenReview={setReviewListingId}
-        />
-      )}
-      {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
+            <Group gap={6} wrap="nowrap" justify="center" style={{ minWidth: 0, flex: '1 1 auto' }}>
+              <IconApps
+                size={14}
+                stroke={1.5}
+                role="img"
+                aria-label="App"
+                style={{ flexShrink: 0 }}
+              />
+              <AppNameCrumb
+                name={label}
+                slug={slug}
+                maxWidth={geometry.nameMaxWidth}
+                onOpenReview={setReviewListingId}
+                compact
+              />
+            </Group>
+          </>
+        ) : (
+          <ChromeDesktopLeadingGroup
+            geometry={geometry}
+            platformNavMenu={platformNavMenu}
+            platformNavItems={platformNavItems}
+            iconProvenance={iconProvenance}
+            showBadgeName={showBadgeName}
+            label={label}
+            isPage={isPage}
+            slug={slug}
+            onOpenReview={setReviewListingId}
+          />
+        )}
+        {/* The ⋮ overflow. On a desktop-width bar it is the same dropdown it always
           was. Below `sm` it becomes a bottom sheet AND absorbs the platform nav,
           because the mobile bar has no second trigger to hang that behind — the
           operator's call, and the reason `platformNavItems` is authored as a fragment
@@ -658,52 +655,52 @@ export function AppBlockChrome({
           meant), then the platform destinations. The back chevron already covers the
           most common of those, so the folded-in nav is the secondary half of the
           sheet, not its headline. */}
-      <ChromeSurface
-        compact={compact}
-        kind="menu"
-        control={overflowMenu}
-        title="App menu"
-        width={180}
-        position="bottom-end"
-        dropdownTestId="app-block-menu-dropdown"
-        target={
-          /* `data-testid` alongside the accessible name: the sibling controls in
+        <ChromeSurface
+          compact={compact}
+          kind="menu"
+          control={overflowMenu}
+          title="App menu"
+          width={180}
+          position="bottom-end"
+          dropdownTestId="app-block-menu-dropdown"
+          target={
+            /* `data-testid` alongside the accessible name: the sibling controls in
              this chrome (`app-block-back`, `app-block-name`, `app-block-breadcrumb*`)
              are all addressable that way, and a test reaching this trigger by
              accessible name alone breaks on a copy change that is not a behaviour
              change. */
-          <ActionIcon
-            variant="subtle"
-            color="gray"
-            size="sm"
-            aria-label="App menu"
-            data-testid="app-block-menu-trigger"
-            // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
-            // Without this the ⋯ trigger is a shrinkable flex item and a long name
-            // at a narrow width can squeeze it below its resting `ActionIcon
-            // size="sm"` (22px in @mantine/core 7.17.8); its sibling on the left
-            // has carried `flexShrink: 0` all along.
-            style={{ flexShrink: 0 }}
-          >
-            <IconDots size={16} stroke={1.5} />
-          </ActionIcon>
-        }
-      >
-        {appMenuItems}
-        {compact && platformNavItems}
-      </ChromeSurface>
-    </Group>
-    {/* Per-app transparency drawer (Part B). Rendered only when the caller
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              aria-label="App menu"
+              data-testid="app-block-menu-trigger"
+              // The row is `wrap="nowrap"` (it must stay one line — CHROME_BAR_PX).
+              // Without this the ⋯ trigger is a shrinkable flex item and a long name
+              // at a narrow width can squeeze it below its resting `ActionIcon
+              // size="sm"` (22px in @mantine/core 7.17.8); its sibling on the left
+              // has carried `flexShrink: 0` all along.
+              style={{ flexShrink: 0 }}
+            >
+              <IconDots size={16} stroke={1.5} />
+            </ActionIcon>
+          }
+        >
+          {appMenuItems}
+          {compact && platformNavItems}
+        </ChromeSurface>
+      </Group>
+      {/* Per-app transparency drawer (Part B). Rendered only when the caller
         threaded an appBlockId; the body's queries fire only once opened. */}
-    {appBlockId && (
-      <AppPermissionsActivityDrawer
-        appBlockId={appBlockId}
-        appName={sanitizedName ?? undefined}
-        opened={permsOpen}
-        onClose={() => setPermsOpen(false)}
-      />
-    )}
-    {/* F4 — the review form, mounted OUTSIDE every floating surface (see
+      {appBlockId && (
+        <AppPermissionsActivityDrawer
+          appBlockId={appBlockId}
+          appName={sanitizedName ?? undefined}
+          opened={permsOpen}
+          onClose={() => setPermsOpen(false)}
+        />
+      )}
+      {/* F4 — the review form, mounted OUTSIDE every floating surface (see
         `reviewListingId` above for why that is forced rather than tidy). Mounted only
         once an entry point has handed up a listing id, so a chrome nobody has asked
         to review issues no `getMyReview` and renders no modal DOM. The modal applies
@@ -716,13 +713,13 @@ export function AppBlockChrome({
         viewport, unlike this bar, which can be 320px wide inside a 2560px window), so
         it is deliberately NOT re-derived from `geometry.compact` here — two mechanisms
         answering one question is how they come to disagree. */}
-    {reviewListingId && (
-      <ReviewListingModal
-        appListingId={reviewListingId}
-        opened
-        onClose={() => setReviewListingId(null)}
-      />
-    )}
+      {reviewListingId && (
+        <ReviewListingModal
+          appListingId={reviewListingId}
+          opened
+          onClose={() => setReviewListingId(null)}
+        />
+      )}
     </>
   );
 }
@@ -892,7 +889,6 @@ function ChromeDesktopLeadingGroup({
     </>
   );
 }
-
 
 export function IframeHost({
   install,

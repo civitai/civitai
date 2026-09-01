@@ -1,6 +1,34 @@
-import { describe, expect, test, vi } from 'vitest';
+/**
+ * 🔴 THIS FILE LOADS MANTINE'S STYLESHEET AND PINS A VIEWPORT, AND UNTIL F3 IT DID
+ * NEITHER — WHICH IS WHY ONE OF ITS NUMBERS WAS MEASURING A HARNESS ARTIFACT.
+ *
+ * Everything below is a LAYOUT measurement, and the shared scaffold
+ * (`test/component-setup.tsx`) deliberately loads no component stylesheet. Without
+ * it a Mantine `Group` is not a flex row, so the app-block chrome bar inside
+ * `app-page-frame` stacked its children and measured **200px** tall here against
+ * **31px** in production. The `> 320` floor check below was green only because of
+ * those 200 phantom pixels: F3 made the narrow-width chrome a single compact row,
+ * the artifact shrank toward the real number, and the host landed exactly on its
+ * `FILL_MIN_HEIGHT_PX = 300` floor — a red that was entirely about this harness and
+ * not about the panel, the fit prop, or the mobile shell.
+ *
+ * Loading the stylesheet makes every number here the number production produces.
+ * Vitest browser mode runs each file in its own iframe, so this does not leak into
+ * sibling suites. (Same reasoning, stated at length, in
+ * `src/components/AppBlocks/AppBlockChromeResponsive.browser.test.tsx`.)
+ *
+ * The viewport is pinned for the second half of the same reason: the file inherited
+ * Vitest's 414×896 default and then reasoned about it in prose ("this runner's
+ * viewport is ~414px WIDE"), which is an observation of a default rather than a
+ * choice. 414 is below the `sm` breakpoint, so the preview now renders the mobile
+ * chrome there; naming a desktop viewport keeps this file's subject — a moderator
+ * reviewing an app in a desktop modal — the thing it was always about.
+ */
+import '@mantine/core/styles.css';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+// eslint-disable-next-line import/first
 import { renderWithProviders } from '../../../test/component-setup';
 // Type-only namespace imports for the `importOriginal` spreads below (the repo's
 // local-rules/no-wholesale-module-mock cure). NOT `typeof import(...)`, which
@@ -200,6 +228,12 @@ function panel() {
 function hostFrame() {
   return page.getByTestId('app-page-frame').element() as HTMLElement;
 }
+
+/** A desktop modal, which is the only place this preview is opened. See the header. */
+const DESKTOP: [number, number] = [1440, 900];
+beforeEach(async () => {
+  await page.viewport(...DESKTOP);
+});
 
 describe('the mod review preview fits its panel instead of being clipped out of it', () => {
   test('RED ARM (invariant guard) — `fit="viewport"` really is pushed out of the 420px panel', async () => {
