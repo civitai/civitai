@@ -1,48 +1,60 @@
 import {
   Anchor,
+  Badge,
   Button,
-  Code,
+  Center,
   CopyButton,
   Flex,
   Group,
-  List,
   Loader,
   Modal,
   Paper,
   Stack,
-  Stepper,
   Text,
-  ThemeIcon,
-  Title,
+  TextInput,
   Tooltip,
 } from '@mantine/core';
 import {
-  IconBoxMultiple,
   IconCheck,
+  IconAlertTriangle,
   IconChevronRight,
   IconCopy,
-  IconDeviceDesktop,
+  IconBoxMultiple,
+  IconDeviceDesktopDown,
+  IconDownload,
   IconInfoCircle,
+  IconLink,
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import type { CivitaiLinkConnectPath } from '~/components/CivitaiLink/civitai-link-paths';
 import {
+  CIVITAI_LINK_COMFYUI_DOWNLOAD,
   CIVITAI_LINK_DESKTOP_RELEASES,
   CIVITAI_LINK_NODE_PACK_NAME,
   CIVITAI_LINK_NODE_PACK_REPO,
 } from '~/components/CivitaiLink/civitai-link-paths';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { fetchLinkReleases } from '~/utils/fetch-link-releases';
-import { CivitaiLinkDownloadButton } from './CivitaiLinkDownloadButton';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import clsx from 'clsx';
+import classes from './CivitaiLinkWizard.module.scss';
 
 const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal'),
   { ssr: false }
 );
 const openCivitaiLinkSuccessModal = createDialogTrigger(CivitaiLinkSuccessModal);
+
+const osLabels: Record<string, string> = {
+  Windows: 'Windows',
+  Mac: 'macOS',
+  Linux: 'Linux',
+  Unknown: 'your machine',
+};
+const downloadableOses = ['Windows', 'Mac', 'Linux'];
 
 const paths: Array<{
   value: CivitaiLinkConnectPath;
@@ -60,7 +72,7 @@ const paths: Array<{
   },
   {
     value: 'desktop',
-    icon: IconDeviceDesktop,
+    icon: IconDeviceDesktopDown,
     label: 'Link desktop app',
     description: `Point it at any models folder. Works with ComfyUI, Forge, or a plain library.`,
   },
@@ -83,8 +95,9 @@ function PathCard({
       type="button"
       onClick={onSelect}
       radius="md"
-      p="md"
-      className="flex-1 cursor-pointer text-left"
+      p="lg"
+      bg="dark.6"
+      className="flex flex-1 cursor-pointer flex-col justify-start text-left"
       // Tailwind's preflight zeroes `border` on `button`, which beats Mantine's
       // `withBorder`. Set the border here so the selected state is visible.
       style={{
@@ -94,23 +107,92 @@ function PathCard({
       }}
       aria-pressed={selected}
     >
-      <Stack gap="xs">
+      <Stack gap={10}>
         <Group justify="space-between" wrap="nowrap">
-          <ThemeIcon variant="light" color={selected ? 'blue' : 'gray'} size="lg" radius="sm">
-            <Icon size={20} />
-          </ThemeIcon>
+          <Center
+            w={38}
+            h={38}
+            style={{
+              borderRadius: 'var(--mantine-radius-sm)',
+              background: selected
+                ? 'var(--mantine-color-blue-light)'
+                : 'var(--mantine-color-dark-5)',
+              flexShrink: 0,
+            }}
+          >
+            <Icon size={20} className={selected ? 'text-blue-3' : 'text-dark-0'} />
+          </Center>
           {path.badge && (
-            <Text c="blue.4" size="xs" fw={700} tt="uppercase">
+            <Badge variant="light" color="blue" radius="xl" tt="none" fz={11} fw={700} px={9}>
               {path.badge}
-            </Text>
+            </Badge>
           )}
         </Group>
-        <Text fw={600}>{path.label}</Text>
-        <Text size="sm" c="dimmed">
+        <Text fz="md" fw={600} c="white">
+          {path.label}
+        </Text>
+        <Text fz={13} c="dimmed" lh={1.5}>
           {path.description}
         </Text>
       </Stack>
     </Paper>
+  );
+}
+
+function NumberedStep({
+  index,
+  children,
+  caption,
+}: {
+  index: number;
+  children: React.ReactNode;
+  caption?: string;
+}) {
+  return (
+    <Group align="flex-start" wrap="nowrap" gap={12}>
+      <Center w={22} h={22} bg="dark.5" style={{ borderRadius: 999, flexShrink: 0 }}>
+        <Text fz={11} fw={700} c="dark.0">
+          {index}
+        </Text>
+      </Center>
+      <Stack gap={2} pt={2}>
+        <Text fz="sm" fw={500} c="dark.0" lh={1.45}>
+          {children}
+        </Text>
+        {caption && (
+          <Text fz="xs" c="dimmed" lh={1.45}>
+            {caption}
+          </Text>
+        )}
+      </Stack>
+    </Group>
+  );
+}
+
+function NoteStrip({ children, icon }: { children: React.ReactNode; icon?: React.ReactNode }) {
+  return (
+    <Group
+      align="flex-start"
+      wrap="nowrap"
+      gap={10}
+      p={12}
+      bg="dark.6"
+      style={{ borderRadius: 'var(--mantine-radius-sm)' }}
+    >
+      {icon ?? <IconInfoCircle size={15} className="mt-0.5 shrink-0 text-dark-2" />}
+      <Text fz="xs" c="dimmed" lh={1.5}>
+        {children}
+      </Text>
+    </Group>
+  );
+}
+
+function WizardFooter({ left, right }: { left: React.ReactNode; right?: React.ReactNode }) {
+  return (
+    <Group justify="space-between" mt="lg">
+      {left}
+      {right}
+    </Group>
   );
 }
 
@@ -119,19 +201,27 @@ export default function CivitaiLinkWizardModal() {
 
   const [active, setActive] = useState(0);
   const [path, setPath] = useState<CivitaiLinkConnectPath>('nodepack');
-  const [buttonData, setButtonData] = useState({
-    text: 'Download the Link App',
-    secondaryText: '',
+  const [release, setRelease] = useState({
+    os: 'Unknown',
+    tagName: '',
     href: CIVITAI_LINK_DESKTOP_RELEASES,
   });
   const nextStep = () => setActive((current) => (current < 2 ? current + 1 : current));
   const prevStep = () => setActive((current) => (current > 0 ? current - 1 : current));
 
-  const { connected, instance, createInstance } = useCivitaiLink();
+  const { connected, instance, createInstance, renameInstance } = useCivitaiLink();
+  const [name, setName] = useState('');
 
   const handleCreateInstance = () => {
     nextStep();
     createInstance();
+  };
+
+  // The instance exists from the moment the code is generated, so an abandoned
+  // wizard would otherwise leave an app named "My SD Instance N" in the list.
+  const commitName = () => {
+    const trimmed = name.trim();
+    if (instance?.id && trimmed && trimmed !== instance.name) renameInstance(instance.id, trimmed);
   };
 
   useEffect(() => {
@@ -144,170 +234,299 @@ export default function CivitaiLinkWizardModal() {
     if (path !== 'desktop') return;
 
     const fetchReleases = async () => {
-      const userAgent = navigator.userAgent;
-      const data = await fetchLinkReleases(userAgent);
-
-      setButtonData({
-        text: 'Download the Link App',
-        secondaryText: `${data.os} ${data.tag_name}`,
-        href: data.href,
-      });
+      const data = await fetchLinkReleases(navigator.userAgent);
+      setRelease({ os: data.os, tagName: data.tag_name, href: data.href });
     };
 
     fetchReleases();
   }, [path]);
 
   const isNodePack = path === 'nodepack';
+  const otherOses = downloadableOses.filter((os) => os !== release.os);
 
   return (
-    <Modal {...dialog} title="Civitai Link" size="lg">
-      <Stepper active={active} onStepClick={setActive} allowNextStepsSelect={false}>
-        <Stepper.Step label="Choose app">
-          <Stack mt="sm">
-            <Stack gap={4}>
-              <Title order={3} style={{ lineHeight: 1.1 }}>
-                How do you want to connect?
-              </Title>
-              <Text c="dimmed">
-                Civitai Link sends models straight from the site to the machine you generate on — no
-                downloads, no file shuffling. Pick whichever you already run.
-              </Text>
-            </Stack>
-            <Flex direction={{ base: 'column', sm: 'row' }} gap="sm" align="stretch">
-              {paths.map((option) => (
-                <PathCard
-                  key={option.value}
-                  path={option}
-                  selected={path === option.value}
-                  onSelect={() => setPath(option.value)}
-                />
-              ))}
-            </Flex>
-            <Group gap="xs" align="flex-start" wrap="nowrap">
-              <IconInfoCircle size={16} className="mt-0.5 shrink-0 opacity-60" />
-              <Text size="xs" c="dimmed">
-                Both connect the same way and do the same things. You can add more apps later.
-              </Text>
-            </Group>
-            <Group justify="space-between" mt="xl">
-              <Button variant="default" onClick={dialog.onClose}>
+    <Modal
+      {...dialog}
+      title={
+        <Group gap="xs">
+          <IconLink size={18} className="text-blue-4" />
+          <Text fw={600}>Civitai Link</Text>
+        </Group>
+      }
+      size="lg"
+    >
+      {active === 0 && (
+        <Stack gap="lg">
+          <Stack gap={4}>
+            <Text fz={24} fw={700} c="white" lh={1.25}>
+              How do you want to connect?
+            </Text>
+            <Text fz="sm" c="dimmed" lh={1.55}>
+              Civitai Link sends models straight from the site to the machine you generate on — no
+              downloads, no file shuffling. Pick whichever you already run.
+            </Text>
+          </Stack>
+          <Flex direction={{ base: 'column', sm: 'row' }} gap="sm" align="stretch">
+            {paths.map((option) => (
+              <PathCard
+                key={option.value}
+                path={option}
+                selected={path === option.value}
+                onSelect={() => setPath(option.value)}
+              />
+            ))}
+          </Flex>
+          <NoteStrip>
+            Both connect the same way and do the same things. You can add more apps later.
+          </NoteStrip>
+          <WizardFooter
+            left={
+              <Button variant="subtle" color="gray" onClick={dialog.onClose}>
                 Not now
               </Button>
-              <Button onClick={nextStep} rightSection={<IconChevronRight />}>
+            }
+            right={
+              <Button onClick={nextStep} rightSection={<IconChevronRight size={16} />}>
                 Continue
               </Button>
-            </Group>
-          </Stack>
-        </Stepper.Step>
-        <Stepper.Step label="Install">
-          <Stack mt="sm">
-            {isNodePack ? (
+            }
+          />
+        </Stack>
+      )}
+      {active === 1 && (
+        <Stack gap="lg">
+          {isNodePack ? (
+            <>
               <Stack gap={4}>
-                <Title order={3} mb={0} style={{ lineHeight: 1 }}>
+                <Text fz={24} fw={700} c="white" lh={1.25}>
                   Install the Civitai node pack
-                </Title>
-                <Text mb="md" c="dimmed">
+                </Text>
+                <Text fz="sm" c="dimmed" lh={1.55}>
                   It lives inside ComfyUI — nothing to download from this page.
                 </Text>
-                <List type="ordered" spacing="xs">
-                  <List.Item>
-                    Open <b>ComfyUI Manager</b>, then <b>Custom Nodes Manager</b>.
-                  </List.Item>
-                  <List.Item>
-                    Search for <b>{CIVITAI_LINK_NODE_PACK_NAME}</b> (publisher <Code>civitai</Code>)
-                    and install it.
-                  </List.Item>
-                  <List.Item>Restart ComfyUI.</List.Item>
-                </List>
-                <Text size="xs" c="dimmed" mt="md">
-                  {`Prefer the CLI? Run `}
-                  <Code>comfy node registry-install civitai-comfy-nodes</Code>
-                  {`, or install `}
+                <Text fz="xs" c="dimmed" mt={2}>
+                  {`Don't have ComfyUI yet? `}
                   <Anchor
                     inherit
-                    href={CIVITAI_LINK_NODE_PACK_REPO}
+                    href={CIVITAI_LINK_COMFYUI_DOWNLOAD}
                     target="_blank"
                     rel="nofollow noreferrer"
                   >
-                    from source
+                    Download it here
                   </Anchor>
                   .
                 </Text>
               </Stack>
-            ) : (
+              <Stack gap={16} pt={4}>
+                <NumberedStep index={1}>
+                  Open <b>ComfyUI Manager</b>, then <b>Custom Nodes Manager</b>.
+                </NumberedStep>
+                <NumberedStep index={2} caption="Takes a few seconds.">
+                  Search for <b>{CIVITAI_LINK_NODE_PACK_NAME}</b> and install it.
+                </NumberedStep>
+                <NumberedStep index={3}>Restart ComfyUI.</NumberedStep>
+                <NumberedStep
+                  index={4}
+                  caption="You'll paste a pairing code there in the next step."
+                >
+                  Open the <b>Civitai</b> panel in the ComfyUI sidebar.
+                </NumberedStep>
+              </Stack>
+              <NoteStrip>
+                {`Prefer a manual install? Clone `}
+                <Anchor
+                  inherit
+                  href={CIVITAI_LINK_NODE_PACK_REPO}
+                  target="_blank"
+                  rel="nofollow noreferrer"
+                >
+                  {CIVITAI_LINK_NODE_PACK_REPO.replace('https://', '')}
+                </Anchor>
+                {` into your custom_nodes folder.`}
+              </NoteStrip>
+            </>
+          ) : (
+            <>
               <Stack gap={4}>
-                <Title order={3} mb={0} style={{ lineHeight: 1 }}>
+                <Text fz={24} fw={700} c="white" lh={1.25}>
                   Install the Link desktop app
-                </Title>
-                <Text mb="md" c="dimmed">
+                </Text>
+                <Text fz="sm" c="dimmed" lh={1.55}>
                   A small background app that watches one models folder and keeps it in sync.
                 </Text>
-                <Flex justify="center" w="100%">
-                  <CivitaiLinkDownloadButton {...buttonData} isMember />
-                </Flex>
-                <List type="ordered" spacing="xs" mt="md">
-                  <List.Item>Run the installer and open the Link app.</List.Item>
-                  <List.Item>Choose the folder your models live in.</List.Item>
-                </List>
               </Stack>
-            )}
-            <Group justify="space-between" mt="xl">
-              <Button variant="default" onClick={prevStep}>
-                Go Back
-              </Button>
-              <Button onClick={handleCreateInstance} rightSection={<IconChevronRight />}>
-                {`Ok, it's installed`}
-              </Button>
-            </Group>
-          </Stack>
-        </Stepper.Step>
-        <Stepper.Step label="Connect">
-          <Stack mt="sm">
-            <Stack gap={4}>
-              <Title order={3} mb={0} style={{ lineHeight: 1 }}>
-                Pair your app
-              </Title>
-              <Text mb="md" c="dimmed">
-                {isNodePack
-                  ? `In ComfyUI, open the Civitai sidebar tab and paste the code below into the Civitai Link panel.`
-                  : `In the Link app, paste the code below to finish pairing.`}
-              </Text>
-              <Stack align="center" gap={5} my="lg">
-                <Title order={4}>Link Key</Title>
-                {instance?.key ? (
-                  <CopyButton value={instance.key}>
-                    {({ copied, copy }) => (
-                      <Tooltip label="copy">
-                        <Button
-                          variant="default"
-                          onClick={copy}
-                          size="lg"
-                          px="sm"
-                          rightSection={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
-                        >
-                          {!copied ? instance.key : 'Copied'}
-                        </Button>
-                      </Tooltip>
+              <Stack align="center" gap="xs" mt="xs">
+                <Button
+                  component={Link}
+                  href={release.href}
+                  rel="nofollow noreferrer"
+                  size="lg"
+                  radius="xl"
+                  leftSection={<IconDownload size={20} />}
+                >
+                  <Stack gap={0} align="flex-start">
+                    <Text inherit>{`Download for ${
+                      osLabels[release.os] ?? osLabels.Unknown
+                    }`}</Text>
+                    {release.tagName && (
+                      <Text fz={10} fw={400} opacity={0.8}>
+                        {release.tagName}
+                      </Text>
                     )}
-                  </CopyButton>
-                ) : (
-                  <Button variant="default" size="lg" px="sm">
-                    <Group gap="xs" align="center">
-                      <Loader size="sm" />
-                      <span>Generating key</span>
+                  </Stack>
+                </Button>
+                <Group gap="xs">
+                  {[...otherOses.map((os) => osLabels[os]), 'All releases'].map((label, index) => (
+                    <Group key={label} gap="xs">
+                      {index > 0 && (
+                        <Text size="xs" c="dimmed">
+                          ·
+                        </Text>
+                      )}
+                      <Anchor
+                        size="xs"
+                        href={CIVITAI_LINK_DESKTOP_RELEASES}
+                        target="_blank"
+                        rel="nofollow noreferrer"
+                      >
+                        {label}
+                      </Anchor>
                     </Group>
-                  </Button>
-                )}
+                  ))}
+                </Group>
               </Stack>
-            </Stack>
-            <Group justify="space-between" mt="xl">
-              <Button variant="default" onClick={prevStep}>
-                Go Back
+              <Stack gap={16} pt={4}>
+                <NumberedStep index={1}>Run the installer and open the Link app.</NumberedStep>
+                <NumberedStep index={2}>Choose the folder your models live in.</NumberedStep>
+                <NumberedStep
+                  index={3}
+                  caption="You'll paste a pairing code there in the next step."
+                >
+                  {`Open the app's `}
+                  <b>Civitai Link</b>
+                  {` panel.`}
+                </NumberedStep>
+              </Stack>
+              <NoteStrip>
+                On a different machine? Grab any build from the{' '}
+                <Anchor
+                  inherit
+                  href={CIVITAI_LINK_DESKTOP_RELEASES}
+                  target="_blank"
+                  rel="nofollow noreferrer"
+                >
+                  releases page
+                </Anchor>
+                .
+              </NoteStrip>
+            </>
+          )}
+          <WizardFooter
+            left={
+              <Button variant="subtle" color="gray" onClick={prevStep}>
+                Go back
               </Button>
-            </Group>
+            }
+            right={
+              <Button onClick={handleCreateInstance} rightSection={<IconChevronRight size={16} />}>
+                {`I've installed it`}
+              </Button>
+            }
+          />
+        </Stack>
+      )}
+      {active === 2 && (
+        <Stack gap="lg">
+          <Stack gap={4}>
+            <Text fz={24} fw={700} c="white" lh={1.25}>
+              Sign in from the app
+            </Text>
+            <Text fz="sm" c="dimmed" lh={1.55}>
+              Enter this code in the app once. The connection sticks — you won&apos;t need it again.
+            </Text>
           </Stack>
-        </Stepper.Step>
-      </Stepper>
+          <Stack align="center" gap="xs" my="md">
+            <div className="relative flex size-24 items-center justify-center">
+              <span
+                className={clsx('absolute inset-0 rounded-full', classes.pairingHalo)}
+                style={{ background: 'var(--mantine-color-blue-light)' }}
+              />
+              <Center
+                w={66}
+                h={66}
+                bg="dark.5"
+                className="relative"
+                style={{ borderRadius: 999, border: '2px solid var(--mantine-color-blue-6)' }}
+              >
+                <IconLink size={26} className="text-blue-6" />
+              </Center>
+            </div>
+            <Text fz="lg" fw={600} c="white" mt="xs">
+              Pair with this code
+            </Text>
+            {instance?.key ? (
+              <CopyButton value={instance.key}>
+                {({ copied, copy }) => (
+                  <Tooltip label="Copy">
+                    <Button
+                      variant="default"
+                      onClick={copy}
+                      size="lg"
+                      px="sm"
+                      rightSection={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                    >
+                      {!copied ? instance.key : 'Copied'}
+                    </Button>
+                  </Tooltip>
+                )}
+              </CopyButton>
+            ) : (
+              <Button variant="default" size="lg" px="sm">
+                <Group gap="xs" align="center">
+                  <Loader size="sm" />
+                  <span>Generating code</span>
+                </Group>
+              </Button>
+            )}
+            <Text size="sm" c="dimmed" ta="center" maw={420}>
+              {isNodePack
+                ? `In ComfyUI, open the Civitai panel and paste the code. We'll pick it up here automatically.`
+                : `In the Link app, open the Civitai Link panel and paste the code. We'll pick it up here automatically.`}
+            </Text>
+          </Stack>
+          <TextInput
+            label="Name this app"
+            description="Shown wherever you pick where to send a model. You can change it later."
+            placeholder="Workstation"
+            value={name}
+            onChange={(e) => setName(e.currentTarget.value)}
+            onBlur={commitName}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitName();
+            }}
+          />
+          <NoteStrip icon={<IconAlertTriangle size={15} className="mt-0.5 shrink-0 text-dark-2" />}>
+            Nothing after a minute? Make sure the app is running, then reload this page.
+          </NoteStrip>
+          <WizardFooter
+            left={
+              <Button variant="subtle" color="gray" onClick={prevStep}>
+                Go back
+              </Button>
+            }
+            right={
+              <Button
+                onClick={() => {
+                  commitName();
+                  dialog.onClose();
+                }}
+              >
+                Done
+              </Button>
+            }
+          />
+        </Stack>
+      )}
     </Modal>
   );
 }

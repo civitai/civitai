@@ -430,7 +430,9 @@
           "name": "Header",
           "width": "fill_container",
           "padding": [
-            16,
+            18,
+            20,
+            6,
             20
           ],
           "justifyContent": "space_between",
@@ -479,181 +481,15 @@
         },
         {
           "type": "frame",
-          "id": "EUwsF",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
-          "id": "UGv8L",
-          "name": "Step Rail",
-          "width": "fill_container",
-          "gap": 8,
-          "padding": [
-            14,
-            20
-          ],
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "frame",
-              "id": "seUC4",
-              "name": "Seg 1",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "S88bd",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$primary",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "S8aikK",
-                      "name": "N",
-                      "fill": "$text-on-primary",
-                      "content": "1",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "IOqLR",
-                  "name": "Label",
-                  "fill": "$text-bright",
-                  "content": "Choose app",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-semibold"
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "zF2Hs",
-              "name": "Rail 1",
-              "width": "fill_container",
-              "height": 2,
-              "fill": "$border",
-              "cornerRadius": "$radius-xl"
-            },
-            {
-              "type": "frame",
-              "id": "Epl3I",
-              "name": "Seg 2",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "D0CBr3",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$bg-hover",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "h2sUlI",
-                      "name": "N",
-                      "fill": "$text-dimmed",
-                      "content": "2",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "ot7jI",
-                  "name": "Label",
-                  "fill": "$text-dimmed",
-                  "content": "Install",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-normal"
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "XZZed",
-              "name": "Rail 2",
-              "width": "fill_container",
-              "height": 2,
-              "fill": "$border",
-              "cornerRadius": "$radius-xl"
-            },
-            {
-              "type": "frame",
-              "id": "RiHbm",
-              "name": "Seg 3",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "CvdbF",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$bg-hover",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "JkNH9",
-                      "name": "N",
-                      "fill": "$text-dimmed",
-                      "content": "3",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "XGaWk",
-                  "name": "Label",
-                  "fill": "$text-dimmed",
-                  "content": "Connect",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-normal"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
           "id": "Oj5Ri",
           "name": "Body",
           "width": "fill_container",
           "layout": "vertical",
           "gap": "$space-lg",
           "padding": [
-            8,
+            6,
             20,
-            24,
+            20,
             20
           ],
           "children": [
@@ -776,19 +612,13 @@
         },
         {
           "type": "frame",
-          "id": "uKbP4",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
           "id": "nTSzn",
           "name": "Footer",
           "width": "fill_container",
           "padding": [
-            14,
+            6,
+            20,
+            18,
             20
           ],
           "justifyContent": "space_between",
@@ -848,7 +678,9 @@
           "name": "Header",
           "width": "fill_container",
           "padding": [
-            16,
+            18,
+            20,
+            6,
             20
           ],
           "justifyContent": "space_between",
@@ -897,181 +729,15 @@
         },
         {
           "type": "frame",
-          "id": "x31hS",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
-          "id": "x1alk",
-          "name": "Step Rail",
-          "width": "fill_container",
-          "gap": 8,
-          "padding": [
-            14,
-            20
-          ],
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "frame",
-              "id": "lumOt",
-              "name": "Seg 1",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "xqEVC",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$success-subtle",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "T8dWK",
-                      "name": "N",
-                      "fill": "$success",
-                      "content": "✓",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "r11Pgg",
-                  "name": "Label",
-                  "fill": "$text-dimmed",
-                  "content": "Choose app",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-normal"
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "CWvyA",
-              "name": "Rail 1",
-              "width": "fill_container",
-              "height": 2,
-              "fill": "$border",
-              "cornerRadius": "$radius-xl"
-            },
-            {
-              "type": "frame",
-              "id": "uUMyV",
-              "name": "Seg 2",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "E8ErUI",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$primary",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "on4HU",
-                      "name": "N",
-                      "fill": "$text-on-primary",
-                      "content": "2",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "EAVk1",
-                  "name": "Label",
-                  "fill": "$text-bright",
-                  "content": "Install",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-semibold"
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "THmMr",
-              "name": "Rail 2",
-              "width": "fill_container",
-              "height": 2,
-              "fill": "$border",
-              "cornerRadius": "$radius-xl"
-            },
-            {
-              "type": "frame",
-              "id": "Zq4r0",
-              "name": "Seg 3",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "bCH2z",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$bg-hover",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "o6nOWH",
-                      "name": "N",
-                      "fill": "$text-dimmed",
-                      "content": "3",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "s3KSte",
-                  "name": "Label",
-                  "fill": "$text-dimmed",
-                  "content": "Connect",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-normal"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
           "id": "gUQuh",
           "name": "Body",
           "width": "fill_container",
           "layout": "vertical",
           "gap": "$space-lg",
           "padding": [
-            8,
+            6,
             20,
-            24,
+            20,
             20
           ],
           "children": [
@@ -1426,19 +1092,13 @@
         },
         {
           "type": "frame",
-          "id": "tZt0z",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
           "id": "y5LBi",
           "name": "Footer",
           "width": "fill_container",
           "padding": [
-            14,
+            6,
+            20,
+            18,
             20
           ],
           "justifyContent": "space_between",
@@ -1499,7 +1159,9 @@
           "name": "Header",
           "width": "fill_container",
           "padding": [
-            16,
+            18,
+            20,
+            6,
             20
           ],
           "justifyContent": "space_between",
@@ -1548,181 +1210,15 @@
         },
         {
           "type": "frame",
-          "id": "esX9a",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
-          "id": "o21gE",
-          "name": "Step Rail",
-          "width": "fill_container",
-          "gap": 8,
-          "padding": [
-            14,
-            20
-          ],
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "frame",
-              "id": "lOK1b",
-              "name": "Seg 1",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "cba9w",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$success-subtle",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "YL7oV",
-                      "name": "N",
-                      "fill": "$success",
-                      "content": "✓",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "oGnfF",
-                  "name": "Label",
-                  "fill": "$text-dimmed",
-                  "content": "Choose app",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-normal"
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "F0xK6X",
-              "name": "Rail 1",
-              "width": "fill_container",
-              "height": 2,
-              "fill": "$border",
-              "cornerRadius": "$radius-xl"
-            },
-            {
-              "type": "frame",
-              "id": "t7r9t",
-              "name": "Seg 2",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "zK8Xj",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$primary",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "xg9xx",
-                      "name": "N",
-                      "fill": "$text-on-primary",
-                      "content": "2",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "O0fb4",
-                  "name": "Label",
-                  "fill": "$text-bright",
-                  "content": "Install",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-semibold"
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "j3C7kW",
-              "name": "Rail 2",
-              "width": "fill_container",
-              "height": 2,
-              "fill": "$border",
-              "cornerRadius": "$radius-xl"
-            },
-            {
-              "type": "frame",
-              "id": "M1jnnN",
-              "name": "Seg 3",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "dfLGB",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$bg-hover",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "ioCij",
-                      "name": "N",
-                      "fill": "$text-dimmed",
-                      "content": "3",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "RxTNg",
-                  "name": "Label",
-                  "fill": "$text-dimmed",
-                  "content": "Connect",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-normal"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
           "id": "HNZsS",
           "name": "Body",
           "width": "fill_container",
           "layout": "vertical",
           "gap": "$space-lg",
           "padding": [
-            8,
+            6,
             20,
-            24,
+            20,
             20
           ],
           "children": [
@@ -2133,19 +1629,13 @@
         },
         {
           "type": "frame",
-          "id": "igD1S",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
           "id": "j5xYH0",
           "name": "Footer",
           "width": "fill_container",
           "padding": [
-            14,
+            6,
+            20,
+            18,
             20
           ],
           "justifyContent": "space_between",
@@ -2206,7 +1696,9 @@
           "name": "Header",
           "width": "fill_container",
           "padding": [
-            16,
+            18,
+            20,
+            6,
             20
           ],
           "justifyContent": "space_between",
@@ -2255,181 +1747,15 @@
         },
         {
           "type": "frame",
-          "id": "h33Mxd",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
-          "id": "RCaNF",
-          "name": "Step Rail",
-          "width": "fill_container",
-          "gap": 8,
-          "padding": [
-            14,
-            20
-          ],
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "frame",
-              "id": "SVGz2",
-              "name": "Seg 1",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "KjTVv",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$success-subtle",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "k0Mid",
-                      "name": "N",
-                      "fill": "$success",
-                      "content": "✓",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "OE5jL",
-                  "name": "Label",
-                  "fill": "$text-dimmed",
-                  "content": "Choose app",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-normal"
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "a6cSQ",
-              "name": "Rail 1",
-              "width": "fill_container",
-              "height": 2,
-              "fill": "$border",
-              "cornerRadius": "$radius-xl"
-            },
-            {
-              "type": "frame",
-              "id": "G3kUfS",
-              "name": "Seg 2",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "Danmw",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$success-subtle",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "XrrVL",
-                      "name": "N",
-                      "fill": "$success",
-                      "content": "✓",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "aGWdi",
-                  "name": "Label",
-                  "fill": "$text-dimmed",
-                  "content": "Install",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-normal"
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "oEPoR",
-              "name": "Rail 2",
-              "width": "fill_container",
-              "height": 2,
-              "fill": "$border",
-              "cornerRadius": "$radius-xl"
-            },
-            {
-              "type": "frame",
-              "id": "HNFI6",
-              "name": "Seg 3",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "LL0tW",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$primary",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "Uwtsq",
-                      "name": "N",
-                      "fill": "$text-on-primary",
-                      "content": "3",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "wJgT2",
-                  "name": "Label",
-                  "fill": "$text-bright",
-                  "content": "Connect",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-semibold"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
           "id": "YAs7Z",
           "name": "Body",
           "width": "fill_container",
           "layout": "vertical",
           "gap": "$space-lg",
           "padding": [
-            8,
+            6,
             20,
-            24,
+            20,
             20
           ],
           "children": [
@@ -2625,19 +1951,13 @@
         },
         {
           "type": "frame",
-          "id": "E71gAg",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
           "id": "pF4EF",
           "name": "Footer",
           "width": "fill_container",
           "padding": [
-            14,
+            6,
+            20,
+            18,
             20
           ],
           "justifyContent": "space_between",
@@ -2659,19 +1979,17 @@
               "type": "frame",
               "id": "V95nTW",
               "name": "Primary",
-              "width": "fit_content(98)",
-              "height": "fit_content(37)",
               "gap": 8,
               "children": [
                 {
                   "id": "I3ezI",
                   "type": "ref",
                   "ref": "R7uGvB",
-                  "enabled": false,
-                  "name": "Continue",
+                  "enabled": true,
+                  "name": "Done",
                   "descendants": {
                     "TvhJw": {
-                      "content": "Continue"
+                      "content": "Done"
                     }
                   }
                 }
@@ -2703,10 +2021,10 @@
           "layout": "vertical",
           "gap": "$space-lg",
           "padding": [
-            32,
-            28,
             24,
-            28
+            20,
+            20,
+            20
           ],
           "alignItems": "center",
           "children": [
@@ -2877,19 +2195,13 @@
         },
         {
           "type": "frame",
-          "id": "qxeZP",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
           "id": "Szvzu",
           "name": "Footer",
           "width": "fill_container",
           "padding": [
-            14,
+            6,
+            20,
+            18,
             20
           ],
           "justifyContent": "space_between",
@@ -2941,8 +2253,10 @@
           "name": "Header",
           "width": "fill_container",
           "padding": [
-            11,
-            14
+            14,
+            16,
+            4,
+            16
           ],
           "justifyContent": "space_between",
           "alignItems": "center",
@@ -2967,14 +2281,6 @@
               ]
             }
           ]
-        },
-        {
-          "type": "frame",
-          "id": "JgaMv",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
         },
         {
           "type": "frame",
@@ -3274,60 +2580,74 @@
           "name": "Header",
           "width": "fill_container",
           "padding": [
-            11,
-            14
+            14,
+            16,
+            6,
+            16
           ],
           "justifyContent": "space_between",
           "alignItems": "center",
           "children": [
             {
               "type": "frame",
-              "id": "hdYaG",
-              "name": "Left",
-              "layout": "vertical",
-              "gap": 1,
+              "id": "R60vyd",
+              "name": "Left group",
+              "width": "fill_container",
+              "gap": 10,
+              "alignItems": "center",
               "children": [
                 {
-                  "type": "text",
-                  "id": "bbGog",
-                  "name": "Title",
-                  "fill": "$text-bright",
-                  "content": "Civitai Link",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-sm",
-                  "fontWeight": "$fw-semibold"
+                  "type": "icon",
+                  "id": "aQT21",
+                  "name": "Back",
+                  "width": 18,
+                  "height": 18,
+                  "icon": "chevron-left",
+                  "library": "lucide",
+                  "fill": "$text-dimmed"
                 },
                 {
-                  "type": "text",
-                  "id": "eOjpp",
-                  "name": "Sub",
-                  "fill": "$text-dimmed",
-                  "content": "Workstation · ComfyUI",
-                  "fontFamily": "$font-body",
-                  "fontSize": 11,
-                  "fontWeight": "normal"
+                  "type": "frame",
+                  "id": "hdYaG",
+                  "name": "Left",
+                  "layout": "vertical",
+                  "gap": 1,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "bbGog",
+                      "name": "Title",
+                      "fill": "$text-bright",
+                      "content": "Workstation",
+                      "fontFamily": "$font-body",
+                      "fontSize": "$fs-sm",
+                      "fontWeight": "$fw-semibold"
+                    },
+                    {
+                      "type": "text",
+                      "id": "eOjpp",
+                      "name": "Sub",
+                      "fill": "$text-dimmed",
+                      "content": "ComfyUI · Connected",
+                      "fontFamily": "$font-body",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
                 }
               ]
             },
             {
               "type": "icon",
-              "id": "O00KX2",
-              "name": "Gear",
-              "width": 16,
-              "height": 16,
-              "icon": "settings",
+              "id": "GdhOi",
+              "name": "Menu",
+              "width": 18,
+              "height": 18,
+              "icon": "ellipsis-vertical",
               "library": "lucide",
               "fill": "$text-dimmed"
             }
           ]
-        },
-        {
-          "type": "frame",
-          "id": "kuzZm",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
         },
         {
           "type": "frame",
@@ -3408,40 +2728,27 @@
         },
         {
           "type": "frame",
-          "id": "NH6XF",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
           "id": "DLOcE",
           "name": "Footer",
           "width": "fill_container",
           "padding": [
-            10,
-            14
+            6,
+            16,
+            12,
+            16
           ],
           "justifyContent": "space_between",
           "alignItems": "center",
           "children": [
             {
               "type": "text",
-              "id": "GjYvi",
-              "name": "Count",
-              "fill": "$text-dimmed",
-              "content": "312 models on this app",
-              "fontFamily": "$font-body",
-              "fontSize": 11,
-              "fontWeight": "normal"
-            },
-            {
-              "type": "text",
               "id": "i8X8YP",
               "name": "Clear",
               "fill": "$color-blue-3",
+              "textGrowth": "fixed-width",
+              "width": "fill_container",
               "content": "Clear activity",
+              "textAlign": "right",
               "fontFamily": "$font-body",
               "fontSize": 11,
               "fontWeight": "$fw-medium"
@@ -3470,8 +2777,10 @@
           "name": "Header",
           "width": "fill_container",
           "padding": [
-            11,
-            14
+            14,
+            16,
+            4,
+            16
           ],
           "justifyContent": "space_between",
           "alignItems": "center",
@@ -3532,14 +2841,6 @@
               ]
             }
           ]
-        },
-        {
-          "type": "frame",
-          "id": "I6Wicy",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
         },
         {
           "type": "frame",
@@ -3605,21 +2906,15 @@
         },
         {
           "type": "frame",
-          "id": "XQVBO",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
           "id": "OPzKQ",
           "name": "Footer",
           "width": "fill_container",
           "gap": 8,
           "padding": [
-            10,
-            14
+            6,
+            16,
+            12,
+            16
           ],
           "alignItems": "center",
           "children": [
@@ -3669,8 +2964,10 @@
           "name": "Header",
           "width": "fill_container",
           "padding": [
-            11,
-            14
+            14,
+            16,
+            4,
+            16
           ],
           "justifyContent": "space_between",
           "alignItems": "center",
@@ -3695,14 +2992,6 @@
               ]
             }
           ]
-        },
-        {
-          "type": "frame",
-          "id": "jTjQh",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
         },
         {
           "type": "frame",
@@ -3901,14 +3190,6 @@
         },
         {
           "type": "frame",
-          "id": "Hxadk",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
           "id": "ZBHP9",
           "name": "Actions",
           "width": "fill_container",
@@ -4008,17 +3289,31 @@
           "id": "ENGYC",
           "name": "Header",
           "width": "fill_container",
+          "gap": 10,
           "padding": [
-            11,
-            14
+            14,
+            16,
+            6,
+            16
           ],
           "justifyContent": "space_between",
           "alignItems": "center",
           "children": [
             {
+              "type": "icon",
+              "id": "s4VrX",
+              "name": "Back",
+              "width": 18,
+              "height": 18,
+              "icon": "chevron-left",
+              "library": "lucide",
+              "fill": "$text-dimmed"
+            },
+            {
               "type": "frame",
               "id": "mgyCI",
               "name": "Left",
+              "width": "fill_container",
               "layout": "vertical",
               "gap": 1,
               "children": [
@@ -4027,7 +3322,7 @@
                   "id": "KiNKR",
                   "name": "Title",
                   "fill": "$text-bright",
-                  "content": "Civitai Link",
+                  "content": "Workstation",
                   "fontFamily": "$font-body",
                   "fontSize": "$fs-sm",
                   "fontWeight": "$fw-semibold"
@@ -4037,22 +3332,24 @@
                   "id": "Vg3xS",
                   "name": "Sub",
                   "fill": "$text-dimmed",
-                  "content": "Workstation · ComfyUI",
+                  "content": "ComfyUI · Not connected",
                   "fontFamily": "$font-body",
                   "fontSize": 11,
                   "fontWeight": "normal"
                 }
               ]
+            },
+            {
+              "type": "icon",
+              "id": "VL7wq",
+              "name": "Menu",
+              "width": 18,
+              "height": 18,
+              "icon": "ellipsis-vertical",
+              "library": "lucide",
+              "fill": "$text-dimmed"
             }
           ]
-        },
-        {
-          "type": "frame",
-          "id": "jMW4Z",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
         },
         {
           "type": "frame",
@@ -4227,54 +3524,10 @@
         },
         {
           "type": "frame",
-          "id": "f36mIi",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
           "id": "wpLro",
           "name": "Actions",
           "width": "fill_container",
           "children": [
-            {
-              "type": "frame",
-              "id": "VX0Gr",
-              "name": "Switch app",
-              "width": "fill_container",
-              "fill": "$bg-card",
-              "gap": 7,
-              "padding": [
-                13,
-                0
-              ],
-              "justifyContent": "center",
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "icon",
-                  "id": "co3eM",
-                  "name": "Icon",
-                  "width": 15,
-                  "height": 15,
-                  "icon": "arrow-left-right",
-                  "library": "lucide",
-                  "fill": "$text-primary"
-                },
-                {
-                  "type": "text",
-                  "id": "j7PcR",
-                  "name": "Label",
-                  "fill": "$text-primary",
-                  "content": "Switch app",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-sm",
-                  "fontWeight": "$fw-semibold"
-                }
-              ]
-            },
             {
               "type": "frame",
               "id": "J7wsc",
@@ -4338,7 +3591,9 @@
           "name": "Header",
           "width": "fill_container",
           "padding": [
-            16,
+            18,
+            20,
+            6,
             20
           ],
           "justifyContent": "space_between",
@@ -4387,181 +3642,15 @@
         },
         {
           "type": "frame",
-          "id": "W5dM5",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
-          "id": "Y3a9w",
-          "name": "Step Rail",
-          "width": "fill_container",
-          "gap": 8,
-          "padding": [
-            14,
-            20
-          ],
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "frame",
-              "id": "h8ecfc",
-              "name": "Seg 1",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "GC22A",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$primary",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "OvgWl",
-                      "name": "N",
-                      "fill": "$text-on-primary",
-                      "content": "1",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "X1T1MP",
-                  "name": "Label",
-                  "fill": "$text-bright",
-                  "content": "Choose app",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-semibold"
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "D12av",
-              "name": "Rail 1",
-              "width": "fill_container",
-              "height": 2,
-              "fill": "$border",
-              "cornerRadius": "$radius-xl"
-            },
-            {
-              "type": "frame",
-              "id": "FUj0f",
-              "name": "Seg 2",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "ZSyJm",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$bg-hover",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "zwdpZ",
-                      "name": "N",
-                      "fill": "$text-dimmed",
-                      "content": "2",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "NmFzF",
-                  "name": "Label",
-                  "fill": "$text-dimmed",
-                  "content": "Install",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-normal"
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "X85Ne",
-              "name": "Rail 2",
-              "width": "fill_container",
-              "height": 2,
-              "fill": "$border",
-              "cornerRadius": "$radius-xl"
-            },
-            {
-              "type": "frame",
-              "id": "x2VaT",
-              "name": "Seg 3",
-              "gap": 8,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "USy7R",
-                  "name": "Dot",
-                  "width": 22,
-                  "height": 22,
-                  "fill": "$bg-hover",
-                  "cornerRadius": "$radius-xl",
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "text",
-                      "id": "OeDPr",
-                      "name": "N",
-                      "fill": "$text-dimmed",
-                      "content": "3",
-                      "fontFamily": "$font-body",
-                      "fontSize": 11,
-                      "fontWeight": "$fw-bold"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "PlTf2",
-                  "name": "Label",
-                  "fill": "$text-dimmed",
-                  "content": "Connect",
-                  "fontFamily": "$font-body",
-                  "fontSize": "$fs-xs",
-                  "fontWeight": "$fw-normal"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
           "id": "GRsNX",
           "name": "Body",
           "width": "fill_container",
           "layout": "vertical",
           "gap": "$space-lg",
           "padding": [
-            8,
+            6,
             20,
-            24,
+            20,
             20
           ],
           "children": [
@@ -4684,19 +3773,13 @@
         },
         {
           "type": "frame",
-          "id": "Ael30",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
-        },
-        {
-          "type": "frame",
           "id": "v8bKo",
           "name": "Footer",
           "width": "fill_container",
           "padding": [
-            14,
+            6,
+            20,
+            18,
             20
           ],
           "justifyContent": "space_between",
@@ -4759,8 +3842,10 @@
           "name": "Header",
           "width": "fill_container",
           "padding": [
-            11,
-            14
+            14,
+            16,
+            4,
+            16
           ],
           "justifyContent": "space_between",
           "alignItems": "center",
@@ -4785,14 +3870,6 @@
               ]
             }
           ]
-        },
-        {
-          "type": "frame",
-          "id": "d5iBX",
-          "name": "Divider",
-          "width": "fill_container",
-          "height": 1,
-          "fill": "$border"
         },
         {
           "type": "frame",

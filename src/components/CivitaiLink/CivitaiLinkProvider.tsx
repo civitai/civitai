@@ -117,7 +117,7 @@ export const useCivitaiLinkStore = create<CivitaiLinkStore>()(
                 title: 'Civitai Link',
                 message: `${inError ? 'Failed ' : ''}Added ${
                   activity.resource.modelName
-                } to SD Instance`,
+                } to your app`,
                 color: inError ? 'red' : 'green',
               });
             }
