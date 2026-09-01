@@ -25,6 +25,7 @@ const {
   isFlipt,
 } = vi.hoisted(() => ({
   throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
   submitModelTextModeration: vi.fn(),
   preventReplicationLag: vi.fn(async () => undefined),
   evaluateAutoNsfw: vi.fn(),

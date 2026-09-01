@@ -92,7 +92,7 @@ import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/us
 import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -2414,7 +2414,10 @@ export const upsertModel = async (
     tracker?: Tracker;
   }
 ) => {
-  if (input.description) await throwOnBlockedLinkDomain(input.description);
+  await throwOnBlockedUserContent([input.name, input.description], {
+    isModerator: input.isModerator,
+    surface: 'model',
+  });
 
   const {
     id,
@@ -2487,7 +2490,7 @@ export const upsertModel = async (
     data.description = expansion.html;
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
     // since, so the string about to be written is one it never checked.
-    await throwOnBlockedLinkDomain(data.description);
+    await throwOnBlockedUserContent(data.description, { isModerator, surface: 'model' });
   }
 
   let profanityAutoNsfw = false;
@@ -2945,7 +2948,7 @@ export async function applyModelContentChange({
 }) {
   // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
-  await throwOnBlockedLinkDomain(description);
+  await throwOnBlockedUserContent(description, { surface: 'model' });
 
   let resolved = context;
   if (!resolved) {

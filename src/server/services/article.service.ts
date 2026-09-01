@@ -34,7 +34,7 @@ import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -790,7 +790,10 @@ export const upsertArticle = async ({
   scanContent?: boolean;
 }) => {
   try {
-    await throwOnBlockedLinkDomain(data.content);
+    await throwOnBlockedUserContent([data.title, data.content], {
+      isModerator,
+      surface: 'article',
+    });
 
     // For updates, fetch article early so we can enforce its stored locks and check cover
     // image ownership and NSFW level
@@ -863,7 +866,7 @@ export const upsertArticle = async ({
 
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
     // spliced in above, so the string about to be written is one it never checked.
-    await throwOnBlockedLinkDomain(data.content);
+    await throwOnBlockedUserContent(data.content, { isModerator, surface: 'article' });
 
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
@@ -1294,7 +1297,7 @@ export async function applyArticleContentChange({
    */
   context?: ArticleContentChangeContext;
 }) {
-  await throwOnBlockedLinkDomain(content);
+  await throwOnBlockedUserContent(content, { surface: 'article' });
 
   let resolved = context;
   if (!resolved) {
@@ -2605,6 +2608,8 @@ export async function createArticleRatingReview({
   userId: number;
   isModerator?: boolean;
 }) {
+  await throwOnBlockedUserContent(userComment, { isModerator, surface: 'articleRatingReview' });
+
   // --- Validate the suggested level against the canonical bitwise set ---
   if (!VALID_NSFW_LEVELS.has(suggestedLevel)) {
     throw throwBadRequestError(

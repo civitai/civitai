@@ -10,6 +10,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { buildBenignPhraseRegex, stripBenignPhrasesWith } from '~/shared/utils/benign-phrases';
 import { removeTags, removeTagsCompact } from '~/utils/string-helpers';
 import { foldConfusables } from '~/server/utils/confusable-fold';
+import { FLIPT_FEATURE_FLAGS, getFliptBoolean } from '~/server/flipt/client';
 import { domainAcceptsMail } from '~/server/utils/email-domain';
 
 export type BlocklistDTO = {
@@ -413,7 +414,8 @@ function substringEntries(entries: string[]) {
  * qualifier — folding crosses namespaces, so a lookalike entry manufactures the REAL domain as
  * a live rule. Checked against the 6 non-ASCII rows live today: every one folds to its intended
  * target and none is a mainstream domain. Adding a lookalike of a domain we do not want to
- * block would block it here and nowhere else, since `throwOnBlockedLinkDomain` does not fold. That is the whole difference from
+ * block would block it on every surface that runs the shared guard — which is now all of them,
+ * not comments alone — while `throwOnBlockedLinkDomain` itself still does not fold. That is the whole difference from
  * `substringEntries` above, and it is why the two exist separately rather than as one helper
  * with a flag. 6 of the 696 live link domains are non-ASCII — styled Unicode and
  * invisible-character spellings — and folding them is what makes those rows enforce at all.
@@ -437,10 +439,10 @@ export async function throwOnBlockedMessagePattern(value: string) {
 }
 // #endregion
 
-// #region [comment content]
+// #region [user-authored content]
 /**
- * The forms of a comment a pattern could be hiding in. Comments are stored as HTML, and
- * scanning any single form has a measured hole in it:
+ * The forms of a piece of user text a pattern could be hiding in. This text is stored as HTML
+ * on most surfaces, and scanning any single form has a measured hole in it:
  *
  * - the raw string misses a pattern split by a tag. `phish-verify<strong>5</strong>92807.example`
  *   is the shape the editor stores, and `strong`/`em`/`u`/`s`/`span`/`code`/`a` all survive
@@ -463,15 +465,92 @@ export async function throwOnBlockedMessagePattern(value: string) {
  * The collapse in `removeTags` is load-bearing, not tidiness: `</p><p>` becomes TWO spaces, and
  * a pattern carrying one space then misses the very case this form exists for.
  */
-export function scannableCommentForms(content: string) {
+export function scannableTextForms(content: string) {
   const forms = [content, removeTagsCompact(content), removeTags(content)];
   return [...new Set([...forms, ...forms.map(foldConfusables)])];
 }
 
 /**
- * Both blocklists over a comment. Comments never called the pattern list at all until now,
- * which is how 366 accounts posted phishing comments in four hours on 2026-08-24 while the
- * same patterns were being enforced on DMs.
+ * Both blocklists over one or more pieces of user-authored text.
+ *
+ * The two exported wrappers below differ only in the message a pattern hit produces. Everything
+ * that decides what is caught lives here, so a surface cannot end up with a weaker version of
+ * the check by calling a different helper — which is the state this replaced, where comments got
+ * both lists over every form and nine other surfaces got the link list over the raw string.
+ *
+ * Each value is scanned SEPARATELY rather than joined. Joining is not merely untidy: a pattern
+ * spanning the seam between two independent fields would match text no user ever wrote.
+ * The lists are read once for the whole set.
+ *
+ * Empty and absent values are skipped, so a caller can hand over an optional field without
+ * guarding the call. That removes the `if (x) await check(x)` shape, which is where a surface
+ * loses its check by degrees — the guard follows the field rather than the call site.
+ */
+async function throwOnBlockedText(
+  values: Array<string | null | undefined>,
+  {
+    exemptFromLinks,
+    exemptFromPatterns,
+    onLinkMatch,
+    onPatternMatch,
+  }: {
+    exemptFromLinks: boolean;
+    exemptFromPatterns: boolean;
+    onLinkMatch: (matched: string[]) => void;
+    onPatternMatch: (matched: string) => Promise<void> | void;
+  }
+) {
+  // 🔴 TWO exemptions, not one. A single `isModerator` short-circuit over both lists is wrong on
+  // the non-comment surfaces: the link-domain check there had NO exemption before this guard
+  // existed, so exempting moderators from it would silently switch off a control that is live in
+  // production. Comments are the case that exempts both, and that asymmetry is why these are two
+  // flags rather than one.
+  if (exemptFromLinks && exemptFromPatterns) return;
+
+  const present = values.filter((value): value is string => !!value);
+  if (!present.length) return;
+
+  const [blockedDomains, blockedPatterns] = await Promise.all([
+    getBlocklistData(BlocklistType.LinkDomain),
+    getBlocklistData(BlocklistType.MessagePattern),
+  ]);
+  const matchable = substringEntries(blockedPatterns);
+  const matchableDomains = exactEntries(blockedDomains);
+
+  for (const value of present) {
+    const forms = scannableTextForms(value);
+
+    // The two lists are scanned in separate passes, not interleaved per form, because
+    // `onPatternMatch` is allowed NOT to throw. Interleaved, a caller in record-only mode would
+    // leave the remaining forms of this value unscanned for LINK hits, which do still throw —
+    // the weaker half would silently shorten the stronger one.
+    for (const form of exemptFromLinks ? [] : forms) {
+      const blockedFor = findBlockedLinkDomains(form, matchableDomains);
+      if (blockedFor.length) {
+        onLinkMatch(blockedFor);
+        // Every caller's `onLinkMatch` throws. Returning here rather than falling through means a
+        // future one that does not cannot silently turn the link half into a no-op that still
+        // reads as a scan.
+        return;
+      }
+    }
+
+    for (const form of exemptFromPatterns ? [] : forms) {
+      const matched = findBlockedPattern(form, matchable);
+      if (matched !== undefined) {
+        await onPatternMatch(matched);
+        // One notification per value. The forms are spellings of the same text, so a caller that
+        // records rather than throws would otherwise count one write up to six times and read as
+        // a false-positive rate several times its real value.
+        break;
+      }
+    }
+  }
+}
+
+/**
+ * Comments never called the pattern list at all until 2026-08-24, which is how 366 accounts
+ * posted phishing comments in four hours while the same patterns were being enforced on DMs.
  *
  * Moderators are exempt from BOTH lists. Several of these patterns ARE the phishing text, and
  * quoting it to warn people is a thing moderators do — one such comment is live on the site
@@ -485,22 +564,106 @@ export async function throwOnBlockedCommentContent(
   content: string,
   { isModerator = false }: { isModerator?: boolean } = {}
 ) {
-  if (isModerator) return;
+  await throwOnBlockedText([content], {
+    exemptFromLinks: isModerator,
+    exemptFromPatterns: isModerator,
+    onLinkMatch: (blockedFor) => throwBadRequestError(`invalid urls: ${blockedFor.join(', ')}`),
+    onPatternMatch: () => throwBadRequestError('Comment blocked by content filter'),
+  });
+}
 
-  const [blockedDomains, blockedPatterns] = await Promise.all([
-    getBlocklistData(BlocklistType.LinkDomain),
-    getBlocklistData(BlocklistType.MessagePattern),
-  ]);
-  const matchable = substringEntries(blockedPatterns);
-  const matchableDomains = exactEntries(blockedDomains);
+/** Which list rejected the text. Callers that classify a block read this rather than the message. */
+export type BlockedContentKind = 'link' | 'pattern';
 
-  for (const form of scannableCommentForms(content)) {
-    const blockedFor = findBlockedLinkDomains(form, matchableDomains);
-    if (blockedFor.length) throwBadRequestError(`invalid urls: ${blockedFor.join(', ')}`);
+/**
+ * The same check for the OTHER surfaces that carry user-authored text — descriptions, titles,
+ * bodies, review details. Those surfaces called `throwOnBlockedLinkDomain` and stopped there, so
+ * they enforced one of the two lists, over the raw string only, unfolded.
+ *
+ * 🔴 Do not "simplify" a call site here back to `throwOnBlockedLinkDomain`. That function is
+ * still exported and still correct for what it does, so the swap type-checks, passes review as a
+ * tidy-up, and silently drops the pattern list plus both normalisation steps. The guard test
+ * `no-unguarded-user-text` exists to fail on exactly that edit.
+ *
+ * `isModerator` defaults to NOT exempt: several of these call sites have no session in scope
+ * (a fan-out re-check has no user in the loop), and defaulting the other way would exempt them
+ * all silently.
+ *
+ * ⚠️ The two halves ship at DIFFERENT strengths, on purpose, and the asymmetry is the point:
+ *
+ * - The link-domain half THROWS. It is the check these surfaces already had, so anything weaker
+ *   would be a regression on a control that is live right now. It scans the derived forms and the
+ *   folded ones, which matches strictly more than the raw string did, so it needs no ramp.
+ *
+ *   ⚠️ "Matches more" is not the same as "no new false positives", and an earlier version of this
+ *   comment claimed the second. `removeTagsCompact` strips tags with NO separator, so it can join
+ *   text that was never contiguous. Measured against `LINK_PATTERN`: a bare glued host does NOT
+ *   match — `check my <em>profile</em>.com` compacts to `check my profile.com`, and the regex
+ *   requires `//`, so it finds nothing. The residual case needs the glue to manufacture the `//`
+ *   itself, which means the source already held a URL split by markup — a true positive. Narrow,
+ *   not absent: do not re-derive the stronger claim from the fact that it matches more.
+ * - The pattern half only throws once `USER_CONTENT_PATTERN_ENFORCE` is on, and records
+ *   otherwise. It is new to these surfaces, the entries are substrings, and a false positive here
+ *   costs a creator a publish with no moderator override on the path — unlike a comment, which
+ *   costs one comment. Recording first is what tells us the rate before a creator pays for it.
+ *
+ * The flag governs that one decision and nothing else. It is read only when a pattern actually
+ * matched, so the ordinary write does no flag evaluation at all.
+ */
+export async function throwOnBlockedUserContent(
+  content: string | null | undefined | Array<string | null | undefined>,
+  {
+    isModerator = false,
+    surface,
+    onBlocked,
+  }: {
+    isModerator?: boolean;
+    surface?: string;
+    /**
+     * Replaces the thrown `BAD_REQUEST` for a caller that has its own error type. It is handed
+     * WHICH list rejected the text, so a caller that classifies a block never has to read the
+     * message string to find out — the one consumer that does classify uses the answer to decide
+     * whether to file a Report.
+     */
+    onBlocked?: (kind: BlockedContentKind) => never;
+  } = {}
+) {
+  // `throwBadRequestError` is not typed as `never`, so nothing here proves to the compiler that
+  // this returns. Every caller pairs it with an explicit `return` for that reason.
+  const reject = (kind: BlockedContentKind, message: string) => {
+    if (onBlocked) onBlocked(kind);
+    throwBadRequestError(message);
+  };
 
-    if (findBlockedPattern(form, matchable) !== undefined)
-      throwBadRequestError('Comment blocked by content filter');
-  }
+  await throwOnBlockedText(Array.isArray(content) ? content : [content], {
+    exemptFromLinks: false,
+    exemptFromPatterns: isModerator,
+    onLinkMatch: (blockedFor) => reject('link', `invalid urls: ${blockedFor.join(', ')}`),
+    onPatternMatch: async (matched) => {
+      // No try/catch: `getBoolean` swallows its own failures and returns `false`, so an
+      // unreachable or uninitialised Flipt already degrades to recording. A catch here would be
+      // unreachable code that reads as a safety net, and the only test able to exercise it would
+      // be asserting that a mock rejects.
+      const enforce = await getFliptBoolean(FLIPT_FEATURE_FLAGS.USER_CONTENT_PATTERN_ENFORCE);
+
+      // Logged on BOTH branches. Recording only the un-enforced hits would delete the telemetry at
+      // the exact moment the flag is flipped, and comparing the rate either side of that flip is
+      // the whole reason the rollout is staged.
+      logToAxiom({
+        name: 'user-content-pattern-match',
+        type: 'info',
+        message: enforce
+          ? 'Blocked pattern found in user content; write rejected'
+          : 'Blocked pattern found in user content; not enforced on this surface yet',
+        details: { surface, matched, enforced: enforce },
+      }).catch(() => undefined);
+
+      if (enforce) {
+        reject('pattern', 'Content blocked by content filter');
+        return;
+      }
+    },
+  });
 }
 // #endregion
 

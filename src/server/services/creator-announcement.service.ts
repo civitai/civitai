@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
   AnnouncementMetaSchema,
@@ -305,6 +306,17 @@ export async function upsertCreatorAnnouncement({
   ...input
 }: UpsertCreatorAnnouncementSchema & { userId: number; isModerator?: boolean }) {
   const existing = input.id ? await assertOwnedAnnouncement(input.id, userId) : undefined;
+
+  // Push, not pull: this text is delivered to every follower rather than waiting to be visited.
+  //
+  // AFTER the ownership check, deliberately — same rule as the two creator-shop updates. The
+  // rejection names the matched entry, so running it first answers "does this text match the
+  // list" for a caller holding an id they do not own, in place of the authorization failure they
+  // should get. This is the router's only gate; the procedure passes straight through.
+  await throwOnBlockedUserContent(
+    [input.title, input.content, input.action?.linkText, input.action?.link],
+    { isModerator, surface: 'creatorAnnouncement' }
+  );
 
   // An announcement costs a slot when it starts notifying, not when it is created.
   // profileOnly rows notify nobody, so they are free — but flipping one to profileOnly:
