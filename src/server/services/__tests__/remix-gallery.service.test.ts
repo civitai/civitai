@@ -144,7 +144,9 @@ const imageFindMany = dbMock.dbRead.image.findMany;
 
 // Writes have no canonical default and the service reads what these return.
 const placementUpdate = dbMock.dbWrite.placement.update;
-placementUpdate.mockResolvedValue({});
+/** Re-applied in `beforeEach` after its `mockReset`, which clears implementations. */
+const primePlacementUpdate = () => placementUpdate.mockResolvedValue({});
+primePlacementUpdate();
 const placementUpdateMany = dbMock.dbWrite.placement.updateMany;
 placementUpdateMany.mockResolvedValue({ count: 1 });
 
@@ -257,13 +259,26 @@ function primeQueries({
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // `clearAllMocks` is mockClear, which does NOT drain a queued `...Once`. Every
-  // `mockRejectedValueOnce` here is consumed today, but this file just gained a
-  // refusal ABOVE the insert - the day another one lands, an unconsumed rejection
-  // survives into the next test and reddens something unrelated.
+  // 🔴 `clearAllMocks` is mockClear, which does NOT drain a queued `...Once`, and
+  // neither does a later `mockResolvedValue` — the queue is consulted first. So
+  // an unconsumed `...Once` survives into the next test and reddens something
+  // unrelated, for a reason that is nowhere near the failure.
+  //
+  // Every mock in this file that anyone has ever given a `...Once` is reset here
+  // rather than only re-primed. Add to this list, not below it: a `...Once` on a
+  // mock that is only re-primed is the shape this block exists to stop, and a
+  // refusal landing above an insert is enough to leave one unconsumed.
   placementCreate.mockReset();
-  primePlacementCreate();
   placementUpdate.mockReset();
+  primePlacementUpdate();
+  placementFindFirst.mockReset();
+  createFreePlacement.mockReset();
+  assertCanPlace.mockReset();
+  holdPlacementEscrow.mockReset();
+  rewardApply.mockReset();
+  settlePlacement.mockReset();
+
+  primePlacementCreate();
   calls.length = 0;
   resolvePlacementSpaceFor.mockResolvedValue(openSpace);
   placementCount.mockResolvedValue(0);
@@ -271,6 +286,8 @@ beforeEach(() => {
   settlePlacement.mockResolvedValue({ settled: true });
   createFreePlacement.mockResolvedValue({ id: FREE_PLACEMENT });
   hasUsedFreePlacementOn.mockResolvedValue(false);
+  assertCanPlace.mockResolvedValue(undefined);
+  rewardApply.mockResolvedValue(undefined);
   holdPlacementEscrow.mockImplementation(async () => {
     calls.push('hold');
     return { fee: 210, principal: 490 };
@@ -796,13 +813,22 @@ describe('submission refusals', () => {
     await submit();
 
     const sql = flatten(queryRaw.mock.calls[0]);
-    expect(sql, 'the remixOfId cast must be guarded by a numeric test').toMatch(
-      /remixOfId'\s*~\s*'\^\[0-9\]\+\$'/
+    // LENGTH-bounded, not just digit-shaped. An unbounded `^[0-9]+$` admits
+    // '99999999999', which overflows ::int; it also admits a 21-digit string,
+    // which overflows the ::bigint written to catch the first case. Ten digits is
+    // at most 9999999999, so the inner cast is total.
+    expect(sql, 'the remixOfId cast must be guarded by a bounded numeric test').toMatch(
+      /remixOfId'\s*~\s*'\^\[0-9\]\{1,10\}\$'/
     );
-    // Digits alone are not enough: '99999999999' passes that regex and then
-    // raises `value out of range for type integer`, which is the same 500 by a
-    // different route.
     expect(sql, 'the cast must also be bounded to the int range').toContain('2147483647');
+    // 🔴 The SHAPE, not just the two values. Flattening this to
+    // `WHEN ... ~ '...' AND (...)::bigint <= 2147483647 THEN` satisfies both
+    // assertions above and is the form the code comment calls unsafe: Postgres
+    // does not guarantee evaluation order for AND, so the cast can still run on
+    // text the regex was meant to exclude. Only a nested CASE orders them.
+    expect(sql, 'the range check must be NESTED, not ANDed with the regex').toMatch(
+      /THEN\s*CASE\s+WHEN/
+    );
   });
 
   it('refuses past the pending cap for one owner', async () => {
@@ -1676,6 +1702,21 @@ describe('startReadyRemixSubmissionClocks', () => {
     // placements, or re-settle rows that are already resolved.
     expect(sql).toContain('remixGallery');
     expect(sql).toContain("status = 'pending'");
+
+    // 🔴 The clause that gives `marked` its meaning. A row leaves the selection
+    // set by being marked undeliverable, and this is the only thing that makes
+    // that true — delete it and a marked row is re-selected every tick, `marked`
+    // counts it again on every pass, the batch never comes back short, and the
+    // job burns all ten passes re-reading the same lowest ids. That is the
+    // original starvation bug, restored, with the counter still reporting
+    // movement.
+    //
+    // Asserted with its OPERATOR. Two bare `toContain`s pass just as happily over
+    // AND for OR, which inverts this into "skip every needsReview row forever".
+    const whereRegion = sql.slice(sql.indexOf('FROM "Placement"'));
+    expect(whereRegion, 'the undeliverable exclusion must be an OR, not an AND').toMatch(
+      /needsReview"\s+IS NULL\s+OR\s+pl\.data\s*->>\s*'undeliverable'\s+IS NULL/
+    );
   });
 
   it('refunds and marks undeliverable when the image is blocked', async () => {

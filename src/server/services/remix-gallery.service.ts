@@ -20,7 +20,11 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import type { QueueImage as SharedQueueImage } from '~/server/utils/queue-image';
 import { toQueueImage } from '~/server/utils/queue-image';
-import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import {
+  isPrismaUniqueViolation,
+  throwAuthorizationError,
+  throwBadRequestError,
+} from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
   nsfwBrowsingLevelsFlag,
@@ -116,17 +120,20 @@ const sourceImageIdsSql = (alias = 'i') => {
 const remixOfIdSql = (alias = 'i') => {
   const t = Prisma.raw(`"${alias}"`);
   const raw = Prisma.sql`${t}.meta -> 'extra' ->> 'remixOfId'`;
-  // Digits alone are not enough. '99999999999' matches ^[0-9]+$ and then raises
-  // `value out of range for type integer`, which is the same 500 by a different
-  // route. Ranged through bigint rather than by digit count, so a legitimate id
-  // near the int ceiling is never silently dropped to NULL.
+  // Digits alone are not enough, and NEITHER IS A BIGINT BOUND ON ITS OWN.
+  // '99999999999' matches `^[0-9]+$` and overflows `::int`; a 21-digit string
+  // matches it too and overflows the `::bigint` written to catch the first case,
+  // which is the same 500 one range further up. `{1,10}` is what makes the inner
+  // cast total: ten digits is at most 9999999999, comfortably inside bigint, and
+  // it still admits every legal id including 2147483647 itself, so a real id at
+  // the ceiling is never silently dropped to NULL.
   //
-  // 🔴 NESTED, not `AND`. Postgres does not guarantee short-circuit evaluation of
-  // AND and may evaluate either side first, so the bigint cast could still run on
-  // non-numeric text. CASE does guarantee its conditions are evaluated in order,
-  // which is the only reason the inner cast is safe.
+  // 🔴 NESTED, not `AND`. Postgres does not guarantee evaluation order for AND
+  // and may evaluate either side first, so the cast could still run on text the
+  // regex was meant to exclude. CASE does guarantee its conditions run in order,
+  // and that is the only reason the inner cast is safe.
   return Prisma.sql`CASE
-    WHEN ${raw} ~ '^[0-9]+$' THEN
+    WHEN ${raw} ~ '^[0-9]{1,10}$' THEN
       CASE WHEN (${raw})::bigint <= 2147483647 THEN (${raw})::int END
   END`;
 };
@@ -469,7 +476,14 @@ export async function createRemixGallerySubmission({
  * therefore do not re-check THIS rule inside the transaction.
  */
 function asDuplicateRefusal(error: unknown): never {
-  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
+  // Through the shared predicate rather than a hand-written `code === 'P2002'`,
+  // because its docblock carries the caveat this site needs: P2002 only means
+  // what we say it means where it is unambiguous. `Placement` now has this
+  // partial unique index AND its primary key, so a pkey violation from a
+  // desynced sequence would read as "already in this gallery". That needs a
+  // restore-shaped accident and loses nothing when it happens - no row, no
+  // escrow - so it is accepted, not defended against.
+  if (isPrismaUniqueViolation(error))
     throw throwBadRequestError('remix gallery: that image is already in this gallery');
   throw error;
 }
