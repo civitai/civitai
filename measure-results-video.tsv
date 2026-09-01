@@ -1,4 +1,0 @@
-key	sat_live	sat_cand	moved	samples	verdict
-ltxv23	1	2	lighting-44 style-33 temporal-33 text+14 audio+89	false	REGRESSED
-ltxv2				false	FAILED: ltxv2 (live): every request failed — no data. Check the endpoint and re-run; thi
-ltxv				false	FAILED: ltxv (live): every request failed — no data. Check the endpoint and re-run; this
