@@ -31,10 +31,16 @@ export const AUTO_FEATURE_JOB_DATE_KEY = 'job:auto-feature-images';
  * The default `intervalHours` re-exported from the schema rather than restated, so a health check
  * reasoning about the cadence of a job whose config has gone missing measures against the value
  * that job would actually have used.
+ *
+ * 🔴 Read per-field, not by parsing a synthetic object. This runs at module load and
+ * `collection.service.ts` imports this file, so a throw here fails that import rather than the job
+ * — and parsing the whole schema to read one default couples this line to all fifteen of its
+ * fields, on a schema that exists to be tuned. One added required field or `.refine()` would be
+ * enough. `shape.<field>.parse(undefined)` resolves a `ZodDefault` and cannot throw; the idiom is
+ * `env.mock.ts`'s. Compare `job.ts`, which wraps its module-scope metrics call for the same reason.
  */
-export const AUTO_FEATURE_DEFAULT_INTERVAL_HOURS = autoFeatureSchema.parse({
-  collectionId: 1,
-}).intervalHours;
+export const AUTO_FEATURE_DEFAULT_INTERVAL_HOURS =
+  autoFeatureSchema.shape.intervalHours.parse(undefined);
 
 /**
  * Resolved by username so the same code identifies the right account in dev, preview and prod

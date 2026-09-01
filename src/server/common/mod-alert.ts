@@ -12,15 +12,23 @@ import { env } from '~/env/server';
  * Behaviour is deliberately unchanged from the copies this replaces, timeout included. Only the
  * return value is new.
  *
- * The richer field-based embeds elsewhere (`git-push.ts`, `new-order-jobs.ts`,
- * `publish-request.service.ts`) are a different shape and are not served by this.
- *
- * @returns whether the alert actually landed. A caller that reports "paged" off its own intent
- * rather than this answer will keep claiming it alerted someone long after the webhook is revoked —
- * which for a health check means the outage detector's own outage is invisible.
+ * `new-order-jobs.ts` posts this same title/description shape and differs only in `color`, so it is
+ * one optional parameter from being the third caller — take it when a third one arrives. The other
+ * three (`git-push.ts`, `publish-request.service.ts`, `apps-shared.router.ts`) build `fields[]`
+ * embeds with `url`/`footer` and are a genuinely different shape; the latter two also resolve `env`
+ * through `await import`, so they would not adopt this unchanged even if the shape matched.
  */
-export async function notifyModAlert(title: string, description: string): Promise<boolean> {
-  if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return false;
+export type ModAlertOutcome = 'delivered' | 'rejected' | 'unconfigured';
+
+/**
+ * @returns what happened, not merely whether it worked. `rejected` and `unconfigured` are different
+ * facts and a caller that collapses them reports a delivery failure in every environment that never
+ * had a webhook — which for a health check means its own alarm cries wolf exactly where nobody can
+ * act on it. A caller reporting "paged" off its own intent instead of this answer keeps claiming it
+ * alerted someone long after the webhook is revoked.
+ */
+export async function notifyModAlert(title: string, description: string): Promise<ModAlertOutcome> {
+  if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return 'unconfigured';
 
   return fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
     method: 'POST',
@@ -29,6 +37,6 @@ export async function notifyModAlert(title: string, description: string): Promis
       embeds: [{ title, description, color: 0xf44336, timestamp: new Date().toISOString() }],
     }),
   })
-    .then((res) => res.ok)
-    .catch(() => false);
+    .then((res) => (res.ok ? ('delivered' as const) : ('rejected' as const)))
+    .catch(() => 'rejected' as const);
 }

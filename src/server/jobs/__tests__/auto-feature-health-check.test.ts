@@ -74,6 +74,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal('fetch', mocks.fetch);
   mocks.isFlipt.mockResolvedValue(true);
+  // Restored, not just cleared. `vi.clearAllMocks()` drops call records but keeps implementations,
+  // so a test that stubs a 404 leaks it into every test after it in this file and the suite goes
+  // green by ordering accident.
+  mocks.fetch.mockResolvedValue(new Response(null, { status: 204 }));
   // Declared rather than replacing the whole module: `~/env/server` exports one `env` object of
   // ~200 keys, so a full replacement gives `undefined` for anything the graph later reads, which
   // is silently wrong rather than a loud missing-export error.
@@ -291,9 +295,14 @@ describe('auto-feature-health-check alerting', () => {
     expect(mocks.fetch).not.toHaveBeenCalled();
     // The finding still has to survive to Axiom; only its delivery is missing.
     expect(result).toMatchObject({ healthy: false, alerts: 1, paged: 0 });
+    // An environment with no webhook is not a broken alarm. Reporting it as a delivery failure
+    // would fire this warning on every unhealthy run in dev and preview, which trains whoever
+    // eventually sees the real one to ignore it.
+    expect(axiom('warning').some((a) => a.message?.includes('Discord rejected'))).toBe(false);
+    expect(axiom('info').some((a) => a.message?.includes('No DISCORD_WEBHOOK'))).toBe(true);
   });
 
-  it('reports paged: 0 when the webhook rejects the page', async () => {
+  it('reports paged: 0 and warns when the webhook rejects the page', async () => {
     stateIs({ lastRun: hoursBefore(79), lastRow: hoursBefore(79) });
     mocks.fetch.mockResolvedValue(new Response(null, { status: 404 }));
 
@@ -302,7 +311,21 @@ describe('auto-feature-health-check alerting', () => {
     // A revoked webhook must not leave the job claiming it alerted someone. This job exists to make
     // a silent failure visible; it must not have one of its own.
     expect(result).toMatchObject({ healthy: false, alerts: 1, paged: 0 });
-    expect(axiom('warning').some((a) => a.message?.includes('reached nobody'))).toBe(true);
+    expect(axiom('warning').some((a) => a.message?.includes('Discord rejected'))).toBe(true);
+  });
+
+  it('still delivers a page after an earlier test stubbed a rejection', async () => {
+    stateIs({ lastRun: hoursBefore(79), lastRow: hoursBefore(79) });
+
+    const result = await autoFeatureHealthCheckJob.run();
+
+    // Ordering guard, and it is the only thing making the fetch restore in `beforeEach` do any
+    // work. `vi.clearAllMocks()` keeps implementations, so the 404 stubbed above would otherwise
+    // leak into every later test in this file — leaving the suite green because nothing after it
+    // happens to need a successful POST. Whoever removes that restore should fail HERE, not in a
+    // test they add months later that appears to break the code it is testing.
+    expect(result).toMatchObject({ healthy: false, paged: 1 });
+    expect(axiom('warning').some((a) => a.message?.includes('Discord rejected'))).toBe(false);
   });
 
   it('does not blame the caps when the attribution account is missing', async () => {

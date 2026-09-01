@@ -46,9 +46,9 @@
  *   invocation and `seedJobMetrics` makes an absent series distinguishable from an idle one, so
  *   `rate(...[6h]) == 0` catches a job that stopped executing with no code at all. It is not enough
  *   on its own: it counts the `flag-off` and `interval-not-elapsed` early returns, so it cannot see
- *   a job that runs but never scores, nor one that scores but writes nothing. This repo also cannot
- *   ship a Prometheus alert rule — see `clickhouse-refresh-monitor.ts`, which hit the same wall and
- *   wrote its PromQL in a comment.
+ *   a job that runs but never scores, nor one that scores but writes nothing. A Prometheus rule for
+ *   the half it does cover belongs in the infra repo rather than here, the way
+ *   `clickhouse-refresh-monitor.ts` records its own — that route is open, not closed.
  */
 
 import {
@@ -259,24 +259,33 @@ export async function checkAutoFeatureHealth() {
   // `paged` reports what LANDED, not what was attempted. A revoked or rotated webhook otherwise
   // leaves this job returning `paged: 1` forever while nobody is being told — the outage detector
   // having its own silent outage, which is the exact failure the job exists to make visible.
-  const delivered =
-    paging.length > 0 &&
-    (await notifyModAlert(
-      `🚨 Auto-feature pipeline — ${paging.length} check(s) failing`,
-      paging.map((a) => a.message).join('\n\n')
-    ));
+  const outcome = paging.length
+    ? await notifyModAlert(
+        `🚨 Auto-feature pipeline — ${paging.length} check(s) failing`,
+        paging.map((a) => a.message).join('\n\n')
+      )
+    : null;
 
-  if (paging.length > 0 && !delivered)
+  // `rejected` and `unconfigured` are kept apart because only the first is a fault. An environment
+  // with no webhook is not a broken alarm, and collapsing the two would fire this warning on every
+  // unhealthy run in dev and preview — training whoever eventually sees the real one to ignore it.
+  if (outcome === 'rejected')
     await logToAxiom({
       type: 'warning',
       name: 'auto-feature-health-check',
-      message: 'Discord alert did not land — the page above reached nobody',
+      message: 'Discord rejected the page — the finding above reached nobody',
+    }).catch(() => null);
+  else if (outcome === 'unconfigured')
+    await logToAxiom({
+      type: 'info',
+      name: 'auto-feature-health-check',
+      message: 'No DISCORD_WEBHOOK_MOD_ALERTS configured — the finding above was recorded only',
     }).catch(() => null);
 
   return {
     healthy: false as const,
     alerts: alerts.length,
-    paged: delivered ? paging.length : 0,
+    paged: outcome === 'delivered' ? paging.length : 0,
     ...details,
   };
 }
