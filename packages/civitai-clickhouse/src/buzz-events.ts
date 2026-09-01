@@ -26,10 +26,12 @@ export const BUZZ_EVENTS_MAX_MULTIPLIER = 9.99;
  * `sendAward`'s amount filter, leaving a row claiming a payout that never happened.
  * Justin's call, 2026-09-01.
  *
- * A non-finite input falls back to the base multiplier of 1 rather than passing NaN through: NaN is
- * a value the column cannot hold, which is the same silently-dropped row this exists to prevent.
+ * A non-finite input falls back rather than passing NaN through, since NaN is a value the column
+ * cannot hold — the same silently-dropped row this exists to prevent. It falls back BY SIGN, or the
+ * floor would be non-monotone: -Infinity is still a negative and must not be worth more than -5.
+ * NaN carries no sign to act on, so it takes the base multiplier like a missing value.
  */
 export function clampBuzzEventMultiplier(multiplier: number): number {
-  if (!Number.isFinite(multiplier)) return 1;
+  if (!Number.isFinite(multiplier)) return multiplier < 0 ? 0 : 1;
   return Math.min(Math.max(multiplier, 0), BUZZ_EVENTS_MAX_MULTIPLIER);
 }

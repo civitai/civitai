@@ -36,8 +36,12 @@ export async function rewardReportReporters(input: {
         // Split by direction rather than re-testing the ceiling, so this cannot drift from the
         // helper. A floored negative did not exceed anything, and saying it did sends whoever reads
         // the alert looking for a bonus event that is not there.
-        if (adjusted && raw > 0) clamped.push(raw);
-        if (adjusted && raw < 0) floored.push(raw);
+        const clampedHigh = adjusted && raw > 0;
+        // Not gated on `adjusted`: every negative floors, including -Infinity, which is not finite
+        // and would otherwise floor to 0 with no signal at all.
+        const flooredLow = raw < 0;
+        if (clampedHigh) clamped.push(raw);
+        if (flooredLow) floored.push(raw);
         // toUserId === byUserId (an accepted report rewards its reporter); ip omitted for localhost/empty
         // so the ClickHouse column falls back to its '' default.
         return {
@@ -50,7 +54,12 @@ export async function rewardReportReporters(input: {
           status: 'pending',
           // The raw product is kept so a clamped row is still traceable back to the tier and bonus
           // that produced it.
-          transactionDetails: adjusted ? JSON.stringify({ multiplierRaw: raw }) : '{}',
+          // Only a finite raw is recorded: JSON.stringify turns +/-Infinity into `null`, which is
+          // a worse audit trail than none. The alert's count still says it happened.
+          transactionDetails:
+            (clampedHigh || flooredLow) && Number.isFinite(raw)
+              ? JSON.stringify({ multiplierRaw: raw })
+              : '{}',
           ...(input.ip && input.ip !== '::1' ? { ip: input.ip } : {}),
         };
       })
@@ -62,7 +71,7 @@ export async function rewardReportReporters(input: {
         message: 'Buzz event multiplier was negative and was floored to 0',
         flooredEvents: floored.length,
         batchSize: rows.length,
-        minRaw: Math.min(...floored),
+        minRaw: Math.min(...floored.filter(Number.isFinite)),
       }).catch(() => null);
     }
     if (clamped.length) {

@@ -399,4 +399,44 @@ describe('rewardReportReporters multiplier', () => {
     const row = await rowFor({ tier: cached(-5), storedBonus: 20 });
     expect(JSON.parse(row.transactionDetails)).toEqual({ multiplierRaw: -10 });
   });
+
+  it('floors a negative that overflows, rather than paying it the base multiplier', async () => {
+    // -1e308 x 5 is -Infinity. Falling back to the base multiplier by finiteness alone made the
+    // floor non-monotone: a tier of -5 paid nothing while a tier of -1e308 paid the FULL award at
+    // 1x. The fallback is by sign for that reason.
+    const row = await rowFor({ tier: cached(-1e308), storedBonus: 50 });
+    expect(row.multiplier).toBe(0);
+    // Signalled even though the raw is not finite — a floor with no trace is what this guards.
+    expect(axiom).toHaveBeenCalledTimes(1);
+    expect(axiom.mock.calls[0][0].message).toMatch(/negative and was floored/);
+    // The raw is unrepresentable in JSON, and `{"multiplierRaw":null}` is a worse trail than none.
+    expect(row.transactionDetails).toBe('{}');
+  });
+
+  it('reports a clamp and a floor in the same batch as two separate signals', async () => {
+    // 4x5=20 clamps, -3x5=-15 floors, 1x5=5 does neither. Nothing else drives both at once, so a
+    // change collapsing the two alerts into one passes every other test.
+    await rowsFor({
+      tiers: [
+        [42, cached(4)],
+        [7, cached(-3)],
+        [9, cached(1)],
+      ],
+      storedBonus: 50,
+    });
+    expect(axiom).toHaveBeenCalledTimes(2);
+    const messages = axiom.mock.calls.map(([payload]) => String(payload.message));
+    expect(messages.some((m) => /negative and was floored/.test(m))).toBe(true);
+    expect(messages.some((m) => /exceeded the ClickHouse column/.test(m))).toBe(true);
+  });
+
+  it('does not treat a legitimately zero multiplier as an adjustment', async () => {
+    // The ineligible reporter is the COMMON production case and its multiplier is 0 by intent, not
+    // by clamping. Alerting on it would page someone for every barred reporter, and writing a
+    // multiplierRaw would claim an adjustment that never happened.
+    const row = await rowFor({ tier: cached(4), storedBonus: 20, ineligible: true });
+    expect(row.multiplier).toBe(0);
+    expect(row.transactionDetails).toBe('{}');
+    expect(axiom).not.toHaveBeenCalled();
+  });
 });
