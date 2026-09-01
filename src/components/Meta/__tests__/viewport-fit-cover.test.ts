@@ -85,6 +85,11 @@ const INSET_CONSUMERS = [
   'src/components/Image/DetailV2/ImageDetail2.tsx',
   'src/components/ImageGeneration/GeneratedOutputLightbox.tsx',
   'src/components/IterativeEditor/IterativeImageEditor.module.scss',
+  // The one component that OUTRANKS the shell's Mantine drawer rule (its
+  // `.module.scss` is in `@layer modules`) and therefore has to re-pay the top
+  // inset itself. It is in this ledger for that reason, not because it is an
+  // ordinary call site.
+  'src/components/Notifications/NotificationsDrawer.module.scss',
   'src/components/Sticker/StickerPlacementTray.tsx',
   'src/components/generation_v2/GenerationLayout.tsx',
   'src/pages/comics/project/[id]/ProjectWorkspace.module.scss',
