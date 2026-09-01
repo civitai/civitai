@@ -191,6 +191,23 @@ export type ListingCard = {
   recommend: ListingRecommendRollup;
   /** Total reviews reflected in the recommend rollup (recommended + not). */
   reviewCount: number;
+  /**
+   * AUTHOR-DECLARED "this app is in beta" flag — renders a small badge on the card.
+   *
+   * 🔴 ALLOWLIST JUSTIFICATION. A boolean the author chose to publish about their own app,
+   * carrying no information about anyone else and gating nothing. It affects no ranking,
+   * no curation and no CTA — it is a label.
+   *
+   * 🔴 THE FLAG IS ON THE CARD, THE MESSAGE IS NOT, and the asymmetry is the same one
+   * `sourceRepoUrl` makes for the opposite reason. A grid of store cards is a
+   * low-attention surface with no room for a sentence; the badge is the whole signal a
+   * card can carry honestly. `betaMessage` appears on the DETAIL page, where there is
+   * room to read it. The exact-key-set assertions in `app-listing.service.test.ts` pin
+   * both halves.
+   *
+   * `false` while the MANUAL-APPLY migration is outstanding — see `projectListingCard`.
+   */
+  isBeta: boolean;
   kindData: ListingCardKindData;
 };
 
@@ -316,6 +333,35 @@ export type ListingDetail = {
    * Null while the MANUAL-APPLY migration is outstanding — see `projectListingDetail`.
    */
   sourceRepoUrl: string | null;
+  /**
+   * AUTHOR-DECLARED "this app is in beta" flag. Same allowlist justification as
+   * `ListingCard.isBeta` — a label the author publishes about their own app.
+   *
+   * `false` while the MANUAL-APPLY migration is outstanding — see `projectListingDetail`.
+   */
+  isBeta: boolean;
+  /**
+   * The author's optional short beta note (≤`BETA_MESSAGE_MAX`), or null.
+   *
+   * 🔴 PLAIN TEXT, NOT MARKDOWN, AND THAT IS A SECURITY DECISION RATHER THAN A STYLE ONE.
+   * `description` on this same DTO renders through `AppListingDescription` →
+   * `CustomMarkdown`; this deliberately does not, so the string cannot mint a link, an
+   * image or any element at all. It is rendered as a text node. Do NOT route it through
+   * `CustomMarkdown`, and never through `dangerouslySetInnerHTML`.
+   *
+   * 🔴 THE TRUST POSTURE IS THE SAME ONE `description` ALREADY HAS on this surface —
+   * author-controlled public copy that no moderator reviews before it goes live, because
+   * beta is a TRIVIAL patch field. The mitigations are deterministic rather than
+   * procedural: a bounded length enforced in zod at the request boundary, and plain-text
+   * rendering. The residual risk is the same as `description`'s: an author can write
+   * misleading prose about their own app, which is a moderation problem (the listing is
+   * delistable) and not a rendering one.
+   *
+   * A STRING (or null), not an object: this DTO also crosses the transformer-less public
+   * REST `GET /api/v1/apps/{slug}` boundary, so it must be a JSON-safe scalar. Null while
+   * the MANUAL-APPLY migration is outstanding.
+   */
+  betaMessage: string | null;
   /** Ordered gallery — screenshots whose backing Image still exists (null-image rows dropped). */
   screenshots: ListingGalleryScreenshot[];
   kindData: ListingDetailKindData;

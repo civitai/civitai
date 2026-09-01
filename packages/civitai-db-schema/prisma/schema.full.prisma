@@ -2859,6 +2859,26 @@ model AppListing {
   // MANUAL-APPLY, like every migration here — the read paths degrade to NULL while
   // the column is absent rather than 500ing the public store.
   sourceRepoUrl   String?      @map("source_repo_url")
+  // AUTHOR-DECLARED "this app is in beta" flag + an optional short note, rendered as
+  // a badge on the store card and a badge + notice on the detail page and the app's
+  // run page. DISPLAY ONLY — it feeds no ranking, no curation, no launch gate and no
+  // consent surface.
+  //
+  // 🔴 LISTING-NATIVE ON BOTH KINDS, and deliberately NOT manifest-governed. Unlike
+  // `sourceRepoUrl` (which an on-site listing mirrors from `manifest.repository` on
+  // every version sync), beta is a statement the AUTHOR makes about the LISTING, so an
+  // on-site author edits it in the same store-details form an off-site author uses and
+  // no manifest key can set or clear it.
+  //
+  // 🔴 TRIVIAL, NOT MATERIAL. An edit applies IN PLACE with no moderator re-review —
+  // the same posture `tagline` / `description` / `category` already have — so these
+  // keys are deliberately absent from `MATERIAL_LISTING_PATCH_FIELDS`, and beta is
+  // never staged on a shadow revision. See `app-listing-beta.service.ts`.
+  //
+  // MANUAL-APPLY, like every migration here — every read path degrades to "not beta"
+  // while the columns are absent rather than 500ing the public store.
+  isBeta          Boolean      @default(false) @map("is_beta")
+  betaMessage     String?      @map("beta_message")
   // Off-site OAuth-connect client (Connect CTA). NULL for on-site/external-link.
   connectClientId String?      @map("connect_client_id")
   connectClient   OauthClient? @relation(fields: [connectClientId], references: [id], onDelete: SetNull)
