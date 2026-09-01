@@ -592,9 +592,16 @@ export type BlockedContentKind = 'link' | 'pattern';
  * ⚠️ The two halves ship at DIFFERENT strengths, on purpose, and the asymmetry is the point:
  *
  * - The link-domain half THROWS. It is the check these surfaces already had, so anything weaker
- *   would be a regression on a control that is live right now. Everything this adds to it —
- *   scanning the derived forms, folding — can only match more, never less, so it carries no new
- *   false-positive risk and needs no ramp.
+ *   would be a regression on a control that is live right now. It scans the derived forms and the
+ *   folded ones, which matches strictly more than the raw string did, so it needs no ramp.
+ *
+ *   ⚠️ "Matches more" is not the same as "no new false positives", and an earlier version of this
+ *   comment claimed the second. `removeTagsCompact` strips tags with NO separator, so it can join
+ *   text that was never contiguous. Measured against `LINK_PATTERN`: a bare glued host does NOT
+ *   match — `check my <em>profile</em>.com` compacts to `check my profile.com`, and the regex
+ *   requires `//`, so it finds nothing. The residual case needs the glue to manufacture the `//`
+ *   itself, which means the source already held a URL split by markup — a true positive. Narrow,
+ *   not absent: do not re-derive the stronger claim from the fact that it matches more.
  * - The pattern half only throws once `USER_CONTENT_PATTERN_ENFORCE` is on, and records
  *   otherwise. It is new to these surfaces, the entries are substrings, and a false positive here
  *   costs a creator a publish with no moderator override on the path — unlike a comment, which
