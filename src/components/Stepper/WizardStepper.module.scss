@@ -11,10 +11,6 @@
 .stepBody {
   margin-inline-start: 0;
   margin-top: var(--mantine-spacing-xs);
-
-  @media (max-width: calc(theme('screens.sm') - 1px)) {
-    display: none;
-  }
 }
 
 .separator {
