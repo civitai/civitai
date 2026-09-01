@@ -10,6 +10,8 @@ type ModelModActivity = {
     | 'moderateFlag'
     | 'setMinor'
     | 'unsetMinor'
+    | 'setSfwOnly'
+    | 'unsetSfwOnly'
     | 'setMinorAutoHash'
     | 'rollbackMinorAutoHash'
     | 'dismissMinorHashMatch';

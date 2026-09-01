@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -586,6 +586,39 @@ describe('exitCodeForSignal', () => {
 
   it('falls back to 143 for a name node does not know', () => {
     expect(exitCodeForSignal('SIGNOTAREALSIGNAL')).toBe(143);
+  });
+});
+
+describe('the WIRING — package.json must actually invoke the wrapper', () => {
+  /**
+   * 🔴 THE SEAM NOBODY OWNS, AND IT WAS ALMOST SEVERED BY A MERGE.
+   *
+   * Every other test in this file exercises the scripts DIRECTLY. Not one of them loads
+   * `package.json`, so if `test:component` stops pointing at the wrapper the entire guard goes
+   * inert — no zero-collected check, no file ledger, no floor — and all 45 of them stay green.
+   * The tier would go back to reporting an abort as "Component suite failed" with nothing to
+   * say it had tested nothing, which is the exact state this change exists to end.
+   *
+   * Not hypothetical. Merging `origin/main` into this branch produced a conflict in
+   * `package.json` where main had edited `test:lint-rules` and this branch had edited
+   * `test:component` — ADJACENT LINES of the same object. Taking either side wholesale silently
+   * reverts one of the two, and the "take theirs" resolution is the one that looks safest and
+   * kills this feature. A textual conflict made it loud that time; the next overlap may not.
+   */
+  it('`pnpm test:component` runs scripts/test-component-run.mjs, not vitest directly', () => {
+    const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf8'));
+    const script = pkg.scripts['test:component'];
+    // Asserted as the WHOLE normalised string, not a substring: a partial match is satisfied by
+    // `vitest run --project component && node scripts/test-component-run.mjs` and by anything
+    // else that merely mentions the file.
+    expect(script.trim()).toBe('node scripts/test-component-run.mjs');
+  });
+
+  it('the script it names EXISTS and exports the entry point', async () => {
+    // A wiring assertion that only reads package.json can pass over a deleted file.
+    const target = resolve(__dirname, '../test-component-run.mjs');
+    expect(existsSync(target)).toBe(true);
+    expect(typeof main).toBe('function');
   });
 });
 

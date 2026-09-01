@@ -28,6 +28,7 @@ import type {
   ImageTraininWhatIfWorkflowSchema,
 } from '~/server/schema/orchestrator/training.schema';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
+import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
@@ -424,6 +425,8 @@ export const createTrainingWorkflow = async ({
       currencies,
     },
   });
+
+  await assertWorkflowOwner(workflow, userId, token);
 
   // Update file and version status immediately after workflow creation
   const now = new Date().toISOString();

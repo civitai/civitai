@@ -256,7 +256,7 @@ export const AuctionTopSection = ({
                   <Badge color="green" mr="xs">
                     Generation
                   </Badge>
-                  Checkpoints will be enabled for use in generation.
+                  Fine-tunes will be enabled for use in generation.
                 </Text>
               </Stack>
             </Stack>

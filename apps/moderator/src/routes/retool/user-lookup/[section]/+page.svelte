@@ -136,7 +136,7 @@
       <CommentsPanel
         {account}
         userId={result.identity.id}
-        canAct={data.canAct}
+        canBulkAct={!!data.grants['user.comments.bulk']}
         civitaiUrl={data.civitaiUrl}
       />
     {:else if section === 'leaderboard' || section === 'score'}
@@ -183,6 +183,8 @@
         identity={result.identity}
         canAct={data.canAct}
         canToggleModerator={!!data.grants['user.moderator.toggle']}
+        canBan={!!data.grants['user.ban']}
+        canPurge={!!data.grants['user.purge']}
       />
     {/if}
   {/key}

@@ -74,6 +74,7 @@ import {
   submitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
 } from '~/server/services/orchestrator/workflows';
+import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -1682,6 +1683,8 @@ export async function generateFromGraph({
       externalId,
     },
   })) as TextToImageResponse;
+
+  await assertWorkflowOwner(workflow, userId, token);
 
   // Format and return response
   const [formatted] = await formatGenerationResponse2([workflow], { id: userId } as any);

@@ -306,12 +306,16 @@ export const reemitScheduledImagesEmittedCounter = registerCounter({
 });
 
 // Metrics for the standing PG<->BitDex consistency audit (audit-bitdex-consistency).
-// checked_total is the liveness signal and the denominator; mismatch_total is the
-// alerting series. `stratum` is the sampled population, `kind` the failure mode —
-// both fixed low-cardinality enums (see MISMATCH_KINDS in the job).
+// mismatch_total is the alerting series. `stratum` is the sampled population, `kind` the
+// failure mode — both fixed low-cardinality enums (the `MismatchKind` union in the job).
+//
+// 🔴 `checked_total` is the LIVENESS signal, not a denominator: it counts rows SAMPLED.
+// Rows whose document is absent or unpublished are skipped before any comparison, so a
+// stratum that compared nothing still reports them. Use `compared_total` as the
+// denominator, and `opportunity_total{kind}` for a particular kind's zero.
 export const bitdexAuditCheckedCounter = registerCounterWithLabels({
   name: 'bitdex_audit_checked_total',
-  help: 'Images compared between PG and BitDex by the consistency audit, by sample stratum',
+  help: 'Images SAMPLED by the consistency audit, by sample stratum — the liveness signal, NOT a denominator (see compared_total)',
   labelNames: ['stratum'] as const,
 });
 export const bitdexAuditMismatchCounter = registerCounterWithLabels({
@@ -319,17 +323,41 @@ export const bitdexAuditMismatchCounter = registerCounterWithLabels({
   help: 'PG<->BitDex disagreements found by the consistency audit, by sample stratum and failure kind',
   labelNames: ['stratum', 'kind'] as const,
 });
+// The denominators a mismatch count of zero has to be read against, on the SAME surface
+// an alert reads. `checked_total` counts rows SAMPLED; a row whose document is absent or
+// unpublished is skipped before any comparison, so a stratum that compared nothing emits
+// a mismatch zero indistinguishable from perfect agreement unless these are here too.
+// `opportunity` is the arm-specific count: compared documents on which that arm COULD
+// have fired at all.
+export const bitdexAuditComparedCounter = registerCounterWithLabels({
+  name: 'bitdex_audit_compared_total',
+  help: 'Sampled images the consistency audit actually compared (document present and published), by sample stratum',
+  labelNames: ['stratum'] as const,
+});
+export const bitdexAuditOpportunityCounter = registerCounterWithLabels({
+  name: 'bitdex_audit_opportunity_total',
+  help: 'Compared images on which a given audit failure kind could have fired, by sample stratum and failure kind — the denominator for that kind of zero',
+  labelNames: ['stratum', 'kind'] as const,
+});
+// Which stratum died, when one is caught rather than taking the whole run down. Without
+// this, a stratum that has been failing for a week is invisible: runs_total still ticks
+// (the run completed for the others) and errors_total cannot say which one.
+export const bitdexAuditStratumFailedCounter = registerCounterWithLabels({
+  name: 'bitdex_audit_stratum_failed_total',
+  help: 'Consistency audit strata that failed and were caught, by sample stratum — the run continues for the others',
+  labelNames: ['stratum'] as const,
+});
 export const bitdexAuditRunsCounter = registerCounter({
   name: 'bitdex_audit_runs_total',
-  help: 'BitDex consistency audit runs that completed SUCCESSFULLY (success-only; the liveness signal behind a mismatch alert being trustworthy)',
+  help: 'BitDex consistency audit runs that completed — the liveness signal. ⚠️ A run counts here even when ONE stratum failed and was caught, because it did complete for the others: pair it with stratum_failed_total before trusting a per-stratum zero',
 });
 export const bitdexAuditErrorsCounter = registerCounter({
   name: 'bitdex_audit_errors_total',
-  help: 'BitDex consistency audit runs that threw (PG sample or BitDex fetch failed) before rethrowing',
+  help: 'BitDex consistency audit runs that hit an error — a whole-run throw, or a single stratum failing and being caught. Unlabelled: see stratum_failed_total for which one',
 });
 export const bitdexAuditRunDurationHistogram = registerHistogram({
   name: 'bitdex_audit_run_duration_seconds',
-  help: 'Wall-clock duration of a BitDex consistency audit run (both strata: PG sample + BitDex fetch + compare)',
+  help: 'Wall-clock duration of a BitDex consistency audit run (all three strata: PG sample + BitDex fetch + compare)',
   buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
 });
 

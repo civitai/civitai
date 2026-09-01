@@ -45,6 +45,7 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(async () => undefined),
+  throwOnBlockedUserContent: vi.fn(),
 }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: vi.fn(async () => undefined),

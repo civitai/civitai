@@ -1,5 +1,5 @@
 import { ReportReason, ReportStatus } from '@civitai/db-schema/enums';
-import { chatAuditChatUrl, entityUrl } from './entity-url';
+import { chatAuditChatUrl, entityUrl, userLookupUrl } from './entity-url';
 
 export { ReportReason, ReportStatus };
 
@@ -191,7 +191,15 @@ export const getReportItemUrl = (
     ? entityId
       ? chatAuditChatUrl(entityId)
       : null
-    : contextUrl
+    : // Same reasoning as chat, and the same reason it read as broken: a report against an ACCOUNT
+      // carries a userId, profiles are addressed by username, so `entityUrl` can derive nothing and
+      // the row fell through to dead grey text — reported as "reportedUser renders greyed out". The
+      // destination exists, it just lives in this app: User Lookup takes an id.
+      type === 'reportedUser'
+      ? entityId
+        ? userLookupUrl(entityId)
+        : null
+      : contextUrl
     ? `${base}${contextUrl}`
     : entityUrl(base, type, entityId);
 

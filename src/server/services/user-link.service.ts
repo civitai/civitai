@@ -1,4 +1,5 @@
 import type { GetByIdInput } from './../schema/base.schema';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { isDefined } from '~/utils/type-guards';
 import type { UpsertManyUserLinkParams, UpsertUserLinkParams } from './../schema/user-link.schema';
 
@@ -22,6 +23,11 @@ export const upsertManyUserLinks = async ({
   data: UpsertManyUserLinkParams;
   userId: number;
 }) => {
+  await throwOnBlockedUserContent(
+    data.map((link) => link.url),
+    { surface: 'userLink' }
+  );
+
   const userLinkIds = data.map((x) => x.id).filter(isDefined);
   const currentUserLinks = await dbWrite.userLink.findMany({
     where: { userId: userId },
@@ -60,6 +66,8 @@ export const upsertManyUserLinks = async ({
 };
 
 export const upsertUserLink = async (data: UpsertUserLinkParams & { userId: number }) => {
+  await throwOnBlockedUserContent(data.url, { surface: 'userLink' });
+
   if (!data.id) await dbWrite.userLink.create({ data });
   else await dbWrite.userLink.update({ where: { id: data.id, userId: data.userId }, data });
 };

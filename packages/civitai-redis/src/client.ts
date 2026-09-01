@@ -1804,6 +1804,7 @@ export const REDIS_SYS_KEYS = {
     STATUS: 'generation:status',
     WORKFLOWS: 'generation:workflows',
     ENGINES: 'generation:engines',
+    /** @deprecated See REDIS_KEYS.GENERATION.TOKENS_OWNED — bearers moved to an owner-tagged key. */
     TOKENS: 'generation:tokens',
     CUSTOM_CHALLENGE: 'generation:custom-challenge',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
@@ -2098,7 +2099,16 @@ const REDIS_KEYS_UNPREFIXED = {
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
     RESOURCE_DATA: 'packed:generation:resource-data-3',
+    /** @deprecated Bare-token orchestrator bearers. Superseded by TOKENS_OWNED; drains by TTL (~1h). */
     TOKENS: 'generation:tokens',
+    /**
+     * Orchestrator bearers stored as `<userId>.<token>`, so a read can VERIFY the token belongs to
+     * the user it was fetched for instead of trusting the field key. Anything reading this hash must
+     * strip the prefix — the raw value is not a usable bearer. A separate key from TOKENS on purpose:
+     * a pod on an older build reading an encoded value would send it verbatim and get a 401 with no
+     * self-heal, so the two formats never share a key.
+     */
+    TOKENS_OWNED: 'generation:tokens:owned',
     COUNT: 'generation:count',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     QUERIED_WORKFLOWS: 'packed:generation:queried-workflows',
@@ -2292,7 +2302,10 @@ const REDIS_KEYS_UNPREFIXED = {
   HOMEBLOCKS: {
     BASE: 'packed:home-blocks',
     FEATURED_COLLECTIONS_STATE: 'home-blocks:featured-collections:state',
-    FEATURED_COLLECTIONS_LAST_PICKED: 'home-blocks:featured-collections:last-picked',
+    // The current rotation pass: eligible collection ids that have not had their turn yet. At most
+    // one integer per eligible collection, consumed from the front, with an hour's TTL.
+    FEATURED_COLLECTIONS_CYCLE: 'home-blocks:featured-collections:cycle',
+    FEATURED_COLLECTIONS_CYCLE_LOCK: 'home-blocks:featured-collections:cycle-lock',
   },
   CACHE_LOCKS: 'cache-lock',
   BUZZ: {

@@ -121,6 +121,7 @@ export const updateUserProfileHandler = async ({
     const user = await updateUserProfile({
       ...input,
       userId,
+      isModerator: sessionUser.isModerator,
       domain: ctx.domain,
     });
 

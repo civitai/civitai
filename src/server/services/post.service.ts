@@ -31,7 +31,7 @@ import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   buildPostCursorClause,
   encodePostCursor,
@@ -784,6 +784,8 @@ export const createPost = async ({
 }: PostCreateInput & {
   userId: number;
 }): Promise<PostDetailEditable> => {
+  await throwOnBlockedUserContent([data.title, data.detail], { surface: 'post' });
+
   const tagsToAdd: number[] = [];
   if (tags && tags.length > 0) {
     const tagObj = await findOrCreateTagsByName(tags);
@@ -872,8 +874,10 @@ export const updatePost = async ({
   user,
   ...data
 }: PostUpdateInput & { user: SessionUser; availability?: Availability }) => {
-  if (data.title) await throwOnBlockedLinkDomain(data.title);
-  if (data.detail) await throwOnBlockedLinkDomain(data.detail);
+  await throwOnBlockedUserContent([data.title, data.detail], {
+    isModerator: user.isModerator,
+    surface: 'post',
+  });
 
   // Peel off a plain-Date publishedAt so it can be routed through the
   // anti-bump guard. Other update-input shapes (null, undefined,

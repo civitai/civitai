@@ -24,11 +24,9 @@ const IMAGE_ID = 9001;
 const IMAGE_URL = 'abc123/def456.jpeg';
 const USER_ID = 5;
 
-const { mockBustImageDeliveryMetadataCache } = vi.hoisted(
-  () => ({
-    mockBustImageDeliveryMetadataCache: vi.fn(),
-  })
-);
+const { mockBustImageDeliveryMetadataCache } = vi.hoisted(() => ({
+  mockBustImageDeliveryMetadataCache: vi.fn(),
+}));
 
 // --- infra scaffold (mirrors contest-entry-resource-gate.test.ts) ---------------------
 // `~/server/redis/client` is covered by the canonical mock registered in src/__tests__/setup.ts,
@@ -116,7 +114,10 @@ vi.mock('~/server/services/tool.service', () => ({
   getToolByDomain: vi.fn(),
   getToolByName: vi.fn(),
 }));
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+}));
 
 // isValidAIGeneration is called before shouldIngest; keep it deterministic. shouldIngest is
 // forced false via currentImage.blockedFor below, so its value doesn't affect the bust path.

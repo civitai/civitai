@@ -297,6 +297,9 @@ export const toggleModelLockSchema = z.object({
 export type SetModelMinorInput = z.infer<typeof setModelMinorSchema>;
 export const setModelMinorSchema = z.object({ id: z.number(), minor: z.boolean() });
 
+export type SetModelSfwOnlyInput = z.infer<typeof setModelSfwOnlySchema>;
+export const setModelSfwOnlySchema = z.object({ id: z.number(), sfwOnly: z.boolean() });
+
 export type MinorFlagSnapshot = {
   at: string;
   source: 'auto' | 'manual';
