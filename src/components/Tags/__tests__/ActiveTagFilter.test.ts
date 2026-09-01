@@ -92,18 +92,28 @@ describe('ActiveTagFilter', () => {
  * and both of those states are pinned in ImageFeedTagBar's own suite, beside the mount
  * guard for the bar itself.
  *
- * ⚠️ Named for the three pages it pins, not for the property, because it is NOT a closed
- * set: `/user/[username]/posts`, `/user/[username]/articles` and `/tools/[slug]` all pass
- * `?tags=` through to their feed with no control that can clear it. They were out of scope
- * for 868kuq3jk. Do not read a green run here as "every tag-filtered feed is covered".
+ * `/tools/[slug]` was named alongside the two `/user/*` pages as a third gap (868kz0qq6)
+ * and is deliberately NOT here: it destructures a fixed field list out of
+ * `useImageQueryParams()` that omits `tags`, and passes `disableStoreFilters`, so the
+ * merge in `ImagesInfiniteContent` that would otherwise supply `tags` from the url never
+ * runs. `?tags=` reaches that page and goes nowhere. Mounting the control there would
+ * offer to clear a filter the feed never applied.
+ *
+ * ⚠️ Named for the pages it pins, not for the property. Still NOT a closed set — a new
+ * feed that spreads its parsed query into `filters` inherits the same defect and nothing
+ * here will notice. Do not read a green run as "every tag-filtered feed is covered".
  */
-describe('/posts, /articles and /3d-models mount the clear control', () => {
+describe('the tag-filtered feeds mount the clear control', () => {
   it.each([
     ['src/pages/posts/index.tsx'],
     ['src/pages/articles/index.tsx'],
     // Read-only `?tags=` since its category scroller was removed, and it reads the param
     // with `parseNumericStringArray` — the same dead end, on a flag-gated feed.
     ['src/pages/3d-models/index.tsx'],
+    // Both spread the whole parsed query into their feed, and `tags` is in both route
+    // schemas, so `?tags=` genuinely filters them. Added by 868kz0qq6.
+    ['src/pages/user/[username]/posts.tsx'],
+    ['src/pages/user/[username]/articles.tsx'],
   ])('%s renders <ActiveTagFilter />', (relative) => {
     const repoRoot = path.resolve(__dirname, '../../../..');
     const source = fs.readFileSync(path.join(repoRoot, ...relative.split('/')), 'utf-8');
@@ -126,5 +136,52 @@ describe('/posts, /articles and /3d-models mount the clear control', () => {
     // a guard stopping at "it is on the page" passes over exactly that.
     expect(mounted[0]).toMatch(/tagIds=\{/);
     expect(mounted[0]).not.toContain('tagIds={[]}');
+  });
+});
+
+/**
+ * A decision, not an accident — do not "fix" this by ungating the mount.
+ *
+ * `/user/[username]/articles` renders `ArticlesInfinite` (which receives `tags`) only in
+ * the published section; the draft section renders `UserDraftArticles`, which takes no
+ * filters at all. So in drafts there is no tag filter in force, and an ungated control
+ * would offer to clear one that was never applied — the same falsehood that kept
+ * `/tools/[slug]` out of the list above.
+ *
+ * The sibling posts page is deliberately NOT gated: it renders `PostsInfinite` in both
+ * sections and spreads `tags` into the filters either way, so the control is honest in
+ * drafts there too.
+ *
+ * The mount guard above cannot see this — it reads source lines, and its own comment
+ * records that a flag-gated mount passes it. This is the assertion that does.
+ */
+describe('the articles clear control is gated on the published section', () => {
+  const read = (relative: string) =>
+    fs.readFileSync(
+      path.join(path.resolve(__dirname, '../../../..'), ...relative.split('/')),
+      'utf-8'
+    );
+
+  it('gates the mount on viewingPublished', () => {
+    const line = read('src/pages/user/[username]/articles.tsx')
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.includes('<ActiveTagFilter'));
+
+    expect(line).toBeDefined();
+    expect(line).toContain('viewingPublished &&');
+  });
+
+  // Positive control for the matcher above: the posts page mounts the same component on
+  // the same kind of line and must NOT carry that gate, so a match here would mean the
+  // assertion passes on any mount rather than on the gate.
+  it('does not gate the posts mount', () => {
+    const line = read('src/pages/user/[username]/posts.tsx')
+      .split('\n')
+      .map((l) => l.trim())
+      .find((l) => l.includes('<ActiveTagFilter'));
+
+    expect(line).toBeDefined();
+    expect(line).not.toContain('viewingPublished');
   });
 });
