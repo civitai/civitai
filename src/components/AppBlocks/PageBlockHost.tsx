@@ -285,6 +285,114 @@ const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
  */
 export const FILL_MIN_HEIGHT_PX = 300;
 
+/**
+ * The width a full-page App Block stops growing at, in px. Above it the host is
+ * a CENTRED column with a neutral gutter either side; below it the cap is inert.
+ *
+ * 🔴 THIS IS THE `var()` FALLBACK, NOT THE SOURCE. The value the host actually
+ * uses comes from `--app-page-max-width`, declared once on `:root` in
+ * `src/styles/globals.css`, because that is the only spelling a per-app opt-out
+ * rule can override (an inline custom property on this element would beat every
+ * stylesheet rule and make the documented opt-out inert). CSS cannot import a TS
+ * constant, so the number exists twice; `__tests__/pageBlockHostMaxWidth.test.ts`
+ * asserts the two agree, exactly as the `--header-height`/`HEADER_HEIGHT_PX`
+ * guard in `__tests__/pageRunScrollContract.test.ts` does. The fallback is not
+ * decorative: it is what caps a host rendered in a context that has not loaded
+ * the app stylesheet, and it is exercised by a case in the browser suite.
+ *
+ * 🔴 WHY A CAP EXISTS AT ALL. The host sized the iframe `width: 100%` with no
+ * bound anywhere in the chain — the run page's wrapper is `width: '100%'`, the
+ * host root was `width: '100%'`, the iframe is `width: '100%'` — so on a 2560px
+ * display an app rendered as a single ~2500px column. An App Block is a
+ * cross-origin guest that is handed a viewport and told nothing about the
+ * display, so the defence has to be here.
+ *
+ * 🔴 WHO IS ACTUALLY UNDEFENDED — enumerated, because the obvious premise ("apps
+ * do not cap themselves") is only half true, and the half that is false is what
+ * decides where this value sits. Across the 13 first-party App Block repos — 11
+ * with a `page` surface; the other two are `model.sidebar_top` slot blocks and a
+ * PAGE cap cannot reach them:
+ *
+ *   · NINE of the eleven page apps DO cap themselves, at 640 / 720 / 720 / 760 /
+ *     820 / 880 / 900 / 960 / 1100 px — a hand-copied `contentStyle` well; median
+ *     860, max 1100. None renders content wider than 1100px, so this cap is a
+ *     no-op for their layout: it changes which background paints the far gutter
+ *     and nothing else.
+ *   · TWO do not cap at all — Notepad and Sensei, both `100dvh` two-pane app
+ *     shells (a fixed 280 / 240px sidebar beside an unbounded `flex: 1` pane).
+ *     Those are the shipped apps that genuinely stretched to the monitor.
+ *   · THE LONG TAIL IS UNBOUNDED BY CONSTRUCTION, which is the real reason for a
+ *     DEFAULT rather than a per-app fix. `@civitai/blocks-react` exports no
+ *     Container / AppShell / Page and declares no container width — its only
+ *     max-widths are modal-scoped (340 / 440 / 620) plus a 420px sign-in gate
+ *     card — and the official starter templates contain zero width declarations.
+ *     An app scaffolded today inherits whatever the host gives it. Nine
+ *     independently hand-picked numbers with nothing to coordinate on is the
+ *     argument for making the decision here instead of asking every app to make
+ *     it again.
+ *
+ * WHY 1600, AGAINST THOSE SURFACES. Two in-repo anchors bound the choice, and the
+ * number sits between them on purpose:
+ *
+ *   1288  the widest ORDINARY civitai content measure — Mantine `xl` (1320
+ *         border-box) is the widest container size in use across `src/pages`,
+ *         and `APPS_TWO_COLUMN_DETAIL_MEASURE` (the store-preview page an app is
+ *         usually launched FROM) is exactly it. An app capped below this would
+ *         render narrower than the page that linked to it, which reads as a
+ *         downgrade rather than a frame.
+ *   1920  `APPS_PAGE_CONTAINER_WIDTH` — the deliberate outlier, and it is an
+ *         outlier for a reason that does NOT transfer: it exists for card GRIDS
+ *         and wide TABLES (`appsPageWidths.ts` records the measurements), which
+ *         genuinely spend the space. An app block may be a grid, but it may just
+ *         as easily be a single form, and the host cannot tell which.
+ *
+ * 1600 is above every ordinary content measure on the site and below the grid
+ * container, i.e. no app is ever narrower than a civitai page and none is ever
+ * wider than the widest first-party surface. It also clears the widest
+ * app-imposed well (1100) by ~45%, so the cap can never letterbox an app that has
+ * already thought about its own width, while leaving a two-pane shell like
+ * Notepad or Sensei a ~1350px content pane — the case the cap exists for.
+ * Concretely it holds five columns of a `minmax(300px, 1fr)` grid (1288 holds
+ * four, 1920 holds six).
+ *
+ * 🔴 THE APP THIS IS PROBABLY WRONG FOR, and why the opt-out ships WITH the cap
+ * rather than after it: Playable Collections. Re-read at its DEPLOYED ref
+ * (`sync/deployed-0.2.2`, manifest `blockId: "playable-collections"`), because an
+ * earlier reading of this — that only its "player mode" is affected, the rest
+ * being governed by the app's own 960px well — is WRONG, and wrong in the
+ * direction that makes the opt-out look smaller than it is:
+ *
+ *   · the 960 well is `contentStyle` in `App.tsx:972`, applied at `App.tsx:789`
+ *     to the BROWSE shell only;
+ *   · opening a collection early-returns at `App.tsx:733` past that wrapper into
+ *     `CollectionViewer`, whose root (`CollectionViewer.tsx:582`) is
+ *     `width: 100%; min-height: 100dvh` with NO max-width;
+ *   · and that root serves THREE view modes — classic (`Player`), plus
+ *     continuous-horizontal and continuous-vertical (`ContinuousView`) — with an
+ *     ambient "cast" state on top. None of them is capped by the app.
+ *
+ * So an opt-out here is per-APP and would unbound all three modes, not tidy up
+ * one. That may well be right — a ticker and a wall want width, and the player's
+ * media is `object-fit: contain` so a centred column simply shrinks it — but it
+ * is a bigger product call than "the app already governs this", and it is not
+ * mine to make. NO LEDGER ENTRY IS WRITTEN TODAY, and the ledger's expected set
+ * in `__tests__/pageBlockHostMaxWidth.test.ts` is `[]` so that the first one has
+ * to be added deliberately.
+ *
+ * 🔴 STATE THE COST HONESTLY: this binds on a maximised browser on a 1080p
+ * monitor (~1905 CSS px of viewport), not only on ultrawides — that is a common
+ * desktop, and it gets a ~150px gutter either side. That is the deliberate
+ * trade. It does NOT bind on any laptop class (1280/1366/1440/1536), on any
+ * tablet, or on any phone in either orientation, which is where the traffic is
+ * and where the rendered geometry is unchanged to the pixel.
+ *
+ * The BAND this value may move in lives in the tests, not here — a band declared
+ * beside the value it bounds can be moved in the same edit (the lesson
+ * `FILL_MIN_HEIGHT_PX` records). The ARITHMETIC that justifies it is what lives
+ * here.
+ */
+export const APP_PAGE_MAX_WIDTH_PX = 1600;
+
 export interface PageBlockHostProps {
   /** AppBlock id (`apb_*`) — used to build the BLOCK_INIT ids + trust chrome. */
   appBlockId: string;
@@ -985,6 +1093,15 @@ export function PageBlockHost({
     // `init_wait` is meant to include the re-post quantization, not exclude it.
     const marks = launchMarksRef.current;
     if (marks && marks.initSentAt === null) marks.initSentAt = nowMs();
+    // 🔴 COUNT EVERY POST, not just the first — this is the whole point of the
+    // field. `initSentAt` above is stamped once because `init_wait` must span
+    // the re-post quantization; `initPosts` counts the posts INSIDE that span,
+    // which is what tells a quantized wait apart from a slow-booting block.
+    //
+    // Counted HERE rather than read off `controller.postCount()` at ack time
+    // because the auto-retry path builds a fresh controller per attempt while
+    // these marks persist across the whole launch — see `LaunchMarks.initPosts`.
+    if (marks) marks.initPosts += 1;
     send('BLOCK_INIT', (buildInitPayloadRef.current ?? (() => undefined as never))());
   }, [send]);
 
@@ -1203,9 +1320,21 @@ export function PageBlockHost({
   // 🔴 PURELY ADDITIVE — see `IframeInitController.notifyHello`. The immediate
   // post on start(), the retry interval and the readiness timeout are all
   // unchanged, so a block that never announces (older SDK) behaves exactly as
-  // today and a block that announces but never acks still times out. The retry
-  // loop is NOT removed: as of 2026-08-05 no deployed block sends BLOCK_HELLO,
-  // so it is still doing all of the work.
+  // today and a block that announces but never acks still times out.
+  //
+  // 🔴 THE RETRY LOOP IS STILL DOING ALMOST ALL OF THE WORK, and the number
+  // behind that claim was re-measured. An earlier revision of this comment said
+  // "as of 2026-08-05 no deployed block sends BLOCK_HELLO"; that is now stale.
+  // MEASURED 2026-08-31 against the deployed fleet: 4 of 23 deployed blocks
+  // ship the accelerator — so 19 do not, including two hand-rolled
+  // `civitai-host.js` shims and one inline-shell app.
+  //
+  // Treat that as a DATED MEASUREMENT, not a standing fact: it moves whenever a
+  // block is rebuilt and re-approved. Its consequence is what matters here —
+  // getting the remaining 19 onto the accelerator is 19 separate
+  // rebuild-and-moderator-approve cycles, so the host-side re-post cadence
+  // (`INIT_RETRY_BACKOFF_MS`) is the only lever that reaches every deployed app
+  // immediately.
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_HELLO', () => {
       controllerRef.current?.notifyHello();
@@ -3668,6 +3797,32 @@ export function PageBlockHost({
         display: 'flex',
         flexDirection: 'column',
         width: '100%',
+        // ULTRAWIDE CAP — the app is a CENTRED column past `APP_PAGE_MAX_WIDTH_PX`,
+        // full width below it. See that constant for the value's justification and
+        // `--app-page-max-width` in globals.css for the per-app opt-out.
+        //
+        // 🔴 BOTH DECLARATIONS ARE INERT BELOW THE CAP, WHICH IS THE REQUIREMENT.
+        // `width: 100%` above already resolves narrower than the cap, so `max-width`
+        // clamps nothing; and `margin-inline: auto` distributes the LEFTOVER inline
+        // space, of which there is none on a box that fills its parent, so both
+        // margins resolve to 0. Nothing about the rendered geometry moves until the
+        // parent is wider than the cap — measured at 1024 and 1280 in
+        // `PageBlockHostMaxWidth.browser.test.tsx`.
+        //
+        // 🔴 IT IS APPLIED TO THE HOST ROOT, NOT TO THE `<iframe>`, so the trust
+        // chrome, the app and the failure card all take ONE measure. Capping the
+        // iframe alone would leave `AppBlockChrome` — the breadcrumb that vouches
+        // for the app — spanning a width the app it labels does not occupy, and
+        // would leave the `BlockFallback` card stretched to the monitor while the
+        // app beside it was not.
+        //
+        // 🔴 READ THROUGH `var()` DELIBERATELY. An inline custom property here
+        // (`'--app-page-max-width': …`) would win over any stylesheet rule on this
+        // same element, which is precisely the rule shape the opt-out ledger uses —
+        // so writing the value inline would silently make the opt-out inert while
+        // looking tidier.
+        maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`,
+        marginInline: 'auto',
         // See the `fit` prop for why these are the two modes and why the
         // viewport arithmetic can never agree with its own scroll viewport.
         ...(fit === 'fill'
@@ -3693,6 +3848,14 @@ export function PageBlockHost({
       // WHICH branch a surface took rather than re-deriving it from computed
       // styles that jsdom does not resolve.
       data-fit={fit}
+      // 🔴 THE OPT-OUT LEDGER'S ANCHOR, not decoration. The full-bleed escape
+      // hatch documented on `--app-page-max-width` is a CSS rule keyed on this
+      // attribute, so removing it does not merely lose an observability hook —
+      // it makes every ledger rule match nothing, silently. `blockId` (the app's
+      // slug, the same value that builds `<slug>.civit.ai`) is the identifier an
+      // app author knows themselves by; `data-block-instance-id` below is the
+      // per-install id and is NOT stable across surfaces.
+      data-block-id={blockId}
       data-block-instance-id={blockInstanceId}
       // #3/#6: surface the consent signal as an observable attribute. The page
       // token still mints with the granted subset (so the block loads — consent

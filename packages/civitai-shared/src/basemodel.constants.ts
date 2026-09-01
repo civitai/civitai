@@ -202,6 +202,7 @@ export const ECO = {
 
   // Root ecosystems - Audio models
   AceAudio: 68,
+  MiniMaxMusic3: 85,
 
   // Root ecosystems - 3D Model providers
   // PolyGen has been displaced twice on main merges:
@@ -836,6 +837,13 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'ACE Audio',
     sortOrder: 300,
   },
+  {
+    id: ECO.MiniMaxMusic3,
+    key: 'MiniMaxMusic3',
+    displayName: 'MiniMax Music 3',
+    // 301-305 were taken by the 3D block before this landed.
+    sortOrder: 306,
+  },
 
   // 3D Model ecosystems
   {
@@ -946,6 +954,8 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'LTXV25',
   // AceStepAudioInput
   'Ace',
+  // MiniMaxMusic3Input
+  'MiniMaxMusic3',
   // Hunyuan3dComfyPolyGenInput (3D; Meshy/Tripo are FAL and stay external)
   'Hunyuan3D',
   // Trellis2ImageTo3dComfyPolyGenInput (3D; Pixal3D + Trellis.2 are modelVersions of trellis2)
@@ -1200,6 +1210,11 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // AceAudio - checkpoint only (audio generation)
   { ecosystemId: ECO.AceAudio, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // MiniMax Music 3 - checkpoint only. The miniMaxMusic3 step takes `loras`, but
+  // the graph exposes no resources node, so advertising LoRA support would offer
+  // resources the form cannot send.
+  { ecosystemId: ECO.MiniMaxMusic3, supportType: 'generation', modelTypes: checkpointOnly },
 
   // PolyGen - remote 3D generator (Meshy via Fal). No Civitai checkpoint/LoRA;
   // entry exists so the unified generator picker can route 3D-Models workflows
@@ -1654,6 +1669,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Other,
     defaults: {
       model: { id: 164821 },
+    },
+  },
+  {
+    ecosystemId: ECO.MiniMaxMusic3,
+    defaults: {
+      model: { id: 3225593 },
+      modelLocked: true,
     },
   },
   {
@@ -2170,6 +2192,7 @@ export const BM = {
   Flux3Video: 98,
   Pixal3D: 102,
   Trellis2: 103,
+  MiniMaxMusic3: 104,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2460,6 +2483,17 @@ export const licenses: LicenseRecord[] = [
     // MiniMax H3" is the separate, merely encouraged notice in III.3(a).
     attribution: 'MiniMax H3',
     poweredBy: 'MiniMax H3',
+  },
+  {
+    id: 42,
+    // Separate from ids 33 and 41: 33 is the Hailuo hosted-service ToS, 41 covers
+    // the H3 weights. Unlike 41 this one has no Applicable Territory clause.
+    name: 'MiniMax-Music3 Community License',
+    // Permalinked to the revision we read. Section 5.2 lets MiniMax amend the
+    // published text, so the `main` link is not a stable record of what we agreed to.
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/fbdf52fbaaca799592917417eb05f1899f1255ec/LICENSE',
+    // Section 3.1 demands this exact string on the UI of a commercial product.
+    attribution: 'MiniMax-Music3',
   },
 ];
 
@@ -3521,6 +3555,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'audio',
     ecosystemId: ECO.AceAudio,
     licenseId: 13,
+  },
+
+  // MiniMax Music 3
+  {
+    id: BM.MiniMaxMusic3,
+    name: 'MiniMax Music 3',
+    description: "MiniMax's full-song music generation model",
+    type: 'audio',
+    ecosystemId: ECO.MiniMaxMusic3,
+    licenseId: 42,
   },
 
   // PolyGen (Meshy via Fal) — remote 3D model generator. Type='image' matches

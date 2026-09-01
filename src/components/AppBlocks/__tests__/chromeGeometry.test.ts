@@ -93,8 +93,59 @@ describe('resolveChromeGeometry', () => {
     // what makes this safe without an `useIsClient` hydration gate.
     expect(resolveChromeGeometry(0)).toEqual({
       tier: 'base',
+      // 🔴 F3: FALSE at an unmeasured width, and this is the assertion that pins it.
+      // `compact` drives a STRUCTURAL swap (breadcrumb ⇄ back chevron + centered
+      // name), so resolving it `true` here would make the server render the mobile
+      // shell for every viewer and then replace it one frame later on every desktop
+      // page load. See the `compact` doc comment in `chromeGeometry.ts`.
+      compact: false,
       nameMaxWidth: 160, // was `maw={160}` on the app-name Text
       navMenuWidth: 200, // was `width={200}` on the platform-nav Menu
+    });
+  });
+
+  describe('compact — the F3 mobile-shell decision', () => {
+    it('is true below sm and false at sm and above, on both sides of the boundary', () => {
+      // Tailwind semantics, same as the tier table: `sm` (768) is the first
+      // DESKTOP width, so 767 is compact and 768 is not. An off-by-one in the
+      // comparison flips exactly one of these two and nothing else.
+      expect(resolveChromeGeometry(CHROME_BREAKPOINTS.sm - 1).compact).toBe(true);
+      expect(resolveChromeGeometry(CHROME_BREAKPOINTS.sm).compact).toBe(false);
+      expect(resolveChromeGeometry(360).compact).toBe(true);
+      expect(resolveChromeGeometry(2560).compact).toBe(false);
+    });
+
+    it('is FALSE for an unmeasured bar even though the tier is `base`', () => {
+      // 🔴 THE ONE THAT WOULD BE WRONG IF `compact` WERE DERIVED FROM `tier`. Width
+      // 0 — SSR, and the first client render before the ResizeObserver fires —
+      // resolves to `base` because `base` carries the pre-F1 pinned widths, which
+      // is what keeps the server HTML unchanged. `compact` must NOT follow it there.
+      // A `tier === 'base' || tier === 'xs'` implementation passes every other test
+      // in this file and fails only this one.
+      expect(resolveChromeTier(0)).toBe('base');
+      expect(resolveChromeGeometry(0).compact).toBe(false);
+      // …and the same for the other unmeasurable inputs the resolver clamps to 0.
+      for (const w of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(resolveChromeGeometry(w).compact, `width ${w} must not be compact`).toBe(false);
+      }
+    });
+
+    it('is TRUE for a narrow model sidebar, which is why the SURFACE gate is the caller’s', () => {
+      // A 340px desktop model sidebar is genuinely narrow, so `compact` says so.
+      // The chrome still does not give it the mobile shell — it gates on
+      // `isPage && compact`, because the shell replaces a breadcrumb only the
+      // full-page surface has. Pinned here so a future reader does not "fix" this
+      // module to answer the surface question it deliberately does not answer.
+      expect(resolveChromeGeometry(340)).toMatchObject({ tier: 'base', compact: true });
+    });
+
+    it('is not a restatement of any other field — it moves where nothing else does', () => {
+      // Positive control on the whole block: between 480 and 767 the tier CHANGES
+      // (base→xs) while `compact` does not, and between 767 and 768 `compact`
+      // changes. A field hardwired to one value satisfies none of this.
+      expect(resolveChromeGeometry(479).tier).not.toBe(resolveChromeGeometry(480).tier);
+      expect(resolveChromeGeometry(479).compact).toBe(resolveChromeGeometry(480).compact);
+      expect(resolveChromeGeometry(767).compact).not.toBe(resolveChromeGeometry(768).compact);
     });
   });
 

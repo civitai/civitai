@@ -1251,7 +1251,7 @@ export function AppListingDetailBody({
               <Card withBorder data-testid="apps-listing-action-card">
                 <Card.Section withBorder inheritPadding py="xs" px="sm">
                   <Text size="sm" fw={600}>
-                    Get this app
+                    Use this app
                   </Text>
                 </Card.Section>
                 <Card.Section inheritPadding py="sm" px="sm">

@@ -670,8 +670,11 @@ describe('PageBlockHost review preview handshake', () => {
       if (!el.contentWindow) throw new Error('not mounted yet');
     });
     const l = listenForReply();
-    // The controller re-posts BLOCK_INIT every 400ms until BLOCK_READY — wait for a
-    // re-post to land on our listener, then assert it carries the review token.
+    // The controller re-posts BLOCK_INIT until BLOCK_READY on the
+    // `INIT_RETRY_BACKOFF_MS` schedule (50/100/200ms, then every 400ms) — wait
+    // for a re-post to land on our listener, then assert it carries the review
+    // token. The 3s budget below is deliberately far above any of those gaps, so
+    // it does not need to track the schedule.
     await vi.waitFor(
       () => {
         expect(l.last('BLOCK_INIT')).toBeTruthy();

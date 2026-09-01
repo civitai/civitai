@@ -8,10 +8,19 @@ import {
   MAX_AUTO_REMINTS,
   MAX_AUTO_RETRIES,
   TOKEN_WAIT_TIMEOUT_MS,
+  worstReachableInitPosts,
   worstReachableLaunchMs,
 } from '../pageBlockHostLogic';
-import { MAX_LAUNCH_SAMPLE_MS } from '../launchTimings';
-import { MAX_APP_BLOCK_LAUNCH_SECONDS } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  INIT_RETRY_BACKOFF_MS,
+  INIT_RETRY_INTERVAL_MS,
+  maxInitPostsWithin,
+} from '../iframeInitController';
+import { MAX_LAUNCH_INIT_POSTS, MAX_LAUNCH_SAMPLE_MS } from '../launchTimings';
+import {
+  MAX_APP_BLOCK_LAUNCH_INIT_POSTS,
+  MAX_APP_BLOCK_LAUNCH_SECONDS,
+} from '~/server/metrics/app-block-runtime.metrics';
 
 /**
  * 🔴 THE LAUNCH-SAMPLE CAP MUST CLEAR THE AUTO-RETRY BOUND — DERIVED, NOT ASSERTED.
@@ -101,6 +110,103 @@ describe('launch-sample cap vs the auto-retry bound', () => {
 });
 
 /**
+ * 🔴 THE INIT-POST CAP MUST CLEAR THE SCHEDULE'S OWN REACH — same shape as the
+ * duration cap above, same failure mode, one extra reason to care.
+ *
+ * `boundedInitPosts` / `launchInitPostsSample` DROP anything past the cap. If
+ * the cap sits below what the re-post schedule can actually produce, the drop is
+ * SIGNAL-CORRELATED in the worst possible direction: it discards precisely the
+ * launches that posted the most, i.e. the quantization-bound ones the field was
+ * added to detect. The metric would then report "launches ack on the first post"
+ * by construction, and the cadence lever would be retired on evidence the cap
+ * itself manufactured.
+ *
+ * 🔴 AND THE CAP IS COUPLED TO A KNOB PEOPLE WILL TUNE. `INIT_RETRY_BACKOFF_MS`
+ * exists to be shortened; shortening it RAISES the reachable post count. A cap
+ * picked by eye today is a cap that silently starts dropping samples the next
+ * time anyone tunes the cadence — which is exactly the moment the metric is
+ * being read. Deriving it is what makes that a red test instead.
+ */
+describe('init-post cap vs the re-post schedule', () => {
+  it('🔴 both caps exceed the worst reachable post count on the AUTOMATIC retry path', () => {
+    const worst = worstReachableInitPosts();
+    expect(MAX_LAUNCH_INIT_POSTS).toBeGreaterThan(worst);
+    expect(MAX_APP_BLOCK_LAUNCH_INIT_POSTS).toBeGreaterThan(worst);
+  });
+
+  /**
+   * 🔴 THE BOUND IS NOT ABSOLUTE, AND THE TEST NAME MUST NOT IMPLY IT IS.
+   *
+   * A MANUAL retry is uncapped: `handleRetry` spends none of the automatic
+   * budget, and `performRetry` resets neither the launch marks nor the
+   * emit-once beacon latch. Clicking Retry inside the auto-retry backoff window
+   * therefore accumulates posts across unboundedly many attempts into ONE
+   * sample, with `autoRetryBudget.attempts` still 0 and no beacon emitted yet.
+   *
+   * This asserts the SHAPE of that exposure rather than pretending it away: the
+   * per-attempt maximum times a handful of manual attempts already clears the
+   * cap, so the cap is a DROP boundary, not a proof of unreachability. Dropping
+   * is the safe direction — no wrong value is ever published — but it does mean
+   * the two launch histograms' `_count` series can disagree.
+   */
+  it('🔴 a manual-retry storm can exceed the cap — so the cap is a DROP, not a proof', () => {
+    const perAttempt = maxInitPostsWithin(BLOCK_READY_TIMEOUT_MS) + 1;
+    // Five manual attempts is already past the cap; four is not. Both pinned so
+    // a schedule change that moves this boundary is visible in this diff.
+    expect(4 * perAttempt).toBeLessThanOrEqual(MAX_LAUNCH_INIT_POSTS);
+    expect(5 * perAttempt).toBeGreaterThan(MAX_LAUNCH_INIT_POSTS);
+    // …and the automatic path alone genuinely cannot get there.
+    expect(worstReachableInitPosts()).toBeLessThan(MAX_LAUNCH_INIT_POSTS);
+  });
+
+  it('🔴 the client and server caps agree (a split would drop samples on one side only)', () => {
+    expect(MAX_LAUNCH_INIT_POSTS).toBe(MAX_APP_BLOCK_LAUNCH_INIT_POSTS);
+  });
+
+  /**
+   * Recomputes the bound INDEPENDENTLY of `worstReachableInitPosts`, by walking
+   * the schedule by hand. Deriving the expectation from the implementation would
+   * make this a tautology — the same trap the duration bound above documents.
+   */
+  it('🔴 the bound matches an independent walk of the schedule', () => {
+    // Posts inside ONE attempt's readiness window: the immediate post at t=0,
+    // then a post at each cumulative gap strictly before the window closes.
+    let t = 0;
+    let perAttempt = 1;
+    for (let n = 0; ; n += 1) {
+      t += INIT_RETRY_BACKOFF_MS[n] ?? INIT_RETRY_INTERVAL_MS;
+      if (t >= BLOCK_READY_TIMEOUT_MS) break;
+      perAttempt += 1;
+    }
+    // +1 per attempt for the at-most-once BLOCK_HELLO push; x attempts because
+    // the launch marks are NOT reset by the auto-retry path, so posts accumulate
+    // across every attempt of one launch.
+    const independent = (MAX_AUTO_RETRIES + 1) * (perAttempt + 1);
+
+    expect(worstReachableInitPosts()).toBe(independent);
+    // Value pin on today's constants, so a silent schedule change shows up in
+    // this file's diff rather than only in a derived comparison.
+    // 28 = 1 immediate + 3 backoff (50/100/200 -> t=350) + 24 steady 400ms ticks
+    // landing at t=750..9950, the last one strictly inside the 10s window.
+    expect(perAttempt).toBe(28);
+    expect(independent).toBe(87); // 3 attempts x (28 + 1 BLOCK_HELLO push)
+  });
+
+  /**
+   * 🔴 THE DIRECTION CHECK. The whole hazard is a cap that stops clearing the
+   * bound after someone shortens the cadence. Assert that shortening the front
+   * of the schedule really does raise the count, so the guard above is known to
+   * be sensitive to the knob it is protecting rather than merely true today.
+   */
+  it('a shorter front-loaded schedule raises the reachable count', () => {
+    const withBackoff = maxInitPostsWithin(BLOCK_READY_TIMEOUT_MS, INIT_RETRY_BACKOFF_MS, 400);
+    const flat = maxInitPostsWithin(BLOCK_READY_TIMEOUT_MS, [], 400);
+    expect(withBackoff).toBeGreaterThan(flat);
+    expect(withBackoff - flat).toBe(INIT_RETRY_BACKOFF_MS.length);
+  });
+});
+
+/**
  * 🔴 SOURCE GATE — the first-mount seed must happen at RENDER time.
  *
  * `shouldResetLaunchMarks` is unit-tested and correct, but the AUDIT found its
@@ -186,5 +292,57 @@ describe('PageBlockHost: launch-mark seed wiring', () => {
   it('the host re-arms the marks through the predicate, not unconditionally', () => {
     const src = fs.readFileSync(HOST, 'utf8');
     expect(src).toContain('shouldResetLaunchMarks(launchInstanceRef.current, blockInstanceId)');
+  });
+
+  /**
+   * 🔴 THE POST COUNTER'S WIRING — the one part of `initPosts` that no pure test
+   * can reach, and the part that decides whether the field means anything.
+   *
+   * `boundedInitPosts` and the histogram are both unit-tested, but they only
+   * grade a number someone else produced. If the host never increments, every
+   * one of those tests stays green and the beacon simply omits the field —
+   * `computeLaunchTimings` drops a 0 by design — so the metric would report NO
+   * DATA rather than wrong data. That is quiet in the worst way: the dashboard
+   * would look like "launches carry no post count yet" rather than "the
+   * instrument is broken".
+   *
+   * 🔴 AND THE INCREMENT MUST LIVE IN `sendInitOnce`, NOT BESIDE `initSentAt`'s
+   * ONE-SHOT STAMP. The line above it is `if (marks.initSentAt === null)` —
+   * deliberately once-per-launch. Folding the counter into that same guard is
+   * the natural-looking edit and it produces a counter that is ALWAYS 1, i.e. a
+   * metric that reports "every launch acked on the first post" — the exact
+   * conclusion the field exists to test, delivered as a constant. This gate
+   * pins the increment as its own unconditional statement.
+   *
+   * A source gate is the weaker instrument and is named as such: the
+   * behavioural version can only live in the `component` project, which CI does
+   * not run, so it would report safety from a tier nothing observes. Same trade
+   * as the seed gate above.
+   */
+  function sendInitBody(src: string): string {
+    const start = src.indexOf('const sendInitOnce = useCallback(');
+    if (start === -1) return '';
+    const end = src.indexOf('}, [send]);', start);
+    if (end === -1) return '';
+    return src.slice(start, end);
+  }
+
+  it('the extractor finds the sendInitOnce body and not the whole file', () => {
+    // POSITIVE CONTROL for the extractor: without it, an `indexOf` that silently
+    // missed would return '' and every assertion below would be red for a reason
+    // unrelated to the host.
+    const body = sendInitBody(fs.readFileSync(HOST, 'utf8'));
+    expect(body.length).toBeGreaterThan(0);
+    expect(body).toContain('BLOCK_INIT');
+    // Bounded to the callback, not the file.
+    expect(body).not.toContain('BLOCK_READY');
+  });
+
+  it('🔴 the host counts EVERY BLOCK_INIT post, unconditionally', () => {
+    const body = sendInitBody(fs.readFileSync(HOST, 'utf8'));
+    expect(body).toContain('marks.initPosts += 1');
+    // 🔴 NOT folded into the one-shot `initSentAt` guard — that would pin the
+    // count at 1 forever and make the metric answer its own question wrongly.
+    expect(body).not.toMatch(/initSentAt === null\)[^\n]*initPosts/);
   });
 });

@@ -16,6 +16,7 @@
 import type {
   AceStepAudioStepTemplate,
   ChatCompletionStepTemplate,
+  MiniMaxMusic3StepTemplate,
   ComfyStepTemplate,
   ImageGenStepTemplate,
   PreprocessImageStepTemplate,
@@ -56,6 +57,7 @@ import { createPonyV7Input } from './pony-v7.handler';
 
 // Audio ecosystem handlers
 import { createAceAudioInput } from './ace-audio.handler';
+import { createMiniMaxMusicInput } from './minimax-music.handler';
 
 // 3D model ecosystem handlers
 import { createPolyGenInput } from './polygen-graph.handler';
@@ -91,6 +93,7 @@ export type StepInput =
   | VideoGenStepTemplate
   | VideoInterpolationStepTemplate
   | AceStepAudioStepTemplate
+  | MiniMaxMusic3StepTemplate
   | ChatCompletionStepTemplate
   | PromptEnhancementStepTemplate
   | PreprocessImageStepTemplate;
@@ -227,6 +230,9 @@ export type Flux3VideoCtx = EcosystemGraphOutput & { ecosystem: 'Flux3Video' };
 /** AceAudio context */
 export type AceAudioCtx = EcosystemGraphOutput & { ecosystem: 'Ace' };
 
+/** MiniMax Music 3 context */
+export type MiniMaxMusic3Ctx = EcosystemGraphOutput & { ecosystem: 'MiniMaxMusic3' };
+
 // =============================================================================
 // Exports - Individual handlers
 // =============================================================================
@@ -258,6 +264,7 @@ export { createMageFlowInput } from './mage-flow.handler';
 
 // Audio ecosystems
 export { createAceAudioInput } from './ace-audio.handler';
+export { createMiniMaxMusicInput } from './minimax-music.handler';
 
 // 3D model ecosystems
 export { createPolyGenInput } from './polygen-graph.handler';
@@ -529,11 +536,14 @@ async function createEcosystemStep(
     }
 
     // =========================================================================
-    // Audio Ecosystems - aceStepAudio step type
+    // Audio Ecosystems - aceStepAudio / miniMaxMusic3 step types
     // =========================================================================
 
     case 'Ace':
       return createAceAudioInput(normalizedData, handlerCtx);
+
+    case 'MiniMaxMusic3':
+      return createMiniMaxMusicInput(normalizedData, handlerCtx);
 
     // =========================================================================
     // 3D Model Ecosystems — polyGen step (Meshy via Fal)
