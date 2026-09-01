@@ -11,6 +11,7 @@ import {
   AUTO_FEATURE_NOTE_PREFIX,
   autoFeatureNote,
   getAutoFeatureUserId,
+  isAutoFeaturedRow,
 } from '~/server/common/auto-feature';
 
 export type AutoFeatureCandidate = {
@@ -54,14 +55,23 @@ export function scoreCandidate(
   return candidate.reactions / decay;
 }
 
+export type BlockReason = 'creatorRun' | 'creatorWindow' | 'collectionWindow';
+
 export type AutoFeatureSelection = {
   picks: AutoFeaturePick[];
   /**
-   * Why a run came up short. Counted over candidates left unpicked once the run is done, so it
-   * answers "what would still be refused now" rather than "how many times did a loop pass ask" —
-   * the round-robin sweep visits the same candidate repeatedly and attempt counts would inflate.
+   * Why a run came up short, one bucket per cap. Counted over candidates left unpicked once the
+   * run is done, so it answers "what would still be refused now" rather than "how many times did
+   * a loop pass ask" — the round-robin sweep visits the same candidate repeatedly and attempt
+   * counts would inflate.
+   *
+   * ⚠️ Because the count runs after the picks, a candidate refused by `maxPerCreatorPerRun` whose
+   * creator was pushed to the window cap BY THIS RUN is filed under `creatorRun` — first match
+   * wins in `blockReason`, and the per-run cap is checked first. So `creatorWindow` means "would
+   * still be refused on the next run too", which is the question an operator raising the cap is
+   * actually asking.
    */
-  blocked: { creatorWindow: number; collectionWindow: number };
+  blocked: Record<BlockReason, number>;
   /** Candidates that cleared `minReactions` — the pool the caps were applied to. */
   scored: number;
 };
@@ -85,16 +95,24 @@ export function selectAutoFeaturePicks({
   const creatorThisRun = new Map<number, number>();
   const picks: AutoFeaturePick[] = [];
 
-  const canTake = (c: AutoFeaturePick) => {
-    if ((creatorThisRun.get(c.userId) ?? 0) >= config.maxPerCreatorPerRun) return false;
-    if ((perCreator.get(c.userId) ?? 0) >= config.maxPerCreatorInWindow) return false;
-    if (
-      config.maxPerCollectionInWindow !== undefined &&
-      (perCollection.get(c.collectionId) ?? 0) >= config.maxPerCollectionInWindow
-    )
-      return false;
-    return true;
+  /**
+   * The single cap predicate. `canTake` and the run diagnostics both go through it, so a cap can
+   * never be enforced without also being attributable — the first version reported only the two
+   * window caps, which meant the commonest shortfall (one item per creator per run) logged
+   * `blocked: 0` beside `picked < target` and read as "the caps refused nothing".
+   *
+   * First match wins, so the buckets partition the refusals and cannot sum past the leftovers.
+   */
+  const blockReason = (c: AutoFeaturePick): BlockReason | null => {
+    if ((creatorThisRun.get(c.userId) ?? 0) >= config.maxPerCreatorPerRun) return 'creatorRun';
+    if ((perCreator.get(c.userId) ?? 0) >= config.maxPerCreatorInWindow) return 'creatorWindow';
+    const collectionCap = config.maxPerCollectionInWindow;
+    if (collectionCap !== undefined && (perCollection.get(c.collectionId) ?? 0) >= collectionCap)
+      return 'collectionWindow';
+    return null;
   };
+
+  const canTake = (c: AutoFeaturePick) => blockReason(c) === null;
 
   const take = (c: AutoFeaturePick) => {
     picks.push(c);
@@ -105,24 +123,17 @@ export function selectAutoFeaturePicks({
 
   const finish = (): AutoFeatureSelection => {
     const pickedIds = new Set(picks.map((p) => p.imageId));
-    const leftOver = scored.filter((c) => !pickedIds.has(c.imageId));
-    return {
-      picks,
-      scored: scored.length,
-      blocked: {
-        creatorWindow: leftOver.filter(
-          (c) => (perCreator.get(c.userId) ?? 0) >= config.maxPerCreatorInWindow
-        ).length,
-        collectionWindow:
-          config.maxPerCollectionInWindow === undefined
-            ? 0
-            : leftOver.filter(
-                (c) =>
-                  (perCollection.get(c.collectionId) ?? 0) >=
-                  (config.maxPerCollectionInWindow as number)
-              ).length,
-      },
+    const blocked: Record<BlockReason, number> = {
+      creatorRun: 0,
+      creatorWindow: 0,
+      collectionWindow: 0,
     };
+    for (const candidate of scored) {
+      if (pickedIds.has(candidate.imageId)) continue;
+      const reason = blockReason(candidate);
+      if (reason) blocked[reason] += 1;
+    }
+    return { picks, scored: scored.length, blocked };
   };
 
   if (config.strategy === 'global') {
@@ -275,72 +286,69 @@ async function fetchCandidates(args: {
  * used to be the same value, so tuning a cap also changed which images the job considered recent,
  * and therefore what it picked.
  *
- * The two counts deliberately cover different populations:
+ * The row set is deliberately unfiltered by adder: the per-creator cap is about how much of the
+ * page one creator holds, and a viewer cannot tell who added an item. Classification into "the
+ * job's own" happens in `aggregateWindowCounts` through `isAutoFeaturedRow`, the same helper the
+ * two collection-item removal paths use — expressing that predicate a second time in SQL let the
+ * two drift, and the drift would be silent: rows would stop counting toward the per-collection
+ * cap with no error and no log line.
  *
- * - **Per creator: every row in the target collection**, however it got there. This used to be
- *   filtered to the job's own rows, which meant a creator featured by hand held slots the cap
- *   could not see — `maxPerCreatorInWindow: 2` permitted 4 in a week in production. The limit is
- *   about how much of the page one creator holds, and a viewer cannot tell who added an item.
- * - **Per source collection: the job's own rows only.** A manual row carries no
- *   `auto-featured:<id>` note, so it has no source collection to attribute. Counting it would
- *   have to invent one, and `split_part` on a NULL note yields NULL rather than an error — the
- *   quiet kind of wrong. `source` is therefore NULL for manual rows and the caller skips them.
+ * `status = 'ACCEPTED'` rather than `<> 'REJECTED'`: this used to count only job-written rows,
+ * which are always ACCEPTED, so the looser test was equivalent. Now that manual rows count, a
+ * REVIEW submission that is not on the homepage would otherwise hold a slot of its creator's cap
+ * for the whole window.
  */
 export function buildWindowCountsQuery({
   targetCollectionId,
   capWindowDays,
-  autoFeatureUserId,
 }: {
   targetCollectionId: number;
   capWindowDays: number;
-  autoFeatureUserId: number;
 }) {
   return Prisma.sql`
-    SELECT
-      i."userId",
-      CASE
-        WHEN ci."addedById" = ${autoFeatureUserId}
-         AND ci.note LIKE ${`${AUTO_FEATURE_NOTE_PREFIX}:%`}
-        THEN split_part(ci.note, ':', 2)
-      END AS source
+    SELECT i."userId", ci."addedById", ci.note
     FROM "CollectionItem" ci
     JOIN "Image" i ON i.id = ci."imageId"
     WHERE ci."collectionId" = ${targetCollectionId}
-      AND ci.status <> 'REJECTED'::"CollectionItemStatus"
-      AND ci."createdAt" >= now() - ${intervalDays(capWindowDays)}
+      AND ci.status = 'ACCEPTED'::"CollectionItemStatus"
+      AND COALESCE(ci."reviewedAt", ci."createdAt") >= now() - ${intervalDays(capWindowDays)}
   `;
 }
 
+export type WindowCountRow = { userId: number; addedById: number | null; note: string | null };
+
 /**
- * Split out from the query so the asymmetry between the two counts is testable: every row counts
- * toward its creator, and only rows carrying a source collection count toward one.
+ * Every row counts toward its creator; only the job's own rows carry a source collection to count
+ * toward.
  *
- * `Number(null)` is 0, not NaN, so the finite check alone would file every manual row under
- * collection 0 and cap a collection that does not exist. The `> 0` is what stops that, and it is
- * load-bearing rather than defensive.
+ * The `> 0` guard is not defensive. A note of exactly `auto-featured:` parses to `''`, and
+ * `Number('')` is `0` — so without it a malformed note files a feature under a collection id that
+ * does not exist and quietly caps it. It fails as data, not as an error.
  */
-export function aggregateWindowCounts(rows: { userId: number; source: string | null }[]) {
+export function aggregateWindowCounts(rows: WindowCountRow[], autoFeatureUserId: number | null) {
   const creatorCounts = new Map<number, number>();
   const collectionCounts = new Map<number, number>();
   for (const row of rows) {
     creatorCounts.set(row.userId, (creatorCounts.get(row.userId) ?? 0) + 1);
-    const source = Number(row.source);
-    if (row.source !== null && Number.isFinite(source) && source > 0)
+    if (!isAutoFeaturedRow(row, autoFeatureUserId)) continue;
+    const source = Number(row.note?.slice(AUTO_FEATURE_NOTE_PREFIX.length + 1));
+    if (Number.isFinite(source) && source > 0)
       collectionCounts.set(source, (collectionCounts.get(source) ?? 0) + 1);
   }
   return { creatorCounts, collectionCounts };
 }
 
-async function fetchWindowCounts(args: {
+async function fetchWindowCounts({
+  autoFeatureUserId,
+  ...args
+}: {
   targetCollectionId: number;
   capWindowDays: number;
   autoFeatureUserId: number;
 }) {
-  const rows = await dbRead.$queryRaw<{ userId: number; source: string | null }[]>(
-    buildWindowCountsQuery(args)
-  );
+  const rows = await dbRead.$queryRaw<WindowCountRow[]>(buildWindowCountsQuery(args));
 
-  return aggregateWindowCounts(rows);
+  return aggregateWindowCounts(rows, autoFeatureUserId);
 }
 
 export async function runAutoFeatureImages({
