@@ -120,8 +120,8 @@ describe('auto-feature-health-check reads state the producer does not have to be
     // with itself: point `auto-feature-images` at a different key and every suite here stays green
     // while the check reads a row nothing writes and pages forever.
     //
-    // Every other getJobDate caller in the repo uses a bare name with no `job:` prefix, so this key
-    // is the odd one out and normalising it is the plausible edit. Both sides are read from source
+    // No other getJobDate caller uses a `job:` prefix, so this key is the odd one out and
+    // normalising it is the plausible edit. Both sides are read from source
     // here because the producer has no suite of its own to assert it in.
     const producer = readFileSync(resolve(__dirname, '../auto-feature-images.ts'), 'utf-8');
     // First identifier only. `getJobDate(key, defaultValue?)` takes a second optional argument, so

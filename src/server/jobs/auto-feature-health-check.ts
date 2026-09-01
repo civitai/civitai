@@ -20,7 +20,7 @@
  * 🔴 **To verify this, do NOT turn off the `AUTO_FEATURE_IMAGES` flag.** That is the obvious reading
  * of "suppress the job and observe the alert", and it produces no alert BY DESIGN — the flag gate
  * below returns before anything is evaluated, and the Axiom "Skipped" line it leaves reads like a
- * pass. What works, and what was used:
+ * pass. What works, and what is still OWED — this has not been run:
  *
  *   1. note the current value of `KeyValue['job:auto-feature-images']`
  *   2. set it back a day
@@ -42,6 +42,9 @@
  *   rides the same scheduler and the same `run-jobs` endpoint, so a failure in *that* layer takes
  *   both down together. For the August outage specifically that was not the cause — other crons
  *   logged continuously through all 79 hours — but nothing here would catch a scheduler-wide stop.
+ * - **The row half is inert whenever `dryRun` is on.** A dry run writes nothing and still advances
+ *   the heartbeat, so the record alert is suppressed by design; only the page remains. Prod runs
+ *   `dryRun: false`, so both halves are live there today.
  * - **`job_duration_seconds_count` already detects half of this.** It increments on every
  *   invocation and `seedJobMetrics` makes an absent series distinguishable from an idle one, so
  *   `rate(...[6h]) == 0` catches a job that stopped executing with no code at all. It is not enough
@@ -115,6 +118,13 @@ async function readLastRun() {
  * which is exactly what someone does while the pipeline is dry, would push `lastRow` to the present
  * and silence the check indefinitely. One such tombstone already exists in the target collection.
  * `buildWindowCountsQuery` filters the same way for the same reason.
+ *
+ * ⚠️ The `addedById` + `note LIKE` pair restates `isAutoFeaturedRow` in SQL, which the producer
+ * deliberately refuses to do — `buildWindowCountsQuery` classifies in JS through that helper
+ * precisely because expressing the predicate twice lets the two drift silently. This is the
+ * exception, taken because `max()` over an unbounded collection belongs in SQL. `isAutoFeaturedRow`
+ * remains the canonical definition: a change to what counts as auto-featured has to be made here
+ * too, and nothing enforces that.
  */
 async function readLastRow(collectionId: number, autoFeatureUserId: number) {
   const [row] = await dbRead.$queryRaw<{ lastRow: Date | null }[]>`
