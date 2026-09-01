@@ -164,6 +164,16 @@ describe('auto-feature-health-check reads state the producer does not have to be
     // so the ordered bind check below cannot see it, and `lastRow` would silently become the newest
     // CURATOR row instead. With `$queryRaw` mocked, the emitted SQL is the only observable there is.
     expect(rowQuery().sql).toMatch(/AND\s+ci\.note LIKE /);
+    // Structural, and the reason this is not a fourth clause-by-clause assertion: pinning the
+    // operator in front of each clause I could see left the `collectionId`/`addedById` conjunction
+    // unguarded, and `OR` there makes max() range over every row in the collection. Enumeration
+    // closes the clauses that exist today; this closes the ones added later too. The query
+    // legitimately contains no OR, so if one is ever needed this fails loudly and someone decides.
+    //
+    // String.raw is load-bearing. Written as a plain literal through a shell heredoc this became a
+    // regex with LITERAL BACKSPACE bytes where the word boundaries belong, matching nothing and
+    // passing forever. Caught only because the mutant was run rather than assumed.
+    expect(rowQuery().sql).not.toMatch(new RegExp(String.raw`\bOR\b`, 'i'));
   });
 
   it('derives the threshold from the configured interval rather than a constant', async () => {
@@ -289,11 +299,24 @@ describe('auto-feature-health-check alerting', () => {
     // file passes either way, because the mock ignores its argument.
     expect(mocks.isFlipt).toHaveBeenCalledWith('auto-feature-images');
 
+    // Read from source, because the line above is otherwise a tautology: the string it compares
+    // against comes from this file's own `vi.mock` of the flipt client, so renaming the REAL enum
+    // value leaves it green while prod goes double-silent — the producer stops on a flag Flipt does
+    // not know, and this check reports `skipped`. The KeyValue test above is sound for exactly this
+    // reason; `importActual` is not an option here, it pulls `~/env/server`.
+    const fliptClient = readFileSync(resolve(__dirname, '../../flipt/client.ts'), 'utf-8');
+    expect(fliptClient).toMatch(/AUTO_FEATURE_IMAGES = 'auto-feature-images'/);
+
     // One side only is not enough — the same asymmetry the KeyValue-key test above closes. Gate the
     // PRODUCER on a different flag and this check goes silent while the job keeps running, or stays
     // noisy while it is off, with every assertion in this file still green.
+    // First identifier only, same rationale as the getJobDate regex above: `isEnabled` takes
+    // (flag, entityId?, context?), so giving the producer a segment rollout is behaviour-preserving
+    // for WHICH flag it is, and anchoring on the closing paren would redden with a message saying
+    // the producer is ungated when it is not.
     const producer = readFileSync(resolve(__dirname, '../auto-feature-images.ts'), 'utf-8');
-    expect(producer).toMatch(/isFlipt\(\s*FLIPT_FEATURE_FLAGS\.AUTO_FEATURE_IMAGES\s*\)/);
+    const gate = producer.match(/isFlipt\(\s*([A-Za-z_$][\w$.]*)/);
+    expect(gate?.[1]).toBe('FLIPT_FEATURE_FLAGS.AUTO_FEATURE_IMAGES');
   });
 
   it('sends the page to the webhook, with the failure in the body', async () => {
