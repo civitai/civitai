@@ -23,12 +23,64 @@
 -- NOT touched, and must not be: `image_sort_at_before` and `post_published_at_change`
 -- maintain the real `Image."sortAt"` column and are unrelated to BitDex despite
 -- sitting on the same two tables.
+--
+-- 🔴 Each DROP takes an ACCESS EXCLUSIVE lock on its table, and four of these are
+-- "Image", "Post", "ModelVersion" and "TagsOnImageNew" — among the hottest tables on
+-- the site. The drop itself is instant; ACQUIRING the lock is not. It waits behind
+-- every in-flight query on that table and, while it waits, queues in front of all new
+-- traffic to it, so one slow feed query turns this into a site-wide write stall.
+--
+-- Hence the per-statement `lock_timeout`: failing fast and retrying costs nothing,
+-- queueing costs the site. Same shape as the 20260827150000_thread_mute FK adds.
+--
+-- Apply these ONE STATEMENT AT A TIME and read each result. A multi-statement run
+-- through the postgres-query skill prints a formatter error and applies anyway, so its
+-- exit status cannot tell you whether the set is half-applied.
 
-DROP TRIGGER IF EXISTS bitdex_image_45edf6c8 ON "Image";
-DROP TRIGGER IF EXISTS bitdex_imageresourcenew_d84d15a8 ON "ImageResourceNew";
-DROP TRIGGER IF EXISTS bitdex_imagetechnique_ee2b2860 ON "ImageTechnique";
-DROP TRIGGER IF EXISTS bitdex_imagetool_f87e1fc4 ON "ImageTool";
-DROP TRIGGER IF EXISTS bitdex_model_a13d0fe3 ON "Model";
-DROP TRIGGER IF EXISTS bitdex_modelversion_22dd59b3 ON "ModelVersion";
-DROP TRIGGER IF EXISTS bitdex_post_54f0a619 ON "Post";
-DROP TRIGGER IF EXISTS bitdex_tagsonimagenew_bcbef3c3 ON "TagsOnImageNew";
+DO $$
+BEGIN
+  SET LOCAL lock_timeout = '5s';
+  DROP TRIGGER IF EXISTS bitdex_image_45edf6c8 ON "Image";
+END $$;
+
+DO $$
+BEGIN
+  SET LOCAL lock_timeout = '5s';
+  DROP TRIGGER IF EXISTS bitdex_imageresourcenew_d84d15a8 ON "ImageResourceNew";
+END $$;
+
+DO $$
+BEGIN
+  SET LOCAL lock_timeout = '5s';
+  DROP TRIGGER IF EXISTS bitdex_imagetechnique_ee2b2860 ON "ImageTechnique";
+END $$;
+
+DO $$
+BEGIN
+  SET LOCAL lock_timeout = '5s';
+  DROP TRIGGER IF EXISTS bitdex_imagetool_f87e1fc4 ON "ImageTool";
+END $$;
+
+DO $$
+BEGIN
+  SET LOCAL lock_timeout = '5s';
+  DROP TRIGGER IF EXISTS bitdex_model_a13d0fe3 ON "Model";
+END $$;
+
+DO $$
+BEGIN
+  SET LOCAL lock_timeout = '5s';
+  DROP TRIGGER IF EXISTS bitdex_modelversion_22dd59b3 ON "ModelVersion";
+END $$;
+
+DO $$
+BEGIN
+  SET LOCAL lock_timeout = '5s';
+  DROP TRIGGER IF EXISTS bitdex_post_54f0a619 ON "Post";
+END $$;
+
+DO $$
+BEGIN
+  SET LOCAL lock_timeout = '5s';
+  DROP TRIGGER IF EXISTS bitdex_tagsonimagenew_bcbef3c3 ON "TagsOnImageNew";
+END $$;
