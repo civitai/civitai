@@ -221,6 +221,16 @@ export function buildBaseModelSampleQuery({
       extract(epoch FROM p."publishedAt")::double precision AS "publishedAtSecs",
       extract(epoch FROM GREATEST(p."publishedAt", i."scannedAt", i."createdAt"))::double precision
         AS "expectedSortAtSecs",
+      -- WARNING: safe by planner grace, not by construction. A correlated subquery in the
+      -- target list, under a random sort, is the shape Postgres can evaluate once per INPUT
+      -- row. Measured on the replica: Result -> Sort -> Gather with the SubPlan at loops=50,
+      -- because the projection is postponed above the top-N heapsort — 2,826 buffers, not
+      -- the ~81,700 executions the shape allows. Move this value into a filter, a sort key
+      -- or a de-duplication and it drops below the Sort; that version takes ~60s per run on
+      -- the primary, every 10 minutes.
+      --
+      -- Deliberately worded without the SQL keywords the builder's tests assert on: a
+      -- comment repeating them would satisfy those substring checks on its own.
       COALESCE((
         SELECT array_agg(DISTINCT mv."baseModel")
         FROM "ImageResourceNew" irn
@@ -382,11 +392,18 @@ export function compareStratum(
       // arriving by a different route, and accepting it silently is how the previous
       // rule's fix would have hidden a real defect while removing a false one.
       //
-      // 🔴 Its own kind on purpose, and it is NOT an alerting series: it is expected to
-      // be nonzero (measured ~0.2% of sampled images) because the index builds the value
-      // with `string_agg`. Alert on `basemodel_not_checkpoint` and `basemodel_missing`;
-      // watch this one for its RATE. Folding it into either of those would put a
-      // permanent floor under a series that has to mean something when it moves.
+      // 🔴 Its own kind on purpose, and NOT an alerting series — but read the reason
+      // carefully before trusting the floor. ~0.2% of sampled images have more than one
+      // checkpoint (measured in PG), and the MEILI indexer glues those with `string_agg`.
+      // Whether BITDEX glues them is unknown: its ingest is not in this repo, which is the
+      // whole reason this guard exists, and this file refuses the same cross-system
+      // inference elsewhere when it keeps `publishedAt`.
+      //
+      // So: if BitDex does NOT glue, every row on this kind is a real defect of
+      // 868ku8x8k's class, pre-labelled as noise. Whoever flips `bitdex-image-search`
+      // should treat a nonzero count here on the first real run as a FINDING until
+      // someone confirms BitDex glues the way Meili does. Alert on
+      // `basemodel_not_checkpoint` and `basemodel_missing`; watch this one's rate.
       if (!expected.includes(state.baseModel)) {
         mismatches.push({
           stratum,
@@ -450,11 +467,23 @@ export function compareStratum(
 
 // The three kinds this stratum can report. Named so the seeding loop and the reader
 // cannot drift from the `MismatchKind` union.
-const BASEMODEL_KINDS = [
+// The two arms denominated by documents that CARRY a value. `satisfies` for the same
+// reason KINDS_BY_STRATUM has it: an untyped string array here is the one place in this
+// file that can drift from `MismatchKind` without a type error.
+const VALUE_SIDE_KINDS = [
   'basemodel_not_checkpoint',
-  'basemodel_missing',
   'basemodel_unfilterable',
 ] as const satisfies readonly MismatchKind[];
+
+// Every stratum's kinds, so the seeding below is not applied to the newest arm alone.
+// The reuse lane caught exactly that: the three paragraphs arguing an absent series breaks
+// `increase(...) == 0` were true of `scheduled_visible`, `published_missing` and
+// `sortat_drift` too, and those were left absent.
+const KINDS_BY_STRATUM = {
+  scheduled: ['scheduled_visible'],
+  published_recent: ['published_missing', 'sortat_drift'],
+  basemodel: ['basemodel_not_checkpoint', 'basemodel_missing', 'basemodel_unfilterable'],
+} as const satisfies Record<AuditStratum, readonly MismatchKind[]>;
 
 const countUnfilterable = (m: AuditMismatch[]) =>
   m.filter((x) => x.kind === 'basemodel_unfilterable').length;
@@ -683,27 +712,31 @@ export const auditBitdexConsistency = createJob(
         );
         // Both value-side arms share this denominator: they can only fire on a compared
         // document that carried a value at all.
-        for (const kind of ['basemodel_not_checkpoint', 'basemodel_unfilterable'])
+        for (const kind of VALUE_SIDE_KINDS)
           bitdexAuditOpportunityCounter?.inc(
             { stratum: scope.stratum, kind },
             scope.withDocValue ?? 0
           );
-
-        // The NUMERATOR needs seeding for the same reason the denominator does. The ratio
-        // these counts exist to enable is mismatch/opportunity, and on a healthy system
-        // the mismatch series has never been inc'd — so the division returns an empty
-        // vector and Grafana renders "No data", which is the ambiguity being fixed rather
-        // than the answer "none". Seeding with zero costs nothing and makes the healthy
-        // case read as zero.
-        for (const kind of BASEMODEL_KINDS)
-          bitdexAuditMismatchCounter?.inc({ stratum: scope.stratum, kind }, 0);
       }
+
+      // The NUMERATOR needs seeding for the same reason the denominators do, and for EVERY
+      // stratum — on a healthy system a kind that has never fired has no series at all, so
+      // `increase(...) == 0` returns an empty vector and Grafana renders "No data" rather
+      // than "none". Outside the basemodel guard above, because the older strata have the
+      // same problem and were left absent.
+      for (const kind of KINDS_BY_STRATUM[scope.stratum])
+        bitdexAuditMismatchCounter?.inc({ stratum: scope.stratum, kind }, 0);
     }
 
     bitdexAuditRunsCounter?.inc();
     bitdexAuditRunDurationHistogram?.observe(durationSec);
 
     const allMismatches = scopes.flatMap((s) => s.mismatches);
+    const perStratumCap = Math.ceil(MAX_LOGGED_MISMATCHES / scopes.length);
+    const loggedMismatches = scopes.flatMap((s) => s.mismatches.slice(0, perStratumCap));
+    const truncatedByStratum = Object.fromEntries(
+      scopes.map((s) => [s.stratum, Math.max(0, s.mismatches.length - perStratumCap)])
+    );
 
     // Logged every run, not only on a finding: a run that checked 0 rows is not the
     // same as a run that found nothing wrong, and only the log distinguishes them.
@@ -733,8 +766,14 @@ export const auditBitdexConsistency = createJob(
         baseModelError: result.baseModelError,
         // Ids and expected-vs-actual, so a firing alert has a trail to pull on
         // instead of only a rate.
-        mismatches: allMismatches.slice(0, MAX_LOGGED_MISMATCHES),
-        mismatchesTruncated: Math.max(0, allMismatches.length - MAX_LOGGED_MISMATCHES),
+        // 🔴 Sliced PER STRATUM, not off one flat list. The strata are logged in order and
+        // basemodel is last, so a flat cap is a priority ordering: during the 2026-08-06
+        // incident class stratum A alone would fill all 25 rows and NO stratum-C image id
+        // would reach the log, while its counter moved and the alert fired. The on-call
+        // then has a rate and no evidence, which is what this field exists to prevent.
+        mismatches: loggedMismatches,
+        mismatchesTruncated: allMismatches.length - loggedMismatches.length,
+        mismatchesTruncatedByStratum: truncatedByStratum,
         durationSec,
         sampleSize: config.sampleSize,
         sortAtToleranceSecs: config.sortAtToleranceSecs,

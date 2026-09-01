@@ -174,6 +174,17 @@ describe('readDocState', () => {
     });
   });
 
+  // `present` is a three-way OR and every other fixture in this file sets `isPublished`,
+  // so the `sortAt` disjunct was exercised by nothing. It is the reason the field is in
+  // every projection: without it, a response missing `isPublished` would skip every row
+  // and report the stratum clean.
+  it('counts sortAt alone as evidence the document exists', () => {
+    expect(readDocState({ id: 7, sortAt: NOW })).toMatchObject({
+      present: true,
+      published: false,
+    });
+  });
+
   it('treats a bare { id } (no doc on disk) as absent', () => {
     // The batch endpoint returns just the id for a slot with no stored document.
     expect(readDocState({ id: 7 })).toMatchObject({ present: false, published: false });
@@ -648,6 +659,46 @@ describe('auditBitdexConsistency job body', () => {
 
     expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(3);
     expect(mockFetchDocs).toHaveBeenCalledTimes(3);
+
+    // 🔴 Which BUILDER each stratum got. The three are wired to `auditStratum` by hand and
+    // `$queryRaw` is mocked to return fixtures whatever SQL it is handed, so without this
+    // swapping the scheduled and published builders leaves the whole suite green while the
+    // 2026-08-06 incident detector samples the wrong population and reports every row.
+    const sqlOf = (i: number) => (mockDbWrite.$queryRaw.mock.calls[i][0] as { sql: string }).sql;
+    expect(sqlOf(0)).toContain('"publishedAt" > now()');
+    expect(sqlOf(0)).not.toContain('"publishedAt" <= now()');
+    expect(sqlOf(1)).toContain('"publishedAt" <= now()');
+    expect(sqlOf(1)).not.toContain('"expectedBaseModels"');
+    expect(sqlOf(2)).toContain('"expectedBaseModels"');
+
+    // 🔴 And the projection for EVERY stratum, exactly — not `toContain`, which is what let
+    // the omission through for A and B. Dropping `isPublished` is invisible to a mocked
+    // fetch and makes `readDocState` report every document unpublished in production,
+    // which silences the scheduled-visible arm for good.
+    expect(mockFetchDocs.mock.calls[0][2]).toEqual(['id', 'isPublished', 'publishedAt', 'sortAt']);
+    expect(mockFetchDocs.mock.calls[1][2]).toEqual(['id', 'isPublished', 'publishedAt', 'sortAt']);
+    expect(mockFetchDocs.mock.calls[2][2]).toEqual([
+      'id',
+      'isPublished',
+      'publishedAt',
+      'sortAt',
+      'baseModel',
+    ]);
+
+    // Which flag gates the job. `mockIsFlipt` ignores its argument, so gating on a
+    // different existing flag typechecks and passes — and in production reads as off.
+    expect(mockIsFlipt).toHaveBeenCalledWith('bitdex-consistency-audit');
+
+    // Seeding is for EVERY stratum's kinds, not the newest arm's. A kind that has never
+    // fired has no series, and `increase(...) == 0` over an absent series is an empty
+    // vector — the older strata had that problem too and were left out of the first fix.
+    for (const [stratum, kinds] of [
+      ['scheduled', ['scheduled_visible']],
+      ['published_recent', ['published_missing', 'sortat_drift']],
+      ['basemodel', ['basemodel_not_checkpoint', 'basemodel_missing', 'basemodel_unfilterable']],
+    ] as const)
+      for (const kind of kinds)
+        expect(mockCounters.mismatch.inc).toHaveBeenCalledWith({ stratum, kind }, 0);
     // The baseModel stratum asks for a different field set; requesting the default one
     // would return documents with no baseModel key and read as a clean audit forever.
     expect(mockFetchDocs.mock.calls[2][2]).toContain('baseModel');
@@ -679,6 +730,9 @@ describe('auditBitdexConsistency job body', () => {
       baseModelWithCheckpoint: 1,
       baseModelWithDocValue: 1,
       baseModelMismatches: 0,
+      // Negative control for `countUnfilterable`, which is otherwise only ever asserted
+      // as 1 — a constant `() => 1` would pass every other test in this file.
+      baseModelUnfilterable: 0,
     });
   });
 
@@ -819,6 +873,60 @@ describe('auditBitdexConsistency job body', () => {
     expect(mockCounters.checked.inc).toHaveBeenCalledWith({ stratum: 'scheduled' }, 1);
     expect(mockCounters.stratumFailed.inc).toHaveBeenCalledWith({ stratum: 'basemodel' }, 1);
     expect(result.baseModelError).toMatch(/does not exist/);
+  });
+
+  // 🔴 The log's id budget is per-stratum, not first-come. basemodel is logged last, so a
+  // flat 25-row cap meant a noisy stratum A could take every slot and leave the alerting
+  // stratum with a rate and no ids.
+  it('gives every stratum a share of the logged mismatch ids', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    const manyScheduled = Array.from({ length: 40 }, (_, i) => row({ imageId: 100 + i }));
+    mockDbWrite.$queryRaw
+      .mockResolvedValueOnce(manyScheduled)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        row({ imageId: 3, postId: 30, expectedBaseModels: ['Illustrious'] }),
+      ]);
+    mockFetchDocs
+      .mockResolvedValueOnce(manyScheduled.map((r) => ({ id: r.imageId, isPublished: true })))
+      .mockResolvedValueOnce([{ id: 3, isPublished: true, baseModel: 'Pony' }]);
+
+    await runJob();
+
+    const payload = loggingMock.logToAxiom.mock.calls.at(-1)?.[0] as {
+      mismatches: { stratum: string }[];
+      mismatchesTruncatedByStratum: Record<string, number>;
+    };
+    const strata = payload.mismatches.map((m) => m.stratum);
+    expect(strata).toContain('basemodel');
+    expect(strata.filter((x) => x === 'scheduled').length).toBeLessThan(40);
+    expect(payload.mismatchesTruncatedByStratum.scheduled).toBeGreaterThan(0);
+    expect(payload.mismatchesTruncatedByStratum.basemodel).toBe(0);
+  });
+
+  // 🔴 `baseModelMismatches` is asserted as 0 at every other job-level site, so a constant
+  // `countAlerting = () => 0` passed the whole suite. This is the one fixture where a real
+  // leak reaches the summary, and it also pins the mismatch counter firing with 1.
+  it('reports a real leak as a nonzero mismatch on the run and the counter', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockDbWrite.$queryRaw
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        row({ imageId: 3, postId: 30, expectedBaseModels: ['Illustrious'] }),
+      ]);
+    mockFetchDocs.mockResolvedValueOnce([{ id: 3, isPublished: true, baseModel: 'Pony' }]);
+
+    const result = (await runJob()) as Record<string, unknown>;
+
+    expect(result.baseModelMismatches).toBe(1);
+    expect(result.baseModelUnfilterable).toBe(0);
+    expect(mockCounters.mismatch.inc).toHaveBeenCalledWith(
+      { stratum: 'basemodel', kind: 'basemodel_not_checkpoint' },
+      1
+    );
+    const payload = loggingMock.logToAxiom.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(payload.baseModelMismatches).toBe(1);
   });
 
   // Split because `basemodel_unfilterable` is expected to be nonzero on a healthy system:
