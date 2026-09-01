@@ -361,4 +361,42 @@ describe('rewardReportReporters multiplier', () => {
       maxRaw: 20,
     });
   });
+
+  it('floors a negative tier to 0 rather than writing it', async () => {
+    // A negative fits Decimal(3, 2) only down to -9.99, so a larger one is the same silently
+    // dropped row the ceiling guards. 0 is the value process-rewards understands: unqualified,
+    // zero award, cap untouched. Justin's call, 2026-09-01.
+    const row = await rowFor({ tier: cached(-5), storedBonus: 20 });
+    expect(row.multiplier).toBe(0);
+  });
+
+  it('does not let a negative past the column even when it would fit', async () => {
+    // -2 x 1 = -2 is storable, so a fix that only guarded the unstorable range would leave it.
+    // Kept out anyway: recorded `awarded`, it consumes the reporter's cap and is then dropped by
+    // sendAward's amount filter — a row claiming a payout that never happened.
+    const row = await rowFor({ tier: cached(-2), storedBonus: 10 });
+    expect(row.multiplier).toBe(0);
+  });
+
+  it('reports a floor as a floor, not as exceeding the column', async () => {
+    // Two floored at DIFFERENT raws, or min and max of a one-element array agree and `minRaw` is
+    // unpinned — the degeneracy that already let a mutation through this file once.
+    await rowsFor({
+      tiers: [
+        [42, cached(-5)],
+        [7, cached(-3)],
+        [9, cached(1)],
+      ],
+      storedBonus: 20,
+    });
+    expect(axiom).toHaveBeenCalledTimes(1);
+    const payload = axiom.mock.calls[0][0];
+    expect(payload.message).toMatch(/negative and was floored/);
+    expect(payload).toMatchObject({ flooredEvents: 2, batchSize: 3, minRaw: -10 });
+  });
+
+  it('keeps the unclamped negative in the audit trail', async () => {
+    const row = await rowFor({ tier: cached(-5), storedBonus: 20 });
+    expect(JSON.parse(row.transactionDetails)).toEqual({ multiplierRaw: -10 });
+  });
 });
