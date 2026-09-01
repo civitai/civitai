@@ -345,10 +345,22 @@ describe('every Menu in the app-block chrome is iframe-aware', () => {
     // components.
     let hooks = 0;
     let triggers = 0;
+    const controls: string[] = [];
     for (const row of LEDGER) {
       const src = row.source();
       hooks += (src.match(/useIframeAwareMenu\(/g) ?? []).length;
-      triggers += chromeSurfaceUses(src).length;
+      const uses = chromeSurfaceUses(src);
+      triggers += uses.length;
+      for (const tag of uses) {
+        const named = /control=\{\s*([A-Za-z_$][\w$]*)\s*\}/.exec(tag.replace(/\s+/g, ' '));
+        expect(
+          named,
+          `a \`<ChromeSurface>\` in ${row.what} passes no simple \`control={identifier}\`. Pass the ` +
+            'variable a `useIframeAwareMenu()` call was assigned to, so the check below can see ' +
+            'WHICH control each surface holds.'
+        ).not.toBeNull();
+        controls.push(`${row.what}::${(named as RegExpExecArray)[1]}`);
+      }
     }
     // Positive control: a zero on BOTH sides would satisfy the equality while
     // proving that neither pattern matched anything in the real tree.
@@ -361,6 +373,18 @@ describe('every Menu in the app-block chrome is iframe-aware', () => {
         'Every `<ChromeSurface>` needs its OWN `useIframeAwareMenu()`; sharing one makes opening ' +
         'either surface close the other.'
     ).toBe(triggers);
+
+    // 🔴 THE COUNT ALONE IS NOT THE RULE, AND A MUTATION PROVED IT. Pointing the
+    // platform-nav surface at `overflowMenu` leaves BOTH numbers at two — two hook
+    // calls, two triggers — while the two surfaces share one `opened` flag, so opening
+    // either closes the other and one hook call is dead. The equality above scores that
+    // clean. The rule is that the controls are DISTINCT, so that is what is asserted.
+    expect(
+      new Set(controls).size,
+      `two chrome surfaces are driven by the SAME control (${controls.join(', ')}). They would ` +
+        'share one `opened` flag: opening either would close the other, and one ' +
+        '`useIframeAwareMenu()` call would be dead while every count still balanced.'
+    ).toBe(controls.length);
   });
 
   it('the primitive takes its open state from the caller rather than owning any', () => {

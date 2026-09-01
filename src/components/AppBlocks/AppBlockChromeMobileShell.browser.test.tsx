@@ -196,6 +196,37 @@ async function renderShell({
 }
 
 /**
+ * Open the ⋮ and wait for its contents, at EITHER rendering.
+ *
+ * 🔴 IT WAITS ON A LABEL BOTH REVISIONS RENDER, NOT ON THE NEW SURFACE'S TESTID —
+ * because a test that dies looking for something F3 introduced is red for a reason
+ * that says nothing about behaviour. "Manage apps" is the ⋮'s own item at
+ * `origin/main` and a sheet row here, so waiting on it means the assertions that
+ * follow run against a populated surface at BOTH revisions, and the red lands on the
+ * claim rather than on the lookup. Measured: the first draft waited on
+ * `app-block-menu-dropdown` and every one of these tests failed at `origin/main` as a
+ * 15-second timeout instead of an assertion.
+ */
+async function openOverflow() {
+  await page.getByTestId('app-block-menu-trigger').click();
+  await expect.element(page.getByText('Manage apps')).toBeInTheDocument();
+}
+
+/**
+ * The ⋮'s content box, whichever rendering it got — a Drawer content box below `sm`,
+ * a Menu dropdown above it (and at `origin/main`, at every width). Keyed on Mantine's
+ * STATIC classes, which this app guarantees (`withStaticClasses` defaults true and is
+ * not overridden), so the lookup does not depend on anything F3 added.
+ */
+function overflowBox(): HTMLElement | null {
+  return q('.mantine-Drawer-content') ?? q('.mantine-Menu-dropdown');
+}
+
+/** The activatable rows of a surface, by their visible label. */
+const rowLabels = (box: HTMLElement) =>
+  [...box.querySelectorAll('a, button')].map((el) => (el.textContent ?? '').trim());
+
+/**
  * Guard-the-guard. Without `@mantine/core/styles.css` the `Group` is not a flex row,
  * every width and height below reads as something other than what ships, and the
  * assertions can still pass. Asserted first in every test that measures anything.
@@ -300,6 +331,53 @@ describe('AppBlockChrome mobile shell', () => {
     ).toBeNull();
   });
 
+  test(`INVARIANT GUARD — at ${PHONE[0]}x${PHONE[1]} the MODEL-slot chrome is untouched, narrow though it is`, async () => {
+    // 🔴 NOT REGRESSION COVERAGE — green at `origin/main`. It is the SURFACE control,
+    // and it is the only thing that kills the most tempting mutation in this change:
+    // dropping the `isPage &&` term from `const compact = isPage && geometry.compact`.
+    // Every other test in this file passes with that term gone, because they all render
+    // the page surface — and the model slot would silently acquire a back chevron
+    // pointing at the Marketplace from a model page nobody reached the store from,
+    // plus a folded nav in place of its own.
+    //
+    // The distinction is real and deliberate: `geometry.compact` is TRUE here (a 360px
+    // bar is narrow by any measure, and the model sidebar is narrower still). What
+    // gates the shell is the SURFACE, because the shell replaces a breadcrumb only the
+    // full-page surface has. See `chromeGeometry.ts`'s `compact` doc comment.
+    await page.viewport(...PHONE);
+    // No `slotId` → the model surface (the chrome's documented back-compat default).
+    renderWithProviders(
+      <AppBlockChrome blockInstanceId="inst-model-narrow" appName={APP_NAME} />
+    );
+    await expect.element(page.getByTestId('app-block-chrome')).toBeInTheDocument();
+    const root = page.getByTestId('app-block-chrome').element() as HTMLElement;
+    // Let the ResizeObserver measure and commit, so this is a claim about the SETTLED
+    // render rather than about the first paint (where nothing is compact anyway).
+    await frame();
+    await frame();
+    await frame();
+    expect(styleSheetLoaded(root), '@mantine/core/styles.css must be loaded').toBe(true);
+
+    expect(
+      root.getAttribute('data-chrome-compact'),
+      `a ${PHONE[0]}px MODEL-slot bar must not take the mobile shell — the shell replaces a ` +
+        'breadcrumb this surface does not have, and "back to the Marketplace" is not a ' +
+        'meaningful action from a model page'
+    ).toBe('false');
+    expect(
+      q('[data-testid="app-block-back"]'),
+      'the model slot must have no back chevron at any width'
+    ).toBeNull();
+    expect(
+      q('[data-testid="app-platform-nav-trigger"]'),
+      'the model slot keeps its own platform-nav trigger at any width'
+    ).not.toBeNull();
+    expect(
+      q('[data-testid="app-block-name"]'),
+      'the model slot keeps its badge app-name label at any width'
+    ).not.toBeNull();
+  });
+
   test(`REGRESSION — at ${PHONE[0]}x${PHONE[1]} the platform nav is inside the ⋮ sheet`, async () => {
     // 🔴 RED AT `origin/main`, BEHAVIOURALLY. The failing assertion is the presence of
     // "Installed apps" after opening the ⋮. That label exists ONLY in the platform-nav
@@ -314,16 +392,15 @@ describe('AppBlockChrome mobile shell', () => {
     const root = await renderShell({ viewport: PHONE, expectCompact: true });
     expect(styleSheetLoaded(root), '@mantine/core/styles.css must be loaded').toBe(true);
 
-    await page.getByTestId('app-block-menu-trigger').click();
-    // Happens-before for everything below: the surface's own content box, whichever
-    // rendering it is. Waiting on this (rather than on the item under test) is what
-    // stops the assertions from being satisfied by a retry window.
-    await expect.element(page.getByTestId('app-block-menu-dropdown')).toBeInTheDocument();
-    const sheet = q('[data-testid="app-block-menu-dropdown"]') as HTMLElement;
+    // Happens-before for everything below: a label the ⋮ carries at BOTH revisions.
+    // Waiting on that (rather than on the item under test) is what stops the
+    // assertions from being satisfied by a retry window, and what keeps the red
+    // behavioural.
+    await openOverflow();
+    const sheet = overflowBox();
+    expect(sheet, 'the ⋮ must have opened SOME surface').not.toBeNull();
 
-    const labels = [...sheet.querySelectorAll('a, button')].map((el) =>
-      (el.textContent ?? '').trim()
-    );
+    const labels = rowLabels(sheet as HTMLElement);
     for (const label of ['Marketplace', 'Installed apps', 'My apps']) {
       expect(
         labels,
@@ -346,10 +423,9 @@ describe('AppBlockChrome mobile shell', () => {
       `at ${PHONE[0]}px the ⋮ must open a Drawer (the site's bottom-sheet idiom), not a dropdown`
     ).not.toBeNull();
     expect(
-      (content as HTMLElement).contains(sheet),
-      'the ⋮ contents must be INSIDE the drawer content box — that is the box the global ' +
-        'safe-area rule pays, so a sheet rendered outside it would be unpaid'
-    ).toBe(true);
+      q('.mantine-Menu-dropdown'),
+      `at ${PHONE[0]}px the ⋮ must NOT also render a dropdown — the sheet replaces it`
+    ).toBeNull();
   });
 
   test(`INVARIANT GUARD — at ${DESKTOP[0]}x${DESKTOP[1]} the nav stays in its own menu and the ⋮ does not absorb it`, async () => {
@@ -361,18 +437,15 @@ describe('AppBlockChrome mobile shell', () => {
     const root = await renderShell({ viewport: DESKTOP, expectCompact: false });
     expect(styleSheetLoaded(root), '@mantine/core/styles.css must be loaded').toBe(true);
 
-    await page.getByTestId('app-block-menu-trigger').click();
     // Wait for an item that IS in this menu at both revisions. That is the
     // happens-before: once "Manage apps" is present the dropdown has rendered its
     // children, so the absence below is measured against a populated surface rather
     // than an empty one.
-    await expect.element(page.getByRole('menuitem', { name: 'Manage apps' })).toBeInTheDocument();
-    const overflow = q('[data-testid="app-block-menu-dropdown"]') as HTMLElement;
-    const overflowLabels = [...overflow.querySelectorAll('a, button')].map((el) =>
-      (el.textContent ?? '').trim()
-    );
+    await openOverflow();
+    const overflow = overflowBox();
+    expect(overflow, 'the ⋮ must have opened SOME surface').not.toBeNull();
     expect(
-      overflowLabels,
+      rowLabels(overflow as HTMLElement),
       `at ${DESKTOP[0]}px the ⋮ must NOT carry the platform nav — it has its own trigger here`
     ).not.toContain('Marketplace');
 
@@ -444,11 +517,20 @@ describe('AppBlockChrome mobile shell', () => {
     // the same `ChromeSurfaceItem` close path with nothing to navigate to.
     await renderShell({ viewport: PHONE, expectCompact: true, appBlockId: 'ab_1' });
 
-    await page.getByTestId('app-block-menu-trigger').click();
-    await expect.element(page.getByTestId('app-block-menu-dropdown')).toBeInTheDocument();
+    await openOverflow();
+    // 🔴 A POSITIVE PRECONDITION, NOT DECORATION. The assertion at the end of this
+    // test is an ABSENCE, and an absence is trivially satisfied by a surface that
+    // never opened — at `origin/main` there is no sheet at all, so without this line
+    // the test would pass there while proving nothing. Requiring the sheet FIRST is
+    // what makes the later `toBeNull()` mean "it closed" rather than "it never was".
+    const sheet = q('.mantine-Drawer-content');
+    expect(
+      sheet,
+      `at ${PHONE[0]}px the ⋮ must open a bottom sheet before this test can say anything about ` +
+        'the sheet closing'
+    ).not.toBeNull();
 
-    const sheet = q('[data-testid="app-block-menu-dropdown"]') as HTMLElement;
-    const action = [...sheet.querySelectorAll('a, button')].find(
+    const action = [...(sheet as HTMLElement).querySelectorAll('a, button')].find(
       (el) => (el.textContent ?? '').trim() === 'Permissions & activity'
     ) as HTMLElement | undefined;
     expect(
@@ -565,8 +647,7 @@ describe('AppBlockChrome mobile shell', () => {
       const style = injectInset(34);
       try {
         await renderShell({ viewport: PHONE, expectCompact: true });
-        await page.getByTestId('app-block-menu-trigger').click();
-        await expect.element(page.getByTestId('app-block-menu-dropdown')).toBeInTheDocument();
+        await openOverflow();
 
         const content = q('.mantine-Drawer-content');
         expect(
@@ -627,13 +708,13 @@ describe('AppBlockChrome mobile shell', () => {
       const root = await renderShell({ viewport, expectCompact });
       expect(styleSheetLoaded(root), '@mantine/core/styles.css must be loaded').toBe(true);
 
-      // The decision actually flipped between the two cases — otherwise this pair
-      // would be measuring one shell twice and reporting it as two viewports.
-      expect(
-        root.getAttribute('data-chrome-compact'),
-        `the ${viewport[0]}px case must actually resolve compact=${expectCompact}`
-      ).toBe(String(expectCompact));
-
+      // 🔴 THIS PAIR DELIBERATELY DOES NOT ASSERT `data-chrome-compact`, EVEN THOUGH
+      // AN EARLIER DRAFT DID. That attribute does not exist at `origin/main`, so
+      // asserting it turned an invariant guard — a test whose whole value is that it
+      // is green on BOTH sides — into one that fails at base for want of an attribute.
+      // A guard that cannot be green at base cannot tell you the height did not move.
+      // Which shell each viewport renders is established by the two structural tests
+      // at the top of this file, so this pair is not measuring one shell twice.
       expect(
         Math.round(rect(root).height),
         `the chrome bar's resting height must not move at ${viewport[0]}px — it is the model ` +
