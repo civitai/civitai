@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { branch, defFamily, defineGraph, parseFixpoint } from 'form-graph';
+import { branch, defFamily, defineGraph } from 'form-graph';
 import { VID_QUANTITY_ECOSYSTEMS } from '~/shared/constants/generation.constants';
 import {
   getInputTypeForWorkflow,
@@ -10,16 +10,8 @@ import { migrateWorkflowKey } from '~/shared/data-graph/generation/generation-gr
 import { mergeGateStates, rulesToStates } from '~/shared/data-graph/generation/gates';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 
-/**
- * A field resolved on a PREVIOUS pass, fed back so a correction can consult a
- * value that resolves after it. See `parseVideo`: data-graph iterates its graph
- * to a fixed point; form-graph resolves once in declaration order, so the
- * iteration lives here — explicit and bounded — instead of inside the graph.
- */
-export type VideoHubExt = GenerationCtx & { resolvedResolution?: string };
-import { ecosystemToVersionDef } from '~/shared/data-graph/generation/wan-graph';
 import { ltx } from './ltx';
-import { wan } from './wan';
+import { deriveWanBackendEcosystem, wan } from './wan';
 import type { VideoExt } from './shared';
 
 /**
@@ -52,7 +44,7 @@ const families = branch(
   { ltx, wan }
 );
 
-export const videoHub = defineGraph<VideoHubExt>()
+export const videoHub = defineGraph<GenerationCtx>()
   .field('workflow', ({ _ext }) => {
     const { hidden, states } = mergeGateStates(
       undefined,
@@ -112,34 +104,6 @@ export const videoHub = defineGraph<VideoHubExt>()
             })
           : z.string(),
       default: defaultValue,
-      // wan-graph.ts syncs the ecosystem to the workflow (T2V <-> I2V) with an
-      // EFFECT. data-graph runs effects during safeParse; form-graph runs rules
-      // on set() only — so a sync that is a pure function of other resolved
-      // fields belongs in resolution, as a correction, or a server-side parse
-      // would keep an ecosystem the client would have moved off.
-      correct: (value: string) => {
-        const def = ecosystemToVersionDef.get(value);
-        if (!def) return undefined;
-        const isImg2vid = workflow === 'img2vid';
-        let target: string;
-        if (def.version === 'v2.1') {
-          // v2.1's I2V is resolution-dependent, and `resolution` lives in the
-          // version subgraph — it resolves AFTER this field. The previous
-          // pass's value (fed back by `parseVideo`) is what makes the 480p /
-          // 720p choice correct; on a first pass it is the enum's default.
-          const resolution = _ext.resolvedResolution ?? '480p';
-          target = isImg2vid
-            ? resolution === '480p'
-              ? def.ecosystems.i2v_480p
-              : def.ecosystems.i2v
-            : def.ecosystems.t2v;
-        } else {
-          target = isImg2vid ? def.ecosystems.i2v : def.ecosystems.t2v;
-        }
-        return target && target !== value
-          ? { value: target, reason: 'workflow_ecosystem_sync', detail: { workflow } }
-          : undefined;
-      },
     };
   })
   .field('quantity', ({ ecosystem, output, _ext }) => {
@@ -154,13 +118,21 @@ export const videoHub = defineGraph<VideoHubExt>()
 export type VideoState = ReturnType<typeof videoHub.resolve>;
 
 /**
- * Parse entry point: form-graph's `parseFixpoint` supplies the bounded
- * fixed-point that Wan 2.1's ecosystem<->resolution coupling needs — the
- * resolved resolution feeds back through ext until a pass changes nothing.
+ * Parse + submission projection. The graph's `ecosystem` field holds the
+ * user's SELECTION; the BACKEND target v1 stored under the same key is a pure
+ * function of (selection, workflow, resolution) and is derived here, at the
+ * boundary — the same function the model definitions use internally. This is
+ * production code: the Phase 4 adapter submits its output.
  */
 export function parseVideo(raw: Record<string, unknown>, ctx: GenerationCtx) {
-  return parseFixpoint(videoHub, raw, ctx as VideoHubExt, (state) => {
-    const resolution = (state as { resolution?: string }).resolution;
-    return resolution !== undefined ? { resolvedResolution: resolution } : null;
-  });
+  const result = videoHub.parse(raw, ctx);
+  if (!result.success) return result;
+  const state = result.state as { ecosystem: string; workflow: string; resolution?: string };
+  const backend = deriveWanBackendEcosystem(state.ecosystem, state.workflow, state.resolution);
+  if (backend === state.ecosystem) return result;
+  return {
+    ...result,
+    data: { ...(result.data as object), ecosystem: backend },
+    state: { ...(result.state as object), ecosystem: backend },
+  } as typeof result;
 }

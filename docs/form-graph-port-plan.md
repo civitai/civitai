@@ -343,12 +343,18 @@ policy, or server-side parse will diverge from the client. The video port hit
 this with Wan's workflow->ecosystem sync; every family with cross-node effects
 will hit it too.
 
-**When two fields are mutually dependent** (Wan 2.1: `ecosystem` needs
-`resolution`, which resolves after it), form-graph's single pass cannot express
-it — data-graph iterates to a fixed point. Make the iteration explicit at the
-call site, as `parseVideo` does in `video/hub.ts`: re-resolve feeding the
-previous pass's value back through ext, and stop when the output stops moving.
-Keep it bounded and assert convergence.
+**"Mutually dependent" fields are a modeling smell, not a porting problem.**
+Wan 2.1 taught this the long way: its ecosystem/resolution "cycle" was v1
+conflating the user's SELECTION with a backend target DERIVED from resolution,
+under one key — kept consistent by an iterating effect. Do NOT port the
+iteration (a parseFixpoint helper was built for this and then deleted). Split
+the facts instead: the field holds the selection; the derived value is computed
+where its inputs already exist — a later definition function (v2.1's `model`
+reads the backend off `resolution`, declared before it) — and the conflated
+OUTPUT key is produced at the submission boundary (`parseVideo` derives
+`ecosystem` after parse; the Phase 4 adapter ships that projection). If a
+family's effects look like they need iteration, find the two facts wearing one
+key first.
 
 **Watch for text editors that are plain nodes.** `createTextEditorGraph`
 registers its key in `snippets.targets`; a plain `negativePromptNode()` does

@@ -42,6 +42,29 @@ import { makeTextBlock, type VideoExt } from './shared';
 
 const versionOf = (ecosystem: string) => ecosystemToVersionDef.get(ecosystem)?.version ?? 'v2.1';
 
+/**
+ * The backend ecosystem for a Wan generation, DERIVED from what the user
+ * actually chose. v1 stored this derived value in the same `ecosystem` key as
+ * the user's selection and kept the conflation consistent with an iterating
+ * effect; here it is a pure function used where its inputs exist — the model
+ * definition (declared after `resolution`) and the submission boundary.
+ * Non-wan selections pass through unchanged.
+ */
+export function deriveWanBackendEcosystem(
+  selection: string,
+  workflow: string,
+  resolution?: string
+): string {
+  const def = ecosystemToVersionDef.get(selection);
+  if (!def) return selection;
+  const isImg2vid = workflow === 'img2vid';
+  if (def.version === 'v2.1') {
+    if (!isImg2vid) return def.ecosystems.t2v;
+    return resolution === '720p' ? def.ecosystems.i2v : (def.ecosystems as { i2v_480p: string }).i2v_480p;
+  }
+  return isImg2vid ? def.ecosystems.i2v : def.ecosystems.t2v;
+}
+
 // Lists that wan-graph.ts keeps module-local; the option tables they build are
 // re-derived here from the same shared helper, and pinned by the differential.
 const wan22AspectRatioList: GenerationAspectRatio[] = [
@@ -156,18 +179,29 @@ const shared = defineGraph<VideoExt>()
       ? imagesDef({ warnOnMissingAiMetadata: true })
       : null;
   })
-  // createCheckpointGraph() with no options — everything from ecosystem defaults
-  .field('model', ({ _ext }) =>
-    checkpointDef({ ecosystem: _ext.ecosystem, workflow: _ext.workflow, ext: _ext })
-  )
-  .field('seed', SEED)
-  // Alibaba's wan3.0 API documents no cfgScale, so it is hidden there.
-  .field('cfgScale', ({ _ext }) => (versionOf(_ext.ecosystem) === 'v3.0' ? null : CFG));
+  .field('seed', SEED);
+
+/**
+ * The model + cfgScale block, parameterised by the derived backend ecosystem.
+ * checkpointDef's defaults and locked substitution are per BACKEND ecosystem
+ * (v2.1's 480p and 720p I2V variants have different default models), so the
+ * definition takes the derived value, not the raw selection.
+ */
+const modelDef = (backend: string, workflow: string, ext: VideoExt) =>
+  checkpointDef({ ecosystem: backend, workflow, ext });
 
 // ---- one graph per Wan version ---------------------------------------------
 const v21 = defineGraph<VideoExt>()
   .use(shared)
   .field('resolution', RES_21)
+  .field('model', ({ resolution, _ext }) =>
+    modelDef(
+      deriveWanBackendEcosystem(_ext.ecosystem, _ext.workflow, resolution),
+      _ext.workflow,
+      _ext
+    )
+  )
+  .field('cfgScale', CFG)
   .field('aspectRatio', ({ images, resolution }) =>
     noImages(images) ? AR_21(resolution) : null
   )
@@ -176,8 +210,16 @@ const v21 = defineGraph<VideoExt>()
   // wan2.1 has no negative prompt
   .use(makeTextBlock({ negativePrompt: false }));
 
+/** Versions whose backend target needs only the workflow. */
+const modelBlock = defineGraph<VideoExt>()
+  .field('model', ({ _ext }) =>
+    modelDef(deriveWanBackendEcosystem(_ext.ecosystem, _ext.workflow), _ext.workflow, _ext)
+  )
+  .field('cfgScale', ({ _ext }) => (versionOf(_ext.ecosystem) === 'v3.0' ? null : CFG));
+
 const v22 = defineGraph<VideoExt>()
   .use(shared)
+  .use(modelBlock)
   .use(makeTextBlock())
   .field('resolution', RES_22)
   .field('aspectRatio', ({ images, resolution, _ext }) =>
@@ -195,6 +237,7 @@ const v22 = defineGraph<VideoExt>()
 
 const v5b = defineGraph<VideoExt>()
   .use(shared)
+  .use(modelBlock)
   .field('aspectRatio', ({ images }) =>
     noImages(images) ? AR_5B : null
   )
@@ -207,6 +250,7 @@ const v5b = defineGraph<VideoExt>()
 
 const v25 = defineGraph<VideoExt>()
   .use(shared)
+  .use(modelBlock)
   .use(makeTextBlock())
   .field('resolution', RES_25)
   .field('aspectRatio', ({ images, resolution }) =>
@@ -216,6 +260,7 @@ const v25 = defineGraph<VideoExt>()
 
 const v27 = defineGraph<VideoExt>()
   .use(shared)
+  .use(modelBlock)
   .field('video', ({ _ext }) => (_ext.workflow === 'vid2vid:edit' ? VIDEO : null))
   // negativePrompt is unsupported on edit-video
   .use(
@@ -246,6 +291,7 @@ const v27 = defineGraph<VideoExt>()
 
 const v30 = defineGraph<VideoExt>()
   .use(shared)
+  .use(modelBlock)
   .use(makeTextBlock())
   .field('resolution', RES_30)
   .field('aspectRatio', ({ images, resolution }) =>
