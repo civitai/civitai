@@ -421,7 +421,6 @@ describe('isNarrowed / narrowingReason', () => {
   });
 });
 
-
 describe('conflictingOutputFile', () => {
   it('catches every spelling that would redirect the report', () => {
     // 🔴 Measured before this existed: an 18/18 GREEN single-file run reported an abort that
