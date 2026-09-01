@@ -525,7 +525,10 @@ export async function toggleThreadMute({
   const { count } = await dbWrite.threadMute.deleteMany({ where: { threadId, userId } });
   if (count > 0) return { muted: false, threadId };
 
-  await dbWrite.threadMute.create({ data: { threadId, userId } });
+  // `createMany({ skipDuplicates })` emits ON CONFLICT DO NOTHING: two concurrent toggles both see
+  // no row and both insert, and the loser would surface a raw constraint error over a mute that did
+  // apply. Same reason the `Thread` write above is an upsert.
+  await dbWrite.threadMute.createMany({ data: [{ threadId, userId }], skipDuplicates: true });
   return { muted: true, threadId };
 }
 
@@ -553,7 +556,10 @@ export async function toggleSectionMute({
   const { count } = await dbWrite.threadMute.deleteMany({ where: { threadId: thread.id, userId } });
   if (count > 0) return { muted: false, threadId: thread.id };
 
-  await dbWrite.threadMute.create({ data: { threadId: thread.id, userId } });
+  await dbWrite.threadMute.createMany({
+    data: [{ threadId: thread.id, userId }],
+    skipDuplicates: true,
+  });
   return { muted: true, threadId: thread.id };
 }
 
@@ -583,9 +589,11 @@ export async function getThreadMuted({
 }: ToggleThreadMuteInput & { userId: number }) {
   const comment = await dbRead.commentV2.findUnique({
     where: { id: commentId },
-    select: { threadId: true, childThread: { select: { id: true } } },
+    select: { threadId: true, tosViolation: true, childThread: { select: { id: true } } },
   });
-  if (!comment) return { muted: false, viaAncestor: false, hasOwnThread: false };
+  // Refuses what the toggle refuses; answering for a ToS-removed comment makes this the oracle its
+  // neighbour was fixed not to be.
+  if (!comment || comment.tosViolation) return { muted: false, viaAncestor: false, canMute: false };
 
   // Seeded from the comment's OWN thread, not its reply thread, so the answer is right before anyone
   // has replied — a reply thread is created lazily, and returning early when it is missing reported
@@ -598,23 +606,35 @@ export async function getThreadMuted({
   // copy — mirroring it by hand is what makes the menu and the notification disagree. Reading only
   // this thread made the menu offer "Mute" on a comment already silenced from above, and offer an
   // "Unmute" that deletes nothing and then claims the notifications are back on.
-  const [row] = await dbRead.$queryRaw<{ own: boolean; ancestor: boolean }[]>`
+  // `dbWrite`, deliberately: the client invalidates this query the moment a toggle succeeds, so off
+  // the replica the refetch can return the pre-toggle state — and because the mutation flips from DB
+  // state, the next click then does the opposite of what the label says. `throwIfThreadChainLocked`
+  // reads the primary for the same reason.
+  const [row] = await dbWrite.$queryRaw<
+    {
+      own: boolean | null;
+      ancestor: boolean | null;
+      locked: boolean | null;
+    }[]
+  >`
     ${Prisma.raw(muteableThreadsCte(String(ownThreadId ?? comment.threadId)))}
     SELECT
-      bool_or(mt."id" = ${ownThreadId}::int) "own",
-      bool_or(mt."id" IS DISTINCT FROM ${ownThreadId}::int) "ancestor"
+      bool_or(tm."threadId" IS NOT NULL AND mt."id" = ${ownThreadId}::int) "own",
+      bool_or(tm."threadId" IS NOT NULL AND mt."id" IS DISTINCT FROM ${ownThreadId}::int) "ancestor",
+      bool_or(th.locked) "locked"
     FROM muteable_threads mt
-    JOIN "ThreadMute" tm ON tm."threadId" = mt."id"
-    WHERE tm."userId" = ${userId}
+    JOIN "Thread" th ON th.id = mt."id"
+    LEFT JOIN "ThreadMute" tm ON tm."threadId" = mt."id" AND tm."userId" = ${userId}
   `;
 
   const own = row?.own ?? false;
   const ancestor = row?.ancestor ?? false;
-  // `hasOwnThread` is what the caller needs to know whether muting is even possible here: without a
-  // reply thread the write has to create one, and `throwIfThreadChainLocked` refuses that inside a
-  // locked chain. Without it the menu offered an enabled control that always threw — on a comment
-  // nobody had replied to, while a sibling that happened to have replies muted fine.
-  return { muted: own || ancestor, viaAncestor: !own && ancestor, hasOwnThread: !!ownThreadId };
+  // Muting a comment with no reply thread has to CREATE one, which `throwIfThreadChainLocked`
+  // refuses anywhere in a locked chain. Answered here rather than from the client's `isLocked`,
+  // which is assembled from React nesting and is simply false on a drilled-in or deep-linked
+  // thread — the view a reply notification actually opens.
+  const canMute = !!ownThreadId || !(row?.locked ?? false);
+  return { muted: own || ancestor, viaAncestor: !own && ancestor, canMute };
 }
 
 export const getComment = async ({

@@ -102,7 +102,7 @@ export function CommentContent({
   ...groupProps
 }: CommentProps) {
   const { setExpanded, setRootThread, rootEntityType } = useRootThreadContext();
-  const { entityId, entityType, highlighted, level, isLocked } = useCommentsContext();
+  const { entityId, entityType, highlighted, level } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, canPin, badge, canReport } = useCommentV2Context();
 
   const seededThreads = useSeededReplyThreads();
@@ -356,14 +356,14 @@ export function CommentContent({
                     !threadMute ||
                     threadMute.viaAncestor ||
                     togglingThreadMute ||
-                    (isLocked && !threadMute.hasOwnThread)
+                    !threadMute.canMute
                   }
                   onClick={() => toggleThreadMute({ commentId: comment.id }).catch(() => null)}
                 >
                   {threadMute?.viaAncestor
                     ? 'Muted with the thread above'
-                    : isLocked && threadMute && !threadMute.hasOwnThread
-                    ? 'Locked — nothing to mute yet'
+                    : threadMute && !threadMute.canMute
+                    ? 'No replies to mute yet'
                     : threadMute?.muted
                     ? 'Unmute this thread'
                     : 'Mute this thread'}

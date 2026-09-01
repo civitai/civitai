@@ -35,8 +35,12 @@ export const MAX_THREAD_CHAIN_DEPTH = 100;
  * `UNION` made a corrupted cycle converge: measured on Postgres 16 with a deliberate 2-cycle, both
  * forms produce 101 rows and stop at depth 100, because `depth` is in the projected row so no row is
  * ever a duplicate. `UNION ALL` is used because a dedupe that provably cannot fire is dead weight and
- * misleads the next reader — NOT because it is faster. Measured on the prod replica, nine interleaved
- * runs per form at 5,000 evaluations: 112.9ms vs 113.2ms, i.e. no difference.
+ * misleads the next reader — NOT because it is faster. Measured on the prod replica over 5,000
+ * single-seed evaluations, interleaved: ~110ms either way against ±25ms run-to-run noise, i.e. no
+ * difference. The "cannot fire" part depends on the CTE being seeded with ONE row, which is all
+ * production does — seed it with thousands at once and siblings converging on a shared ancestor
+ * produce duplicate `(id, depth)` pairs, the dedupe starts working, and `UNION` measurably wins.
+ * Anyone batching this walk needs to revisit the choice, not inherit it.
  *
  * Out-degree is 1 because BOTH joins in the recursive term are primary-key equalities (`th.id` and
  * `pc.id`), so each row yields at most one successor. That does not depend on any constraint anyone

@@ -19,7 +19,7 @@ const db = dbMock.dbWrite;
 beforeEach(() => {
   vi.clearAllMocks();
   db.threadMute.deleteMany.mockResolvedValue({ count: 0 });
-  db.threadMute.create.mockResolvedValue({});
+  db.threadMute.createMany.mockResolvedValue({ count: 1 });
 });
 
 describe('toggleThreadMute', () => {
@@ -47,8 +47,9 @@ describe('toggleThreadMute', () => {
     const result = await toggleThreadMute({ commentId: 5, userId: 1 });
 
     expect(db.thread.upsert).not.toHaveBeenCalled();
-    expect(db.threadMute.create).toHaveBeenCalledWith({
-      data: { threadId: 77, userId: 1 },
+    expect(db.threadMute.createMany).toHaveBeenCalledWith({
+      data: [{ threadId: 77, userId: 1 }],
+      skipDuplicates: true,
     });
     expect(result).toEqual({ muted: true, threadId: 77 });
   });
@@ -112,7 +113,7 @@ describe('toggleThreadMute', () => {
 
     const result = await toggleThreadMute({ commentId: 5, userId: 1 });
 
-    expect(db.threadMute.create).not.toHaveBeenCalled();
+    expect(db.threadMute.createMany).not.toHaveBeenCalled();
     expect(result).toEqual({ muted: false, threadId: 77 });
   });
 
@@ -140,7 +141,7 @@ describe('toggleThreadMute', () => {
     await expect(toggleThreadMute({ commentId: 5, userId: 1 })).rejects.toThrow(
       /could not find entity/i
     );
-    expect(db.threadMute.create).not.toHaveBeenCalled();
+    expect(db.threadMute.createMany).not.toHaveBeenCalled();
     expect(db.threadMute.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -167,7 +168,7 @@ describe('toggleThreadMute', () => {
 
     await expect(toggleThreadMute({ commentId: 5, userId: 1 })).rejects.toThrow(/locked/i);
     expect(db.thread.upsert).not.toHaveBeenCalled();
-    expect(db.threadMute.create).not.toHaveBeenCalled();
+    expect(db.threadMute.createMany).not.toHaveBeenCalled();
   });
 
   /**
@@ -188,7 +189,7 @@ describe('toggleThreadMute', () => {
     await expect(toggleThreadMute({ commentId: 5, userId: 1 })).rejects.toThrow(
       /could not find entity/i
     );
-    expect(db.threadMute.create).not.toHaveBeenCalled();
+    expect(db.threadMute.createMany).not.toHaveBeenCalled();
   });
 });
 
@@ -206,7 +207,7 @@ describe('toggleSectionMute', () => {
     // NOT asserting `thread.create`/`thread.upsert` were not called: `toggleSectionMute` has no
     // create call site on any path, so those negatives are true for every input and would pass a
     // refactor that added one under a different condition. The two below can actually fail.
-    expect(db.threadMute.create).not.toHaveBeenCalled();
+    expect(db.threadMute.createMany).not.toHaveBeenCalled();
     expect(db.thread.findUnique).toHaveBeenCalled();
     expect(result).toEqual({ muted: false, threadId: null });
   });
@@ -236,7 +237,10 @@ describe('toggleSectionMute', () => {
     const result = await toggleSectionMute({ entityType: 'image', entityId: 5, userId: 7 });
 
     expect(db.threadMute.deleteMany).toHaveBeenCalledWith({ where: { threadId: 42, userId: 7 } });
-    expect(db.threadMute.create).toHaveBeenCalledWith({ data: { threadId: 42, userId: 7 } });
+    expect(db.threadMute.createMany).toHaveBeenCalledWith({
+      data: [{ threadId: 42, userId: 7 }],
+      skipDuplicates: true,
+    });
     expect(result).toEqual({ muted: true, threadId: 42 });
   });
 });
@@ -246,8 +250,9 @@ describe('toggleSectionMute', () => {
  * toggles read as coverage of the whole thing, and every mutation below left the suite green.
  */
 describe('getThreadMuted', () => {
-  const walk = (rows: { own: boolean; ancestor: boolean }[]) =>
-    dbMock.dbRead.$queryRaw.mockResolvedValue(rows);
+  const walk = (
+    rows: { own: boolean | null; ancestor: boolean | null; locked?: boolean | null }[]
+  ) => dbMock.dbWrite.$queryRaw.mockResolvedValue(rows);
 
   /**
    * The select is what makes `ownThreadId` reachable at all, and a mocked client ignores it — the
@@ -261,7 +266,7 @@ describe('getThreadMuted', () => {
 
     expect(dbMock.dbRead.commentV2.findUnique).toHaveBeenCalledWith({
       where: { id: 5 },
-      select: { threadId: true, childThread: { select: { id: true } } },
+      select: { threadId: true, tosViolation: true, childThread: { select: { id: true } } },
     });
   });
 
@@ -276,11 +281,24 @@ describe('getThreadMuted', () => {
 
     await getThreadMuted({ commentId: 5, userId: 42 });
 
-    const [call] = dbMock.dbRead.$queryRaw.mock.calls;
+    const [call] = dbMock.dbWrite.$queryRaw.mock.calls;
     // The CTE arrives as a `Prisma.raw` value rather than in the strings array, so read its own SQL.
     const [cte, ...values] = call.slice(1) as [{ sql: string }, ...number[]];
     expect(cte.sql).toContain('SELECT 77 "id", 0 "depth"');
     expect(values).toEqual([77, 77, 42]);
+
+    // Both `bool_or` operands interpolate the SAME id, so the values array cannot tell them apart:
+    // swap the two aliases and it is byte-identical while `viaAncestor` inverts. And `<>` in place
+    // of `IS DISTINCT FROM` is NULL for every row once the seed is NULL, which is precisely the
+    // reply-less bug this pair exists to guard. Only the statement text can see either.
+    const statement = (call[0] as string[]).join('?');
+    expect(statement).toContain('bool_or(tm."threadId" IS NOT NULL AND mt."id" = ?::int) "own"');
+    expect(statement).toContain(
+      'bool_or(tm."threadId" IS NOT NULL AND mt."id" IS DISTINCT FROM ?::int) "ancestor"'
+    );
+    expect(statement).toContain(
+      'LEFT JOIN "ThreadMute" tm ON tm."threadId" = mt."id" AND tm."userId" = ?'
+    );
   });
 
   /**
@@ -295,20 +313,8 @@ describe('getThreadMuted', () => {
     expect(await getThreadMuted({ commentId: 5, userId: 1 })).toEqual({
       muted: false,
       viaAncestor: false,
-      hasOwnThread: true,
+      canMute: true,
     });
-  });
-
-  it('asks about the caller, not the thread', async () => {
-    dbMock.dbRead.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: { id: 77 } });
-    walk([{ own: true, ancestor: false }]);
-
-    await getThreadMuted({ commentId: 5, userId: 42 });
-
-    // Keyed on the USER. Swapping in the thread id is valid SQL that answers a different question,
-    // which is the class the notification guard was hardened against on the write side.
-    const [call] = dbMock.dbRead.$queryRaw.mock.calls;
-    expect(call).toContain(42);
   });
 
   it('reports a mute set on the comment own thread as its own, not inherited', async () => {
@@ -320,7 +326,7 @@ describe('getThreadMuted', () => {
     expect(await getThreadMuted({ commentId: 5, userId: 1 })).toEqual({
       muted: true,
       viaAncestor: false,
-      hasOwnThread: true,
+      canMute: true,
     });
   });
 
@@ -331,7 +337,7 @@ describe('getThreadMuted', () => {
     expect(await getThreadMuted({ commentId: 5, userId: 1 })).toEqual({
       muted: true,
       viaAncestor: true,
-      hasOwnThread: true,
+      canMute: true,
     });
   });
 
@@ -342,14 +348,57 @@ describe('getThreadMuted', () => {
    */
   it('still walks ancestors for a comment nobody has replied to', async () => {
     dbMock.dbRead.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: null });
-    walk([{ own: false, ancestor: true }]);
+    walk([{ own: false, ancestor: true, locked: false }]);
 
     expect(await getThreadMuted({ commentId: 5, userId: 1 })).toEqual({
       muted: true,
       viaAncestor: true,
-      hasOwnThread: false,
+      // No reply thread, but the chain is unlocked, so the create would succeed.
+      canMute: true,
     });
-    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalled();
+    // Seeded from the comment's own thread when there is no reply thread — mutating the fallback
+    // seeds the walk nowhere and every row-mocking test here would still pass.
+    const [, cte] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [unknown, { sql: string }];
+    expect(cte.sql).toContain('SELECT 10 "id", 0 "depth"');
+  });
+
+  /**
+   * The case the client's `isLocked` could not see: a drilled-in or deep-linked thread has no React
+   * ancestor, so that flag is false even when the root is locked. Muting here has to create a reply
+   * thread, which `throwIfThreadChainLocked` refuses, so the server has to say so.
+   */
+  it('refuses a reply-less comment whose chain is locked further up', async () => {
+    dbMock.dbRead.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: null });
+    walk([{ own: false, ancestor: false, locked: true }]);
+
+    expect(await getThreadMuted({ commentId: 5, userId: 1 })).toEqual({
+      muted: false,
+      viaAncestor: false,
+      canMute: false,
+    });
+  });
+
+  it('still allows muting a thread that exists, even inside a locked chain', async () => {
+    dbMock.dbRead.commentV2.findUnique.mockResolvedValue({ threadId: 10, childThread: { id: 77 } });
+    walk([{ own: false, ancestor: false, locked: true }]);
+
+    // Nothing is created, so the lock is not in the way — muting an existing thread stays allowed.
+    expect((await getThreadMuted({ commentId: 5, userId: 1 })).canMute).toBe(true);
+  });
+
+  it('refuses a ToS-removed comment rather than answering about it', async () => {
+    dbMock.dbRead.commentV2.findUnique.mockResolvedValue({
+      threadId: 10,
+      tosViolation: true,
+      childThread: { id: 77 },
+    });
+
+    expect(await getThreadMuted({ commentId: 5, userId: 1 })).toEqual({
+      muted: false,
+      viaAncestor: false,
+      canMute: false,
+    });
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('reports nothing for a comment that does not exist, without walking', async () => {
@@ -358,9 +407,9 @@ describe('getThreadMuted', () => {
     expect(await getThreadMuted({ commentId: 5, userId: 1 })).toEqual({
       muted: false,
       viaAncestor: false,
-      hasOwnThread: false,
+      canMute: false,
     });
-    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 });
 
