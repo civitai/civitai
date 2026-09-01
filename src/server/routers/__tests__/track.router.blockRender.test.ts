@@ -223,6 +223,39 @@ describe('track.blockRender', () => {
    * `expected { …, initPosts: 4 } to deeply equal { … }` — this test's own
    * assertion, not another guard's error.
    */
+  /**
+   * 🔴 THE SAME HALF-FIX HAZARD, FOR `hello`. Its sibling is the REST writer's
+   * copy in `src/tests/api/track/block-render.test.ts`. Two writers, one
+   * allowlist; a field stripped in one and not the other reaches ClickHouse with
+   * nothing failing — spread properties are exempt from excess-property checking.
+   *
+   * EXACT payload equality, not `not.toHaveProperty('hello')`: the strip is an
+   * ALLOWLIST today, so no new field can leak by construction. Only a
+   * "these keys and no others" assertion notices if it is ever turned back into
+   * a destructure-rest denylist, which would re-open the class for every FUTURE
+   * field while a field-specific assertion stayed green.
+   */
+  it('🔴 accepts `hello` on the beacon and keeps it out of the ClickHouse payload', async () => {
+    const parsed = blockRenderSchema.parse({
+      ...validInput(),
+      timings: { totalMs: 1_100, initWaitMs: 700, hello: true },
+    });
+    // Red before the schema carried the field: zod strips unknown keys, so this
+    // would be `undefined` and the strip below would be about nothing.
+    expect(parsed.timings?.hello).toBe(true);
+
+    const caller = trackRouter.createCaller(fakeCtx({ id: 5 }) as never);
+    await caller.blockRender({
+      ...validInput(),
+      timings: { totalMs: 1_100, initWaitMs: 700, hello: true },
+    } as never);
+
+    expect(mockBlockRender).toHaveBeenCalledTimes(1);
+    const arg = mockBlockRender.mock.calls[0][0];
+    expect(arg).toEqual({ ...validInput(), isAnon: false });
+    expect(Object.keys(arg).sort()).toEqual(['appBlockId', 'blockInstanceId', 'isAnon', 'slotId']);
+  });
+
   it('🔴 accepts `initPosts` on the beacon and keeps it out of the ClickHouse payload', async () => {
     const parsed = blockRenderSchema.parse({
       ...validInput(),

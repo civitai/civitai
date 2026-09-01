@@ -490,7 +490,11 @@ async function histCount(name: string, labels: Record<string, string>): Promise<
 const LAUNCH_TOTAL = 'civitai_app_block_launch_total_seconds';
 const LAUNCH_PHASE = 'civitai_app_block_launch_phase_seconds';
 const LAUNCH_INIT_POSTS = 'civitai_app_block_launch_init_posts';
-const timings = { totalMs: 1_100, tokenMintMs: 180, initWaitMs: 700 };
+// 🔴 CARRIES `hello`, because a real beacon always does. The server DROPS a
+// phase/init_posts sample whose beacon has no usable boolean rather than
+// labelling it `no`, so a fixture without it would silently exercise the
+// stale-client drop path instead of the ordinary one.
+const timings = { totalMs: 1_100, tokenMintMs: 180, initWaitMs: 700, hello: false };
 
 describe('POST /api/track/block-render — launch-latency histograms', () => {
   beforeEach(() => {
@@ -576,6 +580,30 @@ describe('POST /api/track/block-render — launch-latency histograms', () => {
    * `blockRenderTrackerPayload` fails this on its own `toEqual`, not on another
    * guard's error.
    */
+  /** The REST half of the `hello` allowlist pair — see the tRPC sibling. */
+  it('🔴 accepts `hello` and keeps it out of the ClickHouse insert (REST writer)', async () => {
+    const handler = (await import('~/pages/api/track/block-render')).default;
+    const withHello = { ...timings, hello: true };
+
+    // The half that can go red at base: the strip assertion below passes even on
+    // a schema that does not know the field, because zod drops unknown keys.
+    const parsed = blockRenderSchema.parse({ ...validInput, timings: withHello });
+    expect(parsed.timings?.hello).toBe(true);
+
+    await handler(
+      makeReq({
+        origin: 'https://civitai.com',
+        body: { ...validInput, timings: withHello },
+      }) as any,
+      makeRes()
+    );
+
+    expect(mockBlockRender).toHaveBeenCalledTimes(1);
+    const arg = mockBlockRender.mock.calls[0][0];
+    expect(arg).toEqual({ ...validInput, isAnon: true });
+    expect(Object.keys(arg).sort()).toEqual(['appBlockId', 'blockInstanceId', 'isAnon', 'slotId']);
+  });
+
   it('🔴 accepts `initPosts` and keeps it out of the ClickHouse insert (REST writer)', async () => {
     const handler = (await import('~/pages/api/track/block-render')).default;
     const withPosts = { ...timings, initPosts: 4 };
