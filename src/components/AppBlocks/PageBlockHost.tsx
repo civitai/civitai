@@ -303,13 +303,36 @@ export const FILL_MIN_HEIGHT_PX = 300;
  * 🔴 WHY A CAP EXISTS AT ALL. The host sized the iframe `width: 100%` with no
  * bound anywhere in the chain — the run page's wrapper is `width: '100%'`, the
  * host root was `width: '100%'`, the iframe is `width: '100%'` — so on a 2560px
- * display an app rendered as a single ~2500px column. The apps cannot defend
- * themselves: an App Block is a cross-origin guest that is handed a viewport and
- * told nothing about the monitor, and almost none of them declare a width of
- * their own. So the defence has to be here.
+ * display an app rendered as a single ~2500px column. An App Block is a
+ * cross-origin guest that is handed a viewport and told nothing about the
+ * display, so the defence has to be here.
  *
- * WHY 1600, AGAINST THE SURFACES THAT ACTUALLY EXIST. Two in-repo anchors bound
- * the choice, and the number sits between them on purpose:
+ * 🔴 WHO IS ACTUALLY UNDEFENDED — enumerated, because the obvious premise ("apps
+ * do not cap themselves") is only half true, and the half that is false is what
+ * decides where this value sits. Across the 13 first-party App Block repos — 11
+ * with a `page` surface; the other two are `model.sidebar_top` slot blocks and a
+ * PAGE cap cannot reach them:
+ *
+ *   · NINE of the eleven page apps DO cap themselves, at 640 / 720 / 720 / 760 /
+ *     820 / 880 / 900 / 960 / 1100 px — a hand-copied `contentStyle` well; median
+ *     860, max 1100. None renders content wider than 1100px, so this cap is a
+ *     no-op for their layout: it changes which background paints the far gutter
+ *     and nothing else.
+ *   · TWO do not cap at all — Notepad and Sensei, both `100dvh` two-pane app
+ *     shells (a fixed 280 / 240px sidebar beside an unbounded `flex: 1` pane).
+ *     Those are the shipped apps that genuinely stretched to the monitor.
+ *   · THE LONG TAIL IS UNBOUNDED BY CONSTRUCTION, which is the real reason for a
+ *     DEFAULT rather than a per-app fix. `@civitai/blocks-react` exports no
+ *     Container / AppShell / Page and declares no container width — its only
+ *     max-widths are modal-scoped (340 / 440 / 620) plus a 420px sign-in gate
+ *     card — and the official starter templates contain zero width declarations.
+ *     An app scaffolded today inherits whatever the host gives it. Nine
+ *     independently hand-picked numbers with nothing to coordinate on is the
+ *     argument for making the decision here instead of asking every app to make
+ *     it again.
+ *
+ * WHY 1600, AGAINST THOSE SURFACES. Two in-repo anchors bound the choice, and the
+ * number sits between them on purpose:
  *
  *   1288  the widest ORDINARY civitai content measure — Mantine `xl` (1320
  *         border-box) is the widest container size in use across `src/pages`,
@@ -325,9 +348,20 @@ export const FILL_MIN_HEIGHT_PX = 300;
  *
  * 1600 is above every ordinary content measure on the site and below the grid
  * container, i.e. no app is ever narrower than a civitai page and none is ever
- * wider than the widest first-party surface. Concretely it holds five columns of
- * a `minmax(300px, 1fr)` grid (1288 holds four, 1920 holds six) while keeping a
- * single-column form off an unreadable measure.
+ * wider than the widest first-party surface. It also clears the widest
+ * app-imposed well (1100) by ~45%, so the cap can never letterbox an app that has
+ * already thought about its own width, while leaving a two-pane shell like
+ * Notepad or Sensei a ~1350px content pane — the case the cap exists for.
+ * Concretely it holds five columns of a `minmax(300px, 1fr)` grid (1288 holds
+ * four, 1920 holds six).
+ *
+ * 🔴 THE ONE APP THIS IS WRONG FOR, and it is why the opt-out ships with the cap
+ * rather than after it: Playable Collections in PLAYER mode returns early past
+ * its own 960px well and renders a `100dvh` slideshow whose media is
+ * `object-fit: contain` — a centred column shrinks the player. That is exactly
+ * the shape the ledger on `--app-page-max-width` is for. No ledger entry is
+ * written today: the entry has to name a block id, and inventing one produces a
+ * rule that matches nothing and looks like protection.
  *
  * 🔴 STATE THE COST HONESTLY: this binds on a maximised browser on a 1080p
  * monitor (~1905 CSS px of viewport), not only on ultrawides — that is a common
