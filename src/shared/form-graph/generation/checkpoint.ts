@@ -6,11 +6,73 @@ import {
   ecosystemByKey,
   getEcosystemDefaults,
 } from '~/shared/constants/basemodel.constants';
-import { getAllVersionIds, type VersionGroup } from '~/shared/data-graph/generation/common';
 import { rulesToStates } from '~/shared/data-graph/generation/gates';
-import { filterVersionGroup } from '~/shared/data-graph/generation/common';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import { resourceSchema, type CheckpointMeta, type ResourceData } from './defs';
+import {
+  getResourceSelectOptions,
+  resourceSchema,
+  type CheckpointMeta,
+  type ResourceData,
+} from './defs';
+import type { ModelType } from '~/shared/utils/prisma/enums';
+
+// ---- copied from common.ts, which dies with the data-graph engine ----------
+
+export type VersionOption = {
+  label: string;
+  value: number;
+  /** Base model name for this version (used for ecosystem switching) */
+  baseModel?: string;
+  /** Child options shown when this option is selected */
+  children?: VersionGroup;
+};
+
+export type VersionGroup = {
+  /** Optional label for this level of the selector (e.g., "Precision", "Variant") */
+  label?: string;
+  /** Available options at this level */
+  options: VersionOption[];
+};
+
+/** Collect all version IDs from a VersionGroup (including nested children). */
+export function getAllVersionIds(group: VersionGroup): Set<number> {
+  const ids = new Set<number>();
+  function collect(g: VersionGroup) {
+    for (const opt of g.options) {
+      ids.add(opt.value);
+      if (opt.children) collect(opt.children);
+    }
+  }
+  collect(group);
+  return ids;
+}
+
+/**
+ * Returns a copy of `group` with any option whose `value` is in `hiddenIds`
+ * removed. Recurses into `children`; a parent option is dropped when all of
+ * its children are hidden, and a parent whose own `value` is hidden is
+ * rewritten to point at the first remaining child so selecting the parent
+ * doesn't land on a gated ID. Returns `undefined` when every option is gated.
+ */
+export function filterVersionGroup(
+  group: VersionGroup,
+  hiddenIds: number[]
+): VersionGroup | undefined {
+  if (hiddenIds.length === 0) return group;
+  const options: VersionOption[] = [];
+  for (const opt of group.options) {
+    if (opt.children) {
+      const filteredChildren = filterVersionGroup(opt.children, hiddenIds);
+      if (!filteredChildren) continue;
+      const value = hiddenIds.includes(opt.value) ? filteredChildren.options[0]!.value : opt.value;
+      options.push({ ...opt, value, children: filteredChildren });
+    } else if (!hiddenIds.includes(opt.value)) {
+      options.push(opt);
+    }
+  }
+  if (options.length === 0) return undefined;
+  return { ...group, options };
+}
 
 /**
  * The model node from common.ts `createCheckpointGraph`, as a form-graph
@@ -25,13 +87,10 @@ import { resourceSchema, type CheckpointMeta, type ResourceData } from './defs';
  *
  * The node's ecosystem/workflow-switching EFFECTS are not here: they are rules,
  * and they live on the family graph that mounts this definition.
- *
- * `meta` carries only what is cheap and value-derived; the picker's resource
- * option list is a UI concern that never reaches parsed data.
  */
 
 /** common.ts, module-local there: base model name -> ecosystem key. */
-function ecosystemKeyForBaseModel(baseModelName: string): string | undefined {
+export function ecosystemKeyForBaseModel(baseModelName: string): string | undefined {
   const baseModel = baseModelByName.get(baseModelName);
   if (!baseModel) return undefined;
   return ecosystemById.get(baseModel.ecosystemId)?.key;
@@ -44,6 +103,13 @@ export function checkpointDef(opts: {
   versions?: VersionGroup;
   defaultModelId?: number;
   modelLocked?: boolean;
+  /**
+   * v1's unlocked families make the ECOSYSTEM follow a cross-ecosystem model
+   * (the checkpoint effect wins; the reset-to-default transform is dead code
+   * there). Set this and derive the effective ecosystem from the model in the
+   * family (an `emit: 'ecosystem'` computed) instead of correcting the model.
+   */
+  modelWins?: boolean;
 }): FieldDef<ResourceData | undefined, CheckpointMeta> {
   const { ecosystem: ecosystemKey, workflow, ext, versions, defaultModelId } = opts;
   const ecosystem = ecosystemByKey.get(ecosystemKey);
@@ -83,29 +149,38 @@ export function checkpointDef(opts: {
           return { ...val, model: { type: 'Checkpoint' } };
         }
         return val;
-      }) as unknown as z.ZodType<ResourceData | undefined>,
-    output: resourceSchema.optional() as unknown as z.ZodType<ResourceData | undefined>,
+      }),
+    output: resourceSchema.optional(),
     default: modelVersionId
       ? ({ id: modelVersionId, model: { type: 'Checkpoint' } } as ResourceData)
       : undefined,
     meta: (value) => ({
+      options: {
+        canGenerate: true,
+        // the checkpoint picker never surfaces partial support — v1 zeroes it
+        resources: getResourceSelectOptions(ecosystemKey, ['Checkpoint'] as ModelType[]).map(
+          (r) => ({ ...r, partialSupport: [] })
+        ),
+        excludeIds: value ? [value.id] : [],
+      },
       modelLocked,
       versions: visibleVersions,
       defaultModelId: modelVersionId,
-      excludeIds: value ? [value.id] : [],
     }),
     // data-graph's `transform`, step 1: a model from another ecosystem resets to
     // this ecosystem's default. (Step 2, the workflow-version transform, only
     // applies to graphs configured with `workflowVersions` — not the video ones.)
-    correct: (value) => {
-      if (!value?.baseModel || !modelVersionId) return undefined;
-      const modelEcosystemKey = ecosystemKeyForBaseModel(value.baseModel);
-      if (!modelEcosystemKey || modelEcosystemKey === ecosystemKey) return undefined;
-      return {
-        value: { id: modelVersionId, model: { type: 'Checkpoint' } } as ResourceData,
-        reason: 'ecosystem_mismatch',
-        detail: { ecosystem: ecosystemKey, baseModel: value.baseModel },
-      };
-    },
+    correct: opts.modelWins
+      ? undefined
+      : (value) => {
+          if (!value?.baseModel || !modelVersionId) return undefined;
+          const modelEcosystemKey = ecosystemKeyForBaseModel(value.baseModel);
+          if (!modelEcosystemKey || modelEcosystemKey === ecosystemKey) return undefined;
+          return {
+            value: { id: modelVersionId, model: { type: 'Checkpoint' } } as ResourceData,
+            reason: 'ecosystem_mismatch',
+            detail: { ecosystem: ecosystemKey, baseModel: value.baseModel },
+          };
+        },
   };
 }

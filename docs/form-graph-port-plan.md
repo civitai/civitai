@@ -4,6 +4,11 @@
 **Owner:** Briant. The executing agent commits at phase boundaries on this branch; it never
 pushes, opens PRs, or merges without Briant's explicit approval.
 
+**Layout (Briant, 2026-09-01):** the port lives at `src/shared/form-graph/generation/` —
+one folder per graph domain, with a future training graph at `src/shared/form-graph/training`.
+Domain-agnostic def builders (slider/enum/select/bool) live at `src/shared/form-graph/defs.ts`,
+shared by every domain; `generation/defs.ts` re-exports them plus the generation-specific defs.
+
 **Closing condition for the whole effort:** `src/libs/data-graph/` and
 `src/shared/data-graph/` are deleted; every former consumer imports `form-graph` (npm,
 `^0.2.0`); `pnpm run typecheck` and `pnpm run test:unit:run` are green; and Briant has
@@ -127,9 +132,9 @@ const ported = newFamilyGraph.parse(input, ctx);            // form-graph
 // with an explicit documented-delta allowlist per case (added/missing/valueDeltas).
 ```
 
-Put differential tests in `src/shared/data-graph/__ported__/__tests__/` (new directory;
+Put differential tests in `src/shared/form-graph/generation/__tests__/` (new directory;
 they run in the `unit` vitest project automatically). Ported graphs live in
-`src/shared/data-graph/__ported__/<family>.ts` until the final swap, so old and new
+`src/shared/form-graph/generation/<family>.ts` until the final swap, so old and new
 coexist without touching consumers.
 
 ---
@@ -157,11 +162,16 @@ code to copy:**
   the reference (v2, v23, v25).
 - The live tables have **different names** than the reference's vendored copies (live
   `wan21AspectRatiosByResolution` vs reference `wan21AspectRatioList`, etc.).
-- **Import tables from the live graph files; never copy them.** Both `wan-graph.ts` and
-  `ltx-graph.ts` end with an `export { … }` block carrying exactly what a port needs
-  (`wanVersionDefs`, `wanAspectRatios`, `wanDurations`, `wanInterpolatorModels`,
-  `ltxVersionOptions`, `DISTILLED_IDS`, …). One source of truth = no drift, and in
-  Phase 6 those tables move to the new home with the port.
+- **COPY constants/tables/helpers out of the graph files into the port — do not import
+  them** (Briant, 2026-09-01, reversing the earlier import-only rule). Every `*-graph.ts`
+  file plus `common.ts` and `version-ids.ts` is deleted at the end of the migration, so
+  an import from them blocks Phase 6; a copy stops being duplicate code the day they go.
+  The differential suite pins the copies against the originals while both live, so drift
+  is caught. What the port MAY keep importing: `generation/config` (workflow/ecosystem
+  availability tables), `generation/gates.ts`, `generation/context.ts` (the ext type),
+  `~/shared/constants/*`, `~/utils/*` — domain config that survives the migration.
+  Gate/ecosystem-state logic copied from `ecosystem-graph.ts` lives in
+  `form-graph/generation/ecosystem-gates.ts`.
 - The reference's `defs.ts` uses `codec()`, which form-graph 0.2.0 **no longer exports**.
   This is NOT a missing capability — `codec()` was a pure identity function for typing.
   Replace `codec<T, M>({…})` with an object literal typed `FieldDef<T, M>` (exported).
@@ -169,7 +179,7 @@ code to copy:**
 Steps:
 
 1. Port `ltx`, `wan` (all six versions) and the video hub into
-   `src/shared/data-graph/__ported__/video/`, reading the live `*-graph.ts` as the source
+   `src/shared/form-graph/generation/video/`, reading the live `*-graph.ts` as the source
    of truth and the reference ports as the shape guide.
 2. Import every table and version id from the live graph files via
    `~/shared/data-graph/generation/…`.
@@ -178,7 +188,7 @@ Steps:
    reconcile probes (workflow↔ecosystem coupling).
 
 **The differential harness already exists and is smoke-tested:**
-`src/shared/data-graph/__ported__/__tests__/differential.ts`. A family suite is a case
+`src/shared/form-graph/generation/__tests__/differential.ts`. A family suite is a case
 table plus `assertDifferential(portedGraph, testCase, TEST_CTX)`. It compares
 success/failure, the full key sets, and per-key values. Declared deltas
 (`added`/`missing`/`valueDeltas`) must carry a written reason inside the string, must be
@@ -196,7 +206,7 @@ There are ~50 more family graphs. For each family (suggested order: `flux-graph.
 families, then audio/video exotics):
 
 1. Read the old `<family>-graph.ts` end to end.
-2. Write `src/shared/data-graph/__ported__/<family>.ts` as a form-graph graph. Patterns:
+2. Write `src/shared/form-graph/generation/<family>.ts` as a form-graph graph. Patterns:
    - per-version subgraphs + `branch('versionKey', pick, members)` for version families;
    - shared segments as graphs mounted with `.use`;
    - node `transform`/`correct` logic → def `correct` policies;
@@ -221,6 +231,16 @@ Port `generation-graph.ts` + `ecosystem-graph.ts` as the top-level hub: head fie
 (workflow/ecosystem/gates/quantity/priority/outputFormat), the family dispatch (a
 `branch` over the family graphs), and the ecosystem↔workflow couplings as `.effect`
 rules. The reference `video-hub.ts` shows exactly this shape for two families.
+
+**One hub per output type — do not port v1's shared ecosystem field as-is** (Briant,
+2026-09-01). v1 has one ecosystem field serving image/video/audio/model3d; the port
+gives each output type its own hub owning only its ecosystems (`videoHub` is already
+trimmed this way — its default is video-only, its quantity has no image branch). The
+root then becomes: workflow + the output/input computeds hoisted up, and a
+`branchOn`-style dispatch over the per-output-type hubs. Each hub keeps the
+selection/derived split internally: the family's `emit: 'ecosystem'` computed
+shadows the same-named selection field off the wire implicitly — no
+`emit: false` needed on the field.
 
 **Closing condition:** a root differential suite — the full old
 `generationGraph.safeParse` vs the ported root's `.parse` — passes over a broad matrix
@@ -259,7 +279,7 @@ needs Briant's hands-on testing before it is called done.
 ### Phase 6 — deletion
 
 Delete `src/libs/data-graph/`, `src/shared/data-graph/generation/` (the old graphs),
-move `__ported__/` to its final home (`src/shared/generation-form/` or Briant's choice),
+move `form-graph/generation/` to its final home (`src/shared/generation-form/` or Briant's choice),
 delete the differential suites (they die with their oracle), and run `docs-drift-review`
 + `comment-review` over the branch.
 
@@ -305,15 +325,44 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
   improvisation.
 - Some old graphs read `Date.now()`/randomness — fine in this repo (no such restriction
   here), but keep such reads out of the differential inputs or the tests will flake.
+- **v1's checkpoint effect runs during safeParse and the MODEL WINS in unlocked
+  families**: a cross-ecosystem model keeps its value and drags `ecosystem` (and every
+  ecosystem-dependent field) with it. Within a family that is the `effectiveEcosystem`
+  `emit: 'ecosystem'` computed + `checkpointDef({ modelWins: true })` — see image/sd.graph.ts
+  and video/ltx.graph.ts (probed 2026-09-01: oracle kept the SD1.5 model on an SDXL selection
+  and produced SD1 data). The same limit applies one level down: an LTX model whose
+  VERSION differs from the selection re-picks the version branch in v1 but not here, so
+  the LTX model shapes in the matrix are scoped to same-version picks. **CROSS-family switching (an SD model on Chroma flips the whole family branch
+  mid-parse in v1) is NOT ported** — the family dispatch picks on the selection before
+  the model resolves. Open design question for Briant before Phase 3 signs off.
+- The oracle emits `controlNets: []` (not undefined) when nothing is staged — the def
+  carries `default: []` for that reason.
+- Both matrices now carry a `gated` context (rules-hidden ecosystem in the image suite,
+  rules-disabled workflow in both) and model/resource/vae shapes, so the gate refusals
+  and the parse-time compat filters are differentially pinned. Seedance is ported, so the video
+  suite pins the hidden-ecosystem drop too.
+- **An ecosystem that doesn't support the workflow REDIRECTS during parse** (v1's
+  workflow→ecosystem sync effect): txt2img + WanVideo30 parses as SD1. Ported as
+  `resolveCompatibleEcosystem` in ecosystem-gates.ts, applied in both hubs' input
+  transforms, with v1's workflow-group override guard (wan T2V↔I2V switches stay
+  in-family). Redirect targets that land on UNPORTED families (txt2vid + SDXL → HyV1)
+  parse into the wrong family until those families arrive — keep such combos out of
+  the matrices.
 
 ## 7. Family checklist (update as you go)
 
 | Family | Ported | Differential green | Notes |
 | --- | --- | --- | --- |
 | video: wan (all 6 versions incl. v3.0) | DONE | DONE | LIVE HAS v3.0, reference does not — shape guide: C:\work\form-graph\src\v1\ports\wan.ts |
-| video: ltx (v2/v23/v25) | DONE | DONE | shape guide: ltx.ts (versions match live) |
-| video hub (workflow/ecosystem/quantity) | DONE | DONE | shape guide: video-hub.ts |
-| flux | ☐ | ☐ | corpus sample: C:\work\form-graph\src\lib\generation\flux.ts |
+| video: ltx (v2/v23/v25) | DONE | DONE | model-wins split like sd (`effectiveEcosystem` emit); cross-VERSION model re-pick is part of the open cross-branch decision. v1's `enablePromptEnhancer` node (`when: false` — never shown, never in data) is deliberately NOT ported; revive it from ltx-graph.ts if the flag ever flips |
+| video hub (ecosystem/quantity, video-scoped) | DONE | DONE | workflow/output/input moved to the composed root |
+| composed root (`form-graph/generation/hub.graph.ts`, image+video dispatch) | DONE | DONE | audio/model3d hubs arrive with their families |
+| image hub (ecosystem/priority/outputFormat/enhancedCompatibility/quantity) | DONE | DONE | enhancedCompatibility + quantity sit AFTER the family dispatch (they read model/effectiveEcosystem) |
+| image: stable-diffusion (SD1/SD2/SDXL/Pony/Illustrious/NoobAI) | DONE | DONE | ecosystem FOLLOWS a cross-eco model (`effectiveEcosystem` emit; `checkpointDef modelWins`); SD2 supports no workflows |
+| image: zimage (Turbo/Base) | DONE | DONE | Base's negativePrompt is NOT a snippet target (v1 mode-subgraph quirk) |
+| image: chroma | DONE | DONE | no negative prompt, no images node |
+| video: seedance | DONE | DONE | no resources, no negative prompt; resolution/duration ceilings per model version. Unblocked the video suite's hidden-ecosystem gate coverage (hidden selections fall back to Seedance) |
+| flux | ☐ | ☐ | corpus sample: C:\work\form-graph\src\lib\generation\flux.ts. ⚠️ `checkpointDef` does NOT yet carry `createCheckpointGraph`'s `workflowVersions`/`currentWorkflow` machinery (per-workflow version sets via `findWorkflowConfig` prefix match, `buildVersionMappings` index-matched version swap on workflow change, and the two workflow-switching effects). No ported family needs it; flux/boogu/krea2 do — port it with this row, copying those helpers out of common.ts. |
 | _…add a row per `*-graph.ts` file during Phase 2 inventory…_ | | | |
 
 ---

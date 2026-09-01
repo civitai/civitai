@@ -28,7 +28,10 @@ const identityPort = {
 
 describe('differential harness', () => {
   it('the oracle resolves real generation input under vitest', () => {
-    const result = runOracle({ workflow: 'txt2img', ecosystem: 'Flux1', prompt: 'a cat' }, TEST_CTX);
+    const result = runOracle(
+      { workflow: 'txt2img', ecosystem: 'Flux1', prompt: 'a cat' },
+      TEST_CTX
+    );
     expect(result.success).toBe(true);
     expect(result.data.workflow).toBe('txt2img');
   });
@@ -74,7 +77,11 @@ describe('differential harness', () => {
       },
     };
     expect(() =>
-      assertDifferential(changesValue, { name: 'changes', input: { workflow: 'txt2img' } }, TEST_CTX)
+      assertDifferential(
+        changesValue,
+        { name: 'changes', input: { workflow: 'txt2img' } },
+        TEST_CTX
+      )
     ).toThrow();
   });
 

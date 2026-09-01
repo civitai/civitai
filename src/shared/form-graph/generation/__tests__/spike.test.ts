@@ -31,8 +31,19 @@ const img2img = defineGraph<{ maxStrength: number }>()
 const txt2img = defineGraph<{ maxStrength: number }>()
   .field('steps', slider({ min: 1, max: 50, default: 25 }))
   // conditional: absent unless the user opted into hires
-  .field('hires', enumOf({ options: [{ value: 'off', label: 'Off' }, { value: 'on', label: 'On' }], default: 'off' }))
-  .field('hiresScale', ({ hires }) => (hires === 'on' ? slider({ min: 1.5, max: 4, default: 2 }) : null));
+  .field(
+    'hires',
+    enumOf({
+      options: [
+        { value: 'off', label: 'Off' },
+        { value: 'on', label: 'On' },
+      ],
+      default: 'off',
+    })
+  )
+  .field('hiresScale', ({ hires }) =>
+    hires === 'on' ? slider({ min: 1.5, max: 4, default: 2 }) : null
+  );
 
 const spikeGraph = branchOn('workflow', WORKFLOW, { txt2img, img2img });
 
@@ -63,7 +74,10 @@ describe('form-graph package spike', () => {
     expect(ok.success).toBe(true);
     if (ok.success) expect(ok.data).toMatchObject({ workflow: 'img2img', strength: 0.5 });
 
-    const bad = spikeGraph.parse({ workflow: 'img2img', sourceImage: 'not-a-url' }, { maxStrength: 1 });
+    const bad = spikeGraph.parse(
+      { workflow: 'img2img', sourceImage: 'not-a-url' },
+      { maxStrength: 1 }
+    );
     expect(bad.success).toBe(false);
     if (!bad.success) expect(Object.keys(bad.errors)).toContain('sourceImage');
   });
@@ -83,13 +97,16 @@ describe('form-graph package spike', () => {
   it('runs effects on set(), rewriting the patch before intent', () => {
     const withRule = defineGraph()
       .field('steps', slider({ min: 1, max: 50, default: 25 }))
-      .field('quality', enumOf({
-        options: [
-          { value: 'draft', label: 'Draft' },
-          { value: 'final', label: 'Final' },
-        ],
-        default: 'draft',
-      }))
+      .field(
+        'quality',
+        enumOf({
+          options: [
+            { value: 'draft', label: 'Draft' },
+            { value: 'final', label: 'Final' },
+          ],
+          default: 'draft',
+        })
+      )
       // picking `final` implies a step floor — a coupling between two user choices
       .effect({
         quality: (quality, { next }) =>

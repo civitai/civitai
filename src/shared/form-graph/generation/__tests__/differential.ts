@@ -120,9 +120,10 @@ export function assertDifferential(
   for (const key of oracleKeys) {
     if (!portKeys.includes(key)) continue;
     if (valueDeltas.has(key)) {
-      expect(port.data[key], `${label}.${key}: declared a value delta but the values match`).not.toEqual(
-        oracle.data[key]
-      );
+      expect(
+        port.data[key],
+        `${label}.${key}: declared a value delta but the values match`
+      ).not.toEqual(oracle.data[key]);
       continue;
     }
     expect(port.data[key], `${label}.${key}`).toEqual(oracle.data[key]);
