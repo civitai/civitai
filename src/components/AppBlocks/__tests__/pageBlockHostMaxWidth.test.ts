@@ -212,7 +212,7 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
         'same commit. If you did not, you have either uncentred the app, hardcoded the cap past ' +
         'its own opt-out, or removed the fallback that caps a host rendered without globals.css.'
     ).toBe(
-      'maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`, marginInline: \'auto\','
+      "maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`, marginInline: 'auto',"
     );
   });
 
@@ -239,7 +239,7 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
       root,
       'the host root no longer stamps `data-block-id={blockId}` between its testid and ' +
         '`data-needs-consent`. The full-bleed ledger in src/styles/globals.css selects on ' +
-        '`[data-testid=\'app-page-frame\'][data-block-id=\'…\']`, so every entry in it is now ' +
+        "`[data-testid='app-page-frame'][data-block-id='…']`, so every entry in it is now " +
         'inert. `blockId` (the app slug) is the required value — `blockInstanceId` is per-install ' +
         'and is NOT what an app author knows their app by.'
     ).toContain('data-block-id={blockId}');
@@ -278,7 +278,7 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
     expect(
       css,
       'src/styles/globals.css no longer documents the full-bleed opt-out against ' +
-        "`data-block-id`. The ledger is the ONLY way out of the cap; if it stops naming the " +
+        '`data-block-id`. The ledger is the ONLY way out of the cap; if it stops naming the ' +
         'attribute the host stamps, an app author following it writes a rule that matches nothing.'
     ).toContain('data-block-id');
   });

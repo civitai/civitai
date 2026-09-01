@@ -321,9 +321,10 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
     expect(gutterRight, `at ${w}x${h} the host has been shifted left`).toBe(0);
 
     const cs = getComputedStyle(host);
-    expect([cs.marginLeft, cs.marginRight], `at ${w}x${h} the auto margins resolved non-zero`).toEqual(
-      ['0px', '0px']
-    );
+    expect(
+      [cs.marginLeft, cs.marginRight],
+      `at ${w}x${h} the auto margins resolved non-zero`
+    ).toEqual(['0px', '0px']);
   });
 
   /**
@@ -360,7 +361,9 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
    */
   test('an app can opt out of the cap with a CSS rule keyed on `data-block-id`', async () => {
     const { measure, hostWidth, parentWidth } = await mountAt(2560, 1080);
-    expect(hostWidth, 'the host is not capped at 2560x1080 to begin with').toBeLessThan(parentWidth);
+    expect(hostWidth, 'the host is not capped at 2560x1080 to begin with').toBeLessThan(
+      parentWidth
+    );
 
     injectCss(
       `[data-testid='app-page-frame'][data-block-id='${BLOCK_ID}'] { --app-page-max-width: none; }`
