@@ -174,12 +174,22 @@ describe('PageBlockHost launch reveal — branded loading', () => {
     await expect.element(page.getByText('Starting Budgeted Generator…')).toBeInTheDocument();
     // Its initial, in the same Avatar treatment the store card uses.
     await expect.element(page.getByText('B', { exact: true })).toBeInTheDocument();
-    // The existing a11y contract is preserved: a busy live REGION, plus a
-    // labelled graphic.
+    // The a11y contract: the REGION announces, and it is the only thing that
+    // does. The skeleton group is decorative and stays out of the tree.
     const overlay = overlayEl();
     expect(overlay.getAttribute('role')).toBe('status');
     expect(overlay.getAttribute('aria-busy')).toBe('true');
-    await expect.element(page.getByLabelText('Loading Budgeted Generator')).toBeInTheDocument();
+
+    // Asserted as STATE, not via a label query. `getByLabelText` does NOT
+    // filter aria-hidden, so an assertion phrased that way passes identically
+    // whether the group is an exposed labelled graphic or a hidden decorative
+    // box — i.e. it reads as a11y coverage while pinning nothing. Giving this
+    // group a role is the specific regression: its name would then be read as
+    // part of the live region and the app name would announce twice.
+    const group = page.getByTestId('app-page-loading-skeleton').element();
+    expect(group.getAttribute('aria-hidden')).toBe('true');
+    expect(group.getAttribute('role')).toBeNull();
+    expect(group.getAttribute('aria-label')).toBeNull();
   });
 
   test('the launch state is a content-shaped SKELETON, not a spinner', async () => {

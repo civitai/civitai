@@ -3801,10 +3801,14 @@ export function PageBlockHost({
           {overlayMounted && (
             <Center
               data-testid="app-page-loading"
-              // Announce the loading state on the REGION, not just the graphic:
-              // role="status" + aria-busy mark the overlay container as a live
-              // busy region so a screen reader announces "loading" when it
-              // appears (the skeleton group below only exposes a labeled graphic).
+              // Announce the loading state on the REGION: role="status" +
+              // aria-busy mark the overlay container as a live busy region so a
+              // screen reader announces it when it appears. The region is the
+              // ONLY thing that announces — the skeleton group below is
+              // aria-hidden and exposes nothing, deliberately (see its own
+              // comment). Do not give that group a role to "restore" a labelled
+              // graphic: its label would then be read as part of this region and
+              // the app name would announce twice.
               // Once the block IS ready the overlay is a purely decorative
               // fading-out veil, so it drops the live-region roles and hides from
               // the a11y tree instead of announcing a stale "loading".
@@ -3898,23 +3902,21 @@ export function PageBlockHost({
 
                     🔴 `aria-hidden`, and NOT `role="img"`. These are decorative
                     placeholder boxes; the announcement is the container's
-                    role="status" / aria-live text ("Starting …") and always
-                    was. Giving the group a role would EXPOSE its label inside
-                    that live region, whose announced string is its whole text
-                    content — so the app name would be read twice ("Starting
-                    Budgeted Generator… Loading Budgeted Generator"). The
-                    <Loader> this replaces never did that: Mantine renders it
-                    as a bare <span> with no role, so its aria-label was not
-                    exposed either. The label is kept only as a stable handle
-                    the suite already pins; it announces nothing. */}
-                <Box
-                  aria-hidden
-                  aria-label={`Loading ${launchName}`}
-                  w="100%"
-                  maw={420}
-                  px="md"
-                  data-testid="app-page-loading-skeleton"
-                >
+                    role="status" / aria-live copy ("Starting …") and always
+                    was. Giving this group a role would expose its name inside
+                    that live region — a region is announced from its
+                    ACCESSIBLE-tree text, so an exposed labelled child is read
+                    as part of it and the app name would announce twice
+                    ("Starting Budgeted Generator… Loading Budgeted
+                    Generator"). The <Loader> this replaces never did that:
+                    Mantine renders it as a bare <span> with no role, so its
+                    aria-label was not exposed either — this restores the
+                    pre-change announcement rather than changing it.
+
+                    Carries no aria-label: on an aria-hidden node it would be
+                    permanently inert, and `data-testid` below is what the
+                    suite queries. */}
+                <Box aria-hidden w="100%" maw={420} px="md" data-testid="app-page-loading-skeleton">
                   <Stack gap="xs">
                     {/* `animate={!reduceMotion}` — same call the fallback makes.
                         Under prefers-reduced-motion the bars stay as static
