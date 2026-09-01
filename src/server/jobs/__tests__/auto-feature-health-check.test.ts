@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -88,6 +90,21 @@ describe('auto-feature-health-check reads state the producer does not have to be
     });
   });
 
+  it('reads the key the PRODUCER writes, not merely a key of its own', async () => {
+    // The assertion above pins one side. On its own it is satisfied by a health check that agrees
+    // with itself: point `auto-feature-images` at a different key and every suite here stays green
+    // while the check reads a row nothing writes and pages forever.
+    //
+    // Every other getJobDate caller in the repo uses a bare name with no `job:` prefix, so this key
+    // is the odd one out and normalising it is the plausible edit. Both sides are read from source
+    // here because the producer has no suite of its own to assert it in.
+    const producer = readFileSync(resolve(__dirname, '../auto-feature-images.ts'), 'utf-8');
+    const call = producer.match(/getJobDate\(\s*([^)]+?)\s*\)/);
+
+    expect(call?.[1]).toBe('AUTO_FEATURE_JOB_DATE_KEY');
+    expect(AUTO_FEATURE_JOB_DATE_KEY).toBe('job:auto-feature-images');
+  });
+
   it('dates a row the way the producer does, by COALESCE rather than one column', async () => {
     stateIs({ lastRun: hoursBefore(1), lastRow: hoursBefore(1) });
 
@@ -98,10 +115,20 @@ describe('auto-feature-health-check reads state the producer does not have to be
     // while reviewedAt happens to be null — which is exactly how this would pass in a test and
     // drift in production.
     expect(sql).toMatch(/max\(COALESCE\(ci\."reviewedAt", ci\."createdAt"\)\)/);
-    // Scoped to the job's own rows: a curator's manual feature must not answer "the job is alive".
-    expect(binds).toContain(107);
-    expect(binds).toContain(9001);
-    expect(binds).toContain('auto-featured:%');
+    // Ordered, not `toContain`: the collection id and the user id are both plain integers, so a
+    // membership assertion passes just as well with the two binds swapped into each other's column.
+    expect(binds).toEqual([107, 9001, 'auto-featured:%']);
+  });
+
+  it('ignores tombstoned rows, so removing a feature cannot pass for writing one', async () => {
+    stateIs({ lastRun: hoursBefore(1), lastRow: hoursBefore(1) });
+
+    await autoFeatureHealthCheckJob.run();
+
+    // Removal sets status REJECTED and stamps reviewedAt = now(), keeping addedById and the note.
+    // Without this filter a moderator clearing stale features — what someone does precisely while
+    // the pipeline is dry — moves lastRow to the present and silences the check for good.
+    expect(rowQuery().sql).toMatch(/ci\.status = 'ACCEPTED'::"CollectionItemStatus"/);
   });
 
   it('derives the threshold from the configured interval rather than a constant', async () => {
@@ -144,7 +171,7 @@ describe('auto-feature-health-check alerting', () => {
     const result = await autoFeatureHealthCheckJob.run();
 
     expect(result).toMatchObject({ healthy: false, paged: 1 });
-    expect(axiom('warning')[0].message).toContain('Not running');
+    expect(axiom('warning')[0].message).toContain('No completed run');
     expect(mocks.fetch).toHaveBeenCalledOnce();
   });
 
@@ -156,7 +183,7 @@ describe('auto-feature-health-check alerting', () => {
     const result = await autoFeatureHealthCheckJob.run();
 
     expect(result).toMatchObject({ healthy: false, paged: 1 });
-    expect(axiom('warning')[0].message).toContain('Not running');
+    expect(axiom('warning')[0].message).toContain('No completed run');
   });
 
   it('does not page on the ordinary 7-hour spacing between runs', async () => {
@@ -209,7 +236,7 @@ describe('auto-feature-health-check alerting', () => {
     expect(result).toMatchObject({ healthy: false, paged: 1 });
   });
 
-  it('skips entirely when the auto-feature flag is off', async () => {
+  it('skips without paging when the auto-feature flag is off', async () => {
     stateIs({ lastRun: hoursBefore(79), lastRow: hoursBefore(79) });
     mocks.isFlipt.mockResolvedValue(false);
 
@@ -217,8 +244,49 @@ describe('auto-feature-health-check alerting', () => {
 
     // The flag off makes the producer return before it touches anything, by design.
     expect(result).toMatchObject({ skipped: true });
-    expect(dbMock.dbRead.keyValue.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
     expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it('still records the heartbeat age when the flag reads off', async () => {
+    stateIs({ lastRun: hoursBefore(79), lastRow: hoursBefore(79) });
+    mocks.isFlipt.mockResolvedValue(false);
+
+    const result = await autoFeatureHealthCheckJob.run();
+
+    // `isFlipt` returns false for an unreachable Flipt too, so this path is also what a control-
+    // plane outage looks like — and it stops the producer and this check together. A flag reading
+    // off over a heartbeat that is 79h old is the only trace that case leaves.
+    expect(result).toMatchObject({ lastRun: hoursBefore(79).toISOString() });
+  });
+});
+
+describe('auto-feature-health-check heartbeat parsing', () => {
+  it('treats a KeyValue row that is not a millisecond number as no heartbeat', async () => {
+    // `KeyValue.value` is untyped Json and other keys in the table hold arrays and strings. Reading
+    // one of those as epoch 0 rather than as null would page, which is the safe direction — but an
+    // unparseable value must not become a plausible-looking date either.
+    for (const value of [null, {}, 'not-a-date', 0]) {
+      vi.clearAllMocks();
+      stateIs({ lastRun: NOW, lastRow: NOW });
+      dbMock.dbRead.keyValue.findUnique.mockResolvedValue({
+        key: AUTO_FEATURE_JOB_DATE_KEY,
+        value,
+      });
+
+      const health = await readAutoFeatureHealth();
+
+      expect(health.lastRun).toBeNull();
+    }
+  });
+
+  it('accepts the millisecond number getJobDate actually writes', async () => {
+    stateIs({ lastRun: NOW, lastRow: NOW });
+
+    const health = await readAutoFeatureHealth();
+
+    // Without this, the guard above could be satisfied by rejecting everything.
+    expect(health.lastRun).toEqual(NOW);
   });
 });
 

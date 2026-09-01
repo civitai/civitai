@@ -16,6 +16,18 @@
  * bailing before it scores, which `setLastRun` deliberately does not count as a run), while a fresh
  * heartbeat over a stale output means it runs and picks nothing — legitimate when the caps are
  * doing their job, so that one is recorded rather than paged.
+ *
+ * Two limits worth knowing before tuning anything here:
+ *
+ * - **The threshold's margin collapses at the bottom of the config's range.** The producer stamps
+ *   its heartbeat during a run, so the next hourly wake is always fractionally short of the gate
+ *   and gets skipped: real spacing is `intervalHours + 1`, against a threshold of
+ *   `2 * intervalHours + 1`. That leaves `intervalHours` hours of slack — six missed wakes at
+ *   today's 6, but only one at the schema's minimum of 1. At the maximum of 168 the threshold is
+ *   14 days, which would not have caught the 79-hour August outage at all.
+ * - **This shares a control plane with the job it watches.** `isFlipt` returns false when Flipt is
+ *   unreachable, so a Flipt outage stops the producer and silences this check in the same instant.
+ *   The flag-off path logs the heartbeat age precisely so that case leaves a trace to search for.
  */
 
 import { env } from '~/env/server';
@@ -86,6 +98,13 @@ async function readLastRun() {
  * `COALESCE(reviewedAt, createdAt)` because that is the timestamp the producer itself treats as
  * when a row landed. Taking `max` of the two columns separately is not the same value, and the two
  * only agree while `reviewedAt` happens to be null.
+ *
+ * 🔴 `status = 'ACCEPTED'` is what makes that safe. Removing an auto-featured image tombstones the
+ * row rather than deleting it — `status` goes REJECTED and `reviewedAt` is stamped `now()`, while
+ * `addedById` and the note survive. Without this clause a moderator clearing out stale features,
+ * which is exactly what someone does while the pipeline is dry, would push `lastRow` to the present
+ * and silence the check indefinitely. One such tombstone already exists in the target collection.
+ * `buildWindowCountsQuery` filters the same way for the same reason.
  */
 async function readLastRow(collectionId: number, autoFeatureUserId: number) {
   const [row] = await dbRead.$queryRaw<{ lastRow: Date | null }[]>`
@@ -93,6 +112,7 @@ async function readLastRow(collectionId: number, autoFeatureUserId: number) {
     FROM "CollectionItem" ci
     WHERE ci."collectionId" = ${collectionId}
       AND ci."addedById" = ${autoFeatureUserId}
+      AND ci.status = 'ACCEPTED'::"CollectionItemStatus"
       AND ci.note LIKE ${`${AUTO_FEATURE_NOTE_PREFIX}:%`}
   `;
   return row?.lastRow ?? null;
@@ -147,9 +167,11 @@ export function evaluateAutoFeatureHealth(
     alerts.push({
       severity: 'page',
       message:
-        `**Not running** — \`auto-feature-images\` has not completed a scoring run in ${staleAfterHours}h. ` +
+        `**No completed run** — \`auto-feature-images\` has not scored a run in ${staleAfterHours}h. ` +
         `Last run: ${describeAge(health.lastRun, now)}. ` +
-        `The job either is not executing or is bailing before it scores; check its \`job-misconfigured\` events.`,
+        `Either it is not executing, or it is executing and bailing first — most often \`no-eligible-collections\`, ` +
+        `where the whole featured pool has gone stale and the homepage block hides itself. ` +
+        `Its \`job-misconfigured\` events name which; an empty pool is fixed by curation, not by the job.`,
     });
   }
 
@@ -189,13 +211,18 @@ export async function checkAutoFeatureHealth() {
   // silence is then expected rather than a fault. Still recorded: it is the likeliest explanation
   // for a homepage that has stopped changing, and the person looking should be able to find it.
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.AUTO_FEATURE_IMAGES))) {
+    // `isFlipt` cannot tell "deliberately off" from "Flipt unreachable" — both are false. So the
+    // heartbeat goes out with it: a flag that reads off while the job last ran months ago is the
+    // shape of an outage in the control plane, and this line is the only trace of it.
+    const lastRun = await readLastRun().catch(() => null);
     log('Auto-feature flag off, skipping health check');
     await logToAxiom({
       type: 'info',
       name: 'auto-feature-health-check',
-      message: 'Skipped: AUTO_FEATURE_IMAGES is off',
+      message: 'Skipped: AUTO_FEATURE_IMAGES reads off (deliberately, or because Flipt is down)',
+      details: { lastRun: lastRun?.toISOString() ?? null },
     }).catch(() => null);
-    return { skipped: true as const };
+    return { skipped: true as const, lastRun: lastRun?.toISOString() ?? null };
   }
 
   const health = await readAutoFeatureHealth();

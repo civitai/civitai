@@ -10,6 +10,12 @@ import { dbRead } from '~/server/db/client';
  * The `getJobDate` key `auto-feature-images` advances on. Shared so the health check watching that
  * timestamp cannot drift from the job that writes it — a mismatch would read as a permanently
  * silent job and page forever.
+ *
+ * 🔴 Do not normalise away the `job:` prefix. Every other `getJobDate` caller in the repo uses a
+ * bare name, so this one looks like the odd one out and tidying it is the obvious edit — but the
+ * key names a live row in the production `KeyValue` table. Renaming it orphans that row, and the
+ * job then reads epoch 0, believes it has never run, and fires once immediately.
+ * `auto-feature-health-check.test.ts` pins both sides against exactly this.
  */
 export const AUTO_FEATURE_JOB_DATE_KEY = 'job:auto-feature-images';
 
