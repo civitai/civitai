@@ -97,8 +97,7 @@ async function getBaseRewardsMultiplier(userId: number): Promise<number> {
       `${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}` as RedisKeyTemplateCache
     );
     // A multiplier of 0 is the cache reporting rewardsEligibility = 'Ineligible', not a missing
-    // value. Falling through to 1 there paid an ineligible reporter the full award — the same hole
-    // PR #4383 closed on the main app's side of this table.
+    // value. A truthiness guard here pays an ineligible reporter the full award.
     // Finite, not just `typeof number`: NaN and Infinity are both `'number'` and both reach the
     // Decimal(3, 2) column as values it cannot parse. Rejecting them here rather than letting the
     // clamp catch them is what makes a garbage entry pay the same as a missing one — the clamp

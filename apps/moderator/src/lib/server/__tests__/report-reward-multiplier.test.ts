@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Axiom from '@civitai/axiom';
+import { REDIS_KEYS } from '@civitai/redis';
 
 /**
  * `rewardReportReporters` writes the `pending` buzzEvents row that IS the payout: the main app's
@@ -39,48 +40,53 @@ vi.mock('../redis', () => ({ getRedis: () => ({ packed: { get: redisGet } }) }))
  * `User` chain resolves only when it asked for the reporters AND for Ineligible, and yields nothing
  * otherwise — a query with a clause dropped, flipped or retargeted resolves empty and fails.
  */
-function chain(resolve: (wheres: unknown[][]) => unknown) {
+function chain(resolve: (calls: { wheres: unknown[][]; selects: unknown[][] }) => unknown) {
   const wheres: unknown[][] = [];
+  const selects: unknown[][] = [];
   const builder: Record<string, unknown> = {
-    select: () => builder,
+    select: (...args: unknown[]) => {
+      selects.push(args);
+      return builder;
+    },
     where: (...args: unknown[]) => {
       wheres.push(args);
       return builder;
     },
-    execute: async () => resolve(wheres),
+    execute: async () => resolve({ wheres, selects }),
   };
   return builder;
 }
 
+/** Deep-equal for the recorded argument arrays, which hold primitives and id arrays only. */
+const same = (a: unknown, b: unknown): boolean =>
+  Array.isArray(a) && Array.isArray(b)
+    ? a.length === b.length && a.every((v, i) => same(v, b[i]))
+    : a === b;
+
 /** Exact clause count, so an ADDED restrictive clause is visible too, not just a changed one. */
 const wheresAre = (wheres: unknown[][], count: number) => wheres.length === count;
 
-const has = (wheres: unknown[][], ...expected: unknown[]) =>
-  wheres.some(
-    (w) =>
-      w.length === expected.length &&
-      expected.every((e, i) => {
-        const actual = w[i];
-        return Array.isArray(e) && Array.isArray(actual)
-          ? e.length === actual.length && e.every((v, j) => v === actual[j])
-          : e === actual;
-      })
-  );
+const has = (wheres: unknown[][], ...expected: unknown[]) => wheres.some((w) => same(w, expected));
 
 vi.mock('../db', () => ({
   dbRead: {
     selectFrom: (table: string) =>
       table === 'User'
-        ? chain((wheres) =>
+        ? chain(({ wheres, selects }) =>
             wheresAre(wheres, 2) &&
             has(wheres, 'id', 'in', reporterIds) &&
-            has(wheres, 'rewardsEligibility', '=', 'Ineligible')
+            has(wheres, 'rewardsEligibility', '=', 'Ineligible') &&
+            // The rows are keyed by `id` downstream; selecting anything else yields a Set of
+            // `undefined` and bars nobody.
+            has(selects, ['id'])
               ? ineligibleRows()
               : []
           )
-        : chain((wheres) =>
+        : table === 'RewardsBonusEvent'
+        ? chain(({ wheres }) =>
             wheresAre(wheres, 1) && has(wheres, 'enabled', '=', true) ? bonusEvents() : []
-          ),
+          )
+        : chain(() => []),
   },
   dbWrite: {},
 }));
@@ -125,6 +131,12 @@ async function rowsFor({
   ineligibleRows.mockReturnValue(ineligible.map((id) => ({ id })));
   await rewardReportReporters({ reportId: 1, reporterIds });
   expect(insert).toHaveBeenCalledTimes(1);
+  // The destination is as load-bearing as the values: a wrong table or format writes nowhere
+  // process-rewards reads, and every reporter is silently never paid.
+  expect(insert.mock.calls[0][0]).toMatchObject({
+    table: 'buzzEvents',
+    format: 'JSONEachRow',
+  });
   const values = insert.mock.calls[0][0].values;
   expect(values).toHaveLength(reporterIds.length);
   return values;
@@ -305,5 +317,48 @@ describe('rewardReportReporters multiplier', () => {
     // safeError's fields land alongside the marker rather than instead of it.
     expect(payload.message).toBe('clickhouse unreachable');
     expect(JSON.stringify(payload)).toContain('reportAccepted rewards write failed');
+  });
+
+  it('writes the reportAccepted envelope process-rewards expects', async () => {
+    const row = await rowFor({ tier: cached(1), storedBonus: 10 });
+    // `status: 'pending'` is what makes process-rewards pick the row up at all, and the award must
+    // match reportAccepted.reward.ts or the two apps grant inconsistently. Nothing else pins these.
+    expect(row).toMatchObject({
+      type: 'reportAccepted',
+      status: 'pending',
+      awardAmount: 50,
+      toUserId: 42,
+      byUserId: 42,
+      forId: 1,
+    });
+  });
+
+  it('reads the tier from the cache key the main app writes', async () => {
+    // The shared key IS the cross-app contract. Point this at any other cache and every reporter
+    // misses, falls back to 1x and is quietly underpaid — no error, no empty result to notice.
+    await rowFor({ tier: cached(2), storedBonus: 10 });
+    expect(redisGet).toHaveBeenCalledWith(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:42`);
+  });
+
+  it('distinguishes the clamp alert fields from each other', async () => {
+    // At one reporter every field is the same number, so swapping them passes — and TWO must clamp
+    // with different raws, or max and min of a one-element array agree and `maxRaw` is still free.
+    // 4x5=20 and 3x5=15 both clamp; 1x5=5 does not. All three fields end up distinct.
+    await rowsFor({
+      tiers: [
+        [42, cached(4)],
+        [7, cached(3)],
+        [9, cached(1)],
+      ],
+      storedBonus: 50,
+    });
+    expect(axiom).toHaveBeenCalledTimes(1);
+    expect(axiom.mock.calls[0][0]).toMatchObject({
+      name: 'buzz-rewards',
+      type: 'error',
+      clampedEvents: 2,
+      batchSize: 3,
+      maxRaw: 20,
+    });
   });
 });
