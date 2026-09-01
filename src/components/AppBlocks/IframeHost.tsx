@@ -453,6 +453,12 @@ export function AppBlockChrome({
               // Non-null by `selectChromeRecentApps` (ChromeRecentApp).
               href={`/apps/run/${r.blockId}`}
               data-testid="app-recently-run-item"
+              // 🔴 THE ONE PUBLISHER-CONTROLLED LABEL IN EITHER SURFACE, so the one
+              // that must be held to a single line. Its five siblings above are
+              // host-authored and deliberately do NOT carry this — see the `clamp`
+              // note in `ChromeSurface.tsx` for why it is opt-in rather than
+              // universal.
+              clamp
               leftSection={
                 r.iconUrl ? (
                   <Avatar src={r.iconUrl} size={16} radius="sm" alt="" />

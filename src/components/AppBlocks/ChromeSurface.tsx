@@ -230,11 +230,30 @@ export function ChromeSurface({
  * supplies it. Without that, tapping "Rate this app" in the sheet parks a bottom sheet
  * behind a focus-trapping modal — the visible half of the defect F0 fixed, arriving
  * through the other rendering.
+ *
+ * 🔴 `clamp` EXISTS BECAUSE THE TWO BRANCHES DID NOT AGREE, AND THE DISAGREEMENT SHIPPED
+ * SILENTLY. The sheet row wraps its children in `<Text size="sm" lineClamp={1}>`
+ * unconditionally; the menu item renders them raw. That is right for the six items whose
+ * labels are short, fixed and host-authored ("Marketplace", "Manage apps", …) — they were
+ * raw children before this primitive existed and must stay that way — and WRONG for the
+ * one item whose label is PUBLISHER-CONTROLLED: the "Recently run" app name, which the
+ * pre-primitive chrome wrapped in exactly that `Text`, with the comment "`lineClamp={1}`
+ * keeps a pathologically long name from blowing out the dropdown at ANY of its widths".
+ * Consolidating the two call sites lost it. Measured at 1440×900 with a 63-char name
+ * (`APP_CHROME_NAME_MAX` is 64): the row goes 33.6px → 56.7px and the dropdown 201.6px →
+ * 228.9px, ×`RECENTLY_RUN_LIMIT` = 5 rows.
+ *
+ * So the clamp is OPT-IN rather than universal, and the opt-in is keyed to the DATA, not
+ * to a layout preference: pass it wherever the label reaches this row from a publisher.
+ * `__tests__/chromeItemClamp.test.ts` fails if an item whose children pass through
+ * `sanitizeAppChromeName` — the repo's marker for exactly that — omits it, and
+ * `AppBlockChromeRecentsClamp.browser.test.tsx` measures the rendered row.
  */
 export function ChromeSurfaceItem({
   href,
   onClick,
   leftSection,
+  clamp = false,
   children,
   'data-testid': dataTestId,
 }: {
@@ -242,6 +261,14 @@ export function ChromeSurfaceItem({
   href?: string;
   onClick?: () => void;
   leftSection?: ReactNode;
+  /**
+   * The label is PUBLISHER-CONTROLLED and must be held to one line. See the 🔴 note in
+   * the component header. No-op in sheet mode, which clamps every row already — stated
+   * rather than "fixed" by clamping the menu universally, because the six host-authored
+   * menu labels were raw children before the primitive existed and changing them would
+   * be a desktop behaviour change this work is not entitled to make.
+   */
+  clamp?: boolean;
   children: ReactNode;
   'data-testid'?: string;
 }) {
@@ -256,7 +283,13 @@ export function ChromeSurfaceItem({
         onClick={onClick}
         data-testid={dataTestId}
       >
-        {children}
+        {clamp ? (
+          <Text size="sm" lineClamp={1}>
+            {children}
+          </Text>
+        ) : (
+          children
+        )}
       </Menu.Item>
     );
   }
