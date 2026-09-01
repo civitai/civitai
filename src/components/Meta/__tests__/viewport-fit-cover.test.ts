@@ -91,6 +91,11 @@ const INSET_CONSUMERS = [
   // ordinary call site.
   'src/components/Notifications/NotificationsDrawer.module.scss',
   'src/components/Sticker/StickerPlacementTray.tsx',
+  // Here for the same reason as NotificationsDrawer, via the other override
+  // channel: a Tailwind utility in `classNames` is UNLAYERED, so its `inner`
+  // padding outranks the shell's modal rule and it has to fold the inset in
+  // itself. The only `inner:` override in the app.
+  'src/components/Support/SupportModal.tsx',
   'src/components/generation_v2/GenerationLayout.tsx',
   'src/pages/comics/project/[id]/ProjectWorkspace.module.scss',
   'src/providers/ThemeProvider.tsx',
@@ -134,6 +139,31 @@ function braceMatched(src: string, open: number): string {
     else if (src[i] === '}' && --depth === 0) return src.slice(open, i + 1);
   }
   return '';
+}
+
+/**
+ * The value of the `slot:` property beginning at `slotAt` in an object literal:
+ * a brace-matched object, a whole quoted string, or the rest up to the next
+ * comma.
+ *
+ * 🔴 THE QUOTED-STRING CASE IS WHY THIS IS NOT A `indexOf(',')`. A Tailwind
+ * arbitrary value contains commas — `pb-[max(1.5rem,var(--safe-area-inset-…))]`
+ * — so a comma-terminated read returns `'pt-[max(1.5rem` and the caller then
+ * cannot see the `safe-area-inset` that makes the value COMPLIANT. Measured:
+ * it reported `SupportModal` as an offender immediately after that file was
+ * fixed, i.e. the guard was grading the truncation rather than the code.
+ */
+function slotValue(obj: string, slotAt: number): string {
+  const colon = obj.indexOf(':', slotAt);
+  let i = colon + 1;
+  while (i < obj.length && /\s/.test(obj[i])) i++;
+  if (obj[i] === '{') return braceMatched(obj, i);
+  if (obj[i] === "'" || obj[i] === '"' || obj[i] === '`') {
+    const close = obj.indexOf(obj[i], i + 1);
+    return close === -1 ? obj.slice(i) : obj.slice(i, close + 1);
+  }
+  const comma = obj.indexOf(',', i);
+  return obj.slice(i, comma === -1 ? undefined : comma);
 }
 
 function srcFiles(extensions: RegExp): string[] {
@@ -331,13 +361,14 @@ describe('the safe-area custom-property layer', () => {
  * `transform`/`filter`/`contain` ancestor turning a `fixed` box into a
  * non-viewport-anchored one. Neither is observable from source.
  *
- * 🔴 RED-AT-BASE — MEASURED, NOT ASSERTED. Whole gating file re-run with
- * `globals.css`, `AppFooter.tsx`, `AdhesiveAd.tsx` and
- * `IterativeImageEditor.module.scss` restored byte-for-byte from d15e02d0d9
- * (the PR head this rework started from): **8 failed | 8 passed (16)**. The 8
- * red are the 5 chokepoint rules, the layer test, the handover test, and the
- * ledger. The 2 new tests that stayed GREEN are labelled INVARIANT GUARD at
- * their own sites and are NOT counted as coverage.
+ * 🔴 RED-AT-BASE — MEASURED, NOT ASSERTED. Whole gating file re-run with all
+ * twelve touched source files restored byte-for-byte from d15e02d0d9 (the PR
+ * head this rework started from): **10 failed | 7 passed (17)**, against
+ * **17 passed (17)** at HEAD. The 10 red are the 5 chokepoint rules, the layer
+ * test, the override sweep, the handover test, its page-content half, and the
+ * ledger. Of the 7 green, 6 are the pre-existing viewport-meta and inset-layer
+ * tests and ONE is a new test labelled INVARIANT GUARD at its own site; that
+ * one is NOT counted as coverage.
  *
  * Each was then killed in isolation, one cause per arm, and each died naming
  * its OWN assertion rather than a neighbour's:
@@ -351,10 +382,20 @@ describe('the safe-area custom-property layer', () => {
  *   · revert ONLY the floating cluster's `bottom` — i.e.
  *     exactly the defect the audit found ................ 1 red (handover, on
  *     the count: four sites must agree on the bar's height, three did not)
- *   · pad a Drawer's `content` slot at one call site ..... 1 red (that sweep)
  *   · turn one Drawer into `position="top"` ............. 1 red (that sweep)
  *   · un-pay the lightbox overlay ....................... 1 red (the ledger)
- * Unmutated control run: 16 passed (16).
+ * and, across all THREE channels the override sweep claims to cover:
+ *   · `styles={{ content: { padding } }}` on a Drawer ... 1 red (the sweep)
+ *   · `classNames={{ inner: 'py-6' }}` on a Modal ....... the sweep + the ledger
+ *   · a `.module.scss` `.inner { top }` via `classNames`  the sweep + the ledger
+ *   · a `.module.scss` `.content { padding }` ........... 1 red (the sweep)
+ * Unmutated control run before and after every arm: 17 passed (17).
+ *
+ * 🔴 That third-channel arm is why the sweep strips CSS comments. It first
+ * scored GREEN with the real declaration deleted, because the file explains its
+ * own inset in a comment naming `--safe-area-inset-top` four times and the
+ * compliance check read the prose. Only the ledger caught it. Prose about a
+ * rule must never satisfy it.
  */
 describe('the chokepoints that pay for whole populations', () => {
   /** Comments out, whitespace collapsed — so a reformat does not read as a change. */
@@ -440,60 +481,150 @@ describe('the chokepoints that pay for whole populations', () => {
     }
   });
 
-  // 🔴 INVARIANT GUARD — GREEN AT BASE, NOT REGRESSION COVERAGE. Measured: it
-  // passes unchanged at d15e02d0d9, because no call site padded `content` there
-  // either. It is not evidence that this change fixed anything; it pins the
-  // PRECONDITION the drawer rule above depends on, which nothing else states.
-  it('no Drawer or Modal call site sets padding on its `content` slot', () => {
-    // The rules above pay on `content` precisely BECAUSE nothing sets padding
-    // there — `body` is where ~20 filter drawers write `padding: 16` as an
-    // inline style, which beats any stylesheet rule. That is a property of the
-    // tree today, not a guarantee, so it is measured every run: the first call
-    // site to set `content` padding wipes the drawer's bottom inset at that one
-    // surface, with nothing else to report it.
+  /**
+   * 🔴 RED AT BASE — REGRESSION COVERAGE, NOT AN INVARIANT GUARD. Measured: it
+   * fails at d15e02d0d9 on two real offenders, `SupportModal`'s
+   * `classNames={{ inner: 'py-6' }}` and `NotificationsDrawer.module.scss`'s
+   * flat `.inner { top: var(--header-height) }`. Both are fixed in this change.
+   * It pins what the `@layer mantine` rules depend on: that nothing outranks
+   * them on the boxes they pay.
+   *
+   * 🔴 IT COVERS THREE OVERRIDE CHANNELS, BECAUSE ITS FIRST VERSION COVERED ONE
+   * AND WAS WRONG ABOUT THE TREE. That version read only `styles={{ … }}`
+   * while its name said "call site", and reported the tree clean while
+   * `SupportModal`'s `classNames={{ inner: 'py-6' }}` was defeating the
+   * non-fullScreen modal rule. The channels, in increasing order of how badly
+   * they outrank a stylesheet:
+   *   1. `styles={{ slot: { padding } }}`   — inline style
+   *   2. `classNames={{ slot: 'p-6' }}`     — Tailwind utility, UNLAYERED
+   *   3. `classNames={classes}` + a `.module.scss` rule — `@layer modules`
+   * The third is the one that produced the real defect: `NotificationsDrawer`
+   * pins its own `.inner { top }`, and left alone it would have overlapped the
+   * header by the inset.
+   *
+   * 🔴 IT IS SCOPED TO THE BOX EACH RULE ACTUALLY PAYS, or it flags surfaces
+   * that are fine: `content` padding matters on a Drawer and on a fullScreen
+   * Modal; `inner` padding matters on a non-fullScreen Modal; `inner`'s `top`
+   * matters on a Drawer. A plain Modal's `content: 'p-0'` is none of those and
+   * is deliberately not reported.
+   */
+  it('nothing outranks the @layer mantine rules on the boxes they pay', () => {
     const offenders: string[] = [];
-    let contentSlotsSeen = 0;
+    let slotsSeen = 0;
+
+    /** A value that folds the inset in itself is compliant, not an offender. */
+    const paysInset = (v: string) => /safe-area-inset/.test(v);
+    const setsPadding = (v: string) =>
+      /\bpadding/i.test(v) || /(^|[\s'"`])p[tbxy]?-[\w[\]./%-]+/.test(v);
+
     for (const file of srcFiles(/\.tsx$/)) {
       if (isTestFile(file)) continue;
       const src = stripComments(fs.readFileSync(file, 'utf8'));
-      for (const tag of ['<Drawer', '<Modal']) {
+      for (const tag of ['<Drawer', '<Modal'] as const) {
         let at = src.indexOf(tag);
         while (at !== -1) {
-          // The opening tag's own props, bounded so a later unrelated
-          // `styles={{ content: … }}` in the same file is not attributed here.
-          const window = src.slice(at, at + 1500);
-          const stylesAt = window.search(/\bstyles=\{\{/);
-          if (stylesAt !== -1) {
-            const obj = braceMatched(window, window.indexOf('{', stylesAt));
-            const contentAt = obj.search(/\bcontent\s*:\s*\{/);
-            if (contentAt !== -1) {
-              contentSlotsSeen++;
-              const slot = braceMatched(obj, obj.indexOf('{', contentAt));
-              if (/\bpadding/i.test(slot)) offenders.push(`${repoPath(file)} :: ${slot.trim()}`);
+          // Walk to the end of the OPENING tag, brace-aware. A fixed character
+          // window truncates a long prop list and stops seeing the very props
+          // it is looking for — measured: that mistake counted 15 fullScreen
+          // modals where a brace-aware walk finds 17.
+          let end = -1;
+          for (let i = at, depth = 0; i < src.length; i++) {
+            const c = src[i];
+            if (c === '{') depth++;
+            else if (c === '}') depth--;
+            else if (c === '>' && depth === 0) {
+              end = i;
+              break;
+            }
+          }
+          const head = src.slice(at, end > 0 ? end + 1 : at + 2000);
+          const isDrawer = tag === '<Drawer';
+          const isFullScreen = /\bfullScreen\b/.test(head);
+          // Which slot is load-bearing HERE. See the scoping note above.
+          const watched: Array<[slot: string, why: string]> = isDrawer
+            ? [['content', 'the drawer bottom/side inset']]
+            : isFullScreen
+            ? [['content', 'the fullScreen modal inset']]
+            : [['inner', 'the non-fullScreen modal cutout offset']];
+
+          for (const prop of ['styles', 'classNames'] as const) {
+            const propAt = head.search(new RegExp(`\\b${prop}=\\{\\{`));
+            if (propAt === -1) continue;
+            const obj = braceMatched(head, head.indexOf('{', propAt));
+            for (const [slot, why] of watched) {
+              const slotAt = obj.search(new RegExp(`\\b${slot}\\s*:`));
+              if (slotAt === -1) continue;
+              slotsSeen++;
+              const value = slotValue(obj, slotAt);
+              if (setsPadding(value) && !paysInset(value))
+                offenders.push(
+                  `${repoPath(file)} :: ${prop}.${slot} overrides ${why} :: ${value
+                    .trim()
+                    .replace(/\s+/g, ' ')
+                    .slice(0, 80)}`
+                );
+            }
+          }
+
+          // Channel 3: a `.module.scss` handed to this element via `classNames`.
+          // Resolved from the file's own imports rather than guessed from the
+          // filename — `SelectMenu.tsx` imports `SelectMenu.module.scss`, but
+          // nothing makes that a rule.
+          if (/\bclassNames=\{/.test(head)) {
+            for (const [, rel] of src.matchAll(
+              /import\s+\w+\s+from\s+'(\.[^']*\.module\.s?css)'/g
+            )) {
+              const sheet = path.resolve(path.dirname(file), rel);
+              if (!fs.existsSync(sheet)) continue;
+              // 🔴 COMMENTS OUT FIRST. These rules are DISCUSSED at length in
+              // the very files they govern — `NotificationsDrawer.module.scss`
+              // explains its inset in a comment that names
+              // `--safe-area-inset-top` four times. Unstripped, that prose
+              // satisfies the `paysInset` check and the rule is scored
+              // compliant with its declaration deleted. Caught by mutation:
+              // removing that file's real inset left this sweep GREEN and only
+              // the ledger noticed.
+              const css = stripComments(fs.readFileSync(sheet, 'utf8'));
+              for (const [slot, prop, why] of [
+                ['content', 'padding', 'the drawer/modal content inset'],
+                ['inner', isDrawer ? 'top' : 'padding', 'the drawer top inset / modal offset'],
+              ] as const) {
+                const ruleAt = css.search(new RegExp(`^\\.${slot}\\s*\\{`, 'm'));
+                if (ruleAt === -1) continue;
+                slotsSeen++;
+                const rule = braceMatched(css, css.indexOf('{', ruleAt));
+                if (new RegExp(`(^|[\\s;{])${prop}`, 'm').test(rule) && !paysInset(rule))
+                  offenders.push(
+                    `${repoPath(sheet)} :: .${slot} sets \`${prop}\` and outranks ${why}`
+                  );
+              }
             }
           }
           at = src.indexOf(tag, at + 1);
         }
       }
     }
+
     // 🔴 POSITIVE CONTROL. A zero-offender result is indistinguishable from a
     // sweep wired to nothing, so report the pair: the walk must have READ some
-    // `content` slots before its silence means anything. Four are known
-    // (challenges, auctions, AdaptiveFiltersDropdown, ModelFiltersDropdown-style
-    // `content: { height, maxHeight }` blocks); the floor is deliberately below
+    // watched slots before its silence means anything. The floor is well below
     // the real count so removing one drawer does not fail this for the wrong
     // reason.
     expect(
-      contentSlotsSeen,
-      'the sweep found NO `content` slot on any Drawer/Modal, so its zero-offender verdict is a ' +
-        'fact about the parser, not about the tree. Check the brace matching before trusting it.'
-    ).toBeGreaterThanOrEqual(3);
+      slotsSeen,
+      'the sweep found NO watched slot on any Drawer/Modal, so its zero-offender verdict is a ' +
+        'fact about the parser, not about the tree. Check the opening-tag walk, the brace ' +
+        'matching and the stylesheet-import resolution before trusting it.'
+    ).toBeGreaterThanOrEqual(8);
     expect(
       offenders,
-      'these call sites set padding on a Drawer/Modal `content` slot, which is the box the ' +
-        '`@layer mantine` rules in globals.css pay the safe-area inset on. An inline `styles` ' +
-        'prop outranks a stylesheet, so this surface is now UNPAID at the bottom edge. Move the ' +
-        'padding to the `body` slot, which composes with the inset instead of replacing it.'
+      'these override the safe-area payment on the exact box the `@layer mantine` rules in ' +
+        'globals.css pay it on, so that surface is UNPAID at that edge on every notched device. ' +
+        'An inline `styles` object outranks a stylesheet, a Tailwind class in `classNames` is ' +
+        'unlayered, and a `.module.scss` sits in `@layer modules` — all three win. Either move ' +
+        'the padding to the `body` slot, which composes with the inset instead of replacing it, ' +
+        'or fold the inset into the value with `max(…)` / `calc(…)` the way `SupportModal` and ' +
+        '`NotificationsDrawer.module.scss` do.'
     ).toEqual([]);
   });
 
