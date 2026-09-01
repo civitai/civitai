@@ -214,9 +214,20 @@ async function awaitListingResolved() {
 }
 
 /** Open the ⋮ overflow menu and wait for a permanent item, so the dropdown mounted. */
+/**
+ * Open the ⋮ overflow and wait for its contents.
+ *
+ * 🔴 WAITS ON THE SURFACE'S CONTENT BOX, NOT ON A `menuitem` ROLE — because F3 gave
+ * this control two renderings and only one of them has that role. Above the `sm`
+ * breakpoint the ⋮ is a `Menu` whose items are `menuitem`s; below it, it is a bottom
+ * sheet whose rows are buttons. `app-block-menu-dropdown` is the testid
+ * `ChromeSurface` puts on whichever content box it rendered, so this helper reads the
+ * same thing at both widths — which is what lets the 375px full-screen-modal test
+ * below exercise F4 THROUGH the sheet rather than needing a parallel helper.
+ */
 async function openOverflow() {
   await page.getByTestId('app-block-menu-trigger').click();
-  await expect.element(page.getByRole('menuitem', { name: 'Manage apps' })).toBeInTheDocument();
+  await expect.element(page.getByTestId('app-block-menu-dropdown')).toBeInTheDocument();
 }
 
 /** Open the app-name crumb popover and wait for its body. */

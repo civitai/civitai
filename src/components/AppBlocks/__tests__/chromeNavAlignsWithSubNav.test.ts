@@ -96,31 +96,46 @@ function parseSubNav(src: string): NavEntry[] {
 }
 
 /**
- * The chrome's PLATFORM-NAV `<Menu.Item>`s, as `{href, label, icon}` rows.
+ * The chrome's PLATFORM-NAV items, as `{href, label, icon}` rows.
  *
- * 🔴 SCOPED TO THE PLATFORM-NAV DROPDOWN, WHICH IS NOT COSMETIC. The chrome renders
- * a SECOND dropdown (the ⋮ overflow menu) whose "Manage apps" item also points at
- * `/apps/installed` — with a different, deliberate icon. A whole-file scan would
- * key both onto one href and either compare the wrong row or clobber it. The slice
- * is anchored on the `Civitai Apps` menu label, which is the dropdown's own
- * heading.
+ * 🔴 SCOPED TO THE PLATFORM-NAV SECTION, WHICH IS NOT COSMETIC. The chrome also
+ * renders the ⋮ overflow's "Manage apps", which points at the SAME
+ * `/apps/installed` with a different, deliberate label. A whole-file scan would key
+ * both onto one href and either compare the wrong row or clobber it. The slice is
+ * anchored on the `Civitai Apps` label, which is the section's own heading.
+ *
+ * 🔴 F3 RE-POINTED BOTH ENDS OF THE SLICE, AND CHANGED WHAT BOUNDS IT. The items are
+ * `<ChromeSurfaceItem>`s now, not `<Menu.Item>`s: below the `sm` breakpoint this
+ * section is rendered as rows of a bottom sheet rather than a dropdown, and a
+ * `Menu.Item` THROWS outside a `<Menu>` context, so it could not be re-parented (see
+ * `ChromeSurface.tsx`). The rule this guard pins — the chrome and the store subnav
+ * draw a shared route with a shared glyph — is completely unchanged; only the element
+ * carrying it moved.
+ *
+ * The bound moved for a related reason. `</Menu.Dropdown>` no longer exists in this
+ * file (the primitive owns it), so the section is bounded by the NEXT
+ * `<ChromeSurfaceLabel>` instead — which is `Recently run`, whose items build their
+ * hrefs from a template literal and are correctly skipped by the literal-href filter
+ * below either way. That is a TIGHTER bound than the old one, not a looser one.
  */
 function parsePlatformNav(src: string): NavEntry[] {
-  const anchor = '<Menu.Label>Civitai Apps</Menu.Label>';
+  const anchor = '<ChromeSurfaceLabel>Civitai Apps</ChromeSurfaceLabel>';
   const start = src.indexOf(anchor);
   expect(
     start,
-    `the platform-nav anchor \`${anchor}\` was not found in IframeHost.tsx — the dropdown was ` +
+    `the platform-nav anchor \`${anchor}\` was not found in IframeHost.tsx — the section was ` +
       'restructured past this scanner. Re-point the anchor; do not delete the guard.'
   ).toBeGreaterThan(-1);
   const rest = src.slice(start + anchor.length);
-  const end = rest.indexOf('</Menu.Dropdown>');
-  expect(end, 'the platform-nav dropdown never closes — the slice is unbounded.').toBeGreaterThan(
-    -1
-  );
+  const end = rest.indexOf('<ChromeSurfaceLabel');
+  expect(
+    end,
+    'the platform-nav section is not followed by another `<ChromeSurfaceLabel>` — the slice is ' +
+      'unbounded and would swallow the ⋮ overflow’s own items.'
+  ).toBeGreaterThan(-1);
   const region = rest.slice(0, end);
 
-  return [...region.matchAll(/<Menu\.Item\b([\s\S]*?)<\/Menu\.Item>/g)]
+  return [...region.matchAll(/<ChromeSurfaceItem\b([\s\S]*?)<\/ChromeSurfaceItem>/g)]
     .map((m) => {
       const block = m[1];
       // A literal string href only. The "Recently run" items build theirs from a
@@ -151,8 +166,8 @@ function parsePlatformNav(src: string): NavEntry[] {
 }
 
 /**
- * EVERY `<Menu.Item>` in the whole chrome that carries a LITERAL href, across both
- * dropdowns — not just the platform-nav one.
+ * EVERY chrome item that carries a LITERAL href, across both surfaces — not just the
+ * platform-nav one.
  *
  * 🔴 THIS IS THE REPO-WIDE HALF, AND IT EXISTS BECAUSE THE SCOPED HALF MISSED A
  * SITE. The platform-nav-scoped parser above deliberately ignores the ⋮ overflow
@@ -184,7 +199,7 @@ function chromeBody(): string {
 }
 
 function parseAllChromeLinks(src: string): NavEntry[] {
-  return [...src.matchAll(/<Menu\.Item\b([\s\S]*?)<\/Menu\.Item>/g)]
+  return [...src.matchAll(/<ChromeSurfaceItem\b([\s\S]*?)<\/ChromeSurfaceItem>/g)]
     .map((m) => {
       const block = m[1];
       const href = /href="([^"]+)"/.exec(block)?.[1];
@@ -231,15 +246,14 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     ]);
 
     const chrome = parsePlatformNav(`
-      <Menu.Label>Civitai Apps</Menu.Label>
-      <Menu.Item
-        component={Link}
+      <ChromeSurfaceLabel>Civitai Apps</ChromeSurfaceLabel>
+      <ChromeSurfaceItem
         href="/apps"
         leftSection={<IconBuildingStore size={14} stroke={1.5} />}
       >
         Marketplace
-      </Menu.Item>
-      </Menu.Dropdown>
+      </ChromeSurfaceItem>
+      <ChromeSurfaceLabel>Recently run</ChromeSurfaceLabel>
     `);
     expect(chrome).toEqual([{ href: '/apps', label: 'Marketplace', icon: 'IconBuildingStore' }]);
 
@@ -250,12 +264,16 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     expect(code('<Text>{/* explain */}Marketplace</Text>')).toBe('<Text>Marketplace</Text>');
     expect(code('a /* block */ b\n  // line\nc')).toBe('a  b\n\nc');
 
-    // …and the scope control: an item in a LATER dropdown must not be picked up.
+    // …and the scope control: an item in a LATER section must not be picked up. This
+    // is the fixture that would catch the F3 bound going wrong — the ⋮ overflow's own
+    // `/apps/installed` sits after its own `<ChromeSurfaceLabel>App</…>`, and if the
+    // slice ran past that label the two entries for one route would be keyed onto
+    // each other and the icon comparison would be against the wrong row.
     const scoped = parsePlatformNav(`
-      <Menu.Label>Civitai Apps</Menu.Label>
-      <Menu.Item component={Link} href="/apps" leftSection={<IconBuildingStore />}>Marketplace</Menu.Item>
-      </Menu.Dropdown>
-      <Menu.Item component={Link} href="/apps/installed" leftSection={<IconApps />}>Manage apps</Menu.Item>
+      <ChromeSurfaceLabel>Civitai Apps</ChromeSurfaceLabel>
+      <ChromeSurfaceItem href="/apps" leftSection={<IconBuildingStore />}>Marketplace</ChromeSurfaceItem>
+      <ChromeSurfaceLabel>App</ChromeSurfaceLabel>
+      <ChromeSurfaceItem href="/apps/installed" leftSection={<IconApps />}>Manage apps</ChromeSurfaceItem>
     `);
     expect(scoped.map((e) => e.href)).toEqual(['/apps']);
   });
@@ -370,23 +388,22 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     expect(new Set(installed.map((l) => l.icon)).size).toBe(1);
   });
 
-  it('the whole-chrome parser sees BOTH dropdowns — positive control', () => {
-    // The scoped parser stops at the first `</Menu.Dropdown>` by design. If this one
-    // inherited that bound it would silently score the ⋮ menu as absent and the rule
-    // above would pass over exactly the site it was written for.
+  it('the whole-chrome parser sees BOTH sections — positive control', () => {
+    // The scoped parser stops at the next `<ChromeSurfaceLabel>` by design. If this
+    // one inherited that bound it would silently score the ⋮ overflow's items as
+    // absent and the rule above would pass over exactly the site it was written for.
     const found = parseAllChromeLinks(`
-      <Menu.Label>Civitai Apps</Menu.Label>
-      <Menu.Item component={Link} href="/apps/installed" leftSection={<IconPlugConnected />}>Installed apps</Menu.Item>
-      </Menu.Dropdown>
-      <Menu.Label>App</Menu.Label>
-      <Menu.Item component={Link} href="/apps/installed" leftSection={<IconApps />}>Manage apps</Menu.Item>
+      <ChromeSurfaceLabel>Civitai Apps</ChromeSurfaceLabel>
+      <ChromeSurfaceItem href="/apps/installed" leftSection={<IconPlugConnected />}>Installed apps</ChromeSurfaceItem>
+      <ChromeSurfaceLabel>App</ChromeSurfaceLabel>
+      <ChromeSurfaceItem href="/apps/installed" leftSection={<IconApps />}>Manage apps</ChromeSurfaceItem>
     `);
     expect(found).toHaveLength(2);
     expect(found.map((f) => f.label)).toEqual(['Installed apps', 'Manage apps']);
     // …and it skips a template-literal href (the "Recently run" shape).
     expect(
       parseAllChromeLinks(
-        '<Menu.Item component={Link} href={`/apps/run/${r.blockId}`} leftSection={<IconApps />}>x</Menu.Item>'
+        '<ChromeSurfaceItem href={`/apps/run/${r.blockId}`} leftSection={<IconApps />}>x</ChromeSurfaceItem>'
       )
     ).toHaveLength(0);
   });

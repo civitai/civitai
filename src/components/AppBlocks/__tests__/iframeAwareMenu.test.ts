@@ -34,6 +34,7 @@ const HOST = path.join(REPO_ROOT, 'src/components/AppBlocks/IframeHost.tsx');
 const HOOK = path.join(REPO_ROOT, 'src/components/AppBlocks/useIframeAwareMenu.ts');
 const CRUMB = path.join(REPO_ROOT, 'src/components/AppBlocks/AppNameCrumb.tsx');
 const REVIEW_ENTRY = path.join(REPO_ROOT, 'src/components/AppBlocks/ChromeReviewEntry.tsx');
+const SURFACE = path.join(REPO_ROOT, 'src/components/AppBlocks/ChromeSurface.tsx');
 
 function read(file: string): string {
   // Prove the path before trusting any "no match" below: a scan of an absent
@@ -70,9 +71,9 @@ function chromeSource(): string {
 }
 
 /**
- * Opening `<Menu …>` / `<Popover …>` tags only — `<Menu.Item>`, `<Menu.Dropdown>`,
- * `<Popover.Target>` etc. are sub-components, not floating surfaces, and closing
- * tags are not openings.
+ * Opening `<Menu …>` / `<Popover …>` / `<Drawer …>` tags only — `<Menu.Item>`,
+ * `<Menu.Dropdown>`, `<Popover.Target>` etc. are sub-components, not floating
+ * surfaces, and closing tags are not openings.
  *
  * 🔴 THE HAZARD IS THE FLOATING SURFACE, NOT THE COMPONENT NAME. The rule this
  * ledger enforces is a fact about the SURFACE — the chrome sits on a cross-origin
@@ -80,11 +81,18 @@ function chromeSource(): string {
  * anything Mantine renders in a floating layer with a click-outside close, not just
  * to `<Menu>`. F2 added a `<Popover>` (the app-name crumb's store card), which the
  * `<Menu>`-only matcher would have counted as zero and passed clean while the
- * popover hung over the app exactly like the ⋮ menu once did. Widen this union
- * before adding a `HoverCard`, `Combobox` or `Drawer` to the chrome.
+ * popover hung over the app exactly like the ⋮ menu once did. F3 added `<Drawer>`
+ * (the bottom sheets below `sm`) — the previous revision of this comment named
+ * `Drawer` as the next thing to widen for, and this is that widening. Widen it again
+ * before adding a `HoverCard` or `Combobox`.
+ *
+ * 🔴 `(?![.\w])` IS WHAT KEEPS `<AppPermissionsActivityDrawer …>` OUT. That element
+ * is rendered by the chrome and its NAME ends in "Drawer", but it is a component of
+ * ours whose own `<Drawer>` lives in its own file — matching it here would count one
+ * surface twice and demand a hook call the chrome does not make for it.
  */
 function menuOpeningTags(src: string): string[] {
-  return [...src.matchAll(/<(?:Menu|Popover)(?![.\w])[\s\S]*?>/g)].map((m) => m[0]);
+  return [...src.matchAll(/<(?:Menu|Popover|Drawer)(?![.\w])[\s\S]*?>/g)].map((m) => m[0]);
 }
 
 describe('every Menu in the app-block chrome is iframe-aware', () => {
@@ -114,6 +122,18 @@ describe('every Menu in the app-block chrome is iframe-aware', () => {
     expect(
       menuOpeningTags('<Popover.Target><button /></Popover.Target><Popover.Dropdown />')
     ).toHaveLength(0);
+
+    // The `<Drawer>` third of the union (F3's bottom sheets), with the same
+    // sub-component control — and, crucially, the OTHER-COMPONENT control: the chrome
+    // renders `<AppPermissionsActivityDrawer>`, whose name ends in "Drawer" and whose
+    // own sheet lives in its own file. A matcher that counted it here would demand a
+    // hook call for a surface this file does not render.
+    expect(
+      menuOpeningTags('<Drawer opened={d.opened} onClose={d.close} position="bottom">x</Drawer>')
+    ).toHaveLength(1);
+    expect(menuOpeningTags('<AppPermissionsActivityDrawer opened={x} onClose={y} />')).toHaveLength(
+      0
+    );
   });
 
   it('the shared hook exists and is the only place the blur listener lives', () => {
@@ -144,93 +164,225 @@ describe('every Menu in the app-block chrome is iframe-aware', () => {
    * third dropdown hung over the app. Every new file that renders into this chrome
    * belongs in this table.
    */
+  /**
+   * 🔴 F3 SPLIT THE ONE NUMBER INTO TWO, AND THE SPLIT IS THE POINT. Until F3 every
+   * chrome source both RENDERED its floating surfaces and OWNED their state, so one
+   * count could pin both ("N surfaces, N hook calls"). F3 moved the rendering into a
+   * single primitive (`ChromeSurface`, which picks `Menu` / `Popover` / `Drawer` from
+   * the bar's measured width) while leaving the state at the CALL SITES — deliberately,
+   * so two triggers can never come to share one `opened` flag.
+   *
+   * A single number can no longer express that: `ChromeSurface.tsx` renders three
+   * surfaces and calls the hook ZERO times (it receives a control), while
+   * `AppBlockChrome` renders zero raw surfaces and calls the hook TWICE. Collapsing
+   * those back into one column would force one of the two files to lie.
+   *
+   * So each row states both, and the invariant that still ties them together is
+   * asserted separately below: `sum(hookCalls) === sum(chromeSurfaceUses)` across the
+   * whole chrome — one control per trigger, no matter which file each half lives in.
+   */
   const LEDGER: ReadonlyArray<{
     what: string;
     source: () => string;
+    /** RAW Mantine floating surfaces (`<Menu>`/`<Popover>`/`<Drawer>`) rendered here. */
     surfaces: number;
+    /** `useIframeAwareMenu()` calls — i.e. open-state owners — declared here. */
+    hookCalls: number;
+    /** `<ChromeSurface>` uses — i.e. triggers wired to the primitive — declared here. */
+    chromeSurfaces: number;
     detail: string;
   }> = [
     {
+      what: 'ChromeSurface.tsx (the primitive)',
+      source: () => code(read(SURFACE)),
+      surfaces: 3,
+      hookCalls: 0,
+      chromeSurfaces: 0,
+      detail:
+        'THE ONLY file in the chrome allowed to render a raw Mantine floating surface, and it ' +
+        'renders exactly three: the `Menu` and `Popover` a desktop-width bar gets, and the ' +
+        'bottom-sheet `Drawer` below `sm`. A FOURTH means a new rendering was added — check it ' +
+        'is controlled from the same `control` prop. FEWER means one mode was dropped, which ' +
+        'silently sends that bar width to whichever branch remains. It calls the hook ZERO ' +
+        'times ON PURPOSE: the state belongs to the call site, so two triggers cannot end up ' +
+        'sharing one `opened` flag.',
+    },
+    {
       what: 'AppBlockChrome (IframeHost.tsx)',
       source: chromeSource,
-      surfaces: 2,
+      surfaces: 0,
+      hookCalls: 2,
+      chromeSurfaces: 2,
       detail:
-        'the platform-nav menu behind the app icon and the ⋮ overflow menu. A THIRD means a ' +
-        'new control was added: put it on `useIframeAwareMenu` and update this count in the ' +
-        'same commit, or it will be stuck open the first time a user clicks into the app. ' +
-        'FEWER means one was removed or restructured past this scanner.',
+        'the platform-nav trigger behind the app icon and the ⋮ overflow trigger — each a ' +
+        '`<ChromeSurface>` with its own control. ZERO raw surfaces is the F3 contract: a bare ' +
+        '`<Menu>` or `<Drawer>` reappearing here is the primitive being bypassed, which is how ' +
+        'the mobile shell would silently regain a dropdown that hangs over the app. A THIRD ' +
+        'trigger means a new control was added: give it its own `useIframeAwareMenu()` and ' +
+        'raise BOTH numbers in the same commit.',
     },
     {
       what: 'AppNameCrumb.tsx',
       source: () => code(read(CRUMB)),
-      surfaces: 1,
+      surfaces: 0,
+      hookCalls: 1,
+      chromeSurfaces: 1,
       detail:
-        'the breadcrumb app-name crumb’s store popover (full name + recommend rollup + "View ' +
-        'in App Store"). It renders directly over the app iframe like every other floating ' +
-        'surface in this chrome, so it is on the same hook.',
+        'the app-name crumb’s store card (full name + recommend rollup + "View in App Store" + ' +
+        'F4’s review action) — a popover on a desktop bar, a bottom sheet below `sm`, one ' +
+        '`<ChromeSurface>` either way.',
     },
     {
       what: 'ChromeReviewEntry.tsx',
       source: () => code(read(REVIEW_ENTRY)),
       surfaces: 0,
+      hookCalls: 0,
+      chromeSurfaces: 0,
       detail:
-        'F4’s two review entry points. ZERO is the correct count and this row is not filler: ' +
-        'both are plain controls rendered INTO surfaces their hosts already own (a `Menu.Item` ' +
-        'inside the chrome’s ⋮ dropdown, a `Button` inside the crumb’s popover), and the modal ' +
-        'they open is mounted by `AppBlockChrome` OUTSIDE both. A `<Menu>` or `<Popover>` ' +
-        'appearing here means this file grew a floating surface of its own — put it on ' +
-        '`useIframeAwareMenu` and raise this number in the same commit, or it will hang over ' +
-        'the app the first time a user clicks into it.',
+        'F4’s two review entry points. ALL THREE ZEROES are the correct counts and this row is ' +
+        'not filler: both entry points are plain controls rendered INTO surfaces their hosts ' +
+        'already own (a `ChromeSurfaceItem` inside the ⋮ surface, a `Button` inside the crumb’s ' +
+        'card), and the modal they open is mounted by `AppBlockChrome` OUTSIDE both. Any of ' +
+        'these going non-zero means this file grew a surface of its own — wire it and raise the ' +
+        'number in the same commit, or it will hang over the app the first time a user clicks ' +
+        'into it.',
     },
   ];
 
-  it.each(LEDGER)('$what renders exactly $surfaces floating surface(s), all on the hook', (row) => {
-    const src = row.source();
-    const tags = menuOpeningTags(src);
+  /** `<ChromeSurface …>` uses — the compound sub-components are not surfaces. */
+  function chromeSurfaceUses(src: string): string[] {
+    return [...src.matchAll(/<ChromeSurface(?![.\w])[\s\S]*?>/g)].map((m) => m[0]);
+  }
 
-    // Failing on GROWTH is the point: a new floating surface must be a deliberate
-    // edit here, which is the moment somebody reads the paragraph above and wires
-    // the hook. Failing on SHRINK catches one being removed or restructured past
-    // this scanner.
+  it('the ChromeSurface matcher can see a use and skips its item siblings — positive control', () => {
+    // Same reasoning as the `<Menu>` control above: a matcher that silently sees
+    // nothing turns every count below into a fact about the regex.
     expect(
-      tags.length,
-      `expected exactly ${row.surfaces} floating surface(s) in ${row.what} — ${row.detail}`
-    ).toBe(row.surfaces);
-
-    // Every one of them is CONTROLLED. A count alone would pass surfaces that all
-    // dropped their `opened`/`onChange`.
-    for (const tag of tags) {
-      const oneLine = tag.replace(/\s+/g, ' ');
-      expect(oneLine, `an uncontrolled floating surface in ${row.what}: ${oneLine}`).toMatch(
-        /opened=\{/
-      );
-      expect(oneLine, `a floating surface with no onChange in ${row.what}: ${oneLine}`).toMatch(
-        /onChange=\{/
-      );
-    }
-
-    // …and the control state comes from the SHARED hook, once per surface. Two
-    // surfaces and one hook call would mean they share a single `opened` flag
-    // (opening one would close the other); two surfaces and three calls means a
-    // dead one.
-    const hookCalls = src.match(/useIframeAwareMenu\(/g) ?? [];
+      chromeSurfaceUses('<ChromeSurface compact={c} control={m}>x</ChromeSurface>')
+    ).toHaveLength(1);
+    // 🔴 THE SIBLINGS ARE THE TRAP. `ChromeSurfaceItem` / `ChromeSurfaceLabel` /
+    // `ChromeSurfaceGroup` all START with the string `ChromeSurface`, and the chrome
+    // renders a dozen of them — without the `(?![.\w])` guard every one would be
+    // counted as a trigger and the hook-call equality below would demand a dozen
+    // controls that must not exist.
     expect(
-      hookCalls,
-      `the number of \`useIframeAwareMenu()\` calls must equal the number of floating surfaces ` +
-        `in ${row.what} — each owns its own open state.`
-    ).toHaveLength(tags.length);
-
-    // 🔴 ONE listener, one place — checked per source, not just for the chrome.
-    // The original defect was this effect existing at one site and not the other;
-    // an inline copy in ANY chrome source is that defect re-forming.
-    expect(
-      src.match(/addEventListener\(\s*'blur'/g) ?? [],
-      `a window \`blur\` listener has reappeared inside ${row.what}. That is the copy this ` +
-        'consolidation removed — route the new control through `useIframeAwareMenu` instead.'
+      chromeSurfaceUses(
+        '<ChromeSurfaceItem href="/apps">a</ChromeSurfaceItem><ChromeSurfaceLabel>b</ChromeSurfaceLabel><ChromeSurfaceGroup />'
+      )
     ).toHaveLength(0);
   });
 
-  it('a CONTROLLED Popover gets no onClick from Mantine, so the crumb wires its own', () => {
+  it.each(LEDGER)(
+    '$what: $surfaces raw floating surface(s), $chromeSurfaces ChromeSurface use(s), $hookCalls hook call(s)',
+    (row) => {
+      const src = row.source();
+      const tags = menuOpeningTags(src);
+
+      // Failing on GROWTH is the point: a new floating surface must be a deliberate
+      // edit here, which is the moment somebody reads the paragraph above and wires
+      // the hook. Failing on SHRINK catches one being removed or restructured past
+      // this scanner.
+      expect(
+        tags.length,
+        `expected exactly ${row.surfaces} raw Mantine floating surface(s) in ${row.what} — ${row.detail}`
+      ).toBe(row.surfaces);
+
+      // Every one of them is CONTROLLED. A count alone would pass surfaces that all
+      // dropped their `opened`/`onChange`.
+      //
+      // 🔴 A `Drawer` CLOSES THROUGH `onClose`, NOT `onChange` — it has no `onChange`
+      // prop at all. Requiring `onChange` of every surface would have made the F3
+      // sheet unrepresentable and invited someone to drop the check rather than
+      // widen it, so the close-handler assertion branches on the component while the
+      // `opened=` half stays universal.
+      for (const tag of tags) {
+        const oneLine = tag.replace(/\s+/g, ' ');
+        expect(oneLine, `an uncontrolled floating surface in ${row.what}: ${oneLine}`).toMatch(
+          /opened=\{/
+        );
+        const closeProp = /^<Drawer\b/.test(oneLine) ? /onClose=\{/ : /onChange=\{/;
+        expect(
+          oneLine,
+          `a floating surface with no close handler in ${row.what}: ${oneLine}`
+        ).toMatch(closeProp);
+      }
+
+      expect(
+        chromeSurfaceUses(src).length,
+        `expected exactly ${row.chromeSurfaces} \`<ChromeSurface>\` use(s) in ${row.what} — ${row.detail}`
+      ).toBe(row.chromeSurfaces);
+
+      // …and the control state comes from the SHARED hook, once per TRIGGER. Two
+      // triggers and one hook call would mean they share a single `opened` flag
+      // (opening one would close the other); two triggers and three calls means a
+      // dead one.
+      const hookCalls = src.match(/useIframeAwareMenu\(/g) ?? [];
+      expect(
+        hookCalls,
+        `the number of \`useIframeAwareMenu()\` calls in ${row.what} must be ${row.hookCalls} — ` +
+          'each trigger owns its own open state, and the primitive owns none.'
+      ).toHaveLength(row.hookCalls);
+
+      // 🔴 ONE listener, one place — checked per source, not just for the chrome.
+      // The original defect was this effect existing at one site and not the other;
+      // an inline copy in ANY chrome source is that defect re-forming.
+      expect(
+        src.match(/addEventListener\(\s*'blur'/g) ?? [],
+        `a window \`blur\` listener has reappeared inside ${row.what}. That is the copy this ` +
+          'consolidation removed — route the new control through `useIframeAwareMenu` instead.'
+      ).toHaveLength(0);
+    }
+  );
+
+  it('ONE CONTROL PER TRIGGER, summed across the whole chrome', () => {
+    // 🔴 THE SEAM THE PER-ROW COUNTS CANNOT SEE. Every number above is a fact about
+    // ONE file, and F3 put the two halves of this rule in different files: a trigger
+    // is declared where its `useIframeAwareMenu()` lives, and rendered by a primitive
+    // somewhere else. A per-file ledger is satisfied by "2 and 2 here, 1 and 1 there"
+    // — and would stay satisfied if a future file declared a `<ChromeSurface>` with a
+    // control borrowed from a sibling, which is exactly the shared-`opened` bug the
+    // per-surface count was written to prevent. This is the relationship, not the
+    // components.
+    let hooks = 0;
+    let triggers = 0;
+    for (const row of LEDGER) {
+      const src = row.source();
+      hooks += (src.match(/useIframeAwareMenu\(/g) ?? []).length;
+      triggers += chromeSurfaceUses(src).length;
+    }
+    // Positive control: a zero on BOTH sides would satisfy the equality while
+    // proving that neither pattern matched anything in the real tree.
+    expect(triggers, 'the ledger found no `<ChromeSurface>` in the chrome at all').toBeGreaterThan(
+      0
+    );
+    expect(
+      hooks,
+      'the chrome declares a different number of open-state controls than it has triggers. ' +
+        'Every `<ChromeSurface>` needs its OWN `useIframeAwareMenu()`; sharing one makes opening ' +
+        'either surface close the other.'
+    ).toBe(triggers);
+  });
+
+  it('the primitive takes its open state from the caller rather than owning any', () => {
+    // The counts above say `ChromeSurface.tsx` calls the hook zero times. That is
+    // consistent with it holding its own `useState` instead, which would be the same
+    // defect wearing different clothes — the state would be per-PRIMITIVE-INSTANCE
+    // either way, but nothing would stop a future caller from reading `opened` for a
+    // decision the primitive no longer exposes. Pin the actual contract.
+    const surface = code(read(SURFACE));
+    expect(
+      surface,
+      '`ChromeSurface` must accept a `control` (the `useIframeAwareMenu()` return) rather than ' +
+        'deriving open state internally.'
+    ).toMatch(/control\s*[,:}]/);
+    expect(
+      surface.match(/useState\(/g) ?? [],
+      '`ChromeSurface` grew its own `useState`. Open state belongs to the CALL SITE — see the ' +
+        'ledger note above for why that split is load-bearing rather than stylistic.'
+    ).toHaveLength(0);
+  });
+
+  it('a CONTROLLED Popover gets no onClick from Mantine, so the primitive wires its own', () => {
     // 🔴 THIS IS THE ONE THAT WOULD SHIP A DEAD BUTTON. `PopoverTarget` clones its
     // child with `...(!ctx.controlled ? { onClick: ctx.onToggle } : null)` — so the
     // moment the popover is put on `useIframeAwareMenu` (which is what supplying
@@ -254,25 +406,50 @@ describe('every Menu in the app-block chrome is iframe-aware', () => {
         'crumb’s own onClick before trusting either.'
     ).toContain('!ctx.controlled ? { onClick: ctx.onToggle } : null');
 
+    // 🔴 F3 MOVED THIS HANDLER FROM `AppNameCrumb` INTO `ChromeSurface`, WHICH IS WHY
+    // THE ASSERTION MOVED WITH IT — and the hazard got WIDER rather than narrower.
+    // The primitive now clones its target in TWO modes that both need it: `popover`
+    // (Mantine withholds `onClick` from a controlled target, as pinned above) and
+    // `sheet` (there is no Mantine target wrapper at all, so nothing would attach
+    // one). A crumb-scoped check would now be looking at a file that no longer owns
+    // the behaviour and would pass by finding nothing.
+    const surface = code(read(SURFACE));
     expect(
-      code(read(CRUMB)),
-      'AppNameCrumb’s Popover.Target must carry its OWN onClick — a controlled Popover.Target ' +
-        'gets none from Mantine, so without it the trigger opens nothing.'
-    ).toMatch(/onClick=\{[^}]*popover\.onChange/);
+      surface,
+      '`ChromeSurface` must clone its target with its OWN onClick — a controlled Popover.Target ' +
+        'gets none from Mantine, and a bare sheet trigger has no wrapper to get one from, so ' +
+        'without it the trigger opens nothing in either mode.'
+    ).toMatch(/cloneElement\([\s\S]{0,200}?onClick:/);
+    // Both cloning sites, not just one: the count is what catches a refactor that
+    // keeps the popover clone and drops the sheet's (or vice versa) — either of which
+    // ships a real button, correctly labelled, that does nothing.
+    expect(
+      surface.match(/cloneElement\(/g) ?? [],
+      '`ChromeSurface` must clone its target in BOTH the `popover` and `sheet` modes. `menu` ' +
+        'mode deliberately does NOT — `MenuTarget` has no `!ctx.controlled` guard, so Mantine ' +
+        'attaches the handler there and a second one would be a behaviour change on the ' +
+        'desktop path this work is not supposed to touch.'
+    ).toHaveLength(2);
   });
 
-  it('the ⋮ overflow trigger is addressable by a stable testid, like its siblings', () => {
+  it('the chrome’s controls are addressable by stable testids, across both shells', () => {
     const chrome = chromeSource();
     // Reachable only by accessible name, the ⋮ trigger broke every test that
     // touched it whenever the copy changed. Its siblings all carry a testid.
     expect(chrome).toContain('data-testid="app-block-menu-trigger"');
     // Named alongside the sibling ledger so a rename of the family is visible
     // here rather than only in a browser suite that does not gate a merge.
+    //
+    // 🔴 `app-block-back` IS THE F3 ADDITION AND IT IS NOT COSMETIC: the mobile
+    // shell's back chevron is the ONLY way off the run page once the breadcrumb is
+    // gone, so a rename that silently orphaned every test reaching for it would
+    // leave that route unguarded in the tier that gates merges.
     for (const id of [
       'app-block-chrome',
       'app-platform-nav-trigger',
       'app-block-name',
       'app-block-menu-trigger',
+      'app-block-back',
     ]) {
       expect(chrome, `chrome testid \`${id}\` is missing`).toContain(`data-testid="${id}"`);
     }
