@@ -418,10 +418,14 @@ export async function getListingPreviewForReview(args: {
   // 🔴 THE BETA READ IS KEYED ON THE **PARENT** FOR A SHADOW, and that is what lets beta
   // stay off the revision round trip entirely. Beta is never staged: every write targets the
   // live listing, so the PARENT row is the only place the current declaration exists. A
-  // shadow's own beta columns are therefore not a source of truth — reading them would show
-  // a moderator whatever the value happened to be when the shadow was minted, which goes
-  // stale the moment the author edits beta again (and they can, at any time, because the
-  // edit applies in place while the revision sits in the queue).
+  // shadow's own beta columns are therefore not a source of truth — and the consequence of
+  // reading them is worse than staleness, which is what an earlier version of this comment
+  // said. NOTHING writes them: `beginListingRevision` clones no beta column and every write
+  // path targets the parent, so a shadow's `is_beta` / `beta_message` hold the SCHEMA
+  // DEFAULTS (`false` / `null`) for every shadow, always. Keying this read on the shadow id
+  // would not show a moderator a stale value; it would remove the badge and the notice from
+  // EVERY revision preview, which is precisely the framing the `preview` omission ledger in
+  // `AppListingDetailBody` exists to guarantee.
   //
   // 🔴 THIS REPLACED A CLONE, AND REMOVING THAT CLONE IS THE POINT. `beginListingRevision`
   // used to copy the columns onto the shadow purely so this preview could render them. That

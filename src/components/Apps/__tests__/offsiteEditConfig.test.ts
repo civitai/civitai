@@ -861,34 +861,23 @@ describe('🔴 NEW-1 — an ABANDONED beta note does not fail the whole save', (
     // what must not move; it is not evidence the fix works.
     //
     // 🔴 AND IT ASSERTS ONLY THE CLIENT HALF. The claim that unticking CLEARS a stored note
-    // is the SERVER's (`buildListingPatchData` nulls it on the off transition), and it is
-    // covered separately by the N5 block in `offsite-listing.edit.service.test.ts`. All this
-    // shows is that the client does not need to send the note for that to happen.
-    const on = {
-      ...OFF_LISTING,
-      scalars: {
-        ...(OFF_LISTING as never as { scalars: object }).scalars,
-        isBeta: true,
-        betaMessage: 'x',
-      },
-    } as never;
-    const current = { ...editContextToForm(on), isBeta: false };
-    const patch = buildScalarPatch(on, current);
+    // is the SERVER's (`buildListingPatchData` nulls it on the off transition). The test that
+    // pins it for THIS patch shape — `{isBeta:false}` with no note key, which is exactly what
+    // the client now sends — is `turning beta OFF clears the note in the SAME write`, in the
+    // F1 block of `offsite-listing.edit.service.test.ts`. (NOT the N5 block, which an earlier
+    // version of this comment cited: N5's subject is a note sitting behind an ALREADY-off
+    // flag, and its nearest case sends `{isBeta:false, betaMessage:'x'}` — a patch that names
+    // the note key, which the client no longer produces.) All this test shows is that the
+    // client does not need to send the note for the server's clear to happen.
+    const current = { ...editContextToForm(ON_LISTING), isBeta: false };
+    const patch = buildScalarPatch(ON_LISTING, current);
     expect(patch.isBeta).toBe(false);
     expect('betaMessage' in patch).toBe(false);
   });
 
   it('editing the note while beta stays ON still emits it', () => {
-    const on = {
-      ...OFF_LISTING,
-      scalars: {
-        ...(OFF_LISTING as never as { scalars: object }).scalars,
-        isBeta: true,
-        betaMessage: 'x',
-      },
-    } as never;
-    const current = { ...editContextToForm(on), betaMessage: 'y' };
-    const patch = buildScalarPatch(on, current);
+    const current = { ...editContextToForm(ON_LISTING), betaMessage: 'y' };
+    const patch = buildScalarPatch(ON_LISTING, current);
     expect(patch.betaMessage).toBe('y');
   });
 });

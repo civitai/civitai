@@ -1147,8 +1147,10 @@ describe('🔴 getListingPreviewForReview reads beta from the PARENT for a shado
    * regress. `beginListingRevision` used to copy the beta columns onto the shadow purely so
    * this preview could render them. That forced the parent's beta write to land BEFORE the
    * shadow was minted, which hoisted a WRITE above the patch validation and made a rejected
-   * patch apply its beta half anyway. Reading the parent here needs no clone, no ordering
-   * rule, and — unlike a clone — cannot go stale while the revision sits in the queue.
+   * patch apply its beta half anyway. Reading the parent here needs no clone and no ordering
+   * rule. Keying it on the SHADOW instead would not merely go stale — nothing writes a
+   * shadow's beta columns, so it would read the schema defaults and strip the badge from
+   * every preview.
    *
    * The beta reader is NOT mocked in this suite, so these assertions exercise the real
    * `readListingBetaForRender` and read the query it actually issues.
