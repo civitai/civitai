@@ -505,7 +505,9 @@ textarea {
    the `@layer mantine` block above cannot reach these boxes at all. Moving
    these two rules up there makes them silently inert.
 
-   The surface: `enableFullScreenToggle` is Mantine-default-ON and is disabled
+   The surface: `enableFullScreenToggle` defaults to `true` in
+   mantine-react-table itself (`enableFullScreenToggle = true` in its bundle —
+   it is MRT's default, not `@mantine/core`'s) and is disabled
    at exactly one of the six MRT call sites (`UserTrainingModels.tsx`), so the
    moderator tables (`moderator/tags`, `moderator/strikes`, `moderator/csam`,
    `moderator/minor-hash-matches`, `FlaggedModelsList`) all have the button. In
