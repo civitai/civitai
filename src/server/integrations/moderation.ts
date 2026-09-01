@@ -1,4 +1,12 @@
 import { env } from '~/env/server';
+import {
+  clampExternalModerationSource,
+  isAbortDeadlineError,
+  observeExternalModeration,
+  recordExternalModerationSkipped,
+  type ExternalModerationSource,
+} from '~/server/prom/external-moderation.metrics';
+import { setActiveSpanAttributes, withSpan } from '~/server/utils/otel-helpers';
 
 const falsePositiveTriggers = Object.entries({
   '\\d*girl': 'woman',
@@ -15,58 +23,126 @@ function removeFalsePositiveTriggers(prompt: string) {
   return prompt;
 }
 
-async function moderatePrompt(prompt: string): Promise<{ flagged: false; categories: string[] }> {
-  if (!env.EXTERNAL_MODERATION_TOKEN || !env.EXTERNAL_MODERATION_ENDPOINT)
+/**
+ * Call the external prompt classifier.
+ *
+ * `source` is OBSERVABILITY ONLY — it selects the `source` label on
+ * `civitai_app_external_moderation_duration_seconds` and changes nothing about the request, the
+ * deadline or the verdict. It is optional and defaults to `other` so an undeclared caller can never
+ * inflate the `generate` population; see `external-moderation.metrics.ts` for what each value means.
+ */
+async function moderatePrompt(
+  prompt: string,
+  source: ExternalModerationSource = 'other'
+): Promise<{ flagged: false; categories: string[] }> {
+  // Clamp once, here, so every instrument below shares one bounded value regardless of what a
+  // spread-built options object handed us.
+  const metricSource = clampExternalModerationSource(source);
+
+  // Read once, into locals, so the guard below narrows them for the fetch. The fetch now runs inside
+  // a callback, and TS cannot carry a narrowing of a mutable object property across a closure
+  // boundary — the values themselves are identical to what the straight-line version read.
+  const endpoint = env.EXTERNAL_MODERATION_ENDPOINT;
+  const token = env.EXTERNAL_MODERATION_TOKEN;
+
+  if (!token || !endpoint) {
+    // Counted, not observed on the histogram: no request is issued, so this is not a latency
+    // sample. Recorded before the span opens — a deployment with the integration switched off
+    // should pay nothing beyond a counter increment.
+    recordExternalModerationSkipped(metricSource);
     return { flagged: false, categories: [] };
+  }
 
   const preparedPrompt = removeFalsePositiveTriggers(prompt);
-  // Hard timeout via AbortSignal. Node's undici `fetch` has NO request timeout by
-  // default (~300s headers/body), so a slow/hanging moderation gateway would park
-  // this await — and since it runs inline on every generation submission
-  // (`generateFromGraph` → `auditPromptServer`), that parks the whole tRPC request
-  // off-CPU for minutes (observed ~194s api-primary tail during a moderation 503/504
-  // wave). The call is already FAIL-SOFT (the caller catches and proceeds with
-  // flagged:false) and the local regex audit still gates regardless, so aborting a
-  // slow call only drops the secondary external layer for that one request — it does
-  // not weaken the primary block. Abort → throws → caller's existing catch fails soft.
-  const res = await fetch(env.EXTERNAL_MODERATION_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${env.EXTERNAL_MODERATION_TOKEN}`,
-    },
-    body: JSON.stringify({
-      input: preparedPrompt,
-      model: 'omni-moderation-latest',
-    }),
-    signal: AbortSignal.timeout(env.EXTERNAL_MODERATION_TIMEOUT_MS),
-  });
-  if (!res.ok) {
-    let message = `External moderation failed: ${res.status} ${res.statusText}`;
-    try {
-      const body = await res.text();
-      message += `\n${body}`;
-    } catch (err) {}
-    throw new Error(message);
-  }
 
-  const { results } = await res.json();
-  let flagged = results[0].flagged;
-  let categories = Object.entries(results[0].category_scores)
-    .filter(([, v]) => (v as number) > env.EXTERNAL_MODERATION_THRESHOLD)
-    .map(([k]) => k);
+  // Wall-clock timing of the whole classifier call — the interval the generation submission actually
+  // parks on. Started before the span so the observation cannot be biased by span setup, and read
+  // exactly once per exit path below (resolve XOR throw), never in a `finally`, which could not see
+  // the outcome the label needs.
+  const start = performance.now();
+  const elapsedSeconds = () => (performance.now() - start) / 1000;
 
-  // If we have categories
-  // Only flag if any of them are found in the results
-  if (env.EXTERNAL_MODERATION_CATEGORIES) {
-    categories = [];
-    for (const [k, v] of Object.entries(env.EXTERNAL_MODERATION_CATEGORIES)) {
-      if (results[0].categories[k]) categories.push(v ?? k);
+  return await withSpan(
+    'moderation:external-prompt',
+    { 'moderation.source': metricSource },
+    async () => {
+      try {
+        // Hard timeout via AbortSignal. Node's undici `fetch` has NO request timeout by
+        // default (~300s headers/body), so a slow/hanging moderation gateway would park
+        // this await — and since it runs inline on every generation submission
+        // (`generateFromGraph` → `auditPromptServer`), that parks the whole tRPC request
+        // off-CPU for minutes (observed ~194s api-primary tail during a moderation 503/504
+        // wave). The call is already FAIL-SOFT (the caller catches and proceeds with
+        // flagged:false) and the local regex audit still gates regardless, so aborting a
+        // slow call only drops the secondary external layer for that one request — it does
+        // not weaken the primary block. Abort → throws → caller's existing catch fails soft.
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            input: preparedPrompt,
+            model: 'omni-moderation-latest',
+          }),
+          signal: AbortSignal.timeout(env.EXTERNAL_MODERATION_TIMEOUT_MS),
+        });
+        if (!res.ok) {
+          let message = `External moderation failed: ${res.status} ${res.statusText}`;
+          try {
+            const body = await res.text();
+            message += `\n${body}`;
+          } catch (err) {}
+          throw new Error(message);
+        }
+
+        const { results } = await res.json();
+        let flagged = results[0].flagged;
+        let categories = Object.entries(results[0].category_scores)
+          .filter(([, v]) => (v as number) > env.EXTERNAL_MODERATION_THRESHOLD)
+          .map(([k]) => k);
+
+        // If we have categories
+        // Only flag if any of them are found in the results
+        if (env.EXTERNAL_MODERATION_CATEGORIES) {
+          categories = [];
+          for (const [k, v] of Object.entries(env.EXTERNAL_MODERATION_CATEGORIES)) {
+            if (results[0].categories[k]) categories.push(v ?? k);
+          }
+          flagged = categories.length > 0;
+        }
+
+        recordOutcome(metricSource, 'ok', elapsedSeconds());
+        return { flagged, categories };
+      } catch (e) {
+        // Exactly one observation per call — here on the throw path, XOR on the resolve path above.
+        // A fired `AbortSignal.timeout` is its own outcome: it costs a full deadline of wall time
+        // and calls for a different fix than a gateway that rejects immediately.
+        recordOutcome(
+          metricSource,
+          isAbortDeadlineError(e) ? 'timeout' : 'error',
+          elapsedSeconds()
+        );
+        throw e;
+      }
     }
-    flagged = categories.length > 0;
-  }
+  );
+}
 
-  return { flagged, categories };
+/**
+ * Record the histogram observation and stamp the same outcome on the active span, so a trace and the
+ * metric can never disagree about how one call settled. Called from INSIDE the `withSpan` callback,
+ * where `moderation:external-prompt` is the active span — outside it the attribute would land on the
+ * caller's span instead.
+ */
+function recordOutcome(
+  source: ExternalModerationSource,
+  outcome: 'ok' | 'error' | 'timeout',
+  durationSeconds: number
+) {
+  observeExternalModeration(source, outcome, durationSeconds);
+  setActiveSpanAttributes({ 'moderation.outcome': outcome });
 }
 
 export const extModeration = {
