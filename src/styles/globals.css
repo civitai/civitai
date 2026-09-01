@@ -102,7 +102,64 @@
      `footer`, so their own markup is the viewport edge at both ends. Every
      other route inherits 0 here and pays nothing, which is correct. */
   --safe-area-inset-bottom-page: var(--safe-area-inset-bottom);
+
+  /* THE ULTRAWIDE CAP FOR A FULL-PAGE APP BLOCK — `/apps/run/<slug>` and the
+     other `PageBlockHost` surfaces (the dev tunnel, the moderator preview).
+
+     WHAT IT IS. `PageBlockHost` reads this as
+     `max-width: var(--app-page-max-width, …)` on its root, with
+     `margin-inline: auto`, so the app renders as a centred column with a
+     neutral gutter either side once the viewport is wider than this. Below it
+     the declaration is INERT — the host is `width: 100%`, which is already
+     narrower than the cap, and `margin-inline: auto` resolves to 0 on a box
+     that fills its parent. That inertness is the point: the great majority of
+     traffic is below this width and must render byte-identically to before.
+
+     🔴 IT IS DECLARED HERE, AND ONLY HERE, SO THAT AN APP CAN OPT OUT — see the
+     ledger below. The host reads it through `var()` rather than writing it as
+     an inline value precisely so a stylesheet rule can override it; an inline
+     custom property on the host itself would beat every such rule and make the
+     opt-out inert. `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` carries the
+     same number as the `var()` fallback (CSS cannot import a TS constant), and
+     `__tests__/pageBlockHostMaxWidth.test.ts` is what keeps the two in step —
+     the same arrangement `--header-height`/`HEADER_HEIGHT_PX` uses. The
+     justification for the VALUE lives on that constant. */
+  --app-page-max-width: 1600px;
 }
+
+/* FULL-BLEED OPT-OUT LEDGER — one rule per app, and the ONLY way out of the cap.
+   Empty today.
+
+   🔴 WHY THIS IS CSS AND NOT A MANIFEST FIELD. The App Block manifest schema is
+   byte-mirrored across three repos (`public/schemas/app-block/v1.json`, the Go
+   CLI, `@civitai/app-sdk`) and has to move in lockstep, and this host is pinned
+   to `@civitai/app-sdk@^0.14.0` while guests ship 0.35.x — so a new manifest
+   field would be UNTYPED at exactly the point the host consumes it. A rule here
+   is one line, needs no schema motion, and cannot be forged: the guest is
+   cross-origin and can never reach this cascade.
+
+   HOW TO ADD ONE. `PageBlockHost` stamps `data-block-id` (the app's slug — the
+   same value that builds `<slug>.civit.ai`) on its root, so:
+
+     [data-testid='app-page-frame'][data-block-id='my-canvas-app'] {
+       --app-page-max-width: none;
+     }
+
+   `none` is the full-bleed value; a narrower app can take a px value instead.
+   Add the rule together with a one-line reason, the way every other ledger in
+   this repo is kept — an entry with no stated reason cannot be reviewed later.
+
+   WHEN IT IS WARRANTED: an app whose surface is the canvas — an infinite grid, a
+   timeline, a map, a side-by-side compare — where a centred column is actively
+   worse. NOT for "it looks bigger". The default exists because an app cannot
+   know how wide the viewer's monitor is and almost none of them defend against
+   it themselves.
+
+   The mechanism is MEASURED, not merely written down: the "opt-out" cases in
+   `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx` inject a
+   rule of exactly this shape at a 2560px viewport and assert the host goes back
+   to full width — so this block cannot rot into a comment describing something
+   that no longer works. */
 
 /* `data-adhesive-ad` is on the ad BAR itself (src/components/Ads/AdhesiveAd.tsx),
    not on a wrapper, so this matches only when the bar is really rendered and
