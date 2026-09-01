@@ -21,12 +21,23 @@ vi.mock('~/server/prom/client', () => ({
   cacheHitCounter: { inc: vi.fn() },
   cacheMissCounter: { inc: vi.fn() },
 }));
+// Hoisted so the suite can ASSERT on it. An inline `vi.fn()` in the factory below would leave the
+// `lru` half of the mismatch alarm unassertable — and that label exists to answer "shared store or
+// per-pod?", the question the incident could not answer.
+const { mockObserveMismatch } = vi.hoisted(() => ({ mockObserveMismatch: vi.fn() }));
+// Mocked as a whole rather than widening the prom mock above: this module registers
+// its own counters at import time, and the point of the prom mock is to keep the
+// global registry out of this suite entirely.
+vi.mock('~/server/orchestrator/orchestrator-identity-metrics', () => ({
+  observeTokenIdentityMismatch: mockObserveMismatch,
+}));
 
 import { __testing, getOrMintCachedToken } from '../orchestrator-token-cache';
 
 describe('orchestrator-token-cache', () => {
   beforeEach(() => {
     __testing.clear();
+    mockObserveMismatch.mockClear();
   });
 
   afterEach(() => {
@@ -123,6 +134,66 @@ describe('orchestrator-token-cache', () => {
     const recovered = await getOrMintCachedToken(userId, mint);
     expect(recovered).toBe('recovered-token');
     expect(mint).toHaveBeenCalledTimes(2);
+  });
+
+  // A hit is VERIFIED, not trusted: entries carry the userId they were minted for.
+  // Reverting that check makes these return the wrong user's bearer, which is a silent
+  // cross-account Buzz charge in production.
+  it('REFUSES an entry bound to another user, alarms, and mints instead', async () => {
+    const mint = vi.fn(async () => 'freshly-minted');
+
+    __testing.poison(42, '999.someone-elses-token');
+    // Negative control: without this, an empty cache produces the same "did not serve it"
+    // result and the test passes even if the staging step did nothing.
+    expect(__testing.size().cache).toBe(1);
+
+    const token = await getOrMintCachedToken(42, mint);
+
+    expect(token).toBe('freshly-minted');
+    expect(token).not.toContain('someone-elses-token');
+    expect(mint).toHaveBeenCalledTimes(1);
+    expect(mockObserveMismatch).toHaveBeenCalledWith('lru');
+  });
+
+  it('treats an unprefixed entry as a miss rather than serving it, without alarming', async () => {
+    const mint = vi.fn(async () => 'freshly-minted');
+
+    __testing.poison(42, 'bare-token-from-an-untaught-writer');
+    expect(__testing.size().cache).toBe(1);
+
+    expect(await getOrMintCachedToken(42, mint)).toBe('freshly-minted');
+    expect(mockObserveMismatch).not.toHaveBeenCalled();
+  });
+
+  it('serves a correctly owned entry without minting', async () => {
+    const mint = vi.fn(async () => 'should-not-be-called');
+
+    __testing.poison(42, '42.owned-token');
+
+    expect(await getOrMintCachedToken(42, mint)).toBe('owned-token');
+    expect(mint).not.toHaveBeenCalled();
+    expect(mockObserveMismatch).not.toHaveBeenCalled();
+  });
+
+  it('verifies the COALESCED result too, not just the cached one', async () => {
+    // The in-flight map is the one structure here that hands one user's mint result to a
+    // different caller. Reverting its check returns the shared value unverified.
+    let resolveMint: (t: string) => void = () => undefined;
+    const mint = vi.fn(
+      () =>
+        new Promise<string>((r) => {
+          resolveMint = r;
+        })
+    );
+
+    const first = getOrMintCachedToken(42, mint);
+    const coalesced = getOrMintCachedToken(42, mint);
+    resolveMint('shared-token');
+
+    expect(await first).toBe('shared-token');
+    expect(await coalesced).toBe('shared-token');
+    // One mint for two callers — the coalescing is still doing its job.
+    expect(mint).toHaveBeenCalledTimes(1);
   });
 });
 

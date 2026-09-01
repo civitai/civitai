@@ -120,9 +120,19 @@ they are a decision or a verification, not a known way in.
 - [x] **Identify the version in the model-version tooltip.** Already fixed in Creator Studio: the
       truncating name cell's tooltip carries the full row label including the version name, which is
       the only thing distinguishing two rows of the same model when grouping by version.
-- [ ] **Persist model upload settings between models.** The publishing settings block resets on every
+- [~] **Persist model upload settings between models.** The publishing settings block resets on every
       new model. Remember the previous values, or support named templates, so a creator releasing
       models repeatedly does not re-enter the same configuration each time.
+  - [x] **Monetization half, remembered.** The last save that actually charged is kept per model type
+        (localStorage) and offered back when monetization is enabled on a new version — fee and paid
+        access. It fills the form; it never applies a charge.
+  - [ ] **Named templates, targeting model type × base model/ecosystem.** The real ask: creator-authored
+        templates in the studio, replacing the per-type memory above. Plan:
+        [creator-studio/pricing-templates.md](creator-studio/pricing-templates.md).
+  - [ ] **The rest of the block.** Only monetization is remembered — trained words, description,
+        recommended resources and the file-level settings still reset. The wizard's existing
+        "use a template" flow (copy a whole model's settings) covers some of this; whether it should
+        also carry monetization is undecided.
 - [ ] **Scheduled price promotions.** Creators want to run time-boxed discounts. Spec as agreed with
       creators: schedule ahead with a start date, end date, discount percentage, and target model
       set; optional follower notification on launch; a per-month cap on promotions per creator so

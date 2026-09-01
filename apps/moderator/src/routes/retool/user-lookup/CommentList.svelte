@@ -62,6 +62,7 @@
   // no debounce, so reading it in `onSuccess` returns whatever the operator has typed since — type
   // during a delete and the panel marks nothing while the server deletes everything.
   let acted: number[] = [];
+  let unflagged = $state<number[]>([]);
   const form = new FormState({
     onSubmit: () => (acted = posting),
     onSuccess: (data) => {
@@ -76,7 +77,12 @@
       }
       partial = null;
       if (data?.op === 'delete') removed = [...removed, ...acted];
-      else flagged = [...flagged, ...acted];
+      else if (data?.op === 'untos') {
+        // The optimistic mark has to be reversible too: leaving the id in `flagged` keeps the badge on
+        // a comment that is back on the page, which is the same class of wrong the restore just fixed.
+        unflagged = [...unflagged, ...acted];
+        flagged = flagged.filter((id) => !acted.includes(id));
+      } else flagged = [...flagged, ...acted];
     },
   });
 
@@ -146,7 +152,7 @@
               {/if}
               {@render link(c)}
               {@render badges?.(c)}
-              {#if flagged.includes(c.id) && !c.tosViolation}
+              {#if flagged.includes(c.id) && !c.tosViolation && !unflagged.includes(c.id)}
                 <Badge variant="destructive">ToS</Badge>
               {/if}
               <span class="text-xs text-dark-2">{dateTime(c.createdAt)}</span>
@@ -169,6 +175,17 @@
             label="Remove as ToS"
             name="op"
             value="tos"
+            count={posting.length}
+            noun="comment"
+            submitting={form.submitting}
+          />
+          <!-- Setting the flag used to be a one-way door: nothing in either app cleared it, and a ban
+               purge can set it across a whole account in one click. This is the way back, and it also
+               reopens the reports the flag actioned. -->
+          <ConfirmSubmit
+            label="Restore from ToS"
+            name="op"
+            value="untos"
             count={posting.length}
             noun="comment"
             submitting={form.submitting}

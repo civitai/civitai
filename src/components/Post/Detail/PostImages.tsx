@@ -156,6 +156,9 @@ export function PostImages({
                             images,
                             collectionId: imageCollectionItem?.collection?.id,
                           }}
+                          // A link drags by default, so a press-and-move on the video controls
+                          // becomes a link drag that eats the click. Media opts into its own drag.
+                          draggable={!showsControlStrip}
                           onClick={() => {
                             if (videoRef.current) videoRef.current.stop();
                           }}
@@ -182,6 +185,10 @@ export function PostImages({
                               original={image.type === 'video'}
                               anim={safe}
                               html5Controls={showsControlStrip}
+                              // Fullscreen belongs to the image detail view, which this media
+                              // links to. Chromium-only; other browsers still show the button,
+                              // which EdgeVideo's fullscreen guards keep usable.
+                              videoProps={{ controlsList: 'nofullscreen' }}
                               videoRef={videoRef}
                               vimeoVideoId={vimeoVideoId}
                             />

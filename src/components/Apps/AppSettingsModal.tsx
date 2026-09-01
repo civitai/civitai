@@ -66,7 +66,7 @@ export interface AppSettingsModalProps {
 }
 
 const MODEL_TYPE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: ModelType.Checkpoint, label: 'Checkpoint' },
+  { value: ModelType.Checkpoint, label: 'Fine-tune' },
   { value: ModelType.LORA, label: 'LoRA' },
   { value: ModelType.LoCon, label: 'LoCon' },
   { value: ModelType.TextualInversion, label: 'Embedding' },

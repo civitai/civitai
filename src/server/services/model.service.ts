@@ -70,6 +70,7 @@ import type {
   PublishPrivateModelInput,
   SetModelCollectionShowcaseInput,
   SetModelMinorInput,
+  SetModelSfwOnlyInput,
   SetModelOfficialInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
@@ -2314,6 +2315,92 @@ export async function setModelMinor({
   return result;
 }
 
+// Kept in sync with `lockableProperties` in ModelUpsertForm.tsx — these are the
+// fields the "Set as SFW" quick action locks against creator edits.
+export const SFW_ONLY_LOCKED_PROPERTIES = ['nsfw', 'sfwOnly'];
+
+export async function setModelSfwOnly({
+  id,
+  sfwOnly,
+  userId,
+}: SetModelSfwOnlyInput & { userId: number }) {
+  const before = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      poi: true,
+      minor: true,
+      sfwOnly: true,
+      nsfw: true,
+      availability: true,
+      gallerySettings: true,
+      lockedProperties: true,
+    },
+  });
+  if (!before) throw throwNotFoundError(`No model with id ${id}`);
+
+  // Both invariants are enforced by `ModelUpsertForm`'s schema, so clearing the flag here
+  // would leave a model no creator could save again.
+  if (!sfwOnly) {
+    if (before.minor)
+      throw throwBadRequestError('Minor models are SFW only. Unset as Minor first.');
+    if (before.availability === Availability.Private)
+      throw throwBadRequestError('Private models must be SFW only.');
+  }
+
+  const prevLockedProperties = before.lockedProperties ?? [];
+  const lockedProperties = sfwOnly
+    ? uniq([...prevLockedProperties, ...SFW_ONLY_LOCKED_PROPERTIES])
+    : prevLockedProperties.filter((prop) => !SFW_ONLY_LOCKED_PROPERTIES.includes(prop));
+
+  const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
+
+  const result = await dbWrite.model.update({
+    where: { id },
+    // Unset deliberately leaves nsfw/gallerySettings untouched — the model may have been
+    // legitimately SFW before it was flagged, and guessing wrong would silently re-open
+    // NSFW generation nobody asked to re-open.
+    data: sfwOnly
+      ? {
+          sfwOnly: true,
+          nsfw: false,
+          gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+          lockedProperties,
+        }
+      : {
+          sfwOnly: false,
+          lockedProperties,
+        },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      poi: true,
+      nsfw: true,
+      minor: true,
+      sfwOnly: true,
+      status: true,
+      gallerySettings: true,
+    },
+  });
+
+  await preventReplicationLag('model', id);
+  await trackModActivity(userId, {
+    entityType: 'model',
+    entityId: id,
+    activity: sfwOnly ? 'setSfwOnly' : 'unsetSfwOnly',
+  }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'set-model-sfw-only-track-activity',
+      message: `Failed to track mod activity for model ${id}`,
+      error,
+    })
+  );
+  await applyModelFlagSideEffects({ before, after: result });
+
+  return result;
+}
+
 // Model columns the GenerationCoverage view reads. `poi` belongs to the same set but is left out
 // here because applyModelFlagSideEffects already busts the version caches when it moves.
 const coverageModelFields = ['allowCommercialUse', 'availability', 'type', 'uploadType'] as const;
@@ -2544,8 +2631,16 @@ export const upsertModel = async (
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
     const prevMeta = beforeUpdate.meta as ModelMeta | null;
 
+    let clearedLicensingSources: { id: number; licensingSourceVersionId: number }[] = [];
+
     const result = await dbWrite.$transaction(
       async (tx) => {
+        // Not `beforeUpdate.type` — that is a `dbRead` read, and a stale replica reads as "type
+        // unchanged", skipping the repair below on exactly the save that needed it.
+        const typeBeforeUpdate = (
+          await tx.model.findUnique({ where: { id }, select: { type: true } })
+        )?.type;
+
         const updated = await tx.model.update({
           select: {
             id: true,
@@ -2560,6 +2655,7 @@ export const upsertModel = async (
             status: true,
             meta: true,
             availability: true,
+            type: true,
           },
           where: { id },
           data: {
@@ -2597,6 +2693,52 @@ export const upsertModel = async (
           },
         });
 
+        // The same lineage rule `upsertModelVersionHandler` coerces on a version write, applied to
+        // the other write that can break the pairing: the model's type (CU 868kwf2fd).
+        //
+        // Inside the transaction: a reader between the type change and the repair would price
+        // generations against a lineage the model no longer supports.
+        //
+        // 🔴 Gate on the type CHANGING, not on the payload carrying one: `type` is required by
+        // `modelUpsertSchema`, so `data.type !== undefined` is true on every save — a rename, a
+        // tag edit.
+        if (updated.type !== typeBeforeUpdate) {
+          const stamped = await tx.modelVersion.findMany({
+            where: { modelId: updated.id, licensingSourceVersionId: { not: null } },
+            select: { id: true, baseModel: true, licensingSourceVersionId: true },
+          });
+          // Type-narrowing only; the `where` above already excludes nulls.
+          const stampedWithSource = stamped.filter(
+            (v): v is typeof v & { licensingSourceVersionId: number } =>
+              v.licensingSourceVersionId != null
+          );
+          if (stampedWithSource.length) {
+            const roots = await tx.licensingRoot.findMany({
+              where: {
+                modelVersionId: {
+                  in: uniq(stampedWithSource.map((v) => v.licensingSourceVersionId)),
+                },
+              },
+              select: { modelVersionId: true, baseModel: true, modelType: true },
+            });
+            const rootByVersionId = new Map(roots.map((r) => [r.modelVersionId, r]));
+            clearedLicensingSources = stampedWithSource
+              .filter((v) => {
+                const root = rootByVersionId.get(v.licensingSourceVersionId);
+                return !root || root.baseModel !== v.baseModel || root.modelType !== updated.type;
+              })
+              .map((v) => ({
+                id: v.id,
+                licensingSourceVersionId: v.licensingSourceVersionId,
+              }));
+            if (clearedLicensingSources.length)
+              await tx.modelVersion.updateMany({
+                where: { id: { in: clearedLicensingSources.map((v) => v.id) } },
+                data: { licensingSourceVersionId: null },
+              });
+          }
+        }
+
         if (descriptionSupplied && expansion.evaluated)
           await reconcileBlurbReferences({
             entityType: 'Model',
@@ -2629,6 +2771,46 @@ export const upsertModel = async (
           : undefined,
       });
       tracker.entityChanges(changeRows).catch(() => null);
+    }
+
+    if (clearedLicensingSources.length) {
+      // `systemFields` attributes the clear to the rule, not the owner, who changed a type, not a fee.
+      const actorRole = resolveActorRole({
+        actorUserId: userId,
+        ownerId: beforeUpdate.userId,
+        isModerator,
+      });
+      if (tracker)
+        tracker
+          .entityChanges(
+            clearedLicensingSources.flatMap((v) =>
+              diffEntityChanges({
+                entityType: 'ModelVersion',
+                entityId: v.id,
+                ownerId: beforeUpdate.userId,
+                before: { licensingSourceVersionId: v.licensingSourceVersionId },
+                after: { licensingSourceVersionId: null },
+                actorRole,
+                systemFields: { licensingSourceVersionId: 'model-type-changed' },
+              })
+            )
+          )
+          .catch(() => null);
+      logToAxiom({
+        name: 'model-version-licensing-source-cleared',
+        type: 'info',
+        reason: 'model-type-changed',
+        userId,
+        modelId: result.id,
+        modelType: result.type,
+        modelVersionIds: clearedLicensingSources.map((v) => v.id),
+      }).catch(() => null);
+      // Flag lag BEFORE the bust (as publishModelById does): otherwise a concurrent read inside the
+      // replication window refills these caches from the replica's pre-clear row and the fee stays
+      // live. A type change already busts every version id below — the ordering is what this adds.
+      const clearedVersionIds = clearedLicensingSources.map((v) => v.id);
+      await preventModelVersionLagBatch(result.id, clearedVersionIds);
+      await bustMvCache(clearedVersionIds, result.id, userId).catch(() => undefined);
     }
 
     const modelMeta = result.meta as ModelMeta | null;

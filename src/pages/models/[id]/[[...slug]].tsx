@@ -41,6 +41,7 @@ import {
   IconReload,
   IconRepeat,
   IconRosetteDiscountCheck,
+  IconShieldCheck,
   IconTagOff,
   IconTrash,
 } from '@tabler/icons-react';
@@ -96,6 +97,7 @@ import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
 import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
+import { ToggleSfwOnlyModel } from '~/components/Model/Actions/ToggleSfwOnlyModel';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { HIDDEN_METRIC_MESSAGE, HiddenMetricNotice } from '~/components/Model/HiddenMetricNotice';
 import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
@@ -1265,6 +1267,20 @@ export default function ModelDetailsV2({
                                     </Menu.Item>
                                   )}
                                 </ToggleMinorModel>
+                                {/* Minor already forces (and locks) sfwOnly, so the toggle would
+                                    only ever offer an "Unset" the server refuses. */}
+                                {!model.minor && (
+                                  <ToggleSfwOnlyModel modelId={model.id} sfwOnly={model.sfwOnly}>
+                                    {({ onClick }) => (
+                                      <Menu.Item
+                                        leftSection={<IconShieldCheck size={14} stroke={1.5} />}
+                                        onClick={onClick}
+                                      >
+                                        {model.sfwOnly ? 'Unset as SFW' : 'Set as SFW'}
+                                      </Menu.Item>
+                                    )}
+                                  </ToggleSfwOnlyModel>
+                                )}
                                 <ToggleLockModelComments
                                   modelId={model.id}
                                   locked={model.meta?.commentsLocked}

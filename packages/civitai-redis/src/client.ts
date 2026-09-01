@@ -1804,6 +1804,7 @@ export const REDIS_SYS_KEYS = {
     STATUS: 'generation:status',
     WORKFLOWS: 'generation:workflows',
     ENGINES: 'generation:engines',
+    /** @deprecated See REDIS_KEYS.GENERATION.TOKENS_OWNED — bearers moved to an owner-tagged key. */
     TOKENS: 'generation:tokens',
     CUSTOM_CHALLENGE: 'generation:custom-challenge',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
@@ -2098,7 +2099,16 @@ const REDIS_KEYS_UNPREFIXED = {
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
     RESOURCE_DATA: 'packed:generation:resource-data-3',
+    /** @deprecated Bare-token orchestrator bearers. Superseded by TOKENS_OWNED; drains by TTL (~1h). */
     TOKENS: 'generation:tokens',
+    /**
+     * Orchestrator bearers stored as `<userId>.<token>`, so a read can VERIFY the token belongs to
+     * the user it was fetched for instead of trusting the field key. Anything reading this hash must
+     * strip the prefix — the raw value is not a usable bearer. A separate key from TOKENS on purpose:
+     * a pod on an older build reading an encoded value would send it verbatim and get a 401 with no
+     * self-heal, so the two formats never share a key.
+     */
+    TOKENS_OWNED: 'generation:tokens:owned',
     COUNT: 'generation:count',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     QUERIED_WORKFLOWS: 'packed:generation:queried-workflows',

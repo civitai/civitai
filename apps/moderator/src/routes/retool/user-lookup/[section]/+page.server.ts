@@ -508,7 +508,7 @@ export const actions: Actions = {
     const input = parseForm(
       userIdSchema.extend({
         kind: z.enum(['comments', 'reviews']),
-        op: z.enum(['delete', 'tos', 'exclude', 'include']),
+        op: z.enum(['delete', 'tos', 'untos', 'exclude', 'include']),
       }),
       form
     );
@@ -521,12 +521,17 @@ export const actions: Actions = {
         .filter((n) => Number.isInteger(n) && n > 0);
 
     if (input.kind === 'comments') {
-      if (input.op !== 'delete' && input.op !== 'tos')
+      if (input.op !== 'delete' && input.op !== 'tos' && input.op !== 'untos')
         return contentFail('Unsupported action for comments.');
       const commentIds = ids('commentIds');
       const commentV2Ids = ids('commentV2Ids');
       const result = await bulkCommentAction({
-        action: input.op === 'delete' ? 'bulkDelete' : 'removeAsTos',
+        action:
+          input.op === 'delete'
+            ? 'bulkDelete'
+            : input.op === 'tos'
+              ? 'removeAsTos'
+              : 'restoreFromTos',
         commentIds,
         commentV2Ids,
         userId: input.userId,
@@ -541,7 +546,8 @@ export const actions: Actions = {
       };
     }
 
-    if (input.op === 'tos') return contentFail('Unsupported action for reviews.');
+    if (input.op === 'tos' || input.op === 'untos')
+      return contentFail('Unsupported action for reviews.');
     const result = await bulkReviewAction({
       action: input.op === 'delete' ? 'delete' : 'setExclude',
       reviewIds: ids('reviewIds'),

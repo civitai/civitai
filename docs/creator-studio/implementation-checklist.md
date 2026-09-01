@@ -56,7 +56,7 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial · **🚧** blocked on 
 ### `/settings` — Payout & settings
 - [x] Membership / tier status card; Payout (Tipalti) status card
 - [x] Payout unlock (**#16**) — "Set up payouts" prompt unlocks once settled cash ≥ $50 (`getCreatorCash`)
-- [x] Fee defaults — **read-only info** per **B9** *(but see open decision #17 below)*
+- [x] Fee defaults — **read-only info** per **B9** *(becomes a link to the templates list once [pricing-templates.md](pricing-templates.md) ships)*
 
 ### `/join` — Membership upsell
 - [x] CP-framed upsell (**B1**), capability comparison, CTA; CP-member redirect to `/`; reusable `JoinUpsell`; nav aligned to CP membership
@@ -64,7 +64,6 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial · **🚧** blocked on 
 ---
 
 ## Open — needs a product decision (Justin)
-- 🟢 **#17 — Fee defaults: read-only vs. editable + "apply to all"?** Justin expected the settings section to *set* a default rate + a bulk-apply button; **B9** decided fixed system defaults (read-only). Reconcile — is B9 being reversed? ([feedback #17](feedback-justin-round-2.md))
 - 🟢 **#23 — Early-access reframing.** **Pre-check answered — the backend already enforces manage-only.** `mergeEarlyAccessConfigUpdate` (`model-version.service.ts:341`) throws *"You cannot add early access on a model after it has been published"*; on a published version with existing EA you can only *loosen* terms (no price↑, no timeframe↑, no donation-goal change). So enabling-on-published is impossible server-side — the studio drawer currently lets you try and eats a 400. Remaining work is UX in `/models` (disable "enable EA" for published-without-config versions; allow manage-only), not a product decision. ([feedback #23](feedback-justin-round-2.md))
 - 🟢 **B13 — Publish / schedule a version in v1?** Recommended default: fast-follow (not v1). ([decisions B13](pre-implementation-decisions.md))
 
@@ -80,6 +79,7 @@ Legend: `[x]` done · `[ ]` not started · `[~]` partial · **🚧** blocked on 
 - 🐛 **ClickHouse `buzzTransactions` mirror gap** — CH showed a pending-cash balance the buzz service didn't; flag to whoever owns the buzz→CH sync. Doesn't affect the studio (cash reads go to the buzz service).
 
 ## Deferred / unblocked builds (buildable when prioritized)
+- ⏭ **Pricing templates** — creator-authored fee + paid-access defaults targeting model type × base model/ecosystem, pre-filling the main-app version form. Plan (data model, resolution order, phasing): [pricing-templates.md](pricing-templates.md). Resolves **#17**; needs no product decision (see the B9 note there). A per-type localStorage stopgap already ships in the main app and is retired by phase 4 of that plan.
 - ⏭ **Model analytics via the in-spoke fallback** — Postgres version-ids → `IN()` over `daily_resource_generation_counts` / `daily_downloads` / `buzz_resource_compensation`, capped by version count, Redis-cached. Ships per-model usage/earnings + top-models for small/moderate creators *now*; swap the read to the A1 dictionary when it lands (UI/contract unchanged). *(Scoped + measured; paused by request.)*
 - ⏭ **#24 — Bulk "select all matching" + base-model filter** (`/models`) — highest-value remaining bulk-fee build. ([feedback #24](feedback-justin-round-2.md))
 - [x] **#11 — Synchronized crosshair across charts** — DONE: added a `plugins` prop to the `@civitai/ui` `Chart` wrapper + a `createSyncedCrosshair()` plugin (shared hover index across charts sharing a date axis); wired across the `/analytics` charts.

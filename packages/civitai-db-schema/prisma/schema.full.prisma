@@ -1125,9 +1125,11 @@ model ModelVersion {
   licensingFeeSettlementCurrency LicensingFeeSettlementCurrency? @default(Buzz)
 
   // Licensing lineage: the root version whose fee this version inherits (e.g. a
-  // checkpoint built on Anima-Turbo points at the turbo version). Null falls
-  // back to the (baseModel, modelType) BaseModelLicensingFee rule. Decoupled
-  // from baseModel so it never affects gen-compat / leaderboards / filters.
+  // checkpoint built on Anima-Turbo points at the turbo version). Null means NO
+  // lineage fee — a derivative carries an explicit parent, and there is no
+  // (baseModel, modelType) rule table behind it (see the resolution comment in
+  // api/v1/model-versions/mini/[id].ts). Decoupled from baseModel so it never
+  // affects gen-compat / leaderboards / filters.
   licensingSourceVersionId Int?
   licensingSource          ModelVersion?  @relation("licensingSource", fields: [licensingSourceVersionId], references: [id], onDelete: SetNull)
 

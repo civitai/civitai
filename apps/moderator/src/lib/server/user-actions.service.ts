@@ -130,6 +130,7 @@ async function postJson(opts: {
 export type ModEndpoint =
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
+  | 'comment/restore-from-tos'
   | 'csam/training-data-report'
   | 'image/tag-vote'
   | 'minor-flag/confirm'
@@ -224,7 +225,7 @@ const countOf = (body: Record<string, unknown>, keys: string[]) =>
 // BULK COMMENT ACTIONS (Retool's DeleteComments / ToSComments). Both tables in one call, matching the
 // endpoint's contract and Retool's Model Comments / Other Comments split.
 export async function bulkCommentAction(input: {
-  action: 'bulkDelete' | 'removeAsTos';
+  action: 'bulkDelete' | 'removeAsTos' | 'restoreFromTos';
   commentIds: number[];
   commentV2Ids: number[];
   userId: number;
@@ -233,10 +234,17 @@ export async function bulkCommentAction(input: {
   if (!input.commentIds.length && !input.commentV2Ids.length)
     return { ok: false, error: 'Select at least one comment.' };
 
+  const ENDPOINTS = {
+    bulkDelete: ['comment/bulk-delete', 'Comment delete'],
+    removeAsTos: ['comment/remove-as-tos', 'Comment ToS'],
+    restoreFromTos: ['comment/restore-from-tos', 'Comment ToS restore'],
+  } as const;
+  const [path, label] = ENDPOINTS[input.action];
+
   const result = await callModEndpoint(
-    input.action === 'bulkDelete' ? 'comment/bulk-delete' : 'comment/remove-as-tos',
+    path,
     { commentIds: input.commentIds, commentV2Ids: input.commentV2Ids },
-    input.action === 'bulkDelete' ? 'Comment delete' : 'Comment ToS'
+    label
   );
   if (!result.ok) return result;
 
@@ -247,6 +255,7 @@ export async function bulkCommentAction(input: {
       ? countOf(section as Record<string, unknown>, ['count'])
       : 0;
   };
+  // `restoreFromTos` nests per table exactly like `removeAsTos`; only `bulkDelete` is flat.
   const affected =
     input.action === 'bulkDelete'
       ? countOf(result.body, ['commentDeleted', 'commentV2Deleted'])
@@ -254,7 +263,13 @@ export async function bulkCommentAction(input: {
 
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
   if (affected === 0)
-    return { ok: false, error: 'Nothing changed — those comments may already be gone. Reload.' };
+    return {
+      ok: false,
+      error:
+        input.action === 'restoreFromTos'
+          ? 'Nothing changed — those comments may not be flagged. Reload.'
+          : 'Nothing changed — those comments may already be gone. Reload.',
+    };
 
   await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
   // Both endpoints count rows they actually wrote, so a short count is real.
