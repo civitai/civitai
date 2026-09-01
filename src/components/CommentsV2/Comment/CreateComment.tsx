@@ -146,7 +146,17 @@ function useSectionMute({ target, enabled }: { target?: SectionMuteInput; enable
   const control = (
     <Menu position="bottom-end" withinPortal opened={opened} onChange={setOpened}>
       <Menu.Target>
-        <LegacyActionIcon size="sm" variant="subtle" aria-label="Comment notification settings">
+        {/*
+          `self-center` because the enclosing Group is `align="flex-start"` — the avatar has to stay
+          level with the top of the input, but the kebab reads as belonging to the whole composer, so
+          it centres against it rather than hanging off the first line.
+        */}
+        <LegacyActionIcon
+          size="sm"
+          variant="subtle"
+          className="self-center"
+          aria-label="Comment notification settings"
+        >
           <IconDotsVertical size={16} />
         </LegacyActionIcon>
       </Menu.Target>
