@@ -20,13 +20,17 @@ export async function rewardReportReporters(input: {
   if (!input.reporterIds.length) return;
   try {
     const globalBonus = await getGlobalRewardsBonus();
+    const ineligible = await getIneligibleReporters(input.reporterIds);
     const clamped: number[] = [];
     const rows = await Promise.all(
       input.reporterIds.map(async (reporterId) => {
-        const base = await getBaseRewardsMultiplier(reporterId);
+        const base = ineligible.has(reporterId) ? 0 : await getBaseRewardsMultiplier(reporterId);
         const raw = base * globalBonus;
         const multiplier = clampBuzzEventMultiplier(raw);
-        if (multiplier !== raw) clamped.push(raw);
+        // `raw` is non-finite only if the cached tier was garbage, and 1 is then the fallback rather
+        // than a clamp — reporting it as one would fire an error alert naming a ceiling nothing hit.
+        const wasClamped = Number.isFinite(raw) && multiplier !== raw;
+        if (wasClamped) clamped.push(raw);
         // toUserId === byUserId (an accepted report rewards its reporter); ip omitted for localhost/empty
         // so the ClickHouse column falls back to its '' default.
         return {
@@ -39,7 +43,7 @@ export async function rewardReportReporters(input: {
           status: 'pending',
           // The raw product is kept so a clamped row is still traceable back to the tier and bonus
           // that produced it.
-          transactionDetails: multiplier === raw ? '{}' : JSON.stringify({ multiplierRaw: raw }),
+          transactionDetails: wasClamped ? JSON.stringify({ multiplierRaw: raw }) : '{}',
           ...(input.ip && input.ip !== '::1' ? { ip: input.ip } : {}),
         };
       })
@@ -60,7 +64,23 @@ export async function rewardReportReporters(input: {
   }
 }
 
-// Reads the shared MULTIPLIERS_FOR_USER cache (populated by the main app); a miss falls back to base 1.
+// Eligibility is read from Postgres, not from the shared cache. That cache is populated only by the
+// main app and expires after a day, so a reporter who has not browsed the site since filing has no
+// entry — and a miss there is indistinguishable from eligible. This path is the whole payout: the
+// pending row it writes is what process-rewards pays, so the barred user has to be barred here.
+async function getIneligibleReporters(userIds: number[]): Promise<Set<number>> {
+  const rows = await dbRead
+    .selectFrom('User')
+    .select(['id'])
+    .where('id', 'in', userIds)
+    .where('rewardsEligibility', '=', 'Ineligible')
+    .execute();
+  return new Set(rows.map((row) => row.id));
+}
+
+// Reads the shared MULTIPLIERS_FOR_USER cache (populated by the main app) for the TIER only; a miss
+// falls back to base 1. Unlike eligibility, a stale tier costs the reporter a multiplier rather than
+// paying someone who should earn nothing.
 async function getBaseRewardsMultiplier(userId: number): Promise<number> {
   try {
     const cached = await getRedis().packed.get<{ rewardsMultiplier?: number; notFound?: boolean }>(
