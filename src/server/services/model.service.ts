@@ -351,6 +351,12 @@ export const getModelsRaw = async ({
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
 }) => {
+  // Ahead of every early empty return below, including the Meilisearch no-hits one: the point of
+  // throwing rather than falling back is that the misuse is legible, and an empty page hides it.
+  if (input.sort === ModelSort.RecentlyAdded && !input.collectionId) {
+    throw throwBadRequestError('Recently Added sort requires a collectionId');
+  }
+
   const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(
     input,
     {
@@ -484,6 +490,7 @@ export const getModelsRaw = async ({
 
   let isPrivate = false;
   const AND: Prisma.Sql[] = [];
+  let collectionJoin = Prisma.empty;
 
   const userId = sessionUser?.id;
   const isModerator = sessionUser?.isModerator ?? false;
@@ -833,15 +840,26 @@ export const getModelsRaw = async ({
     const { rawAND: collectionItemModelsAND }: { rawAND: Prisma.Sql[] } =
       getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
 
-    AND.push(
-      Prisma.sql`EXISTS (
+    // A semi-join cannot expose ci."id" to the ORDER BY. Safe to widen: CollectionItem is unique on
+    // ("collectionId", "modelId"), so the join cannot multiply rows. schema.full.prisma does not
+    // declare it, and the name has drifted — CollectionItem_model_idx in
+    // containers/db/docker-init/02_all_dll.sql, CollectionItem_model on prod.
+    if (sort === ModelSort.RecentlyAdded) {
+      collectionJoin = Prisma.sql`JOIN "CollectionItem" ci ON ci."modelId" = mm."modelId"
+        AND ci."collectionId" = ${collectionId}
+        AND ${Prisma.join(collectionItemModelsAND, ' AND ')}
+        ${collectionTagId ? Prisma.sql`AND ci."tagId" = ${collectionTagId}` : Prisma.empty}`;
+    } else {
+      AND.push(
+        Prisma.sql`EXISTS (
         SELECT 1 FROM "CollectionItem" ci
         WHERE ci."modelId" = mm."modelId"
         AND ci."collectionId" = ${collectionId}
         AND ${Prisma.join(collectionItemModelsAND, ' AND ')}
         ${collectionTagId ? Prisma.sql`AND ci."tagId" = ${collectionTagId}` : Prisma.empty}
       )`
-    );
+      );
+    }
 
     isPrivate = !permissions.publicCollection;
   }
@@ -868,6 +886,7 @@ export const getModelsRaw = async ({
   else if (sort === ModelSort.ImageCount)
     orderBy = `${pAlias}."imageCount" DESC, ${pAlias}."thumbsUpCount" DESC, ${pAlias}."modelId"`;
   else if (sort === ModelSort.Oldest) orderBy = `mm."lastVersionAt" ASC, ${pAlias}."modelId"`;
+  else if (sort === ModelSort.RecentlyAdded) orderBy = `ci."id" DESC`;
 
   // Cursor predicate split (perf): we build two branches that are combined with
   // UNION ALL when there is a multi-field sort + cursor. The OR-form predicate
@@ -1000,7 +1019,8 @@ export const getModelsRaw = async ({
       mm."userId",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"`;
 
-  const fromAndJoin = fromClause;
+  const fromAndJoin = Prisma.sql`${fromClause}
+      ${collectionJoin}`;
 
   const limitValue = (take ?? 100) + 1;
   const orderByRaw = Prisma.raw(orderBy);

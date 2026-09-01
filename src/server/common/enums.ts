@@ -17,7 +17,12 @@ export enum ModelSort {
   ImageCount = 'Most Images',
   Newest = 'Newest',
   Oldest = 'Oldest',
+  RecentlyAdded = 'Recently Added',
 }
+
+export const ModelSortHidden = {
+  RecentlyAdded: ModelSort.RecentlyAdded,
+};
 
 export enum ReviewSort {
   Newest = 'newest',
@@ -50,10 +55,12 @@ export enum ImageSort {
   Newest = 'Newest',
   Oldest = 'Oldest',
   Random = 'Random',
+  RecentlyAdded = 'Recently Added',
 }
 
 export const ImageSortHidden = {
   Random: ImageSort.Random,
+  RecentlyAdded: ImageSort.RecentlyAdded,
 };
 
 export enum PostSort {
@@ -62,7 +69,12 @@ export enum PostSort {
   MostCollected = 'Most Collected',
   Newest = 'Newest',
   Oldest = 'Oldest',
+  RecentlyAdded = 'Recently Added',
 }
+
+export const PostSortHidden = {
+  RecentlyAdded: PostSort.RecentlyAdded,
+};
 
 export enum ImageType {
   txt2img = 'txt2img',
@@ -108,7 +120,12 @@ export enum ArticleSort {
   MostCollected = 'Most Collected',
   Newest = 'Newest',
   RecentlyUpdated = 'Recently Updated',
+  RecentlyAdded = 'Recently Added',
 }
+
+export const ArticleSortHidden = {
+  RecentlyAdded: ArticleSort.RecentlyAdded,
+};
 
 export enum CheckpointType {
   Trained = 'Trained',

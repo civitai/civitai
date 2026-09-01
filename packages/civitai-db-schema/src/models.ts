@@ -545,6 +545,7 @@ export interface User {
   questionReactions?: QuestionReaction[];
   answerReactions?: AnswerReaction[];
   commentV2Reactions?: CommentV2Reaction[];
+  threadMutes?: ThreadMute[];
   answerVotes?: AnswerVote[];
   tagsEngaged?: TagEngagement[];
   imageReactions?: ImageReaction[];
@@ -2572,6 +2573,15 @@ export interface Thread {
   comments?: CommentV2[];
   directChildren?: Thread[];
   children?: Thread[];
+  mutes?: ThreadMute[];
+}
+
+export interface ThreadMute {
+  userId: number;
+  user?: User;
+  threadId: number;
+  thread?: Thread;
+  mutedAt: Date;
 }
 
 export interface QuestionReaction {
