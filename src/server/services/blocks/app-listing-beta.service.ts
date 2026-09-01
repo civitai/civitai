@@ -27,13 +27,23 @@
  * the sibling module and never re-measured here. Two independent counts of it disagreed
  * (they scope "a query site" differently and both drift with every commit), and no test
  * asserts on it — an unpinned number in a comment is a claim that rots silently, which is
- * how the wrong one got copied forward in the first place. What actually decides exposure is
- * the METHOD, and that does not drift: `findUnique` / `findFirst` / `findMany` / `create` /
- * `update` / `upsert` / `delete` return model rows, so with no explicit `select` they name
- * every scalar. `updateMany` / `deleteMany` / `createMany` return `BatchPayload` — a row
- * COUNT — so they name no scalars and cannot raise P2022 from a missing column at all
- * (verified against the pinned client's own generated types). Both shapes exist in this
- * file's neighbourhood; to see today's exposure, grep for the first list without a `select:`.
+ * how the wrong one got copied forward in the first place.
+ *
+ * What decides exposure is whether the call RETURNS ROWS. `findUnique` / `findFirst` /
+ * `findMany` / `create` / `update` / `upsert` / `delete` do, and so do the `…AndReturn`
+ * variants (`createManyAndReturn` / `updateManyAndReturn`, both present in the pinned
+ * client) — with no explicit `select`, every one of them names every scalar the model
+ * declares. `updateMany` / `deleteMany` / `createMany` return a `BatchPayload` row COUNT, so
+ * they name no scalars IN THE RETURNING LIST.
+ *
+ * 🔴 THAT LAST EXEMPTION IS NARROWER THAN IT LOOKS, and the rewrite that introduced it
+ * overstated it as "cannot raise P2022 from a missing column at all". FALSE: a `*Many` call
+ * still names whatever columns appear in its own `data` and `where`, so
+ * `appListing.updateMany({ data: { isBeta: true } })` emits `SET is_beta = $1` and raises
+ * 42703 exactly like the others. The exemption covers the RETURNING list and nothing else.
+ * Note too that `createManyAndReturn` / `updateManyAndReturn` CONTAIN the exempt names as
+ * substrings, so a grep built from those names alone matches them and gets the wrong answer
+ * — match whole method names.
  *
  * 🔴 NO TEST IN THIS REPO CAN SEE THAT. The suites mock Prisma, so none of them ever
  * generates SQL; this module's own tests are green and blind to it. The consequence is
@@ -47,16 +57,20 @@
  * `{ available: false, isBeta: false, betaMessage: null }`. Both render nothing, but only
  * the FIRST licenses a write — every write path in this feature is gated on it.
  *
- * 🔴 TWO SHAPES OF WRITE, TWO DIFFERENT ANSWERS, AND THEY ARE NOT INTERCHANGEABLE:
- *   - a write the SYSTEM originates (the shadow-revision clone) carries a value nobody
- *     asked for right now, so an absent column means OMIT THE KEYS and carry on —
- *     {@link betaWriteFragment};
- *   - a write an AUTHOR originates (a listing patch naming `isBeta` / `betaMessage`)
- *     carries a value the author just typed and expects to see again, so an absent column
- *     must be an ERROR — {@link assertBetaWritable}. Silently dropping it would show them a
- *     saved form with their beta note missing and no explanation, and writing it anyway
- *     raises a P2022 500 that rolls back the surrounding transaction.
- * Using the omit-fragment on an author write is the failure this split exists to stop.
+ * 🔴 THERE IS EXACTLY ONE SHAPE OF BETA WRITE, AND THAT IS WHY THERE IS ONE HELPER. Every
+ * write of these columns is AUTHOR-originated — a listing patch naming `isBeta` /
+ * `betaMessage` — so an absent column must be an ERROR ({@link assertBetaWritable}), never a
+ * silent omission: the author typed that value and expects to see it again, and dropping it
+ * would show them a saved form with their note missing and no explanation.
+ *
+ * 🔴 THIS MODULE BRIEFLY HAD A SECOND, SYSTEM-ORIGINATED HELPER — a spread fragment that
+ * omitted the keys — for exactly one caller: `beginListingRevision` cloned the columns onto
+ * the shadow so the moderator review preview could render them. That clone is gone
+ * (`getListingPreviewForReview` reads beta from the PARENT for a shadow), and with it the
+ * only system-originated write. Do not reintroduce the fragment without a caller: the
+ * sibling `sourceRepoUrl` module legitimately needs both shapes because its column IS staged
+ * on a revision, and copying its structure here is what produced the clone in the first
+ * place.
  *
  * 🔴 BETA IS NEVER STAGED ON A SHADOW REVISION, and that is the one place this feature
  * deliberately departs from how `sourceRepoUrl` is handled. `sourceRepoUrl` is MATERIAL, so
@@ -71,14 +85,16 @@
  *      there would have made that claim false for every on-site media revision; and
  *   3. neither column belongs in `OFFSITE_UNCOMPARED_APPLY_FIELDS`, because that list names
  *      what the apply COPIES without comparing, and the apply copies nothing here.
- * The clone in `beginListingRevision` still carries the columns — see
- * {@link betaWriteFragment} — but for DISPLAY, not for the round trip: the moderator review
- * preview renders the SHADOW row, so without the clone a reviewer would see a beta app
- * without its beta banner.
+ * There is no clone either: `beginListingRevision` used to copy the columns onto the shadow
+ * so the moderator review preview could render them, and that is now unnecessary because
+ * `getListingPreviewForReview` reads beta from the PARENT for a shadow. Removing it also
+ * removed an ordering constraint that had hoisted a WRITE above the patch validation in
+ * `updateListing`.
  */
 
 import { TRPCError } from '@trpc/server';
 
+import { logToAxiom } from '~/server/logging/client';
 import { isMissingColumnError } from '~/server/services/blocks/app-listing-source-repo.service';
 
 /** What a guarded read of the beta columns yields. See the module header on `available`. */
@@ -231,6 +247,31 @@ export async function readListingBetaMany(
 }
 
 /**
+ * Record a degraded beta read, without letting the recording break the page.
+ *
+ * 🔴 `type: 'warning'`, NOT `'error'`. `type` is what the Alloy→Loki pipeline reads as the
+ * log level, and the rule in `~/server/logging/client` is that a fault which is not a
+ * server-side failure must never sit on the error board. A missing column during the
+ * manual-apply window is an expected intermediate state, not an incident.
+ *
+ * 🔴 THE `.catch(() => null)` IS LOAD-BEARING, not tidiness. Nothing awaits this call, and
+ * `logToAxiom` awaits an ingest that REJECTS when Axiom itself is degraded — so without the
+ * catch the rejection has nowhere to go but `unhandledRejection`, and the render this exists
+ * merely to OBSERVE would be taken down by the observation. That is the precise failure this
+ * whole `…ForRender` posture exists to prevent, reintroduced through the logging. Same
+ * reasoning as `app-listing-assets.service`, `~/server/redis/fail-open-log` and
+ * `~/server/meilisearch/client`.
+ */
+function noteDegradedBetaRead(err: unknown): void {
+  logToAxiom({
+    name: 'app-listing-beta-read-degraded',
+    type: 'warning',
+    message: err instanceof Error ? err.message : String(err),
+    code: (err as { code?: unknown })?.code ?? null,
+  }).catch(() => null);
+}
+
+/**
  * A read for a RENDERING path, which degrades on **any** error rather than only on a missing
  * column.
  *
@@ -249,10 +290,16 @@ export async function readListingBetaMany(
  * is not a close call. The same reasoning, at lower stakes, covers the public `/apps` grid
  * and the moderator table, which are also read-only renders of a cosmetic label.
  *
- * The error is NOT lost — the sibling queries in the same request hit the same client, so a
- * genuine outage still surfaces through them (and through the logs and metrics of whatever
- * broke). What is suppressed is only this label's ability to be the thing that takes a page
- * down.
+ * 🔴 THE ERROR IS LOGGED RATHER THAN ASSUMED TO SURFACE ELSEWHERE. An earlier version of
+ * this paragraph argued it could not be lost, because "the sibling queries in the same
+ * request hit the same client". True on the two LIST surfaces, whose siblings read
+ * `app_listings` — and FALSE on the one surface this was built for: the run page's only
+ * sibling reads `app_blocks`, so a table-scoped failure on `app_listings` (`42P01`, `42501`
+ * — the exact codes this module's tests enumerate) is invisible to it. Without a log a
+ * half-applied schema would leave the badge permanently and silently absent. Hence the warn
+ * in {@link noteDegradedBetaRead}: the page still renders, and the failure is still
+ * findable. What is suppressed is only this label's ability to be the thing that takes a
+ * page down.
  *
  * `available` is reported honestly as `false` on any failure, so a caller that ever wanted to
  * gate a write on one of these reads would still fail CLOSED — but none does, and none should.
@@ -260,7 +307,8 @@ export async function readListingBetaMany(
 async function readForRender(read: () => Promise<ListingBetaRead>): Promise<ListingBetaRead> {
   try {
     return await read();
-  } catch {
+  } catch (err) {
+    noteDegradedBetaRead(err);
     return BETA_UNAVAILABLE;
   }
 }
@@ -297,7 +345,8 @@ export async function readListingBetaManyForRender(
 ): Promise<Map<string, ListingBetaRead>> {
   try {
     return await readListingBetaMany(listingIds, db);
-  } catch {
+  } catch (err) {
+    noteDegradedBetaRead(err);
     return new Map();
   }
 }
@@ -323,24 +372,6 @@ export async function isBetaColumnAvailable(db: BetaReadClient): Promise<boolean
 }
 
 /**
- * Spread-ready write fragment for the beta columns: `{ isBeta, betaMessage }` when they are
- * available, `{}` when they are not.
- *
- * 🔴 THE WHOLE POINT IS THE EMPTY OBJECT. Unavailable columns must be OMITTED from the
- * write, not written as defaults — writing them would raise the same P2022 and roll back
- * the surrounding transaction, so a feature that is merely inert would instead break the
- * (pre-existing) flow it rides along with. The one caller is `beginListingRevision`'s
- * shadow clone, which is a pre-existing author flow that must keep working before the
- * migration lands.
- */
-export function betaWriteFragment(read: ListingBetaRead): {
-  isBeta?: boolean;
-  betaMessage?: string | null;
-} {
-  return read.available ? { isBeta: read.isBeta, betaMessage: read.betaMessage } : {};
-}
-
-/**
  * The message an AUTHOR sees when they edit their beta declaration before the manual-apply
  * migration has run.
  *
@@ -354,11 +385,13 @@ export const BETA_UNAVAILABLE_MESSAGE =
 /**
  * Gate an AUTHOR-ORIGINATED write of the beta columns on the manual-apply migration.
  *
- * 🔴 THIS IS DELIBERATELY NOT {@link betaWriteFragment}. Omitting the keys is the right
- * answer for a write the system originates on the author's behalf; it is the WRONG answer
- * for a value the author just typed, because the request then reports success while the
- * beta note vanishes, and the author's only recourse is to type it again. A refusal that
- * names the field is recoverable; a silent drop is not.
+ * 🔴 IT REFUSES RATHER THAN OMITTING, and the contrast is with the sibling `sourceRepoUrl`
+ * module, which has an omit-fragment for its system-originated writes. Omitting the keys is
+ * the right answer for a write the system originates on the author's behalf; it is the WRONG
+ * answer for a value the author just typed, because the request then reports success while
+ * the beta note vanishes, and the author's only recourse is to type it again. A refusal that
+ * names the field is recoverable; a silent drop is not. Every beta write is author-
+ * originated, so there is no second helper here.
  *
  * `PRECONDITION_FAILED`, not `BAD_REQUEST`: the value is not malformed and there is nothing
  * the author can do to make it acceptable — the environment is not ready. The distinct code

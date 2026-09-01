@@ -287,7 +287,8 @@ function cardKindData(row: HydratedListing): ListingCardKindData {
  * public `/apps` GRID. Putting `isBeta: true` into `listingHydrateSelect` (the obvious
  * implementation, and the select this function's rows come from) makes every store read
  * that shares it throw P2022 from the moment this deploys until a human runs the SQL. The
- * caller resolves it through `readListingBetaMany`, which degrades to an empty map, and the
+ * caller resolves it through `readListingBetaManyForRender`, which degrades to an empty map on
+ * ANY error, and the
  * row is not even consulted for it here. It defaults to {@link BETA_NOT_SET} so the many
  * existing fixtures and call sites that pass one argument keep working unchanged.
  */
@@ -402,23 +403,37 @@ export async function getListingPreviewForReview(args: {
 }): Promise<{ card: ListingCard; detail: ListingDetail } | null> {
   const row = await dbRead.appListing.findUnique({
     where: { id: args.listingId },
-    select: listingHydrateSelect,
+    // `revisionOfId` on top of the shared select — the beta read below is keyed on the
+    // PARENT for a shadow. Spread here rather than added to `listingHydrateSelect`, so the
+    // public grid and detail reads are untouched (same pattern as `status` on the public
+    // detail read). It is an ordinary long-standing column, not a manual-apply one.
+    select: { ...listingHydrateSelect, revisionOfId: true },
   });
   if (!row) return null;
   // Same manual-apply guard as the public read — a moderator previewing a shadow must
   // see the source link the apply will publish, and the preview must not 500 while the
   // migration is outstanding. `args.listingId` is the row this preview projects (a
   // shadow id here, deliberately), not its parent.
-  // 🔴 BOTH manual-apply guards, and the beta one is here for a REASON the source-repo one
-  // does not have: `AppListingDetailBody`'s `preview` posture deliberately KEEPS the beta
-  // notice (it is presentational, and a moderator approving a shadow should see the banner
-  // they are approving), so this projection has to carry it or the preview would show a
-  // beta app without its beta framing. `args.listingId` is the row this preview projects (a
-  // shadow id here, deliberately), not its parent — which is exactly why
-  // `beginListingRevision` clones the columns onto the shadow.
+  //
+  // 🔴 THE BETA READ IS KEYED ON THE **PARENT** FOR A SHADOW, and that is what lets beta
+  // stay off the revision round trip entirely. Beta is never staged: every write targets the
+  // live listing, so the PARENT row is the only place the current declaration exists. A
+  // shadow's own beta columns are therefore not a source of truth — reading them would show
+  // a moderator whatever the value happened to be when the shadow was minted, which goes
+  // stale the moment the author edits beta again (and they can, at any time, because the
+  // edit applies in place while the revision sits in the queue).
+  //
+  // 🔴 THIS REPLACED A CLONE, AND REMOVING THAT CLONE IS THE POINT. `beginListingRevision`
+  // used to copy the columns onto the shadow purely so this preview could render them. That
+  // put an ordering constraint on `updateListing` — the parent's beta write had to land
+  // before the shadow was minted or the clone captured the pre-edit value — and honouring it
+  // hoisted a WRITE above the patch validation, so a patch that failed validation applied
+  // its beta half anyway. Reading the parent here needs no clone, no ordering rule, and
+  // cannot go stale.
+  const betaSourceId = row.revisionOfId ?? args.listingId;
   const [sourceRepo, beta] = await Promise.all([
     readListingSourceRepoUrl(args.listingId, dbRead),
-    readListingBetaForRender(args.listingId, dbRead),
+    readListingBetaForRender(betaSourceId, dbRead),
   ]);
   return {
     card: projectListingCard(row, beta),
@@ -798,8 +813,8 @@ export async function getListingDetail(
   // ONE round trip more than the bare hydrate, not three. Each is separately guarded
   // against its own manual-apply migration being outstanding — the collaborator TABLE
   // (`safeCollaboratorQuery` → `[]`), the source-repo COLUMN (`readListingSourceRepoUrl` →
-  // `{available:false, value:null}`) and the beta COLUMNS (`readListingBeta` →
-  // `BETA_UNAVAILABLE`).
+  // `{available:false, value:null}`) and the beta COLUMNS (`readListingBetaForRender` →
+  // `BETA_UNAVAILABLE` on ANY error, because a cosmetic label must not 500 a public page).
   const [collaborators, sourceRepo, beta] = await Promise.all([
     loadDisplayedCollaboratorChips(row.id),
     readListingSourceRepoUrl(row.id, dbRead),

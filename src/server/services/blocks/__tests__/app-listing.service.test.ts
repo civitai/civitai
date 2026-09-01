@@ -1140,3 +1140,90 @@ describe('the beta projections — flag, note, and the stale-note rule', () => {
     );
   });
 });
+
+describe('🔴 getListingPreviewForReview reads beta from the PARENT for a shadow', () => {
+  /**
+   * 🔴 THIS IS THE MECHANISM THAT REPLACED THE CLONE, so it is the thing that must not
+   * regress. `beginListingRevision` used to copy the beta columns onto the shadow purely so
+   * this preview could render them. That forced the parent's beta write to land BEFORE the
+   * shadow was minted, which hoisted a WRITE above the patch validation and made a rejected
+   * patch apply its beta half anyway. Reading the parent here needs no clone, no ordering
+   * rule, and — unlike a clone — cannot go stale while the revision sits in the queue.
+   *
+   * The beta reader is NOT mocked in this suite, so these assertions exercise the real
+   * `readListingBetaForRender` and read the query it actually issues.
+   */
+  /** The `findUnique` call the guarded beta reader makes, or undefined. */
+  function betaLookup() {
+    return (
+      mockDbRead.appListing.findUnique.mock.calls
+        .map((c) => c[0] as { where?: { id?: string }; select?: Record<string, unknown> })
+        .find((a) => a?.select && 'isBeta' in a.select) ?? undefined
+    );
+  }
+  /** The `findUnique` call the guarded SOURCE-REPO reader makes, or undefined. */
+  function sourceRepoLookup() {
+    return (
+      mockDbRead.appListing.findUnique.mock.calls
+        .map((c) => c[0] as { where?: { id?: string }; select?: Record<string, unknown> })
+        .find((a) => a?.select && 'sourceRepoUrl' in a.select) ?? undefined
+    );
+  }
+
+  beforeEach(() => {
+    mockDbRead.appListing.findUnique.mockReset();
+  });
+
+  it('keys the beta read on `revisionOfId`, not on the shadow id', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValue({
+      ...hydratedRow(),
+      id: 'apl_shadow',
+      revisionOfId: 'apl_parent',
+    });
+    await getListingPreviewForReview({ listingId: 'apl_shadow' });
+    expect(betaLookup()?.where).toEqual({ id: 'apl_parent' });
+  });
+
+  it('keys it on the row itself for a NON-shadow listing (positive control)', async () => {
+    // Without this, the assertion above would also pass on an implementation that read some
+    // other id unconditionally — this pins that the parent hop is conditional on being a
+    // shadow, i.e. on `revisionOfId` being non-null.
+    mockDbRead.appListing.findUnique.mockResolvedValue({
+      ...hydratedRow(),
+      id: 'apl_parent',
+      revisionOfId: null,
+    });
+    await getListingPreviewForReview({ listingId: 'apl_parent' });
+    expect(betaLookup()?.where).toEqual({ id: 'apl_parent' });
+  });
+
+  it('🔴 the SOURCE-REPO read still keys on the SHADOW — the two are opposite questions', async () => {
+    // `sourceRepoUrl` IS staged on a revision (a MATERIAL field the apply copies), so the
+    // moderator must see the SHADOW's value — the one approving will publish. Beta is never
+    // staged, so they must see the PARENT's. Same function, opposite keys; this pins that a
+    // future "consolidation" cannot collapse them into one id.
+    mockDbRead.appListing.findUnique.mockResolvedValue({
+      ...hydratedRow(),
+      id: 'apl_shadow',
+      revisionOfId: 'apl_parent',
+    });
+    await getListingPreviewForReview({ listingId: 'apl_shadow' });
+    expect(sourceRepoLookup()?.where).toEqual({ id: 'apl_shadow' });
+    expect(betaLookup()?.where).toEqual({ id: 'apl_parent' });
+  });
+
+  it('surfaces the parent beta declaration into BOTH projections', async () => {
+    mockDbRead.appListing.findUnique.mockImplementation(
+      async (args: { select?: Record<string, unknown> }) => {
+        if (args?.select && 'isBeta' in args.select)
+          return { isBeta: true, betaMessage: 'reviewer sees this' };
+        if (args?.select && 'sourceRepoUrl' in args.select) return { sourceRepoUrl: null };
+        return { ...hydratedRow(), id: 'apl_shadow', revisionOfId: 'apl_parent' };
+      }
+    );
+    const res = await getListingPreviewForReview({ listingId: 'apl_shadow' });
+    expect(res!.card.isBeta).toBe(true);
+    expect(res!.detail.isBeta).toBe(true);
+    expect(res!.detail.betaMessage).toBe('reviewer sees this');
+  });
+});

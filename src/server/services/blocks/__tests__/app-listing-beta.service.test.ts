@@ -1,11 +1,10 @@
 import { TRPCError } from '@trpc/server';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   BETA_UNAVAILABLE,
   BETA_UNAVAILABLE_MESSAGE,
   assertBetaWritable,
-  betaWriteFragment,
   isBetaColumnAvailable,
   readListingBeta,
   readListingBetaBySlug,
@@ -16,6 +15,19 @@ import {
   type BetaReadClient,
   type ListingBetaRead,
 } from '~/server/services/blocks/app-listing-beta.service';
+
+// 🔴 THE CANONICAL `loggingMock`, NOT A PER-FILE MOCK OF THE LOGGING CLIENT MODULE. That
+// module is one of the guarded shared specifiers: a per-file mock of it freezes THIS file's
+// shape into every later file in the same worker under `isolate: false`, which is why
+// `no-direct-shared-module-mock.test.ts` fails a new one. It is registered globally in
+// `src/__tests__/setup.ts`; behaviour is DECLARED here rather than re-mocked.
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+
+const logToAxiom = loggingMock.logToAxiom;
+
+beforeEach(() => {
+  logToAxiom.mockClear().mockResolvedValue(undefined);
+});
 
 /**
  * The UNAPPLIED-MIGRATION posture for `app_listings.is_beta` / `beta_message`.
@@ -238,36 +250,6 @@ describe('isBetaColumnAvailable — the column probe', () => {
   });
 });
 
-describe('betaWriteFragment — the SYSTEM-originated write', () => {
-  it('emits both keys when the columns are available', () => {
-    expect(betaWriteFragment({ available: true, isBeta: true, betaMessage: 'x' })).toEqual({
-      isBeta: true,
-      betaMessage: 'x',
-    });
-  });
-
-  it('emits an EMPTY object when they are not — the keys must be OMITTED, not defaulted', () => {
-    // 🔴 THE ASSERTION THAT MATTERS. Writing `{isBeta:false}` against a missing column
-    // raises the same P2022 and rolls back the surrounding transaction, so a feature that
-    // is merely inert would instead break the pre-existing flow it rides along with.
-    const fragment = betaWriteFragment({ available: false, isBeta: false, betaMessage: null });
-    expect(fragment).toEqual({});
-    expect(Object.keys(fragment)).toHaveLength(0);
-    expect('isBeta' in fragment).toBe(false);
-    expect('betaMessage' in fragment).toBe(false);
-  });
-
-  it('emits `isBeta: false` explicitly when the columns ARE available and beta is off', () => {
-    // The positive control for the case above: "off" and "unreadable" produce DIFFERENT
-    // fragments, so a mutant that returns `{}` unconditionally is killed here rather than
-    // passing because both arms looked empty.
-    expect(betaWriteFragment({ available: true, isBeta: false, betaMessage: null })).toEqual({
-      isBeta: false,
-      betaMessage: null,
-    });
-  });
-});
-
 describe('assertBetaWritable — the AUTHOR-originated write', () => {
   it('passes when the columns are available', () => {
     expect(() => assertBetaWritable(true)).not.toThrow();
@@ -298,19 +280,19 @@ describe('assertBetaWritable — the AUTHOR-originated write', () => {
   });
 });
 
-describe('the two write helpers are NOT interchangeable', () => {
+describe('an unavailable column REFUSES an author write — there is no silent shape', () => {
   /**
-   * 🔴 THIS IS THE SEAM, and it is the one a future maintainer is most likely to collapse:
-   * both helpers answer "may I write?", so reaching for whichever is nearer looks harmless.
-   * Using the omit-fragment on an AUTHOR write reports success while the author's value
-   * silently vanishes; using the assert on a SYSTEM write turns an unapplied migration into
-   * a hard failure of a pre-existing flow (opening a revision). Pinned as a relationship —
-   * on the SAME unavailable input the two must disagree, one silently, one loudly.
+   * 🔴 THIS BLOCK USED TO PIN A SEAM BETWEEN TWO HELPERS — an omit-fragment for
+   * system-originated writes and an assert for author-originated ones, the shape the sibling
+   * `sourceRepoUrl` module has. The fragment is gone: its only caller was the shadow clone in
+   * `beginListingRevision`, and the moderator preview now reads beta from the parent instead,
+   * so every beta write is author-originated. What survives is the half that matters — an
+   * unreadable column must be LOUD, never a silent omission that reports success while the
+   * author's note vanishes.
    */
   const unavailable: ListingBetaRead = { available: false, isBeta: false, betaMessage: null };
 
-  it('the system helper is SILENT and the author helper is LOUD on the same input', () => {
-    expect(betaWriteFragment(unavailable)).toEqual({});
+  it('refuses, rather than quietly writing nothing', () => {
     expect(() => assertBetaWritable(unavailable.available)).toThrow(TRPCError);
   });
 });
@@ -382,5 +364,98 @@ describe('🔴 the …ForRender readers — a cosmetic label must never take a p
       okClient(null, [{ id: 'a', isBeta: true, betaMessage: null }])
     );
     expect(map.get('a')?.isBeta).toBe(true);
+  });
+});
+
+describe('🔴 a degraded render read is LOGGED, and the logging cannot take the page down', () => {
+  /**
+   * 🔴 WHY THE LOG EXISTS. The catch-all posture's original justification was that the error
+   * "is not lost, because the sibling queries in the same request hit the same client". True
+   * on the two LIST surfaces, whose siblings read `app_listings` — and FALSE on the one
+   * surface the posture was built for: the run page's only sibling reads `app_blocks`, so a
+   * table-scoped failure on `app_listings` (`42P01`, `42501`) is invisible to it. Without a
+   * log, a half-applied schema leaves the badge permanently and silently absent.
+   */
+  it('logs once, at WARNING, when a render read degrades', async () => {
+    const err = new Error('permission denied for table app_listings') as Error & {
+      code?: string;
+    };
+    err.code = '42501';
+    await readListingBetaForRender('apl_1', throwingClient(err));
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+    // 🔴 `warning`, NOT `error`. `type` is what the Alloy→Loki pipeline reads as the level,
+    // and a missing column during the manual-apply window is an expected intermediate state,
+    // not an incident — logging it at error severity puts an expected state on the error
+    // board, which is the rule `~/server/logging/client` states.
+    expect(logToAxiom.mock.calls[0][0]).toMatchObject({
+      name: 'app-listing-beta-read-degraded',
+      type: 'warning',
+      code: '42501',
+    });
+  });
+
+  it('does NOT log on the happy path (positive control)', async () => {
+    // Without this, the assertion above would pass on an implementation that logged on every
+    // read — which would be its own defect, and would make the signal useless.
+    await readListingBetaForRender('apl_1', okClient({ isBeta: true, betaMessage: null }));
+    expect(logToAxiom).not.toHaveBeenCalled();
+  });
+
+  it('🔴 the log promise gets a REJECTION HANDLER attached — the `.catch` is load-bearing', async () => {
+    // 🔴 THE FAILURE THIS PREVENTS IS THE ONE THE WHOLE POSTURE EXISTS FOR, reintroduced
+    // through the logging. `logToAxiom` awaits an ingest that rejects when Axiom is degraded,
+    // and NOTHING awaits the call — so without `.catch(() => null)` the rejection has nowhere
+    // to go but `unhandledRejection`, and the render this merely OBSERVES is taken down by
+    // the observation.
+    //
+    // 🔴 TWO EARLIER VERSIONS OF THIS TEST WERE VACUOUS, AND BOTH LOOKED RIGHT.
+    //   (a) asserting only that the read RESOLVES passes with the `.catch` deleted, precisely
+    //       because nothing awaits the log — the dangling rejection cannot reach the read's
+    //       own value. Mutant SURVIVED a green suite.
+    //   (b) listening for `process.on('unhandledRejection')` also passes, because vitest
+    //       installs its own handling and the event never reaches a test-registered listener.
+    //       Mutant SURVIVED again.
+    // What is actually observable is the call the guard makes on the returned promise, so
+    // that is what this reads: the mock hands back a rejected promise instrumented to record
+    // whether anyone attached a handler.
+    let handlerAttached = false;
+    logToAxiom.mockImplementationOnce((() => {
+      const promise = Promise.reject(new Error('axiom is down'));
+      const realCatch = promise.catch.bind(promise);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (promise as any).catch = (...args: unknown[]) => {
+        handlerAttached = true;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return (realCatch as any)(...args);
+      };
+      return promise;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    }) as any);
+
+    const err = new Error('boom') as Error & { code?: string };
+    err.code = '57014';
+    await expect(readListingBetaForRender('apl_1', throwingClient(err))).resolves.toEqual(
+      BETA_UNAVAILABLE
+    );
+    expect(
+      handlerAttached,
+      'the degradation log must attach a rejection handler, or a degraded Axiom takes the page down'
+    ).toBe(true);
+  });
+
+  it('the batched render read logs and degrades the same way', async () => {
+    const err = new Error('boom') as Error & { code?: string };
+    err.code = '42P01';
+    expect((await readListingBetaManyForRender(['a'], throwingClient(err))).size).toBe(0);
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
+  });
+
+  it('the NARROW readers do not log — they propagate instead', async () => {
+    // The split, asserted on the logging axis too: a write-gating path surfaces the error to
+    // its caller, so logging there would double-report it.
+    const err = new Error('boom') as Error & { code?: string };
+    err.code = '42P01';
+    await expect(readListingBeta('apl_1', throwingClient(err))).rejects.toBe(err);
+    expect(logToAxiom).not.toHaveBeenCalled();
   });
 });

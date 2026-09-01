@@ -85,11 +85,16 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // already relies on), and `AppListing.slug` is `@unique`, so it is one indexed
     // single-row read.
     //
-    // 🔴 IT FAILS OPEN TO "NOT BETA", and it must. This page's SSR 404s or 500s the APP
-    // LAUNCH — a failure here does not degrade a badge, it takes the app away. So the read
-    // goes through the guarded reader (which swallows exactly the missing-column error while
-    // the manual-apply migration is outstanding), and a listing row that does not exist at
-    // all resolves to `isBeta: false` rather than throwing.
+    // 🔴 IT FAILS OPEN TO "NOT BETA" ON **EVERY** ERROR, AND IT MUST. This page's SSR 404s or
+    // 500s the APP LAUNCH — a failure here does not degrade a badge, it takes the app away,
+    // and `createServerSideProps` has no try/catch above it. So the call below is
+    // `readListingBetaBySlugForRender`, the CATCH-ALL variant, and deliberately NOT the
+    // narrow `readListingBetaBySlug` that every write-gating path uses: that one propagates a
+    // timeout / deadlock / `42P01` by design, which here would be an HTTP 500 on the page
+    // that runs the app. Do not "consolidate" the two — the ForRender reader's own docstring
+    // names this call site as the reason it exists. A listing row that does not exist
+    // resolves to `isBeta: false` the same way, and a degraded read is logged rather than
+    // silently swallowed.
     const [page, beta] = await Promise.all([
       BlockRegistry.resolvePageBlockBySlug(slug, { db: 'read' }),
       readListingBetaBySlugForRender(slug, dbRead),
