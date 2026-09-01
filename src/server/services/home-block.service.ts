@@ -36,6 +36,7 @@ import {
   computeFeaturedCollectionsState,
   getFeaturedCollectionsState,
 } from '~/server/jobs/refresh-featured-collections-eligibility';
+import { takeFeaturedCollectionCycle } from '~/server/services/featured-collections-rotation';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { GET_ALL_IMAGES_PER_MODEL_SLIM } from '~/server/utils/model-getall-images';
 import {
@@ -579,13 +580,10 @@ export const getHomeBlockData = async ({
         candidates.length
       );
 
-      // Fisher-Yates shuffle, take N.
-      const pool = [...candidates];
-      for (let i = pool.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [pool[i], pool[j]] = [pool[j], pool[i]];
-      }
-      const picks = pool.slice(0, renderCount);
+      // Round-robin over a shuffled pass rather than an independent draw each window. The block is
+      // cached for 3 minutes in one shared entry, so an uncorrelated shuffle shows every visitor in
+      // that window the same five and can repeat 4 of those 5 on the next one.
+      const picks = await takeFeaturedCollectionCycle(candidates, renderCount);
 
       const hydrated = await Promise.all(
         picks.map(async (id) => {
