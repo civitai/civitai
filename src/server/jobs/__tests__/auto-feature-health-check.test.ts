@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   isFlipt: vi.fn(async () => true),
@@ -72,6 +72,13 @@ function axiom(type: 'warning' | 'info') {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `checkAutoFeatureHealth` reads the real clock, and every timestamp below is relative to a fixed
+  // literal — so without this the gap between them grows in real time and the tests asserting a
+  // healthy pipeline expire. They passed until 2026-09-02T00:00:00Z and would then have failed on
+  // their own, hours after the last commit, looking like a regression in the code they cover.
+  // Only Date is faked: faking timers wholesale would stall the async paths under test.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(NOW);
   vi.stubGlobal('fetch', mocks.fetch);
   mocks.isFlipt.mockResolvedValue(true);
   // Restored, not just cleared. `vi.clearAllMocks()` drops call records but keeps implementations,
@@ -82,6 +89,10 @@ beforeEach(() => {
   // ~200 keys, so a full replacement gives `undefined` for anything the graph later reads, which
   // is silently wrong rather than a loud missing-export error.
   setEnv({ DISCORD_WEBHOOK_MOD_ALERTS: WEBHOOK });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 /** The request `notifyModAlert` actually emitted, rather than the fact that fetch was called. */
@@ -319,11 +330,11 @@ describe('auto-feature-health-check alerting', () => {
 
     const result = await autoFeatureHealthCheckJob.run();
 
-    // Ordering guard, and it is the only thing making the fetch restore in `beforeEach` do any
-    // work. `vi.clearAllMocks()` keeps implementations, so the 404 stubbed above would otherwise
-    // leak into every later test in this file — leaving the suite green because nothing after it
-    // happens to need a successful POST. Whoever removes that restore should fail HERE, not in a
-    // test they add months later that appears to break the code it is testing.
+    // Position matters: this must run after the test that stubs a 404, and asserts the stub was
+    // restored. `vi.clearAllMocks()` keeps implementations, so without the restore in `beforeEach`
+    // that 404 leaks into every later test. Reordering the file, or any invocation that shuffles
+    // test order, breaks it here rather than in a later test that would appear to break the code it
+    // is testing.
     expect(result).toMatchObject({ healthy: false, paged: 1 });
     expect(axiom('warning').some((a) => a.message?.includes('Discord rejected'))).toBe(false);
   });
