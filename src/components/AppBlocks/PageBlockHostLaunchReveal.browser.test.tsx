@@ -195,8 +195,17 @@ describe('PageBlockHost launch reveal — branded loading', () => {
     // Mantine's Skeleton is the shared primitive both hosts use; asserting the
     // rendered elements rather than a class keeps this about "there are
     // placeholder bars", not about Mantine's internals.
-    const bars = group.querySelectorAll('.mantine-Skeleton-root');
+    const bars = Array.from(group.querySelectorAll('.mantine-Skeleton-root'));
     expect(bars.length).toBeGreaterThan(1);
+
+    // POSITIVE CONTROL for the reduced-motion test below. Asserting only that
+    // `data-animate` is ABSENT under reduce-motion is satisfied by a build
+    // where NOBODY ever sees the shimmer: `animate={false}` on all four bars
+    // survives the whole file. One direction of a boolean is not a pin, and
+    // this is the direction the feature actually exists for.
+    for (const bar of bars) {
+      expect(bar.getAttribute('data-animate')).toBe('true');
+    }
 
     // …and the spinner it replaced is GONE. Without this the test passes with
     // BOTH rendered, which is the half-done state a partial revert produces.
@@ -215,8 +224,10 @@ describe('PageBlockHost launch reveal — branded loading', () => {
     const bars = Array.from(group.querySelectorAll('.mantine-Skeleton-root'));
     expect(bars.length).toBeGreaterThan(1);
     // Mantine renders `data-animate="true"` when animating and omits the
-    // attribute entirely when not (confirmed against the rendered DOM, not
-    // assumed — the shimmering case is pinned in the test above).
+    // attribute entirely when not (`Skeleton.mjs` `mod: [{ visible, animate }]`
+    // in 7.17.8 — confirmed against the rendered DOM, not assumed). The
+    // OPPOSITE direction is asserted in the test above; without that pair this
+    // one alone is satisfied by never animating at all.
     for (const bar of bars) {
       expect(bar.getAttribute('data-animate')).toBeNull();
     }

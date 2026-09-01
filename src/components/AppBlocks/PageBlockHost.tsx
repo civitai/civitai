@@ -3836,7 +3836,18 @@ export function PageBlockHost({
                   carry control/bidi/zalgo spoofing here either — consistency with
                   AppBlockChrome, not a new gate. Falls back to 'app' when nothing
                   legible remains. */}
-              <Stack align="center" gap="sm">
+              {/* 🔴 `w="100%"` is load-bearing, not decoration. Without it this
+                  Stack is a shrink-to-fit flex item of the <Center>, so its
+                  width is set by its widest CONTENT-sized child — the
+                  "Starting {appName}…" text. A percentage width on the
+                  skeleton group below then resolves against the APP NAME's
+                  rendered width and its `maw` is never reached: measured, a
+                  two-character app name gave an 82.5px group with 27.8px bars,
+                  where a normal one gave 193px. Publisher-controlled, so the
+                  loading state would look different for every app in the
+                  store. Constraining the Stack instead makes the group's
+                  100%/maw pair mean what it says. */}
+              <Stack align="center" gap="sm" w="100%">
                 <Avatar radius="md" size={56} alt="" aria-hidden>
                   {/* `Array.from(...)[0]` not `charAt(0)`: charAt splits a
                       surrogate pair, so an emoji-leading app name would render a
@@ -3885,13 +3896,19 @@ export function PageBlockHost({
                     layout: this renders for every app in the store, so a shape
                     borrowed from one of them would be wrong for the rest.
 
-                    Labelled `role="img"` + aria-label rather than left bare: it
-                    replaces the <Loader> that used to carry the accessible name,
-                    and dropping that would have quietly removed the labelled
-                    graphic from the a11y tree. The container's role="status" /
-                    aria-busy and the visible copy above are unchanged. */}
+                    🔴 `aria-hidden`, and NOT `role="img"`. These are decorative
+                    placeholder boxes; the announcement is the container's
+                    role="status" / aria-live text ("Starting …") and always
+                    was. Giving the group a role would EXPOSE its label inside
+                    that live region, whose announced string is its whole text
+                    content — so the app name would be read twice ("Starting
+                    Budgeted Generator… Loading Budgeted Generator"). The
+                    <Loader> this replaces never did that: Mantine renders it
+                    as a bare <span> with no role, so its aria-label was not
+                    exposed either. The label is kept only as a stable handle
+                    the suite already pins; it announces nothing. */}
                 <Box
-                  role="img"
+                  aria-hidden
                   aria-label={`Loading ${launchName}`}
                   w="100%"
                   maw={420}
