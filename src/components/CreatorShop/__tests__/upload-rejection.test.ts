@@ -44,12 +44,16 @@ describe('notifyUploadRejection', () => {
   it('reports a wrong file type as a type problem, not a size one', () => {
     notifyUploadRejection(rejection(1 * MB, 'file-invalid-type'), 50 * MB);
 
+    // Asserted before destructuring so an early-return regression fails legibly here
+    // rather than dying on `Cannot destructure property 'error' of undefined`.
+    expect(mocks.showErrorNotification).toHaveBeenCalledTimes(1);
     const { error } = mocks.showErrorNotification.mock.calls[0][0];
     expect(error.message).toContain('file type');
     expect(error.message).not.toContain('limit is');
   });
 
-  // Positive control for the assertions above: the same mock, and nothing to report.
+  // Proves the mock is not pre-populated, so the two assertions above are reading
+  // calls this function actually made.
   it('says nothing when no file was rejected', () => {
     notifyUploadRejection([] as never, 50 * MB);
     expect(mocks.showErrorNotification).not.toHaveBeenCalled();
