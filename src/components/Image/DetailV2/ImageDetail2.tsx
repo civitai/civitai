@@ -505,13 +505,35 @@ export function ImageDetail2() {
               </div>
               <div
                 className={`@max-md:absolute @max-md:inset-0 ${
-                  !active ? '@max-md:translate-y-[calc(100%-60px)]' : '@max-md:transition-transform'
+                  !active
+                    ? // COLLAPSED, and on `/images/[imageId]` this 60px strip is the
+                      // bottom of the layout viewport whenever `hideAds` suppresses
+                      // the ad bar below it — the route passes `footer: null`, so
+                      // nothing else is down there. The strip has to grow by the
+                      // inset or its controls sit 12px above the physical bottom,
+                      // i.e. inside the home indicator. Same expression as the
+                      // header row's padding just below, so the strip stays exactly
+                      // that row and no scroll content peeks under the indicator.
+                      //
+                      // `…-unpaid` and not the raw inset: when the ad bar DOES
+                      // render it is the viewport bottom and pays for itself, and
+                      // this panel is back to being an ordinary box above it.
+                      '@max-md:translate-y-[calc(100%-60px-var(--safe-area-inset-bottom-unpaid))]'
+                    : '@max-md:transition-transform'
                 } @md:w-[450px] @md:min-w-[450px] ${
                   !sidebarOpen ? '@md:hidden' : ''
                 } z-10 flex flex-col bg-gray-2 dark:bg-dark-9`}
                 style={{ wordBreak: 'break-word' }}
               >
-                <div className="@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden">
+                {/* The padding is on the `!active` branch only. Expanded, this row
+                    is at the TOP of the panel and the inset below it would be a
+                    spurious 34px gap — over-payment, which is a defect here in
+                    exactly the way under-payment is. */}
+                <div
+                  className={`@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden ${
+                    !active ? '@max-md:pb-[calc(0.75rem+var(--safe-area-inset-bottom-unpaid))]' : ''
+                  }`}
+                >
                   <div className="flex gap-1">{LeftImageControls}</div>
                   <LegacyActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
                     <IconChevron {...sharedIconProps} />

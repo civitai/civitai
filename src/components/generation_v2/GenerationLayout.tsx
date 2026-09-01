@@ -87,7 +87,9 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
     status.available && reviewed && !membershipUpsell.needsAcknowledgment && !selfHostedBlocked;
 
   return (
-    <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
+    // Holds the primary Generate CTA, and on a phone `GenerationSidebar` renders
+    // `!w-screen`, so this bar IS the viewport bottom there.
+    <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 pb-[max(0.5rem,var(--safe-area-inset-bottom))] dark:bg-dark-7">
       {!status.available ? (
         <AlertWithIcon
           color="yellow"

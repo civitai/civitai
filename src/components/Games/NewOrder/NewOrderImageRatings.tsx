@@ -16,7 +16,17 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel }: Props) {
   const nothingFound = raters.Knight?.length === 0 && raters.Templar?.length === 0;
 
   return (
-    <div className={`fixed right-0 top-1/2 -translate-y-1/2 ${opened ? 'z-30' : 'z-0'}`}>
+    // The only `fixed`-to-the-RIGHT-edge surface in the app, and therefore the
+    // one place `--safe-area-inset-right` is load-bearing on its own: the
+    // collapsed state is a 40px chevron flush to `right: 0`, which in landscape
+    // on a notched phone is entirely inside the ~47px cutout strip — the handle
+    // that opens the panel becomes untappable. Vertically centred, so neither
+    // vertical inset applies.
+    <div
+      className={`fixed right-[var(--safe-area-inset-right)] top-1/2 -translate-y-1/2 ${
+        opened ? 'z-30' : 'z-0'
+      }`}
+    >
       <div
         className={`relative flex items-center transition-transform duration-300 ${
           opened ? 'translate-x-0' : 'translate-x-[350px]'
