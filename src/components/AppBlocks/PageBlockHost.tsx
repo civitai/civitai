@@ -3970,10 +3970,25 @@ export function PageBlockHost({
           way this can be a width-only change. It was previously the iframe wrapper's
           `flex: 1` that consumed the space left by the chrome, as a direct child of the
           root's column; this box now takes that role and re-offers it, so it must be a
-          column flex container AND a `flex: 1` item itself. `minHeight: 0` lets it
-          shrink below its content's automatic minimum, so the iframe is bounded by the
-          viewport rather than pushing an outer scrollbar — the property the exact
-          equality in `PageBlockHostScrollFit.browser.test.tsx` measures. */}
+          column flex container AND a `flex: 1` item itself.
+
+          🔴 `flex: 1` IS THE LOAD-BEARING ONE AND NOTHING RENDERED CATCHES ITS LOSS.
+          Measured by mutation: dropping it leaves the FULL node suite and the FULL
+          `AppBlocks` browser suite green while the app column collapses to ~150px at a
+          900px content height — a running App Block reduced to a sliver, with every tier
+          green. `__tests__/pageBlockHostMaxWidth.test.ts` therefore pins this style block
+          verbatim in the GATING tier; that source pin is the only thing standing between
+          that mutation and production.
+
+          ⚠️ `minHeight: 0` IS DEFENCE, NOT A LOAD-BEARING PROPERTY — SAY SO RATHER THAN
+          NAMING A TEST THAT DOES NOT COVER IT. Measured: removing it leaves the scroll-fit
+          and max-width browser suites 20/20 green, because the child iframe wrapper already
+          carries `overflow: hidden`, which per CSS Flexbox §4.5 gives it an automatic
+          minimum size of 0 — so this box's content-based minimum is 0 with or without the
+          declaration. It is kept because that reasoning depends on a property of a DIFFERENT
+          element that nothing pins, and it costs nothing; an earlier version of this comment
+          credited `PageBlockHostScrollFit.browser.test.tsx` with covering it, which would
+          have misled anyone auditing whether it could go. */}
       <Box
         data-testid="app-page-content"
         style={{

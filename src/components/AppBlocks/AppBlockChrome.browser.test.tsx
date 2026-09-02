@@ -244,14 +244,24 @@ describe('AppBlockChrome run-page breadcrumb (Marketplace / <app name>)', () => 
     // `__tests__/chromeCrumbLinkStyle.test.ts`, which reads the shipped Mantine
     // stylesheet directly.
     //
-    // What IS observable here is that the crumb is a real Mantine `Anchor` sitting at
-    // the library default rather than a locally restyled `Text`. `Anchor` renders its
-    // `underline` prop as `data-underline`, and its default is `hover`.
+    // What IS observable here is that the crumb is a real Mantine `Anchor` and which
+    // `underline` mode it is in — `Anchor` renders that prop as `data-underline`.
+    //
+    // 🔴 `always`, NOT THE LIBRARY DEFAULT `hover`, AND THE DIFFERENCE IS AN ACCESSIBILITY
+    // DECISION RATHER THAN A STYLE PREFERENCE. At rest this crumb sits between two dimmed
+    // `/` separators and a dimmed app-name crumb, so with a hover-only underline the sole
+    // resting differentiator would be hue — measured 1.07:1 on light, 1.29:1 on dark, where
+    // WCAG 1.4.1 (failure F73) allows colour alone only above 3:1, and Mantine emits no
+    // `:focus-visible` underline to fall back on. Reverting this to `hover` looks like
+    // "adopting the library default" and is a Level-A regression; that is exactly why it is
+    // asserted rather than left to the default.
     expect(
       appsLink.getAttribute('data-underline'),
-      'the crumb is not rendering as a Mantine `Anchor` at its default `underline="hover"`. ' +
-        'If it went back to a hand-styled `Text`, the chrome has re-forked the site link idiom.'
-    ).toBe('hover');
+      'the crumb is not a Mantine `Anchor` with `underline="always"`. Either it went back ' +
+        'to a hand-styled `Text` (re-forking the site link idiom), or it was relaxed to the ' +
+        'library default `hover` — which removes the only resting cue distinguishing it from ' +
+        'its dimmed neighbours at 1.07:1 contrast. See the note above before changing this.'
+    ).toBe('always');
 
     // …and it carries NO local colour or decoration override — the mutation that would
     // re-introduce the fork. The old implementation set both (`c="blue.6"`,

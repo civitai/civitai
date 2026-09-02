@@ -849,32 +849,40 @@ function ChromeDesktopLeadingGroup({
               /
             </Text>
             {/* Link affordance: the SITE'S OWN `Anchor`, not a hand-styled `Text`. This
-                crumb used to carry `c="blue.6" td="underline"` — a link that was bluer and
-                permanently underlined in a way nothing else on the site is, which is what
-                made the chrome read as foreign inside its own page.
+                crumb used to carry `c="blue.6" td="underline"` — a hand-rolled colour and
+                decoration, which is what made the chrome read as foreign inside its own page.
 
-                🔴 THE AA CONTRAST FIX THAT `blue.6` ENCODED IS PRESERVED, NOT DISCARDED —
-                that is the whole reason this swap is safe, and it is not obvious from the
-                diff. Mantine 7.17.8 resolves `--mantine-color-anchor` per COLOR SCHEME
-                (`@mantine/core/styles.css`):
+                🔴 THE COLOUR IS NOW THEMED, AND THAT IS THE HALF THAT MATTERS. Mantine 7.17.8
+                resolves `--mantine-color-anchor` per COLOR SCHEME (`@mantine/core/styles.css`):
                   light → `--mantine-primary-color-filled` → `--mantine-color-blue-filled`
                           → `--mantine-color-blue-6`   ← identical to the old hard-coded value
                   dark  → `--mantine-color-blue-4`
-                So on the light chrome surface the rendered colour does not move at all, and
-                the audit-L3 finding this crumb was bumped to `blue.6` for is untouched. On
-                DARK it gets LIGHTER (blue-4), which is the direction contrast wants on a
-                dark surface and which the old fixed `blue.6` got wrong — the hard-coded
-                shade was only ever reasoned about against the light background.
+                So light is unchanged to the pixel, and DARK improves: measured against this
+                bar's own background (`--mantine-color-default-hover` → dark-5 `#2c2e33`) the
+                link goes 3.82:1 → 5.49:1, i.e. from FAILING WCAG AA to passing it. The old
+                fixed shade was only ever reasoned about against the light background.
 
-                ⚠️ THE RESTING UNDERLINE IS GONE, DELIBERATELY. `Anchor`'s default is
-                `underline="hover"` and that is the site's link idiom, so the crumb now
-                announces itself by colour at rest and underlines on hover/focus. It stays
-                distinguishable from its neighbours because they are `c="dimmed"` and it is
-                not; `data-clickable` remains the machine-readable marker that separates the
-                link affordance from the trailing crumb's POPOVER affordance. If a future
-                audit wants a resting underline back for WCAG 1.4.1, put it on the site's
-                `Anchor` rather than re-forking it here — a one-off underline in the chrome
-                is the exact drift this change removes.
+                🔴 DO NOT RESTATE THE OLD "blue.6 CLEARS AA ON THE LIGHT CHROME" CLAIM — IT IS
+                FALSE, AND IT WAS FALSE BEFORE THIS CHANGE TOO. Measured: blue-6 `#228be6` on
+                this bar's light background (gray-0 `#f8f9fa`) is **3.37:1**, against the 4.5:1
+                AA needs for the crumb's 12px (`size="xs"`) text. An audit did bump the shade
+                from `blue.4`, which improved it, but it did not reach AA and no comment should
+                say it did. That shortfall is PRE-EXISTING and untouched here — this change
+                neither causes nor fixes it — and it is recorded so the next reader measures
+                instead of inheriting the claim.
+
+                🔴 `underline="always"` IS NOT A RE-FORK — IT IS THE SITE'S OWN PROP, USED THE
+                WAY THE SITE ALREADY USES IT. `Anchor`'s default is `underline="hover"`, and
+                that default is wrong HERE specifically: this crumb's neighbours are the two
+                dimmed `/` separators and the dimmed app-name crumb, so at rest the ONLY thing
+                distinguishing the link from them would be hue — measured at **1.07:1** on
+                light (blue-6 vs gray-6) and 1.29:1 on dark. That is WCAG 1.4.1 failure F73:
+                colour as the sole differentiator is permitted only above 3:1, and Mantine
+                emits its underline for `:hover`/`:active` only — there is no `:focus-visible`
+                rule to fall back on. Five other call sites in this repo reach for the same
+                prop for the same reason (`ShopItem`, the Sticker hover cards, `StickerBook`).
+                What this change removes is the hand-rolled `c=`/`td=` pair, not the resting
+                cue the crumb has always had.
 
                 Real anchor semantics (a Next `<Link>`) are unchanged: keyboard, middle-click
                 and long-press all still behave. */}
@@ -882,6 +890,7 @@ function ChromeDesktopLeadingGroup({
               component={Link}
               href="/apps"
               size="xs"
+              underline="always"
               style={{ flexShrink: 0 }}
               data-testid="app-block-breadcrumb-apps"
               data-clickable="true"

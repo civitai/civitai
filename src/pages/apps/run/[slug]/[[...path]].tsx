@@ -226,13 +226,26 @@ function AppPage(props: PageProps) {
         kind: 'onsite',
         hasPage: true,
         name: appName,
-        // Spread-when-truthy, never `iconUrl: iconUrl ?? undefined`. `RecentApp.iconUrl`
-        // is an OPTIONAL string, and the store's own writers use exactly this shape
-        // (`...(entry.iconUrl ? { iconUrl: entry.iconUrl } : {})`) so that an absent icon
-        // leaves the key off the persisted object rather than writing an explicit
-        // undefined into localStorage. Matters because `resolveRecentApp` upgrades an
-        // entry by preferring a previously-recorded icon over a missing one — a present
-        // key holding nothing would defeat that.
+        // Spread-when-truthy, matching the shape the store's own writers use
+        // (`...(entry.iconUrl ? { iconUrl: entry.iconUrl } : {})`) so an absent icon leaves
+        // the key off the persisted object. `RecentApp.iconUrl` is an OPTIONAL string.
+        //
+        // ⚠️ CONSISTENCY, NOT SAFETY — do not restate this as a hazard it is not. Writing
+        // `iconUrl: undefined` here would be harmless: `coerce` in the store keeps the field
+        // only when `typeof === 'string'`, and `JSON.stringify` drops an undefined value
+        // anyway. An earlier version of this comment claimed the explicit-undefined form
+        // would defeat an upgrade in `resolveRecentApp`; it would not, and `resolveRecentApp`
+        // does no such upgrade — the icon preference lives in `upgradeRecentFromCard`, which
+        // is reached only through `reconcileRecentApps` on the store page.
+        //
+        // 🔴 THE REAL SECOND-ORDER, WHICH IS THE OPPOSITE OF WHAT THAT CLAIMED:
+        // `recordRecentlyOpenedApp` REPLACES the entry wholesale and has no icon ratchet, so
+        // a run while the icon read is degraded (`null` → key omitted) DROPS an icon a store
+        // visit had previously recorded, until the next successful run or reconcile. Net this
+        // is still a large improvement — before this change EVERY run cleared a store-written
+        // icon, because the run page never sent one — so it is a residual, not a regression,
+        // and it is recorded here rather than fixed because adding a ratchet would change
+        // `recordRecentlyOpenedApp`'s semantics for all five of its callers.
         ...(iconUrl ? { iconUrl } : {}),
       },
       recentsOwnerId

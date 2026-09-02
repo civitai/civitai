@@ -8,8 +8,15 @@ import { describe, expect, it } from 'vitest';
  * A full-page App Block had no width bound anywhere in its chain (page wrapper,
  * host root and iframe are each `width: 100%`), so on a 2560px display an app
  * rendered as a single ~2500px column. `PageBlockHost` now reads
- * `max-width: var(--app-page-max-width, …)` with `margin-inline: auto` on its
- * root.
+ * `max-width: var(--app-page-max-width, …)` with `margin-inline: auto`.
+ *
+ * 🔴 ON `app-page-content`, NOT ON THE HOST ROOT — the root is full-bleed so the app
+ * CHROME spans the page like every other site-level bar, and only the app's own column
+ * is capped. The opt-out ledger still keys on the ROOT and reaches the capped box by
+ * INHERITANCE. That split is why two of the pins below are about the RELATIONSHIP
+ * between the two elements rather than about either one alone: before it, the cap and
+ * the ledger anchor were the same element and the older pins composed into the
+ * mechanism for free. They no longer do.
  *
  * 🔴 WHY A SOURCE GUARD AS WELL AS A RENDERED ONE. The measurement lives in
  * `PageBlockHostMaxWidth.browser.test.tsx`, which is the only tier that can see a
@@ -20,14 +27,20 @@ import { describe, expect, it } from 'vitest';
  * records the measured case where a fully-reverted floor left the gating tier
  * 9/9 green and only the non-blocking tier red).
  *
- * WHAT IS PINNED HERE, and each is a thing whose absence is silent:
- *   1. the constant exists, once, inside a band this file states as LITERALS
- *   2. `--app-page-max-width` exists, once, in globals.css, and agrees with it
- *   3. the host's two declarations, as one verbatim expression
- *   4. `data-block-id` is stamped on the SAME element as the host testid — the
- *      opt-out ledger's selector chains the two, so a rename makes every ledger
- *      rule match nothing without changing anything visible
- *   5. the value is read through `var()` and never written inline
+ * WHAT IS PINNED HERE — each is a thing whose absence is SILENT. Deliberately an
+ * unnumbered list: it has grown twice, and a count stated beside the thing it counts
+ * drifts on the next edit. Read the `it(...)` titles for the authoritative set.
+ *   · the constant exists, once, inside a band this file states as LITERALS
+ *   · `--app-page-max-width` exists, once, in globals.css, and agrees with it
+ *   · the cap's two declarations, as one verbatim expression
+ *   · the cap is on `app-page-content` and that box is INSIDE the frame — the
+ *     relationship the ledger's inheritance depends on, which no older pin covers
+ *   · the content wrapper's whole box model, because a dropped `flex: 1` collapses
+ *     the app to a sliver with every test in BOTH tiers green (measured)
+ *   · `data-block-id` is stamped on the SAME element as the host testid — the
+ *     opt-out ledger's selector chains the two, so a rename makes every ledger
+ *     rule match nothing without changing anything visible
+ *   · the value is read through `var()` and never written inline
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
@@ -294,6 +307,101 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
         'its own opt-out, or removed the fallback that caps a host rendered without globals.css.'
     ).toBe(
       "maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`, marginInline: 'auto',"
+    );
+  });
+
+  /**
+   * 🔴 THE CAP AND THE CHROME ARE ON DIFFERENT ELEMENTS NOW, AND UNTIL THIS GUARD
+   * EXISTED THE GATING TIER COULD NOT SEE THAT AT ALL.
+   *
+   * The cap used to sit on the host root, so the two guards above — "the cap pair
+   * appears verbatim somewhere" and "`data-block-id` is on the frame" — described
+   * the SAME element and together implied the mechanism. Moving the cap down to
+   * `app-page-content` broke that composition silently: each guard still passes
+   * while describing a different element, and nothing asserts the capped box is a
+   * DESCENDANT of the frame — which is exactly the relationship the full-bleed
+   * ledger now depends on, since the custom property is set on the frame and read
+   * one level down.
+   *
+   * Measured by mutation, in a copy: reverting the whole change (cap back on the
+   * frame, chrome capped again) left the FULL node suite — 1569 files, 24877 tests
+   * — byte-identically green. Only the report-only browser tier caught it, and
+   * that tier cannot block a merge. This test is the gating-tier half.
+   */
+  it('the cap sits on `app-page-content`, INSIDE the frame — not back on the frame itself', () => {
+    const src = code(read(HOST));
+    const frameAt = src.indexOf('data-testid="app-page-frame"');
+    const contentAt = src.indexOf('data-testid="app-page-content"');
+
+    expect(
+      frameAt,
+      'the host root testid is gone — the ledger selects on it; see the guard below'
+    ).toBeGreaterThan(-1);
+    expect(
+      contentAt,
+      'the `app-page-content` wrapper is gone. If the cap moved back onto the host root, the ' +
+        'app chrome is being capped along with the app again — the exact regression this ' +
+        'change removed. Re-point this guard only if the element was renamed.'
+    ).toBeGreaterThan(-1);
+    expect(
+      contentAt,
+      '`app-page-content` no longer renders inside `app-page-frame`. The full-bleed opt-out ' +
+        'ledger sets `--app-page-max-width` ON THE FRAME and relies on INHERITANCE to reach ' +
+        'the capped box; move the capped box out from under the frame and every ledger entry ' +
+        'silently stops applying.'
+    ).toBeGreaterThan(frameAt);
+
+    // The cap pair must live in the CONTENT element's style, not the frame's.
+    //
+    // 🔴 THE REGION STARTS AT THE FRAME'S OPENING `<`, NOT AT ITS TESTID, AND THE
+    // DIFFERENCE IS THE WHOLE ASSERTION. JSX puts `style={{…}}` BEFORE `data-testid` on
+    // this element, so a region beginning at the testid starts *after* the frame's style
+    // block and cannot see a cap declared there. Caught by mutation: with the cap moved
+    // back onto the frame this test PASSED and the mutant died to the box-model pin below
+    // instead — green for the wrong reason, and it would have stayed green for the one
+    // mutation this test exists to catch.
+    const frameOpen = src.lastIndexOf('<', frameAt);
+    expect(frameOpen, "could not find the frame element's opening tag").toBeGreaterThan(-1);
+    expect(
+      src.slice(frameOpen, contentAt),
+      'the `max-width` cap is declared on the host FRAME again. That re-caps the app chrome ' +
+        'along with the app — a full-page app then renders as a boxed widget rather than a ' +
+        'page of the site.'
+    ).not.toContain('--app-page-max-width');
+  });
+
+  /**
+   * 🔴 `flex: 1` ON THE CONTENT WRAPPER IS LOAD-BEARING AND NOTHING RENDERED CATCHES
+   * ITS LOSS — which is why this pins the whole style block rather than one token.
+   *
+   * Measured by mutation, in a copy: deleting `flex: 1` left the FULL node suite
+   * (24877 tests) AND the full `AppBlocks` browser tier (1717 tests across 124
+   * files) green, while the app column and its iframe rendered at **150px** instead
+   * of ~860px at a 900px content height. A running App Block reduced to a sliver,
+   * with every tier green in both directions. This source pin is the only thing
+   * standing between that mutation and production.
+   *
+   * Pinned WHOLE, for the reason the neighbouring cap pin records: a presence check
+   * on `flex` survives `flex: 0`, and one on `maxWidth` survives losing the auto
+   * margins. The accepted cost is that a deliberate reformat of this block fails
+   * this test — pay it, and update the string in the same commit.
+   */
+  it("pins the content wrapper's box model verbatim — a dropped `flex: 1` collapses the app with every suite green", () => {
+    const src = code(read(HOST));
+    expect(
+      region(
+        src,
+        /display: 'flex',\s*flexDirection: 'column',\s*flex: 1,[\s\S]*?marginInline: 'auto',/,
+        'content wrapper box model'
+      ),
+      'This is a DELIBERATE verbatim pin. `flex: 1` is what makes this box consume the ' +
+        'height the chrome left; without it the app column collapses to its content-based ' +
+        'minimum (~150px measured) and NO rendered test in either tier notices. If you ' +
+        'changed this block on purpose, update the expected string here in the same commit.'
+    ).toBe(
+      "display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, width: '100%', " +
+        'maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`, ' +
+        "marginInline: 'auto',"
     );
   });
 

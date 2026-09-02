@@ -3,8 +3,8 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * THE APP-CHROME BREADCRUMB LINK USES THE SITE'S LINK IDIOM — and the WCAG AA shade
- * the contrast audit settled on is still what renders.
+ * THE APP-CHROME BREADCRUMB LINK USES THE SITE'S LINK IDIOM — themed colour, and a
+ * resting underline it keeps on purpose.
  *
  * 🔴 WHY THIS IS A NODE-TIER SOURCE + LIBRARY GUARD RATHER THAN A RENDERED ONE. The
  * natural test is "render the crumb and read its computed colour", and it cannot be
@@ -27,17 +27,25 @@ import { describe, expect, it } from 'vitest';
  * reasoning, as `pageBlockHostMaxWidth.test.ts`.
  *
  * HISTORY THIS PROTECTS. The crumb used to carry `c="blue.6" td="underline"` — a
- * one-off link style bluer and more underlined than anything else on the site. The
- * `blue.6` was not arbitrary: an audit found the original `blue.4` borderline against
- * the near-white light chrome surface and bumped it. Adopting the shared `Anchor` had
- * to preserve that, and the reason it does is a fact about Mantine that lives in
- * Mantine, not here — which is exactly why it is asserted against the installed
- * package instead of restated in a comment.
+ * hand-rolled colour and decoration. The `blue.6` was not arbitrary: an audit found
+ * the original `blue.4` worse against the near-white light chrome surface and bumped
+ * it. Adopting the shared `Anchor` had to land on the same shade, and the reason it
+ * does is a fact about Mantine that lives in Mantine — which is why it is asserted
+ * against the installed package rather than restated in a comment.
+ *
+ * 🔴 DO NOT DESCRIBE blue-6 AS "THE WCAG AA SHADE" — MEASURED, IT IS NOT, AND AN
+ * EARLIER VERSION OF THIS HEADER SAID SO. On this bar's light background
+ * (`--mantine-color-default-hover` → gray-0 `#f8f9fa`) blue-6 `#228be6` is **3.37:1**,
+ * against the 4.5:1 AA wants for the crumb's 12px text. The audit's bump improved it
+ * without reaching AA. That shortfall PRE-DATES the move to `Anchor` and is untouched
+ * by it — this file pins which shade renders, and deliberately makes no AA claim about
+ * it. (The dark side is the one that genuinely improved: 3.82:1 → 5.49:1, failing → passing.)
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const CHROME = path.join(REPO_ROOT, 'src/components/AppBlocks/IframeHost.tsx');
 const MANTINE_CSS = path.join(REPO_ROOT, 'node_modules/@mantine/core/styles.css');
+const THEME = path.join(REPO_ROOT, 'src/providers/ThemeProvider.tsx');
 
 function read(file: string): string {
   // Prove the path before trusting a "no match": a comparison against an absent
@@ -127,9 +135,23 @@ describe('the app-chrome breadcrumb link uses the site link idiom, at the audite
     ).toBe(false);
     expect(
       /\std=["{]/.test(element),
-      'the crumb hard-codes a text-decoration again (`td=…`). `Anchor` defaults to ' +
-        'underline-on-hover, which is the site idiom.'
+      'the crumb hard-codes a text-decoration again (`td=…`). The decoration is chosen with ' +
+        "`Anchor`'s own `underline` prop, asserted below."
     ).toBe(false);
+
+    // 🔴 `underline="always"` IS LOAD-BEARING AND IS NOT THE LIBRARY DEFAULT. Dropping it
+    // reads as "adopt the default" and is a WCAG 1.4.1 (F73) Level-A regression: this
+    // crumb's neighbours are dimmed, so at rest hue would be the only differentiator —
+    // 1.07:1 on light, 1.29:1 on dark, where colour alone is permitted only above 3:1, and
+    // Mantine emits its underline for `:hover`/`:active` with no `:focus-visible` fallback.
+    // Five other call sites in this repo use the same prop for the same reason.
+    expect(
+      /\sunderline="always"/.test(element),
+      'the crumb lost `underline="always"`. `Anchor` then falls back to `underline="hover"`, ' +
+        'leaving colour as the sole resting cue against dimmed neighbours at 1.07:1 — WCAG ' +
+        '1.4.1 failure F73. If this is intentional, the resting cue has to come from ' +
+        'somewhere else and this guard should be re-pointed at it, not deleted.'
+    ).toBe(true);
   });
 
   /**
@@ -185,6 +207,53 @@ describe('the app-chrome breadcrumb link uses the site link idiom, at the audite
         'regression the move to `Anchor` fixed.'
     ).toBe('var(--mantine-color-blue-4)');
     expect(rootVar(css, '--mantine-color-blue-4')).toBe('#4dabf7');
+
+    // 🔴 THE LIBRARY'S DEFAULTS ONLY DECIDE THE RENDERED COLOUR WHILE THIS APP LEAVES THEM
+    // ALONE — and without the next three assertions this guard's headline would be wider
+    // than what it checks. Measured: setting `primaryColor: 'orange'` and lightening
+    // `blue[6]` in ThemeProvider changes the crumb's rendered colour outright while every
+    // assertion above stays green, because none of them can see this app's theme.
+    //
+    // `createTheme` resolves `--mantine-color-anchor` through the PRIMARY colour and the
+    // app's own `blue` scale, so an override of either re-points the whole chain. Read as
+    // source rather than by importing the theme: importing pulls @mantine/core into the
+    // node tier for a question that is answered by three literals.
+    const theme = code(read(THEME));
+    expect(
+      /primaryColor\s*:/.test(theme),
+      'ThemeProvider now sets `primaryColor`. The chrome crumb takes its colour from ' +
+        '`--mantine-color-anchor`, which resolves through the PRIMARY colour on light — so ' +
+        'the blue-6 chain asserted above is no longer what renders. Re-derive the crumb ' +
+        'colour and re-point this guard.'
+    ).toBe(false);
+    expect(
+      /primaryShade\s*:/.test(theme),
+      'ThemeProvider now sets `primaryShade`, which moves which shade `filled` resolves to ' +
+        'and therefore what the crumb renders on light.'
+    ).toBe(false);
+    // The app DOES restate Mantine's `blue` scale, so what matters is that the two shades
+    // the chain lands on still hold the library's values. Read by INDEX, not by "appears
+    // somewhere in the file" — the palette contains ten hexes and a containment check would
+    // be satisfied by the right colour sitting at the wrong position. Compared
+    // case-insensitively: this file writes `#228BE6`, the stylesheet `#228be6`, and a
+    // case-sensitive compare would fail for the spelling rather than for the colour.
+    const blue = /\bblue\s*:\s*\[([^\]]*)\]/.exec(theme)?.[1];
+    expect(
+      blue,
+      "ThemeProvider's `blue` palette could not be parsed — re-point this guard"
+    ).toBeDefined();
+    const shades = [...blue!.matchAll(/'(#[0-9a-fA-F]{6})'/g)].map((m) => m[1].toLowerCase());
+    expect(shades, "ThemeProvider's `blue` is not a 10-shade tuple").toHaveLength(10);
+    expect(
+      shades[6],
+      'ThemeProvider overrides `blue[6]`, the shade the crumb renders on LIGHT. The library ' +
+        'chain asserted above is no longer what ships — re-derive the crumb colour and its ' +
+        'contrast against the app theme.'
+    ).toBe('#228be6');
+    expect(
+      shades[4],
+      'ThemeProvider overrides `blue[4]`, the shade the crumb renders on DARK.'
+    ).toBe('#4dabf7');
 
     // 🔴 THE DISCRIMINATOR, AND THE REASON THE SWAP IS AN IMPROVEMENT RATHER THAN A WASH.
     // The whole argument is that the themed colour MOVES with the scheme where the old
