@@ -430,8 +430,14 @@ export interface BlockManifest {
    * enabled for the BLOCK_INIT URL fragment and read it before first paint; the
    * allowlist is empty today, so a boot skeleton currently guesses from
    * `prefers-color-scheme` and can disagree with the host until BLOCK_INIT
-   * lands. This is the type an author reads while writing a manifest, so the
-   * unqualified word "themed" is likeliest to be acted on here.
+  lands.
+   *
+   * (This type is HOST-INTERNAL — two consumers, both in this repo. The type an
+   * external app author actually reads is the canonical schema at
+   * `public/schemas/app-block/v1.json`, which already carries this
+   * qualification. Corrected here because the first version of this note
+   * claimed the opposite, and a wrong "this is the author-facing site" is the
+   * kind of sentence that later gets cited as coverage.)
    *
    * Declared for discoverability — the index signature below would admit it
    * anyway, which is exactly why it is easy to misspell.

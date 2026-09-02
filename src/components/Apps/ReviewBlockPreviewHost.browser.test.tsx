@@ -25,10 +25,12 @@ vi.mock('~/components/AppBlocks/PageBlockHost', () => ({
     reviewRunForReal,
     canOpenPage,
     bootSkeleton,
+    trustTier,
   }: {
     reviewRunForReal?: boolean;
     canOpenPage?: boolean;
     bootSkeleton?: boolean;
+    trustTier?: string;
   }) => (
     <div
       data-testid="page-host"
@@ -42,6 +44,13 @@ vi.mock('~/components/AppBlocks/PageBlockHost', () => ({
       // reversible with a fully green gate — hardcoding `false` here again, or
       // dropping the key from the mint, killed nothing.
       data-boot-skeleton={String(!!bootSkeleton)}
+      // 🔴 The forced tier is DEFENCE LAYER 2 (this file's own header): it is
+      // what makes `intersectSandbox` drop `allow-same-origin`, so the review
+      // iframe runs at an opaque origin rather than the moderator's. It was
+      // unpinned — flipping it to 'internal' type-checks and survived 1151
+      // tests across every Apps browser suite. Pre-existing, closed here
+      // because the stub was open on the desk.
+      data-trust-tier={String(trustTier)}
     />
   ),
 }));
@@ -119,7 +128,10 @@ vi.mock('~/utils/trpc', async () => {
               mutate: (input: { publishRequestId: string; runForReal: boolean }) => {
                 mintCalls.inputs.push({ runForReal: input.runForReal });
                 const base = input.runForReal ? RUN_FOR_REAL_MINT : RENDER_ONLY_MINT;
-                setData({ ...base, bootSkeleton: mintCalls.bootSkeleton });
+                // `??` not a bare override: an unconditional overwrite makes the
+                // fixtures' own `bootSkeleton` field DEAD, so a future author who
+                // sets it there gets a silently-passing false result.
+                setData({ ...base, bootSkeleton: mintCalls.bootSkeleton ?? base.bootSkeleton });
               },
             };
           },
@@ -163,6 +175,10 @@ describe('ReviewBlockPreviewHost — run-for-real opt-in', () => {
     expect(page.getByTestId('page-host').element().getAttribute('data-boot-skeleton')).toBe(
       'false'
     );
+    // The forced-unverified tier, pinned for the first time.
+    expect(page.getByTestId('page-host').element().getAttribute('data-trust-tier')).toBe(
+      'unverified'
+    );
   });
 
   test('a mint that DECLARES bootSkeleton reaches the host', async () => {
@@ -170,9 +186,7 @@ describe('ReviewBlockPreviewHost — run-for-real opt-in', () => {
     mintCalls.bootSkeleton = true;
     mount();
     await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
-    expect(page.getByTestId('page-host').element().getAttribute('data-boot-skeleton')).toBe(
-      'true'
-    );
+    expect(page.getByTestId('page-host').element().getAttribute('data-boot-skeleton')).toBe('true');
   });
 
   test('DEFAULT is render-only: host gets reviewRunForReal=false, no banner, opt-in offered', async () => {

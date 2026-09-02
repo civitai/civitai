@@ -4010,7 +4010,9 @@ export function PageBlockHost({
               // instantaneous (the pre-animation behaviour).
               //
               // 🔴 `bootSkeleton` apps opt OUT of the whole reveal. They paint
-              // their own themed boot state in the HTML they ship, so hiding the
+              // their own boot state in the HTML they ship (themed only if they also
+              // read the BLOCK_INIT fragment; otherwise a prefers-color-scheme
+              // guess), so hiding the
               // iframe until BLOCK_READY would hide exactly that, and the
               // translateY settle would move it on arrival — a layout shift, at
               // the one moment the app is trying not to move. Visible from mount,
