@@ -296,6 +296,20 @@ describe('upsertModelVersionHandler — a save that omits the stamp', () => {
     expect(written.licensingSourceCoercedReason).toBe('model-type-mismatch');
   });
 
+  // The seed opens the whole rejection ladder to partial saves, not only its base-model rung, so the
+  // other rungs are pinned here too rather than left to be discovered by whoever changes one.
+  it('coerces a stored source that is no longer a registered root', async () => {
+    const written = await call(omitting({ root: null }));
+    expect(written.licensingSourceVersionId).toBeNull();
+    expect(written.licensingSourceCoercedReason).toBe('not-a-root');
+  });
+
+  it('coerces a stored source when the destination model cannot be read', async () => {
+    const written = await call(omitting({ modelTypes: { [STORED_MODEL_ID]: 'Checkpoint' } }));
+    expect(written.licensingSourceVersionId).toBeNull();
+    expect(written.licensingSourceCoercedReason).toBe('model-not-found');
+  });
+
   // `undefined` is "the client said nothing"; `null` is the owner clearing the stamp. Seeding on
   // anything looser than `=== undefined` restores a source the creator just removed.
   it('does not restore a stored source over an explicit null', async () => {

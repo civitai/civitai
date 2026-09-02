@@ -80,9 +80,11 @@ describe('licensingSourceVersionId — the settings audit', () => {
    */
 
   /**
-   * 🔴 `diffEntityChanges` compares `before[field]` to `after[field]`, so a watched field the
-   * service never selects is `undefined` on the before side and silently produces no row — the audit
-   * reads as wired up and records nothing.
+   * 🔴 `diffEntityChanges` compares `before[field]` to `after[field]`, and its skip at
+   * `entity-change-helpers.ts:107` guards the AFTER side only. So a watched field the service never
+   * selects is `undefined` on the before side, `stableStringify` encodes that as `''`, and the row is
+   * written with a BLANK `oldValue` — a corrupt record of the change, not a missing one, and nothing
+   * throws either way.
    *
    * Asserted over the whole watched list, because the next field added will have the same trap and
    * nobody will remember this test exists.
@@ -177,8 +179,8 @@ describe('Model.type — the audit trail for what clears a lineage fee', () => {
 
   /**
    * 🔴 Same silent trap as the ModelVersion select above: a watched field the service never reads on
-   * the before side is `undefined` there and produces no row, so the audit reads as wired up and
-   * records nothing. `upsertModel`'s `beforeUpdate` is that read.
+   * the before side lands in the row as a blank `oldValue`, so the audit reads as wired up and
+   * records a change from nothing. `upsertModel`'s `beforeUpdate` is that read.
    */
   it('selects every watched Model column for the audit before-side', () => {
     const service = readFileSync(
@@ -190,7 +192,12 @@ describe('Model.type — the audit trail for what clears a lineage fee', () => {
       at,
       "upsertModel's before-read moved; re-anchor this test, do not delete it"
     ).toBeGreaterThan(-1);
-    const select = service.slice(at, service.indexOf(': null;', at));
+    const end = service.indexOf(': null;', at);
+    // The end marker is the ternary's own `: null;`. If that ever becomes `: undefined`, `indexOf`
+    // silently finds the next one hundreds of lines down, the span swallows unrelated selects, and
+    // some other `type: true` satisfies every field — the guard passes while checking nothing.
+    expect(end - at, 'the beforeUpdate span no longer ends at its own ternary').toBeLessThan(1200);
+    const select = service.slice(at, end);
 
     const missing = watchedEntityFields.Model.filter(
       (field) => !new RegExp(`\\b${field.split('.')[0]}: (true|\\{)`).test(select)
