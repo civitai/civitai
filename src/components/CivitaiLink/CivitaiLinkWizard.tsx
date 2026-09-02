@@ -199,41 +199,41 @@ function WizardFooter({ left, right }: { left: React.ReactNode; right?: React.Re
 }
 
 function PairingState({ status, onRetry }: { status?: PairingStatus; onRetry: () => void }) {
-  if (status === 'paired')
-    return (
-      <Group justify="center" gap={10} my="md">
-        <Center
-          w={40}
-          h={40}
-          style={{ borderRadius: 999, background: 'var(--mantine-color-green-light)' }}
-        >
-          <IconCheck size={20} className="text-green-6" />
-        </Center>
-        <Text fz="md" fw={600} c="var(--mantine-color-bright)">
-          Signed in — this app is connected
-        </Text>
-      </Group>
-    );
-
-  if (status === 'timeout')
-    return (
-      <Stack align="center" gap="xs" my="md">
-        <Text fz="sm" c="dimmed" ta="center" maw={420}>
-          Still waiting? Make sure the app is running.
-        </Text>
-        <Button variant="default" onClick={onRetry} leftSection={<IconRefresh size={16} />}>
-          Retry
-        </Button>
-      </Stack>
-    );
-
+  // A live region added alongside its own content announces unreliably, so one
+  // wrapper spans all three states.
   return (
-    <Group justify="center" gap={10} my="md">
-      <Loader size="sm" />
-      <Text fz="md" fw={600} c="var(--mantine-color-bright)">
-        Waiting for the app…
-      </Text>
-    </Group>
+    <div role="status">
+      {status === 'paired' ? (
+        <Group justify="center" gap={10} my="md">
+          <Center
+            w={40}
+            h={40}
+            style={{ borderRadius: 999, background: 'var(--mantine-color-green-light)' }}
+          >
+            <IconCheck size={20} className="text-green-6" />
+          </Center>
+          <Text fz="md" fw={600} c="var(--mantine-color-bright)">
+            Signed in — this app is connected
+          </Text>
+        </Group>
+      ) : status === 'timeout' ? (
+        <Stack align="center" gap="xs" my="md">
+          <Text fz="sm" c="dimmed" ta="center" maw={420}>
+            Still waiting? Make sure the app is running.
+          </Text>
+          <Button variant="default" onClick={onRetry} leftSection={<IconRefresh size={16} />}>
+            Retry
+          </Button>
+        </Stack>
+      ) : (
+        <Group justify="center" gap={10} my="md">
+          <Loader size="sm" />
+          <Text fz="md" fw={600} c="var(--mantine-color-bright)">
+            Waiting for the app…
+          </Text>
+        </Group>
+      )}
+    </div>
   );
 }
 
@@ -285,8 +285,8 @@ export default function CivitaiLinkWizardModal() {
   }, [active, isNodePack]); // eslint-disable-line
 
   useEffect(() => {
-    if (pairingStatus === 'paired') commitName();
-  }, [pairingStatus, instance?.id]); // eslint-disable-line
+    if (active === 2 && !isNodePack && pairingStatus === 'paired') commitName();
+  }, [active, isNodePack, pairingStatus, instance?.id]); // eslint-disable-line
 
   useEffect(() => {
     if (path !== 'desktop') return;
