@@ -344,10 +344,15 @@ Scopes are represented as a bitmask integer. Combine scopes with bitwise OR.
 
 ## Rate Limits
 
-- Token endpoint: 20 requests/minute per client
-- Authorization endpoint: 10 requests/minute per user
-- Revocation endpoint: 20 requests/minute per client
-- Introspection endpoint: 60 requests/minute per client
+Buckets are keyed differently per endpoint — check which one applies before sizing your client:
+
+- Token endpoint (`/token`): 20 requests/minute per **IP**
+- Device endpoints (`/device`, `/device-token`): 20 requests/minute per **client id**, one budget
+  shared by every install of your app
+- Authorization endpoint: 10 requests/minute per **user**
+- Revocation endpoint: 20 requests/minute per **IP**
+- Introspection endpoint: 60 requests/minute per **client id**, plus 120/minute per **IP** charged
+  before client authentication
 
 The hub sends no rate-limit headers and no `Retry-After`. A throttled request is `429` with `{"error":"rate_limited"}` — back off on the 429 itself.
 
