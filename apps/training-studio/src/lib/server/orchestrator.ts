@@ -1,5 +1,6 @@
 import {
   createCivitaiClient,
+  getConsumerBlobUploadUrl,
   getWorkflow,
   queryWorkflows,
   submitWorkflow,
@@ -121,6 +122,17 @@ export async function trainingWhatIf(
     throw new Error(`training whatif failed: ${detail}`);
   }
   return data.cost?.total ?? null;
+}
+
+/** Mint a short-lived presigned URL for a single dataset blob. The browser POSTs the file straight to
+ *  `uploadUrl` (offloading the bytes from us); that POST scans the media and returns the registered blob.
+ *  One URL per file, as the main app's per-image upload does. */
+export async function blobUploadUrl(
+  token: string
+): Promise<{ uploadUrl: string; expiresAt: string }> {
+  const { data, error } = await getConsumerBlobUploadUrl({ client: orchestratorClient(token) });
+  if (!data) throw new Error(`blob upload url failed: ${error?.detail ?? 'no data returned'}`);
+  return { uploadUrl: data.uploadUrl, expiresAt: data.expiresAt };
 }
 
 /** One training run's detail (the Open screen), or null if it's gone / not the caller's / not mappable. */

@@ -4,7 +4,7 @@
   import DataStep from './DataStep.svelte';
   import ReviewStep from './ReviewStep.svelte';
   import ResultsStep from './ResultsStep.svelte';
-  import type { Img, LaunchedRun, Selection } from './trainingFlow';
+  import { isTrainable, type Img, type LaunchedRun, type Selection } from './trainingFlow';
   import type { FromPrices } from '$lib/data/trainingModels';
 
   let { prices, onExit }: { prices: FromPrices; onExit: () => void } = $props();
@@ -22,6 +22,15 @@
   let images = $state<Img[]>([]);
   let trigger = $state('');
   let launched = $state<LaunchedRun[] | null>(null);
+  // Only successfully uploaded + scanned images train — blocked / in-flight tiles don't count.
+  const trainableCount = $derived(images.filter(isTrainable).length);
+
+  // Free the dataset preview object URLs when the flow unmounts (leaving to My-trainings). Reads
+  // nothing reactive, so it's mount-only — not per-step; images and their previews live here and must
+  // survive Back/Continue, so DataStep must not do this on its own unmount.
+  $effect(() => () => {
+    for (const img of images) URL.revokeObjectURL(img.previewUrl);
+  });
 
   function jump(n: number) {
     if (n <= step) step = n;
@@ -76,7 +85,7 @@
     <ReviewStep
       {selection}
       {prices}
-      imageCount={images.length}
+      imageCount={trainableCount}
       onStart={(l) => {
         launched = l;
         step = 4;

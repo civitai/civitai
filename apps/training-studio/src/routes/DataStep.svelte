@@ -1,37 +1,3 @@
-<script module lang="ts">
-  // Stand-in label seeds — not real auto-labels. Do not build on these; they're replaced by the
-  // orchestrator's signal stream when per-blob upload lands (CLAUDE.md).
-  const TAGSETS: string[][] = [
-    ['1girl', 'solo', 'looking at viewer', 'close-up', 'detailed face', 'soft lighting'],
-    ['1girl', 'portrait', 'front view', 'neutral background', 'freckles', 'smile'],
-    ['1girl', 'side profile', 'long hair', 'window light', 'pensive'],
-    ['1girl', 'full body', 'standing', 'casual clothes', 'outdoors', 'daylight'],
-    ['1girl', 'upper body', 'dramatic lighting', 'dark background', 'serious'],
-    ['1girl', 'three-quarter view', 'detailed eyes', 'studio', 'soft focus'],
-    ['1girl', 'solo', 'sitting', 'indoors', 'warm light', 'relaxed'],
-    ['1girl', 'close-up', 'freckles', 'blue eyes', 'natural light'],
-    ['1girl', 'action pose', 'motion blur', 'dynamic', 'outdoors'],
-    ['1girl', 'headshot', 'plain background', 'sharp focus', 'neutral expression'],
-    ['1girl', 'full body', 'walking', 'street', 'overcast'],
-    ['1girl', 'portrait', 'golden hour', 'backlight', 'smiling'],
-  ];
-  const CAPSETS: string[] = [
-    'a close-up portrait, soft even lighting, highly detailed face, looking at the viewer',
-    'a front-facing portrait, freckled skin, gentle smile, neutral studio background',
-    'a side profile with long hair, soft window light, a pensive expression',
-    'a full-body shot standing outdoors in casual clothes, natural daylight',
-    'an upper-body portrait under dramatic lighting against a dark background',
-    'a three-quarter view, detailed eyes, studio setup with soft focus',
-    'sitting indoors, warm ambient light, relaxed pose',
-    'a close-up with freckles and blue eyes, soft natural light',
-    'an action shot mid-motion outdoors with subtle motion blur',
-    'a headshot on a plain background, sharp focus, neutral expression',
-    'a full-body photo walking down a street on an overcast day',
-    'a golden-hour portrait, warm backlight, smiling',
-  ];
-  const POOL = ['1girl', '1boy', 'solo', 'looking at viewer', 'smile', 'portrait', 'full body', 'upper body', 'outdoors', 'indoors', 'detailed face', 'soft lighting', 'dramatic lighting', 'blue eyes', 'long hair', 'freckles', 'casual clothes', 'sitting', 'standing'];
-</script>
-
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -39,8 +5,9 @@
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import { loraTypeById } from '$lib/data/trainingModels';
-  import GradientTile from '$lib/components/GradientTile.svelte';
-  import { labelNoun, runCard, type Img, type Selection } from './trainingFlow';
+  import { pool } from '$lib/pool';
+  import { isAbort, uploadFile, UploadError } from '$lib/upload';
+  import { isTrainable, labelNoun, runCard, type Img, type Selection } from './trainingFlow';
 
   // images + trigger are owned by the flow (TrainingFlow) so they survive Back/Continue.
   let {
@@ -58,87 +25,213 @@
   } = $props();
 
   const type = $derived(loraTypeById(selection.loraType));
-  // A dataset has one label type; SelectStep's label-type lock guarantees every run in a
-  // multi-run selection shares run[0]'s, so run[0] is representative of the whole dataset.
+  // A dataset has one label type; SelectStep's label-type lock guarantees every run in a multi-run
+  // selection shares run[0]'s, so run[0] is representative of the whole dataset.
   const primaryCard = $derived(runCard(selection.runs[0]!));
   const labelMode = $derived(primaryCard.label);
   const noun = $derived(labelNoun(primaryCard));
+  const media = $derived(selection.media);
 
+  const uploadedCount = $derived(images.filter(isTrainable).length);
+  const busy = $derived(images.some((i) => i.status === 'uploading'));
+  const blockedCount = $derived(images.filter((i) => i.status === 'blocked').length);
+  // A trainable image needs a label — tags or a caption (a global trigger word isn't a per-image label).
+  // Auto-labeling (next slice) fills these for the whole set; until then it's manual, but an unlabeled
+  // dataset must not reach Review.
+  const labeledCount = $derived(
+    images.filter((i) => isTrainable(i) && (i.tags.length > 0 || i.caption.trim().length > 0)).length
+  );
+  const allLabeled = $derived(uploadedCount > 0 && labeledCount === uploadedCount);
+  const canContinue = $derived(uploadedCount > 0 && !busy && allLabeled);
+  const enough = $derived(uploadedCount >= type.minImg);
+
+  let seq = 0;
+  let dragging = $state(false);
+  let fileInput: HTMLInputElement;
+  // In-flight uploads, so removing a tile (or leaving) aborts its request.
+  const controllers = new Map<number, AbortController>();
+
+  // Mutate the tile through `images` (the state proxy) rather than the captured ref, so the change
+  // is reactive.
+  function patch(id: number, values: Partial<Img>) {
+    const tile = images.find((x) => x.id === id);
+    if (tile) Object.assign(tile, values);
+  }
+
+  async function addFiles(list: FileList | null | undefined) {
+    if (!list) return;
+    const matched = [...list].filter((f) => f.type.startsWith(`${media}/`));
+    if (matched.length === 0) return;
+    const added: Img[] = matched.map((file) => ({
+      id: ++seq,
+      file,
+      previewUrl: URL.createObjectURL(file),
+      mediaType: media,
+      status: 'uploading',
+      progress: 0,
+      tags: [],
+      caption: '',
+    }));
+    images = [...images, ...added];
+    await pool(added, 4, (img) => uploadOne(img.id, img.file));
+  }
+
+  async function uploadOne(id: number, file: File) {
+    const controller = new AbortController();
+    controllers.set(id, controller);
+    patch(id, { status: 'uploading', progress: 0, message: undefined });
+    try {
+      const blob = await uploadFile(file, (fraction) => patch(id, { progress: fraction }), controller.signal);
+      patch(id, { status: 'uploaded', progress: 1, blobId: blob.id, blobUrl: blob.url ?? undefined });
+    } catch (err) {
+      if (isAbort(err)) return;
+      const permanent = err instanceof UploadError && err.permanent;
+      patch(id, {
+        status: permanent ? 'blocked' : 'error',
+        message: err instanceof Error ? err.message : 'Upload failed',
+      });
+    } finally {
+      controllers.delete(id);
+    }
+  }
+
+  function retry(id: number) {
+    const tile = images.find((x) => x.id === id);
+    if (tile) void uploadOne(id, tile.file);
+  }
+
+  function remove(id: number) {
+    controllers.get(id)?.abort();
+    controllers.delete(id);
+    const tile = images.find((x) => x.id === id);
+    if (tile) URL.revokeObjectURL(tile.previewUrl);
+    images = images.filter((x) => x.id !== id);
+  }
+
+  function onDrop(e: DragEvent) {
+    e.preventDefault();
+    dragging = false;
+    void addFiles(e.dataTransfer?.files);
+  }
+  function onPick(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    void addFiles(input.files);
+    input.value = ''; // let the same file be re-picked after a remove
+  }
+
+  // ---- label editor (manual for now; auto-label is the next slice) ----
   let editorOpen = $state(false);
-  let editorIdx = $state(0);
+  let editorId = $state(0);
   let newTag = $state('');
+  const editing = $derived(images.find((x) => x.id === editorId));
 
-  const labeled = $derived(images.filter((i) => i.done).length);
-  const canContinue = $derived(images.length > 0 && labeled === images.length);
-  const enough = $derived(images.length >= type.minImg);
-
-  function addDataset() {
-    if (images.length > 0) return;
-    images = TAGSETS.map((tags, i) => ({ id: i, tags: [...tags], caption: CAPSETS[i]!, done: false }));
-    // TODO(orchestrator): upload each blob individually, scan on upload, and append the auto-label
-    // returned over signals. This setTimeout stands in for that stream.
-    images.forEach((_, i) => setTimeout(() => (images[i]!.done = true), 500 + i * 150));
-  }
-
-  function relabelOne(i: number) {
-    images[i]!.done = false;
-    setTimeout(() => (images[i]!.done = true), 600);
-  }
-
-  function openEditor(i: number) {
-    editorIdx = i;
+  function openEditor(id: number) {
+    editorId = id;
     newTag = '';
     editorOpen = true;
   }
-  function editStep(d: number) {
-    editorIdx = (editorIdx + d + images.length) % images.length;
-    newTag = '';
-  }
   function addTag() {
-    const v = newTag.trim();
-    if (v && !images[editorIdx]!.tags.includes(v)) {
-      images[editorIdx]!.tags = [...images[editorIdx]!.tags, v];
+    const value = newTag.trim();
+    if (editing && value && !editing.tags.includes(value)) {
+      editing.tags = [...editing.tags, value];
     }
     newTag = '';
   }
-  function removeTag(k: number) {
-    images[editorIdx]!.tags = images[editorIdx]!.tags.filter((_, x) => x !== k);
+  function removeTag(tag: string) {
+    if (editing) editing.tags = editing.tags.filter((t) => t !== tag);
   }
-  function suggestions(img: Img) {
-    return POOL.filter((p) => !img.tags.includes(p)).slice(0, 10);
+
+  // The trigger word is only prepended to a label that doesn't already contain it; where it's already
+  // present it's highlighted in place rather than duplicated. Matching is case-insensitive.
+  const triggerText = $derived(trigger.trim());
+  const isTriggerTag = (tag: string) =>
+    triggerText.length > 0 && tag.toLowerCase() === triggerText.toLowerCase();
+  const tagsHaveTrigger = (tags: string[]) => tags.some(isTriggerTag);
+  function captionHit(caption: string) {
+    if (!triggerText) return null;
+    const idx = caption.toLowerCase().indexOf(triggerText.toLowerCase());
+    if (idx < 0) return null;
+    return {
+      before: caption.slice(0, idx),
+      match: caption.slice(idx, idx + triggerText.length),
+      after: caption.slice(idx + triggerText.length),
+    };
   }
 </script>
+
+{#snippet triggerTags(tags: string[], limit: number)}
+  <div class="flex flex-wrap gap-1">
+    {#if triggerText && !tagsHaveTrigger(tags)}
+      <span class="rounded border border-[#f59f00]/30 bg-[#f59f00]/10 px-1.5 py-0.5 font-mono text-[10px] text-[#f59f00]">
+        {triggerText}
+      </span>
+    {/if}
+    {#each tags.slice(0, limit) as t (t)}
+      <span
+        class="rounded border px-1.5 py-0.5 font-mono text-[10px] {isTriggerTag(t)
+          ? 'border-[#f59f00]/30 bg-[#f59f00]/10 text-[#f59f00]'
+          : 'border-dark-4 bg-dark-7 text-dark-2'}"
+      >
+        {t}
+      </span>
+    {/each}
+    {#if tags.length > limit}
+      <span class="rounded px-1.5 py-0.5 font-mono text-[10px] text-dark-2">+{tags.length - limit}</span>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet triggerCaption(caption: string)}
+  {@const hit = captionHit(caption)}
+  <div class="line-clamp-3 text-[11px] leading-snug text-dark-2">
+    {#if hit}{hit.before}<span class="font-semibold text-[#f59f00]">{hit.match}</span>{hit.after}{:else}{#if triggerText}<span
+          class="font-semibold text-[#f59f00]">{triggerText}</span
+        >, {/if}{caption}{/if}
+  </div>
+{/snippet}
 
 <div class="flex flex-col gap-5">
   <div>
     <h2 class="m-0 text-xl font-semibold text-white">Add your data</h2>
     <p class="mt-1 text-sm text-dark-2">
-      Build a dataset from any of these — mix and match freely. Everything is auto-labeled as
-      <strong class="text-dark-0">{noun}</strong> for you, for free.
+      Drop your files — they upload and get scanned as you go. We'll auto-label them as
+      <strong class="text-dark-0">{noun}</strong> for free.
     </p>
   </div>
 
   <div class="flex flex-wrap gap-2.5">
-    <Button variant="outline" onclick={addDataset}>⬆ Upload files</Button>
-    <Button variant="outline" onclick={addDataset}>🖼 From my generations</Button>
-    <Button variant="outline" onclick={addDataset}>♻ Reuse a dataset</Button>
+    <Button variant="outline" onclick={() => fileInput.click()}>⬆ Upload files</Button>
+    <Button variant="outline" disabled title="Coming soon">🖼 From my generations</Button>
+    <Button variant="outline" disabled title="Coming soon">♻ Reuse a dataset</Button>
   </div>
+
+  <input
+    bind:this={fileInput}
+    type="file"
+    multiple
+    accept={`${media}/*`}
+    class="hidden"
+    onchange={onPick}
+  />
 
   {#if images.length === 0}
     <button
       type="button"
-      onclick={addDataset}
-      class="rounded-md border-2 border-dashed border-dark-4 bg-dark-6 p-9 text-center transition hover:border-primary"
+      onclick={() => fileInput.click()}
+      ondragover={(e) => {
+        e.preventDefault();
+        dragging = true;
+      }}
+      ondragleave={() => (dragging = false)}
+      ondrop={onDrop}
+      class="rounded-md border-2 border-dashed p-9 text-center transition
+        {dragging ? 'border-primary bg-primary/[0.06]' : 'border-dark-4 bg-dark-6 hover:border-primary'}"
     >
       <div class="text-3xl">📁</div>
-      <div class="mt-2 text-base font-semibold text-dark-0">Drop images, video, or audio</div>
-      <div class="mt-2 font-mono text-xs text-dark-2">
-        JPG · PNG · WEBP · MP4 · WEBM · MP3 · media type auto-detected
+      <div class="mt-2 text-base font-semibold text-dark-0">
+        Drop your {media} files here, or click to browse
       </div>
-      <div class="mt-1.5 font-mono text-xs text-dark-2">
-        Already labeled? Drop a .zip with matching .txt files and we'll use those.
-      </div>
-      <div class="mt-2.5 font-mono text-xs text-[#f59f00]">▸ Click to add a sample dataset</div>
+      <div class="mt-2 font-mono text-xs text-dark-2">Uploaded one by one · scanned on upload</div>
     </button>
   {:else}
     <div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
@@ -148,9 +241,7 @@
             {labelMode === 'tag' ? '🏷️' : '📝'}
           </span>
           <div>
-            <div class="text-sm font-bold text-dark-0">
-              Auto-labeled as {noun} · free
-            </div>
+            <div class="text-sm font-bold text-dark-0">Will be auto-labeled as {noun} · free</div>
             <div class="font-mono text-[11px] text-dark-2">
               {labelMode === 'tag'
                 ? `${primaryCard.name} trains on booru-style tags`
@@ -166,71 +257,105 @@
             : 'border-[#f59f00]/30 bg-[#f59f00]/10 text-[#f59f00]'}"
         >
           {#if enough}
-            ✓ {images.length} images — good for a {type.name.toLowerCase()} (we recommend ≥{type.minImg}).
+            ✓ {uploadedCount} uploaded — good for a {type.name.toLowerCase()} (we recommend ≥{type.minImg}).
           {:else}
-            ⚠️ Only {images.length} images. We recommend at least {type.minImg} for a
-            {type.name.toLowerCase()} — results may be weak.
+            ⚠️ {uploadedCount} uploaded. We recommend at least {type.minImg} for a
+            {type.name.toLowerCase()} — add more.
           {/if}
         </div>
 
         <div class="mb-3 flex items-center justify-between">
-          <b class="text-dark-0">{images.length} images · {labeled} labeled</b>
-          <span class="font-mono text-xs text-dark-2">✎ edit · ↻ relabel one</span>
+          <b class="text-dark-0">
+            {images.length}
+            {images.length === 1 ? 'file' : 'files'}
+            {#if busy}· uploading…{/if}
+            {#if uploadedCount > 0}·
+              <span class={labeledCount === uploadedCount ? 'text-emerald-400' : 'text-dark-2'}>
+                {labeledCount}/{uploadedCount} labeled
+              </span>{/if}
+            {#if blockedCount > 0}· <span class="text-red-400">{blockedCount} blocked</span>{/if}
+          </b>
+          <Button variant="outline" size="xs" onclick={() => fileInput.click()}>＋ Add more</Button>
         </div>
 
         <div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
-          {#each images as img, i (img.id)}
+          {#each images as img (img.id)}
             <div class="overflow-hidden rounded-md border border-dark-4 bg-dark-6">
-              <GradientTile index={i} class="relative rounded-none">
-                {#if !img.done}
-                  <div class="absolute inset-0 grid place-items-center bg-black/40">
-                    <span class="font-mono text-[11px] text-white">✨ labeling…</span>
+              <div class="relative aspect-square bg-dark-7">
+                {#if img.mediaType === 'image'}
+                  <img src={img.previewUrl} alt="" class="h-full w-full object-cover" />
+                {:else if img.mediaType === 'video'}
+                  <!-- svelte-ignore a11y_media_has_caption -->
+                  <video src={img.previewUrl} muted class="h-full w-full object-cover"></video>
+                {:else}
+                  <div class="flex h-full flex-col items-center justify-center gap-1 p-2 text-center">
+                    <span class="text-2xl">🎵</span>
+                    <span class="line-clamp-2 break-all font-mono text-[10px] text-dark-2">{img.file.name}</span>
                   </div>
                 {/if}
+
+                {#if img.status === 'uploading'}
+                  <div class="absolute inset-0 grid place-items-center bg-black/50">
+                    <span class="font-mono text-[11px] text-white">⬆ {Math.round(img.progress * 100)}%</span>
+                  </div>
+                  <div class="absolute bottom-0 left-0 h-1 bg-primary transition-[width]" style:width="{img.progress * 100}%"></div>
+                {:else if img.status === 'blocked'}
+                  <div class="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-red-950/70 p-2 text-center">
+                    <span class="text-lg">⚠️</span>
+                    <span class="font-mono text-[10px] leading-tight text-red-200">{img.message}</span>
+                  </div>
+                {:else if img.status === 'error'}
+                  <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-black/70 p-2 text-center">
+                    <span class="font-mono text-[10px] leading-tight text-[#f59f00]">{img.message}</span>
+                    <Button variant="outline" size="xs" onclick={() => retry(img.id)}>↻ Retry</Button>
+                  </div>
+                {/if}
+
                 <div class="absolute right-1.5 top-1.5 flex gap-1">
+                  {#if img.status === 'uploaded'}
+                    <button
+                      type="button"
+                      aria-label="Edit label"
+                      onclick={() => openEditor(img.id)}
+                      class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-xs text-white hover:bg-primary"
+                    >
+                      ✎
+                    </button>
+                  {/if}
                   <button
                     type="button"
-                    aria-label="Relabel"
-                    onclick={() => relabelOne(i)}
-                    class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-xs text-white hover:bg-primary"
+                    aria-label="Remove"
+                    onclick={() => remove(img.id)}
+                    class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-xs text-white hover:bg-red-500"
                   >
-                    ↻
-                  </button>
-                  <button
-                    type="button"
-                    aria-label="Edit label"
-                    onclick={() => openEditor(i)}
-                    class="grid h-6 w-6 place-items-center rounded-md bg-black/60 text-xs text-white hover:bg-primary"
-                  >
-                    ✎
+                    ✕
                   </button>
                 </div>
-              </GradientTile>
-              <div class="min-h-[56px] p-2.5">
-                {#if !img.done}
-                  <div class="font-mono text-[11px] text-dark-2">✨ labeling…</div>
+
+                {#if img.status === 'uploaded'}
+                  <span class="absolute left-1.5 top-1.5 grid h-5 w-5 place-items-center rounded-full bg-emerald-500 text-[10px] font-bold text-white">
+                    ✓
+                  </span>
+                {/if}
+              </div>
+
+              <div class="min-h-[44px] p-2.5">
+                {#if img.status !== 'uploaded'}
+                  <div class="font-mono text-[11px] text-dark-2">
+                    {img.status === 'uploading' ? 'uploading…' : img.status === 'blocked' ? 'blocked' : 'failed'}
+                  </div>
+                {:else if img.tags.length === 0 && !img.caption}
+                  <button
+                    type="button"
+                    onclick={() => openEditor(img.id)}
+                    class="font-mono text-[11px] text-dark-2 hover:text-primary"
+                  >
+                    ＋ add label
+                  </button>
                 {:else if labelMode === 'tag'}
-                  <div class="flex flex-wrap gap-1">
-                    {#if trigger}
-                      <span class="rounded border border-[#f59f00]/30 bg-[#f59f00]/10 px-1.5 py-0.5 font-mono text-[10px] text-[#f59f00]">
-                        {trigger}
-                      </span>
-                    {/if}
-                    {#each img.tags.slice(0, 4) as t (t)}
-                      <span class="rounded border border-dark-4 bg-dark-7 px-1.5 py-0.5 font-mono text-[10px] text-dark-2">
-                        {t}
-                      </span>
-                    {/each}
-                    {#if img.tags.length > 4}
-                      <span class="rounded px-1.5 py-0.5 font-mono text-[10px] text-dark-2">
-                        +{img.tags.length - 4}
-                      </span>
-                    {/if}
-                  </div>
+                  {@render triggerTags(img.tags, 4)}
                 {:else}
-                  <div class="line-clamp-3 text-[11px] leading-snug text-dark-2">
-                    {#if trigger}<span class="font-semibold text-[#f59f00]">{trigger}</span>, {/if}{img.caption}
-                  </div>
+                  {@render triggerCaption(img.caption)}
                 {/if}
               </div>
             </div>
@@ -258,8 +383,8 @@
         </div>
         <Input bind:value={trigger} placeholder="optional, e.g. my_character" class="mt-2 font-mono" />
         <p class="mt-2 text-[12px] leading-snug text-dark-2">
-          Prepended &amp; <span class="text-[#f59f00]">highlighted</span> in every label. Leave blank to
-          skip.
+          Prepended to each label when missing, and <span class="text-[#f59f00]">highlighted</span> where
+          it already appears. Leave blank to skip.
         </p>
       </aside>
     </div>
@@ -267,37 +392,49 @@
 
   <div class="flex items-center justify-between gap-3 border-t border-dark-4 pt-5">
     <Button variant="outline" onclick={onBack}>← Back</Button>
-    <Button disabled={!canContinue} onclick={onContinue}>Continue to Review →</Button>
+    <div class="flex items-center gap-3">
+      {#if uploadedCount > 0 && !busy && !allLabeled}
+        <span class="font-mono text-xs text-[#f59f00]">
+          {uploadedCount - labeledCount} unlabeled — label every image to continue
+        </span>
+      {/if}
+      <Button disabled={!canContinue} onclick={onContinue}>Continue to Review →</Button>
+    </div>
   </div>
 </div>
 
 <!-- label editor -->
 <Dialog.Root bind:open={editorOpen}>
   <Dialog.Content class="max-w-3xl">
-    {#if images[editorIdx]}
-      {@const img = images[editorIdx]}
+    {#if editing}
       <Dialog.Header>
         <Dialog.Title>{labelMode === 'tag' ? 'Edit tags' : 'Edit caption'}</Dialog.Title>
-        <Dialog.Description>image {editorIdx + 1} / {images.length}</Dialog.Description>
+        <Dialog.Description>{editing.file.name}</Dialog.Description>
       </Dialog.Header>
 
       {#if labelMode === 'tag'}
         <div class="grid gap-4 sm:grid-cols-[220px_1fr]">
-          <GradientTile index={editorIdx} class="border border-dark-4" />
+          <img src={editing.previewUrl} alt="" class="w-full rounded border border-dark-4 object-cover" />
           <div>
             <div class="mb-2 font-mono text-xs uppercase tracking-wider text-dark-2">
-              Tags {#if trigger}· <span class="text-[#f59f00]">{trigger}</span> pinned first{/if}
+              Tags {#if triggerText}·
+                <span class="text-[#f59f00]">{triggerText}</span>
+                {tagsHaveTrigger(editing.tags) ? 'highlighted' : 'prepended'}{/if}
             </div>
             <div class="flex min-h-[64px] flex-wrap content-start gap-1.5 rounded border border-dark-4 bg-dark-7 p-2.5">
-              {#if trigger}
+              {#if triggerText && !tagsHaveTrigger(editing.tags)}
                 <span class="rounded border border-[#f59f00]/30 bg-[#f59f00]/10 px-2 py-1 font-mono text-xs text-[#f59f00]">
-                  {trigger}
+                  {triggerText}
                 </span>
               {/if}
-              {#each img.tags as t, k (t)}
-                <span class="inline-flex items-center gap-1.5 rounded border border-dark-4 bg-dark-6 px-2 py-1 font-mono text-xs text-dark-0">
+              {#each editing.tags as t (t)}
+                <span
+                  class="inline-flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-xs {isTriggerTag(t)
+                    ? 'border-[#f59f00]/30 bg-[#f59f00]/10 text-[#f59f00]'
+                    : 'border-dark-4 bg-dark-6 text-dark-0'}"
+                >
                   {t}
-                  <button type="button" aria-label={`Remove ${t}`} onclick={() => removeTag(k)} class="text-dark-2 hover:text-red-400">✕</button>
+                  <button type="button" aria-label={`Remove ${t}`} onclick={() => removeTag(t)} class="text-dark-2 hover:text-red-400">✕</button>
                 </span>
               {/each}
             </div>
@@ -311,39 +448,28 @@
               <Input bind:value={newTag} placeholder="Add a tag and press Enter" class="font-mono" />
               <Button type="submit" variant="outline">Add</Button>
             </form>
-            <div class="mt-3">
-              <div class="mb-1.5 font-mono text-[11px] uppercase tracking-wider text-dark-2">Suggested</div>
-              <div class="flex flex-wrap gap-1.5">
-                {#each suggestions(img) as p (p)}
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    class="font-mono"
-                    onclick={() => !img.tags.includes(p) && (img.tags = [...img.tags, p])}
-                  >
-                    + {p}
-                  </Button>
-                {/each}
-              </div>
-            </div>
           </div>
         </div>
       {:else}
         <div class="flex flex-col gap-3">
-          <GradientTile index={editorIdx} class="aspect-auto h-44 w-full border border-dark-4" />
+          <img src={editing.previewUrl} alt="" class="h-44 w-full rounded border border-dark-4 object-contain" />
           <div>
             <div class="mb-2 font-mono text-xs uppercase tracking-wider text-dark-2">Caption</div>
-            <Textarea bind:value={img.caption} rows={6} />
+            <Textarea bind:value={editing.caption} rows={6} />
             <p class="mt-2 text-xs text-dark-2">
-              Trigger <span class="text-[#f59f00]">{trigger || '(none)'}</span> is prepended automatically.
+              {#if !triggerText}
+                No trigger word set.
+              {:else if captionHit(editing.caption)}
+                Trigger <span class="text-[#f59f00]">{triggerText}</span> is highlighted where it appears.
+              {:else}
+                Trigger <span class="text-[#f59f00]">{triggerText}</span> is prepended automatically.
+              {/if}
             </p>
           </div>
         </div>
       {/if}
 
       <Dialog.Footer>
-        <Button variant="outline" onclick={() => editStep(-1)}>← Prev</Button>
-        <Button variant="outline" onclick={() => editStep(1)}>Next →</Button>
         <Button onclick={() => (editorOpen = false)}>Done</Button>
       </Dialog.Footer>
     {/if}

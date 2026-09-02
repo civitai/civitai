@@ -1,5 +1,6 @@
 import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { MODEL_CARDS, type FromPrices } from '$lib/data/trainingModels';
+import { pool } from '$lib/pool';
 import { getSysRedis } from './redis';
 import { trainingWhatIf } from './orchestrator';
 
@@ -54,30 +55,24 @@ function refresh(token: string): Promise<FromPrices> {
 async function computeAndCache(token: string): Promise<FromPrices> {
   const prices: FromPrices = {};
   const unpriced: string[] = [];
-  let next = 0;
-  const worker = async () => {
-    while (next < MODEL_CARDS.length) {
-      const card = MODEL_CARDS[next++];
-      const version = card?.versions[0];
-      if (!card || !version) continue;
-      try {
-        const cost = await trainingWhatIf(token, {
-          ecosystem: version.ecosystem,
-          modelVariant: version.modelVariant,
-          version: version.version,
-          model: version.air,
-          engine: version.engine,
-        });
-        if (typeof cost === 'number' && cost > 0) prices[card.type] = Math.round(cost);
-        else unpriced.push(card.type);
-      } catch {
-        // Leave this card unpriced (shown as "—"); one model's failure shouldn't blank the rest.
-        unpriced.push(card.type);
-      }
+  await pool(MODEL_CARDS, WHATIF_CONCURRENCY, async (card) => {
+    const version = card.versions[0];
+    if (!version) return;
+    try {
+      const cost = await trainingWhatIf(token, {
+        ecosystem: version.ecosystem,
+        modelVariant: version.modelVariant,
+        version: version.version,
+        model: version.air,
+        engine: version.engine,
+      });
+      if (typeof cost === 'number' && cost > 0) prices[card.type] = Math.round(cost);
+      else unpriced.push(card.type);
+    } catch {
+      // Leave this card unpriced (shown as "—"); one model's failure shouldn't blank the rest.
+      unpriced.push(card.type);
     }
-  };
-
-  await Promise.all(Array.from({ length: WHATIF_CONCURRENCY }, worker));
+  });
 
   // Some catalog ecosystems aren't submittable as configured (a bad AIR, a missing modelVariant, an
   // unsupported engine). Surface it so a partial or total blackout is visible in logs.

@@ -69,12 +69,31 @@ export function recommendedCardFor(loraTypeId: string, media: Media): ModelCard 
   );
 }
 
-/** A dataset image with its (demo) label. Owned by the flow so it survives Back/Continue. */
+export type ImgStatus = 'uploading' | 'uploaded' | 'blocked' | 'error';
+
+/** A dataset item: its source file, upload/scan state against the orchestrator, and its label.
+ *  Owned by the flow so it survives Back/Continue. Once uploaded the bytes live in the orchestrator
+ *  (`blobId` is the training-data reference, `blobUrl` the scanned media URL); labels are edited
+ *  locally for now (auto-label lands next). */
 export interface Img {
   id: number;
+  file: File;
+  previewUrl: string;
+  mediaType: Media;
+  status: ImgStatus;
+  /** Upload fraction 0–1, driven by the XHR progress event. */
+  progress: number;
+  blobId?: string;
+  blobUrl?: string;
+  /** A block reason or upload error, shown on the tile. */
+  message?: string;
   tags: string[];
   caption: string;
-  done: boolean;
+}
+
+/** An image counts toward the trainable dataset once its bytes are uploaded and it passed the scan. */
+export function isTrainable(img: Img): boolean {
+  return img.status === 'uploaded';
 }
 
 /** Per-run training parameters chosen on the Review step (mirrors the prod trainer's fields). */
