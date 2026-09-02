@@ -189,6 +189,27 @@ const DECLARED_MIGRATIONS: Record<string, DeclaredMigration> = {
       },
     ],
   },
+  '20260902065427_register_civitai_link_desktop_oauth_client': {
+    liveReferences: 1,
+    grants: [
+      {
+        clientId: 'civitai-link-desktop',
+        op: 'set',
+        value: 159383553,
+        pinnedSql:
+          'INSERT INTO "OauthClient" ( "id", "secret", "name", "description", "logoUrl", ' +
+          '"redirectUris", "allowedOrigins", "grants", "allowedScopes", "isConfidential", ' +
+          '"accessMode", "userId", "isVerified", "createdAt", "updatedAt" ) SELECT ' +
+          "'civitai-link-desktop', NULL, 'Civitai Link', 'Official Civitai Link desktop app. " +
+          'Connects your local Stable Diffusion install to Civitai so you can send models to it ' +
+          "from the site, and reads your Vault.', NULL, ARRAY[]::TEXT[], ARRAY[]::TEXT[], " +
+          "ARRAY['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token']::TEXT[], " +
+          "159383553, false, 'open', -1, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP WHERE " +
+          'EXISTS (SELECT 1 FROM "User" WHERE "id" = -1) ON CONFLICT ("id") DO NOTHING;',
+        note: 'UserRead | VaultRead | VaultWrite | LinkConnect — not a superset of Full',
+      },
+    ],
+  },
 };
 
 /**
