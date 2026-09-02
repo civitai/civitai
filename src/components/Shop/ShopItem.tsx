@@ -200,11 +200,13 @@ export const ShopItem = ({
               <div className={clsx(classes.sampleWrapper, outOfStock && classes.dim)}>
                 {/*
                   Shop grids render this card unvirtualised, so every card they paint fetches
-                  its `<img>` up front. Bounded, though — `COSMETIC_SHOP_PAGE_SIZES` pages
-                  /shop and the storefront cosmetics grid at 24, featured sections cap at 6,
-                  and the homepage block slices to `maxItems` (6 over a 4-item section,
-                  measured 2026-09-01). So this is worth ~24 cards at a time, not a whole
-                  94-row section.
+                  its `<img>` up front. Bounded, though — /shop and the storefront cosmetics
+                  grid page at `COSMETIC_SHOP_DEFAULT_PAGE_SIZE` (24), which the reader can
+                  raise to 48 via `COSMETIC_SHOP_PAGE_SIZES`; featured sections cap at 6, and
+                  the homepage block slices to `maxItems` (6 over a 4-item section, measured
+                  2026-09-01). So this is worth 24-48 cards at a time, not a whole 94-row
+                  section. These are catalogue-side numbers — re-measure before relying on
+                  them.
 
                   Animated artwork is what makes even 24 expensive: measured 2026-09-01, an
                   animated cover is 1.7-4.6 MB at width=450 against 43.8 KB for a static one,

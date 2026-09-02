@@ -143,8 +143,9 @@ describe('CosmeticSample turns `lazy` into a loading attribute, per branch', () 
  *    carry a `texture.url`.
  *  - A video-typed ProfileBackground routes to `EdgeVideo`, and `EdgeMedia` spreads
  *    `imgProps` into `EdgeImage` ONLY, so `loading` is dropped there. The `<video>` itself is
- *    already `preload="none"`, but its `poster` stays eager: 17 of 24 live ProfileBackgrounds
- *    are video-typed, ~1.5 MB of posters. Not covered here.
+ *    `preload="none"` everywhere except Safari, which forces `'auto'`, and its `poster` is
+ *    eager unconditionally: 17 of 24 live ProfileBackgrounds are video-typed, ~1.5 MB of
+ *    posters. Not covered here.
  *
  * Re-measure all of the above before relying on it; these are CDN- and catalogue-side facts.
  *
