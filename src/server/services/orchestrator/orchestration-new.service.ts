@@ -2200,7 +2200,8 @@ type StepWithOutput = WorkflowStep & {
     // job (e.g. LTX 2.3). Each slot uses Seed + slotIndex.
     additionalVideos?: VideoBlob[] | null;
     blobs?: ImageBlob[];
-    // For aceStepAudio: blob.type is 'audio' (audio-only) or 'video' (audio + cover image).
+    // Audio steps bundle a cover image into a VideoBlob when they have one, so the
+    // container type varies per result — discriminate on blob.type, not on $type.
     blob?: ImageBlob | VideoBlob | AudioBlob;
     // PolyGen: composite output with a primary 3D model, optional alternate-
     // format export, a 2D preview thumbnail, and optional rigged / animated
@@ -2278,6 +2279,9 @@ function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
       if (output.blob.type === 'video')
         return [{ ...(output.blob as VideoBlob), type: 'video' as const }];
       return [{ ...(output.blob as AudioBlob), type: 'audio' as const }];
+    case 'miniMaxMusic3':
+      // Always audio-only — MiniMaxMusic3Output has no cover-image variant.
+      return output.blob ? [{ ...(output.blob as AudioBlob), type: 'audio' as const }] : [];
     case 'polyGen':
       // Bundle every PolyGen sibling onto a single item — the format step
       // turns this into one NormalizedModel3DOutput per generated mesh
