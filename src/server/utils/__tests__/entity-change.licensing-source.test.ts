@@ -206,20 +206,15 @@ describe('Model.type — the audit trail for what clears a lineage fee', () => {
   });
 
   /**
-   * 🔴 `beforeUpdate` is a `dbRead` read. On a replica that lags the previous save it reports the type
-   * as unchanged, and the differ then emits NO row — on precisely the save whose fee clears need
-   * explaining. The repair inside the transaction already re-reads the type for this reason; the audit
-   * has to use the same value or it records the absence of the event it exists for.
+   * The source-text test that used to sit here — asserting `upsertModel`'s audit call contains the
+   * literal `type: typeBeforeUpdate` — is deliberately gone, per this file's own rule two blocks up:
+   * when the behavioural test exists, delete the source-text one rather than keeping both. It lives at
+   * `src/server/services/__tests__/model-licensing-source-on-type-change.test.ts`, named
+   * `audits the type change against the writer read, not the replica`.
+   *
+   * Measured before deleting, so this is not a guess about coverage: the behavioural test fails on the
+   * plain revert (`before: beforeUpdate`) that the source-text one caught, AND on a spread-order swap
+   * (`before: { type: …, ...beforeUpdate }`) that the source-text one passes, because the literal is
+   * still present while the spread overwrites it. Strictly stronger, on the mutation that matters.
    */
-  it('audits the type off the transaction read, not the replica one', () => {
-    const service = readFileSync(
-      path.join(REPO_ROOT, 'src/server/services/model.service.ts'),
-      'utf8'
-    );
-    const at = service.indexOf('const changeRows = diffEntityChanges({');
-    expect(at, 'the Model audit diff moved; re-anchor this test').toBeGreaterThan(-1);
-    const block = service.slice(at, service.indexOf('});', at));
-    expect(block).toContain("entityType: 'Model'");
-    expect(block).toContain('type: typeBeforeUpdate');
-  });
 });

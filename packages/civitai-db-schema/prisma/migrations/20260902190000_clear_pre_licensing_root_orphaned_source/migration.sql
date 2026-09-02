@@ -17,15 +17,16 @@
 -- A predicate alone does not pin the row set to what was measured. `createdAt` is immutable, so a
 -- date bound caps the CANDIDATE POOL, but membership is decided by the subquery, which reads
 -- `LicensingRoot` and `Model."type"` at whatever moment a human runs this -- days after the count in
--- this header was taken. Nothing in this workspace writes `LicensingRoot`; its rows are inserted and
--- corrected out of band, during work like this ticket. So one root deleted or one root's `modelType`
--- corrected makes pre-cutoff stamps that pass today stop passing, and a bounded-but-unlisted
--- statement would sweep them with no version and no model having moved.
+-- this header was taken. No APPLICATION code writes `LicensingRoot` -- the only writes in this repo
+-- are the one-shot seed in 20260715130000_add_licensing_root_table, so ongoing curation happens out
+-- of band, invisibly to `git grep`. One root deleted or one root's `modelType` corrected makes
+-- pre-cutoff stamps that pass today stop passing, and a bounded-but-unlisted statement would sweep
+-- them with no version and no model having moved.
 --
 -- The subquery is kept anyway rather than trusting the ids alone: a row that the app repaired in the
 -- meantime -- this ticket's own guard now coerces a stored source on saves that omit it -- simply
--- fails `IS NOT NULL` and is skipped. So the statement can only ever clear FEWER than 23, never
--- more, whenever it is run.
+-- fails `IS NOT NULL` and is skipped. So the statement clears AT MOST 23, never more, whenever it is
+-- run. 23 is the expected result, not a warning sign.
 --
 -- Re-count before applying. If it is not 23, that is a real change in the data and worth
 -- understanding before proceeding, not a number to update in place.
