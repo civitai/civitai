@@ -360,8 +360,10 @@ Scopes are represented as a bitmask integer. Combine scopes with bitwise OR.
 Buckets are keyed differently per endpoint — check which one applies before sizing your client:
 
 - Token endpoint (`/token`): 20 requests/minute per **IP**
-- Device endpoints (`/device`, `/device-token`): 20 requests/minute per **client id**, one budget
-  shared by every install of your app
+- Device authorization (`/device`): 30 requests/minute per **IP**
+- Device token poll (`/device-token`): 20 requests/minute per **`device_code`** — one sign-in attempt —
+  plus 240/minute per **IP** charged before the code is validated. Poll at the `interval` the
+  authorization response gives you and you will not reach either
 - Authorization endpoint: 10 requests/minute per **user**
 - Revocation endpoint: 20 requests/minute per **IP**
 - Introspection endpoint: 60 requests/minute per **client id**, plus 120/minute per **IP** charged
