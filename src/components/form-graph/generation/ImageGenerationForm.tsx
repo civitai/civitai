@@ -1,4 +1,4 @@
-import { Checkbox, Input, Stack } from '@mantine/core';
+import { Checkbox, Input, Stack, Switch } from '@mantine/core';
 import { Controller, MultiController } from 'form-graph/react';
 
 import { ActiveWildcards } from '~/components/Generate/Input/ActiveWildcards';
@@ -7,15 +7,17 @@ import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
 import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
 import { ControlNetsInput } from '~/components/generation_v2/inputs/ControlNetsInput';
-import type { ControlNetsInputProps } from '~/components/generation_v2/inputs/ControlNetsInput';
+
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { OutputFormatInput } from '~/components/generation_v2/inputs/OutputFormatInput';
 import { PriorityInput } from '~/components/generation_v2/inputs/PriorityInput';
 import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
 import { ResourceSelectMultipleInput } from '~/components/generation_v2/inputs/ResourceSelectMultipleInput';
+import { Krea2StyleReferencesInput } from '~/components/generation_v2/inputs/Krea2StyleReferencesInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
+import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { imageHub } from '~/shared/form-graph/generation/image/hub.graph';
 
 import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './form-helpers';
@@ -52,37 +54,40 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         <Controller
           graph={imageHub}
           name="model"
-          render={({ value, meta, onChange }) => (
-            <>
-              <ResourceSelectInput
-                value={value as never}
-                onChange={onChange as (v: unknown) => void}
-                label={
-                  <ControllerLabel
-                    label="Model"
-                    info="Models are the resources you're generating with. Using a different base model can drastically alter the style and composition of images, while adding additional resources can change the characters, concepts and objects."
-                  />
-                }
-                buttonLabel="Select Model"
-                modalTitle="Select Model"
-                options={meta?.options}
-                allowRemove={false}
-                allowSwap={!meta?.modelLocked}
-                onRevertToDefault={
-                  meta?.defaultModelId
-                    ? () => onChange({ id: meta.defaultModelId } as never)
-                    : undefined
-                }
-              />
-              {meta?.versions ? (
-                <VersionGroupSelector
-                  versions={meta.versions}
-                  modelId={value?.id}
-                  onChange={onChange as (v: { id: number }) => void}
+          render={({ value, meta, onChange }) => {
+            const defaultModelId = meta?.defaultModelId;
+            return (
+              <>
+                <ResourceSelectInput
+                  value={value}
+                  onChange={onChange}
+                  label={
+                    <ControllerLabel
+                      label="Model"
+                      info="Models are the resources you're generating with. Using a different base model can drastically alter the style and composition of images, while adding additional resources can change the characters, concepts and objects."
+                    />
+                  }
+                  buttonLabel="Select Model"
+                  modalTitle="Select Model"
+                  options={meta?.options}
+                  allowRemove={false}
+                  allowSwap={!meta?.modelLocked}
+                  onRevertToDefault={
+                    defaultModelId
+                      ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
+                      : undefined
+                  }
                 />
-              ) : null}
-            </>
-          )}
+                {meta?.versions ? (
+                  <VersionGroupSelector
+                    versions={meta.versions}
+                    modelId={value?.id}
+                    onChange={onChange}
+                  />
+                ) : null}
+              </>
+            );
+          }}
         />
       </div>
       <Controller
@@ -91,8 +96,8 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange, error }) => (
           <ImageUploadMultipleInput
             label="Source images"
-            value={value as never}
-            onChange={onChange as (v: unknown[]) => void}
+            value={value}
+            onChange={onChange}
             max={meta?.max}
             slots={meta?.slots}
             warnOnMissingAiMetadata={meta?.warnOnMissingAiMetadata}
@@ -106,8 +111,8 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         name="resources"
         render={({ value, meta, onChange }) => (
           <ResourceSelectMultipleInput
-            value={value as never}
-            onChange={onChange as (v: unknown[]) => void}
+            value={value}
+            onChange={onChange}
             label="Additional Resources"
             buttonLabel="Add LoRA"
             modalTitle="Select Resources"
@@ -141,7 +146,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
           <GenerationTextEditor
             value={value}
             onChange={onChange}
-            snippets={meta?.snippets as never}
+            snippets={meta?.snippets}
             triggerWords={meta?.triggerWords}
             attentionEdit
             label={
@@ -163,7 +168,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
           <GenerationTextEditor
             value={value}
             onChange={onChange}
-            snippets={meta?.snippets as never}
+            snippets={meta?.snippets}
             triggerWords={meta?.triggerWords}
             attentionEdit
             label="Negative Prompt"
@@ -309,12 +314,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         graph={imageHub}
         name="controlNets"
         render={({ value, meta, onChange, error }) => (
-          <ControlNetsInput
-            value={value as ControlNetsInputProps['value']}
-            onChange={onChange as ControlNetsInputProps['onChange']}
-            meta={meta as ControlNetsInputProps['meta']}
-            error={error?.message}
-          />
+          <ControlNetsInput value={value} onChange={onChange} meta={meta} error={error?.message} />
         )}
       />
       <Controller
@@ -329,8 +329,8 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
         name="vae"
         render={({ value, meta, onChange }) => (
           <ResourceSelectInput
-            value={value as never}
-            onChange={onChange as (v: unknown) => void}
+            value={value}
+            onChange={onChange}
             label={
               <ControllerLabel
                 label="VAE"
@@ -341,6 +341,109 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
             modalTitle="Select VAE"
             options={meta?.options}
             allowRemove
+          />
+        )}
+      />
+      <Controller
+        graph={imageHub}
+        name="resolution"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <Input.Label>Resolution</Input.Label>
+            <SegmentedControlWrapper
+              value={value}
+              onChange={(v) => onChange(v as typeof value)}
+              data={(meta as { options: { label: string; value: string }[] }).options.map((o) => ({
+                label: o.label,
+                value: o.value,
+              }))}
+            />
+          </div>
+        )}
+      />
+      <Controller
+        graph={imageHub}
+        name="quality"
+        render={({ value, meta, onChange }) => (
+          <SelectInput value={value} onChange={onChange} label="Quality" options={meta.options} />
+        )}
+      />
+      <Controller
+        graph={imageHub}
+        name="transparent"
+        render={({ value, onChange }) => (
+          <Checkbox
+            checked={value}
+            onChange={(e) => onChange(e.target.checked)}
+            label="Transparent Background"
+            description="Generate image with transparent background"
+          />
+        )}
+      />
+      <Controller
+        graph={imageHub}
+        name="enableWebSearch"
+        render={({ value, onChange }) => (
+          <Switch
+            label="Web Search"
+            description="Enable web search for the image generation task. This will allow the model to use the latest information from the web to generate the image."
+            checked={value}
+            onChange={(e) => onChange(e.currentTarget.checked)}
+          />
+        )}
+      />
+      {/* nested record-less branch (qwen -> qwen3) — key doesn't reach
+          GraphFieldName yet, so the generic form types this one */}
+      <Controller<boolean | undefined, undefined>
+        name="enablePromptExpansion"
+        render={({ value, onChange }) => (
+          <Switch
+            size="xs"
+            label="Enhance prompt"
+            labelPosition="left"
+            checked={!!value}
+            onChange={(e) => onChange(e.currentTarget.checked)}
+          />
+        )}
+      />
+      <Controller
+        graph={imageHub}
+        name="creativity"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <Input.Label>Creativity</Input.Label>
+            <SegmentedControlWrapper
+              value={value}
+              onChange={(v) => onChange(v as typeof value)}
+              data={meta.options.map((o: { label: string; value: string }) => ({
+                label: o.label,
+                value: o.value,
+              }))}
+            />
+          </div>
+        )}
+      />
+      <Controller
+        graph={imageHub}
+        name="styleReferences"
+        render={({ value, meta, onChange, error }) => (
+          <Krea2StyleReferencesInput
+            value={value}
+            onChange={onChange}
+            meta={meta}
+            error={error?.message}
+          />
+        )}
+      />
+      <Controller
+        graph={imageHub}
+        name="fluxUltraRaw"
+        render={({ value, onChange }) => (
+          <Checkbox
+            checked={value}
+            onChange={(e) => onChange(e.target.checked)}
+            label="Raw Mode"
+            description="Generate with more natural, less processed look"
           />
         )}
       />
@@ -363,7 +466,7 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
           render={({ value, meta, onChange }) => (
             <OutputFormatInput
               value={value}
-              onChange={onChange as (v: string) => void}
+              onChange={onChange}
               options={[...(meta?.options ?? [])]}
               isMember={meta?.isMember}
             />

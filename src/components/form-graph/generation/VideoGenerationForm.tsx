@@ -17,7 +17,7 @@ import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { videoHub } from '~/shared/form-graph/generation/video/hub.graph';
 import { wanVersionDefs, wanVersionOptions } from '~/shared/form-graph/generation/video/wan.graph';
-import type { VideoValue } from '~/shared/form-graph/generation/defs';
+
 
 import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './form-helpers';
 import type { GenerationStore } from './store';
@@ -51,32 +51,35 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         <Controller
           graph={videoHub}
           name="model"
-          render={({ value, meta, onChange }) => (
-            <>
-              <ResourceSelectInput
-                value={value as never}
-                onChange={onChange as (v: unknown) => void}
-                label={<ControllerLabel label="Model" />}
-                buttonLabel="Select Model"
-                modalTitle="Select Model"
-                options={meta?.options}
-                allowRemove={false}
-                allowSwap={!meta?.modelLocked}
-                onRevertToDefault={
-                  meta?.defaultModelId
-                    ? () => onChange({ id: meta.defaultModelId } as never)
-                    : undefined
-                }
-              />
-              {meta?.versions ? (
-                <VersionGroupSelector
-                  versions={meta.versions}
-                  modelId={value?.id}
-                  onChange={onChange as (v: { id: number }) => void}
+          render={({ value, meta, onChange }) => {
+            const defaultModelId = meta?.defaultModelId;
+            return (
+              <>
+                <ResourceSelectInput
+                  value={value}
+                  onChange={onChange}
+                  label={<ControllerLabel label="Model" />}
+                  buttonLabel="Select Model"
+                  modalTitle="Select Model"
+                  options={meta?.options}
+                  allowRemove={false}
+                  allowSwap={!meta?.modelLocked}
+                  onRevertToDefault={
+                    defaultModelId
+                      ? () => onChange({ id: defaultModelId, model: { type: 'Checkpoint' } })
+                      : undefined
+                  }
                 />
-              ) : null}
-            </>
-          )}
+                {meta?.versions ? (
+                  <VersionGroupSelector
+                    versions={meta.versions}
+                    modelId={value?.id}
+                    onChange={onChange}
+                  />
+                ) : null}
+              </>
+            );
+          }}
         />
         <Controller
           graph={videoHub}
@@ -97,7 +100,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
                   isImg2vid && def.version !== 'v2.1' ? def.ecosystems.i2v : def.ecosystems.t2v;
                 store.set({ ecosystem: eco });
               }}
-              data={wanVersionOptions as never}
+              data={wanVersionOptions}
             />
           )}
         />
@@ -108,8 +111,8 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange, error }) => (
           <ImageUploadMultipleInput
             label="Source images"
-            value={value as never}
-            onChange={onChange as (v: unknown[]) => void}
+            value={value}
+            onChange={onChange}
             max={meta?.max}
             slots={meta?.slots}
             warnOnMissingAiMetadata={meta?.warnOnMissingAiMetadata}
@@ -121,17 +124,15 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
       <Controller
         graph={videoHub}
         name="video"
-        render={({ value, onChange }) => (
-          <VideoInput value={value} onChange={onChange as (v: VideoValue | undefined) => void} />
-        )}
+        render={({ value, onChange }) => <VideoInput value={value} onChange={onChange} />}
       />
       <Controller
         graph={videoHub}
         name="resources"
         render={({ value, meta, onChange }) => (
           <ResourceSelectMultipleInput
-            value={value as never}
-            onChange={onChange as (v: unknown[]) => void}
+            value={value}
+            onChange={onChange}
             label="Additional Resources"
             buttonLabel="Add LoRA"
             modalTitle="Select Resources"
@@ -165,7 +166,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
           <GenerationTextEditor
             value={value}
             onChange={onChange}
-            snippets={meta?.snippets as never}
+            snippets={meta?.snippets}
             triggerWords={meta?.triggerWords}
             attentionEdit
             label={
@@ -187,7 +188,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
           <GenerationTextEditor
             value={value}
             onChange={onChange}
-            snippets={meta?.snippets as never}
+            snippets={meta?.snippets}
             triggerWords={meta?.triggerWords}
             attentionEdit
             label="Negative Prompt"
@@ -423,7 +424,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
             value={value}
             onChange={(v) => onChange(v as typeof value)}
             label="Interpolator"
-            options={meta?.options as never}
+            options={meta?.options}
           />
         )}
       />

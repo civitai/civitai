@@ -1,8 +1,11 @@
-import { defineGraph } from 'form-graph';
+import { defineGraph, type Scope } from 'form-graph';
+import { getEcosystemGroupByKey } from '~/shared/constants/basemodel.constants';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import {
   MAX_NEGATIVE_PROMPT_LENGTH,
   SNIPPETS,
+  resourcesDef,
+  sliderDef,
   textDef,
   type ImageEntry,
   type ResourceData,
@@ -79,12 +82,15 @@ export function makeTextBlock(
      * `{ prompt }` alone.
      */
     negativePromptRegistersTarget?: boolean;
+    /** hi-dream-o1 omits v1's snippetsGraph entirely — no snippets key at all. */
+    snippets?: boolean;
   } = {}
 ) {
   const {
     negativePrompt = true,
     negativePromptIsEditor = true,
     negativePromptRegistersTarget = negativePromptIsEditor,
+    snippets: hasSnippets = true,
   } = opts;
   const hasNegative = (ext: TextBlockNeeds) =>
     typeof negativePrompt === 'function' ? negativePrompt(ext) : negativePrompt;
@@ -103,7 +109,7 @@ export function makeTextBlock(
         return all.flatMap((r) => r.trainedWords ?? []);
       })
       .field('snippets', ({ _ext }) =>
-        _ext.flags?.wildcards
+        hasSnippets && _ext.flags?.wildcards
           ? {
               ...SNIPPETS,
               default: withTargets(SNIPPETS.default as SnippetsValue, editorsFor(_ext)),
@@ -151,5 +157,72 @@ export function makeTextBlock(
   );
 }
 
+/**
+ * The per-family persistence bucket (v1's ecosystem/group storage group):
+ * grouped ecosystems (wan versions, klein variants) share their group id so
+ * settings survive version switches; standalone ecosystems get their own key.
+ * Family graphs attach it with `.scope(familyScope)`.
+ */
+export function familyScope(ext: { ecosystem: string }): Scope {
+  return getEcosystemGroupByKey(ext.ecosystem)?.id ?? ext.ecosystem;
+}
+
+/**
+ * v1's turbo-variant refinement: ecosystems that ship distilled and base
+ * builds with different slider ranges store cfgScale/steps per MODEL VERSION,
+ * so switching variants doesn't clamp values one-way.
+ */
+export function perModelScope(ext: { ecosystem: string; model?: unknown }): Scope {
+  const id = modelIdOf(ext.model);
+  return id != null ? [ext.ecosystem, id] : familyScope(ext);
+}
+
+/**
+ * A model's version id from either shape it takes in ctx: the STORE keeps the
+ * raw input (a bare number from remix/deep-link), parse normalizes to an
+ * object — mode picks and scopes must read both.
+ */
+export function modelIdOf(model: unknown): number | undefined {
+  if (typeof model === 'number') return model;
+  if (model && typeof model === 'object') return (model as { id?: number }).id;
+  return undefined;
+}
+
+/** The standard family resources field: this ecosystem, the ctx limit. */
+export const familyResources = ({ _ext }: { _ext: FamilyExt }) =>
+  resourcesDef({ ecosystem: _ext.ecosystem, limit: _ext.limits.maxResources });
+
+/**
+ * A slider remembered per MODEL VERSION (the turbo-variant refinement) — the
+ * one shape every distilled/base family repeats for cfgScale/steps.
+ */
+export function perModelSlider(opts: Parameters<typeof sliderDef>[0]) {
+  return ({ _ext }: { _ext: { ecosystem: string; model?: unknown } }) => ({
+    ...sliderDef(opts),
+    scope: perModelScope(_ext),
+  });
+}
+
+/**
+ * Version-id → mode lookup, input-tolerant (bare number or object). One
+ * builder for the graphs AND the handlers, so the two lanes cannot drift on
+ * which ids map to which mode.
+ */
+export function versionModeOf<M extends string>(
+  ids: Record<M, number>,
+  fallback: NoInfer<M> | ((ext: { workflow: string }) => NoInfer<M>)
+): (model: unknown, ext?: { workflow: string }) => M {
+  const byId = new Map<number, M>(
+    (Object.entries(ids) as [M, number][]).map(([mode, id]) => [id, mode])
+  );
+  return (model, ext) => {
+    const id = modelIdOf(model);
+    const hit = id != null ? byId.get(id) : undefined;
+    if (hit) return hit;
+    return typeof fallback === 'function' ? fallback(ext ?? { workflow: '' }) : fallback;
+  };
+}
+
 /** The common case: prompt + negative prompt. */
 export const textBlock = makeTextBlock();
+export const promptOnlyTextBlock = makeTextBlock({ negativePrompt: false });

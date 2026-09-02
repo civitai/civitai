@@ -30,7 +30,7 @@ export function sliderDef(opts: {
   step?: number;
   default?: number;
   presets?: { label: string; value: number }[];
-}): FieldDef<number, NumberMeta> {
+}) {
   const { min, max, step = 1 } = opts;
   return {
     input: z.coerce
@@ -40,7 +40,7 @@ export function sliderDef(opts: {
     output: z.number().min(min).max(max),
     default: opts.default ?? min,
     meta: { min, max, step, presets: opts.presets },
-  };
+  } satisfies FieldDef<number, NumberMeta>;
 }
 
 export interface EnumMeta<T extends string | number> {
@@ -51,7 +51,7 @@ export interface EnumMeta<T extends string | number> {
 export function enumDef<const T extends string | number>(opts: {
   options: readonly { label: string; value: T }[];
   default?: T;
-}): FieldDef<T, EnumMeta<T>> {
+}) {
   const values = opts.options.map((o) => o.value);
   const isNumeric = typeof values[0] === 'number';
   const base = (isNumeric ? z.coerce.number() : z.coerce.string()) as z.ZodType<unknown>;
@@ -61,7 +61,7 @@ export function enumDef<const T extends string | number>(opts: {
     output: schema,
     default: opts.default ?? (values[0] as T),
     meta: { options: opts.options },
-  };
+  } satisfies FieldDef<T, EnumMeta<T>>;
 }
 
 export interface SelectMeta {
@@ -74,7 +74,7 @@ export function selectDef(opts: {
   options: readonly string[];
   default?: string;
   presets?: { label: string; value: string }[];
-}): FieldDef<string, SelectMeta> {
+}) {
   const { options } = opts;
   const resolvedDefault =
     opts.default && options.includes(opts.default) ? opts.default : options[0]!;
@@ -90,11 +90,12 @@ export function selectDef(opts: {
     output: z.enum(options as [string, ...string[]]),
     default: resolvedDefault,
     meta: { options: options.map((s) => ({ label: s, value: s })), presets: opts.presets },
-  };
+  } satisfies FieldDef<string, SelectMeta>;
 }
 
-export const boolDef = (dflt: boolean): FieldDef<boolean> => ({
-  input: z.boolean().optional(),
-  output: z.boolean(),
-  default: dflt,
-});
+export const boolDef = (dflt: boolean) =>
+  ({
+    input: z.boolean().optional(),
+    output: z.boolean(),
+    default: dflt,
+  } satisfies FieldDef<boolean>);

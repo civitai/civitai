@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import type { FieldDef } from 'form-graph';
-import { MAX_SEED } from '~/shared/constants/generation.constants';
+import type { VersionGroup } from './checkpoint';
+import { MAX_SEED, sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
+import { snippetReferenceSchema } from '~/shared/data-graph/schemas/snippet-schema';
 import {
   controlNetCategoryLabels,
   controlNetPreprocessors,
@@ -52,7 +54,33 @@ export const SEED: FieldDef<number | undefined> = {
     .transform((val) => (val === null ? undefined : val)),
   output: z.number().int().min(1).max(MAX_SEED).optional(),
   default: undefined,
+  // v1 stores seed globally (bare key), not per family
+  scope: [],
 };
+
+/**
+ * The standard edit-images field: present on every non-txt workflow,
+ * remembered per workflow. The `'txt'` prefix test is one policy — do not
+ * fork it per family.
+ */
+export function img2imgImages(config: Parameters<typeof imagesDef>[0]) {
+  return workflowScoped(({ _ext }: { _ext: { workflow: string } }) =>
+    !_ext.workflow.startsWith('txt') ? imagesDef(config) : null
+  );
+}
+
+/**
+ * v1 stores images/video per WORKFLOW (its 'workflow' storage group), not per
+ * family — wrap the def fn so the resolved def carries that scope.
+ */
+export function workflowScoped<B extends { _ext: { workflow: string } }, D extends object | null>(
+  fn: (bag: B) => D
+): (bag: B) => D {
+  return (bag) => {
+    const def = fn(bag);
+    return def && !('scope' in def) ? ({ ...def, scope: bag._ext.workflow } as D) : def;
+  };
+}
 
 // --- aspect ratio -------------------------------------------------------------
 
@@ -70,7 +98,8 @@ export interface AspectRatioMeta {
 export function aspectRatioDef(opts: {
   options: AspectRatioOption[];
   default?: string;
-}): FieldDef<AspectRatioValue, AspectRatioMeta> {
+  priorityOptions?: string[];
+}) {
   const options = opts.options;
   const defaultOption = options.find((o) => o.value === (opts.default ?? '1:1')) ?? options[0]!;
   const toValue = ({ value, width, height }: AspectRatioOption): AspectRatioValue => ({
@@ -105,8 +134,8 @@ export function aspectRatioDef(opts: {
       }),
     output: z.object({ value: z.string(), width: z.number(), height: z.number() }),
     default: toValue(defaultOption),
-    meta: { options },
-  };
+    meta: { options, ...(opts.priorityOptions ? { priorityOptions: opts.priorityOptions } : {}) },
+  } satisfies FieldDef<AspectRatioValue, AspectRatioMeta>;
 }
 
 // --- text (prompt / negativePrompt) -------------------------------------------
@@ -139,12 +168,6 @@ export function textDef(name: string, maxLength = MAX_PROMPT_LENGTH) {
 }
 
 // --- snippets ------------------------------------------------------------------
-
-const snippetReferenceSchema = z.object({
-  categoryId: z.number().int().positive(),
-  in: z.array(z.number().int().positive()).default([]),
-  ex: z.array(z.number().int().positive()).default([]),
-});
 
 export const snippetsSchema = z.object({
   wildcardSetIds: z.array(z.number().int().positive()).default([]),
@@ -223,7 +246,12 @@ export function resourcesDef(opts: {
   ecosystem: string;
   limit: number;
   resourceTypes?: ModelType[];
-}): FieldDef<ResourceData[], ResourcesMeta> {
+  /**
+   * v1 has two resource nodes: `createResourcesGraph` filters cross-ecosystem
+   * resources (the default here), raw `resourcesNode` keeps them (ernie).
+   */
+  filterIncompatible?: boolean;
+}) {
   const { ecosystem, limit } = opts;
   const resourceTypes = opts.resourceTypes ?? DEFAULT_RESOURCE_TYPES;
   const selectOptions = getResourceSelectOptions(ecosystem, resourceTypes);
@@ -246,6 +274,7 @@ export function resourcesDef(opts: {
       limit,
     }),
     correct: (value) => {
+      if (opts.filterIncompatible === false) return undefined;
       if (!value?.length || !ecosystemData) return undefined;
       const filtered = filterCompatibleResources(ecosystemData.id, value);
       if (filtered.length === value.length) return undefined;
@@ -255,7 +284,7 @@ export function resourcesDef(opts: {
         detail: { ecosystem, dropped: value.length - filtered.length },
       };
     },
-  };
+  } satisfies FieldDef<ResourceData[], ResourcesMeta>;
 }
 
 /**
@@ -263,9 +292,7 @@ export function resourcesDef(opts: {
  * default; an incompatible VAE is cleared (v1 effect → `correct`, parse-time
  * behaviour pinned by the suites).
  */
-export function vaeDef(opts: {
-  ecosystem: string;
-}): FieldDef<ResourceData | undefined, Omit<ResourcesMeta, 'limit'>> {
+export function vaeDef(opts: { ecosystem: string }) {
   const selectOptions = getResourceSelectOptions(opts.ecosystem, ['VAE'] as ModelType[]);
   const ecosystemData = ecosystemByKey.get(opts.ecosystem);
   return {
@@ -291,13 +318,13 @@ export function vaeDef(opts: {
         detail: { ecosystem: opts.ecosystem, baseModel: value.baseModel },
       };
     },
-  };
+  } satisfies FieldDef<ResourceData | undefined, Omit<ResourcesMeta, 'limit'>>;
 }
 
 export interface CheckpointMeta {
   options: { canGenerate: boolean; resources: ResourceSelectOption[]; excludeIds: number[] };
   modelLocked: boolean;
-  versions: import('./checkpoint').VersionGroup | undefined;
+  versions: VersionGroup | undefined;
   defaultModelId: number | undefined;
 }
 
@@ -345,7 +372,7 @@ export function imagesDef(config: {
   slots?: { label: string; required?: boolean }[];
   warnOnMissingAiMetadata?: boolean;
   aspectRatios?: string[];
-}): FieldDef<ImageEntry[], ImagesMeta> {
+}) {
   const max = config.slots?.length ?? config.max ?? 1;
   const min = config.slots ? config.slots.filter((s) => s.required).length : config.min ?? 1;
   const imageObject = z.object({
@@ -381,7 +408,7 @@ export function imagesDef(config: {
       warnOnMissingAiMetadata: config.warnOnMissingAiMetadata,
       aspectRatios: config.aspectRatios,
     },
-  };
+  } satisfies FieldDef<ImageEntry[], ImagesMeta>;
 }
 
 const videoMetadataSchema = z.object({
@@ -416,7 +443,7 @@ export const defaultSamplerPresets = [
 // --- quantity -------------------------------------------------------------------
 
 /** common.ts `quantityNode`: min and default both equal the step (draft = 4s). */
-export function quantityDef(opts: { max: number; step?: number }): FieldDef<number, NumberMeta> {
+export function quantityDef(opts: { max: number; step?: number }) {
   const step = opts.step ?? 1;
   const min = step;
   const { max } = opts;
@@ -428,7 +455,7 @@ export function quantityDef(opts: { max: number; step?: number }): FieldDef<numb
     output: z.number().min(min).max(max),
     default: min,
     meta: { min, max, step },
-  };
+  } satisfies FieldDef<number, NumberMeta>;
 }
 
 // --- controlNets ----------------------------------------------------------------
@@ -450,7 +477,14 @@ const controlNetEntryInputSchema = z.object({
 });
 
 const controlNetEntryOutputSchema = z.object({
-  preprocessor: z.string(),
+  // runtime-guaranteed: the def refines entries against its per-family
+  // allowlist (a subset of these keys), so the narrow union is truthful
+  preprocessor: z.enum(
+    Object.keys(controlNetPreprocessors) as [
+      ControlNetPreprocessorKey,
+      ...ControlNetPreprocessorKey[]
+    ]
+  ),
   mode: z.enum(controlNetModes),
   image: controlNetImageObjectSchema,
   weight: z.number().min(0).max(2),
@@ -484,7 +518,7 @@ export interface ControlNetsMeta {
 export function controlNetsDef(opts: {
   preprocessors: readonly ControlNetPreprocessorKey[];
   limit?: number;
-}): FieldDef<ControlNetEntry[] | undefined, ControlNetsMeta> {
+}) {
   const limit = opts.limit ?? 4;
   const seen = new Set<ControlNetPreprocessorKey>();
   const validKeys = opts.preprocessors.filter((key) => {
@@ -561,6 +595,9 @@ export function controlNetsDef(opts: {
       .pipe(controlNetEntryOutputSchema.array().optional()),
     // the oracle emits [] when nothing is staged, not undefined
     default: [],
+    // v1 stores controlNets globally (bare key) so staged nets survive
+    // ecosystem switches
+    scope: [],
     meta: {
       options,
       groups,
@@ -568,5 +605,14 @@ export function controlNetsDef(opts: {
       weight: { min: 0, max: 2, default: 1, step: 0.05 },
       step: { min: 0, max: 1, step: 0.05 },
     },
-  };
+  } satisfies FieldDef<ControlNetEntry[] | undefined, ControlNetsMeta>;
 }
+
+/** v1's Low/Balanced/High guidance presets — shared by chroma, flux, flux2 and pony-v7. */
+export const guidancePresetsLowBalHigh = [
+  { label: 'Low', value: 2 },
+  { label: 'Balanced', value: 3.5 },
+  { label: 'High', value: 7 },
+];
+
+export const SDXL_SQUARE_AR = aspectRatioDef({ options: sdxlAspectRatioBuckets, default: '1:1' });

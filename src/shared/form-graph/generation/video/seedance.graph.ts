@@ -5,8 +5,16 @@ import {
 } from '~/shared/constants/generation.constants';
 import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
 import { checkpointDef } from '../checkpoint';
-import { SEED, aspectRatioDef, boolDef, enumDef, imagesDef, sliderDef } from '../defs';
-import { makeTextBlock, type FamilyExt } from '../shared';
+import {
+  SEED,
+  aspectRatioDef,
+  boolDef,
+  enumDef,
+  imagesDef,
+  workflowScoped,
+  sliderDef,
+} from '../defs';
+import { familyScope, makeTextBlock, type FamilyExt } from '../shared';
 
 /**
  * Seedance (ByteDance), ported from `seedance-graph.ts`. No resources, no
@@ -50,8 +58,12 @@ const seedanceResolutionsV2 = [...seedanceResolutions, { label: '1080p', value: 
 // ---- end of seedance-graph.ts copies ----------------------------------------
 
 export const seedance = defineGraph<FamilyExt>()
-  .field('images', ({ _ext }) =>
-    isWorkflowOrVariant(_ext.workflow, 'img2vid') ? imagesDef({ max: 1 }) : null
+  .scope(familyScope)
+  .field(
+    'images',
+    workflowScoped(({ _ext }) =>
+      isWorkflowOrVariant(_ext.workflow, 'img2vid') ? imagesDef({ max: 1 }) : null
+    )
   )
   .field('model', ({ _ext }) =>
     checkpointDef({

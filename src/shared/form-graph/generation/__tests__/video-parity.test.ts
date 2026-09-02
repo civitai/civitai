@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { assertDifferential, runOracle, type AnyRecord } from './differential';
 import { generationHub } from '../hub.graph';
+import { reconcileSelectors } from '../reconcile';
 import { ecosystemToVersionDef } from '../video/wan.graph';
 import { isWorkflowAvailable } from '~/shared/data-graph/generation/config';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
@@ -109,12 +110,11 @@ const INPUT_SHAPES: AnyRecord[] = [
 ];
 
 /**
- * LTXV23 only: same-version model picks. On other LTX versions these models
- * cross-version-switch in v1 (the branch re-pick the port deliberately does
- * not do yet — see the plan doc); on wan they hit the locked substitution,
- * which the unknown-id shape above already covers.
+ * LTX model picks, including CROSS-version (an LTXV23 model on LTXV2 re-picks
+ * the version branch through `reconcileSelectors` — the model wins). On wan
+ * these hit the locked substitution, which the unknown-id shape covers.
  */
-const LTXV23_ONLY_SHAPES: AnyRecord[] = [
+const LTX_MODEL_SHAPES: AnyRecord[] = [
   // the DISTILLED version hides cfgScale/steps
   { prompt: 'a cat', model: { id: 2749948, baseModel: 'LTXV 2.3' } },
   // Sulphur 2 rides the LTXV23 ecosystem
@@ -122,9 +122,19 @@ const LTXV23_ONLY_SHAPES: AnyRecord[] = [
 ];
 
 const WORKFLOWS = ['txt2vid', 'img2vid', 'img2vid:ref2vid', 'vid2vid:edit', 'vid2vid:extend'];
-const ECOSYSTEMS = [...ecosystemToVersionDef.keys(), 'LTXV2', 'LTXV23', 'LTXV25', 'Seedance'];
+// legacy 'WanVideo' is in the wan version map but supports no generation
+// workflows any more (like SD2 on the image side), so it can produce no rows
+const ECOSYSTEMS = [
+  ...[...ecosystemToVersionDef.keys()].filter((k) => k !== 'WanVideo'),
+  'LTXV2',
+  'LTXV23',
+  'LTXV25',
+  'Seedance',
+];
 
-const port = { parse: (raw: AnyRecord, ext: never) => generationHub.parse(raw, ext as never) };
+const port = {
+  parse: (raw: AnyRecord, ext: never) => generationHub.parse(reconcileSelectors(raw).raw, ext),
+};
 
 type Combo = { name: string; input: AnyRecord; ext: GenerationCtx };
 
@@ -135,8 +145,16 @@ for (const [ctxName, ctx] of CONTEXTS) {
     if (!eco) continue;
     for (const workflow of WORKFLOWS) {
       if (!isWorkflowAvailable(workflow, eco.id)) continue;
+      // model shapes skip ecosystems the ctx gate-hides: v1 drops the hidden
+      // selection to the default BEFORE its model effect runs, an ordering the
+      // ext-free boundary reconciler cannot reproduce
+      const hiddenHere = new Set(
+        (ctx.gateRules ?? []).flatMap((r) => (r.presentation === 'hidden' ? r.ecosystems : []))
+      );
       const shapes =
-        ecosystem === 'LTXV23' ? [...INPUT_SHAPES, ...LTXV23_ONLY_SHAPES] : INPUT_SHAPES;
+        ecosystem.startsWith('LTX') && !hiddenHere.has(ecosystem)
+          ? [...INPUT_SHAPES, ...LTX_MODEL_SHAPES]
+          : INPUT_SHAPES;
       for (const [i, shape] of shapes.entries()) {
         COMBOS.push({
           name: `${ctxName} | ${ecosystem} | ${workflow} | shape${i}`,
@@ -153,7 +171,10 @@ describe('video slice: differential parity with generationGraph', () => {
     // Guards the generator itself: a mis-wired filter that silently produced a
     // handful of cases would make the suite below vacuously green.
     expect(COMBOS.length).toBeGreaterThan(800);
-    expect(new Set(COMBOS.map((c) => c.input.ecosystem)).size).toBeGreaterThanOrEqual(13);
+    const covered = new Set(COMBOS.map((c) => c.input.ecosystem));
+    expect(ECOSYSTEMS.filter((e) => !covered.has(e))).toEqual([]);
+    // an ECOSYSTEMS entry the constants don't know would silently drop its rows
+    expect(ECOSYSTEMS.filter((e) => !ecosystemByKey.has(e))).toEqual([]);
   });
 
   it.each(COMBOS)('$name', ({ input, ext }) => {
@@ -167,7 +188,7 @@ describe('video slice: differential parity with generationGraph', () => {
       : false;
     const result = generationHub.parse(
       { workflow: 'txt2vid', ecosystem: 'LTXV23', prompt: 'x' },
-      BASE as never
+      BASE
     );
     if (!result.success) throw new Error('unexpected');
     type Data = typeof result.data;
@@ -194,7 +215,7 @@ describe('video slice: differential parity with generationGraph', () => {
             images: [IMAGE],
             resolution,
           },
-          BASE as never
+          BASE
         ) as { success: true; data: AnyRecord }
       ).data.ecosystem;
     expect(at('480p')).toBe('WanVideo14B_I2V_480p');

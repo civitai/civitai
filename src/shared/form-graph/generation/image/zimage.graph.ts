@@ -1,17 +1,14 @@
 import { branch, defineGraph } from 'form-graph';
-import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
 import { zImageControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 import { checkpointDef } from '../checkpoint';
+import { SDXL_SQUARE_AR, SEED, controlNetsDef, defaultSamplerPresets, selectDef } from '../defs';
 import {
-  SEED,
-  aspectRatioDef,
-  controlNetsDef,
-  defaultSamplerPresets,
-  resourcesDef,
-  selectDef,
-  sliderDef,
-} from '../defs';
-import { makeTextBlock, type FamilyExt } from '../shared';
+  familyResources,
+  familyScope,
+  makeTextBlock,
+  perModelSlider,
+  type FamilyExt,
+} from '../shared';
 
 /**
  * ZImage family (ZImageTurbo / ZImageBase), ported from `z-image-graph.ts`.
@@ -38,31 +35,29 @@ const modeOf = (ecosystem: string) => {
   }
 };
 
-const AR = aspectRatioDef({ options: sdxlAspectRatioBuckets, default: '1:1' });
+const AR = SDXL_SQUARE_AR;
 const CONTROL_NETS = controlNetsDef({ preprocessors: zImageControlNetPreprocessors, limit: 1 });
 
 const turbo = defineGraph<FamilyExt>()
-  .field('resources', ({ _ext }) =>
-    resourcesDef({ ecosystem: _ext.ecosystem, limit: _ext.limits.maxResources })
-  )
+  .scope(familyScope)
+  .field('resources', familyResources)
   .field('aspectRatio', AR)
-  .field('cfgScale', sliderDef({ min: 1, max: 2, step: 0.1, default: 1 }))
-  .field('steps', sliderDef({ min: 1, max: 15, default: 9 }))
+  .field('cfgScale', perModelSlider({ min: 1, max: 2, step: 0.1, default: 1 }))
+  .field('steps', perModelSlider({ min: 1, max: 15, default: 9 }))
   .field('controlNets', ({ _ext }) => (_ext.workflow === 'txt2img' ? CONTROL_NETS : null))
   .field('seed', SEED);
 
 const base = defineGraph<FamilyExt>()
-  .field('resources', ({ _ext }) =>
-    resourcesDef({ ecosystem: _ext.ecosystem, limit: _ext.limits.maxResources })
-  )
+  .scope(familyScope)
+  .field('resources', familyResources)
   .field('aspectRatio', AR)
   .field(
     'sampler',
     selectDef({ options: zImageSamplers, default: 'euler', presets: defaultSamplerPresets })
   )
   .field('scheduler', selectDef({ options: zImageSchedules, default: 'simple' }))
-  .field('cfgScale', sliderDef({ min: 1, max: 10, step: 0.5, default: 4 }))
-  .field('steps', sliderDef({ min: 1, max: 50, default: 20 }))
+  .field('cfgScale', perModelSlider({ min: 1, max: 10, step: 0.5, default: 4 }))
+  .field('steps', perModelSlider({ min: 1, max: 50, default: 20 }))
   .field('controlNets', ({ _ext }) => (_ext.workflow === 'txt2img' ? CONTROL_NETS : null))
   .field('seed', SEED);
 
@@ -70,6 +65,7 @@ const base = defineGraph<FamilyExt>()
 const modes = branch('zImageMode', (ext: FamilyExt) => modeOf(ext.ecosystem), { turbo, base });
 
 export const zimage = defineGraph<FamilyExt>()
+  .scope(familyScope)
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,

@@ -110,7 +110,7 @@ export function checkpointDef(opts: {
    * family (an `emit: 'ecosystem'` computed) instead of correcting the model.
    */
   modelWins?: boolean;
-}): FieldDef<ResourceData | undefined, CheckpointMeta> {
+}) {
   const { ecosystem: ecosystemKey, workflow, ext, versions, defaultModelId } = opts;
   const ecosystem = ecosystemByKey.get(ecosystemKey);
   const ecosystemDefaults = ecosystem ? getEcosystemDefaults(ecosystem.id) : undefined;
@@ -182,5 +182,5 @@ export function checkpointDef(opts: {
             detail: { ecosystem: ecosystemKey, baseModel: value.baseModel },
           };
         },
-  };
+  } satisfies FieldDef<ResourceData | undefined, CheckpointMeta>;
 }

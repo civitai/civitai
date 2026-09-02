@@ -8,6 +8,7 @@ import type { AspectRatioOption, NumberMeta } from '../defs';
 import {
   SEED,
   VIDEO,
+  workflowScoped,
   aspectRatioDef,
   boolDef,
   enumDef,
@@ -16,7 +17,7 @@ import {
   sliderDef,
   type ImageEntry,
 } from '../defs';
-import { makeTextBlock, type FamilyExt } from '../shared';
+import { familyScope, makeTextBlock, type FamilyExt } from '../shared';
 
 /**
  * Wan (2.1 / 2.2 / 2.2-5b / 2.5 / 2.7 / 3.0), ported from `wan-graph.ts`.
@@ -271,27 +272,31 @@ const RESOLUTION_BY_VERSION = {
 
 // ---- the parent's shared nodes ---------------------------------------------
 const shared = defineGraph<FamilyExt>()
-  .field('images', ({ _ext }) => {
-    const version = versionOf(_ext.ecosystem);
-    const isV27 = version === 'v2.7';
-    const isRef2vid = _ext.workflow === 'img2vid:ref2vid';
-    const isImg2vid = _ext.workflow === 'img2vid' || _ext.workflow === 'img2vid:first-last';
-    const isEditVideo = _ext.workflow.startsWith('vid2vid');
+  .scope(familyScope)
+  .field(
+    'images',
+    workflowScoped(({ _ext }) => {
+      const version = versionOf(_ext.ecosystem);
+      const isV27 = version === 'v2.7';
+      const isRef2vid = _ext.workflow === 'img2vid:ref2vid';
+      const isImg2vid = _ext.workflow === 'img2vid' || _ext.workflow === 'img2vid:first-last';
+      const isEditVideo = _ext.workflow.startsWith('vid2vid');
 
-    // v3.0 takes startImage + optional endImage, same slot shape as v2.7.
-    if ((isV27 || version === 'v3.0') && isImg2vid) {
-      return imagesDef({
-        slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
-        warnOnMissingAiMetadata: true,
-      });
-    }
-    if (isV27 && isRef2vid) {
-      return imagesDef({ warnOnMissingAiMetadata: true, max: 5 });
-    }
-    return !_ext.workflow.startsWith('txt') && !isEditVideo
-      ? imagesDef({ warnOnMissingAiMetadata: true })
-      : null;
-  })
+      // v3.0 takes startImage + optional endImage, same slot shape as v2.7.
+      if ((isV27 || version === 'v3.0') && isImg2vid) {
+        return imagesDef({
+          slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
+          warnOnMissingAiMetadata: true,
+        });
+      }
+      if (isV27 && isRef2vid) {
+        return imagesDef({ warnOnMissingAiMetadata: true, max: 5 });
+      }
+      return !_ext.workflow.startsWith('txt') && !isEditVideo
+        ? imagesDef({ warnOnMissingAiMetadata: true })
+        : null;
+    })
+  )
   .field('seed', SEED)
   // every version has a resolution — only the option set is version-specific
   .field('resolution', ({ _ext }) => RESOLUTION_BY_VERSION[versionOf(_ext.ecosystem)])
@@ -313,6 +318,7 @@ const shared = defineGraph<FamilyExt>()
 
 // ---- one graph per Wan version ---------------------------------------------
 const v21 = defineGraph<FamilyExt>()
+  .scope(familyScope)
   .use(shared)
   .field('aspectRatio', ({ images, resolution }) => (noImages(images) ? AR_21(resolution) : null))
   .field('duration', DURATION_WAN)
@@ -323,6 +329,7 @@ const v21 = defineGraph<FamilyExt>()
   .use(makeTextBlock({ negativePrompt: false }));
 
 const v22 = defineGraph<FamilyExt>()
+  .scope(familyScope)
   .use(shared)
   .use(makeTextBlock())
   .field('aspectRatio', ({ images, resolution, _ext }) =>
@@ -339,6 +346,7 @@ const v22 = defineGraph<FamilyExt>()
   );
 
 const v5b = defineGraph<FamilyExt>()
+  .scope(familyScope)
   .use(shared)
   .field('aspectRatio', ({ images }) => (noImages(images) ? AR_5B : null))
   .use(makeTextBlock())
@@ -350,14 +358,19 @@ const v5b = defineGraph<FamilyExt>()
   );
 
 const v25 = defineGraph<FamilyExt>()
+  .scope(familyScope)
   .use(shared)
   .use(makeTextBlock())
   .field('aspectRatio', ({ images, resolution }) => (noImages(images) ? AR_25(resolution) : null))
   .field('duration', DURATION_25);
 
 const v27 = defineGraph<FamilyExt>()
+  .scope(familyScope)
   .use(shared)
-  .field('video', ({ _ext }) => (_ext.workflow === 'vid2vid:edit' ? VIDEO : null))
+  .field(
+    'video',
+    workflowScoped(({ _ext }) => (_ext.workflow === 'vid2vid:edit' ? VIDEO : null))
+  )
   // negativePrompt is unsupported on edit-video
   .use(
     makeTextBlock({
@@ -385,6 +398,7 @@ const v27 = defineGraph<FamilyExt>()
   );
 
 const v30 = defineGraph<FamilyExt>()
+  .scope(familyScope)
   .use(shared)
   .use(makeTextBlock())
   .field('aspectRatio', ({ images, resolution }) => (noImages(images) ? AR_30(resolution) : null))

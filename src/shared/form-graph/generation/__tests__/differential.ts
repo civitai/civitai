@@ -48,14 +48,14 @@ export interface DifferentialCase {
 const bare = (entry: string) => entry.split(/[\s(]/)[0]!;
 
 export function runOracle(input: AnyRecord, ext: GenerationCtx) {
-  const result = generationGraph.safeParse(input as never, ext);
+  const result = generationGraph.safeParse(input, ext);
   return result.success
     ? { success: true as const, data: result.data as AnyRecord }
     : { success: false as const, data: {} as AnyRecord, errors: result.errors };
 }
 
 export function runPort(graph: PortedGraph, input: AnyRecord, ext: GenerationCtx) {
-  const result = graph.parse(input, ext as never);
+  const result = graph.parse(input, ext);
   return result.success
     ? { success: true as const, data: result.data as AnyRecord }
     : { success: false as const, data: {} as AnyRecord, errors: result.errors };

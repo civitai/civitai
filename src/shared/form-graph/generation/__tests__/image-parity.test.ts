@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { assertDifferential, type AnyRecord } from './differential';
 import { generationHub } from '../hub.graph';
+import { reconcileSelectors } from '../reconcile';
 import { isWorkflowAvailable } from '~/shared/data-graph/generation/config';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
@@ -88,18 +89,119 @@ const INPUT_SHAPES: AnyRecord[] = [
 ];
 
 /**
- * SD-family only: a model whose baseModel belongs to ANOTHER ecosystem drags
- * the effective ecosystem with it (v1's checkpoint effect). Cross-FAMILY model
- * switching (an SD model on Chroma flipping the whole family) is out of the
- * port's scope so far, so these shapes only run where the switch stays inside
- * the SD family.
+ * Cross-ecosystem models: the MODEL WINS (v1's checkpoint effect). With
+ * `reconcileSelectors` at the boundary this now holds across FAMILIES too —
+ * an SD checkpoint on Chroma parses as SD1 — so these shapes run on every
+ * image ecosystem.
  */
-const SD_ONLY_SHAPES: AnyRecord[] = [
+/** Boundary shape: a 1-char prompt pins min-length-rule drift between lanes. */
+const BOUNDARY_SHAPES: AnyRecord[] = [{ prompt: 'a' }];
+
+const CROSS_MODEL_SHAPES: AnyRecord[] = [
   { prompt: 'a cat', model: { id: 128713, baseModel: 'SD 1.5' } },
   { prompt: 'a cat', model: { id: 128713, baseModel: 'SD 1.5' }, aspectRatio: '16:9' },
 ];
 
-const SD_FAMILY = new Set(['SD1', 'SDXL', 'Pony', 'Illustrious', 'NoobAI']);
+/**
+ * Flux-family only: mode selection by version id, and both directions of the
+ * draft workflow<->model coupling (the workflow wins at parse — probed).
+ */
+const FLUX_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 699279 }, // draft model on txt2img -> snapped to standard
+  { prompt: 'a cat', model: 922358 }, // pro
+  { prompt: 'a cat', model: 1088507, aspectRatio: '21:9' }, // ultra + its AR table
+  { prompt: 'a cat', model: 2068000 }, // krea
+  { prompt: 'a cat', model: 691639 }, // standard, explicit
+];
+/** Ernie turbo + Seedream versions: mode/toggle selection by version id. */
+const ERNIE_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 2863892 }, // turbo: no resources arm
+];
+const SEEDREAM_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 2208174 }, // v3: no resolution toggle
+  { prompt: 'a cat', model: 2470991, resolution: '2K' }, // v4.5: toggle + 2K dims
+  { prompt: 'a cat', model: 2720141, aspectRatio: '16:9' }, // v5.0-lite at 4K default
+];
+
+const IMG = { url: 'https://example.com/a.png', width: 1216, height: 832 };
+
+/** Nano Banana: four modes by version id, resolution-scaled dims. */
+const NANOBANANA_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 2436219, resolution: '2K', aspectRatio: '16:9' }, // pro
+  { prompt: 'a cat', model: 2725610, enableWebSearch: true }, // v2
+  { prompt: 'a cat', model: 3086021 }, // v2 lite
+];
+
+/** Qwen: workflow-scoped versions hit the lock (substitute to default). */
+const QWEN_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 2110043 }, // txt v2509 explicit
+  { prompt: 'a cat', model: 2133258 }, // img2img version on txt rows -> default
+];
+
+/** OpenAI gpt1 (transparency toggle) + Lens turbo and resolution tiers. */
+const OPENAI_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 1733399, transparent: true, quality: 'low' }, // gpt1
+  { prompt: 'a cat', model: 2512167 }, // v1.5 -> gpt1
+  { prompt: 'a cat', quality: 'medium' }, // default v2 -> gpt2
+];
+const LENS_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 2982241 }, // turbo ranges
+  { prompt: 'a cat', resolution: '1440', aspectRatio: '16:9' },
+];
+
+/** HiDream variants (fast/full at both precisions) + O1's full/dev + tiers. */
+const HIDREAM_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 1770945 }, // fp8 fast: no cfg/steps/resources
+  { prompt: 'a cat', model: 1772448 }, // fp8 full: everything
+  { prompt: 'a cat', model: 1768731 }, // fp16 fast
+];
+const HIDREAMO1_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 2939946 }, // full defaults
+  { prompt: 'a cat', resolution: '2K', aspectRatio: '16:9' },
+];
+
+/** Anima turbo variant + MageFlow's workflow-scoped versions. */
+const ANIMA_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 3108589 }, // turbo ranges
+  { prompt: 'a cat', sampler: 'dpmpp_2m', scheduler: 'sgm_uniform' },
+];
+const MAGEFLOW_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 3172039 }, // txt turbo
+  { prompt: 'a cat', model: 3172043, images: [IMG] }, // edit model -> workflow follows
+];
+
+/** Kontext + Flux2 mode selection by version id (Klein modes are ecosystems). */
+const KONTEXT_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 1892509 }, // pro
+  { prompt: 'a cat', model: 1892523, aspectRatio: '21:9' }, // max + kontext AR table
+];
+/** Boogu: workflow-scoped versions — the model wins the workflow (probed). */
+const BOOGU_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 3050010 }, // turbo (no negativePrompt, turbo ranges)
+  { prompt: 'a cat', model: 3049824, images: [IMG] }, // edit model -> workflow follows
+  { prompt: 'a cat', model: 3113427, images: [IMG] }, // editTurbo -> workflow follows
+  { prompt: 'a cat', model: 3049541 }, // base explicit (on edit rows: workflow -> txt2img)
+];
+
+/** Krea2: FAL tiers vs comfy builds; edit substitutes non-comfy versions. */
+const KREA2_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 2983023 }, // fal medium: creativity + styleReferences
+  { prompt: 'a cat', model: 2983022, creativity: 'high' }, // fal large
+  {
+    prompt: 'a cat',
+    model: 2983023,
+    styleReferences: [{ image: 'https://example.com/s.png', strength: 0.7 }, {}],
+  },
+  { prompt: 'a cat', model: 3072332 }, // comfy turbo
+  { prompt: 'a cat', model: 2983023, images: [IMG] }, // fal model where edit rows substitute
+];
+
+const FLUX2_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 2439067 }, // dev (resources arm)
+  { prompt: 'a cat', model: 2439047 }, // flex
+  { prompt: 'a cat', model: 2439442 }, // pro
+  { prompt: 'a cat', model: 2547175 }, // max
+];
 
 const WORKFLOWS = [
   'txt2img',
@@ -115,6 +217,8 @@ const WORKFLOWS = [
 // SD2 is in the SD family's discriminator but supports no generation
 // workflows any more, so it can produce no matrix rows.
 const ECOSYSTEMS = [
+  'Flux1',
+  'FluxKrea',
   'SD1',
   'SDXL',
   'Pony',
@@ -123,9 +227,60 @@ const ECOSYSTEMS = [
   'ZImageTurbo',
   'ZImageBase',
   'Chroma',
+  'Flux1Kontext',
+  'Flux2',
+  'Flux2Klein_9B',
+  'Flux2Klein_9B_base',
+  'Flux2Klein_4B',
+  'Flux2Klein_4B_base',
+  'Boogu',
+  'Krea2',
+  'Imagen4',
+  'PonyV7',
+  'Reve',
+  'MAI',
+  'Ernie',
+  'Seedream',
+  'Anima',
+  'MageFlow',
+  'HiDream',
+  'HiDream-O1',
+  'OpenAI',
+  'Lens',
+  'Qwen',
+  'Qwen2',
+  'Qwen3',
+  'NanoBanana',
 ];
 
-const port = { parse: (raw: AnyRecord, ext: never) => generationHub.parse(raw, ext as never) };
+// the port's boundary = reconcile + parse, exactly as the server adapter composes it
+const port = {
+  parse: (raw: AnyRecord, ext: never) => generationHub.parse(reconcileSelectors(raw).raw, ext),
+};
+
+/**
+ * Family-specific extra shapes, keyed by ecosystem. A RECORD rather than a
+ * ternary chain so a typo'd key fails the canary by name instead of silently
+ * running zero extra shapes.
+ */
+const EXTRA_SHAPES: Record<string, AnyRecord[]> = {
+  NanoBanana: NANOBANANA_ONLY_SHAPES,
+  Qwen: QWEN_ONLY_SHAPES,
+  OpenAI: OPENAI_ONLY_SHAPES,
+  Lens: LENS_ONLY_SHAPES,
+  HiDream: HIDREAM_ONLY_SHAPES,
+  'HiDream-O1': HIDREAMO1_ONLY_SHAPES,
+  Anima: ANIMA_ONLY_SHAPES,
+  MageFlow: MAGEFLOW_ONLY_SHAPES,
+  Ernie: ERNIE_ONLY_SHAPES,
+  Seedream: SEEDREAM_ONLY_SHAPES,
+  Boogu: BOOGU_ONLY_SHAPES,
+  Krea2: KREA2_ONLY_SHAPES,
+  Flux1Kontext: KONTEXT_ONLY_SHAPES,
+  Flux2: FLUX2_ONLY_SHAPES,
+  Flux1: FLUX_ONLY_SHAPES,
+  FluxKrea: FLUX_ONLY_SHAPES,
+};
 
 type Combo = { name: string; input: AnyRecord; ext: GenerationCtx };
 
@@ -136,7 +291,12 @@ for (const [ctxName, ctx] of CONTEXTS) {
     if (!eco) continue;
     for (const workflow of WORKFLOWS) {
       if (!isWorkflowAvailable(workflow, eco.id)) continue;
-      const shapes = SD_FAMILY.has(ecosystem) ? [...INPUT_SHAPES, ...SD_ONLY_SHAPES] : INPUT_SHAPES;
+      const shapes = [
+        ...INPUT_SHAPES,
+        ...BOUNDARY_SHAPES,
+        ...CROSS_MODEL_SHAPES,
+        ...(EXTRA_SHAPES[ecosystem] ?? []),
+      ];
       for (const [i, shape] of shapes.entries()) {
         COMBOS.push({
           name: `${ctxName} | ${ecosystem} | ${workflow} | shape${i}`,
@@ -151,7 +311,14 @@ for (const [ctxName, ctx] of CONTEXTS) {
 describe('image slice: differential parity with generationGraph', () => {
   it('covers every supported ecosystem x workflow x input shape x context', () => {
     expect(COMBOS.length).toBeGreaterThan(500);
-    expect(new Set(COMBOS.map((c) => c.input.ecosystem)).size).toBe(ECOSYSTEMS.length);
+    const covered = new Set(COMBOS.map((c) => c.input.ecosystem));
+    expect(ECOSYSTEMS.filter((e) => !covered.has(e))).toEqual([]);
+    // every ECOSYSTEMS entry must resolve in the constants, or its rows
+    // silently vanished from the matrix
+    expect(ECOSYSTEMS.filter((e) => !ecosystemByKey.has(e))).toEqual([]);
+    // every family-specific shape list must be keyed by a REAL matrix
+    // ecosystem — a typo here is zero extra shapes, invisibly
+    expect(Object.keys(EXTRA_SHAPES).filter((k) => !ECOSYSTEMS.includes(k))).toEqual([]);
   });
 
   it.each(COMBOS)('$name', ({ input, ext }) => {

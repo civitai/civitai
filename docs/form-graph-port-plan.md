@@ -108,9 +108,13 @@ import { slider, enumOf, textOf, boolOf } from 'form-graph/defs';
   snaps a value with a recorded note (this is what the substitution metrics will read).
   `enumOf({ gate: { optionValue: 'reason' } })` disables an option AND corrects off it.
 - **React binding:** `import { useForm, useField, useTypedField, Controller,
-  createTypedController, useFormState } from 'form-graph/react'` —
+  MultiController, createTypedController, useFormState } from 'form-graph/react'` —
   `useForm(graph, { ext, storage })` returns the store; `persistedStorage(key)` /
-  `debouncedStorage(...)` from `form-graph` for localStorage persistence.
+  `debouncedStorage(...)` from `form-graph` for localStorage persistence. The
+  `graph` prop on `Controller` types `name`/`value`/`meta` from the graph itself
+  (the port's standard form); `MultiController` is one subscription over several
+  fields. `graph.scope(fn)` sets a default persistence scope for every field a
+  graph declares (field `scope` wins; `[]` opts out; children keep their own fn).
 - **Word list:** definitions ("defs"), not codecs. `graph.defs` is the registry. There is
   no public `codec()`, `Fields`, or `FieldOptions` — if you find yourself wanting them,
   you are porting the wrong way; re-read the docs' graph model.
@@ -249,17 +253,6 @@ reconcile-sequence probes through live stores. This is the effort's centerpiece 
 budget real time for the case list.
 
 **Phase 4/5 groundwork (built 2026-09-01, uncommitted):** the handler lane lives at
- — per-family  transcribed
-from the data-graph handlers but importing only ported modules, a dispatcher
-(, loud error on unported ecosystems), and a differential
-test feeding BOTH dispatchers the same parsed data and asserting identical steps.
-The client lane lives at  —
-BaseGenerationForm (owns the store over the composed root, switches on the computed) + Image/VideoGenerationForm rendering the store's active keys in
-declaration order with bespoke-component slots (resources/media/snippets are
-visible placeholders until the real inputs are wired). Storage-adapter parity and
-submit wiring are still open.
-
-**Phase 4/5 groundwork (built 2026-09-01, uncommitted):** the handler lane lives at
 `src/server/services/orchestrator/form-graph/` — per-family `*.handler.ts` transcribed
 from the data-graph handlers but importing only ported modules, a dispatcher
 (`createFormGraphStepInput`, loud error on unported ecosystems), and a differential
@@ -276,8 +269,30 @@ GenerationTextEditor, ControlNetsInput, AspectRatioInput, Priority/OutputFormat,
 ActiveWildcards with the ported add/remove flow, ResourceAlerts via
 MultiController). Demo at `/form-graph` (standalone page; mounts
 ResourceDataProvider itself). Not yet ported from v2's form: compatibility-confirm
-modal flows, prompt-enhance button, presets, tours, remix handling, the whatIf
-cost footer, and storage-adapter persistence; submit ends at `validate()`.
+modal flows, prompt-enhance button, presets, tours, remix handling, and the whatIf
+cost footer; submit ends at `validate()`.
+
+**Persistence (2026-09-01):** v1's ~540-line grouped storage adapter maps onto
+per-graph scopes. The lib grew `graph.scope(fn)` (graph-level default scope;
+field `scope` — including `[]`, the bare-key opt-out — wins; mounted children
+keep their own fn). The layout, mirroring v1's groups: every family graph and
+branch member carries `.scope(familyScope)` (ecosystem group id, else key —
+wan versions and klein variants share buckets); `SEED` and `controlNetsDef`
+opt out to bare keys (v1 stores them globally); images/video wrap their def fns
+in `workflowScoped` (per-workflow buckets); the hubs scope `ecosystem` per
+output type, `quantity` per workflow only on draft, `enhancedCompatibility`
+per family bucket; and the turbo-variant families (zimage/boogu/krea2/anima/ernie/lens/mage-flow — all seven ported
+entries of v1's TURBO_VARIANT_ECOSYSTEMS) refine
+cfgScale/steps `perModelScope` — per model version, v1's
+TURBO_VARIANT_ECOSYSTEMS. One localStorage record under `form-graph:generation`
+(`persistedStorage`, debounced, flushed on pagehide) attached in
+BaseGenerationForm. Layout pinned by `__tests__/persistence.test.ts`.
+Not decided (Briant): migrating v1's stored values (different keys AND record
+shape — v1 splits across many localStorage keys) vs a one-time reset; and v1's
+"preferences survive reset" semantics (outputFormat/priority), which belongs to
+the reset affordance when one exists. Store-path gotcha this surfaced: STORE
+state holds raw inputs (a bare-number model), so mode picks and scopes read ids
+via `modelIdOf` rather than `.id`.
 
 ### Phase 4 — server swap (small, high-stakes)
 
@@ -299,9 +314,9 @@ Replace `DataGraphProvider`/`useDataGraph` usage with `form-graph/react`
 (`useForm(rootGraph, { ext, storage: persistedStorage(...) })`, `useTypedField`,
 `createTypedController`). `GenerationFormProvider.tsx` is the hub; port it first, then
 walk the ~119 consumer files (most only consume via the provider's context and need
-import/type updates, not logic changes). Storage: study `storage-adapter.ts` for the
-existing localStorage key/shape and decide (with Briant) whether to migrate stored
-intent or accept a one-time reset — form-graph's intent format differs.
+import/type updates, not logic changes). Storage: the adapter layout is built (see the Persistence note under the Phase 4/5
+groundwork above); the v1 stored-value migration-vs-reset decision recorded there is
+the remaining Phase 5 item.
 
 **Closing condition:** the generation form works end to end in the dev server (use the
 `/dev-server` skill; verify with `probe`), typecheck green, full suite green. This phase
@@ -361,11 +376,20 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
   ecosystem-dependent field) with it. Within a family that is the `effectiveEcosystem`
   `emit: 'ecosystem'` computed + `checkpointDef({ modelWins: true })` — see image/sd.graph.ts
   and video/ltx.graph.ts (probed 2026-09-01: oracle kept the SD1.5 model on an SDXL selection
-  and produced SD1 data). The same limit applies one level down: an LTX model whose
-  VERSION differs from the selection re-picks the version branch in v1 but not here, so
-  the LTX model shapes in the matrix are scoped to same-version picks. **CROSS-family switching (an SD model on Chroma flips the whole family branch
-  mid-parse in v1) is NOT ported** — the family dispatch picks on the selection before
-  the model resolves. Open design question for Briant before Phase 3 signs off.
+  and produced SD1 data). **CROSS-family and cross-VERSION
+  switching are handled by `generation/reconcile.ts`** (decided 2026-09-01): one pure
+  policy (`deriveSelectorsFromModel`) with two adapters — `reconcileSelectors(raw)`
+  applied BEFORE `parse` at the boundary (the differential harnesses compose it into
+  their port wrapper; the production call site lands with the Phase 4 submit wiring,
+  beside `normalizeInput`), and `modelSelectorRules` attached with `.effect` on both
+  hubs so an interactive pick moves the selectors identically. Two ordering truths the
+  matrix forced: a LOCKED slot (ecosystem-defaults `modelLocked`, or flux's draft
+  workflow) beats a cross-family model — v1 substitutes it before its effect runs — but
+  version SIBLINGS (LTX↔LTX, wan↔wan) re-pick THROUGH the lock, since they are valid in
+  the locked picker's own version list; and a gate-HIDDEN selection drops to the default
+  before v1's model effect runs, an ordering the ext-free boundary reconciler cannot see,
+  so that one combo stays scoped out of the matrix. The family computeds
+  (`effectiveEcosystem`) now delegate to the same policy via `effectiveEcosystemOf`.
 - The oracle emits `controlNets: []` (not undefined) when nothing is staged — the def
   carries `default: []` for that reason.
 - Both matrices now carry a `gated` context (rules-hidden ecosystem in the image suite,
@@ -385,7 +409,7 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 | Family | Ported | Differential green | Notes |
 | --- | --- | --- | --- |
 | video: wan (all 6 versions incl. v3.0) | DONE | DONE | LIVE HAS v3.0, reference does not — shape guide: C:\work\form-graph\src\v1\ports\wan.ts |
-| video: ltx (v2/v23/v25) | DONE | DONE | model-wins split like sd (`effectiveEcosystem` emit); cross-VERSION model re-pick is part of the open cross-branch decision. v1's `enablePromptEnhancer` node (`when: false` — never shown, never in data) is deliberately NOT ported; revive it from ltx-graph.ts if the flag ever flips |
+| video: ltx (v2/v23/v25) | DONE | DONE | model-wins split like sd (`effectiveEcosystem` emit); cross-VERSION re-pick handled by `reconcile.ts` (version siblings re-pick THROUGH the lock). v1's `enablePromptEnhancer` node (`when: false` — never shown, never in data) is deliberately NOT ported; revive it from ltx-graph.ts if the flag ever flips |
 | video hub (ecosystem/quantity, video-scoped) | DONE | DONE | workflow/output/input moved to the composed root |
 | composed root (`form-graph/generation/hub.graph.ts`, image+video dispatch) | DONE | DONE | audio/model3d hubs arrive with their families |
 | image hub (ecosystem/priority/outputFormat/enhancedCompatibility/quantity) | DONE | DONE | enhancedCompatibility + quantity sit AFTER the family dispatch (they read model/effectiveEcosystem) |
@@ -393,7 +417,28 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 | image: zimage (Turbo/Base) | DONE | DONE | Base's negativePrompt is NOT a snippet target (v1 mode-subgraph quirk) |
 | image: chroma | DONE | DONE | no negative prompt, no images node |
 | video: seedance | DONE | DONE | no resources, no negative prompt; resolution/duration ceilings per model version. Unblocked the video suite's hidden-ecosystem gate coverage (hidden selections fall back to Seedance) |
-| flux | ☐ | ☐ | corpus sample: C:\work\form-graph\src\lib\generation\flux.ts. ⚠️ `checkpointDef` does NOT yet carry `createCheckpointGraph`'s `workflowVersions`/`currentWorkflow` machinery (per-workflow version sets via `findWorkflowConfig` prefix match, `buildVersionMappings` index-matched version swap on workflow change, and the two workflow-switching effects). No ported family needs it; flux/boogu/krea2 do — port it with this row, copying those helpers out of common.ts. |
+| image: flux (Flux1/FluxKrea, 5 modes) | DONE | DONE | `workflowVersions` turned out UNUSED by flux — its draft coupling is two sync effects, resolved at parse as "the workflow wins" (both directions are `correct` policies on the model, probed 2026-09-01). The `fluxMode` tagged branch picks on `model.id` — a mounted branch's pick sees prior fields via ctx-over-ext. Kontext/Flux2/Klein are separate graphs (rows below). |
+| image: flux-kontext (pro/max) | DONE | DONE | img2img-primary; both modes share one field set, so the mode is just a version pick — no branch |
+| image: flux2 (dev/flex/pro/max) | DONE | DONE | mode by model.id; only dev carries resources |
+| image: flux2-klein (9B/9B-base/4B/4B-base) | DONE | DONE | FOUR ecosystems share the graph — mode from ecosystem, not model. negativePrompt is NOT a snippet target (v1's own comment claims it self-registers; the differential says no). Handler pins distilled steps/cfg even though the graph exposes a steps slider — v1 quirk, mirrored |
+| image: boogu (base/turbo/edit/editTurbo) | DONE | DONE | workflowVersions: version options are WORKFLOW-scoped and the MODEL WINS the workflow (probed — an edit checkpoint on txt2img parses as img2img:edit, model kept; v1's index-remap transform is dead code). The cross-workflow rewrite lives in `reconcile.ts` (`deriveWorkflowFromModel`, registry `workflowScopedVersions`) since a family cannot change the root workflow. negativePrompt only in base/edit modes |
+| image: krea2 (fal/raw/turbo/editRaw/editTurbo) | DONE | DONE | locked checkpoint; version selector splits across FAL (creativity/styleReferences) and comfy (LoRA/cfg/steps) engines; img2img:edit narrows the picker to comfy builds and the lock substitutes FAL tiers to the edit default. NO cross-workflow pull (unlike boogu) |
+| image: imagen4 | DONE | DONE | locked single version; negative prompt registers at top level |
+| image: pony-v7 | DONE | DONE | LoRAs, no negative prompt; ecosystem-defaults lock applies |
+| image: reve | DONE | DONE | locked; AR on txt2img only, edit takes 1-4 reference frames |
+| image: mai | DONE | DONE | locked; edit crops the single reference to a supported ratio |
+| image: ernie (base/turbo) | DONE | DONE | RAW resourcesNode in v1 — `resourcesDef({ filterIncompatible: false })`, foreign LoRAs pass through and only the limit binds |
+| image: seedream (5 versions) | DONE | DONE | one field set; 2K/4K toggle gated per version (v5.0-pro is 2K-only) |
+| image: anima (base/turbo) | DONE | DONE | comfy sampler/scheduler names; controlNets behind the `animaControlnet` fail-open flag |
+| image: mage-flow (4 workflow-scoped versions) | DONE | DONE | workflowVersions where the WORKFLOW wins — the oracle index-remaps a cross-workflow version (opposite of boogu, probed); the remap is a `correct` in the graph |
+| image: hi-dream (fast/dev/full × fp8/fp16) | DONE | DONE | hierarchical VersionGroup picker; negativePrompt only in full, snippet registration never fires |
+| image: hi-dream-o1 (full/dev) | DONE | DONE | ecosystem KEY is `HiDream-O1` (dash); v1 mounts no snippetsGraph — `makeTextBlock({ snippets: false })` |
+| image: openai (v1/v1.5/v2) | DONE | DONE | gpt1 arms carry the transparency toggle; gpt2 drops seed handling in the engine but keeps the field |
+| image: lens (base/turbo) | DONE | DONE | raw resourcesNode (no filter); resolution above the variant branch, AR follows it |
+| image: qwen (Qwen/Qwen2/Qwen3) | DONE | DONE | one graph, untagged sub-branch on ecosystem; Qwen's workflow-scoped versions hit the LOCK (cross-workflow version substitutes to the current workflow's default — probed, a third semantics next to boogu/mageflow) |
+| image: nano-banana (standard/pro/v2/v2lite) | DONE | DONE | resolution-multiplied AR dims; negativePrompt only in pro, not a snippet target |
+| image: grok | OPEN | OPEN | spans BOTH output types (grokImageGraph + grokVideoGraph split on output) — needs a member in each hub sharing constants; the last image-hub family |
+| video: happy-horse, minimax, kling, veo3, vidu, sora, mochi, hunyuan, flux3-video, wan-image + audio/model3d hubs | OPEN | OPEN | the video/audio/3d tail — same loop as the image slice |
 | _…add a row per `*-graph.ts` file during Phase 2 inventory…_ | | | |
 
 ---

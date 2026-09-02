@@ -13,12 +13,12 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 import { createEcosystemStepInput } from '../../ecosystems';
-import { createFormGraphStepInput } from '../index';
+import { createFormGraphStepInput, type GenerationData } from '../index';
 
 /**
  * The handler lane's oracle test: the data-graph dispatcher and the
  * form-graph dispatcher are fed the SAME parsed data (the port's, which the
- * 4,700-case parity suite pins as byte-identical to the oracle's) and must
+ * image/video parity suites pins as byte-identical to the oracle's) and must
  * emit identical @civitai/client steps. A transcription slip in a form-graph
  * handler fails here with the exact step diff.
  */
@@ -71,6 +71,29 @@ const CASES: Record<string, unknown>[] = [
   },
   // Chroma
   { workflow: 'txt2img', ecosystem: 'Chroma', prompt: 'a cat', seed: 42, quantity: 2 },
+  // Flux: every mode + the draft coupling in both directions
+  { workflow: 'txt2img', ecosystem: 'Flux1', prompt: 'a cat', seed: 42 },
+  { workflow: 'txt2img:draft', ecosystem: 'Flux1', prompt: 'a cat', seed: 42 },
+  { workflow: 'txt2img:draft', ecosystem: 'Flux1', prompt: 'a cat', seed: 42, model: 691639 },
+  { workflow: 'txt2img', ecosystem: 'Flux1', prompt: 'a cat', seed: 42, model: 699279 },
+  { workflow: 'txt2img', ecosystem: 'Flux1', prompt: 'a cat', seed: 42, model: 922358 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Flux1',
+    prompt: 'a cat',
+    seed: 42,
+    model: 1088507,
+    aspectRatio: '21:9',
+    fluxUltraRaw: true,
+  },
+  { workflow: 'txt2img', ecosystem: 'FluxKrea', prompt: 'a cat', seed: 42 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Flux1',
+    prompt: 'a cat',
+    seed: 42,
+    resources: [{ id: 555, baseModel: 'Flux.1 D', model: { type: 'LORA' }, strength: 0.7 }],
+  },
   // Enhanced compatibility rewrites textToImage engines in both lanes
   {
     workflow: 'txt2img',
@@ -78,6 +101,231 @@ const CASES: Record<string, unknown>[] = [
     prompt: 'a cat',
     seed: 42,
     enhancedCompatibility: true,
+  },
+  // Boogu: version-routed model strings; edit variants carry images
+  { workflow: 'txt2img', ecosystem: 'Boogu', prompt: 'a cat', seed: 42 },
+  { workflow: 'txt2img', ecosystem: 'Boogu', prompt: 'a cat', seed: 42, model: 3050010 },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Boogu',
+    prompt: 'a cat',
+    negativePrompt: 'blurry',
+    seed: 42,
+    images: [IMAGE],
+    resources: [{ id: 999, baseModel: 'Boogu', model: { type: 'LORA' }, strength: 0.5 }],
+  },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Boogu',
+    prompt: 'a cat',
+    seed: 42,
+    model: 3113427,
+    images: [IMAGE],
+  },
+  // Krea2: FAL tier with style refs, comfy raw/turbo, edit with diffusionModel
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Krea2',
+    prompt: 'a cat',
+    seed: 42,
+    model: 2983023,
+    creativity: 'high',
+    styleReferences: [{ image: 'https://example.com/s.png', strength: 0.7 }],
+  },
+  { workflow: 'txt2img', ecosystem: 'Krea2', prompt: 'a cat', seed: 42 },
+  { workflow: 'txt2img', ecosystem: 'Krea2', prompt: 'a cat', seed: 42, model: 3072332 },
+  { workflow: 'img2img:edit', ecosystem: 'Krea2', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  // Imagen4 / PonyV7 / Reve / MAI: single-version fal/google families
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Imagen4',
+    prompt: 'a cat',
+    negativePrompt: 'blurry',
+    seed: 42,
+  },
+  { workflow: 'txt2img', ecosystem: 'PonyV7', prompt: 'a cat', seed: 42, quantity: 2 },
+  { workflow: 'txt2img', ecosystem: 'Reve', prompt: 'a cat', seed: 42, aspectRatio: '16:9' },
+  { workflow: 'img2img:edit', ecosystem: 'Reve', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  { workflow: 'txt2img', ecosystem: 'MAI', prompt: 'a cat', seed: 42 },
+  { workflow: 'img2img:edit', ecosystem: 'MAI', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  // Ernie: base with LoRA vs turbo; Seedream: version + resolution tiers
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Ernie',
+    prompt: 'a cat',
+    negativePrompt: 'blurry',
+    seed: 42,
+    resources: [{ id: 444, baseModel: 'Ernie', model: { type: 'LORA' }, strength: 0.7 }],
+  },
+  { workflow: 'txt2img', ecosystem: 'Ernie', prompt: 'a cat', seed: 42, model: 2863892 },
+  { workflow: 'txt2img', ecosystem: 'Seedream', prompt: 'a cat', seed: 42 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Seedream',
+    prompt: 'a cat',
+    seed: 42,
+    model: 2470991,
+    resolution: '2K',
+  },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Seedream',
+    prompt: 'a cat',
+    seed: 42,
+    model: 2208174,
+    images: [IMAGE],
+  },
+  // Anima: base with LoRA + controlnet; turbo. MageFlow: all four models
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Anima',
+    prompt: 'a cat',
+    negativePrompt: 'blurry',
+    sampler: 'dpmpp_2m',
+    scheduler: 'sgm_uniform',
+    seed: 42,
+    resources: [{ id: 666, baseModel: 'Anima', model: { type: 'LORA' }, strength: 0.8 }],
+    controlNets: [{ preprocessor: 'canny', image: { url: 'https://example.com/cn.png' } }],
+  },
+  { workflow: 'txt2img', ecosystem: 'Anima', prompt: 'a cat', seed: 42, model: 3108589 },
+  { workflow: 'txt2img', ecosystem: 'MageFlow', prompt: 'a cat', seed: 42 },
+  { workflow: 'txt2img', ecosystem: 'MageFlow', prompt: 'a cat', seed: 42, model: 3172039 },
+  { workflow: 'img2img:edit', ecosystem: 'MageFlow', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'MageFlow',
+    prompt: 'a cat',
+    seed: 42,
+    model: 3172044,
+    images: [IMAGE],
+  },
+  // HiDream: full variant with everything; fast bare. O1: dev/full, create/edit
+  {
+    workflow: 'txt2img',
+    ecosystem: 'HiDream',
+    prompt: 'a cat',
+    seed: 42,
+    model: 1772448,
+    negativePrompt: 'blurry',
+    resources: [{ id: 321, baseModel: 'HiDream', model: { type: 'LORA' }, strength: 0.9 }],
+  },
+  { workflow: 'txt2img', ecosystem: 'HiDream', prompt: 'a cat', seed: 42, model: 1770945 },
+  { workflow: 'txt2img', ecosystem: 'HiDream-O1', prompt: 'a cat', seed: 42 },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'HiDream-O1',
+    prompt: 'a cat',
+    seed: 42,
+    model: 2939946,
+    images: [IMAGE],
+  },
+  // OpenAI gpt1 transparency + gpt2; Lens base with LoRA + turbo
+  {
+    workflow: 'txt2img',
+    ecosystem: 'OpenAI',
+    prompt: 'a cat',
+    seed: 42,
+    model: 1733399,
+    transparent: true,
+    quality: 'low',
+  },
+  { workflow: 'txt2img', ecosystem: 'OpenAI', prompt: 'a cat', seed: 42, quantity: 3 },
+  { workflow: 'img2img:edit', ecosystem: 'OpenAI', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Lens',
+    prompt: 'a cat',
+    negativePrompt: 'blurry',
+    seed: 42,
+    resources: [{ id: 246, baseModel: 'Lens', model: { type: 'LORA' }, strength: 0.4 }],
+  },
+  { workflow: 'txt2img', ecosystem: 'Lens', prompt: 'a cat', seed: 42, model: 2982241 },
+  // Qwen family: sdcpp with LoRA, fal, DashScope + edits
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Qwen',
+    prompt: 'a cat',
+    seed: 42,
+    model: 2110043,
+    resources: [{ id: 135, baseModel: 'Qwen', model: { type: 'LORA' }, strength: 0.6 }],
+  },
+  { workflow: 'img2img:edit', ecosystem: 'Qwen', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  { workflow: 'txt2img', ecosystem: 'Qwen2', prompt: 'a cat', negativePrompt: 'blurry', seed: 42 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Qwen3',
+    prompt: 'a cat',
+    seed: 42,
+    enablePromptExpansion: false,
+  },
+  { workflow: 'img2img:edit', ecosystem: 'Qwen3', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  // Nano Banana: all four modes + standard edit
+  { workflow: 'txt2img', ecosystem: 'NanoBanana', prompt: 'a cat', seed: 42 },
+  { workflow: 'img2img:edit', ecosystem: 'NanoBanana', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'NanoBanana',
+    prompt: 'a cat',
+    seed: 42,
+    model: 2436219,
+    resolution: '2K',
+    aspectRatio: '16:9',
+  },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'NanoBanana',
+    prompt: 'a cat',
+    seed: 42,
+    model: 2725610,
+    enableWebSearch: true,
+  },
+  { workflow: 'txt2img', ecosystem: 'NanoBanana', prompt: 'a cat', seed: 42, model: 3086021 },
+  // Flux Kontext: both modes, img2img with source image
+  { workflow: 'txt2img', ecosystem: 'Flux1Kontext', prompt: 'a cat', seed: 42 },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Flux1Kontext',
+    prompt: 'a cat',
+    seed: 42,
+    model: 1892523,
+    images: [IMAGE],
+    aspectRatio: '21:9',
+  },
+  // Flux2: dev with LoRA, flex, max, and the editImage operation
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Flux2',
+    prompt: 'a cat',
+    seed: 42,
+    resources: [{ id: 777, baseModel: 'Flux.2 D', model: { type: 'LORA' }, strength: 0.6 }],
+  },
+  { workflow: 'txt2img', ecosystem: 'Flux2', prompt: 'a cat', seed: 42, model: 2439047 },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Flux2',
+    prompt: 'a cat',
+    seed: 42,
+    model: 2547175,
+    images: [IMAGE],
+  },
+  // Flux2 Klein: distilled pins steps/cfg; base exposes sampler/scheduler; LoRAs everywhere
+  { workflow: 'txt2img', ecosystem: 'Flux2Klein_9B', prompt: 'a cat', seed: 42 },
+  {
+    workflow: 'txt2img',
+    ecosystem: 'Flux2Klein_4B_base',
+    prompt: 'a cat',
+    negativePrompt: 'blurry',
+    sampler: 'heun',
+    scheduler: 'karras',
+    seed: 42,
+    resources: [{ id: 888, baseModel: 'Flux.2 Klein 4B', model: { type: 'LORA' }, strength: 0.9 }],
+  },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'Flux2Klein_9B_base',
+    prompt: 'a cat',
+    seed: 42,
+    images: [IMAGE],
   },
   // LTX: all three versions + edit/extend + distilled + prompt enhancer
   { workflow: 'txt2vid', ecosystem: 'LTXV2', prompt: 'a cat', seed: 42 },
@@ -92,14 +340,8 @@ const CASES: Record<string, unknown>[] = [
     seed: 42,
     video: VIDEO_INPUT,
   },
-  {
-    workflow: 'vid2vid:extend',
-    ecosystem: 'LTXV23',
-    prompt: 'a cat',
-    seed: 42,
-    video: VIDEO_INPUT,
-    numFrames: 48,
-  },
+  // vid2vid:extend is DISABLED in the workflow config (quality; the graph and
+  // handler branches stay for re-enablement) — no case can reach it live
   { workflow: 'txt2vid', ecosystem: 'LTXV25', prompt: 'a cat', seed: 42 },
   {
     workflow: 'txt2vid',
@@ -120,6 +362,9 @@ const CASES: Record<string, unknown>[] = [
   {
     workflow: 'img2vid',
     ecosystem: 'WanVideo14B_T2V',
+    // wan derives the backend key from workflow+resolution: img2vid on the
+    // T2V version parses to the I2V backend — same wan handler, by design
+    expectEcosystem: 'WanVideo14B_I2V_480p',
     prompt: 'a cat',
     seed: 42,
     images: [IMAGE],
@@ -136,10 +381,20 @@ const CASES: Record<string, unknown>[] = [
   { workflow: 'img2vid', ecosystem: 'Seedance', prompt: 'a cat', seed: 42, images: [IMAGE] },
 ];
 
-async function bothLanes(input: Record<string, unknown>) {
-  const parsed = generationHub.parse(input, BASE as never);
+async function bothLanes({ expectEcosystem, ...input }: Record<string, unknown>) {
+  const parsed = generationHub.parse(input, BASE);
   if (!parsed.success) throw new Error(`parse failed: ${JSON.stringify(parsed.errors)}`);
-  const data = parsed.data as never;
+  // a hub redirect (unsupported workflow x ecosystem) would silently route the
+  // case to a DIFFERENT family's handler and the comparison would be vacuous
+  const parsedEco = (parsed.data as { ecosystem?: string }).ecosystem;
+  if (parsedEco !== (expectEcosystem ?? input.ecosystem)) {
+    throw new Error(
+      `case labeled ${String(input.ecosystem)} parsed to ${String(
+        parsedEco
+      )} — redirected, not testing the named handler`
+    );
+  }
+  const data = parsed.data as GenerationData;
   const v1 = await createEcosystemStepInput(data, ctx);
   const v2 = await createFormGraphStepInput(data, ctx);
   return { v1, v2 };
@@ -175,7 +430,7 @@ describe('form-graph handlers emit the same steps as the data-graph handlers', (
   it('an unported ecosystem is a loud error, not a silent fallthrough', async () => {
     await expect(
       createFormGraphStepInput(
-        { ecosystem: 'Flux1', workflow: 'txt2img', prompt: 'x', seed: 1 } as never,
+        { ecosystem: 'Grok', workflow: 'txt2img', prompt: 'x', seed: 1 } as GenerationData,
         ctx
       )
     ).rejects.toThrow(/no handler for ecosystem/);

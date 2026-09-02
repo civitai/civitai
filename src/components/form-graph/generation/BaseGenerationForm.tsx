@@ -1,5 +1,6 @@
 import { Paper, Stack, Text } from '@mantine/core';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
+import { persistedStorage } from 'form-graph';
 import { FormProvider, useForm } from 'form-graph/react';
 
 import {
@@ -26,9 +27,13 @@ import { useOutputType, type GenerationStore } from './store';
  * graph itself dispatches: on the `output` computed. Image and Video forms
  * receive the SAME store — the graph is one form; only the rendering splits.
  *
- * Persistence (the v1 storage-adapter scope groups) is deliberately not wired
- * yet — the store starts from graph defaults each mount.
+ * Persistence: one localStorage record of scoped intent addresses
+ * (`steps@SDXL`, `ecosystem@image`, …) — the scopes themselves live on the
+ * graphs (`familyScope`/`workflowScoped`/field `scope`), so this component
+ * only attaches the adapter. Debounced writes; flushed on pagehide.
  */
+
+const STORAGE_KEY = 'form-graph:generation';
 
 export function BaseGenerationForm() {
   const status = useGenerationStatus();
@@ -66,7 +71,10 @@ export function BaseGenerationForm() {
     ]
   );
 
-  const store = useForm(generationHub, { ext }) as GenerationStore;
+  const storage = useMemo(() => persistedStorage(STORAGE_KEY), []);
+  useEffect(() => () => storage?.dispose(), [storage]);
+
+  const store = useForm(generationHub, { ext, storage }) as GenerationStore;
   const output = useOutputType(store);
 
   const isMember = ext.user?.isMember ?? false;

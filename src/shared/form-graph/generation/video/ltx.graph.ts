@@ -1,9 +1,8 @@
 import { z } from 'zod';
 import { branch, defFamily, defineGraph, type FieldDef } from 'form-graph';
 import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
-import { isWorkflowAvailable } from '~/shared/data-graph/generation/config';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
-import { checkpointDef, ecosystemKeyForBaseModel, type VersionGroup } from '../checkpoint';
+import { checkpointDef, type VersionGroup } from '../checkpoint';
+import { effectiveEcosystemOf } from '../reconcile';
 import {
   SEED,
   aspectRatioDef,
@@ -13,11 +12,12 @@ import {
   resourcesDef,
   sliderDef,
   VIDEO,
+  workflowScoped,
   type AspectRatioOption,
   type ImageEntry,
   type NumberMeta,
 } from '../defs';
-import { textBlock, type FamilyExt } from '../shared';
+import { familyScope, textBlock, type FamilyExt } from '../shared';
 
 /**
  * LTX (LTXV2 + LTXV23 + LTXV25), ported from `ltx-graph.ts`.
@@ -278,19 +278,23 @@ const versionOf = (ecosystem: string) => {
 
 // ---- the parent's shared nodes, mounted first by every version --------------
 const shared = defineGraph<FamilyExt>()
-  .field('images', ({ _ext }) => {
-    if (isFirstLast(_ext.workflow)) {
-      return imagesDef({
-        slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
-        warnOnMissingAiMetadata: true,
-        aspectRatios: sharedAspectRatioValues,
-      });
-    }
-    if (_ext.workflow === 'img2vid:ref2vid') {
-      return imagesDef({ warnOnMissingAiMetadata: true });
-    }
-    return null;
-  })
+  .scope(familyScope)
+  .field(
+    'images',
+    workflowScoped(({ _ext }) => {
+      if (isFirstLast(_ext.workflow)) {
+        return imagesDef({
+          slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
+          warnOnMissingAiMetadata: true,
+          aspectRatios: sharedAspectRatioValues,
+        });
+      }
+      if (_ext.workflow === 'img2vid:ref2vid') {
+        return imagesDef({ warnOnMissingAiMetadata: true });
+      }
+      return null;
+    })
+  )
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,
@@ -303,17 +307,11 @@ const shared = defineGraph<FamilyExt>()
   )
   // LTX is unlocked and its version options carry baseModel precisely so a
   // model choice drags the ecosystem (v1's checkpoint effect) — same split as
-  // image/sd.ts. The version BRANCH still picks on the selection; a
-  // cross-version model where the versions' field sets differ is part of the
-  // open cross-branch re-pick decision (see the plan doc).
+  // image/sd.ts. The version BRANCH still picks on the selection; the
+  // cross-version re-pick happens at the boundary via reconcileSelectors.
   .computed(
     'effectiveEcosystem',
-    ({ model, _ext }) => {
-      const modelEco = model?.baseModel ? ecosystemKeyForBaseModel(model.baseModel) : undefined;
-      if (!modelEco || modelEco === _ext.ecosystem) return _ext.ecosystem;
-      const target = ecosystemByKey.get(modelEco);
-      return target && isWorkflowAvailable(_ext.workflow, target.id) ? modelEco : _ext.ecosystem;
-    },
+    ({ model, _ext }) => effectiveEcosystemOf(model, _ext.ecosystem, _ext.workflow),
     { emit: 'ecosystem' }
   )
   .field('seed', SEED)
@@ -331,15 +329,20 @@ const shared = defineGraph<FamilyExt>()
 
 // ---- one graph per LTX version ---------------------------------------------
 const v2 = defineGraph<FamilyExt>()
+  .scope(familyScope)
   .use(shared)
   .field('aspectRatio', ({ _ext }) => (_ext.workflow !== 'img2vid' ? AR_V2 : null))
   .field('duration', DURATION_V2)
   .use(textBlock);
 
 const v23 = defineGraph<FamilyExt>()
+  .scope(familyScope)
   .use(shared)
-  .field('video', ({ _ext }) =>
-    _ext.workflow === 'vid2vid:edit' || _ext.workflow === 'vid2vid:extend' ? VIDEO : null
+  .field(
+    'video',
+    workflowScoped(({ _ext }) =>
+      _ext.workflow === 'vid2vid:edit' || _ext.workflow === 'vid2vid:extend' ? VIDEO : null
+    )
   )
   .field('resolution', RESOLUTION)
   .field('aspectRatio', ({ resolution, _ext }) =>
@@ -354,6 +357,7 @@ const v23 = defineGraph<FamilyExt>()
   .use(textBlock);
 
 const v25 = defineGraph<FamilyExt>()
+  .scope(familyScope)
   .use(shared)
   .field('resolution', RESOLUTION)
   .field('aspectRatio', ({ resolution, _ext }) =>

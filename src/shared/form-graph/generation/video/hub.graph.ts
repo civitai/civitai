@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { branch, defFamily, defineGraph } from 'form-graph';
 import { VID_QUANTITY_ECOSYSTEMS } from '~/shared/constants/generation.constants';
 import { getEcosystemStates, resolveCompatibleEcosystem } from '../ecosystem-gates';
+import { modelSelectorRules } from '../reconcile';
 import type { RootCtx, FamilyExt } from '../shared';
 
 import { ltx } from './ltx.graph';
@@ -80,6 +81,8 @@ export const videoHub = defineGraph<RootCtx>()
             })
           : z.string(),
       default: defaultValue,
+      // v1 stores the ecosystem selection per OUTPUT type
+      scope: 'video',
       meta: {
         compatibleEcosystems,
         hiddenEcosystems,
@@ -94,6 +97,8 @@ export const videoHub = defineGraph<RootCtx>()
     if (!VID_QUANTITY_ECOSYSTEMS.has(ecosystem)) return null;
     return QUANTITY(_ext.limits.vidQuantity);
   })
-  .use(families);
+  .use(families)
+  // interactive model picks reconcile selectors the same way the parse boundary does
+  .effect(modelSelectorRules);
 
 export type VideoState = ReturnType<typeof videoHub.resolve>;

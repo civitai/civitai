@@ -8,15 +8,15 @@ import {
   sd1ControlNetPreprocessors,
   sdxlControlNetPreprocessors,
 } from '~/shared/constants/controlnets.constants';
-import { isWorkflowAvailable } from '~/shared/data-graph/generation/config';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
-import { checkpointDef, ecosystemKeyForBaseModel } from '../checkpoint';
+import { checkpointDef } from '../checkpoint';
+import { effectiveEcosystemOf } from '../reconcile';
 import {
   SEED,
   defaultSamplerPresets,
   aspectRatioDef,
   controlNetsDef,
   imagesDef,
+  workflowScoped,
   resourcesDef,
   selectDef,
   sliderDef,
@@ -24,7 +24,7 @@ import {
   type AspectRatioValue,
   type ImageEntry,
 } from '../defs';
-import { textBlock, type FamilyExt } from '../shared';
+import { familyScope, textBlock, type FamilyExt } from '../shared';
 
 /**
  * Stable Diffusion family (SD1 / SD2 / SDXL / Pony / Illustrious / NoobAI),
@@ -82,6 +82,7 @@ const upscaleDims = (
 };
 
 export const sd = defineGraph<FamilyExt>()
+  .scope(familyScope)
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,
@@ -96,15 +97,13 @@ export const sd = defineGraph<FamilyExt>()
   // name, and everything ecosystem-dependent below reads IT.
   .computed(
     'effectiveEcosystem',
-    ({ model, _ext }) => {
-      const modelEco = model?.baseModel ? ecosystemKeyForBaseModel(model.baseModel) : undefined;
-      if (!modelEco || modelEco === _ext.ecosystem) return _ext.ecosystem;
-      const target = ecosystemByKey.get(modelEco);
-      return target && isWorkflowAvailable(_ext.workflow, target.id) ? modelEco : _ext.ecosystem;
-    },
+    ({ model, _ext }) => effectiveEcosystemOf(model, _ext.ecosystem, _ext.workflow),
     { emit: 'ecosystem' }
   )
-  .field('images', ({ _ext }) => (_ext.workflow.startsWith('img2img') ? imagesDef({}) : null))
+  .field(
+    'images',
+    workflowScoped(({ _ext }) => (_ext.workflow.startsWith('img2img') ? imagesDef({}) : null))
+  )
   .field('resources', ({ effectiveEcosystem, _ext }) =>
     resourcesDef({ ecosystem: effectiveEcosystem, limit: _ext.limits.maxResources })
   )

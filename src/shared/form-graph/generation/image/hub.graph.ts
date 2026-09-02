@@ -7,9 +7,30 @@ import {
   supportsSdcpp,
 } from '../ecosystem-gates';
 import { boolDef, quantityDef } from '../defs';
-import type { FamilyExt, RootCtx } from '../shared';
+import { modelSelectorRules } from '../reconcile';
+import { familyScope, type FamilyExt, type RootCtx } from '../shared';
 
 import { chroma } from './chroma.graph';
+import { flux } from './flux.graph';
+import { fluxKontext } from './flux-kontext.graph';
+import { flux2 } from './flux2.graph';
+import { flux2Klein } from './flux2-klein.graph';
+import { boogu } from './boogu.graph';
+import { krea2 } from './krea2.graph';
+import { imagen4 } from './imagen4.graph';
+import { ponyV7 } from './pony-v7.graph';
+import { reve } from './reve.graph';
+import { mai } from './mai.graph';
+import { ernie } from './ernie.graph';
+import { seedream } from './seedream.graph';
+import { anima } from './anima.graph';
+import { mageFlow } from './mage-flow.graph';
+import { hiDream } from './hi-dream.graph';
+import { hiDreamO1 } from './hi-dream-o1.graph';
+import { openai } from './openai.graph';
+import { lens } from './lens.graph';
+import { qwen } from './qwen.graph';
+import { nanoBanana } from './nano-banana.graph';
 import { sd } from './sd.graph';
 import { zimage } from './zimage.graph';
 
@@ -33,6 +54,52 @@ const families = branch((ext: FamilyExt) => {
       return zimage;
     case 'Chroma':
       return chroma;
+    case 'Flux1':
+    case 'FluxKrea':
+      return flux;
+    case 'Flux1Kontext':
+      return fluxKontext;
+    case 'Flux2':
+      return flux2;
+    case 'Flux2Klein_9B':
+    case 'Flux2Klein_9B_base':
+    case 'Flux2Klein_4B':
+    case 'Flux2Klein_4B_base':
+      return flux2Klein;
+    case 'Boogu':
+      return boogu;
+    case 'Krea2':
+      return krea2;
+    case 'Imagen4':
+      return imagen4;
+    case 'PonyV7':
+      return ponyV7;
+    case 'Reve':
+      return reve;
+    case 'MAI':
+      return mai;
+    case 'Ernie':
+      return ernie;
+    case 'Seedream':
+      return seedream;
+    case 'Anima':
+      return anima;
+    case 'MageFlow':
+      return mageFlow;
+    case 'HiDream':
+      return hiDream;
+    case 'HiDream-O1':
+      return hiDreamO1;
+    case 'OpenAI':
+      return openai;
+    case 'Lens':
+      return lens;
+    case 'Qwen':
+    case 'Qwen2':
+    case 'Qwen3':
+      return qwen;
+    case 'NanoBanana':
+      return nanoBanana;
     case 'SD1':
     case 'SD2':
     case 'SDXL':
@@ -80,6 +147,8 @@ export const imageHub = defineGraph<RootCtx>()
             })
           : z.string(),
       default: defaultValue,
+      // v1 stores the ecosystem selection per OUTPUT type
+      scope: 'image',
       meta: {
         compatibleEcosystems,
         hiddenEcosystems,
@@ -139,7 +208,7 @@ export const imageHub = defineGraph<RootCtx>()
   .field('enhancedCompatibility', ({ model, effectiveEcosystem, ecosystem, _ext }) =>
     _ext.workflow === 'txt2img' &&
     supportsEnhancedCompatibility(effectiveEcosystem ?? ecosystem, model?.id)
-      ? boolDef(false)
+      ? { ...boolDef(false), scope: familyScope({ ecosystem }) }
       : null
   )
   .field('quantity', ({ model, effectiveEcosystem, ecosystem, enhancedCompatibility, _ext }) => {
@@ -150,7 +219,14 @@ export const imageHub = defineGraph<RootCtx>()
       supportsSdcpp(effectiveEcosystem ?? ecosystem, model?.id) &&
       enhancedCompatibility !== true;
     const step = isDraft ? 4 : bogoActive ? 2 : 1;
-    return quantityDef({ max: _ext.limits.maxQuantity, step });
-  });
+    // draft's 4-step quantity gets its own bucket (v1's conditional group);
+    // everywhere else quantity is global
+    return {
+      ...quantityDef({ max: _ext.limits.maxQuantity, step }),
+      scope: isDraft ? _ext.workflow : [],
+    };
+  })
+  // interactive model picks reconcile selectors the same way the parse boundary does
+  .effect(modelSelectorRules);
 
 export type ImageState = ReturnType<typeof imageHub.resolve>;

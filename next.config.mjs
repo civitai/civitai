@@ -3,6 +3,7 @@ import { withAxiom } from '@civitai/next-axiom';
 import bundlAnalyzer from '@next/bundle-analyzer';
 import CircularDependencyPlugin from 'circular-dependency-plugin';
 import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
 const require = createRequire(import.meta.url);
 const packageJson = require('./package.json');
 
@@ -115,7 +116,9 @@ export default defineNextConfig(
     // `serverExternalPackages` below, so Turbopack externalizes them and never
     // emits those warnings — an empty config just acknowledges we're on Turbopack
     // and silences Next's "webpack config with no turbopack config" build error.
-    turbopack: {},
+    // root spans C:work so the pnpm link: to the local form-graph checkout is
+    // inside Turbopack's readable tree (it refuses files outside the root)
+    turbopack: { root: fileURLToPath(new URL('../..', import.meta.url)) },
     // Per-branch build dir. Turbopack's dev filesystem cache (~8GB) is invalidated
     // wholesale by an in-place branch switch, so the dev daemon points each branch at
     // its own dir and keeps them warm instead of purging. Unset -> stock `.next`.

@@ -24,3 +24,19 @@ export type Loose<U> = {
 };
 
 export type LooseGenerationData = Loose<GenerationData>;
+
+/**
+ * The comfy-style loras map every handler builds from additional resources.
+ * One home for the AIR resolution and the `?? 1` strength default.
+ */
+export function resourcesToLoras(
+  resources: { id: number; strength?: number }[] | undefined,
+  airs: { getOrThrow: (id: number) => string }
+): Record<string, number> | undefined {
+  if (!resources?.length) return undefined;
+  const loras: Record<string, number> = {};
+  for (const resource of resources) {
+    loras[airs.getOrThrow(resource.id)] = resource.strength ?? 1;
+  }
+  return loras;
+}

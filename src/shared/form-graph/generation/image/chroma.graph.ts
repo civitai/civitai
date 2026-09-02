@@ -1,29 +1,24 @@
 import { defineGraph } from 'form-graph';
-import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
 import { checkpointDef } from '../checkpoint';
 import {
+  SDXL_SQUARE_AR,
   SEED,
-  aspectRatioDef,
   defaultSamplerPresets,
-  resourcesDef,
+  guidancePresetsLowBalHigh,
   selectDef,
   sliderDef,
 } from '../defs';
-import { makeTextBlock, type FamilyExt } from '../shared';
+import { familyResources, familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /** Chroma, ported from `chroma-graph.ts`. No negative prompt, no CLIP skip. */
 
 // Copied from chroma-graph.ts, which dies with the data-graph engine.
 const chromaVersionId = 2164239;
-const chromaGuidancePresets = [
-  { label: 'Low', value: 2 },
-  { label: 'Balanced', value: 3.5 },
-  { label: 'High', value: 7 },
-];
 /** Flow-compatible samplers. */
 const chromaSamplers = ['Euler', 'Euler a', 'DPM++ SDE', 'DPM++ 2M Karras', 'DPM++ SDE Karras'];
 
 export const chroma = defineGraph<FamilyExt>()
+  .scope(familyScope)
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,
@@ -32,18 +27,16 @@ export const chroma = defineGraph<FamilyExt>()
       defaultModelId: chromaVersionId,
     })
   )
-  .field('resources', ({ _ext }) =>
-    resourcesDef({ ecosystem: _ext.ecosystem, limit: _ext.limits.maxResources })
-  )
-  .use(makeTextBlock({ negativePrompt: false }))
-  .field('aspectRatio', aspectRatioDef({ options: sdxlAspectRatioBuckets, default: '1:1' }))
+  .field('resources', familyResources)
+  .use(promptOnlyTextBlock)
+  .field('aspectRatio', SDXL_SQUARE_AR)
   .field(
     'sampler',
     selectDef({ options: chromaSamplers, default: 'Euler', presets: defaultSamplerPresets })
   )
   .field(
     'cfgScale',
-    sliderDef({ min: 1, max: 20, default: 3.5, step: 0.5, presets: chromaGuidancePresets })
+    sliderDef({ min: 1, max: 20, default: 3.5, step: 0.5, presets: guidancePresetsLowBalHigh })
   )
   .field('steps', sliderDef({ min: 4, max: 50, default: 25 }))
   .field('seed', SEED);

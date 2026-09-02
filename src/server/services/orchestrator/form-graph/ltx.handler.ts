@@ -32,14 +32,12 @@ import {
 import { defineHandler } from '../ecosystems/handler-factory';
 import type { GenerationHandlerCtx, StepInput } from '../ecosystems';
 import { createChainedPromptEnhancementStep } from '~/server/services/orchestrator/promptEnhancement';
+import { resourcesToLoras } from './types';
 import type { LooseGenerationData } from './types';
 
 function buildLoras(data: LooseGenerationData, ctx: GenerationHandlerCtx) {
-  const loras: Record<string, number> = {};
-  for (const resource of data.resources ?? []) {
-    loras[ctx.airs.getOrThrow(resource.id)] = resource.strength ?? 1;
-  }
-  return Object.keys(loras).length > 0 ? loras : undefined;
+  const loras = resourcesToLoras(data.resources, ctx.airs);
+  return loras;
 }
 
 export const createLTXInput = defineHandler<LooseGenerationData, StepInput[]>((data, ctx) => {

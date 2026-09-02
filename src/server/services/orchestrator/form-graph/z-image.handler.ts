@@ -12,6 +12,7 @@ import type {
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { buildControlNetSteps } from '../ecosystems/controlnets.helper';
+import { resourcesToLoras } from './types';
 import type { LooseGenerationData } from './types';
 
 type ZImageInput = ZImageTurboCreateImageGenInput | ZImageBaseCreateImageGenInput;
@@ -30,10 +31,7 @@ export const createZImageInput = defineHandler<
   const quantity = data.quantity ?? 1;
   const model = baseModelToModel[data.ecosystem ?? ''] ?? 'turbo';
 
-  const loras: Record<string, number> = {};
-  for (const resource of data.resources ?? []) {
-    loras[ctx.airs.getOrThrow(resource.id)] = resource.strength ?? 1;
-  }
+  const loras = resourcesToLoras(data.resources, ctx.airs);
 
   const { preprocessSteps, controlNets } = buildControlNetSteps(
     data.controlNets,
@@ -61,7 +59,7 @@ export const createZImageInput = defineHandler<
       schedule: data.scheduler ?? 'simple',
       quantity,
       seed: data.seed,
-      loras: Object.keys(loras).length > 0 ? loras : undefined,
+      loras,
       diffuserModel: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
       ...(controlNets.length ? { controlNets } : {}),
     }) as ZImageInput,

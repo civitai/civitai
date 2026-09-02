@@ -14,6 +14,26 @@ import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generatio
 import { isWanEcosystem } from '~/shared/form-graph/generation/video/wan.graph';
 import type { GenerationHandlerCtx, StepInput } from '../ecosystems';
 import { createChromaInput } from './chroma.handler';
+import { createFluxInput } from './flux.handler';
+import { createFluxKontextInput } from './flux-kontext.handler';
+import { createFlux2Input } from './flux2.handler';
+import { createFlux2KleinInput } from './flux2-klein.handler';
+import { createBooguInput } from './boogu.handler';
+import { createKrea2Input } from './krea2.handler';
+import { createImagen4Input } from './imagen4.handler';
+import { createPonyV7Input } from './pony-v7.handler';
+import { createReveInput } from './reve.handler';
+import { createMAIInput } from './mai.handler';
+import { createErnieInput } from './ernie.handler';
+import { createSeedreamInput } from './seedream.handler';
+import { createAnimaInput } from './anima.handler';
+import { createMageFlowInput } from './mage-flow.handler';
+import { createHiDreamInput } from './hi-dream.handler';
+import { createHiDreamO1Input } from './hi-dream-o1.handler';
+import { createOpenAIInput } from './openai.handler';
+import { createLensInput } from './lens.handler';
+import { createQwenInput } from './qwen.handler';
+import { createNanoBananaInput } from './nano-banana.handler';
 import { createLTXInput } from './ltx.handler';
 import { createSeedanceInput } from './seedance.handler';
 import { createStableDiffusionInput } from './stable-diffusion.handler';
@@ -23,6 +43,26 @@ import type { GenerationData, LooseGenerationData } from './types';
 
 export type { GenerationData, LooseGenerationData } from './types';
 export { createChromaInput } from './chroma.handler';
+export { createFluxInput } from './flux.handler';
+export { createFluxKontextInput } from './flux-kontext.handler';
+export { createFlux2Input } from './flux2.handler';
+export { createFlux2KleinInput } from './flux2-klein.handler';
+export { createBooguInput } from './boogu.handler';
+export { createKrea2Input } from './krea2.handler';
+export { createImagen4Input } from './imagen4.handler';
+export { createPonyV7Input } from './pony-v7.handler';
+export { createReveInput } from './reve.handler';
+export { createMAIInput } from './mai.handler';
+export { createErnieInput } from './ernie.handler';
+export { createSeedreamInput } from './seedream.handler';
+export { createAnimaInput } from './anima.handler';
+export { createMageFlowInput } from './mage-flow.handler';
+export { createHiDreamInput } from './hi-dream.handler';
+export { createHiDreamO1Input } from './hi-dream-o1.handler';
+export { createOpenAIInput } from './openai.handler';
+export { createLensInput } from './lens.handler';
+export { createQwenInput } from './qwen.handler';
+export { createNanoBananaInput } from './nano-banana.handler';
 export { createLTXInput } from './ltx.handler';
 export { createSeedanceInput } from './seedance.handler';
 export { createStableDiffusionInput } from './stable-diffusion.handler';
@@ -42,6 +82,9 @@ export async function createFormGraphStepInput(
   const steps = await createStep(normalizedData, handlerCtx);
 
   // Enhanced compatibility mode: comfyui engine for every textToImage step.
+  // Assumes parsed data: the graph never emits enhancedCompatibility for flux
+  // ultra (whose step must keep its own engine) — unparsed input would bypass
+  // that guarantee.
   if (
     loose.enhancedCompatibility &&
     EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(loose.ecosystem ?? '')
@@ -79,6 +122,72 @@ function createStep(
 
     case 'Chroma':
       return createChromaInput(data, handlerCtx);
+
+    case 'Flux1':
+    case 'FluxKrea':
+      return createFluxInput(data, handlerCtx);
+
+    case 'Flux1Kontext':
+      return createFluxKontextInput(data, handlerCtx);
+
+    case 'Flux2':
+      return createFlux2Input(data, handlerCtx);
+
+    case 'Flux2Klein_9B':
+    case 'Flux2Klein_9B_base':
+    case 'Flux2Klein_4B':
+    case 'Flux2Klein_4B_base':
+      return createFlux2KleinInput(data, handlerCtx);
+
+    case 'Boogu':
+      return createBooguInput(data, handlerCtx);
+
+    case 'Krea2':
+      return createKrea2Input(data, handlerCtx);
+
+    case 'Imagen4':
+      return createImagen4Input(data, handlerCtx);
+
+    case 'PonyV7':
+      return createPonyV7Input(data, handlerCtx);
+
+    case 'Reve':
+      return createReveInput(data, handlerCtx);
+
+    case 'MAI':
+      return createMAIInput(data, handlerCtx);
+
+    case 'Ernie':
+      return createErnieInput(data, handlerCtx);
+
+    case 'Seedream':
+      return createSeedreamInput(data, handlerCtx);
+
+    case 'Anima':
+      return createAnimaInput(data, handlerCtx);
+
+    case 'MageFlow':
+      return createMageFlowInput(data, handlerCtx);
+
+    case 'HiDream':
+      return createHiDreamInput(data, handlerCtx);
+
+    case 'HiDream-O1':
+      return createHiDreamO1Input(data, handlerCtx);
+
+    case 'OpenAI':
+      return createOpenAIInput(data, handlerCtx);
+
+    case 'Lens':
+      return createLensInput(data, handlerCtx);
+
+    case 'Qwen':
+    case 'Qwen2':
+    case 'Qwen3':
+      return createQwenInput(data, handlerCtx);
+
+    case 'NanoBanana':
+      return createNanoBananaInput(data, handlerCtx);
 
     case 'LTXV2':
     case 'LTXV23':
