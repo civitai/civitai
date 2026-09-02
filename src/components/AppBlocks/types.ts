@@ -423,10 +423,18 @@ export interface BlockManifest {
   name?: string;
   renderMode?: 'iframe' | 'inline' | 'hybrid';
   /**
-   * The app's shipped `index.html` paints its own themed boot state inside
-   * `#root`, so the run host stands down its branded veil and shows the iframe
-   * from mount. Declared here for discoverability — the index signature below
-   * would admit it anyway, which is exactly why it is easy to misspell.
+   * The app's shipped `index.html` paints its own boot state inside `#root`, so
+   * the run host stands down its branded veil and shows the iframe from mount.
+   *
+   * 🔴 NOT necessarily THEMED. To paint in the host's theme the app must also be
+   * enabled for the BLOCK_INIT URL fragment and read it before first paint; the
+   * allowlist is empty today, so a boot skeleton currently guesses from
+   * `prefers-color-scheme` and can disagree with the host until BLOCK_INIT
+   * lands. This is the type an author reads while writing a manifest, so the
+   * unqualified word "themed" is likeliest to be acted on here.
+   *
+   * Declared for discoverability — the index signature below would admit it
+   * anyway, which is exactly why it is easy to misspell.
    */
   bootSkeleton?: boolean;
   [key: string]: unknown;
