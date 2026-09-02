@@ -101,10 +101,15 @@ describe('getMultipliersForUser floors the value it pays with', () => {
   // rewards side and nothing at all on the purchases side. That path needs its own floor, decided
   // on its own terms. Without this test the reverted regression comes back green.
   //
-  // Closing condition, so this does not become a wall: when the purchases path gets its own floor —
-  // likely at 1, which delivers what was paid for — this test is UPDATED, not deleted. A floor at 0
-  // is the one that pays nothing. Note also that every value able to witness "not floored" is a
-  // value that must never reach the payment path, so the assertions below pin a hazard on purpose.
+  // Closing condition, so this does not become a wall: the decision is "0 is the WRONG repair", not
+  // "no repair". When the purchases path gets its own floor — likely at 1, which delivers what was
+  // paid for — this test is UPDATED to assert that, not deleted.
+  //
+  // Read the assertions knowing this: `clampRewardMultiplier` only alters negatives and non-finites,
+  // so every value able to witness "not floored" is a value that must never reach the payment path.
+  // `-3` credits a NEGATIVE grant and `NaN` an unpayable one — both already broken today, and both
+  // worse than the 0 this argues against. The test pins the absence of a repair, not the health of
+  // the path.
   it('does NOT floor purchasesMultiplier — that is a different money path', async () => {
     h.fetch.mockResolvedValue({
       [USER]: {
@@ -139,7 +144,12 @@ describe('getMultipliersForUser floors the value it pays with', () => {
     expect((await getMultipliersForUser(USER)).globalRewardsBonus).toBe(1);
 
     h.getActiveRewardsBonusEvent.mockResolvedValue({ multiplier: NaN } as any);
-    expect((await getMultipliersForUser(USER)).globalRewardsBonus).toBe(1);
+    const result = await getMultipliersForUser(USER);
+    expect(result.globalRewardsBonus).toBe(1);
+    // The banner gate rides on the same number and had no coverage anywhere in the repo. At a bonus
+    // of 1 there is nothing to advertise; `>= 1` here would announce a running event to every user
+    // for an event that multiplies by nothing.
+    expect(result.rewardsBonusEvent).toBeNull();
   });
 
   it('can return a NON-FINITE multiplier built from two finite floored factors', async () => {
@@ -149,9 +159,15 @@ describe('getMultipliersForUser floors the value it pays with', () => {
     // happens after. `String(Infinity)` reaching the Lua cap script is `tonumber` nil, which throws
     // out of `redis.eval` and into the user's mutation.
     //
-    // Two earlier attempts to write down why the spending sites clamp were both wrong (a
-    // `multiplierRaw` audit trail; a pending row read back by `process` — which cannot happen,
-    // `isProcessable = !isOnDemand`). This is the one that holds, so it is asserted, not narrated.
+    // Two earlier attempts to say why the clamps sit WHERE they do were wrong (a pending row read
+    // back by `process` — impossible, `isProcessable = !isOnDemand`; and an audit trail for an
+    // operator typo, which this PR's own read-side floor removed). `multiplierRaw` is still the
+    // reason they are not at `apply`'s read, for THIS value — see base.reward.forid.test.ts. What
+    // was missing was the reason to clamp at all, which is the overflow below.
+    //
+    // Closing condition: if `getMultipliersForUser` ever clamps its own product, this test is
+    // UPDATED to assert that clamp, not deleted. Deleting it is how the spending-site clamps become
+    // unexplained again.
     cached(1e308);
     h.getActiveRewardsBonusEvent.mockResolvedValue({ multiplier: 50 } as any);
 
@@ -159,7 +175,10 @@ describe('getMultipliersForUser floors the value it pays with', () => {
 
     expect(result.baseRewardsMultiplier).toBe(1e308);
     expect(result.globalRewardsBonus).toBe(5);
-    expect(Number.isFinite(result.rewardsMultiplier)).toBe(false);
+    // `toBe(Infinity)`, not `Number.isFinite(...)).toBe(false)`: the latter also passes if the key
+    // stops being returned at all, and does not separate Infinity from NaN — and it is `Infinity`
+    // specifically that reaches the Lua as a string `tonumber` cannot parse.
+    expect(result.rewardsMultiplier).toBe(Infinity);
   });
 
   it('leaves a sub-1 multiplier alone', async () => {

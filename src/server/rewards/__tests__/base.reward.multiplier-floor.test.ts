@@ -3,10 +3,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ---------------------------------------------------------------------------
 // The multiplier reaching the AWARD computation, not the ClickHouse audit row.
 //
-// `rewardsMultiplier` is read off operator-authored `Product.metadata`, and lands in TWO money
-// computations: `processOnDemand` (which stringifies it into the Redis Lua cap script) and
-// `sendAward` (which pays `awardAmount * multiplier`). `toClickhouseBuzzEvent`'s clamp reaches
-// neither — it clamps a copy on its way to ClickHouse and leaves the event alone.
+// `rewardsMultiplier` is read off operator-authored `Product.metadata`, and has THREE readers:
+// `processOnDemand` (which stringifies it into the Redis Lua cap script), `sendAward` (which pays
+// `awardAmount * multiplier`), and `getUserRewardDetails` (which advertises the award and cap).
+// `toClickhouseBuzzEvent`'s clamp reaches none of them — it clamps a copy on its way to ClickHouse
+// and leaves the event alone.
 //
 // These mock `getMultipliersForUser`. The real one floors its BASE and then multiplies by the
 // bonus without re-clamping the product, so it can hand these sites a non-finite value built from
@@ -183,6 +184,30 @@ describe('the multiplier sendAward pays from', () => {
       { amount: number }[]
     ];
     expect(transactions[0].amount).toBe(400);
+  });
+});
+
+describe('the multiplier the rewards list advertises', () => {
+  it('is a number, not Infinity', async () => {
+    // The third reader. Display rather than money, so it was the one with no test — and a clamp
+    // with no test is what the rest of this file exists to argue against.
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: Infinity } as any);
+
+    const details = await reward().getUserRewardDetails(1);
+
+    expect(details?.awardAmount).toBe(AWARD_AMOUNT);
+    expect(details?.cap).toBe(CAP);
+  });
+
+  it('still applies a legitimate multiplier', async () => {
+    // Negative control: without it the assertions above pass on an implementation that ignores the
+    // multiplier entirely.
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: 4 } as any);
+
+    const details = await reward().getUserRewardDetails(1);
+
+    expect(details?.awardAmount).toBe(AWARD_AMOUNT * 4);
+    expect(details?.cap).toBe(CAP * 4);
   });
 });
 

@@ -156,6 +156,17 @@ describe('foldUserMultipliers', () => {
     // arm lets one bad row poison a membership the user is paying for.
     expect(foldUserMultipliers([paidBronze(14), bad(NaN)])[14].rewardsMultiplier).toBe(1.5);
     expect(foldUserMultipliers([paidBronze(14), bad(Infinity)])[14].rewardsMultiplier).toBe(1.5);
+
+    // And the purchases MERGE arm is not floored either — pinned here because the first-row
+    // assertion above cannot see it: flooring only this arm passed all 19 tests in this file.
+    // `Math.max(1.05, NaN)` is NaN, which is what a paying member with one bad row gets today.
+    const badPurchases: UserMultiplierRow = {
+      userId: 15,
+      rewardsIneligible: false,
+      rewardsMultiplier: 1,
+      purchasesMultiplier: NaN,
+    };
+    expect(foldUserMultipliers([paidBronze(15), badPurchases])[15].purchasesMultiplier).toBeNaN();
     // No negative case here on purpose: `Math.max(1.5, -1)` is 1.5 floored or not, so the merge arm
     // cannot be caught with one. The first-row arm covers negatives, in the test above.
   });

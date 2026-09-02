@@ -145,11 +145,13 @@ export function createBuzzEvent<T>({
       accountType: buzzEvent.toAccountType ?? 'blue',
     };
 
-    // Apply multipliers
+    // The THIRD reader of this value. Display rather than money, but `getMultipliersForUser` can
+    // return a non-finite product, and an advertised award of `Infinity` is still a bug.
     const { rewardsMultiplier } = await getMultipliersForUser(userId);
-    if (rewardsMultiplier !== 1) {
-      data.awardAmount = Math.ceil(rewardsMultiplier * data.awardAmount);
-      if (data.cap) data.cap = Math.ceil(rewardsMultiplier * data.cap);
+    const multiplier = clampRewardMultiplier(rewardsMultiplier);
+    if (multiplier !== 1) {
+      data.awardAmount = Math.ceil(multiplier * data.awardAmount);
+      if (data.cap) data.cap = Math.ceil(multiplier * data.cap);
     }
 
     if (!isOnDemand) {
@@ -241,12 +243,13 @@ export function createBuzzEvent<T>({
 
     const hashField = `${key.toUserId}:${type}`;
     const cacheKey = String(hashifyObject(key));
-    // Floored where the value is SPENT. `getMultipliersForUser` floors its BASE and then multiplies
-    // by the bonus without re-clamping the product, so it can return a non-finite value built from
-    // two finite floored factors — no read-side clamp closes that, because the overflow happens
-    // after it. See `can return a NON-FINITE multiplier` in buzz.service.multiplier-floor.test.ts.
+    // WHETHER to clamp: `getMultipliersForUser` floors its BASE and then multiplies by the bonus
+    // without re-clamping the product, so it can hand this a non-finite value built from two finite
+    // floored factors — see `can return a NON-FINITE multiplier` in
+    // buzz.service.multiplier-floor.test.ts.
     //
-    // Flooring at the read instead normalises the value before `toClickhouseBuzzEvent` sees it and
+    // WHERE, and this is the part that is easy to get wrong: clamping at `apply`'s read would close
+    // the same case, but it normalises the value before `toClickhouseBuzzEvent` sees it and
     // destroys the `multiplierRaw` audit fidelity — see base.reward.forid.test.ts.
     const effective = clampRewardMultiplier(multiplier);
     const effectiveAward = Math.ceil(config.awardAmount * effective);
