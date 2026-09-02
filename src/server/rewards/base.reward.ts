@@ -16,6 +16,7 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
 import type { ResolvedRewardConfig, RewardConfig } from '~/server/rewards/reward-config';
 import { resolveFromConfig, resolveRewardConfig } from '~/server/rewards/reward-config';
+import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
 
@@ -144,11 +145,14 @@ export function createBuzzEvent<T>({
       accountType: buzzEvent.toAccountType ?? 'blue',
     };
 
-    // Apply multipliers
+    // Display rather than money, but `getMultipliersForUser` can return a non-finite product, and
+    // an advertised award of `Infinity` is still a bug. Not a complete census of readers: `claimBuzz`
+    // is a fourth, in buzz.service.ts, and it pays.
     const { rewardsMultiplier } = await getMultipliersForUser(userId);
-    if (rewardsMultiplier !== 1) {
-      data.awardAmount = Math.ceil(rewardsMultiplier * data.awardAmount);
-      if (data.cap) data.cap = Math.ceil(rewardsMultiplier * data.cap);
+    const multiplier = clampRewardMultiplier(rewardsMultiplier);
+    if (multiplier !== 1) {
+      data.awardAmount = Math.ceil(multiplier * data.awardAmount);
+      if (data.cap) data.cap = Math.ceil(multiplier * data.cap);
     }
 
     if (!isOnDemand) {
@@ -208,7 +212,7 @@ export function createBuzzEvent<T>({
               type: TransactionType.Reward,
               toAccountId: event.toUserId,
               fromAccountId: 0, // central bank
-              amount: Math.ceil(event.awardAmount * (event.multiplier ?? 1)),
+              amount: Math.ceil(event.awardAmount * clampRewardMultiplier(event.multiplier ?? 1)),
               description: `Buzz Reward: ${description}`,
               details: {
                 type: event.type,
@@ -240,11 +244,20 @@ export function createBuzzEvent<T>({
 
     const hashField = `${key.toUserId}:${type}`;
     const cacheKey = String(hashifyObject(key));
-    const effectiveAward = Math.ceil(config.awardAmount * multiplier);
+    // WHETHER to clamp: `getMultipliersForUser` floors its BASE and then multiplies by the bonus
+    // without re-clamping the product, so it can hand this a non-finite value built from two finite
+    // floored factors — see `can return a NON-FINITE multiplier` in
+    // buzz.service.multiplier-floor.test.ts.
+    //
+    // WHERE, and this is the part that is easy to get wrong: clamping at `apply`'s read would close
+    // the same case, but it normalises the value before `toClickhouseBuzzEvent` sees it and
+    // destroys the `multiplierRaw` audit fidelity — see base.reward.forid.test.ts.
+    const effective = clampRewardMultiplier(multiplier);
+    const effectiveAward = Math.ceil(config.awardAmount * effective);
     // An uncapped reward needs a finite ceiling: `tonumber('Infinity')` is nil in
     // Lua, which would throw out of the script and into the user's mutation.
     const effectiveCap =
-      config.cap === undefined ? Number.MAX_SAFE_INTEGER : Math.ceil(config.cap * multiplier);
+      config.cap === undefined ? Number.MAX_SAFE_INTEGER : Math.ceil(config.cap * effective);
     const endOfDay = Math.floor(new Date().setUTCHours(23, 59, 59, 999) / 1000);
 
     const result = (await redis.eval(ON_DEMAND_REWARD_SCRIPT, {
