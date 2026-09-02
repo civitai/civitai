@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as Trpc from '~/utils/trpc';
 
 /**
  * Which caches a creator-announcement mutation busts.
@@ -23,7 +24,8 @@ const invalidate = vi.hoisted(() => ({
 
 const captured = vi.hoisted(() => ({ options: {} as Record<string, any> }));
 
-vi.mock('~/utils/trpc', () => {
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof Trpc>();
   const mutationHook = (name: string) => ({
     useMutation: (options: Record<string, unknown>) => {
       captured.options[name] = options;
@@ -31,6 +33,7 @@ vi.mock('~/utils/trpc', () => {
     },
   });
   return {
+    ...actual,
     trpc: {
       useUtils: () => ({
         announcement: {
