@@ -35,11 +35,9 @@ The OAuth pairing path will add one more column on the link-service side, not su
 type: `installId`, the desktop app's per-install uuid. `(userId, installId)` is unique, so
 re-pairing the same install re-keys it instead of adding a row.
 
-**The key length is load-bearing.** The socket layer treats a **short key (< 10 chars)** as a
-not-yet-upgraded pairing code, and a **long key (128 hex)** as an activated instance. It kicks the
-room when the second party joins if that does not match `activated` — a short key must have
-`activated: false`, a long key `activated: true`. This is why the OAuth path creates instances with
-a full-length key and `activated: true` in one step.
+**The key length is load-bearing.** The socket layer uses it to distinguish a not-yet-upgraded
+pairing code from an activated instance, which is why the OAuth path creates instances with a
+full-length key and `activated: true` in one step.
 
 `INSTANCE_LIMIT` (link-service, default 10) caps instances per user, counted before each create.
 
@@ -49,6 +47,16 @@ a full-length key and `activated: true` in one step.
 > registered `civitai-link-desktop` client. The link-service half — `POST /api/link/self`, the Bearer
 > path, and the `installId` column — ships in that repo's own PR. The flow below is the design, not
 > something you can call today.
+>
+> **Three things have to happen per environment before it can work**, none of them automatic:
+>
+> - The `civitai-link-desktop` client row is applied by hand — migrations here are never auto-run —
+>   and only after the hub deploy that ships `LinkConnect`, or the requested scope is rejected.
+> - A **confidential** `link-service` OAuth client is registered out of band. Its secret cannot live
+>   in a migration, so no file in this repo creates it.
+> - That client's id is added to the hub's `OAUTH_INTROSPECTION_CLIENT_IDS`. The allowlist fails
+>   closed: unset or stale, every introspection call gets a flat `401 invalid_client`, indistinguishable
+>   from a bad secret. Check it first when a service that was introspecting stops.
 
 From Civitai Link 1.21.0 the desktop app never shows a code. It signs in.
 
@@ -63,12 +71,22 @@ From Civitai Link 1.21.0 the desktop app never shows a code. It signs in.
    `{ installId, name }`.
 4. link-service calls `POST {hub}/api/auth/oauth/introspect` with its own confidential client
    credentials, requires `active: true` **and** the `LinkConnect` bit in the returned `scope`
-   bitmask, then upserts the instance on `(userId, installId)` with a fresh 128-hex key and
+   bitmask, then upserts the instance on `(userId, installId)` with a fresh full-length key and
    `activated: true`. It returns `{ id, key, name }`.
 5. The app persists the key and joins the socket room. The socket protocol is unchanged.
 
+`active: true` already means the account is in good standing — the hub answers `active: false` for a
+closed or suspended owner — so link-service needs no second check beyond the `LinkConnect` bit.
+
 The Bearer token is used **once**, at pairing. link-service caches nothing. If the hub is
 unreachable a new pairing fails with a 503; already-connected apps are untouched.
+
+**The app must call `/token` and `/revoke` from the Electron main process.** `civitai-link-desktop` is
+registered with an empty `allowedOrigins`, and both endpoints answer `403 origin_not_allowed` to a
+public-client request that carries an `Origin` header; a request that sends none — which is what the
+main process does — is allowed. Pairing itself is unaffected, because the device endpoints have no
+origin gate, so the symptom would surface later: the first token refresh, or sign-out revocation.
+Calling either from a renderer would require adding its origin to the client's `allowedOrigins`.
 
 Why introspection rather than a signed grant: the access token is opaque (`civitai_` + 36 random
 chars, only a salted SHA-512 hash stored), so link-service cannot verify it locally. See
@@ -82,8 +100,8 @@ so no existing key carries it.
 ## Pairing: the ComfyUI node pack (six-character code)
 
 Unchanged, and staying. The node pack cannot run a device grant, so the wizard's node-pack path
-still calls `POST /api/link` to mint a six **hex character** code, shows it, and the user pastes it
-into the ComfyUI panel. The short key is upgraded to a 128-hex key when the two sockets meet.
+still calls `POST /api/link` to mint a short code, shows it, and the user pastes it into the ComfyUI
+panel. The code is upgraded to a full-length key when the two sockets meet.
 
 Already-paired desktop apps from before 1.21.0 keep working: the socket inspects nothing but the
 key.
@@ -112,5 +130,5 @@ socket, not polling.
 
 ## Design record
 
-Full design, sequencing, and the accepted caveats:
-[`docs/superpowers/specs/2026-09-01-civitai-link-oauth-design.md`](../superpowers/specs/2026-09-01-civitai-link-oauth-design.md).
+Full design, sequencing, and the accepted caveats: [ClickUp
+`868kyynkb`](https://app.clickup.com/t/868kyynkb).
