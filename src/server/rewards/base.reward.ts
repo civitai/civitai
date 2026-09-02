@@ -16,6 +16,7 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
 import type { ResolvedRewardConfig, RewardConfig } from '~/server/rewards/reward-config';
 import { resolveFromConfig, resolveRewardConfig } from '~/server/rewards/reward-config';
+import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import { hashify, hashifyObject } from '~/utils/string-helpers';
 import { isClickHouseConnectionError, withRetries } from '../utils/errorHandling';
 
@@ -208,7 +209,7 @@ export function createBuzzEvent<T>({
               type: TransactionType.Reward,
               toAccountId: event.toUserId,
               fromAccountId: 0, // central bank
-              amount: Math.ceil(event.awardAmount * (event.multiplier ?? 1)),
+              amount: Math.ceil(event.awardAmount * clampRewardMultiplier(event.multiplier ?? 1)),
               description: `Buzz Reward: ${description}`,
               details: {
                 type: event.type,
@@ -240,11 +241,15 @@ export function createBuzzEvent<T>({
 
     const hashField = `${key.toUserId}:${type}`;
     const cacheKey = String(hashifyObject(key));
-    const effectiveAward = Math.ceil(config.awardAmount * multiplier);
+    // Floored at the two places the value is USED for money rather than where it is read, so the
+    // event keeps the raw multiplier and `toClickhouseBuzzEvent` can still record it as
+    // `multiplierRaw`. An operator typo stays legible in the audit row and stops being payable.
+    const effective = clampRewardMultiplier(multiplier);
+    const effectiveAward = Math.ceil(config.awardAmount * effective);
     // An uncapped reward needs a finite ceiling: `tonumber('Infinity')` is nil in
     // Lua, which would throw out of the script and into the user's mutation.
     const effectiveCap =
-      config.cap === undefined ? Number.MAX_SAFE_INTEGER : Math.ceil(config.cap * multiplier);
+      config.cap === undefined ? Number.MAX_SAFE_INTEGER : Math.ceil(config.cap * effective);
     const endOfDay = Math.floor(new Date().setUTCHours(23, 59, 59, 999) / 1000);
 
     const result = (await redis.eval(ON_DEMAND_REWARD_SCRIPT, {

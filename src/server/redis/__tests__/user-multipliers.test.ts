@@ -112,6 +112,51 @@ describe('foldUserMultipliers', () => {
   it('returns nothing for no rows', () => {
     expect(foldUserMultipliers([])).toEqual({});
   });
+
+  // `Math.max` here is a max ACROSS ROWS, not a floor, and the values come from operator-authored
+  // `Product.metadata` via `(...)::float` — a column that accepts a negative, `Infinity` and `NaN`.
+  // These reach the award computation and the Redis Lua cap script (ClickUp 868m06pn5).
+  it('floors a negative multiplier at 0 rather than carrying it', () => {
+    const typo: UserMultiplierRow = {
+      userId: 10,
+      rewardsIneligible: false,
+      rewardsMultiplier: -1,
+      purchasesMultiplier: -1,
+    };
+
+    const result = foldUserMultipliers([typo]);
+
+    // 0, not 1: a zero already means "earns nothing" everywhere downstream, and flooring to 1 would
+    // invent a payout out of a typo.
+    expect(result[10].rewardsMultiplier).toBe(0);
+    expect(result[10].purchasesMultiplier).toBe(0);
+  });
+
+  it('replaces a non-finite multiplier by sign', () => {
+    const rows: UserMultiplierRow[] = [
+      {
+        userId: 12,
+        rewardsIneligible: false,
+        rewardsMultiplier: Infinity,
+        purchasesMultiplier: NaN,
+      },
+      {
+        userId: 13,
+        rewardsIneligible: false,
+        rewardsMultiplier: -Infinity,
+        purchasesMultiplier: -Infinity,
+      },
+    ];
+
+    const result = foldUserMultipliers(rows);
+
+    // Infinity and NaN take the base multiplier; a negative infinity is still a negative and must
+    // not come out worth more than -5 does.
+    expect(result[12].rewardsMultiplier).toBe(1);
+    expect(result[12].purchasesMultiplier).toBe(1);
+    expect(result[13].rewardsMultiplier).toBe(0);
+    expect(result[13].purchasesMultiplier).toBe(0);
+  });
 });
 
 describe('userMultipliersCache wiring', () => {
