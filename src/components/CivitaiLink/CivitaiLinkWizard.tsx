@@ -97,7 +97,7 @@ function PathCard({
       radius="md"
       p="lg"
       className={clsx(
-        'flex flex-1 cursor-pointer flex-col justify-start text-left',
+        'mantine-focus-auto flex flex-1 cursor-pointer flex-col justify-start text-left',
         classes.surface
       )}
       // Tailwind's preflight zeroes `border` on `button`, which beats Mantine's

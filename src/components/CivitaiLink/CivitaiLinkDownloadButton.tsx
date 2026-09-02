@@ -34,7 +34,12 @@ export function CivitaiLinkDownloadButton({
       {isMember ? (
         <Text fz={10} mt={10}>
           Not your OS? Check out all{' '}
-          <Anchor inherit href={CIVITAI_LINK_DESKTOP_RELEASES} target="_blank">
+          <Anchor
+            inherit
+            href={CIVITAI_LINK_DESKTOP_RELEASES}
+            target="_blank"
+            rel="nofollow noreferrer"
+          >
             releases
           </Anchor>
           .
