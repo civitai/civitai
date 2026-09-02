@@ -57,7 +57,11 @@ export function runOracle(input: AnyRecord, ext: GenerationCtx) {
 export function runPort(graph: PortedGraph, input: AnyRecord, ext: GenerationCtx) {
   const result = graph.parse(input, ext);
   return result.success
-    ? { success: true as const, data: result.data as AnyRecord }
+    ? {
+        success: true as const,
+        data: result.data as AnyRecord,
+        state: (result as { state?: AnyRecord }).state,
+      }
     : { success: false as const, data: {} as AnyRecord, errors: result.errors };
 }
 
@@ -95,6 +99,15 @@ export function assertDifferential(
       Object.keys(oracle.errors).sort()
     );
     return;
+  }
+
+  // The parse boundary must be a FIXPOINT of resolved state: whatIf feeds the
+  // store's state back through parse to price it, so a transform that isn't
+  // idempotent would quote a cost for different parameters than submit sends.
+  if (port.success && port.state) {
+    const again = runPort(graph, port.state, ext);
+    expect(again.success, `${label}: state failed to re-parse (whatIf round-trip)`).toBe(true);
+    expect(again.data, `${label}: parse is not a fixpoint of its own state`).toEqual(port.data);
   }
 
   const oracleKeys = Object.keys(oracle.data).sort();

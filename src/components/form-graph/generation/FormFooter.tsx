@@ -72,6 +72,7 @@ import {
 } from '~/shared/constants/generation.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import { outputResetPredicate } from '~/shared/form-graph/generation/reset';
 import { sourceMetadataStore, type SourceMetadata } from '~/store/source-metadata.store';
 import { remixStore } from '~/store/remix.store';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
@@ -893,12 +894,11 @@ export function FormFooter({
 
   const handleReset = () => {
     const snap = store.getSnapshot().state as { output?: string };
-    const outputType = snap.output ?? 'image';
+    const outputType = (snap.output ?? 'image') as 'image' | 'video' | 'audio' | 'model3d';
 
-    // preserve output preferences; everything else (persisted intent included)
-    // resets. store.reset clears every output's intent — coarser than v1's
-    // per-output clearStorageForOutput, but the v1 storage record is untouched
-    store.reset({ exclude: ['outputFormat', 'priority'] });
+    // clear only THIS output's buckets (v1's clearStorageForOutput semantics)
+    // while preserving output preferences; other outputs' settings survive
+    store.prune(outputResetPredicate(outputType, { exclude: ['outputFormat', 'priority'] }));
 
     if (outputType === 'video') store.set({ workflow: 'txt2vid' });
     if (outputType === 'audio') store.set({ workflow: 'txt2music' });
