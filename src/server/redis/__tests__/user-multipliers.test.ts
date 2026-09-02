@@ -131,9 +131,10 @@ describe('foldUserMultipliers', () => {
     expect(result[10].rewardsMultiplier).toBe(0);
   });
 
-  // The floor is applied at FOUR places: the two first-row assignments and the two `Math.max` merge
-  // arms. Every other test here gives a user ONE row, so only the first-row branch runs — reverting
-  // the merge arms alone left the whole file green. A multi-row user is the reason this fold exists.
+  // The floor is applied at TWO places, both on the rewards side: the first-row assignment and the
+  // `Math.max` merge arm. Every other test here gives a user ONE row, so only the first branch ran
+  // — reverting the merge arm alone left the whole file green. A multi-row user is the reason this
+  // fold exists. (`purchasesMultiplier` is deliberately NOT floored; see the buzz.service test.)
   it('floors a bad SECOND row, not only the first one it sees', () => {
     const bad = (rewardsMultiplier: number): UserMultiplierRow => ({
       userId: 14,
@@ -150,7 +151,8 @@ describe('foldUserMultipliers', () => {
     // arm lets one bad row poison a membership the user is paying for.
     expect(foldUserMultipliers([paidBronze(14), bad(NaN)])[14].rewardsMultiplier).toBe(1.5);
     expect(foldUserMultipliers([paidBronze(14), bad(Infinity)])[14].rewardsMultiplier).toBe(1.5);
-    expect(foldUserMultipliers([paidBronze(14), bad(-1)])[14].rewardsMultiplier).toBe(1.5);
+    // No negative case here on purpose: `Math.max(1.5, -1)` is 1.5 floored or not, so the merge arm
+    // cannot be caught with one. The first-row arm covers negatives, in the test above.
   });
 
   it('replaces a non-finite multiplier by sign', () => {

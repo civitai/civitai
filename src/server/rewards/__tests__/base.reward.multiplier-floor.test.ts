@@ -6,8 +6,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // `rewardsMultiplier` is read off operator-authored `Product.metadata`, and lands in TWO money
 // computations: `processOnDemand` (which stringifies it into the Redis Lua cap script) and
 // `sendAward` (which pays `awardAmount * multiplier`). `toClickhouseBuzzEvent`'s clamp reaches
-// neither — it clamps a copy on its way to ClickHouse, so the event keeps the raw value and the
-// audit row can record it.
+// neither — it clamps a copy on its way to ClickHouse and leaves the event alone.
+//
+// These mock `getMultipliersForUser`, so they see values that a caller going through the real one
+// would already have had floored. That is the point: the clamps here are what covers a value that
+// did NOT come from it — a `pending` row written before this shipped, read back by `process`.
 //
 // The assertions below read the ARGV strings the Lua actually receives and the amount
 // `createBuzzTransactionMany` is actually asked for, because those are the two values that decide
@@ -170,6 +173,11 @@ describe('the multiplier sendAward pays from', () => {
     h.evalImpl.mockResolvedValue(400 as any);
     await applyWith('4.00' as unknown as number);
 
+    // Asserted, not assumed: if the cap-trim branch is ever taken, `event.multiplier` is
+    // neutralised to 1 and the assertion below stops seeing the clamp at all. The sibling above
+    // pins the same precondition for the same reason.
+    expect(luaArgs().award, 'the cap-trim branch would neutralise the multiplier').toBe('400');
+
     const [transactions] = h.createBuzzTransactionMany.mock.calls[0] as unknown as [
       { amount: number }[]
     ];
@@ -204,9 +212,20 @@ describe('clampRewardMultiplier', () => {
     expect(clampRewardMultiplier(20)).toBe(20);
   });
 
+  it('reads a quoted decimal at its value', () => {
+    // The unit-level statement of the batch-path bug. Without this, the coercion is reachable only
+    // through the three-mock integration test above.
+    expect(clampRewardMultiplier('4.00' as unknown as number)).toBe(4);
+    expect(clampRewardMultiplier('0.00' as unknown as number)).toBe(0);
+  });
+
   it('agrees with clampBuzzEventMultiplier on the half they do share', () => {
     // `multiplier.ts` claims its non-finite rule matches the shared helper's. Only the ceiling was
     // pinned, so the claim could rot in either direction without a test noticing.
+    //
+    // Numbers only, deliberately: on a quoted decimal the two DISAGREE and are meant to —
+    // `clampRewardMultiplier('4.00')` is 4 and `clampBuzzEventMultiplier('4.00')` is 1, because the
+    // shared helper's callers coerce for it. Pinned in the test above, not folded in here.
     for (const value of [-5, -Infinity, NaN, Infinity, 0, 0.5, 4]) {
       expect(clampRewardMultiplier(value), `disagreed on ${String(value)}`).toBe(
         clampBuzzEventMultiplier(value)

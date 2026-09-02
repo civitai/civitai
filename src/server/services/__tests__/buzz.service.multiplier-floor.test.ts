@@ -80,13 +80,48 @@ describe('getMultipliersForUser floors the value it pays with', () => {
     // prints `expected 4 to be 8`. It does NOT separate a floor-at-0 from a floor-at-1 — clamp(4)
     // is 4 under either — so do not read it as doing that.
     cached(4);
-    h.getActiveRewardsBonusEvent.mockResolvedValue({ multiplier: 20 } as any);
+    // 200/10 = 20, ABOVE MAX_GLOBAL_BONUS. At the 20 this used to carry, the raw value was already
+    // 2 — inside [1, 5] — so the bonus clamp was inert and deleting it changed nothing here.
+    h.getActiveRewardsBonusEvent.mockResolvedValue({ multiplier: 200 } as any);
 
     const result = await getMultipliersForUser(USER);
 
     expect(result.baseRewardsMultiplier).toBe(4);
-    expect(result.globalRewardsBonus).toBe(2);
-    expect(result.rewardsMultiplier).toBe(8);
+    expect(result.globalRewardsBonus).toBe(5);
+    // The same 20x the `keeps no ceiling` test defends, arrived at independently.
+    expect(result.rewardsMultiplier).toBe(20);
+  });
+
+  // 🔴 THE DECISION THIS PINS. If you are here because you are adding a `clampRewardMultiplier` to
+  // `purchasesMultiplier` for symmetry: don't. It feeds `getBuzzBulkMultiplier`, which is called
+  // UNCONDITIONALLY unlike every UI consumer, and there `mainBuzzAdded = floor(amount * m - amount)`
+  // — so a 0 makes `totalCustomBuzz` 0 and a completed Stripe/Paddle/NowPayments purchase credits
+  // NOTHING. `completeStripeBuzzPurchase` then writes the `transactionId` its own early return uses
+  // as an idempotency marker, so a retry can never repair it. A 0 means "earns nothing" on the
+  // rewards side and nothing at all on the purchases side. That path needs its own floor, decided
+  // on its own terms. Without this test the reverted regression comes back green.
+  it('does NOT floor purchasesMultiplier — that is a different money path', async () => {
+    h.fetch.mockResolvedValue({
+      [USER]: {
+        userId: USER,
+        rewardsMultiplier: 1,
+        purchasesMultiplier: -3,
+        rewardsIneligible: false,
+      },
+    });
+
+    expect((await getMultipliersForUser(USER)).purchasesMultiplier).toBe(-3);
+
+    h.fetch.mockResolvedValue({
+      [USER]: {
+        userId: USER,
+        rewardsMultiplier: 1,
+        purchasesMultiplier: NaN,
+        rewardsIneligible: false,
+      },
+    });
+
+    expect((await getMultipliersForUser(USER)).purchasesMultiplier).toBeNaN();
   });
 
   it('leaves a sub-1 multiplier alone', async () => {

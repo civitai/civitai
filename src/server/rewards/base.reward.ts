@@ -241,9 +241,11 @@ export function createBuzzEvent<T>({
 
     const hashField = `${key.toUserId}:${type}`;
     const cacheKey = String(hashifyObject(key));
-    // Floored at the two places the value is USED for money rather than where it is read, so the
-    // event keeps the raw multiplier and `toClickhouseBuzzEvent` can still record it as
-    // `multiplierRaw`. An operator typo stays legible in the audit row and stops being payable.
+    // Floored where the value is SPENT, not where `apply` reads it. `getMultipliersForUser` already
+    // floors, so this covers what does not come through it: a `pending` row written before that
+    // shipped and read back by `process`, and any future writer of one. Flooring at the read
+    // instead normalises the value before `toClickhouseBuzzEvent` sees it, which is how the first
+    // revision of this deleted seven `multiplierRaw` assertions in base.reward.forid.test.ts.
     const effective = clampRewardMultiplier(multiplier);
     const effectiveAward = Math.ceil(config.awardAmount * effective);
     // An uncapped reward needs a finite ceiling: `tonumber('Infinity')` is nil in
