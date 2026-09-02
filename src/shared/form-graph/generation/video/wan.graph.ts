@@ -17,7 +17,7 @@ import {
   sliderDef,
   type ImageEntry,
 } from '../defs';
-import { familyScope, makeTextBlock, type FamilyExt } from '../shared';
+import { familyScope, makeTextBlock, type FamilyExt, narrowEcosystem } from '../shared';
 
 /**
  * Wan (2.1 / 2.2 / 2.2-5b / 2.5 / 2.7 / 3.0), ported from `wan-graph.ts`.
@@ -298,7 +298,22 @@ const shared = defineGraph<FamilyExt>()
   // its inputs exist and carries the wire name. Only v2.1 consults resolution.
   .computed(
     'backendEcosystem',
-    ({ resolution, _ext }) => deriveWanBackendEcosystem(_ext.ecosystem, _ext.workflow, resolution),
+    ({ resolution, _ext }) =>
+      narrowEcosystem(
+        [
+          'WanVideo14B_T2V',
+          'WanVideo14B_I2V_720p',
+          'WanVideo14B_I2V_480p',
+          'WanVideo-22-T2V-A14B',
+          'WanVideo-22-I2V-A14B',
+          'WanVideo-22-TI2V-5B',
+          'WanVideo-25-T2V',
+          'WanVideo-25-I2V',
+          'WanVideo27',
+          'WanVideo30',
+        ],
+        deriveWanBackendEcosystem(_ext.ecosystem, _ext.workflow, resolution)
+      ),
     { emit: 'ecosystem' }
   )
   // checkpointDef's defaults and locked substitution are per BACKEND ecosystem

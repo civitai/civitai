@@ -14,7 +14,7 @@ import { maxRandomSeed } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../ecosystems/handler-factory';
 import type { StepInput } from '../ecosystems';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 const SIMPLE_CHAT_MODEL = 'gpt-4o-mini';
 const SIMPLE_CHAT_TEMPERATURE = 0.9;
@@ -39,16 +39,16 @@ const SIMPLE_RESPONSE_FORMAT = {
   },
 };
 
-export const createMiniMaxMusicInput = defineHandler<LooseGenerationData, StepInput[]>((data) => {
-  const d = data as LooseGenerationData & {
-    minimaxMusicMode?: 'simple' | 'custom';
-    musicDescription?: string;
-    lyrics?: string;
-  };
+type MiniMaxMusicData = EcosystemData<'MiniMaxMusic3'>;
+
+export const createMiniMaxMusicInput = defineHandler<MiniMaxMusicData, StepInput[]>((data) => {
+  // minimaxMusicMode picks the mode arm, so these narrow to the same split
+  const simple = 'prompt' in data ? data : undefined;
+  const custom = 'musicDescription' in data ? data : undefined;
   const steps: StepInput[] = [];
 
   let chatRef: string | undefined;
-  if (d.minimaxMusicMode === 'simple') {
+  if (data.minimaxMusicMode === 'simple') {
     chatRef = `$${steps.length}`;
     const chatStep: ChatCompletionStepTemplate & { metadata: { suppressOutput: true } } = {
       $type: 'chatCompletion',
@@ -58,7 +58,7 @@ export const createMiniMaxMusicInput = defineHandler<LooseGenerationData, StepIn
           { role: 'system', content: SIMPLE_SYSTEM_PROMPT },
           {
             role: 'user',
-            content: `Write a song of at most ${d.duration} seconds. ${d.prompt}. Output JSON with caption and lyrics.`,
+            content: `Write a song of at most ${data.duration} seconds. ${simple?.prompt}. Output JSON with caption and lyrics.`,
           },
         ],
         temperature: SIMPLE_CHAT_TEMPERATURE,
@@ -70,16 +70,16 @@ export const createMiniMaxMusicInput = defineHandler<LooseGenerationData, StepIn
   }
 
   const musicInput = removeEmpty({
-    seed: d.seed ?? Math.floor(Math.random() * maxRandomSeed),
-    maxDuration: d.duration,
-    ...(d.minimaxMusicMode === 'simple'
+    seed: data.seed ?? Math.floor(Math.random() * maxRandomSeed),
+    maxDuration: data.duration,
+    ...(data.minimaxMusicMode === 'simple'
       ? {
           caption: { $ref: chatRef!, path: 'output.parsed.caption' },
           lyrics: { $ref: chatRef!, path: 'output.parsed.lyrics' },
         }
       : {
-          caption: d.musicDescription,
-          lyrics: d.lyrics,
+          caption: custom?.musicDescription,
+          lyrics: custom?.lyrics,
         }),
   });
 

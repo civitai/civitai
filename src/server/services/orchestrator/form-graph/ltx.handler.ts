@@ -33,22 +33,26 @@ import { defineHandler } from '../ecosystems/handler-factory';
 import type { GenerationHandlerCtx, StepInput } from '../ecosystems';
 import { createChainedPromptEnhancementStep } from '~/server/services/orchestrator/promptEnhancement';
 import { resourcesToLoras } from './types';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
-function buildLoras(data: LooseGenerationData, ctx: GenerationHandlerCtx) {
+type LtxData = EcosystemData<'LTXV2' | 'LTXV23' | 'LTXV25'>;
+
+function buildLoras(data: LtxData, ctx: GenerationHandlerCtx) {
   const loras = resourcesToLoras(data.resources, ctx.airs);
   return loras;
 }
 
-export const createLTXInput = defineHandler<LooseGenerationData, StepInput[]>((data, ctx) => {
+export const createLTXInput = defineHandler<LtxData, StepInput[]>((data, ctx) => {
   const loras = buildLoras(data, ctx);
 
   const steps: StepInput[] = [];
   let prompt = data.prompt ?? '';
   let negativePrompt: string | undefined = data.negativePrompt || undefined;
-  if (data.enablePromptEnhancer) {
+  // No LTX arm declares enablePromptEnhancer, so the enhancer step never runs today.
+  const enablePromptEnhancer = (data as { enablePromptEnhancer?: boolean }).enablePromptEnhancer;
+  if (enablePromptEnhancer) {
     const enhancerImages = data.images?.map((img) => img.url).filter((u): u is string => !!u);
-    const audioEnabled = !!data.generateAudio;
+    const audioEnabled = 'generateAudio' in data && !!data.generateAudio;
     const instruction = audioEnabled
       ? "Audio generation is enabled. Preserve any audio descriptions the user already wrote in the prompt (music, voices, dialogue, sound effects, ambient sounds) — do not remove, replace, or contradict them. If the user's prompt has little or no audio detail, add appropriate audio cues that fit the scene."
       : undefined;

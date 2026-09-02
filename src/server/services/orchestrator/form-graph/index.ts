@@ -58,6 +58,7 @@ import { createLTXInput } from './ltx.handler';
 import { createSeedanceInput } from './seedance.handler';
 import { createStableDiffusionInput } from './stable-diffusion.handler';
 import { createWanSteps } from './wan.handler';
+import type { WanGenerationData } from './wan.handler';
 import { createZImageInput } from './z-image.handler';
 import type { GenerationData, LooseGenerationData } from './types';
 
@@ -113,11 +114,8 @@ export async function createFormGraphStepInput(
   data: GenerationData,
   handlerCtx: GenerationHandlerCtx
 ): Promise<StepInput[]> {
-  const loose = data as LooseGenerationData;
-  const normalizedData: LooseGenerationData = {
-    ...loose,
-    seed: loose.seed ?? Math.floor(Math.random() * maxRandomSeed),
-  };
+  const normalizedData = withSeed(data);
+  const loose = normalizedData as LooseGenerationData;
 
   const steps = await createStep(normalizedData, handlerCtx);
 
@@ -139,15 +137,24 @@ export async function createFormGraphStepInput(
   return steps;
 }
 
+/**
+ * Fill the seed preserving the arm type. Constrained to `object`, not
+ * `{ seed?: ... }` — that is a weak type, and an arm with no seed field at
+ * all (Flux3Video) fails the no-common-properties rule. The extra key on such
+ * an arm is inert: v1's dispatcher seeds unconditionally the same way.
+ */
+function withSeed<T extends object>(data: T): T {
+  const seed = (data as { seed?: number }).seed;
+  return { ...data, seed: seed ?? Math.floor(Math.random() * maxRandomSeed) } as T;
+}
+
 function createStep(
-  data: LooseGenerationData,
+  data: GenerationData,
   handlerCtx: GenerationHandlerCtx
 ): Promise<StepInput[]> | StepInput[] {
-  const ecosystem = data.ecosystem ?? '';
+  if (isWanEcosystem(data.ecosystem)) return createWanSteps(data as WanGenerationData, handlerCtx);
 
-  if (isWanEcosystem(ecosystem)) return createWanSteps(data, handlerCtx);
-
-  switch (ecosystem) {
+  switch (data.ecosystem) {
     case 'SD1':
     case 'SD2':
     case 'SDXL':
@@ -299,6 +306,10 @@ function createStep(
       return createTrellis2Input(data, handlerCtx);
 
     default:
-      throw new Error(`form-graph lane has no handler for ecosystem "${ecosystem}"`);
+      throw new Error(
+        `form-graph lane has no handler for ecosystem "${
+          (data as { ecosystem?: string }).ecosystem
+        }"`
+      );
   }
 }

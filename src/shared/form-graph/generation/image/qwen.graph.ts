@@ -102,17 +102,12 @@ const qwen3 = defineGraph<FamilyExt>()
     default: true,
   });
 
-/** Untagged: `ecosystem` itself is the discriminant, already in data. */
-const subFamilies = branch((ext: FamilyExt) => {
-  switch (ext.ecosystem) {
-    case 'Qwen2':
-      return qwen2;
-    case 'Qwen3':
-      return qwen3;
-    default:
-      return qwen1;
-  }
-});
+/** Keyed on `ecosystem` — the hub resolves it before this family mounts. */
+const subFamilies = branch('ecosystem', [
+  [['Qwen'], qwen1],
+  [['Qwen2'], qwen2],
+  [['Qwen3'], qwen3],
+] as const);
 
 export const qwen = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ max: 3 }))

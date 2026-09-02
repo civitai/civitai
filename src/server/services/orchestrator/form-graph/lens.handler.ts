@@ -9,9 +9,9 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { lensVersionIds } from '~/shared/form-graph/generation/image/lens.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { resourcesToLoras } from './types';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
-export const createLensInput = defineHandler<LooseGenerationData, [ImageGenStepTemplate]>(
+export const createLensInput = defineHandler<EcosystemData<'Lens'>, [ImageGenStepTemplate]>(
   (data, ctx) => {
     if (!data.aspectRatio) throw new Error('Aspect ratio is required for Lens workflows');
 

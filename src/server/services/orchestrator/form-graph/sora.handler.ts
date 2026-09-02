@@ -7,11 +7,11 @@ import type {
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 type SoraInput = Sora2TextToVideoInput | Sora2ImageToVideoInput;
 
-export const createSoraInput = defineHandler<LooseGenerationData, [VideoGenStepTemplate]>(
+export const createSoraInput = defineHandler<EcosystemData<'Sora2'>, [VideoGenStepTemplate]>(
   (data) => {
     const hasImages = !!data.images?.length;
 
@@ -19,9 +19,9 @@ export const createSoraInput = defineHandler<LooseGenerationData, [VideoGenStepT
       engine: 'sora',
       prompt: data.prompt,
       aspectRatio: data.aspectRatio?.value as SoraInput['aspectRatio'],
-      resolution: (data as { resolution?: string }).resolution,
-      usePro: (data as { usePro?: boolean }).usePro,
-      duration: (data as { duration?: number }).duration,
+      resolution: data.resolution,
+      usePro: data.usePro,
+      duration: data.duration,
       quantity: data.quantity ?? 1,
       seed: data.seed,
       operation: 'text-to-video',

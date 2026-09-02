@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { branchOn, defineGraph } from 'form-graph';
+import { branch, defineGraph } from 'form-graph';
 import { enumOf, slider, textOf } from 'form-graph/defs';
 
 /**
@@ -45,7 +45,14 @@ const txt2img = defineGraph<{ maxStrength: number }>()
     hires === 'on' ? slider({ min: 1.5, max: 4, default: 2 }) : null
   );
 
-const spikeGraph = branchOn('workflow', WORKFLOW, { txt2img, img2img });
+const spikeGraph = defineGraph()
+  .field('workflow', WORKFLOW)
+  .use(
+    branch('workflow', [
+      [['txt2img'], txt2img],
+      [['img2img'], img2img],
+    ] as const)
+  );
 
 describe('form-graph package spike', () => {
   it('resolves both entry points and builds a store', () => {

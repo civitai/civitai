@@ -11,10 +11,10 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { buildControlNetSteps } from '../ecosystems/controlnets.helper';
 import { resourcesToLoras } from './types';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 export const createAnimaInput = defineHandler<
-  LooseGenerationData,
+  EcosystemData<'Anima'>,
   (ImageGenStepTemplate | PreprocessImageStepTemplate)[]
 >((data, ctx) => {
   const loras = resourcesToLoras(data.resources, ctx.airs);
@@ -37,7 +37,7 @@ export const createAnimaInput = defineHandler<
     cfgScale: data.cfgScale,
     steps: data.steps,
     sampler: data.sampler as ComfySampler,
-    scheduler: (data as { scheduler?: string }).scheduler as ComfyScheduler,
+    scheduler: data.scheduler as ComfyScheduler,
     seed: data.seed,
     quantity: data.quantity ?? 1,
     outputFormat: data.outputFormat,

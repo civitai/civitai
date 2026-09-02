@@ -13,7 +13,7 @@ import type {
 import { removeEmpty } from '~/utils/object-helpers';
 import { flux2ModeOf, type Flux2Mode } from '~/shared/form-graph/generation/image/flux2.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 type Flux2Input =
   | Flux2DevImageGenInput
@@ -21,12 +21,12 @@ type Flux2Input =
   | Flux2ProImageGenInput
   | Flux2MaxImageGenInput;
 
-export const createFlux2Input = defineHandler<LooseGenerationData, [ImageGenStepTemplate]>(
+export const createFlux2Input = defineHandler<EcosystemData<'Flux2'>, [ImageGenStepTemplate]>(
   (data, ctx) => {
     const model: Flux2Mode = flux2ModeOf(data.model);
 
     const loras: { air: string; strength: number }[] = [];
-    if (model === 'dev' && data.resources?.length) {
+    if (model === 'dev' && 'resources' in data && data.resources?.length) {
       for (const resource of data.resources) {
         loras.push({
           air: ctx.airs.getOrThrow(resource.id),

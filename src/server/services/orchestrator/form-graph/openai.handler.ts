@@ -12,7 +12,7 @@ import type {
 import { removeEmpty } from '~/utils/object-helpers';
 import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 type OpenAIModel = 'gpt-image-1' | 'gpt-image-1.5' | 'gpt-image-2';
 const versionIdToModel = new Map<number, OpenAIModel>([
@@ -21,7 +21,7 @@ const versionIdToModel = new Map<number, OpenAIModel>([
   [openaiVersionIds.v2, 'gpt-image-2'],
 ]);
 
-export const createOpenAIInput = defineHandler<LooseGenerationData, [ImageGenStepTemplate]>(
+export const createOpenAIInput = defineHandler<EcosystemData<'OpenAI'>, [ImageGenStepTemplate]>(
   (data) => {
     const quantity = Math.min(data.quantity ?? 1, 10);
 
@@ -36,7 +36,7 @@ export const createOpenAIInput = defineHandler<LooseGenerationData, [ImageGenSte
         engine: 'openai' as const,
         model: 'gpt-image-2' as const,
         prompt: data.prompt,
-        quality: (data as { quality?: string }).quality,
+        quality: data.quality,
         quantity,
         width,
         height,
@@ -58,7 +58,7 @@ export const createOpenAIInput = defineHandler<LooseGenerationData, [ImageGenSte
       ];
     }
 
-    const background = (data as { transparent?: boolean }).transparent ? 'transparent' : 'opaque';
+    const background = 'transparent' in data && data.transparent ? 'transparent' : 'opaque';
 
     const gpt1Base = {
       engine: 'openai',
@@ -66,7 +66,7 @@ export const createOpenAIInput = defineHandler<LooseGenerationData, [ImageGenSte
       prompt: data.prompt,
       background,
       quantity,
-      quality: (data as { quality?: string }).quality,
+      quality: data.quality,
       size: `${width}x${height}`,
       seed: data.seed,
     };

@@ -10,7 +10,7 @@ import type {
 import { removeEmpty } from '~/utils/object-helpers';
 import { mageFlowVersionIds } from '~/shared/form-graph/generation/image/mage-flow.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 type MageFlowModel = '4b' | '4b-turbo' | '4b-edit' | '4b-edit-turbo';
 
@@ -23,7 +23,7 @@ const versionToModel = new Map<number, MageFlowModel>([
 
 const isTurboModel = (model: MageFlowModel) => model === '4b-turbo' || model === '4b-edit-turbo';
 
-export const createMageFlowInput = defineHandler<LooseGenerationData, [ImageGenStepTemplate]>(
+export const createMageFlowInput = defineHandler<EcosystemData<'MageFlow'>, [ImageGenStepTemplate]>(
   (data, ctx) => {
     if (!data.aspectRatio) throw new Error('Aspect ratio is required for Mage Flow workflows');
 

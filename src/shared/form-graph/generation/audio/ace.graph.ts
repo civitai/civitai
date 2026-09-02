@@ -134,10 +134,11 @@ const custom = defineGraph<AceExt>()
   .field('instrumentalWeight', WEIGHT)
   .field('vocalWeight', WEIGHT);
 
-/** Untagged: `aceAudioMode` is a real field, declared before the dispatch. */
-const modes = branch((ext: AceExt & { aceAudioMode?: AceAudioMode }) =>
-  ext.aceAudioMode === 'custom' ? custom : simple
-);
+/** Keyed on the `aceAudioMode` field, declared before the dispatch. */
+const modes = branch('aceAudioMode', [
+  [['simple'], simple],
+  [['custom'], custom],
+] as const);
 
 export const ace = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>

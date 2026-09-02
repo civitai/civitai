@@ -6,15 +6,7 @@ import {
 } from '~/shared/constants/generation.constants';
 import { flux3VideoVersionIds } from '~/shared/data-graph/generation/version-ids';
 import { checkpointDef } from '../checkpoint';
-import {
-  SEED,
-  aspectRatioDef,
-  boolDef,
-  enumDef,
-  imagesDef,
-  sliderDef,
-  workflowScoped,
-} from '../defs';
+import { aspectRatioDef, boolDef, enumDef, imagesDef, sliderDef, workflowScoped } from '../defs';
 import { familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**

@@ -7,11 +7,11 @@ import type {
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 type ReveAspectRatio = NonNullable<ReveCreateFalImageGenInput['aspectRatio']>;
 
-export const createReveInput = defineHandler<LooseGenerationData, [ImageGenStepTemplate]>(
+export const createReveInput = defineHandler<EcosystemData<'Reve'>, [ImageGenStepTemplate]>(
   (data) => {
     const baseInput = {
       engine: 'fal' as const,

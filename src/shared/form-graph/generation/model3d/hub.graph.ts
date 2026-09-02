@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { branch, defineGraph } from 'form-graph';
+import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { getEcosystemStates, resolveCompatibleEcosystem } from '../ecosystem-gates';
-import type { RootCtx, FamilyExt } from '../shared';
+import type { RootCtx } from '../shared';
 
 import { polygen } from './polygen.graph';
 import { tripo } from './tripo.graph';
@@ -9,28 +10,12 @@ import { hunyuan3d } from './hunyuan3d.graph';
 import { pixal3d, trellis2 } from './trellis-family.graph';
 
 /**
- * The MODEL3D hub: ecosystem selection scoped to model3d output, then the
- * family dispatch. No quantity/priority/outputFormat — those are image (or
- * partly video) concerns in the oracle. Workflow and the output/input
- * computeds live on the root (`../hub.graph.ts`).
+ * The MODEL3D hub: ecosystem selection scoped to model3d output, dispatching
+ * to the family graphs via a keyed branch — the table keys type each arm's
+ * `ecosystem` as its literal. No quantity/priority/outputFormat — those are
+ * image (or partly video) concerns in the oracle. Workflow and the
+ * output/input computeds live on the root (`../hub.graph.ts`).
  */
-
-/** Which family graph owns an ecosystem. Untagged: the oracle has no family key. */
-const families = branch((ext: FamilyExt) => {
-  switch (ext.ecosystem) {
-    case 'Tripo':
-      return tripo;
-    case 'Hunyuan3D':
-      return hunyuan3d;
-    case 'Pixal3D':
-      return pixal3d;
-    case 'Trellis2':
-      return trellis2;
-    case 'PolyGen':
-    default:
-      return polygen;
-  }
-});
 
 export const model3dHub = defineGraph<RootCtx>()
   .field('ecosystem', ({ _ext }) => {
@@ -53,7 +38,10 @@ export const model3dHub = defineGraph<RootCtx>()
         .optional()
         .transform((v) => {
           if (!v) return undefined;
-          if (hiddenSet.has(v)) return undefined;
+          // an unknown key would have no member graph — fall to the default,
+          // like a hidden one; disabled/memberOnly are kept for the picker and
+          // refused on output
+          if (!ecosystemByKey.has(v) || hiddenSet.has(v)) return undefined;
           return resolveCompatibleEcosystem(_ext.workflow, v);
         }),
       output:
@@ -69,10 +57,18 @@ export const model3dHub = defineGraph<RootCtx>()
         compatibleEcosystems,
         hiddenEcosystems,
         ecosystemStates,
-        mediaType: 'model3d',
+        mediaType: 'model3d' as const,
       },
     };
   })
-  .use(families);
+  .use(
+    branch('ecosystem', [
+      [['PolyGen'], polygen],
+      [['Tripo'], tripo],
+      [['Hunyuan3D'], hunyuan3d],
+      [['Pixal3D'], pixal3d],
+      [['Trellis2'], trellis2],
+    ] as const)
+  );
 
 export type Model3dState = ReturnType<typeof model3dHub.resolve>;

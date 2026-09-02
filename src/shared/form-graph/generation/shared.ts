@@ -192,6 +192,20 @@ export function perModelScope(ext: { model?: unknown }): Scope | undefined {
  * raw input (a bare number from remix/deep-link), parse normalizes to an
  * object — mode picks and scopes must read both.
  */
+/**
+ * Runtime-checked narrowing for a multi-ecosystem family's `effectiveEcosystem`
+ * emit: the value is one of the family's served keys, typed as their literal
+ * union so `GenerationData` discriminates per arm. The fallback can only fire
+ * if an unserved ecosystem reached the family — the hub dispatch prevents it,
+ * and the differential suites would catch the changed wire value.
+ */
+export function narrowEcosystem<const E extends readonly string[]>(
+  served: E,
+  value: string
+): E[number] {
+  return (served.includes(value) ? value : served[0]) as E[number];
+}
+
 export function modelIdOf(model: unknown): number | undefined {
   if (typeof model === 'number') return model;
   if (model && typeof model === 'object') return (model as { id?: number }).id;

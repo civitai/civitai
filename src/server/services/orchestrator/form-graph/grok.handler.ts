@@ -25,7 +25,7 @@ import {
 } from '~/shared/constants/generation.constants';
 import { isGrokV15, isGrokV2 } from '~/shared/form-graph/generation/grok-shared';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 const grokVideoAspectRatioList: GenerationAspectRatio[] = [
   '16:9',
@@ -37,7 +37,7 @@ const grokVideoAspectRatioList: GenerationAspectRatio[] = [
   '9:16',
 ];
 
-export const createGrokImageInput = defineHandler<LooseGenerationData, [ImageGenStepTemplate]>(
+export const createGrokImageInput = defineHandler<EcosystemData<'Grok'>, [ImageGenStepTemplate]>(
   (data) => {
     const hasImages = !!data.images?.length;
 
@@ -52,8 +52,8 @@ export const createGrokImageInput = defineHandler<LooseGenerationData, [ImageGen
       const v2Base = {
         ...baseData,
         version: 'v2.0' as const,
-        resolution: (data as { resolution?: GrokV2CreateImageGenInput['resolution'] }).resolution,
-        quality: (data as { quality?: GrokV2CreateImageGenInput['quality'] }).quality,
+        resolution: 'quality' in data ? data.resolution : undefined,
+        quality: 'quality' in data ? data.quality : undefined,
       };
 
       return [
@@ -83,16 +83,15 @@ export const createGrokImageInput = defineHandler<LooseGenerationData, [ImageGen
   }
 );
 
-export const createGrokVideoInput = defineHandler<LooseGenerationData, [VideoGenStepTemplate]>(
+export const createGrokVideoInput = defineHandler<EcosystemData<'Grok'>, [VideoGenStepTemplate]>(
   (data) => {
     const hasImages = !!data.images?.length;
-    const hasVideo = !!data.video;
-    const resolution = ((data as { resolution?: string }).resolution as string) ?? '720p';
+    const resolution: string = data.resolution ?? '720p';
 
     const baseData = {
       engine: 'grok',
       prompt: data.prompt,
-      duration: (data as { duration?: number }).duration,
+      duration: 'duration' in data ? data.duration : undefined,
       resolution,
     };
 
@@ -143,8 +142,8 @@ export const createGrokVideoInput = defineHandler<LooseGenerationData, [VideoGen
 
     const v1Base = { ...baseData, version: 'v1.0' as const };
 
-    if (hasVideo) {
-      const video = data.video as { url: string; metadata?: { duration?: number } };
+    if ('video' in data && data.video) {
+      const video = data.video;
       return [
         {
           $type: 'videoGen',

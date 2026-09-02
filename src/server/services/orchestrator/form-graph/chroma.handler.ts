@@ -7,9 +7,9 @@ import { maxRandomSeed } from '~/server/common/constants';
 import { samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
-export const createChromaInput = defineHandler<LooseGenerationData, [TextToImageStepTemplate]>(
+export const createChromaInput = defineHandler<EcosystemData<'Chroma'>, [TextToImageStepTemplate]>(
   (data, ctx) => {
     if (!data.aspectRatio) throw new Error('Aspect ratio is required for Chroma workflows');
 

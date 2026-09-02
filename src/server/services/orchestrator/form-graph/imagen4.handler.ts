@@ -3,11 +3,11 @@
 import type { Imagen4ImageGenInput, ImageGenStepTemplate } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 type Imagen4AspectRatio = '16:9' | '4:3' | '1:1' | '3:4' | '9:16';
 
-export const createImagen4Input = defineHandler<LooseGenerationData, [ImageGenStepTemplate]>(
+export const createImagen4Input = defineHandler<EcosystemData<'Imagen4'>, [ImageGenStepTemplate]>(
   (data) => [
     {
       $type: 'imageGen',

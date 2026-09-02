@@ -18,7 +18,7 @@ import {
 } from '~/shared/form-graph/generation/audio/ace.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
 import type { StepInput } from '../ecosystems';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 const SIMPLE_CHAT_MODEL = 'gpt-4o-mini';
 const SIMPLE_CHAT_TEMPERATURE = 0.9;
@@ -44,23 +44,18 @@ const SIMPLE_RESPONSE_FORMAT = {
   },
 };
 
-export const createAceAudioInput = defineHandler<LooseGenerationData, StepInput[]>((data, ctx) => {
-  const d = data as LooseGenerationData & {
-    aceAudioMode?: 'simple' | 'custom';
-    generateCover?: boolean;
-    musicDescription?: string;
-    lyrics?: string;
-    bpm?: number;
-    instrumentalWeight?: number;
-    vocalWeight?: number;
-  };
-  const diffusionModel = d.model ? ctx.airs.getOrThrow(d.model.id) : undefined;
-  const coverDescription = d.aceAudioMode === 'simple' ? d.prompt : d.musicDescription;
+export const createAceAudioInput = defineHandler<EcosystemData<'Ace'>, StepInput[]>((data, ctx) => {
+  // aceAudioMode picks the mode arm, so these narrow to the same split
+  const simple = 'prompt' in data ? data : undefined;
+  const custom = 'musicDescription' in data ? data : undefined;
+  const diffusionModel = data.model ? ctx.airs.getOrThrow(data.model.id) : undefined;
+  const coverDescription =
+    data.aceAudioMode === 'simple' ? simple?.prompt : custom?.musicDescription;
 
   const steps: StepInput[] = [];
 
   let coverRef: string | undefined;
-  if (d.generateCover) {
+  if (data.generateCover) {
     coverRef = `$${steps.length}`;
     const coverStep: ImageGenStepTemplate & { metadata: { suppressOutput: true } } = {
       $type: 'imageGen',
@@ -78,7 +73,7 @@ export const createAceAudioInput = defineHandler<LooseGenerationData, StepInput[
   }
 
   let chatRef: string | undefined;
-  if (d.aceAudioMode === 'simple') {
+  if (data.aceAudioMode === 'simple') {
     chatRef = `$${steps.length}`;
     const chatStep: ChatCompletionStepTemplate & { metadata: { suppressOutput: true } } = {
       $type: 'chatCompletion',
@@ -88,7 +83,7 @@ export const createAceAudioInput = defineHandler<LooseGenerationData, StepInput[
           { role: 'system', content: SIMPLE_SYSTEM_PROMPT },
           {
             role: 'user',
-            content: `Write a ${d.duration}-second song. ${d.prompt}. Output JSON with lyrics, musicDescription, bpm (${ACE_AUDIO_MIN_BPM}-${ACE_AUDIO_MAX_BPM}), key.`,
+            content: `Write a ${data.duration}-second song. ${simple?.prompt}. Output JSON with lyrics, musicDescription, bpm (${ACE_AUDIO_MIN_BPM}-${ACE_AUDIO_MAX_BPM}), key.`,
           },
         ],
         temperature: SIMPLE_CHAT_TEMPERATURE,
@@ -101,16 +96,16 @@ export const createAceAudioInput = defineHandler<LooseGenerationData, StepInput[
 
   const cover = coverRef
     ? { imageUrl: { $ref: coverRef, path: 'output.images[0].url' } as unknown as string }
-    : d.images?.length
-    ? { imageUrl: d.images[0].url }
+    : data.images?.length
+    ? { imageUrl: data.images[0].url }
     : undefined;
 
   const aceInput = removeEmpty({
-    duration: d.duration,
-    seed: d.seed,
+    duration: data.duration,
+    seed: data.seed,
     diffusionModel,
     cover,
-    ...(d.aceAudioMode === 'simple'
+    ...(data.aceAudioMode === 'simple'
       ? {
           musicDescription: { $ref: chatRef!, path: 'output.parsed.musicDescription' },
           lyrics: { $ref: chatRef!, path: 'output.parsed.lyrics' },
@@ -118,13 +113,13 @@ export const createAceAudioInput = defineHandler<LooseGenerationData, StepInput[
           key: { $ref: chatRef!, path: 'output.parsed.key' },
         }
       : {
-          musicDescription: d.musicDescription,
-          lyrics: d.lyrics,
-          bpm: d.bpm,
-          instrumentalWeight: d.instrumentalWeight,
-          vocalWeight: d.vocalWeight,
-          steps: d.steps,
-          cfg: d.cfgScale,
+          musicDescription: custom?.musicDescription,
+          lyrics: custom?.lyrics,
+          bpm: custom?.bpm,
+          instrumentalWeight: custom?.instrumentalWeight,
+          vocalWeight: custom?.vocalWeight,
+          steps: custom?.steps,
+          cfg: custom?.cfgScale,
         }),
   });
 

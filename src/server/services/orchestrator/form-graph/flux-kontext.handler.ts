@@ -14,28 +14,29 @@ import {
   type FluxKontextMode,
 } from '~/shared/form-graph/generation/image/flux-kontext.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 type FluxKontextInput = Flux1KontextProImageGenInput | Flux1KontextMaxImageGenInput;
 
-export const createFluxKontextInput = defineHandler<LooseGenerationData, [ImageGenStepTemplate]>(
-  (data) => {
-    const model: FluxKontextMode = fluxKontextModeOf(data.model);
+export const createFluxKontextInput = defineHandler<
+  EcosystemData<'Flux1Kontext'>,
+  [ImageGenStepTemplate]
+>((data) => {
+  const model: FluxKontextMode = fluxKontextModeOf(data.model);
 
-    return [
-      {
-        $type: 'imageGen',
-        input: removeEmpty({
-          engine: 'flux1-kontext',
-          model,
-          prompt: data.prompt,
-          images: data.images?.map((x) => x.url),
-          aspectRatio: data.aspectRatio?.value,
-          quantity: data.quantity ?? 1,
-          guidanceScale: data.cfgScale,
-          seed: data.seed,
-        }) as FluxKontextInput,
-      },
-    ];
-  }
-);
+  return [
+    {
+      $type: 'imageGen',
+      input: removeEmpty({
+        engine: 'flux1-kontext',
+        model,
+        prompt: data.prompt,
+        images: data.images?.map((x) => x.url),
+        aspectRatio: data.aspectRatio?.value,
+        quantity: data.quantity ?? 1,
+        guidanceScale: data.cfgScale,
+        seed: data.seed,
+      }) as FluxKontextInput,
+    },
+  ];
+});

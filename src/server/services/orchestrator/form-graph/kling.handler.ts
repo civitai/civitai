@@ -13,7 +13,11 @@ import type {
 import { removeEmpty } from '~/utils/object-helpers';
 import { klingVersionIds } from '~/shared/data-graph/generation/version-ids';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
+
+type KlingData = EcosystemData<'Kling'>;
+type KlingLegacyData = Extract<KlingData, { klingVersion: 'legacy' }>;
+type KlingV3Data = Extract<KlingData, { klingVersion: 'v3' }>;
 
 const versionIdToModel = new Map<number, KlingModel>([
   [klingVersionIds.v1_6, 'v1.6'],
@@ -21,17 +25,12 @@ const versionIdToModel = new Map<number, KlingModel>([
   [klingVersionIds.v2_5_turbo, 'v2.5-turbo'],
 ]);
 
-export const createKlingInput = defineHandler<LooseGenerationData, [VideoGenStepTemplate]>(
-  (data) => {
-    const input =
-      (data as { klingVersion?: string }).klingVersion === 'v3'
-        ? createV3Input(data)
-        : createLegacyInput(data);
-    return [{ $type: 'videoGen', input }];
-  }
-);
+export const createKlingInput = defineHandler<KlingData, [VideoGenStepTemplate]>((data) => {
+  const input = data.klingVersion === 'v3' ? createV3Input(data) : createLegacyInput(data);
+  return [{ $type: 'videoGen', input }];
+});
 
-function createLegacyInput(data: LooseGenerationData): KlingVideoGenInput {
+function createLegacyInput(data: KlingLegacyData): KlingVideoGenInput {
   const model: KlingModel =
     (data.model ? versionIdToModel.get(data.model.id) : undefined) ?? 'v1.6';
 
@@ -41,32 +40,32 @@ function createLegacyInput(data: LooseGenerationData): KlingVideoGenInput {
     prompt: data.prompt,
     negativePrompt: data.negativePrompt,
     aspectRatio: data.aspectRatio?.value as KlingVideoGenInput['aspectRatio'],
-    mode: (data as { mode?: string }).mode,
-    duration: (data as { duration?: string }).duration,
+    mode: data.mode,
+    duration: data.duration,
     cfgScale: data.cfgScale,
     sourceImage: data.images?.[0]?.url,
     quantity: data.quantity ?? 1,
     seed: data.seed,
-    enablePromptEnhancer: (data as { enablePromptEnhancer?: boolean }).enablePromptEnhancer,
+    enablePromptEnhancer: data.enablePromptEnhancer,
   }) as KlingVideoGenInput;
 }
 
-function createV3Input(data: LooseGenerationData): KlingV3VideoGenInput {
+function createV3Input(data: KlingV3Data): KlingV3VideoGenInput {
   const hasImages = !!data.images?.length;
-  const isRef2Vid = (data as { operation?: string }).operation === 'reference-to-video';
+  const isRef2Vid = data.operation === 'reference-to-video';
 
   return removeEmpty({
     engine: 'kling-v3' as const,
     prompt: data.prompt,
-    operation: (data as { operation?: string }).operation,
-    mode: (data as { mode?: string }).mode,
+    operation: data.operation,
+    mode: data.mode,
     duration: data.duration != null ? Number(data.duration) : undefined,
     aspectRatio: data.aspectRatio?.value as KlingV3VideoGenInput['aspectRatio'],
     // ref2vid sends images as an array; img2vid uses sourceImage/endImage slots
     sourceImage: !isRef2Vid && hasImages ? data.images?.[0]?.url : undefined,
     endImage: !isRef2Vid && hasImages ? data.images?.[1]?.url : undefined,
     images: isRef2Vid && hasImages ? data.images?.map((img) => img.url) : undefined,
-    generateAudio: (data as { generateAudio?: boolean }).generateAudio,
+    generateAudio: data.generateAudio,
     quantity: data.quantity ?? 1,
     seed: data.seed,
   }) as KlingV3VideoGenInput;

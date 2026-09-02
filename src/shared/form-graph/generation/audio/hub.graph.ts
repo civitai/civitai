@@ -1,28 +1,19 @@
 import { z } from 'zod';
 import { branch, defineGraph } from 'form-graph';
+import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { getEcosystemStates, resolveCompatibleEcosystem } from '../ecosystem-gates';
-import type { RootCtx, FamilyExt } from '../shared';
+import type { RootCtx } from '../shared';
 
 import { ace } from './ace.graph';
 import { minimaxMusic } from './minimax-music.graph';
 
 /**
  * The AUDIO hub: ecosystem selection scoped to audio output, then the family
- * dispatch. No quantity/priority/outputFormat — those are image (or partly
+ * dispatch — a keyed branch whose table types each arm's `ecosystem` as its
+ * literal. No quantity/priority/outputFormat — those are image (or partly
  * video) concerns in the oracle. Workflow and the output/input computeds live
  * on the root (`../hub.graph.ts`).
  */
-
-/** Which family graph owns an ecosystem. Untagged: the oracle has no family key. */
-const families = branch((ext: FamilyExt) => {
-  switch (ext.ecosystem) {
-    case 'MiniMaxMusic3':
-      return minimaxMusic;
-    case 'Ace':
-    default:
-      return ace;
-  }
-});
 
 export const audioHub = defineGraph<RootCtx>()
   .field('ecosystem', ({ _ext }) => {
@@ -45,7 +36,10 @@ export const audioHub = defineGraph<RootCtx>()
         .optional()
         .transform((v) => {
           if (!v) return undefined;
-          if (hiddenSet.has(v)) return undefined;
+          // an unknown key would have no member graph — fall to the default,
+          // like a hidden one; disabled/memberOnly are kept for the picker
+          // and refused on output
+          if (!ecosystemByKey.has(v) || hiddenSet.has(v)) return undefined;
           return resolveCompatibleEcosystem(_ext.workflow, v);
         }),
       output:
@@ -61,10 +55,15 @@ export const audioHub = defineGraph<RootCtx>()
         compatibleEcosystems,
         hiddenEcosystems,
         ecosystemStates,
-        mediaType: 'audio',
+        mediaType: 'audio' as const,
       },
     };
   })
-  .use(families);
+  .use(
+    branch('ecosystem', [
+      [['Ace'], ace],
+      [['MiniMaxMusic3'], minimaxMusic],
+    ] as const)
+  );
 
 export type AudioState = ReturnType<typeof audioHub.resolve>;

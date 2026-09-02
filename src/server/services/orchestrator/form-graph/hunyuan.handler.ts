@@ -3,9 +3,9 @@
 import type { HunyuanVdeoGenInput, VideoGenStepTemplate } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
-export const createHunyuanInput = defineHandler<LooseGenerationData, [VideoGenStepTemplate]>(
+export const createHunyuanInput = defineHandler<EcosystemData<'HyV1'>, [VideoGenStepTemplate]>(
   (data, ctx) => {
     const loras: { air: string; strength: number }[] = [];
     for (const resource of data.resources ?? []) {
@@ -25,7 +25,7 @@ export const createHunyuanInput = defineHandler<LooseGenerationData, [VideoGenSt
           height: data.aspectRatio?.height,
           cfgScale: data.cfgScale,
           steps: data.steps,
-          duration: (data as { duration?: number }).duration,
+          duration: data.duration,
           quantity: data.quantity ?? 1,
           seed: data.seed,
           loras: loras.length > 0 ? loras : undefined,

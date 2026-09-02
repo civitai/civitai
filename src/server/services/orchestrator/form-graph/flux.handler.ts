@@ -13,36 +13,35 @@ import type {
 import { maxRandomSeed } from '~/server/common/constants';
 import { fluxUltraAir, samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
-import { fluxModeOf, type FluxMode } from '~/shared/form-graph/generation/image/flux.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { buildControlNetSteps } from '../ecosystems/controlnets.helper';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
+
+type FluxData = EcosystemData<'Flux1' | 'FluxKrea'>;
 
 export const createFluxInput = defineHandler<
-  LooseGenerationData,
+  FluxData,
   (TextToImageStepTemplate | PreprocessImageStepTemplate)[]
 >((data, ctx) => {
   if (!data.aspectRatio) throw new Error('Aspect ratio is required for Flux workflows');
 
-  const fluxMode = (data.fluxMode as FluxMode | undefined) ?? fluxModeOf(data.model);
-
   const quantity = data.quantity ?? 1;
   const seed = data.seed ?? getRandomInt(quantity, maxRandomSeed) - quantity;
 
-  let steps = data.steps ?? 28;
-  let cfgScale = data.cfgScale ?? 3.5;
+  if (data.fluxMode === 'ultra') {
+    return [createFluxUltraInput(data, seed)];
+  }
 
-  if (fluxMode === 'draft') {
+  let steps = ('steps' in data ? data.steps : undefined) ?? 28;
+  let cfgScale = ('cfgScale' in data ? data.cfgScale : undefined) ?? 3.5;
+
+  if (data.fluxMode === 'draft') {
     steps = 4;
     cfgScale = 1;
   }
 
-  if (fluxMode === 'ultra') {
-    return [createFluxUltraInput(data, seed)];
-  }
-
   const additionalNetworks: Record<string, ImageJobNetworkParams> = {};
-  if (fluxMode !== 'pro' && data.resources?.length) {
+  if (data.fluxMode !== 'pro' && 'resources' in data && data.resources?.length) {
     for (const resource of data.resources) {
       additionalNetworks[ctx.airs.getOrThrow(resource.id)] = { strength: resource.strength };
     }
@@ -55,7 +54,7 @@ export const createFluxInput = defineHandler<
   ] as Scheduler;
 
   const { preprocessSteps, controlNets } = buildControlNetSteps(
-    data.controlNets,
+    'controlNets' in data ? data.controlNets : undefined,
     ctx.baseStepIndex
   );
 
@@ -82,7 +81,10 @@ export const createFluxInput = defineHandler<
 });
 
 /** Ultra mode: fixed ultra AIR, special aspect ratios, raw-mode engine switch. */
-function createFluxUltraInput(data: LooseGenerationData, seed: number): TextToImageStepTemplate {
+function createFluxUltraInput(
+  data: Extract<FluxData, { fluxMode: 'ultra' }>,
+  seed: number
+): TextToImageStepTemplate {
   const scheduler = samplersToSchedulers[
     'undefined' as keyof typeof samplersToSchedulers
   ] as Scheduler;
@@ -93,8 +95,8 @@ function createFluxUltraInput(data: LooseGenerationData, seed: number): TextToIm
       additionalNetworks: {},
       prompt: data.prompt,
       seed,
-      width: data.aspectRatio!.width,
-      height: data.aspectRatio!.height,
+      width: data.aspectRatio.width,
+      height: data.aspectRatio.height,
       quantity: data.quantity ?? 1,
       batchSize: 1,
       outputFormat: data.outputFormat,

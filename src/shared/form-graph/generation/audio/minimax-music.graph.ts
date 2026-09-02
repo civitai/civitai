@@ -64,10 +64,11 @@ const custom = defineGraph<MinimaxMusicExt>()
     meta: editorMeta('lyrics', true),
   });
 
-/** Untagged: `minimaxMusicMode` is a real field, declared before the dispatch. */
-const modes = branch((ext: MinimaxMusicExt) =>
-  ext.minimaxMusicMode === 'custom' ? custom : simple
-);
+/** Keyed on the `minimaxMusicMode` field, declared before the dispatch. */
+const modes = branch('minimaxMusicMode', [
+  [['simple'], simple],
+  [['custom'], custom],
+] as const);
 
 export const minimaxMusic = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>

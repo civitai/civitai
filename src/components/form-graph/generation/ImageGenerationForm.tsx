@@ -485,22 +485,6 @@ export function ImageGenerationForm({ store }: { store: GenerationStore }) {
           )}
         />
       </div>
-      <Controller
-        graph={imageHub}
-        name="quantity"
-        render={({ value, meta, onChange }) =>
-          meta ? (
-            <SliderInput
-              value={value}
-              onChange={onChange}
-              label={<Input.Label>Quantity</Input.Label>}
-              min={meta.min}
-              max={meta.max}
-              step={meta.step}
-            />
-          ) : null
-        }
-      />
     </Stack>
   );
 }

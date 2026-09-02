@@ -44,9 +44,7 @@ import {
 import { defineHandler } from '../ecosystems/handler-factory';
 import { buildModel3DPreviewStep } from '../ecosystems/model3d-preview';
 import type { StepInput } from '../ecosystems';
-import type { LooseGenerationData } from './types';
-
-type SourceImage = { url: string; width: number; height: number };
+import type { EcosystemData } from './types';
 
 // The shared `StepInput` union lists neither `PolyGenStepTemplate` nor the
 // (client-untyped) `model3DPreview` step, but the orchestrator queue accepts
@@ -54,40 +52,39 @@ type SourceImage = { url: string; width: number; height: number };
 const withPreview = (step: PolyGenStepTemplate, baseStepIndex: number): StepInput[] =>
   [step, buildModel3DPreviewStep(baseStepIndex)] as unknown as StepInput[];
 
-export const createPolyGenInput = defineHandler<LooseGenerationData, StepInput[]>((data, ctx) => {
-  const { polygenMode, ...rest } = data as LooseGenerationData & {
-    polygenMode?: 'preview' | 'full';
-    polygenVersion?: 'v6' | 'v7';
-  };
-  const images = (data as { images?: SourceImage[] }).images ?? [];
+export const createPolyGenInput = defineHandler<EcosystemData<'PolyGen'>, StepInput[]>(
+  (data, ctx) => {
+    const { polygenMode, ...rest } = data;
+    const images = data.images ?? [];
 
-  let input:
-    | MeshyTextTo3dFalPolyGenInput
-    | MeshyImageTo3dFalPolyGenInput
-    | MeshyV7ImageTo3dFalPolyGenInput
-    | MeshyV7MultiImageTo3dFalPolyGenInput;
+    let input:
+      | MeshyTextTo3dFalPolyGenInput
+      | MeshyImageTo3dFalPolyGenInput
+      | MeshyV7ImageTo3dFalPolyGenInput
+      | MeshyV7MultiImageTo3dFalPolyGenInput;
 
-  if ((data as { polygenVersion?: string }).polygenVersion === 'v7') {
-    input = toMeshyV7PolyGenInput({
-      ...rest,
-      sourceImages: images,
-    } as unknown as PolyGenV7GenerationSchema);
-  } else {
-    const process = data.workflow?.startsWith('txt') ? 'textTo3D' : 'imageTo3D';
-    const sourceImage = process === 'imageTo3D' ? images[0] : undefined;
-    input = toMeshyPolyGenInput({
-      ...rest,
-      process,
-      ...(polygenMode !== undefined ? { mode: polygenMode } : {}),
-      ...(sourceImage ? { sourceImage } : {}),
-    } as unknown as Model3DGenerationSchema);
+    if (data.polygenVersion === 'v7') {
+      input = toMeshyV7PolyGenInput({
+        ...rest,
+        sourceImages: images,
+      } as unknown as PolyGenV7GenerationSchema);
+    } else {
+      const process = data.workflow?.startsWith('txt') ? 'textTo3D' : 'imageTo3D';
+      const sourceImage = process === 'imageTo3D' ? images[0] : undefined;
+      input = toMeshyPolyGenInput({
+        ...rest,
+        process,
+        ...(polygenMode !== undefined ? { mode: polygenMode } : {}),
+        ...(sourceImage ? { sourceImage } : {}),
+      } as unknown as Model3DGenerationSchema);
+    }
+
+    return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
   }
+);
 
-  return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
-});
-
-export const createTripoInput = defineHandler<LooseGenerationData, StepInput[]>((data, ctx) => {
-  const sourceImage = (data as { images?: SourceImage[] }).images?.[0];
+export const createTripoInput = defineHandler<EcosystemData<'Tripo'>, StepInput[]>((data, ctx) => {
+  const sourceImage = data.images?.[0];
   const input = toTripoPolyGenInput({
     ...data,
     ...(sourceImage ? { sourceImage } : {}),
@@ -95,51 +92,51 @@ export const createTripoInput = defineHandler<LooseGenerationData, StepInput[]>(
   return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
 });
 
-export const createHunyuan3dInput = defineHandler<LooseGenerationData, StepInput[]>((data, ctx) => {
-  const {
-    images,
-    hunyuanPrompt,
-    hunyuanModelVersion,
-    hunyuanSteps,
-    hunyuanCfgScale,
-    hunyuanOctreeResolution,
-    ...rest
-  } = data as LooseGenerationData & {
-    hunyuanPrompt?: string;
-    hunyuanModelVersion?: 'v2' | 'v2.1' | 'v2-mini';
-    hunyuanSteps?: number;
-    hunyuanCfgScale?: number;
-    hunyuanOctreeResolution?: number;
-  };
+export const createHunyuan3dInput = defineHandler<EcosystemData<'Hunyuan3D'>, StepInput[]>(
+  (data, ctx) => {
+    const {
+      images,
+      hunyuanPrompt,
+      hunyuanModelVersion,
+      hunyuanSteps,
+      hunyuanCfgScale,
+      hunyuanOctreeResolution,
+      ...rest
+    } = data;
 
-  const input = toHunyuan3dPolyGenInput({
-    ...rest,
-    ...(images?.[0] ? { sourceImage: images[0] } : {}),
-    // empty prompt ⇒ omit (Hunyuan3D treats the prompt as an optional hint)
-    prompt: hunyuanPrompt ? hunyuanPrompt : undefined,
-    modelVersion: hunyuanModelVersion,
-    steps: hunyuanSteps,
-    cfgScale: hunyuanCfgScale,
-    octreeResolution: hunyuanOctreeResolution,
-  } as unknown as Hunyuan3dGenerationSchema) as Hunyuan3dImageTo3dComfyPolyGenInput;
+    const input = toHunyuan3dPolyGenInput({
+      ...rest,
+      ...(images?.[0] ? { sourceImage: images[0] } : {}),
+      // empty prompt ⇒ omit (Hunyuan3D treats the prompt as an optional hint)
+      prompt: hunyuanPrompt ? hunyuanPrompt : undefined,
+      modelVersion: hunyuanModelVersion,
+      steps: hunyuanSteps,
+      cfgScale: hunyuanCfgScale,
+      octreeResolution: hunyuanOctreeResolution,
+    } as unknown as Hunyuan3dGenerationSchema) as Hunyuan3dImageTo3dComfyPolyGenInput;
 
-  return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
-});
+    return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
+  }
+);
 
-export const createPixal3dInput = defineHandler<LooseGenerationData, StepInput[]>((data, ctx) => {
-  const sourceImage = (data as { images?: SourceImage[] }).images?.[0];
-  const input = toPixal3dPolyGenInput({
-    ...data,
-    ...(sourceImage ? { sourceImage } : {}),
-  } as unknown as Pixal3dGenerationSchema) as Trellis2ImageTo3dComfyPolyGenInput;
-  return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
-});
+export const createPixal3dInput = defineHandler<EcosystemData<'Pixal3D'>, StepInput[]>(
+  (data, ctx) => {
+    const sourceImage = data.images?.[0];
+    const input = toPixal3dPolyGenInput({
+      ...data,
+      ...(sourceImage ? { sourceImage } : {}),
+    } as unknown as Pixal3dGenerationSchema) as Trellis2ImageTo3dComfyPolyGenInput;
+    return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
+  }
+);
 
-export const createTrellis2Input = defineHandler<LooseGenerationData, StepInput[]>((data, ctx) => {
-  const sourceImage = (data as { images?: SourceImage[] }).images?.[0];
-  const input = toTrellis2PolyGenInput({
-    ...data,
-    ...(sourceImage ? { sourceImage } : {}),
-  } as unknown as Trellis2GenerationSchema) as Trellis2ImageTo3dComfyPolyGenInput;
-  return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
-});
+export const createTrellis2Input = defineHandler<EcosystemData<'Trellis2'>, StepInput[]>(
+  (data, ctx) => {
+    const sourceImage = data.images?.[0];
+    const input = toTrellis2PolyGenInput({
+      ...data,
+      ...(sourceImage ? { sourceImage } : {}),
+    } as unknown as Trellis2GenerationSchema) as Trellis2ImageTo3dComfyPolyGenInput;
+    return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
+  }
+);

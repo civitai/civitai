@@ -13,7 +13,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { buildControlNetSteps } from '../ecosystems/controlnets.helper';
 import { resourcesToLoras } from './types';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 type ZImageInput = ZImageTurboCreateImageGenInput | ZImageBaseCreateImageGenInput;
 
@@ -23,13 +23,15 @@ const baseModelToModel: Record<string, 'turbo' | 'base'> = {
 };
 
 export const createZImageInput = defineHandler<
-  LooseGenerationData,
+  EcosystemData<'ZImageTurbo' | 'ZImageBase'>,
   (ImageGenStepTemplate | PreprocessImageStepTemplate)[]
 >((data, ctx) => {
   if (!data.aspectRatio) throw new Error('Aspect ratio is required for ZImage workflows');
 
   const quantity = data.quantity ?? 1;
-  const model = baseModelToModel[data.ecosystem ?? ''] ?? 'turbo';
+  const model = baseModelToModel[data.ecosystem] ?? 'turbo';
+  const sampler = data.zImageMode === 'base' ? data.sampler : undefined;
+  const scheduler = data.zImageMode === 'base' ? data.scheduler : undefined;
 
   const loras = resourcesToLoras(data.resources, ctx.airs);
 
@@ -55,8 +57,8 @@ export const createZImageInput = defineHandler<
       height: data.aspectRatio.height,
       cfgScale: data.cfgScale ?? 1,
       steps: data.steps ?? 4,
-      sampleMethod: data.sampler ?? 'euler',
-      schedule: data.scheduler ?? 'simple',
+      sampleMethod: sampler ?? 'euler',
+      schedule: scheduler ?? 'simple',
       quantity,
       seed: data.seed,
       loras,

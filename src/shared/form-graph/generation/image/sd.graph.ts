@@ -24,7 +24,7 @@ import {
   type AspectRatioValue,
   type ImageEntry,
 } from '../defs';
-import { familyScope, textBlock, type FamilyExt } from '../shared';
+import { familyScope, textBlock, type FamilyExt, narrowEcosystem } from '../shared';
 
 /**
  * Stable Diffusion family (SD1 / SD2 / SDXL / Pony / Illustrious / NoobAI),
@@ -96,7 +96,11 @@ export const sd = defineGraph<FamilyExt>({ scope: familyScope })
   // name, and everything ecosystem-dependent below reads IT.
   .computed(
     'effectiveEcosystem',
-    ({ model, _ext }) => effectiveEcosystemOf(model, _ext.ecosystem, _ext.workflow),
+    ({ model, _ext }) =>
+      narrowEcosystem(
+        ['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'],
+        effectiveEcosystemOf(model, _ext.ecosystem, _ext.workflow)
+      ),
     { emit: 'ecosystem' }
   )
   .field(

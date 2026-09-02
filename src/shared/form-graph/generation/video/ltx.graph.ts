@@ -16,7 +16,7 @@ import {
   type ImageEntry,
   refusingRangeDef,
 } from '../defs';
-import { familyScope, textBlock, type FamilyExt } from '../shared';
+import { familyScope, textBlock, type FamilyExt, narrowEcosystem } from '../shared';
 
 /**
  * LTX (LTXV2 + LTXV23 + LTXV25), ported from `ltx-graph.ts`.
@@ -303,7 +303,11 @@ const shared = defineGraph<FamilyExt>()
   // cross-version re-pick happens at the boundary via reconcileSelectors.
   .computed(
     'effectiveEcosystem',
-    ({ model, _ext }) => effectiveEcosystemOf(model, _ext.ecosystem, _ext.workflow),
+    ({ model, _ext }) =>
+      narrowEcosystem(
+        ['LTXV2', 'LTXV23', 'LTXV25'],
+        effectiveEcosystemOf(model, _ext.ecosystem, _ext.workflow)
+      ),
     { emit: 'ecosystem' }
   )
   .field('seed', SEED)

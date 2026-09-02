@@ -29,7 +29,20 @@ import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { ecosystemToVersionDef } from '~/shared/form-graph/generation/video/wan.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
+
+export type WanGenerationData = EcosystemData<
+  | 'WanVideo14B_T2V'
+  | 'WanVideo14B_I2V_720p'
+  | 'WanVideo14B_I2V_480p'
+  | 'WanVideo-22-T2V-A14B'
+  | 'WanVideo-22-I2V-A14B'
+  | 'WanVideo-22-TI2V-5B'
+  | 'WanVideo-25-T2V'
+  | 'WanVideo-25-I2V'
+  | 'WanVideo27'
+  | 'WanVideo30'
+>;
 
 type WanSteps =
   | [VideoGenStepTemplate]
@@ -103,15 +116,16 @@ function getImageAspectRatio<T extends `${number}:${number}`>(
  * for multi-step v2.2. The version comes from the BACKEND ecosystem key,
  * falling back to the branch tag.
  */
-export const createWanSteps = defineHandler<LooseGenerationData, WanSteps>(async (data, ctx) => {
+export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (data, ctx) => {
   const hasImages = !!data.images?.length;
   const version: WanVersion =
-    (data.ecosystem ? ecosystemToVersionDef.get(data.ecosystem)?.version : undefined) ??
-    (data.wanVersion as WanVersion | undefined) ??
-    'v2.1';
+    ecosystemToVersionDef.get(data.ecosystem)?.version ?? data.wanVersion ?? 'v2.1';
+  const duration = 'duration' in data ? data.duration : undefined;
+  const steps = 'steps' in data ? data.steps : undefined;
+  const resources = 'resources' in data ? data.resources : undefined;
 
   const loras: { air: string; strength: number }[] = [];
-  for (const resource of data.resources ?? []) {
+  for (const resource of resources ?? []) {
     loras.push({ air: ctx.airs.getOrThrow(resource.id), strength: resource.strength ?? 1 });
   }
 
@@ -120,14 +134,16 @@ export const createWanSteps = defineHandler<LooseGenerationData, WanSteps>(async
     version,
     prompt: data.prompt,
     cfgScale: data.cfgScale,
-    duration: data.duration,
+    duration,
     quantity: data.quantity ?? 1,
     seed: data.seed,
     loras: loras.length > 0 ? loras : undefined,
     frameRate: 24,
   };
 
-  switch (version) {
+  // `wanVersion` (the branch tag) and the backend-ecosystem lookup agree by
+  // construction; the tag is what narrows the arm.
+  switch (data.wanVersion) {
     case 'v2.1': {
       const resolution = data.resolution ?? '480p';
       const ratioEntries =
@@ -172,7 +188,7 @@ export const createWanSteps = defineHandler<LooseGenerationData, WanSteps>(async
             width: dims?.width,
             height: dims?.height,
             duration: data.duration ?? 5,
-            steps: data.steps ?? 20,
+            steps: steps ?? 20,
             negativePrompt: data.negativePrompt,
             shift: data.shift,
             images: hasImages ? data.images?.map((x) => x.url) : undefined,

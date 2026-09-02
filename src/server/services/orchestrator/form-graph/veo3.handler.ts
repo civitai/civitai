@@ -5,7 +5,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { veo3AspectRatios, veo3VersionIds } from '~/shared/form-graph/generation/video/veo3.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 type Veo3Mode = 'fast' | 'standard';
 const versionIdToMode = new Map<number, Veo3Mode>([
@@ -20,7 +20,7 @@ function getImageAspectRatio(images: { width: number; height: number }[] | undef
     .value;
 }
 
-export const createVeo3Input = defineHandler<LooseGenerationData, [VideoGenStepTemplate]>(
+export const createVeo3Input = defineHandler<EcosystemData<'Veo3'>, [VideoGenStepTemplate]>(
   (data, ctx) => {
     const images = data.images;
     const isRef2Vid = data.workflow === 'img2vid:ref2vid';
@@ -28,7 +28,9 @@ export const createVeo3Input = defineHandler<LooseGenerationData, [VideoGenStepT
 
     const mode: Veo3Mode = (data.model ? versionIdToMode.get(data.model.id) : undefined) ?? 'fast';
 
-    const loras = (data.resources ?? []).map((resource) => ({
+    // The Veo3 graph declares no resources field, so this is always empty today.
+    const resources = (data as { resources?: { id: number; strength?: number }[] }).resources;
+    const loras = (resources ?? []).map((resource) => ({
       air: ctx.airs.getOrThrow(resource.id),
       strength: resource.strength ?? 1,
     }));
@@ -52,11 +54,11 @@ export const createVeo3Input = defineHandler<LooseGenerationData, [VideoGenStepT
           negativePrompt: data.negativePrompt,
           aspectRatio: (data.aspectRatio?.value ??
             getImageAspectRatio(images)) as Veo3VideoGenInput['aspectRatio'],
-          duration: (data as { duration?: number }).duration,
+          duration: data.duration,
           // Never let this fall through as undefined: the orchestrator's
           // Veo3Version zero value is 3.0, whose endpoints Google retired.
-          version: (data as { version?: string }).version ?? '3.1',
-          generateAudio: (data as { generateAudio?: boolean }).generateAudio,
+          version: data.version ?? '3.1',
+          generateAudio: data.generateAudio,
           images: refImages ?? sourceImages,
           quantity: data.quantity ?? 1,
           seed: data.seed,

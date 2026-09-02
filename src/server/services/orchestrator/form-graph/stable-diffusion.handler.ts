@@ -20,7 +20,7 @@ import type { GenerationHandlerCtx } from '../ecosystems';
 import { createComfyInput } from '../ecosystems/comfy-input';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { buildControlNetSteps } from '../ecosystems/controlnets.helper';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 /** SD1 Draft LoRA - pre-computed AIR string */
 const SD1_DRAFT_LORA = {
@@ -124,7 +124,7 @@ function createTextToImageInput(
 }
 
 export const createStableDiffusionInput = defineHandler<
-  LooseGenerationData,
+  EcosystemData<'SD1' | 'SD2' | 'SDXL' | 'Pony' | 'Illustrious' | 'NoobAI'>,
   (TextToImageStepTemplate | ComfyStepTemplate | PreprocessImageStepTemplate)[]
 >(async (data, ctx) => {
   if (!data.model) throw new Error('Model is required for SD family workflows');

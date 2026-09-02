@@ -15,20 +15,18 @@ import { removeEmpty } from '~/utils/object-helpers';
 import {
   krea2VersionIds,
   krea2VersionIdToSize,
-  type Krea2StyleReferenceEntry,
 } from '~/shared/form-graph/generation/image/krea2.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { resourcesToLoras } from './types';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 type Krea2AspectRatio = NonNullable<Krea2FalImageGenInput['aspectRatio']>;
-type Krea2Creativity = NonNullable<Krea2FalImageGenInput['creativity']>;
 type Krea2ComfyInput =
   | ComfyKrea2RawCreateImageGenInput
   | ComfyKrea2TurboCreateImageGenInput
   | ComfyKrea2EditImageInput;
 
-export const createKrea2Input = defineHandler<LooseGenerationData, [ImageGenStepTemplate]>(
+export const createKrea2Input = defineHandler<EcosystemData<'Krea2'>, [ImageGenStepTemplate]>(
   (data, ctx) => {
     const quantity = data.quantity ?? 1;
     // Edit is comfy-only, so it wins over the FAL size tiers.
@@ -36,7 +34,7 @@ export const createKrea2Input = defineHandler<LooseGenerationData, [ImageGenStep
     const size = !isEdit && data.model ? krea2VersionIdToSize.get(data.model.id) : undefined;
 
     if (size) {
-      const styleRefs = (data as { styleReferences?: Krea2StyleReferenceEntry[] }).styleReferences;
+      const styleRefs = 'styleReferences' in data ? data.styleReferences : undefined;
       const imageStyleReferences: Krea2StyleReference[] = (styleRefs ?? []).map((ref) => ({
         imageUrl: ref.image.url,
         strength: ref.strength,
@@ -52,7 +50,7 @@ export const createKrea2Input = defineHandler<LooseGenerationData, [ImageGenStep
             prompt: data.prompt,
             aspectRatio: data.aspectRatio?.value as Krea2AspectRatio | undefined,
             size,
-            creativity: (data as { creativity?: Krea2Creativity }).creativity,
+            creativity: 'creativity' in data ? data.creativity : undefined,
             seed: data.seed,
             quantity,
             imageStyleReferences,
@@ -63,9 +61,9 @@ export const createKrea2Input = defineHandler<LooseGenerationData, [ImageGenStep
 
     const model = isEdit ? 'edit' : data.model?.id === krea2VersionIds.turbo ? 'turbo' : 'raw';
 
-    const loras = resourcesToLoras(data.resources, ctx.airs);
+    const loras = resourcesToLoras('resources' in data ? data.resources : undefined, ctx.airs);
 
-    const images = data.images?.map((x) => x.url);
+    const images = 'images' in data ? data.images?.map((x) => x.url) : undefined;
     if (isEdit && !images?.length) throw new Error('At least one image is required to edit');
 
     // `model: 'edit'` selects the edit graph, not a checkpoint — the base build
@@ -90,8 +88,8 @@ export const createKrea2Input = defineHandler<LooseGenerationData, [ImageGenStep
           negativePrompt: data.negativePrompt,
           width: data.aspectRatio?.width,
           height: data.aspectRatio?.height,
-          cfgScale: data.cfgScale,
-          steps: data.steps,
+          cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
+          steps: 'steps' in data ? data.steps : undefined,
           sampler: 'euler',
           scheduler: 'simple',
           seed: data.seed,

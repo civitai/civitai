@@ -4,13 +4,13 @@ import type { ImageGenStepTemplate, SeedreamImageGenInput, SeedreamVersion } fro
 import { removeEmpty } from '~/utils/object-helpers';
 import { seedreamVersionIds } from '~/shared/form-graph/generation/image/seedream.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 const versionIdToVersion = new Map<number, SeedreamVersion>(
   Object.entries(seedreamVersionIds).map(([version, id]) => [id, version as SeedreamVersion])
 );
 
-export const createSeedreamInput = defineHandler<LooseGenerationData, [ImageGenStepTemplate]>(
+export const createSeedreamInput = defineHandler<EcosystemData<'Seedream'>, [ImageGenStepTemplate]>(
   (data) => {
     const version: SeedreamVersion =
       (data.model?.id != null ? versionIdToVersion.get(data.model.id) : undefined) ?? 'v5.0-pro';

@@ -57,20 +57,13 @@ export function migrateWorkflowKey(key: string | undefined): string | undefined 
   return resolved;
 }
 
-/** Untagged: the oracle has no output-family key in data. */
-const outputHubs = branch((ext: RootCtx) => {
-  switch (ext.output) {
-    case 'video':
-      return videoHub;
-    case 'audio':
-      return audioHub;
-    case 'model3d':
-      return model3dHub;
-    case 'image':
-    default:
-      return imageHub;
-  }
-});
+/** Keyed on the `output` computed, declared above the dispatch. */
+const outputHubs = branch('output', [
+  [['image'], imageHub],
+  [['video'], videoHub],
+  [['audio'], audioHub],
+  [['model3d'], model3dHub],
+] as const);
 
 export const generationHub = defineGraph<GenerationCtx>()
   .field('workflow', ({ _ext }) => {

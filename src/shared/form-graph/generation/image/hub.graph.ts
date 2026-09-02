@@ -8,7 +8,8 @@ import {
 } from '../ecosystem-gates';
 import { boolDef, quantityDef } from '../defs';
 import { modelSelectorRules } from '../reconcile';
-import { familyScope, type FamilyExt, type RootCtx } from '../shared';
+import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import { familyScope, type RootCtx } from '../shared';
 
 import { chroma } from './chroma.graph';
 import { flux } from './flux.graph';
@@ -38,7 +39,8 @@ import { zimage } from './zimage.graph';
 
 /**
  * The IMAGE hub: ecosystem selection scoped to image output, the image-only
- * head fields (`priority`, `outputFormat`), the family dispatch, and the two
+ * the family dispatch (a keyed branch whose table types each arm), the
+ * image-only head fields (`priority`, `outputFormat`), and the two
  * fields the oracle declares AFTER its family discriminator because they read
  * family state (`enhancedCompatibility` reads the model; `quantity` reads
  * both). Workflow and the output/input computeds live on the root (`../hub.ts`).
@@ -47,75 +49,6 @@ import { zimage } from './zimage.graph';
 // Copied from generation-graph.ts, which dies with the data-graph engine.
 const priorityOptions = ['low', 'normal', 'high'] as const;
 const outputFormatOptions = ['jpeg', 'png'] as const;
-
-/** Untagged: the oracle has no family key in data. */
-const families = branch((ext: FamilyExt) => {
-  switch (ext.ecosystem) {
-    case 'ZImageTurbo':
-    case 'ZImageBase':
-      return zimage;
-    case 'Chroma':
-      return chroma;
-    case 'Flux1':
-    case 'FluxKrea':
-      return flux;
-    case 'Flux1Kontext':
-      return fluxKontext;
-    case 'Flux2':
-      return flux2;
-    case 'Flux2Klein_9B':
-    case 'Flux2Klein_9B_base':
-    case 'Flux2Klein_4B':
-    case 'Flux2Klein_4B_base':
-      return flux2Klein;
-    case 'Boogu':
-      return boogu;
-    case 'Krea2':
-      return krea2;
-    case 'Imagen4':
-      return imagen4;
-    case 'PonyV7':
-      return ponyV7;
-    case 'Reve':
-      return reve;
-    case 'MAI':
-      return mai;
-    case 'Ernie':
-      return ernie;
-    case 'Seedream':
-      return seedream;
-    case 'Anima':
-      return anima;
-    case 'MageFlow':
-      return mageFlow;
-    case 'HiDream':
-      return hiDream;
-    case 'HiDream-O1':
-      return hiDreamO1;
-    case 'OpenAI':
-      return openai;
-    case 'Lens':
-      return lens;
-    case 'Qwen':
-    case 'Qwen2':
-    case 'Qwen3':
-      return qwen;
-    case 'NanoBanana':
-      return nanoBanana;
-    case 'WanImage27':
-      return wanImage;
-    case 'Grok':
-      return grokImage;
-    case 'SD1':
-    case 'SD2':
-    case 'SDXL':
-    case 'Pony':
-    case 'Illustrious':
-    case 'NoobAI':
-    default:
-      return sd;
-  }
-});
 
 export const imageHub = defineGraph<RootCtx>()
   .field('ecosystem', ({ _ext }) => {
@@ -142,8 +75,9 @@ export const imageHub = defineGraph<RootCtx>()
           // falls back to the default; disabled/memberOnly are kept so the
           // picker can explain them, and refused on output. A value that
           // doesn't support the workflow redirects to the workflow's default
-          // (v1's sync effect).
-          if (hiddenSet.has(v)) return undefined;
+          // (v1's sync effect). An unknown key would have no member graph —
+          // it falls to the default too.
+          if (!ecosystemByKey.has(v) || hiddenSet.has(v)) return undefined;
           return resolveCompatibleEcosystem(_ext.workflow, v);
         }),
       output:
@@ -159,10 +93,41 @@ export const imageHub = defineGraph<RootCtx>()
         compatibleEcosystems,
         hiddenEcosystems,
         ecosystemStates,
-        mediaType: 'image',
+        mediaType: 'image' as const,
       },
     };
   })
+  .use(
+    // one entry per family, however many ecosystems it serves — the keys
+    // type each arm's `ecosystem` literal
+    branch('ecosystem', [
+      [['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'], sd],
+      [['ZImageTurbo', 'ZImageBase'], zimage],
+      [['Chroma'], chroma],
+      [['Flux1', 'FluxKrea'], flux],
+      [['Flux1Kontext'], fluxKontext],
+      [['Flux2'], flux2],
+      [['Flux2Klein_9B', 'Flux2Klein_9B_base', 'Flux2Klein_4B', 'Flux2Klein_4B_base'], flux2Klein],
+      [['Boogu'], boogu],
+      [['Krea2'], krea2],
+      [['Imagen4'], imagen4],
+      [['PonyV7'], ponyV7],
+      [['Reve'], reve],
+      [['MAI'], mai],
+      [['Ernie'], ernie],
+      [['Seedream'], seedream],
+      [['Anima'], anima],
+      [['MageFlow'], mageFlow],
+      [['HiDream'], hiDream],
+      [['HiDream-O1'], hiDreamO1],
+      [['OpenAI'], openai],
+      [['Lens'], lens],
+      [['Qwen', 'Qwen2', 'Qwen3'], qwen],
+      [['NanoBanana'], nanoBanana],
+      [['WanImage27'], wanImage],
+      [['Grok'], grokImage],
+    ] as const)
+  )
   .field('priority', ({ _ext }) => {
     const isMember = _ext.user?.isMember ?? false;
     const options: {
@@ -207,7 +172,6 @@ export const imageHub = defineGraph<RootCtx>()
           },
         }
   )
-  .use(families)
   // Both read the family's DERIVED ecosystem where one exists (v1 reads its
   // conflated key after the checkpoint effect has moved it); families without
   // a derivation declare nothing and the selection stands.

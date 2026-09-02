@@ -15,13 +15,13 @@ import {
 } from '~/shared/form-graph/generation/video/minimax.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { resourcesToLoras } from './types';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 const minimaxComfyDefaultAspectRatio =
   minimaxComfyAspectRatios.find((option) => option.value === MINIMAX_DEFAULT_ASPECT_RATIO) ??
   minimaxComfyAspectRatios[0];
 
-export const createMiniMaxInput = defineHandler<LooseGenerationData, [VideoGenStepTemplate]>(
+export const createMiniMaxInput = defineHandler<EcosystemData<'MiniMaxH3'>, [VideoGenStepTemplate]>(
   (data, ctx) => {
     const images = data.images;
     const isRef2Vid = data.workflow === 'img2vid:ref2vid';
@@ -30,14 +30,14 @@ export const createMiniMaxInput = defineHandler<LooseGenerationData, [VideoGenSt
     const prompt = data.prompt?.trim();
     if (!prompt) throw throwBadRequestError('A prompt is required for MiniMax H3');
 
-    if ((data as { minimaxVariant?: string }).minimaxVariant === 'comfy') {
+    if (data.minimaxVariant === 'comfy') {
       const shared = {
         engine: 'minimax-h3-comfy' as const,
         prompt,
-        duration: (data as { duration?: number }).duration,
+        duration: data.duration,
         seed: data.seed,
         steps: data.steps,
-        turbo: (data as { turbo?: boolean }).turbo,
+        turbo: data.turbo,
         loras: resourcesToLoras(data.resources, ctx.airs),
         diffusionModel: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
       };
@@ -95,7 +95,7 @@ export const createMiniMaxInput = defineHandler<LooseGenerationData, [VideoGenSt
           aspectRatio: firstFrameImage
             ? 'adaptive'
             : (data.aspectRatio?.value as MiniMaxH3VideoGenInput['aspectRatio']),
-          duration: (data as { duration?: number }).duration,
+          duration: data.duration,
           resolution: '2K',
           firstFrameImage,
           lastFrameImage,

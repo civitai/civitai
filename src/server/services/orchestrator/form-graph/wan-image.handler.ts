@@ -7,31 +7,32 @@ import type {
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { defineHandler } from '../ecosystems/handler-factory';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
-export const createWanImageInput = defineHandler<LooseGenerationData, [ImageGenStepTemplate]>(
-  (data) => {
-    const hasImages = !!data.images?.length;
+export const createWanImageInput = defineHandler<
+  EcosystemData<'WanImage27'>,
+  [ImageGenStepTemplate]
+>((data) => {
+  const hasImages = !!data.images?.length;
 
-    return [
-      {
-        $type: 'imageGen',
-        input: removeEmpty({
-          engine: 'wan' as const,
-          version: 'v2.7' as const,
-          provider: 'fal' as const,
-          prompt: data.prompt,
-          negativePrompt: data.negativePrompt,
-          guidanceScale: data.cfgScale,
-          seed: data.seed,
-          quantity: data.quantity ?? 1,
-          aspectRatio: data.aspectRatio?.value,
-          enablePromptExpansion: (data as { enablePromptEnhancer?: boolean }).enablePromptEnhancer,
-          ...(hasImages
-            ? { operation: 'editImage', images: data.images!.map((x) => x.url) }
-            : { operation: 'createImage' }),
-        }) as Wan27FalTextToImageInput | Wan27FalImageEditInput,
-      },
-    ];
-  }
-);
+  return [
+    {
+      $type: 'imageGen',
+      input: removeEmpty({
+        engine: 'wan' as const,
+        version: 'v2.7' as const,
+        provider: 'fal' as const,
+        prompt: data.prompt,
+        negativePrompt: data.negativePrompt,
+        guidanceScale: data.cfgScale,
+        seed: data.seed,
+        quantity: data.quantity ?? 1,
+        aspectRatio: data.aspectRatio?.value,
+        enablePromptExpansion: data.enablePromptEnhancer,
+        ...(hasImages
+          ? { operation: 'editImage', images: data.images!.map((x) => x.url) }
+          : { operation: 'createImage' }),
+      }) as Wan27FalTextToImageInput | Wan27FalImageEditInput,
+    },
+  ];
+});

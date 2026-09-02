@@ -14,7 +14,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { booguModeOf, type BooguMode } from '~/shared/form-graph/generation/image/boogu.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { resourcesToLoras } from './types';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
 type BooguInput =
   | ComfyBooguBaseCreateImageGenInput
@@ -22,7 +22,7 @@ type BooguInput =
   | ComfyBooguEditImageInput
   | ComfyBooguEditTurboImageInput;
 
-export const createBooguInput = defineHandler<LooseGenerationData, [ImageGenStepTemplate]>(
+export const createBooguInput = defineHandler<EcosystemData<'Boogu'>, [ImageGenStepTemplate]>(
   (data, ctx) => {
     const model: BooguMode = booguModeOf(data.model, { workflow: data.workflow ?? '' });
 

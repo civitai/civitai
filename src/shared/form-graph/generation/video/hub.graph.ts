@@ -1,13 +1,14 @@
 import { z } from 'zod';
 import { branch, defFamily, defineGraph } from 'form-graph';
 import { VID_QUANTITY_ECOSYSTEMS } from '~/shared/constants/generation.constants';
+import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { getEcosystemStates, resolveCompatibleEcosystem } from '../ecosystem-gates';
 import { modelSelectorRules } from '../reconcile';
-import type { RootCtx, FamilyExt } from '../shared';
+import type { RootCtx } from '../shared';
 
 import { ltx } from './ltx.graph';
 import { seedance } from './seedance.graph';
-import { isWanEcosystem, wan } from './wan.graph';
+import { wan } from './wan.graph';
 import { grokVideo } from './grok.graph';
 import { mochi } from './mochi.graph';
 import { sora } from './sora.graph';
@@ -20,12 +21,11 @@ import { vidu } from './vidu.graph';
 import { kling } from './kling.graph';
 
 /**
- * The VIDEO hub: ecosystem selection scoped to video output, plus quantity for
- * the video ecosystems that batch, then the family dispatch. Workflow and the
- * output/input computeds live on the root (`../hub.ts`), which mounts this hub
- * only when the workflow's output type is video — so nothing here handles
- * image/audio/model3d ecosystems, and `priority`/`outputFormat` (image-only in
- * the oracle) never appear.
+ * The VIDEO hub: ecosystem selection scoped to video output, quantity for the
+ * video ecosystems that batch, then the family dispatch — a keyed branch
+ * whose table types each arm's `ecosystem` as its literal (the model-wins
+ * families' own emits then narrow it to the keys they can rewrite to).
+ * Workflow and the output/input computeds live on the root (`../hub.graph.ts`).
  */
 
 const QUANTITY = defFamily((max: number) => {
@@ -39,40 +39,6 @@ const QUANTITY = defFamily((max: number) => {
     default: 1,
     meta: { min: 1, max, step: 1 },
   };
-});
-
-/** Which family graph owns an ecosystem. Untagged: the oracle has no family key. */
-const families = branch((ext: FamilyExt) => {
-  if (isWanEcosystem(ext.ecosystem)) return wan;
-  switch (ext.ecosystem) {
-    case 'Seedance':
-      return seedance;
-    case 'Grok':
-      return grokVideo;
-    case 'Mochi':
-      return mochi;
-    case 'Sora2':
-      return sora;
-    case 'HyV1':
-      return hunyuan;
-    case 'Flux3Video':
-      return flux3Video;
-    case 'MiniMaxH3':
-      return minimax;
-    case 'HappyHorse':
-      return happyHorse;
-    case 'Veo3':
-      return veo3;
-    case 'Vidu':
-      return vidu;
-    case 'Kling':
-      return kling;
-    case 'LTXV2':
-    case 'LTXV23':
-    case 'LTXV25':
-    default:
-      return ltx;
-  }
 });
 
 export const videoHub = defineGraph<RootCtx>()
@@ -96,12 +62,10 @@ export const videoHub = defineGraph<RootCtx>()
         .optional()
         .transform((v) => {
           if (!v) return undefined;
-          // Hidden values are dropped at the boundary so a stale stored value
-          // falls back to the default; disabled/memberOnly are kept so the
-          // picker can explain them, and refused on output. A value that
-          // doesn't support the workflow redirects to the workflow's default
-          // (v1's sync effect).
-          if (hiddenSet.has(v)) return undefined;
+          // an unknown key would have no member graph — fall to the default,
+          // like a hidden one; disabled/memberOnly are kept for the picker
+          // and refused on output
+          if (!ecosystemByKey.has(v) || hiddenSet.has(v)) return undefined;
           return resolveCompatibleEcosystem(_ext.workflow, v);
         }),
       output:
@@ -117,17 +81,50 @@ export const videoHub = defineGraph<RootCtx>()
         compatibleEcosystems,
         hiddenEcosystems,
         ecosystemStates,
-        mediaType: 'video',
+        mediaType: 'video' as const,
       },
-      // the SELECTION: shadowed off the wire by each family's
-      // `emit: 'ecosystem'` computed, which carries the derived backend
+      // the SELECTION: shadowed off the wire by the model-wins families'
+      // `emit: 'ecosystem'` computeds, which carry the derived backend
     };
   })
   .field('quantity', ({ ecosystem, _ext }) => {
     if (!VID_QUANTITY_ECOSYSTEMS.has(ecosystem)) return null;
     return QUANTITY(_ext.limits.vidQuantity);
   })
-  .use(families)
+  .use(
+    // one entry per family, however many ecosystems it serves — the keys
+    // type each arm's `ecosystem` literal
+    branch('ecosystem', [
+      [
+        [
+          'WanVideo',
+          'WanVideo14B_T2V',
+          'WanVideo14B_I2V_720p',
+          'WanVideo14B_I2V_480p',
+          'WanVideo-22-T2V-A14B',
+          'WanVideo-22-I2V-A14B',
+          'WanVideo-22-TI2V-5B',
+          'WanVideo-25-T2V',
+          'WanVideo-25-I2V',
+          'WanVideo27',
+          'WanVideo30',
+        ],
+        wan,
+      ],
+      [['LTXV2', 'LTXV23', 'LTXV25'], ltx],
+      [['Seedance'], seedance],
+      [['Grok'], grokVideo],
+      [['Mochi'], mochi],
+      [['Sora2'], sora],
+      [['HyV1'], hunyuan],
+      [['Flux3Video'], flux3Video],
+      [['MiniMaxH3'], minimax],
+      [['HappyHorse'], happyHorse],
+      [['Veo3'], veo3],
+      [['Vidu'], vidu],
+      [['Kling'], kling],
+    ] as const)
+  )
   // interactive model picks reconcile selectors the same way the parse boundary does
   .effect(modelSelectorRules);
 

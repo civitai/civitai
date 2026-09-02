@@ -1,3 +1,4 @@
+import type { InferArm, InferData, InferLooseData } from 'form-graph';
 import type { generationHub } from '~/shared/form-graph/generation/hub.graph';
 
 /**
@@ -6,24 +7,25 @@ import type { generationHub } from '~/shared/form-graph/generation/hub.graph';
  * handler here receives exactly what its data-graph counterpart receives.
  */
 
-type ParseOk = Extract<ReturnType<typeof generationHub.parse>, { success: true }>;
-
 /** The composed root's parsed wire data — a union over every family arm. */
-export type GenerationData = ParseOk['data'];
-
-type AllKeys<U> = U extends unknown ? keyof U : never;
+export type GenerationData = InferData<typeof generationHub>;
 
 /**
- * Every key of every arm, optional — the handler-side counterpart of the
- * graph bag's loose read. Handlers read fields defensively (a field a family
- * lacks is simply absent), which this types directly instead of the v1
- * pattern of `'field' in data` narrowing on a discriminated union.
+ * One (or several) family arms, selected by the ecosystem discriminant — the
+ * hub's branchOn keys type every arm's ecosystem as a literal, so this is
+ * the typed view a handler declares instead of narrowing a loose bag by hand.
  */
-export type Loose<U> = {
-  [K in AllKeys<U>]?: U extends unknown ? (K extends keyof U ? U[K] : never) : never;
-};
+export type EcosystemData<E extends GenerationData['ecosystem']> = InferArm<
+  typeof generationHub,
+  'ecosystem',
+  E
+>;
 
-export type LooseGenerationData = Loose<GenerationData>;
+/**
+ * Every key of every arm, optional — for helpers shared across arms, which
+ * read fields defensively (a field a family lacks is simply absent).
+ */
+export type LooseGenerationData = InferLooseData<typeof generationHub>;
 
 /**
  * The comfy-style loras map every handler builds from additional resources.

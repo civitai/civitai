@@ -9,9 +9,9 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { ernieVersionIds } from '~/shared/form-graph/generation/image/ernie.graph';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { resourcesToLoras } from './types';
-import type { LooseGenerationData } from './types';
+import type { EcosystemData } from './types';
 
-export const createErnieInput = defineHandler<LooseGenerationData, [ImageGenStepTemplate]>(
+export const createErnieInput = defineHandler<EcosystemData<'Ernie'>, [ImageGenStepTemplate]>(
   (data, ctx) => {
     if (!data.aspectRatio) throw new Error('Aspect ratio is required for Ernie workflows');
 
@@ -42,7 +42,7 @@ export const createErnieInput = defineHandler<LooseGenerationData, [ImageGenStep
       ];
     }
 
-    const loras = resourcesToLoras(data.resources, ctx.airs);
+    const loras = resourcesToLoras('resources' in data ? data.resources : undefined, ctx.airs);
 
     return [
       {
