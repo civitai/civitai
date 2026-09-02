@@ -18,6 +18,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { ChatPortal } from '~/components/Chat/ChatPortal';
 import { RewardsBonusBanner } from '~/components/Buzz/RewardsBonusBanner';
+import { VerifyEmailBanner } from '~/components/User/VerifyEmailBanner';
 import { useRegionWarning } from '~/components/RegionBlock/useRegionWarning';
 import { useRegionRedirectDetection } from '~/components/RegionBlock/useRegionRedirectDetection';
 import { useToSUpdateModal } from '~/hooks/useToSUpdateModal';
@@ -128,11 +129,17 @@ export function MainContent({
       <main className="min-w-0 flex-1">
         {subNav && (
           <SubNav>
+            <VerifyEmailBanner />
             <RewardsBonusBanner />
             {subNav}
           </SubNav>
         )}
-        {!subNav && <RewardsBonusBanner />}
+        {!subNav && (
+          <>
+            <VerifyEmailBanner />
+            <RewardsBonusBanner />
+          </>
+        )}
         {announcements && <Announcements className="mb-3" />}
         {children}
       </main>
@@ -143,11 +150,17 @@ export function MainContent({
       <main className="flex flex-1 flex-col overflow-hidden">
         {subNav && (
           <SubNav>
+            <VerifyEmailBanner />
             <RewardsBonusBanner />
             {subNav}
           </SubNav>
         )}
-        {!subNav && <RewardsBonusBanner />}
+        {!subNav && (
+          <>
+            <VerifyEmailBanner />
+            <RewardsBonusBanner />
+          </>
+        )}
         {children}
       </main>
       {footer}

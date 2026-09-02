@@ -91,11 +91,13 @@ import {
 } from '~/server/services/user.service';
 import {
   requestEmailChange,
+  sendEmailVerification,
   confirmEmailChange,
   validateEmailChangeToken,
 } from '~/server/services/email-verification.service';
 import {
   guardedProcedure,
+  guardedProcedureAllowUnverifiedEmail,
   isFlagProtected,
   moderatorProcedure,
   protectedProcedure,
@@ -110,7 +112,8 @@ import { handleLogError } from '~/server/utils/errorHandling';
 import { createTipaltiPayee } from '~/server/services/user-payment-configuration.service';
 import { addSystemPermission } from '~/server/services/system-cache';
 import { createNotification } from '~/server/services/notification.service';
-import { NotificationCategory } from '~/server/common/enums';
+import { NotificationCategory, OnboardingSteps } from '~/server/common/enums';
+import type { UserOnboardingSchema } from '~/server/schema/user.schema';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import { dbRead } from '~/server/db/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -204,6 +207,21 @@ export const userRouter = router({
     .mutation(async ({ input, ctx }) => {
       return requestEmailChange(ctx.user.id, input.newEmail);
     }),
+  // `protectedProcedure`, deliberately NOT `guardedProcedure`: the accounts that need this are exactly
+  // the ones `guardedProcedure` now refuses.
+  resendEmailVerification: protectedProcedure
+    .meta({ requiredScope: TokenScope.UserWrite })
+    .use(
+      rateLimit({
+        limit: 3,
+        period: 60 * 60,
+        errorMessage:
+          'You can only request 3 verification emails per hour. Please try again later.',
+      })
+    )
+    .mutation(async ({ ctx }) => {
+      return sendEmailVerification(ctx.user.id);
+    }),
   validateEmailToken: publicProcedure
     .meta({ requiredScope: TokenScope.UserRead })
     .input(validateEmailTokenSchema)
@@ -216,7 +234,8 @@ export const userRouter = router({
     .mutation(async ({ input }) => {
       return confirmEmailChange(input.token);
     }),
-  updateBrowsingMode: guardedProcedure
+  // A browsing preference, not a content action.
+  updateBrowsingMode: guardedProcedureAllowUnverifiedEmail
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(updateBrowsingModeSchema)
     .mutation(async ({ input, ctx }) => {
@@ -244,6 +263,20 @@ export const userRouter = router({
   completeOnboardingStep: protectedProcedure
     .meta({ requiredScope: TokenScope.UserWrite })
     .input(userOnboardingSchema)
+    // Belt and braces on the ONE step that can send mail to a caller-chosen address. The handler only
+    // sends on a first completion, so the primitive is closed there; this bounds the residual if that
+    // condition is ever loosened, and it is scoped to the Profile step so a user retrying a username
+    // — or completing the other three steps — never meets it.
+    .use(
+      rateLimit(
+        {
+          limit: 10,
+          period: 60 * 60,
+          errorMessage: 'Too many attempts. Please wait a few minutes and try again.',
+        },
+        (input: UserOnboardingSchema) => input.step === OnboardingSteps.Profile
+      )
+    )
     .mutation(completeOnboardingHandler),
   toggleFollow: verifiedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })

@@ -97,6 +97,7 @@ import {
   restoreUser,
   setLeaderboardEligibility,
   setUserSetting,
+  setEmailVerificationRequired,
   patchUserSettings,
   splitSettingsPatch,
   toggleBan,
@@ -115,6 +116,7 @@ import {
   userByReferralCode,
 } from '~/server/services/user.service';
 import { assertEmailAllowed } from '~/server/services/blocklist.service';
+import { issueEmailVerification } from '~/server/services/email-verification.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -401,13 +403,73 @@ export const completeOnboardingHandler = async ({
       case OnboardingSteps.Profile: {
         if (input.username && !(await isUsernamePermitted(input.username)))
           throw throwBadRequestError('Invalid username');
+
+        // Off the row, not off `ctx.user`: the session shape is cached for up to 4h, so comparing
+        // against it lets a stale email skip `assertEmailAllowed` and skip the stamp below. From the
+        // PRIMARY, because the comparison decides a write — a replica read would decide on a row that
+        // may already have moved.
+        const current = await dbWrite.user.findUnique({
+          where: { id },
+          select: { email: true, emailVerified: true, username: true },
+        });
         // OAuth providers that hand us no email (Reddit) land here with `email: null`, and this step
         // then REQUIRES one — free text that is never verified, which is the burner ring's door in.
-        if (input.email && input.email !== ctx.user.email) await assertEmailAllowed(input.email);
+        // Compared case-insensitively because the column is `citext`: a case-only retype is the SAME
+        // address, and treating it as a change would revoke a verification the user already earned.
+        const emailChanged =
+          !!input.email && input.email.toLowerCase() !== current?.email?.toLowerCase();
+        if (emailChanged) await assertEmailAllowed(input.email);
+
+        // `emailVerified` attests to ONE address. Carrying it across a change would leave the flag
+        // vouching for an address nobody proved, and would hand the gate a free bypass: sign in with a
+        // verified provider, then type someone else's address here.
+        const verified = emailChanged ? null : current?.emailVerified ?? null;
+
+        // 🔴 BEFORE the row write, and the order is the whole point. These are three statements with
+        // no transaction between them. Stamped second, a failure here after the row had committed
+        // would leave the user retrying a step whose `changed` and `emailChanged` are now both false —
+        // so the retry writes no stamp and the account finishes ungated, permanently, with nothing
+        // left to re-stamp it. Stamped first, the same failure commits nothing and the retry is clean.
+        //
+        // Only when this step is genuinely ESTABLISHING the address — the first time it completes, or
+        // when it changes the address. A bare re-submit must not stamp: `onboarding` is caller-supplied
+        // input, so without that condition any account could mark itself, including one that predates
+        // the rule and has been posting for years.
+        if (changed || emailChanged) await setEmailVerificationRequired(id, !verified);
+
         await dbWrite.user.update({
           where: { id },
-          data: { onboarding, username: input.username, email: input.email },
+          data: {
+            onboarding,
+            username: input.username,
+            email: input.email,
+            ...(emailChanged ? { emailVerified: null } : {}),
+          },
         });
+
+        // 🔴 `changed` only — NOT `emailChanged`. The caller picks the recipient, so sending on
+        // every address change made this an unmetered way to mail an arbitrary third party from
+        // Civitai's sending domain: alternate two addresses and loop. `changed` can be true at most
+        // once per account, so this path sends at most once. A user who mistypes their address
+        // corrects it and uses the banner's resend.
+        //
+        // That does not close the primitive, only this path's unmetered version of it. Nothing binds
+        // `User.email` to the account holder — this step rewrites it without the immutability check in
+        // `updateUserById` — so `resendEmailVerification` still mails a caller-chosen address, at its
+        // 3/hour. Against `requestEmailChange`'s 2/day that is the residual, and it is a rate limit
+        // rather than a bound on WHO can be mailed.
+        //
+        // The address is passed rather than re-read: a replica read right after this write can still
+        // hold the OLD row, and a token minted for the old address silently reverts the change when
+        // its link is clicked — `confirmEmailChange` writes the address the TOKEN carries, not the one
+        // the mail reached. Best-effort: the step is committed above, and a mail failure must not
+        // report a step the user then re-submits.
+        if (changed && !verified && input.email)
+          await issueEmailVerification(
+            id,
+            input.email,
+            input.username ?? current?.username ?? null
+          ).catch(handleLogError);
         break;
       }
       case OnboardingSteps.BrowsingLevels: {
