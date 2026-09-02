@@ -13,17 +13,28 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 /**
- * Who may delete, and the confirm step. Shared so the profile's icon button and the panel's
- * menu item cannot drift apart on either — the permission is the load-bearing half.
+ * Delete an announcement, as an icon button or as a menu entry. One component with `as`
+ * rather than two, following `HideUserButton` and its siblings: the permission, the confirm
+ * step and the in-flight state cannot then differ between the two chromes.
+ *
+ * In the panel this lives in the options menu — a destructive control does not belong loose
+ * in the card's top bar, which is chrome the reader scans.
  */
-function useDeleteCreatorAnnouncementAction(announcement: CreatorAnnouncementModel) {
+export function DeleteCreatorAnnouncementButton({
+  announcement,
+  as = 'button',
+}: {
+  announcement: CreatorAnnouncementModel;
+  as?: 'menu-item' | 'button';
+}) {
   const currentUser = useCurrentUser();
   const { deleteAnnouncement, isLoading } = useDeleteCreatorAnnouncement();
 
   const canDelete =
     !!currentUser && (currentUser.isModerator || currentUser.id === announcement.userId);
+  if (!canDelete) return null;
 
-  const confirmDelete = () =>
+  const handleDelete = () =>
     openConfirmModal({
       title: 'Delete announcement',
       children: 'Are you sure you want to delete this announcement? This cannot be undone.',
@@ -32,45 +43,24 @@ function useDeleteCreatorAnnouncementAction(announcement: CreatorAnnouncementMod
       onConfirm: () => deleteAnnouncement(announcement.id),
     });
 
-  return { canDelete, isLoading, confirmDelete };
-}
-
-export function DeleteCreatorAnnouncementButton({
-  announcement,
-}: {
-  announcement: CreatorAnnouncementModel;
-}) {
-  const { canDelete, isLoading, confirmDelete } = useDeleteCreatorAnnouncementAction(announcement);
-  if (!canDelete) return null;
-
-  return (
+  return as === 'button' ? (
     <LegacyActionIcon
       variant="subtle"
       color="red"
       radius="xl"
       loading={isLoading}
-      onClick={confirmDelete}
+      onClick={handleDelete}
       aria-label="Delete announcement"
     >
       <IconTrash size={18} />
     </LegacyActionIcon>
-  );
-}
-
-/**
- * The same action as a menu entry. In the panel the card's top bar is chrome the reader
- * scans, so a destructive control does not belong loose in it.
- */
-export function DeleteCreatorAnnouncementMenuItem({
-  announcement,
-}: {
-  announcement: CreatorAnnouncementModel;
-}) {
-  const { canDelete, confirmDelete } = useDeleteCreatorAnnouncementAction(announcement);
-  if (!canDelete) return null;
-
-  return (
-    <Menu.Item color="red" leftSection={<IconTrash size={16} />} onClick={confirmDelete}>
+  ) : (
+    <Menu.Item
+      color="red"
+      disabled={isLoading}
+      leftSection={<IconTrash size={16} />}
+      onClick={handleDelete}
+    >
       Delete announcement
     </Menu.Item>
   );

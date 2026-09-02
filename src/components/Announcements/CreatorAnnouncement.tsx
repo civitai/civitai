@@ -6,6 +6,7 @@ import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 
 export const DEFAULT_ANNOUNCEMENT_TITLE = 'Creator Announcement';
+export const CREATOR_ANNOUNCEMENT_LABEL = 'Creator announcement';
 
 /**
  * A creator-authored announcement. Layout lives in `AnnouncementCard`, shared with the
@@ -29,7 +30,6 @@ export function CreatorAnnouncement({
   withAuthor?: boolean;
 } & React.HTMLAttributes<HTMLDivElement>) {
   const { cover, user } = announcement;
-  const showAuthor = withAuthor && !!user;
   const postedAt = announcement.startsAt ?? announcement.createdAt;
 
   // The backfill stores this title on migrated banners, so this fallback is for the case
@@ -59,12 +59,27 @@ export function CreatorAnnouncement({
       actions={announcement.metadata?.actions ?? []}
       // With a top bar the controls belong up there beside the author, not indented into
       // the content; without one there is nowhere else for them to go.
-      controls={showAuthor ? undefined : actions}
+      controls={withAuthor ? undefined : actions}
       topBar={
-        showAuthor ? (
+        withAuthor ? (
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
-              <UserAvatar user={user} size="sm" withUsername linkToProfile withHoverCard={false} />
+              {user ? (
+                <UserAvatar
+                  user={user}
+                  size="sm"
+                  withUsername
+                  linkToProfile
+                  withHoverCard={false}
+                />
+              ) : (
+                // Fails CLOSED. An author-less row cannot reach this today, but if one ever
+                // does, dropping the bar would render a creator announcement in the exact
+                // shape of an official Civitai one — the confusion this exists to prevent.
+                <Text size="sm" fw={500}>
+                  {CREATOR_ANNOUNCEMENT_LABEL}
+                </Text>
+              )}
               <Text c="dimmed" size="xs" className="whitespace-nowrap">
                 <DaysFromNow date={postedAt} />
               </Text>
@@ -74,7 +89,7 @@ export function CreatorAnnouncement({
         ) : null
       }
       footer={
-        showAuthor ? null : (
+        withAuthor ? null : (
           <Text c="dimmed" size="xs">
             <DaysFromNow date={postedAt} />
           </Text>

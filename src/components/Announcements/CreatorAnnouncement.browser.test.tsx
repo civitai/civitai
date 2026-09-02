@@ -43,23 +43,29 @@ vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOrigina
   useViewerBrowsingLevelDebounced: () => 1,
 }));
 
-// `UserAvatar` calls `trpc.user.getById.useQuery` even when it is handed a user (the query
-// is disabled, the hook still runs), and this scaffold mounts no tRPC provider. Only that
-// one procedure is replaced; the rest of the module is the real one.
+// A STUB tRPC client, not a narrowed real one. `trpc` is a tRPC flat Proxy, and spreading a
+// Proxy reads ownKeys — which is empty — so `{...actual.trpc}` yields `{}`. Anything not
+// named here is absent by construction; the Proxy below turns that into a named error
+// instead of `Cannot read properties of undefined` inside a render, which empties the tree
+// and makes every assertion in the file time out with nothing pointing at tRPC.
+//
+// `UserAvatar` calls `trpc.user.getById.useQuery` even when handed a complete user (the
+// query is disabled, the hook still runs), and this scaffold mounts no tRPC provider.
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const actual = await importOriginal<typeof Trpc>();
+  const stubbed: Record<string, unknown> = {
+    user: { getById: { useQuery: () => ({ data: undefined, isInitialLoading: false }) } },
+  };
   return {
     ...actual,
-    trpc: {
-      ...actual.trpc,
-      user: {
-        ...(actual.trpc as any).user,
-        getById: { useQuery: () => ({ data: undefined, isInitialLoading: false }) },
+    trpc: new Proxy(stubbed, {
+      get(target, prop: string) {
+        if (prop in target) return target[prop];
+        throw new Error(`Unmocked tRPC router in a component test: trpc.${String(prop)}`);
       },
-    },
+    }),
   };
 });
-
 
 const announcement = {
   id: 2,

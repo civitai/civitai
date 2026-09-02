@@ -8,7 +8,7 @@ import {
   pruneDismissedCreatorAnnouncements,
   useDismissedCreatorAnnouncements,
 } from '~/components/Announcements/creator-announcement-dismissals';
-import { DeleteCreatorAnnouncementMenuItem } from '~/components/Announcements/CreatorAnnouncementsCarousel';
+import { DeleteCreatorAnnouncementButton } from '~/components/Announcements/CreatorAnnouncementsCarousel';
 import { AnnouncementMuteMenuItem } from '~/components/Announcements/AnnouncementMuteToggle';
 import {
   useCreatorAnnouncementsFeature,
@@ -83,28 +83,30 @@ export function AnnouncementsPanel({ sources }: { sources: AnnouncementSource[] 
           withAuthor
           actions={
             <div className="flex items-center gap-1">
-              {!!announcement.user && (
-                <Menu withinPortal position="bottom-end">
-                  <Menu.Target>
-                    <LegacyActionIcon
-                      variant="subtle"
-                      color="gray"
-                      radius="xl"
-                      aria-label="Announcement options"
-                    >
-                      <IconDotsVertical size={16} />
-                    </LegacyActionIcon>
-                  </Menu.Target>
-                  <Menu.Dropdown>
+              <Menu withinPortal position="bottom-end">
+                <Menu.Target>
+                  <LegacyActionIcon
+                    variant="subtle"
+                    color="gray"
+                    radius="xl"
+                    aria-label="Announcement options"
+                  >
+                    <IconDotsVertical size={16} />
+                  </LegacyActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  {/* Muting needs an author to mute; deleting does not, and a moderator
+                      should not lose the control on the row most likely to need it. */}
+                  {!!announcement.user && (
                     <AnnouncementMuteMenuItem
                       creatorId={announcement.user.id}
                       creatorName={announcement.user.username}
                       muted={mutedCreatorIds.includes(announcement.user.id)}
                     />
-                    <DeleteCreatorAnnouncementMenuItem announcement={announcement} />
-                  </Menu.Dropdown>
-                </Menu>
-              )}
+                  )}
+                  <DeleteCreatorAnnouncementButton announcement={announcement} as="menu-item" />
+                </Menu.Dropdown>
+              </Menu>
               <LegacyActionIcon
                 variant="subtle"
                 color="gray"

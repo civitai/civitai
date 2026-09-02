@@ -86,8 +86,13 @@ function toCreatorAnnouncementDTO<T extends RawCreatorAnnouncement>(announcement
  * so a creator announcement renders with the same identity the rest of the site gives them
  * — a byline that is only a name is what the reader has to tell apart from Civitai's own.
  */
-async function withAuthorIdentity<T extends { user: { id: number } | null }>(announcements: T[]) {
-  const userIds = [...new Set(announcements.map((x) => x.user?.id).filter(isDefined))];
+async function withAuthorIdentity<T extends { user: { id: number } | null }>(
+  announcements: T[],
+  { hydrate }: { hydrate: boolean }
+) {
+  const userIds = hydrate
+    ? [...new Set(announcements.map((x) => x.user?.id).filter(isDefined))]
+    : [];
   const [profilePictures, cosmetics] = userIds.length
     ? await Promise.all([getProfilePicturesForUsers(userIds), getCosmeticsForUsers(userIds)])
     : [{}, {}];
@@ -154,7 +159,12 @@ export async function getCreatorAnnouncements({
     take: limit,
   });
 
-  return withAuthorIdentity(announcements.map(toCreatorAnnouncementDTO));
+  // `hydrate: false` — the profile carousel renders no byline (see `CreatorAnnouncement`'s
+  // `withAuthor`), so fetching the author's picture and cosmetics here would be two cache
+  // fan-outs and several KB per row, duplicated across rows that all share one author, for
+  // fields nothing reads. The FIELDS are still present so both queries have one DTO shape.
+  // If a byline is ever added to the profile, flip this — do not remove the argument.
+  return withAuthorIdentity(announcements.map(toCreatorAnnouncementDTO), { hydrate: false });
 }
 
 /**
@@ -220,7 +230,8 @@ export async function getFollowedAnnouncements({
   });
 
   const items = await withAuthorIdentity(
-    announcements.slice(0, limit).map(toCreatorAnnouncementDTO)
+    announcements.slice(0, limit).map(toCreatorAnnouncementDTO),
+    { hydrate: true }
   );
 
   return {

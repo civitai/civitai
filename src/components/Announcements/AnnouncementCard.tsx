@@ -125,7 +125,12 @@ export function AnnouncementCard({
       )}
 
       <div
-        className={clsx('flex flex-1 flex-col justify-center gap-2 p-3', cover && 'border-l')}
+        className={clsx(
+          'flex flex-1 flex-col justify-center gap-2 p-3',
+          // Gated on the same container query that hides the cover: keyed on the DATA alone
+          // this is a second border 1px inside the card's own on a narrow card.
+          cover && 'border-l @max-xs:border-l-0'
+        )}
         style={cover ? { borderColor } : undefined}
       >
         {(!!title || !!controls) && (
