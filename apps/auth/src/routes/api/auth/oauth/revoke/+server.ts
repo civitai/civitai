@@ -107,11 +107,10 @@ export const POST: RequestHandler = async ({ request, locals }) => {
         .executeTakeFirst();
 
       if (apiKey) {
-        // Only your own token: the authenticated user's, or one issued to the public client presenting
-        // it. Silently ignore otherwise (RFC 7009 — don't reveal token existence).
         const mayRevoke =
           (!!authenticatedUserId && apiKey.userId === authenticatedUserId) ||
           (!!publicClientId && apiKey.clientId === publicClientId);
+        // Silently, not as an error (RFC 7009 — don't reveal token existence).
         if (!mayRevoke) break;
 
         logOAuthEvent({

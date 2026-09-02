@@ -245,6 +245,13 @@ describe('revoke — a public client may NOT revoke anything else', () => {
     expect([hit.status, miss.status, refused.status]).toEqual([200, 200, 200]);
     const bodies = await Promise.all([hit.json(), miss.json(), refused.json()]);
     expect(bodies).toEqual([{}, {}, {}]);
+    // Headers too: they are input-derived today, and comparing them is what keeps an outcome from
+    // leaking into one later.
+    const [hitHeaders, missHeaders, refusedHeaders] = [hit, miss, refused].map((res) =>
+      [...res.headers].sort(([a], [b]) => a.localeCompare(b))
+    );
+    expect(missHeaders).toEqual(hitHeaders);
+    expect(refusedHeaders).toEqual(hitHeaders);
   });
 });
 

@@ -223,9 +223,17 @@ token=civitai_abc123...
 &client_id=YOUR_CLIENT_ID
 ```
 
-A token is revoked only for the client it was issued to (a confidential client must also send
-`client_secret`), or for the signed-in user when the call carries a session cookie. Revoking a
-refresh token also drops that user's access tokens for the same client — this is the sign-out call.
+What a call may revoke depends on how it authenticates, and the three paths differ:
+
+- **Public client** — send `client_id`. Revokes the token only if that client is the one it was
+  issued to.
+- **Confidential client** — send `client_id` and `client_secret`. Authenticates as the client's
+  **owner account**: it revokes tokens owned by that account whichever client issued them, and does
+  not revoke a token it issued to anyone else.
+- **Session cookie** — revokes tokens owned by the signed-in user.
+
+Revoking a refresh token also drops that user's access tokens for the same client — this is the
+sign-out call.
 
 Always returns 200, even if the token was already revoked, so a 200 is not confirmation on its own.
 
