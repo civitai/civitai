@@ -2655,14 +2655,14 @@ export const upsertModel = async (
     const prevMeta = beforeUpdate.meta as ModelMeta | null;
 
     let clearedLicensingSources: { id: number; licensingSourceVersionId: number }[] = [];
+    let typeBeforeUpdate: ModelType | undefined;
 
     const result = await dbWrite.$transaction(
       async (tx) => {
         // Not `beforeUpdate.type` — that is a `dbRead` read, and a stale replica reads as "type
         // unchanged", skipping the repair below on exactly the save that needed it.
-        const typeBeforeUpdate = (
-          await tx.model.findUnique({ where: { id }, select: { type: true } })
-        )?.type;
+        typeBeforeUpdate = (await tx.model.findUnique({ where: { id }, select: { type: true } }))
+          ?.type;
 
         const updated = await tx.model.update({
           select: {
@@ -2782,7 +2782,10 @@ export const upsertModel = async (
         entityType: 'Model',
         entityId: id as number,
         ownerId: beforeUpdate.userId,
-        before: beforeUpdate,
+        // `type` off the transaction's own read, not the `dbRead` one beside it: a stale replica
+        // reads as "type unchanged" and emits no row, on exactly the save whose fee clears need
+        // explaining. Same reason the repair above does not use `beforeUpdate.type`.
+        before: { ...beforeUpdate, type: typeBeforeUpdate ?? beforeUpdate.type },
         after: data as Record<string, unknown>,
         actorRole: resolveActorRole({
           actorUserId: userId,

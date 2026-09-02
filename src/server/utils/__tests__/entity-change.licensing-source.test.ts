@@ -131,3 +131,88 @@ describe('licensingSourceVersionId — the settings audit', () => {
     expect(block).toContain('licensingSourceVersionId:');
   });
 });
+
+/**
+ * `Model.type` is the other end of the same money path: changing it clears `licensingSourceVersionId`
+ * on every stamped version beneath the model (`upsertModel`'s repair, attributed `model-type-changed`).
+ * Unwatched, the sweep that goes looking for why a fee moved finds the clears and nothing that caused
+ * them — 31 of 36 rows in the last one were unexplainable for exactly that reason. CU 868kzk4rr.
+ */
+describe('Model.type — the audit trail for what clears a lineage fee', () => {
+  const MODEL_ID = 2790719;
+
+  const diffModel = (before: Record<string, unknown>, after: Record<string, unknown>) =>
+    diffEntityChanges({
+      entityType: 'Model',
+      entityId: MODEL_ID,
+      ownerId: OWNER_ID,
+      before,
+      after,
+      actorRole: 'owner',
+    });
+
+  it('is watched at all', () => {
+    expect(watchedEntityFields.Model).toContain('type');
+  });
+
+  it('records the change that clears every stamped version under it', () => {
+    const rows = diffModel({ type: 'Checkpoint' }, { type: 'LORA' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      entityType: 'Model',
+      field: 'type',
+      oldValue: '"Checkpoint"',
+      newValue: '"LORA"',
+    });
+  });
+
+  // The control: an ordinary save resubmits the stored type, and a row on every model edit would bury
+  // the ones that mean something.
+  it('emits nothing when the type is resubmitted unchanged', () => {
+    const rows = diffModel({ type: 'Checkpoint', name: 'v1' }, { type: 'Checkpoint', name: 'v2' });
+    // The changed sibling is the point: a differ that emitted nothing at all would pass a bare
+    // length-0 assertion here while recording no type change either.
+    expect(rows.map((r) => r.field)).toEqual(['name']);
+  });
+
+  /**
+   * 🔴 Same silent trap as the ModelVersion select above: a watched field the service never reads on
+   * the before side is `undefined` there and produces no row, so the audit reads as wired up and
+   * records nothing. `upsertModel`'s `beforeUpdate` is that read.
+   */
+  it('selects every watched Model column for the audit before-side', () => {
+    const service = readFileSync(
+      path.join(REPO_ROOT, 'src/server/services/model.service.ts'),
+      'utf8'
+    );
+    const at = service.indexOf('const beforeUpdate =');
+    expect(
+      at,
+      "upsertModel's before-read moved; re-anchor this test, do not delete it"
+    ).toBeGreaterThan(-1);
+    const select = service.slice(at, service.indexOf(': null;', at));
+
+    const missing = watchedEntityFields.Model.filter(
+      (field) => !new RegExp(`\\b${field.split('.')[0]}: (true|\\{)`).test(select)
+    );
+    expect(missing, `watched but not selected, so they audit nothing: ${missing}`).toEqual([]);
+  });
+
+  /**
+   * 🔴 `beforeUpdate` is a `dbRead` read. On a replica that lags the previous save it reports the type
+   * as unchanged, and the differ then emits NO row — on precisely the save whose fee clears need
+   * explaining. The repair inside the transaction already re-reads the type for this reason; the audit
+   * has to use the same value or it records the absence of the event it exists for.
+   */
+  it('audits the type off the transaction read, not the replica one', () => {
+    const service = readFileSync(
+      path.join(REPO_ROOT, 'src/server/services/model.service.ts'),
+      'utf8'
+    );
+    const at = service.indexOf('const changeRows = diffEntityChanges({');
+    expect(at, 'the Model audit diff moved; re-anchor this test').toBeGreaterThan(-1);
+    const block = service.slice(at, service.indexOf('});', at));
+    expect(block).toContain("entityType: 'Model'");
+    expect(block).toContain('type: typeBeforeUpdate');
+  });
+});

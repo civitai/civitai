@@ -423,6 +423,7 @@ export const upsertModelVersionHandler = async ({
             usageControl: true,
             licensingFee: true,
             licensingFeeSettlementCurrency: true,
+            licensingSourceVersionId: true,
             baseModel: true,
           },
         })
@@ -578,6 +579,18 @@ export const upsertModelVersionHandler = async ({
     // deliberate selection cannot reach the coercion. It is also not a way to dodge a fee — sending
     // `null` outright has always been allowed, and 99.77% of Anima and Krea 2 LoRAs do exactly that
     // (107 of 46,994 and 45 of 19,999 carry a source at all).
+    // `licensingSourceVersionId` is nullish in the schema while `baseModel` and `modelId` are required,
+    // so a save can move everything the stamp depends on without ever naming it — and an absent field
+    // leaves the column untouched, which is a stored stamp surviving a change that invalidates it.
+    // TrainingSubmit does exactly this shape: it updates the first version with a newly chosen
+    // `baseModel` and no stamp field. Seeding the stored value makes the guard judge what the row will
+    // actually hold. Only `undefined` is seeded — an explicit `null` is the owner clearing the stamp.
+    if (
+      input.licensingSourceVersionId === undefined &&
+      storedVersion?.licensingSourceVersionId != null
+    )
+      input.licensingSourceVersionId = storedVersion.licensingSourceVersionId;
+
     if (input.licensingSourceVersionId != null) {
       const [source, destinationModel] = await Promise.all([
         // `dbWrite`, matching the destination read below rather than sitting one line above it under the
