@@ -20,6 +20,7 @@ import type {
   WorkerOutgoingMessage,
   WorkerIncomingMessage,
   Instance,
+  PairingStatus,
 } from '~/workers/civitai-link-worker-types';
 import type { MantineColor } from '@mantine/core';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -52,11 +53,14 @@ type CivitaiLinkState = {
   resources: ResponseResourcesList['resources'];
   error?: string;
   status: CivitaiLinkStatus;
+  pairingStatus?: PairingStatus;
   createInstance: (id?: number) => Promise<void>;
   deleteInstance: (id: number) => Promise<void>;
   renameInstance: (id: number, name: string) => Promise<void>;
   selectInstance: (id: number) => Promise<void>;
   deselectInstance: () => Promise<void>;
+  awaitPairing: () => Promise<void>;
+  cancelAwaitPairing: () => Promise<void>;
   runCommand: (command: CommandRequest) => Promise<{
     promise: Promise<unknown>;
     id: string;
@@ -152,6 +156,7 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
   const [resources, setResources] = useState<ResponseResourcesList['resources']>([]);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string>();
+  const [pairingStatus, setPairingStatus] = useState<PairingStatus>();
   const setActivities = useCivitaiLinkStore((state) => state.setActivities);
 
   //TODO.civitai-link - timeout when setting active instance
@@ -222,6 +227,7 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
         else if (data.type === 'activitiesUpdate') handleActivities(data.payload);
         else if (data.type === 'commandComplete') handleCommandComplete(data.payload);
         else if (data.type === 'socketConnection') setSocketConnected(data.payload);
+        else if (data.type === 'pairing') setPairingStatus(data.status);
       };
     });
 
@@ -244,6 +250,19 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
   const createInstance = (id?: number) => workerReq({ type: 'create', id });
   const deleteInstance = (id: number) => workerReq({ type: 'delete', id });
   const renameInstance = (id: number, name: string) => workerReq({ type: 'rename', id, name });
+  const awaitPairing = () => {
+    const known = instances ?? [];
+    setPairingStatus('waiting');
+    return workerReq({
+      type: 'awaitPairing',
+      knownIds: known.map((x) => x.id),
+      knownKeys: Object.fromEntries(known.map((x) => [x.id, x.key])),
+    });
+  };
+  const cancelAwaitPairing = () => {
+    setPairingStatus(undefined);
+    return workerReq({ type: 'cancelAwaitPairing' });
+  };
 
   const runCommand = async (command: CommandRequest, timeout = 0) => {
     const payload = command as Command;
@@ -314,11 +333,14 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
         resources,
         error,
         status,
+        pairingStatus,
         createInstance,
         deleteInstance,
         renameInstance,
         selectInstance,
         deselectInstance,
+        awaitPairing,
+        cancelAwaitPairing,
         runCommand,
       }}
     >
@@ -342,11 +364,14 @@ export function CivitaiLinkProvider({ children }: { children: React.ReactElement
         resources: [],
         error: 'Civitai Link is not enabled',
         status: 'not-connected',
+        pairingStatus: undefined,
         createInstance: () => Promise.resolve(),
         deleteInstance: () => Promise.resolve(),
         renameInstance: () => Promise.resolve(),
         selectInstance: () => Promise.resolve(),
         deselectInstance: () => Promise.resolve(),
+        awaitPairing: () => Promise.resolve(),
+        cancelAwaitPairing: () => Promise.resolve(),
         runCommand: () => Promise.resolve({ promise: Promise.resolve(), id: '', cancel: () => {} }),
       }}
     >
