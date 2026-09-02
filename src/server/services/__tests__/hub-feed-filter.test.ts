@@ -238,8 +238,8 @@ describe('builders that cannot serve a hub refuse it', () => {
 });
 
 /**
- * The hub's own content cap (subtask 868kwp5f2). Each builder applies it and each
- * emits its own clause syntax, so a cap missing from one is a hub serving past its
+ * The hub's own content cap (subtask 868kwp5f2). Both builders apply it separately,
+ * so a cap missing from one is a hub serving past its
  * own setting on whichever backend that request happened to take — with nothing
  * red anywhere. Asserted on the EMITTED level list rather than on the call, because
  * the call is identical with and without the cap.

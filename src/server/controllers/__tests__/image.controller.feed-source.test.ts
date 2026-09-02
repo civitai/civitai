@@ -3,11 +3,11 @@ import type { Context } from '~/server/createContext';
 import type * as ImageService from '~/server/services/image.service';
 
 /**
- * The feed notice is gated on the `source` this handler emits, so the handler is
- * where the guard actually lives. Both branches must name themselves: an unnamed
- * DB page is indistinguishable from an index page that returned nothing, and the
- * client then cannot tell "routing changed mid-session" from "you reached the end
- * of the feed" — the first must take the notice down, the second must not.
+ * Which backend served the page is decided in this handler, so this is where the
+ * routing guard lives. Both branches must name themselves in `source`: an unnamed
+ * DB page is indistinguishable on the wire from an index page that returned nothing.
+ * No client consumes `source` today — these tests are what keep the two branches
+ * distinguishable.
  */
 
 const { getAllImagesMock, getAllImagesIndexMock } = vi.hoisted(() => ({
@@ -76,6 +76,31 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     expect(getAllImagesMock).toHaveBeenCalledTimes(1);
     expect(getAllImagesIndexMock).not.toHaveBeenCalled();
     expect(result.source).toBe('db');
+  });
+
+  // 🔴 The `!!input.hubId ||` arm of `useIndex`. Without this, deleting that arm
+  // passes every test in the repo — measured: 247 passed. A hub would then route to
+  // getAllImages with the index flag off, which throws rather than leaking, but the
+  // routing decision itself would be unpinned. `userHubs` is needed or the handler's
+  // own hub guard refuses before routing.
+  it('pins a hub to the index even with the index feed flag off', async () => {
+    const flagOffCtx = {
+      ...ctx,
+      features: {
+        ...(ctx as unknown as { features: object }).features,
+        imageIndexFeed: false,
+        userHubs: true,
+      },
+    } as typeof ctx;
+
+    const result = await getInfiniteImagesHandler({
+      input: { ...(indexBoundInput as object), hubId: 3 } as never,
+      ctx: flagOffCtx,
+    });
+
+    expect(getAllImagesIndexMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesMock).not.toHaveBeenCalled();
+    expect(result.source).toBe('meili');
   });
 
   it('passes the index path’s own source through untouched', async () => {

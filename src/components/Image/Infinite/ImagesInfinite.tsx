@@ -42,11 +42,6 @@ type ImagesInfiniteProps = {
   showAds?: boolean;
   showEmptyCta?: boolean;
   disableStoreFilters?: boolean;
-  /**
-   * Opt-in, because this component also backs image PICKERS (the collection
-   * add-content modal, challenge submission). Those are index-served too, but a
-   * "tell us if the feed looks off" box does not belong above a picker.
-   */
 } & Pick<ImagesContextState, 'collectionId' | 'judgeInfo' | 'judgingCategories'>;
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {

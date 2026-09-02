@@ -3364,8 +3364,9 @@ async function resolvedHubSources(input: ImageSearchInput) {
 
 type HubFilterArm = { field: MetricsImageFilterableAttribute; ids: number[] };
 
-// The single enumeration of the arms a hub ORs together. Both backends build their
-// own clause syntax from this, so an arm added here cannot reach one of them only.
+// The single enumeration of the arms a hub ORs together. One builder consumes it
+// today (`buildHubFilter`); the split survives so a second clause syntax cannot be
+// given a different set of arms.
 // Returns null for "no arm", which callers must treat as "serve nothing"; treating
 // it as "no filter" hands the caller the global feed as their hub.
 function hubFilterArms(

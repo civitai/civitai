@@ -345,9 +345,8 @@ export const getInfiniteImagesHandler = async ({
       });
       // Name this branch too, like the index path's `source`. Stamped here rather
       // than inside getAllImages because the index result type is derived from its
-      // return. Without it, a DB page and an index page that returned nothing are
-      // indistinguishable on the wire, and a client cannot tell a routing change
-      // mid-session from the end of the feed.
+      // return. No client reads it today — it is the wire contract, and the routing
+      // tests assert on it to tell a DB page from an index page that returned nothing.
       return { ...result, source: 'db' as const };
     }
   } catch (error) {
