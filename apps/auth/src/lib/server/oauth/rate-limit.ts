@@ -6,6 +6,7 @@ import { checkRateLimit } from '$lib/server/auth/rate-limit';
 //   - authorize: per-user   (10/min)
 //   - token:     per-client (20/min)
 //   - revoke:    per-client (20/min)
+//   - introspect: per-client (60/min) — server-to-server; one call per Civitai Link pairing.
 //   - session:   per-IP     (300/min) — first-party BFF exchange. Called SERVER-TO-SERVER by the spoke, and
 //                keyed via the cf-first getClientIp: on the PUBLIC path that resolves to the spoke's node egress
 //                IP (the original intent — "the spoke's egress IP, not an end user", well above any single spoke
@@ -19,6 +20,7 @@ const OAUTH_RATE_LIMITS = {
   authorize: { limit: 10, windowSeconds: 60 },
   revoke: { limit: 20, windowSeconds: 60 },
   session: { limit: 300, windowSeconds: 60 },
+  introspect: { limit: 60, windowSeconds: 60 },
 } as const;
 
 export type OAuthRateLimitBucket = keyof typeof OAUTH_RATE_LIMITS;
