@@ -447,11 +447,17 @@ export const completeOnboardingHandler = async ({
           },
         });
 
-        // 🔴 `changed` only — NOT `emailChanged`. This procedure carries no rate limit of its own and
-        // the caller picks the recipient, so sending on every address change made it an unmetered way
-        // to mail an arbitrary third party from Civitai's sending domain: alternate two addresses and
-        // loop. `changed` can be true at most once per account, so this path sends at most once. A
-        // user who mistypes their address corrects it and uses the banner's resend, which IS limited.
+        // 🔴 `changed` only — NOT `emailChanged`. The caller picks the recipient, so sending on
+        // every address change made this an unmetered way to mail an arbitrary third party from
+        // Civitai's sending domain: alternate two addresses and loop. `changed` can be true at most
+        // once per account, so this path sends at most once. A user who mistypes their address
+        // corrects it and uses the banner's resend.
+        //
+        // That does not close the primitive, only this path's unmetered version of it. Nothing binds
+        // `User.email` to the account holder — this step rewrites it without the immutability check in
+        // `updateUserById` — so `resendEmailVerification` still mails a caller-chosen address, at its
+        // 3/hour. Against `requestEmailChange`'s 2/day that is the residual, and it is a rate limit
+        // rather than a bound on WHO can be mailed.
         //
         // The address is passed rather than re-read: a replica read right after this write can still
         // hold the OLD row, and a token minted for the old address silently reverts the change when

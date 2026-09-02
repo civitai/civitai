@@ -94,6 +94,16 @@ describe('the spoke door is not cheaper than the onsite one', () => {
     expect(upsert).not.toHaveBeenCalled();
   });
 
+  it('refuses a creator the email gate would refuse onsite', async () => {
+    const res = await call(
+      { method: 'POST', body: validBody },
+      { ...OK_USER, emailVerified: null, meta: { emailVerificationRequired: true } }
+    );
+
+    expect(res.statusCode).toBe(500);
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
   it('refuses when the feature flag is off, so the spoke cannot outrun the rollout', async () => {
     features.mockReturnValue({ creatorAnnouncements: false });
 

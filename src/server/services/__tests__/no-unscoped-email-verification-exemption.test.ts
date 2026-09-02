@@ -51,6 +51,7 @@ const MUST_STAY_GUARDED: Record<string, string[]> = {
   'comment.router.ts': ['upsert'],
   'model.router.ts': ['upsert'],
   'article.router.ts': ['upsert'],
+  'orchestrator.router.ts': ['iterateGenerate'],
 };
 
 /**
