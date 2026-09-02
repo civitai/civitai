@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// The db fake below FILTERS rather than returning a canned row: `type = 'Access'` and the
-// not-expired disjunction are enforced in SQL, so a fake that ignores `.where` would make the
-// expired-token and wrong-type arms pass no matter what the route queries.
+// The db fake below FILTERS rather than returning a canned row: `type = 'Access'`, the not-expired
+// disjunction and the account-state predicates are enforced in SQL, so a fake that ignores `.where`
+// would make the expired-token, wrong-type and disabled-account arms pass no matter what the route
+// queries. It also APPLIES the innerJoin — `username` lives only on the User fixture, so an
+// unresolved join drops the field the happy-path body asserts.
 
 const h = vi.hoisted(() => {
   // generateSecretHash salts with NEXTAUTH_SECRET (and @civitai/auth memoises its env on first
@@ -12,6 +14,7 @@ const h = vi.hoisted(() => {
     clientIp: '203.0.113.7',
     clients: [] as Record<string, unknown>[],
     apiKeys: [] as Record<string, unknown>[],
+    users: [] as Record<string, unknown>[],
     // Per-bucket, so a test can exhaust one bucket and watch the other go uncharged.
     rateLimitAllow: {} as Record<string, boolean>,
     rateLimitCalls: [] as [string, string | null | undefined][],
@@ -19,31 +22,45 @@ const h = vi.hoisted(() => {
 });
 
 type Row = Record<string, unknown>;
-type Clause = (row: Row) => boolean;
+type Get = (column: string) => unknown;
+type Clause = (get: Get) => boolean;
 
 const eb = Object.assign(
-  (column: string, op: string, value: unknown): Clause => {
-    const field = column.split('.').pop() as string;
-    return (row) => {
-      const actual = row[field];
+  (column: string, op: string, value: unknown): Clause =>
+    (get) => {
+      const actual = get(column);
       if (op === '=' || op === 'is') return actual === value;
       if (op === '>=')
         return (
           actual instanceof Date && value instanceof Date && actual.getTime() >= value.getTime()
         );
       throw new Error(`the db fake does not implement operator "${op}"`);
-    };
-  },
-  { or: (clauses: Clause[]): Clause => (row) => clauses.some((c) => c(row)) }
+    },
+  {
+    or:
+      (clauses: Clause[]): Clause =>
+      (get) =>
+        clauses.some((c) => c(get)),
+  }
 );
+
+function tableRows(table: string): Row[] {
+  if (table === 'OauthClient') return h.clients;
+  if (table === 'User') return h.users;
+  return h.apiKeys;
+}
 
 vi.mock('$lib/server/db/db', () => ({
   db: {
-    selectFrom(table: string) {
+    selectFrom(base: string) {
       const clauses: Clause[] = [];
+      const joins: { table: string; left: string; right: string }[] = [];
       const qb: Record<string, unknown> = {};
       qb.select = () => qb;
-      qb.innerJoin = () => qb;
+      qb.innerJoin = (table: string, left: string, right: string) => {
+        joins.push({ table, left, right });
+        return qb;
+      };
       qb.where = (a: unknown, op?: string, value?: unknown) => {
         clauses.push(
           typeof a === 'function'
@@ -53,8 +70,30 @@ vi.mock('$lib/server/db/db', () => ({
         return qb;
       };
       qb.executeTakeFirst = () => {
-        const rows = table === 'OauthClient' ? h.clients : h.apiKeys;
-        return Promise.resolve(rows.find((row) => clauses.every((c) => c(row))));
+        for (const row of tableRows(base)) {
+          const scope: Record<string, Row> = { [base]: row };
+          // INNER semantics: a base row with no counterpart drops out, as it would in SQL.
+          const resolved = joins.every(({ table, left, right }) => {
+            const [leftTable, leftField] = left.split('.');
+            const [, rightField] = right.split('.');
+            const [joinedField, baseField] =
+              leftTable === table ? [leftField, rightField] : [rightField, leftField];
+            const match = tableRows(table).find((r) => r[joinedField] === row[baseField]);
+            if (match) scope[table] = match;
+            return !!match;
+          });
+          if (!resolved) continue;
+          const get: Get = (column) => {
+            const dot = column.indexOf('.');
+            if (dot < 0) return row[column];
+            return (scope[column.slice(0, dot)] ?? row)[column.slice(dot + 1)];
+          };
+          // Unaliased selects flatten across the join, so the row the route reads does too.
+          if (clauses.every((c) => c(get))) {
+            return Promise.resolve(Object.assign({}, ...Object.values(scope)) as Row);
+          }
+        }
+        return Promise.resolve(undefined);
       };
       return qb;
     },
@@ -79,6 +118,7 @@ const LINK_SCOPE =
 const CALLER = 'link-service';
 const CALLER_SECRET = 'link-service-secret';
 const EXPIRES_AT = new Date('2030-01-01T00:00:00.000Z');
+const DISABLED_AT = new Date('2026-08-01T00:00:00.000Z');
 const CLIENT_IP = h.clientIp;
 
 function post(body: Record<string, string>, headers: Record<string, string> = {}) {
@@ -112,12 +152,18 @@ beforeEach(() => {
     // Confidential with a real secret, but NOT on the allowlist.
     { id: 'rogue-service', secret: generateSecretHash('rogue-secret'), isConfidential: true },
   ];
+  // `username` lives ONLY here, so every assertion on it is evidence the join ran.
+  h.users = [
+    { id: 4242, username: 'manuel', deletedAt: null, bannedAt: null },
+    { id: 77, username: 'ops', deletedAt: null, bannedAt: null },
+    { id: 5150, username: 'gone', deletedAt: DISABLED_AT, bannedAt: null },
+    { id: 6060, username: 'sanctioned', deletedAt: null, bannedAt: DISABLED_AT },
+  ];
   h.apiKeys = [
     {
       key: generateSecretHash('civitai_live'),
       type: 'Access',
       userId: 4242,
-      username: 'manuel',
       tokenScope: LINK_SCOPE,
       clientId: 'civitai-link-desktop',
       expiresAt: EXPIRES_AT,
@@ -126,7 +172,6 @@ beforeEach(() => {
       key: generateSecretHash('civitai_expired'),
       type: 'Access',
       userId: 4242,
-      username: 'manuel',
       tokenScope: LINK_SCOPE,
       clientId: 'civitai-link-desktop',
       expiresAt: new Date('2020-01-01T00:00:00.000Z'),
@@ -135,7 +180,6 @@ beforeEach(() => {
       key: generateSecretHash('civitai_refresh'),
       type: 'Refresh',
       userId: 4242,
-      username: 'manuel',
       tokenScope: LINK_SCOPE,
       clientId: 'civitai-link-desktop',
       expiresAt: EXPIRES_AT,
@@ -144,10 +188,34 @@ beforeEach(() => {
       key: generateSecretHash('civitai_forever'),
       type: 'Access',
       userId: 77,
-      username: 'ops',
       tokenScope: TokenScope.UserRead,
       clientId: null,
       expiresAt: null,
+    },
+    // Live, in-scope, unexpired tokens whose OWNER is no longer entitled to one.
+    {
+      key: generateSecretHash('civitai_deleted_owner'),
+      type: 'Access',
+      userId: 5150,
+      tokenScope: LINK_SCOPE,
+      clientId: 'civitai-link-desktop',
+      expiresAt: EXPIRES_AT,
+    },
+    {
+      key: generateSecretHash('civitai_banned_owner'),
+      type: 'Access',
+      userId: 6060,
+      tokenScope: LINK_SCOPE,
+      clientId: 'civitai-link-desktop',
+      expiresAt: EXPIRES_AT,
+    },
+    {
+      key: generateSecretHash('civitai_orphan'),
+      type: 'Access',
+      userId: 314159,
+      tokenScope: LINK_SCOPE,
+      clientId: 'civitai-link-desktop',
+      expiresAt: EXPIRES_AT,
     },
   ];
 });
@@ -221,6 +289,49 @@ describe('introspect — inactive tokens all answer 200 {active:false}', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ active: false });
     expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+});
+
+// Deletion in this codebase is SOFT (User.deletedAt + status), so the innerJoin alone drops nothing
+// — the route's account-state predicates are the whole control. Each case flips one column on an
+// otherwise-live fixture and pairs with a control clearing it, so a revert reads as a failed
+// `active` assertion rather than a fixture that was never reachable.
+describe('introspect — a disabled owner reads as inactive', () => {
+  const cases: {
+    label: string;
+    token: string;
+    userId: number;
+    column: 'deletedAt' | 'bannedAt';
+  }[] = [
+    {
+      label: 'a soft-deleted account',
+      token: 'civitai_deleted_owner',
+      userId: 5150,
+      column: 'deletedAt',
+    },
+    { label: 'a banned account', token: 'civitai_banned_owner', userId: 6060, column: 'bannedAt' },
+  ];
+
+  it.each(cases)('$label', async ({ token, userId, column }) => {
+    const res = await post({ token, client_id: CALLER, client_secret: CALLER_SECRET });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ active: false });
+
+    const user = h.users.find((u) => u.id === userId);
+    expect(user?.[column]).toBeInstanceOf(Date);
+    user![column] = null;
+    const control = await post({ token, client_id: CALLER, client_secret: CALLER_SECRET });
+    expect(((await control.json()) as { active: boolean }).active).toBe(true);
+  });
+
+  it('an access token with no User row at all reads as inactive', async () => {
+    const res = await post({
+      token: 'civitai_orphan',
+      client_id: CALLER,
+      client_secret: CALLER_SECRET,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ active: false });
   });
 });
 

@@ -281,8 +281,13 @@ Active token:
 - `client_id` is the OAuth client the token was issued to.
 
 Anything else returns `200 {"active": false}` — unknown token, expired token, a refresh token, a
-personal API key (a different key type; only OAuth **access** tokens introspect as active), or a
-missing `token` parameter. The endpoint never distinguishes those cases.
+personal API key (a different key type; only OAuth **access** tokens introspect as active), a
+missing `token` parameter, or a live token whose **owner's account is closed or suspended**. The
+endpoint never distinguishes those cases.
+
+So `active` covers the subject as well as the token: `active: true` means the token is live *and*
+its owner is entitled to act, which is what lets a caller treat one introspection as a whole
+go/no-go.
 
 Responses are `Cache-Control: no-store`, and the endpoint adds none of the wildcard CORS headers the
 token endpoints carry: this is a server-to-server call.
