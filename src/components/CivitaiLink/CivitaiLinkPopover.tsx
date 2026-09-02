@@ -45,7 +45,7 @@ import {
   IconPlayerPlay,
   IconRefresh,
 } from '@tabler/icons-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useLayoutEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
@@ -483,7 +483,9 @@ function GetReconnected() {
     useCivitaiLink();
   const oauthPaired = !!instances?.find((x) => x.id === instance?.id)?.oauthPaired;
 
-  useEffect(() => {
+  // Layout, not passive: the cancel this same cleanup fires broadcasts a
+  // terminal status back, so a passive arm renders one frame of it on reopen.
+  useLayoutEffect(() => {
     if (!oauthPaired) return;
     awaitPairing();
     return () => {

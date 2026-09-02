@@ -347,9 +347,9 @@ let pairingGeneration = 0;
 let pairingSeeded = false;
 let pairingArmed = false;
 
-// There is one poll for every tab, so a cancel from one of them strands the
-// rest on 'waiting' unless they are told. Callers that re-arm or emit their own
-// terminal status next pass `null`.
+// One poll is shared by every tab, so a cancel from one strands the rest on
+// 'waiting' unless they are told. Callers that re-arm, or that emit their own
+// terminal status next, pass `null`.
 const stopPairingPoll = (status: PairingStatus | null = 'timeout') => {
   const wasArmed = pairingArmed;
   pairingArmed = false;
