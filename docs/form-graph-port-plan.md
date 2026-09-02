@@ -287,26 +287,30 @@ cfgScale/steps `perModelScope` — per model version, v1's
 TURBO_VARIANT_ECOSYSTEMS. One localStorage record under `form-graph:generation`
 (`persistedStorage`, debounced, flushed on pagehide) attached in
 BaseGenerationForm. Layout pinned by `__tests__/persistence.test.ts`.
-Not decided (Briant): migrating v1's stored values (different keys AND record
-shape — v1 splits across many localStorage keys) vs a one-time reset; and v1's
-"preferences survive reset" semantics (outputFormat/priority), which belongs to
-the reset affordance when one exists. Store-path gotcha this surfaced: STORE
+Decided (Briant, 2026-09-02): partial one-time migration, implemented in
+`src/components/form-graph/generation/migrate-v1-storage.ts` — carries
+prompt/negativePrompt, outputFormat, priority, quantity, workflow, per-output
+ecosystem, and per-family model + resources; everything else resets. v1's
+records are only read, never deleted. Store-path gotcha this surfaced: STORE
 state holds raw inputs (a bare-number model), so mode picks and scopes read ids
 via `modelIdOf` rather than `.id`.
 
-### Phase 4 — server swap (small, high-stakes)
+### Phase 4 — server swap (small, high-stakes) — BUILT, staged behind Flipt flags (2026-09-02)
 
-1. Write one adapter in `src/server/services/orchestrator/`: a function with the exact
-   shape the three call sites expect from `generationGraph.safeParse`, implemented over
-   the ported root's `.parse` (map `notes` → whatever the substitution metrics read —
-   study `generation-model-substitution.metrics.ts` first; its tests must stay green).
-2. Swap the call sites (`orchestration-new.service.ts`, `legacy-metadata-mapper.ts`)
-   behind that adapter.
-3. Run the covering suites for those services, then the FULL unit suite once.
-
-**Closing condition:** full unit suite green (compare failing files against `main` via
-stash before blaming the port); substitution-metrics tests green; committed. **Ask
-Briant before this phase begins** — it changes the production submit path.
+No adapter needed. `validateInput` in `orchestration-new.service.ts` is staged behind
+two Flipt flags (both default off; see
+`src/server/services/orchestrator/form-graph/shadow-parse.ts`):
+`form-graph-shadow-parse` runs the hub parse alongside v1 and compares — outcomes
+counted in `form_graph_shadow_parse_total`, divergence logged with diff KEYS only —
+and `form-graph-parse` serves the hub result. The v1 parse always runs (substitution
+metrics + reverse compare); dropping it belongs to Phase 6. `computedKeys` on the
+serve path comes from the parse result's own `computedKeys` (wire-named computeds —
+the v1 node-partition equivalent), and the substitution metrics need no mapping
+because the port's `checkpoint.ts` records into `ext.modelSubstitutions` directly.
+`legacy-metadata-mapper.ts`'s `getGenerationDisplayKeys` deliberately stays on the v1
+graph: its input/computed partition differs in the hub (workflow/ecosystem are
+fields, not computeds), so it moves in Phase 6 with a behavior decision, not
+mechanically. Flip criterion: a sustained zero on diverged/error outcomes.
 
 ### Phase 5 — client swap (large, UI)
 
@@ -314,9 +318,11 @@ Replace `DataGraphProvider`/`useDataGraph` usage with `form-graph/react`
 (`useForm(rootGraph, { ext, storage: persistedStorage(...) })`, `useTypedField`,
 `createTypedController`). `GenerationFormProvider.tsx` is the hub; port it first, then
 walk the ~119 consumer files (most only consume via the provider's context and need
-import/type updates, not logic changes). Storage: the adapter layout is built (see the Persistence note under the Phase 4/5
-groundwork above); the v1 stored-value migration-vs-reset decision recorded there is
-the remaining Phase 5 item.
+import/type updates, not logic changes). Storage: the adapter layout is built and the
+v1 stored-value migration is implemented (see the Persistence note above). The swap
+itself is staged: GenerationTabs mounts `FormGraphGenerator` behind the
+`formGraphGenerator` feature flag (mod availability, Flipt key
+`form-graph-generator`), falling back to `GenerationFormV2` when off.
 
 **Closing condition:** the generation form works end to end in the dev server (use the
 `/dev-server` skill; verify with `probe`), typecheck green, full suite green. This phase

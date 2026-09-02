@@ -22,6 +22,7 @@ import { AudioGenerationForm } from './AudioGenerationForm';
 import { Model3dGenerationForm } from './Model3dGenerationForm';
 import { FormFooter } from './FormFooter';
 import { WhatIfProvider } from './WhatIfProvider';
+import { migrateV1GenerationStorage } from './migrate-v1-storage';
 import { useOutputType, type GenerationStore } from './store';
 
 /**
@@ -74,7 +75,10 @@ export function BaseGenerationForm() {
     ]
   );
 
-  const storage = useMemo(() => persistedStorage(STORAGE_KEY), []);
+  const storage = useMemo(() => {
+    migrateV1GenerationStorage(STORAGE_KEY);
+    return persistedStorage(STORAGE_KEY);
+  }, []);
   useEffect(() => () => storage?.dispose(), [storage]);
 
   const store = useForm(generationHub, { ext, storage }) as GenerationStore;

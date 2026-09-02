@@ -507,6 +507,10 @@ const featureFlags = createFeatureFlags({
   // kill lever. Off ⇒ v2.0 is dropped from the picker and a submitted v2.0
   // version id falls back to the ecosystem default (see grok-graph.ts).
   grokImagine2: { availability: ['mod'], fliptKey: 'grok-imagine-2' },
+  // form-graph cutover: swaps GenerationTabs' form for the form-graph lane
+  // (FormGraphGenerator). Server parsing is staged separately via the
+  // form-graph-shadow-parse / form-graph-parse Flipt flags.
+  formGraphGenerator: { availability: ['mod'], fliptKey: 'form-graph-generator' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay

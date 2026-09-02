@@ -24,6 +24,7 @@ import {
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { GenerationFormV2 } from '~/components/generation_v2';
+import { FormGraphGenerator } from '~/components/form-graph/generation/FormGraphGenerator';
 import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 import { PresetHeaderButton } from '~/components/generation_v2/preset/PresetHeaderButton';
 import { useIsClient } from '~/providers/IsClientProvider';
@@ -89,7 +90,7 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
 
   // Perf experiment: defer the generation-tab-switch remount to fix mobile INP.
   // Switching tabs swaps `View` to a DIFFERENT component, so React synchronously
-  // unmounts the whole GenerationFormV2 tree and mounts Queue/Feed inside the tap's
+  // unmounts the whole generation-form tree and mounts Queue/Feed inside the tap's
   // onChange handler (~1s of processing_duration counted against INP). `useDeferredValue`
   // moves that heavy remount off the urgent path; the SegmentedControl highlight stays on
   // the live `view` for instant tap feedback. startTransition does NOT work here — zustand
@@ -100,7 +101,10 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
   const deferredView = useDeferredValue(view);
   const contentView = deferGenTabView ? deferredView : view;
 
-  const GenerationFormComponent = GenerationFormV2;
+  // form-graph cutover: the new lane behind its flag; OFF is byte-identical
+  const GenerationFormComponent = features.formGraphGenerator
+    ? FormGraphGenerator
+    : GenerationFormV2;
 
   const tabs = useMemo<Tabs>(
     () => ({
