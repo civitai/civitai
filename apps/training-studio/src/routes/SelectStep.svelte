@@ -3,6 +3,7 @@
   import {
     CUSTOM_MODEL_SURCHARGE,
     MEDIA_OPTIONS,
+    cardByType,
     cardsForMedia,
     typesForMedia,
     type Media,
@@ -15,31 +16,62 @@
     labelNoun,
     newRun,
     nextRunId,
-    recCard,
+    recommendedCardFor,
     runCard,
     runVersionLabel,
-    startPrice,
     type Run,
     type Selection,
   } from './trainingFlow';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
 
-  let { onContinue }: { onContinue: (sel: Selection) => void } = $props();
+  let { onContinue, prices }: { onContinue: (sel: Selection) => void; prices: Record<string, number> } =
+    $props();
+
+  // The "from" price for a card: a real orchestrator quote when we have one, plus the flat custom-model
+  // surcharge. Partial — a model the orchestrator couldn't quote is absent, and we return null rather than
+  // inventing a number (the caller shows a muted em-dash).
+  function price(cardType: string, custom = false): number | null {
+    const base = prices[cardType];
+    if (base == null) return null;
+    return base + (custom ? CUSTOM_MODEL_SURCHARGE : 0);
+  }
 
   let media = $state<Media>('image');
   let loraType = $state('character');
-  let runs = $state<Run[]>([newRun(recCard('character', 'image'))]);
+  let runs = $state<Run[]>([newRun(recommendedCardFor('character', 'image'))]);
   let focus = $state(0);
+  let sweepOpen = $state(false);
 
   const types = $derived(typesForMedia(media));
   const type = $derived(types.find((t) => t.id === loraType) ?? types[0]!);
-  const cards = $derived(cardsForMedia(media));
   const multi = $derived(runs.length > 1);
   const primary = $derived(runs[0]!);
   const focused = $derived(runs[focus] ?? primary);
+  const selectedCard = $derived(runCard(focused));
+  const recommendedType = $derived(type.recommended[media]);
+  const recommendedCard = $derived(recommendedType ? cardByType(recommendedType) : undefined);
+  // Flat, all models as equal peers — strength tiers downplayed the non-"top" models. Recommended first
+  // so the eye lands on the safe default; the rest keep catalog order.
+  const orderedCards = $derived.by(() => {
+    const cards = cardsForMedia(media);
+    const recommended = cards.find((c) => c.type === recommendedType);
+    return recommended
+      ? [recommended, ...cards.filter((c) => c !== recommended)]
+      : cards;
+  });
   const labelMode = $derived(runCard(primary).label);
-  const modeNoun = $derived(labelNoun(runCard(primary)));
-  const total = $derived(runs.reduce((s, r) => s + startPrice(r.cardType, isCustom(r)), 0));
+  const labelModeNoun = $derived(labelNoun(runCard(primary)));
+  // Sum the quotes we have; if any selected run is unpriced the total is partial, so surface null and let
+  // the summary show "—" rather than a total that's quietly missing a model.
+  const total = $derived.by(() => {
+    let sum = 0;
+    for (const r of runs) {
+      const runPrice = price(r.cardType, isCustom(r));
+      if (runPrice == null) return null;
+      sum += runPrice;
+    }
+    return sum;
+  });
 
   function pickMedia(m: Media) {
     if (m === media) return;
@@ -47,14 +79,15 @@
     // A dataset can't span media, so switching resets to that media's recommended type + model.
     const t = typesForMedia(m)[0]!;
     loraType = t.id;
-    runs = [newRun(recCard(t.id, m))];
+    runs = [newRun(recommendedCardFor(t.id, m))];
     focus = 0;
+    sweepOpen = false;
   }
 
   function pickType(id: string) {
     loraType = id;
     if (runs.length === 1) {
-      runs = [newRun(recCard(id, media))];
+      runs = [newRun(recommendedCardFor(id, media))];
       focus = 0;
     }
   }
@@ -62,6 +95,11 @@
   function pickBase(card: ModelCard) {
     if (multi && card.label !== labelMode) return; // label-type lock
     runs = runs.map((r, i) => (i === focus ? { ...newRun(card), id: r.id } : r));
+  }
+
+  function openSweep() {
+    sweepOpen = true;
+    if (runs.length === 1) addRun();
   }
 
   function pickVersion(runIndex: number, versionKey: string) {
@@ -78,7 +116,10 @@
   function removeRun(i: number) {
     if (runs.length <= 1) return;
     runs = runs.filter((_, k) => k !== i);
+    // Keep focus on the same run: removing one before it shifts every later run down a slot.
+    if (i < focus) focus -= 1;
     if (focus >= runs.length) focus = runs.length - 1;
+    if (runs.length === 1) sweepOpen = false;
   }
 
   function versionsFor(card: ModelCard) {
@@ -87,7 +128,37 @@
       { key: CUSTOM_VERSION_KEY, label: 'Custom…', note: `+⚡${CUSTOM_MODEL_SURCHARGE} · pick a model` },
     ];
   }
+
+  // Radiogroup arrow-key nav (media/type/base model): Tab enters at the checked radio (roving tabindex on
+  // the buttons), arrows move focus AND selection to the next/prev ENABLED option. Reads the DOM so it
+  // skips disabled (label-locked) tiles without index bookkeeping.
+  function radioKeydown(e: KeyboardEvent) {
+    const fwd = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+    const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp';
+    if (!fwd && !back) return;
+    e.preventDefault();
+    const radios = [
+      ...(e.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="radio"]'),
+    ].filter((r) => !r.disabled);
+    if (radios.length === 0) return;
+    let i = radios.findIndex((r) => r === document.activeElement);
+    if (i === -1) i = radios.findIndex((r) => r.getAttribute('aria-checked') === 'true');
+    if (i === -1) i = 0;
+    const target = radios[fwd ? (i + 1) % radios.length : (i - 1 + radios.length) % radios.length];
+    target.focus();
+    target.click();
+  }
 </script>
+
+<!-- A "from ⚡X" price, or a muted em-dash when there's no quote — used by the run summaries. (The model
+     tile renders its own gold badge inline.) -->
+{#snippet priceTag(amount: number | null, size: string)}
+  {#if amount != null}
+    <span class="whitespace-nowrap font-mono {size} text-[#f59f00]">from ⚡{amount.toLocaleString()}</span>
+  {:else}
+    <span class="whitespace-nowrap font-mono {size} text-dark-2">—</span>
+  {/if}
+{/snippet}
 
 <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
   <div class="flex min-w-0 flex-col gap-6">
@@ -98,173 +169,197 @@
       </p>
     </div>
 
-    <!-- media type -->
-    <div>
-      <div class="mb-2 font-mono text-xs uppercase tracking-wider text-dark-2">Media</div>
-      <div class="grid grid-cols-3 gap-2.5" role="radiogroup" aria-label="Media type">
-        {#each MEDIA_OPTIONS as m (m.id)}
-          <button
-            type="button"
-            role="radio"
-            aria-checked={m.id === media}
-            onclick={() => pickMedia(m.id)}
-            class="flex items-center justify-center gap-2 rounded-md border px-2 py-3 text-sm font-semibold transition
-              {m.id === media
-              ? 'border-primary bg-primary/10 text-white'
-              : 'border-dark-4 bg-dark-6 text-dark-2 hover:border-dark-3 hover:text-dark-0'}"
-          >
-            <span class="text-lg">{m.icon}</span>
-            {m.name}
-          </button>
-        {/each}
+    <!-- Media + Type gate everything below (switching either resets the model), so they stay full
+         labeled rows rather than a dropdown or a quiet segmented strip that would under-sell them. -->
+    <div class="flex flex-col gap-3">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <div class="w-14 shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2">Media</div>
+        <div
+          class="flex min-w-0 flex-1 flex-wrap gap-2"
+          role="radiogroup"
+          aria-label="Media type"
+          tabindex="-1"
+          onkeydown={radioKeydown}
+        >
+          {#each MEDIA_OPTIONS as m (m.id)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={m.id === media}
+              tabindex={m.id === media ? 0 : -1}
+              onclick={() => pickMedia(m.id)}
+              class="flex items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm transition
+                {m.id === media
+                ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40 font-semibold text-white'
+                : 'border-dark-4 bg-dark-6 font-medium text-dark-1 hover:border-dark-3 hover:text-dark-0'}"
+            >
+              {#if m.id === media}
+                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true"></span>
+              {/if}
+              {m.name}
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <div class="w-14 shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2">Type</div>
+        <div
+          class="flex min-w-0 flex-1 flex-wrap gap-2"
+          role="radiogroup"
+          aria-label="LoRA type"
+          tabindex="-1"
+          onkeydown={radioKeydown}
+        >
+          {#each types as t (t.id)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={t.id === loraType}
+              tabindex={t.id === loraType ? 0 : -1}
+              onclick={() => pickType(t.id)}
+              class="flex items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm transition
+                {t.id === loraType
+                ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40 font-semibold text-white'
+                : 'border-dark-4 bg-dark-6 font-medium text-dark-1 hover:border-dark-3 hover:text-dark-0'}"
+            >
+              {#if t.id === loraType}
+                <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true"></span>
+              {/if}
+              {t.name}
+            </button>
+          {/each}
+        </div>
       </div>
     </div>
 
-    <!-- type tiles (filtered to the chosen media) -->
+    <!-- base model: every model visible as an equal peer, recommended first; no disclosure -->
     <div>
-      <div class="mb-2 font-mono text-xs uppercase tracking-wider text-dark-2">Type</div>
-      <div class="grid grid-cols-2 gap-2.5 sm:grid-cols-4" role="radiogroup" aria-label="LoRA type">
-        {#each types as t (t.id)}
-          <button
-            type="button"
-            role="radio"
-            aria-checked={t.id === loraType}
-            onclick={() => pickType(t.id)}
-            class="flex flex-col items-center gap-1.5 rounded-md border px-2 py-3.5 text-sm font-semibold transition
-              {t.id === loraType
-              ? 'border-primary bg-primary/10 text-white'
-              : 'border-dark-4 bg-dark-6 text-dark-2 hover:border-dark-3 hover:text-dark-0'}"
-          >
-            <span class="text-2xl">{t.icon}</span>
-            {t.name}
-          </button>
-        {/each}
+      <div class="mb-1 flex items-baseline justify-between gap-2">
+        <div class="font-mono text-xs uppercase tracking-wider text-dark-2">Base model</div>
+        <div class="font-mono text-[11px] text-dark-2">
+          {labelMode === 'tag' ? 'auto-labeled with tags' : 'auto-labeled with captions'}
+        </div>
       </div>
-    </div>
+      {#if recommendedCard}
+        <p class="mb-3 text-[12.5px] leading-snug text-dark-1">
+          <span class="text-[#f59f00]">★</span>
+          We recommend <span class="font-semibold text-white">{recommendedCard.name}</span> for a
+          {type.name.toLowerCase()}
+          {media} LoRA — or pick any below.
+        </p>
+      {/if}
 
-    <!-- base model cards, filtered to the chosen media -->
-    <div>
-      <div class="mb-2 font-mono text-xs uppercase tracking-wider text-dark-2">
-        Base model · {media} · recommended is pre-selected
-      </div>
-      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {#each cards as card (card.type)}
+      <div
+        class="grid grid-cols-2 gap-2 sm:grid-cols-3"
+        role="radiogroup"
+        aria-label="Base model"
+        tabindex="-1"
+        onkeydown={radioKeydown}
+      >
+        {#each orderedCards as card (card.type)}
           {@const selected = card.type === focused.cardType}
           {@const disabled = multi && !selected && card.label !== labelMode}
-          {@const rec = card.type === type.rec[media]}
+          {@const isRecommended = card.type === recommendedType}
+          {@const cardPrice = price(card.type)}
           <button
             type="button"
+            role="radio"
+            aria-checked={selected}
+            tabindex={selected ? 0 : -1}
             {disabled}
-            onclick={() => !disabled && pickBase(card)}
+            onclick={() => pickBase(card)}
+            aria-label={`${card.name}. ${card.description} ${
+              cardPrice != null ? `From ${cardPrice.toLocaleString()} Buzz.` : 'Price not available.'
+            } ${isRecommended ? 'Recommended. ' : ''}${
+              card.versions.length > 1 ? `${card.versions.length} versions. ` : ''
+            }${disabled ? `Unavailable — uses ${labelNoun(card)}, your sweep uses ${labelModeNoun}.` : ''}`}
             title={disabled
-              ? `${card.name} uses ${labelNoun(card)}; your other run uses ${modeNoun}. One dataset can't mix — remove the other run to switch.`
+              ? `${card.name} uses ${labelNoun(card)}; your other run uses ${labelModeNoun}. One dataset can't mix — remove the other run to switch.`
               : undefined}
-            class="group relative overflow-hidden rounded-md border bg-dark-6 text-left transition
-              {selected ? 'border-primary ring-2 ring-primary/40' : 'border-dark-4 hover:border-dark-3'}
-              {disabled ? 'opacity-40 grayscale' : 'hover:-translate-y-0.5'}"
+            class="group relative flex flex-col rounded-md border p-3 text-left transition
+              {selected
+              ? 'border-primary bg-primary/[0.07] ring-1 ring-primary/40'
+              : 'border-dark-4 bg-dark-6 hover:border-dark-3 hover:bg-dark-5'}
+              {disabled ? 'cursor-not-allowed opacity-40 grayscale' : ''}"
           >
-            {#if rec}
-              <span
-                class="absolute left-2 top-2 z-10 rounded bg-primary px-2 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wide text-primary-foreground"
-              >
-                Recommended
-              </span>
-            {/if}
-            {#if selected}
-              <span
-                class="absolute right-2 top-2 z-10 grid h-5 w-5 place-items-center rounded-full bg-primary font-mono text-xs font-bold text-primary-foreground"
-              >
-                ✓
-              </span>
-            {/if}
-            <div class="grid h-16 place-items-center bg-dark-7 font-mono text-lg font-extrabold text-dark-2">
-              {card.code}
+            <div class="flex items-center gap-2">
+              <ModelCodeBadge code={card.code} size="sm" />
+              <div class="min-w-0 flex-1">
+                <div class="truncate text-sm font-semibold text-dark-0">{card.name}</div>
+              </div>
+              {#if isRecommended}
+                <span class="shrink-0 rounded bg-primary px-1.5 py-0.5 font-mono text-[8px] font-bold uppercase tracking-wide text-primary-foreground">
+                  ★ Recommended
+                </span>
+              {/if}
+              {#if selected}
+                <span class="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
+                  ✓
+                </span>
+              {/if}
             </div>
-            <div class="p-3">
-              <div class="text-sm font-bold text-dark-0">{card.name}</div>
-              <div class="mt-0.5 line-clamp-2 min-h-[32px] text-[11px] leading-snug text-dark-2">
-                {card.description}
-              </div>
-              <div class="mt-2 flex flex-wrap items-center gap-1.5">
-                <span class="rounded border border-[#f59f00]/30 px-1.5 py-0.5 font-mono text-[9px] text-[#f59f00]">
-                  from ⚡{startPrice(card.type).toLocaleString()}
+            <div class="mt-1 line-clamp-1 text-[11px] leading-snug text-dark-2">
+              {card.description}
+            </div>
+            <div class="mt-2 flex items-center gap-2">
+              {#if cardPrice != null}
+                <span
+                  class="inline-flex items-center whitespace-nowrap rounded border border-[#f59f00]/25 bg-[#f59f00]/[0.08] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#f59f00]"
+                >
+                  from ⚡{cardPrice.toLocaleString()}
                 </span>
-                <span class="rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[9px] text-primary">
-                  {labelNoun(card)}
+              {:else}
+                <span class="font-mono text-[10px] text-dark-2">—</span>
+              {/if}
+              {#if card.versions.length > 1}
+                <span
+                  aria-hidden="true"
+                  title={`${card.versions.length} versions`}
+                  class="ml-auto inline-flex items-center gap-0.5 rounded-sm border border-dark-4 px-1 py-px font-mono text-[9px] leading-none text-dark-2"
+                >
+                  <span class="text-[10px] leading-none">⧉</span>
+                  {card.versions.length}
                 </span>
-                {#if card.versions.length > 1}
-                  <span class="rounded bg-dark-7 px-1.5 py-0.5 font-mono text-[9px] text-dark-2">
-                    {card.versions.length} versions
-                  </span>
-                {/if}
-              </div>
+              {/if}
             </div>
           </button>
         {/each}
       </div>
-    </div>
 
-    <!-- selected runs + versions -->
-    <div>
-      <div class="mb-2 font-mono text-xs uppercase tracking-wider text-dark-2">
-        Selected to train
-        <span class="lowercase text-dark-2">
-          {multi ? `· ${runs.length} models` : '· pick one, or add more to sweep (advanced)'}
-        </span>
-      </div>
-      <div class="flex flex-col gap-2.5">
-        {#each runs as r, ri (r.id)}
-          {@const card = runCard(r)}
-          {@const focusedRow = ri === focus && multi}
-          <div
-            role="button"
-            tabindex="0"
-            onclick={() => (focus = ri)}
-            onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && (focus = ri)}
-            class="rounded-md border p-3 transition
-              {focusedRow ? 'border-primary ring-2 ring-primary/30' : 'border-dark-4 bg-dark-6'}
-              {multi ? '' : 'cursor-default'}"
-          >
-            <div class="flex items-center gap-3">
-              <ModelCodeBadge code={card.code} size="md" />
-              <div class="min-w-0">
-                <div class="truncate text-sm font-bold text-dark-0">
-                  {multi ? `Run ${ri + 1} · ` : ''}{card.name}
-                  {runVersionLabel(r)}
-                </div>
-                <div class="font-mono text-[11px] text-dark-2">
-                  {labelNoun(card)}{isCustom(r)
-                    ? ` · custom (+⚡${CUSTOM_MODEL_SURCHARGE})`
-                    : ''}{focusedRow ? ' · editing' : ''}
-                </div>
+      <!-- version choice for the single selected model, inline (no disclosure) -->
+      {#if !multi}
+        {@const card = selectedCard}
+        {@const runPrice = price(primary.cardType, isCustom(primary))}
+        <div class="mt-3 rounded-md border border-dark-4 bg-dark-6 p-3">
+          <div class="flex items-center gap-3">
+            <ModelCodeBadge code={card.code} size="md" />
+            <div class="min-w-0">
+              <div class="truncate text-sm font-bold text-dark-0">
+                {card.name}
+                {runVersionLabel(primary)}
               </div>
-              <span class="ml-auto whitespace-nowrap font-mono text-[13px] text-[#f59f00]">
-                from ⚡{startPrice(r.cardType, isCustom(r)).toLocaleString()}
-              </span>
-              {#if multi}
-                <button
-                  type="button"
-                  aria-label={`Remove run ${ri + 1}`}
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    removeRun(ri);
-                  }}
-                  class="grid h-7 w-7 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400"
-                >
-                  ✕
-                </button>
-              {/if}
+              <div class="font-mono text-[11px] text-dark-2">
+                {labelNoun(card)}{isCustom(primary) ? ` · custom (+⚡${CUSTOM_MODEL_SURCHARGE})` : ''}
+              </div>
             </div>
-            <div class="mt-2.5 flex flex-wrap gap-2">
+            <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
+          </div>
+          {#if versionsFor(card).length > 1}
+            <div class="mt-1 font-mono text-[10px] uppercase tracking-wider text-dark-2">Version</div>
+            <div
+              class="mt-1.5 flex flex-wrap gap-2"
+              role="radiogroup"
+              aria-label={`${card.name} version`}
+            >
               {#each versionsFor(card) as v (v.key)}
                 <button
                   type="button"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    pickVersion(ri, v.key);
-                  }}
+                  role="radio"
+                  aria-checked={primary.versionKey === v.key}
+                  onclick={() => pickVersion(0, v.key)}
                   class="rounded border px-3 py-1.5 text-left transition
-                    {r.versionKey === v.key
+                    {primary.versionKey === v.key
                     ? 'border-primary bg-primary/10'
                     : 'border-dark-4 bg-dark-7 hover:border-dark-3'}
                     {v.key === CUSTOM_VERSION_KEY ? 'border-dashed' : ''}"
@@ -276,17 +371,97 @@
                 </button>
               {/each}
             </div>
+          {/if}
+        </div>
+      {/if}
+    </div>
+
+    <!-- multi-run sweep (advanced): train several models / versions at once -->
+    <div class="rounded-md border border-dark-4 bg-dark-6/40">
+      {#if !sweepOpen && !multi}
+        <button
+          type="button"
+          onclick={openSweep}
+          class="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left transition hover:bg-dark-6"
+        >
+          <span class="text-sm font-semibold text-dark-1">+ Add another model to sweep</span>
+          <span class="font-mono text-[11px] text-dark-2">train several at once</span>
+        </button>
+      {:else}
+        <div class="flex flex-col gap-2.5 p-3.5">
+          <div class="font-mono text-xs uppercase tracking-wider text-dark-2">
+            Sweep <span class="lowercase text-dark-2">· {runs.length} models · pick a tile above to change the highlighted run</span>
           </div>
-        {/each}
-      </div>
-      <button
-        type="button"
-        disabled={runs.length >= MAX_RUNS}
-        onclick={addRun}
-        class="mt-2.5 w-full rounded-md border border-dashed border-dark-4 py-2.5 text-sm font-semibold text-dark-2 transition hover:border-primary hover:text-primary disabled:opacity-40"
-      >
-        + Add another model to train (advanced)
-      </button>
+          {#each runs as r, ri (r.id)}
+            {@const card = runCard(r)}
+            {@const focusedRow = ri === focus}
+            {@const runPrice = price(r.cardType, isCustom(r))}
+            <div
+              class="rounded-md border p-3 transition
+                {focusedRow ? 'border-primary ring-2 ring-primary/30' : 'border-dark-4 bg-dark-6'}"
+            >
+              <div class="flex items-center gap-3">
+                <button
+                  type="button"
+                  aria-pressed={focusedRow}
+                  onclick={() => (focus = ri)}
+                  class="flex min-w-0 flex-1 items-center gap-3 text-left"
+                >
+                  <ModelCodeBadge code={card.code} size="md" />
+                  <div class="min-w-0">
+                    <div class="truncate text-sm font-bold text-dark-0">
+                      Run {ri + 1} · {card.name}
+                      {runVersionLabel(r)}
+                    </div>
+                    <div class="font-mono text-[11px] text-dark-2">
+                      {labelNoun(card)}{isCustom(r)
+                        ? ` · custom (+⚡${CUSTOM_MODEL_SURCHARGE})`
+                        : ''}{focusedRow ? ' · editing' : ''}
+                    </div>
+                  </div>
+                </button>
+                <div class="ml-auto shrink-0">{@render priceTag(runPrice, 'text-[13px]')}</div>
+                {#if multi}
+                  <button
+                    type="button"
+                    aria-label={`Remove run ${ri + 1}`}
+                    onclick={() => removeRun(ri)}
+                    class="grid h-7 w-7 shrink-0 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400"
+                  >
+                    ✕
+                  </button>
+                {/if}
+              </div>
+              <div class="mt-2.5 flex flex-wrap gap-2">
+                {#each versionsFor(card) as v (v.key)}
+                  <button
+                    type="button"
+                    onclick={() => pickVersion(ri, v.key)}
+                    class="rounded border px-3 py-1.5 text-left transition
+                      {r.versionKey === v.key
+                      ? 'border-primary bg-primary/10'
+                      : 'border-dark-4 bg-dark-7 hover:border-dark-3'}
+                      {v.key === CUSTOM_VERSION_KEY ? 'border-dashed' : ''}"
+                  >
+                    <div class="text-[12.5px] font-bold text-dark-0">{v.label}</div>
+                    {#if v.note}
+                      <div class="font-mono text-[10px] text-dark-2">{v.note}</div>
+                    {/if}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/each}
+          <button
+            type="button"
+            disabled={runs.length >= MAX_RUNS}
+            onclick={addRun}
+            class="w-full rounded-md border border-dashed border-dark-4 py-2.5 text-sm font-semibold text-dark-2 transition hover:border-primary hover:text-primary disabled:opacity-40"
+          >
+            + Add another model to train
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 
@@ -308,7 +483,11 @@
     </div>
     <div class="mt-3.5 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
       <span class="text-sm text-dark-2">Starting at</span>
-      <span class="font-mono text-2xl font-bold text-[#f59f00]">⚡ {total.toLocaleString()}</span>
+      {#if total != null}
+        <span class="font-mono text-2xl font-bold text-[#f59f00]">⚡ {total.toLocaleString()}</span>
+      {:else}
+        <span class="font-mono text-2xl font-bold text-dark-2">—</span>
+      {/if}
     </div>
     <div class="mt-1 text-right font-mono text-[11px] text-dark-2">
       final price after your data &amp; settings

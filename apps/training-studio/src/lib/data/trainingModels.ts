@@ -42,6 +42,12 @@ export interface ModelVersionInfo {
   /** AI-Toolkit ecosystem + optional discriminated variant (source `aiToolkit`). */
   ecosystem: string;
   modelVariant?: string;
+  /** Training engine when it is NOT the default `ai-toolkit` — e.g. `flux2-dev` for Flux.2, which has no
+   * ai-toolkit ecosystem and trains via the `imageResourceTraining` path with an explicit base AIR. */
+  engine?: string;
+  /** Ecosystem-specific version selector (the `qwen` ecosystem's `version` field). The default and
+   * `latest` both resolve to the currently-unresolvable `2512` resource, so we pin `2509` (verified). */
+  version?: string;
   isNew?: boolean;
 }
 
@@ -94,6 +100,7 @@ export const MODEL_CARDS: ModelCard[] = [
         air: 'urn:air:flux2:checkpoint:civitai:2165902@2439067',
         baseModel: 'Flux.2 D',
         ecosystem: 'flux2',
+        engine: 'flux2-dev',
         isNew: true,
       },
     ],
@@ -157,6 +164,7 @@ export const MODEL_CARDS: ModelCard[] = [
         air: 'urn:air:qwen:checkpoint:civitai:1864281@2110043',
         baseModel: 'Qwen',
         ecosystem: 'qwen',
+        version: '2509',
       },
     ],
   },
@@ -428,6 +436,8 @@ export const MODEL_CARDS: ModelCard[] = [
         air: 'urn:air:hyv1:vae:huggingface:tencent/HunyuanVideo@main/hunyuan-video-t2v-720p/vae/pytorch_model.pt',
         baseModel: 'Hunyuan Video',
         ecosystem: 'wan',
+        // The `wan` ecosystem is a discriminated union on `modelVariant`; Hunyuan prices under 2.1.
+        modelVariant: '2.1',
       },
     ],
   },
@@ -533,7 +543,7 @@ export interface LoraType {
   /** Which media this type applies to. */
   medias: Media[];
   /** Recommended base-model card `type` per media. */
-  rec: Partial<Record<Media, string>>;
+  recommended: Partial<Record<Media, string>>;
   /** Default per-item "seen" target used to compute a starting step count. */
   seen: number;
   /** Warn below this item count for this type. */
@@ -546,7 +556,7 @@ export const LORA_TYPES: LoraType[] = [
     name: 'Character',
     icon: '🧍',
     medias: ['image', 'video'],
-    rec: { image: 'flux', video: 'wan' },
+    recommended: { image: 'flux', video: 'wan' },
     seen: 100,
     minImg: 10,
   },
@@ -555,7 +565,7 @@ export const LORA_TYPES: LoraType[] = [
     name: 'Style',
     icon: '🎨',
     medias: ['image', 'video', 'audio'],
-    rec: { image: 'flux', video: 'wan', audio: 'acestep' },
+    recommended: { image: 'flux', video: 'wan', audio: 'acestep' },
     seen: 150,
     minImg: 15,
   },
@@ -564,7 +574,7 @@ export const LORA_TYPES: LoraType[] = [
     name: 'Concept',
     icon: '💡',
     medias: ['image', 'video', 'audio'],
-    rec: { image: 'flux', video: 'wan', audio: 'acestep' },
+    recommended: { image: 'flux', video: 'wan', audio: 'acestep' },
     seen: 150,
     minImg: 15,
   },
@@ -573,7 +583,7 @@ export const LORA_TYPES: LoraType[] = [
     name: 'Effect',
     icon: '✨',
     medias: ['video'],
-    rec: { video: 'wan' },
+    recommended: { video: 'wan' },
     seen: 150,
     minImg: 20,
   },
@@ -607,33 +617,10 @@ export const findByAir = (
 export const cardByEcosystem = (ecosystem: string): ModelCard | undefined =>
   MODEL_CARDS.find((c) => c.versions.some((v) => v.ecosystem === ecosystem));
 
-/**
- * Placeholder "starting price" per card, in Buzz. The REAL price comes from the
- * orchestrator whatif at the Review step — this is only the "from ⚡X" hint on
- * the Select cards, before we know the dataset. Conservative round numbers.
- */
-export const START_PRICE: Record<string, number> = {
-  flux: 2400,
-  flux2: 2800,
-  flux2klein: 2000,
-  chroma: 1800,
-  qwen: 2200,
-  zimage: 1600,
-  'hidream-o1': 2400,
-  ernie: 1800,
-  anima: 1500,
-  boogu: 2000,
-  krea2: 2400,
-  mageflow: 1800,
-  ideogram4: 2200,
-  sdxl: 1400,
-  sd15: 700,
-  wan: 5200,
-  hunyuan: 4800,
-  ltx: 5000,
-  minimaxh3: 5200,
-  acestep: 1200,
-};
-
 /** Extra Buzz for training on top of a user-supplied custom model. */
 export const CUSTOM_MODEL_SURCHARGE = 500;
+
+/** Per-card "from" price map keyed by `ModelCard.type`, quoted live from the orchestrator `whatif` (see
+ * `$lib/server/pricing`). PARTIAL: a model the orchestrator can't price is simply absent — there is no
+ * static fallback, so callers must handle a missing entry (show "—", not a guessed number). */
+export type FromPrices = Record<string, number>;

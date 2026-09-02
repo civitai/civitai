@@ -5,8 +5,9 @@
   import ReviewStep from './ReviewStep.svelte';
   import ResultsStep from './ResultsStep.svelte';
   import type { Img, LaunchedRun, Selection } from './trainingFlow';
+  import type { FromPrices } from '$lib/data/trainingModels';
 
-  let { onExit }: { onExit: () => void } = $props();
+  let { prices, onExit }: { prices: FromPrices; onExit: () => void } = $props();
 
   const STEPS = [
     { n: 1, label: 'Select' },
@@ -63,6 +64,7 @@
 
   {#if step === 1}
     <SelectStep
+      {prices}
       onContinue={(sel) => {
         selection = sel;
         step = 2;
@@ -73,6 +75,7 @@
   {:else if step === 3 && selection}
     <ReviewStep
       {selection}
+      {prices}
       imageCount={images.length}
       onStart={(l) => {
         launched = l;

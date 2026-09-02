@@ -3,7 +3,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
-  import { loraTypeById, typesForMedia } from '$lib/data/trainingModels';
+  import { loraTypeById, typesForMedia, type FromPrices } from '$lib/data/trainingModels';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import {
     isCustom,
@@ -17,11 +17,13 @@
 
   let {
     selection,
+    prices,
     imageCount,
     onStart,
     onBack,
   }: {
     selection: Selection;
+    prices: FromPrices;
     imageCount: number;
     onStart: (launched: LaunchedRun[]) => void;
     onBack: () => void;
@@ -65,10 +67,24 @@
 
   const presetSeen = $derived(seenFor(presetType));
   const sampleCost = $derived(prompts.length * SAMPLE_RATE);
-  const runTotal = $derived(
-    selection.runs.reduce((s, run, i) => s + runCost(run, params[i]!.steps), 0),
-  );
-  const total = $derived(runTotal + sampleCost);
+  // Per-run cost from the model's live quote; `null` for any run the orchestrator couldn't price, which
+  // makes the whole total `null` (shown as "—") rather than a total quietly missing a run.
+  const runCostAt = (i: number) =>
+    runCost(prices[selection.runs[i]!.cardType], selection.runs[i]!, params[i]!.steps);
+  const runTotal = $derived.by(() => {
+    let sum = 0;
+    for (let i = 0; i < selection.runs.length; i++) {
+      const cost = runCostAt(i);
+      if (cost == null) return null;
+      sum += cost;
+    }
+    return sum;
+  });
+  const total = $derived(runTotal == null ? null : runTotal + sampleCost);
+  const runCostLabel = (i: number) => {
+    const cost = runCostAt(i);
+    return cost == null ? '—' : `⚡ ${cost.toLocaleString()}`;
+  };
   const etaMin = $derived(
     Math.max(...selection.runs.map((_, i) => Math.max(1, Math.round((params[i]!.steps / 2000) * 18)))),
   );
@@ -158,7 +174,7 @@
               />
             </div>
             <span class="w-20 text-right font-mono text-sm text-[#f59f00]">
-              ⚡ {runCost(run, params[i]!.steps).toLocaleString()}
+              {runCostLabel(i)}
             </span>
           </div>
 
@@ -261,7 +277,7 @@
     {#each selection.runs as run, i (run.id)}
       <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
         <span class="truncate text-dark-2">{multi ? `Run ${i + 1} · ` : ''}{runCard(run).name}</span>
-        <span class="font-semibold text-dark-0">⚡ {runCost(run, params[i]!.steps).toLocaleString()}</span>
+        <span class="font-semibold text-dark-0">{runCostLabel(i)}</span>
       </div>
     {/each}
     <div class="flex justify-between gap-2.5 py-2 text-sm">
@@ -270,7 +286,9 @@
     </div>
     <div class="mt-2 flex items-baseline justify-between border-t border-dark-4 pt-3.5">
       <span class="text-sm text-dark-2">Total</span>
-      <span class="font-mono text-2xl font-bold text-[#f59f00]">⚡ {total.toLocaleString()}</span>
+      <span class="font-mono text-2xl font-bold text-[#f59f00]">
+        {total == null ? '—' : `⚡ ${total.toLocaleString()}`}
+      </span>
     </div>
     <div class="mt-1 text-right font-mono text-[11px] text-dark-2">
       ~{etaMin} min{multi ? ' · parallel' : ''} · {imageCount} images

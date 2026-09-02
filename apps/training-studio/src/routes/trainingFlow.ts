@@ -2,7 +2,6 @@ import {
   CUSTOM_MODEL_SURCHARGE,
   LORA_TYPES,
   MODEL_CARDS,
-  START_PRICE,
   cardByType,
   cardsForMedia,
   type Media,
@@ -53,10 +52,6 @@ export function runVersionLabel(run: Run): string {
   return v?.label ?? '';
 }
 
-export function startPrice(cardType: string, custom = false): number {
-  return (START_PRICE[cardType] ?? 0) + (custom ? CUSTOM_MODEL_SURCHARGE : 0);
-}
-
 export function newRun(card: ModelCard): Run {
   const first = card.versions[0];
   if (!first) throw new Error(`Base-model card ${card.type} has no versions`);
@@ -64,10 +59,14 @@ export function newRun(card: ModelCard): Run {
 }
 
 /** The recommended base-model card for a LoRA type + media (falls back defensively). */
-export function recCard(loraTypeId: string, media: Media): ModelCard {
+export function recommendedCardFor(loraTypeId: string, media: Media): ModelCard {
   const t = LORA_TYPES.find((x) => x.id === loraTypeId);
-  const recId = t?.rec[media];
-  return (recId ? cardByType(recId) : undefined) ?? cardsForMedia(media)[0] ?? MODEL_CARDS[0]!;
+  const recommendedId = t?.recommended[media];
+  return (
+    (recommendedId ? cardByType(recommendedId) : undefined) ??
+    cardsForMedia(media)[0] ??
+    MODEL_CARDS[0]!
+  );
 }
 
 /** A dataset image with its (demo) label. Owned by the flow so it survives Back/Continue. */
@@ -98,11 +97,12 @@ export interface LaunchedRun {
   params: RunParams;
 }
 
-/** Per-run Buzz cost: base scales with step count but never drops below the card's "from ⚡X" floor
- * shown on Select, and the custom-model surcharge is flat (matching the "+⚡500" quoted there). Demo
- * pricing — the real number comes from the orchestrator whatif. */
-export function runCost(run: Run, steps: number): number {
-  const floor = START_PRICE[run.cardType] ?? 0;
-  const base = Math.max(floor, Math.round(floor * (steps / 2000)));
+/** Per-run Buzz cost, scaled from the model's real "from ⚡X" orchestrator quote by the chosen step count,
+ * plus the flat custom-model surcharge. `fromPrice` is the live quote for the run's card (see `FromPrices`);
+ * `null` when the orchestrator couldn't price it, so the caller shows "—" rather than a guessed number.
+ * Interim: the Review step should eventually re-quote the exact run config via a real whatif. */
+export function runCost(fromPrice: number | undefined, run: Run, steps: number): number | null {
+  if (fromPrice == null) return null;
+  const base = Math.max(fromPrice, Math.round(fromPrice * (steps / 2000)));
   return base + (isCustom(run) ? CUSTOM_MODEL_SURCHARGE : 0);
 }

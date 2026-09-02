@@ -5,6 +5,14 @@
 /* Tailwind v4 skips node_modules — point it at the shared component package so its classes aren't purged. */
 @source '../../../packages/civitai-ui/src/lib';
 
+/* Civitai's brand accent is blue — the shared theme's `--primary` is a near-white accent, so override it
+   here (the app is always `.dark`). Buzz/price stays gold: that's the literal `#f59f00`, not `--primary`,
+   so it's unaffected. Unlayered on purpose so it wins over the theme's layered `.dark`. */
+.dark {
+  --primary: #1971c2;
+  --primary-foreground: #ffffff;
+}
+
 @layer base {
   :root {
     color-scheme: dark;

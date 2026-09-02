@@ -1816,6 +1816,9 @@ export const REDIS_SYS_KEYS = {
   },
   TRAINING: {
     STATUS: 'training:status',
+    // The training-studio app's cached per-model "from" price map (packed JSON), quoted from the
+    // orchestrator `whatif`. Shared across pods so the ~21 estimate calls run once per TTL, not per load.
+    STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
   },
   CLIENT: 'client',
   SYSTEM: {

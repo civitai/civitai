@@ -1,4 +1,11 @@
-import { createCivitaiClient, getWorkflow, queryWorkflows } from '@civitai/client';
+import {
+  createCivitaiClient,
+  getWorkflow,
+  queryWorkflows,
+  submitWorkflow,
+  type BuzzClientAccount,
+  type WorkflowStepTemplate,
+} from '@civitai/client';
 import { env } from '$env/dynamic/private';
 import {
   CIVITAI_TAG,
@@ -29,6 +36,91 @@ export async function listTrainingWorkflows(token: string): Promise<TrainingRow[
   });
   if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
   return (data.items ?? []).map(workflowToRow).filter((r): r is TrainingRow => r !== null);
+}
+
+/** A representative dataset size for a pre-dataset "from" quote. Under step-based pricing the image count
+ * barely moves the estimate — steps (omitted here, so the orchestrator uses the ecosystem's default) drive
+ * it — so any plausible count works. */
+const WHATIF_IMAGE_COUNT = 20;
+// License fees are only priced when a run generates samples, so a whatif must always carry non-empty
+// prompts or the estimate silently drops the fee the real submission incurs (mirrors the main app).
+const WHATIF_SAMPLE_PROMPTS = ['sample prompt', 'sample prompt', 'sample prompt'];
+// Which Buzz wallets may pay — the standard user spend set. It gates the payment source, not the price,
+// so the estimated total is the same for any non-empty set; required on the workflow body regardless.
+const WHATIF_CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue'];
+
+export interface TrainingWhatIfInput {
+  ecosystem: string;
+  modelVariant?: string;
+  /** The base checkpoint AIR — required by the `flux2-dev` path; unused by ai-toolkit (its ecosystem
+   * resolves the base). */
+  model?: string;
+  /** Non-default engine (e.g. `flux2-dev`); when set the whatif uses the `imageResourceTraining` shape. */
+  engine?: string;
+  /** Ecosystem-specific version selector (e.g. the `qwen` ecosystem's `version` field). */
+  version?: string;
+  /** Omit for the "from" floor — the orchestrator then prices its per-ecosystem default step budget. */
+  steps?: number;
+  imageCount?: number;
+}
+
+// Representative defaults for the `imageResourceTraining` (flux2-dev) path — that schema requires an
+// epoch/repeat/resolution budget rather than deriving one, so a "from" quote uses a modest fixed config.
+const WHATIF_FLUX2 = { resolution: 1024, maxTrainEpochs: 10, numRepeats: 200, trainBatchSize: 1 };
+
+/** Price a training run without submitting it (`whatif`). Most models use the ai-toolkit path (its
+ * ecosystem resolves the base); a few (Flux.2) have no ai-toolkit ecosystem and train via `flux2-dev`,
+ * priced through the `imageResourceTraining` shape with an explicit base AIR. Returns the total Buzz cost,
+ * or null if the orchestrator returned no estimate. No real dataset is needed — the URL is never fetched. */
+export async function trainingWhatIf(
+  token: string,
+  input: TrainingWhatIfInput
+): Promise<number | null> {
+  const count = input.imageCount ?? WHATIF_IMAGE_COUNT;
+  // The SDK type marks server-computed fields (defaultSteps, usesStepPricing, …) as required outputs we
+  // must not send; cast past them, as the main app's training step builders do.
+  const step = (input.engine === 'flux2-dev' || input.engine === 'flux2-dev-edit'
+    ? {
+        $type: 'imageResourceTraining',
+        priority: 'normal',
+        input: {
+          loraName: '',
+          model: input.model,
+          trainingData: 'https://fake',
+          trainingDataImagesCount: count,
+          samplePrompts: WHATIF_SAMPLE_PROMPTS,
+          negativePrompt: '',
+          engine: input.engine,
+          ...WHATIF_FLUX2,
+        },
+      }
+    : {
+        $type: 'training',
+        priority: 'normal',
+        input: {
+          engine: 'ai-toolkit',
+          ecosystem: input.ecosystem,
+          ...(input.modelVariant ? { modelVariant: input.modelVariant } : {}),
+          ...(input.version ? { version: input.version } : {}),
+          trainingData: { type: 'zip', sourceUrl: 'https://fake', count },
+          samples: { prompts: WHATIF_SAMPLE_PROMPTS },
+          ...(input.steps ? { steps: input.steps } : {}),
+        },
+      }) as unknown as WorkflowStepTemplate;
+
+  const { data, error } = await submitWorkflow({
+    client: orchestratorClient(token),
+    body: { steps: [step], currencies: WHATIF_CURRENCIES },
+    query: { whatif: true },
+  });
+  if (!data) {
+    // A rejected step comes back as an RFC-9110 ProblemDetails (`.title` + `.errors`), not `.detail`, so
+    // surface `.title` — otherwise a validation 400 logs as an unhelpful "no data returned".
+    const detail =
+      typeof error === 'string' ? error : error?.detail ?? error?.title ?? 'no data returned';
+    throw new Error(`training whatif failed: ${detail}`);
+  }
+  return data.cost?.total ?? null;
 }
 
 /** One training run's detail (the Open screen), or null if it's gone / not the caller's / not mappable. */
