@@ -1,7 +1,14 @@
 # Pricing templates — implementation plan
 
-> **Status:** proposed, not started. Supersedes the open question **#17** (see
+> **Status:** proposed, **blocked**. Supersedes the open question **#17** (see
 > [Decisions](#decisions)). Owner: unassigned.
+>
+> 🔴 **Blocked on [paid-access-decay.md](paid-access-decay.md)** — whose design is settled as of
+> 2026-09-02, so the block is now on that work shipping rather than on a decision. That change alters the
+> shape of a gate, and a template stores one — shipping templates first means migrating stored
+> template JSON afterwards. The block is narrow: the table, both targeting axes, ordering,
+> conflict detection and the whole licensing-fee half are unaffected, so Phase 1 is not wasted work.
+> What waits is the editor's gate panel and the published-version drop rule.
 
 A creator releasing model after model re-enters the same monetization settings every time. A
 **pricing template** is a named, creator-authored set of monetization values — licensing fee and
@@ -58,14 +65,55 @@ switchable off, rather than an invisible account setting.
 **Consequence for `/settings`:** the fee-defaults section stops being read-only system info and
 becomes a link to the templates list. Authoring defaults lives in one place, not two.
 
+### Answered 2026-09-01
+
+| | Decision |
+|---|---|
+| **Labelled pre-fill** | The form says which template filled it, with a way to clear it for this version. An unexplained number in a fee box is the support ticket. |
+| **No bridge to existing versions** | Creating or editing a template offers nothing retrospective — that is what the bulk editors are for. |
+| **Who can author** | Anyone who can set a price. The route carries the same eligibility as pricing (creator-score floor), not a looser one. |
+| **No cap on template count** | But the list must **flag conflicts** — see below. |
+| **Base-model change** | Re-clamp, never re-resolve — but polish, not a blocker. See [Base-model changes mid-form](#base-model-changes-mid-form--a-polish-item-not-a-hole). |
+
+### Conflicts
+
+Two templates conflict when their match sets overlap. With first-match-wins this is never an *error* —
+the higher-priority one simply wins — but the creator has to be able to see it, and there are two
+degrees worth distinguishing:
+
+- **Shadowed** — B's match set is a subset of a higher-priority A's. B can never apply to anything.
+  This is a dead template and reads as a warning.
+- **Overlapping** — they share cells but each also matches cells of its own. Informational: the
+  shared cells go to whichever is higher.
+
+Computable exactly, and cheaply: expand each template to its set of `(modelType, baseModel)` pairs —
+an empty axis expands to all of it, an ecosystem expands via `getBaseModelsByEcosystemId` — then
+compare sets. The worst case is 23 × 101 = 2,323 cells per template, so this is a set operation in
+the browser, not a query.
+
+This is the second reason the ordering is explicit rather than scored: **a conflict is only legible
+when the tie-break is something the creator can see.** Under specificity scoring, "shadowed" would
+be a claim the UI could not justify on screen.
+
 ### Scope
 
-- **In:** licensing fee, paid access (gate terms + prices), targeting on model type × base
-  model/ecosystem, multiple templates with explicit ordering.
-- **Out:** donation goals (per-model fundraising target, create-once and immutable — carrying one
-  across models sets a goal against a window nobody chose); `licensingSourceVersionId` (version
-  lineage, resolved per-model by `getLicensingRoots`); settlement currency (not a creator choice);
-  usage control (changes what the model *is*, not what it costs).
+- **In:** licensing fee, and **the whole paid-access gate** — access price, the generation grant
+  (bundled / cheaper generation-only / free for everyone), free preview generations, Blue Buzz
+  acceptance, the timed-vs-permanent choice and its window, **and the donation goal**. Targeting on
+  model type × base model/ecosystem, explicit ordering, conflict detection.
+- **Out:** `licensingSourceVersionId` (version lineage, resolved per-model by `getLicensingRoots`);
+  settlement currency (not a creator choice); usage control (changes what the model *is*, not what it
+  costs).
+
+**Donation goals are in (2026-09-01), reversing an earlier call of mine.** I had excluded them as a
+per-model fundraising target that shouldn't travel. That reasoning confused two things: create-once
+and immutable describes editing a goal *after* it exists, not where its initial value comes from. A
+creator who runs every release with the same goal wants it templated, and a pre-filled number is one
+they can see and change before saving.
+
+One constraint the editor has to enforce: `toDonationGoalInput` returns null for a permanent gate — a
+goal ends a *window* early, and a permanent gate has no window. So the goal field exists only while
+the template's gate is timed, and disappears when it is switched to permanent.
 
 ---
 
@@ -92,6 +140,7 @@ model PricingTemplate {
   // Values. Null = this template does not speak to that field.
   licensingFee     Decimal? @db.Decimal(10, 2)
   licensingFeeType LicensingFeeType?
+  // The whole gate config, donation goal included — the form's shape, not the API's.
   paidAccess       Json?
 
   createdAt DateTime @default(now())
@@ -106,10 +155,11 @@ models the creator has *already used*, so a `baseModels`-only template can only 
 past. The moment they adopt a new base model — precisely when a default helps most — nothing
 matches. Ecosystem targeting is what makes a template survive "Illustrious v2 shipped".
 
-**Why `paidAccess` is Json.** It is a nested object (`permanent`, `timeframeDays`, `terms.download`,
-`terms.generation`, `acceptsBlueBuzz`); `modelVersionPaidAccessInputSchema` already validates that
-shape on the way in, and `toFormPaidAccessConfig` already maps it to the form's shape on the way
-out. Flattening it into columns forks a contract that exists.
+**Why `paidAccess` is Json.** It holds every field of the gate editor — access price, generation
+grant and its optional cheaper price, trial limit, Blue Buzz, timed/permanent, window, donation goal.
+`formPaidAccessConfigSchema` already validates exactly that shape, so the column stores it whole with
+no `omit` and no second contract to keep in step. Flattening ten fields into columns buys nothing the
+list view needs.
 
 **Why the fee stays columns.** So the studio can list and sort templates without parsing Json.
 
@@ -184,7 +234,7 @@ first load, or simply dropped.
 New route `apps/creator-studio/src/routes/(app)/templates/`, plus a nav entry.
 
 - **List** — name, targeting summary ("LoRA · Illustrious, Pony"), fee, gate, enabled toggle,
-  drag-to-reorder writing `priority`.
+  drag-to-reorder writing `priority`, and a **conflict badge** per row (shadowed / overlapping).
 - **Editor** — targeting via the same faceted multi-selects `/models` uses, with an ecosystem
   option alongside base models; values via `BulkActionDialog` / `PaidAccessEditor`.
 - **Match preview** — "matches 14 of your versions", computed from the same facet query. This is
@@ -201,14 +251,43 @@ New route `apps/creator-studio/src/routes/(app)/templates/`, plus a nav entry.
   returning the resolved template or null. Resolution runs server-side via the shared helper so the
   client never holds the creator's full template list.
 - **`ModelVersionUpsertForm`** — replace the localStorage read in `applyMonetizationDefaults()` with
-  this query. **The seam is already built and tested**: the effect keyed on `showChargeSettings`,
-  the fee clamp, the denominator guard, the `hasExistingCharge` guard, and the drop-not-coerce rule
-  for a timed window the version cannot offer. Only the source of the values changes.
+  this query. Most of the seam transfers unchanged: the effect keyed on `showChargeSettings`, the
+  fee clamp, the denominator guard, the `hasExistingCharge` guard, and the drop-not-coerce rule for
+  a timed window the version cannot offer.
 
   Keep the disclosure rule that seam exists for: values land when the pricing controls **mount**,
   never at the monetize switch. At the switch the creator has only the affirmation on screen, so a
   fee applied there is a charge with no control to see it by — and one `requiresRightsAffirmation`
   then refuses the save over.
+
+  **New:** the pre-fill is labelled — "Pricing from *LoRA defaults*" beside the section, with a
+  control that clears the applied values for this version only. The template is unaffected.
+
+### Base-model changes mid-form — a polish item, not a hole
+
+An earlier draft of this plan called this "the one place the shipped seam does not transfer" and
+"the actual bug". **That was overstated** (corrected 2026-09-01), on two counts.
+
+**The server already guards it, by name.** `assertPricingAllowed` computes `movesToStricterMedia`
+and refuses the write with a message that names the ceiling and the base model —
+*"A licensing fee can be at most 100 Buzz per generation on this base model. Lower the fee to
+continue."* ([`paid-access.service.ts`](../../src/server/services/paid-access.service.ts), the fee
+ceiling block). The comment there already explains the video-to-image case in full. So the failure
+mode is a specific, actionable error, not silent corruption.
+
+**And the sequence is rare.** It needs a creator to enable monetization — applying a template — and
+*then* go back and change the base model to one on a stricter media axis, in the same session. On a
+version that already charges, no template applies at all (`hasExistingCharge`); on a brand-new one
+there is no `storedBaseModel`, so the write is refused the same way a hand-typed over-cap fee is.
+
+So: **a client-side re-clamp on `baseModel` change is worth doing as polish** — it turns a server
+refusal into a visible adjustment — but it is not a correctness requirement and does not gate Phase 3.
+If it is built, the rule is still re-clamp, never re-resolve: silently swapping in a different template
+would overwrite edits the creator made deliberately.
+
+The version of this that **is** frequent is authoring-time, and only the editor can catch it: a
+template targeting a video ecosystem and an image one has two ceilings, and its fee must clear the
+stricter. See the editor's match preview.
 
 ---
 
@@ -221,14 +300,18 @@ with its test file.
 *Done when:* `pnpm run db:check-generated` passes and `pnpm run test:packages:run` covers matching,
 ordering, the empty-axis wildcards, and ecosystem expansion.
 
-**Phase 2 — studio authoring.** Route, list, editor, reorder, match preview.
-*Done when:* a creator can create, reorder, disable and delete a template, and the three
-`svelte-*-review` agents pass on the segment.
+**Phase 2 — studio authoring.** Route (gated on the same pricing eligibility as setting a price),
+list with conflict badges, editor, reorder, match preview.
+*Done when:* a creator can create, reorder, disable and delete a template; a template fully shadowed
+by a higher-priority one is flagged as such; and the three `svelte-*-review` agents pass on the
+segment.
 
-**Phase 3 — main-app consumption.** tRPC procedure; swap the form's source.
+**Phase 3 — main-app consumption.** tRPC procedure; swap the form's source; add the label. The
+base-model re-clamp is optional polish here — the server already refuses an over-cap fee with a
+specific message.
 *Done when:* the existing `ModelVersionUpsertForm.browser.test.tsx` monetization-defaults tests pass
-against the template source, and a new test covers "no template matches → falls back to the B9
-suggestion".
+against the template source, plus new tests for "no template matches → falls back to the B9
+suggestion" and "clearing the applied values leaves the template alone".
 
 **Phase 4 — retire the stopgap.** Delete the localStorage store and its schema module (fold
 `formPaidAccessConfigSchema` back into the form or keep the module, but drop the persistence).
@@ -239,7 +322,8 @@ suggestion".
 ## Testing
 
 - **Shared rule** (`@civitai/buzz`) — matching, wildcards, ecosystem expansion, ordering, disabled
-  templates. Pure functions, no fixtures.
+  templates, and conflict classification (shadowed vs overlapping vs disjoint). Pure functions, no
+  fixtures.
 - **Studio** — form actions scoped to the owner; a template belonging to another user is not
   editable. Reorder writes the priorities it claims to.
 - **Main app** — the browser tests already written for the localStorage version transfer as-is; add
