@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -90,6 +91,79 @@ function region(src: string, anchor: RegExp, label: string): string {
       'More than one means this pin is now ambiguous.'
   ).toBe(1);
   return norm(all[0][0]);
+}
+
+/**
+ * The two elements this file reasons about, located by PARSING `PageBlockHost.tsx`
+ * rather than by searching its text.
+ *
+ * 🔴 A REAL PARSE, BECAUSE TWO SUCCESSIVE TEXT-BASED VERSIONS WERE EACH DEFEATED BY
+ * WHERE THE CHARACTERS FELL — once by JSX ordering `style` before `data-testid`, and
+ * once by `lastIndexOf('<', …)` finding a `<` inside the element's own props. Both
+ * failures were silent and both left the guard GREEN for the exact mutation it
+ * existed to catch. Offsets cannot express "inside"; a tree can. `typescript` is
+ * already used this way by several guards in this repo.
+ */
+function hostElements(): { frame: ts.Node; content: ts.Node } {
+  const sf = ts.createSourceFile(HOST, read(HOST), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const found = new Map<string, ts.Node>();
+  const visit = (n: ts.Node) => {
+    if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
+      for (const a of n.attributes.properties) {
+        if (
+          ts.isJsxAttribute(a) &&
+          a.name.getText() === 'data-testid' &&
+          a.initializer &&
+          ts.isStringLiteral(a.initializer)
+        ) {
+          found.set(a.initializer.text, n);
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+
+  const frame = found.get('app-page-frame');
+  const content = found.get('app-page-content');
+  // Fail on the LOOKUP rather than letting a missing element make every assertion
+  // below vacuous — the reassuring-zero shape this file guards against elsewhere.
+  expect(
+    frame,
+    'no element in PageBlockHost.tsx carries `data-testid="app-page-frame"`. The opt-out ' +
+      'ledger selects on it, so every ledger rule is inert. Re-point this guard only if the ' +
+      'element was deliberately renamed.'
+  ).toBeDefined();
+  expect(
+    content,
+    'no element in PageBlockHost.tsx carries `data-testid="app-page-content"`. If the cap ' +
+      'moved back onto the host root, the app chrome is being capped along with the app ' +
+      'again — the regression this change removed.'
+  ).toBeDefined();
+  return { frame: frame!, content: content! };
+}
+
+/** Is `maybeDescendant` inside `ancestor`'s element? Walks real parent links. */
+function isDescendant(ancestor: ts.Node, maybeDescendant: ts.Node): boolean {
+  // The opening element's PARENT is the whole `JsxElement`, which is the subtree the
+  // children live in — so ascend from the candidate looking for it.
+  const ancestorElement = ancestor.parent;
+  for (let n: ts.Node | undefined = maybeDescendant.parent; n; n = n.parent) {
+    if (n === ancestorElement) return true;
+  }
+  return false;
+}
+
+/** The literal text of an element's `style={{…}}` attribute. */
+function styleTextOf(el: ts.Node): string {
+  const attrs = (el as ts.JsxOpeningElement | ts.JsxSelfClosingElement).attributes.properties;
+  for (const a of attrs) {
+    if (ts.isJsxAttribute(a) && a.name.getText() === 'style' && a.initializer) {
+      const init = a.initializer;
+      if (ts.isJsxExpression(init) && init.expression) return init.expression.getText();
+    }
+  }
+  return '';
 }
 
 describe('the full-page App Block host caps its width, and the cap is overridable', () => {
@@ -328,80 +402,93 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    * — byte-identically green. Only the report-only browser tier caught it, and
    * that tier cannot block a merge. This test is the gating-tier half.
    */
-  it('the cap sits on `app-page-content`, INSIDE the frame — not back on the frame itself', () => {
-    const src = code(read(HOST));
-    const frameAt = src.indexOf('data-testid="app-page-frame"');
-    const contentAt = src.indexOf('data-testid="app-page-content"');
+  it('the cap sits on `app-page-content`, and that box is a real DESCENDANT of the frame', () => {
+    const { frame, content } = hostElements();
 
+    // 🔴 CONTAINMENT IS ASSERTED ON THE PARSE TREE, NOT BY COMPARING TEXT OFFSETS, AND
+    // THE DIFFERENCE IS THE ENTIRE VALUE OF THIS TEST. An earlier version asked whether
+    // `app-page-content` appeared LATER IN THE FILE than `app-page-frame` — which every
+    // sibling, cousin and unrelated later element also satisfies. Measured on that
+    // version: closing the frame before the content box, so the two are genuine SIBLINGS
+    // and the ledger's inheritance is dead, left this file 9/9 green AND the whole
+    // gating suite (1569 files / 24,879 tests) byte-identically green, while the
+    // report-only browser tier correctly failed BOTH ledger tests. A guard whose message
+    // says "no longer renders inside" must actually mean inside.
     expect(
-      frameAt,
-      'the host root testid is gone — the ledger selects on it; see the guard below'
-    ).toBeGreaterThan(-1);
-    expect(
-      contentAt,
-      'the `app-page-content` wrapper is gone. If the cap moved back onto the host root, the ' +
-        'app chrome is being capped along with the app again — the exact regression this ' +
-        'change removed. Re-point this guard only if the element was renamed.'
-    ).toBeGreaterThan(-1);
-    expect(
-      contentAt,
-      '`app-page-content` no longer renders inside `app-page-frame`. The full-bleed opt-out ' +
-        'ledger sets `--app-page-max-width` ON THE FRAME and relies on INHERITANCE to reach ' +
-        'the capped box; move the capped box out from under the frame and every ledger entry ' +
-        'silently stops applying.'
-    ).toBeGreaterThan(frameAt);
+      isDescendant(frame, content),
+      '`app-page-content` is no longer a DESCENDANT of `app-page-frame`. The full-bleed ' +
+        'opt-out ledger sets `--app-page-max-width` ON THE FRAME and relies on CSS ' +
+        'INHERITANCE to reach the capped box, so lifting that box out from under the ' +
+        'frame — even into a sibling that still renders — makes every ledger entry ' +
+        'silently inert. Nothing rendered in the gating tier can see this.'
+    ).toBe(true);
 
-    // The cap pair must live in the CONTENT element's style, not the frame's.
+    // The cap must live in the CONTENT element's style prop, not the FRAME's.
     //
-    // 🔴 THE REGION STARTS AT THE FRAME'S OPENING `<`, NOT AT ITS TESTID, AND THE
-    // DIFFERENCE IS THE WHOLE ASSERTION. JSX puts `style={{…}}` BEFORE `data-testid` on
-    // this element, so a region beginning at the testid starts *after* the frame's style
-    // block and cannot see a cap declared there. Caught by mutation: with the cap moved
-    // back onto the frame this test PASSED and the mutant died to the box-model pin below
-    // instead — green for the wrong reason, and it would have stayed green for the one
-    // mutation this test exists to catch.
-    const frameOpen = src.lastIndexOf('<', frameAt);
-    expect(frameOpen, "could not find the frame element's opening tag").toBeGreaterThan(-1);
+    // 🔴 READ OFF THE ELEMENT'S OWN `style` ATTRIBUTE, NOT A TEXT SLICE BETWEEN THE TWO
+    // TESTIDS. Two successive text-based attempts were each defeated by where the
+    // characters happened to fall: the first started at the frame's `data-testid` and so
+    // began AFTER its `style={{…}}` (JSX orders them that way), and the second anchored on
+    // `lastIndexOf('<', …)`, which finds the nearest preceding `<` — the opening tag only
+    // while nothing in the element's own props contains one. Measured: inserting an
+    // ordinary prop holding a `<` before the testid re-opened the hole and the
+    // cap-back-on-the-frame mutant passed this test again. The attribute's own text has no
+    // such ambiguity.
     expect(
-      src.slice(frameOpen, contentAt),
+      styleTextOf(frame),
       'the `max-width` cap is declared on the host FRAME again. That re-caps the app chrome ' +
-        'along with the app — a full-page app then renders as a boxed widget rather than a ' +
-        'page of the site.'
+        'along with the app — a full-page app then renders as a boxed widget dropped into ' +
+        'the page rather than as a page of the site.'
     ).not.toContain('--app-page-max-width');
+    expect(
+      styleTextOf(content),
+      'the `max-width` cap is no longer declared on `app-page-content`. If it moved, this ' +
+        "guard and the ledger's inheritance both need re-deriving."
+    ).toContain('--app-page-max-width');
   });
 
   /**
    * 🔴 `flex: 1` ON THE CONTENT WRAPPER IS LOAD-BEARING AND NOTHING RENDERED CATCHES
-   * ITS LOSS — which is why this pins the whole style block rather than one token.
+   * ITS LOSS — which is why this pins the whole style object rather than one token.
    *
    * Measured by mutation, in a copy: deleting `flex: 1` left the FULL node suite
-   * (24877 tests) AND the full `AppBlocks` browser tier (1717 tests across 124
-   * files) green, while the app column and its iframe rendered at **150px** instead
-   * of ~860px at a 900px content height. A running App Block reduced to a sliver,
-   * with every tier green in both directions. This source pin is the only thing
-   * standing between that mutation and production.
+   * (24,879 tests) AND the full `AppBlocks` browser tier (40 files / 484 tests)
+   * green, while the app column and its iframe collapsed to a sliver of their
+   * height. A running App Block reduced to a strip, with every tier green in both
+   * directions. This source pin is the only thing standing between that mutation
+   * and production.
+   *
+   * 🔴 THE EXPECTED VALUE IS COMPARED AGAINST THE PARSED `style` ATTRIBUTE, AND THE
+   * PIN CONTAINS NO ANCHOR REGEX — that is a correctness property, not tidiness.
+   * When the same claim was written as `region(src, /…flex: 1,…/)`, `flex: 1` sat
+   * inside the ANCHOR: deleting it failed with *"the anchor rotted — update the pin
+   * deliberately rather than deleting it"*, so the carefully-written message
+   * explaining what `flex: 1` does was unreachable for the one mutation it was
+   * written for, and the advice a developer actually saw told them to edit the pin —
+   * after which the sliver ships. Worse, deleting `minHeight: 0` (which the
+   * component's own comment says is NOT load-bearing) failed WITH the `flex: 1`
+   * message. Both mutants died, both for the wrong reason. Anchoring on the element
+   * instead means every mutation inside this block fails the equality below and
+   * prints the same, correct explanation.
    *
    * Pinned WHOLE, for the reason the neighbouring cap pin records: a presence check
    * on `flex` survives `flex: 0`, and one on `maxWidth` survives losing the auto
    * margins. The accepted cost is that a deliberate reformat of this block fails
    * this test — pay it, and update the string in the same commit.
    */
-  it("pins the content wrapper's box model verbatim — a dropped `flex: 1` collapses the app with every suite green", () => {
-    const src = code(read(HOST));
+  it("pins the content wrapper's box model — a dropped `flex: 1` collapses the app with every suite green", () => {
+    const { content } = hostElements();
     expect(
-      region(
-        src,
-        /display: 'flex',\s*flexDirection: 'column',\s*flex: 1,[\s\S]*?marginInline: 'auto',/,
-        'content wrapper box model'
-      ),
-      'This is a DELIBERATE verbatim pin. `flex: 1` is what makes this box consume the ' +
-        'height the chrome left; without it the app column collapses to its content-based ' +
-        'minimum (~150px measured) and NO rendered test in either tier notices. If you ' +
-        'changed this block on purpose, update the expected string here in the same commit.'
+      norm(styleTextOf(content)),
+      "This is a DELIBERATE verbatim pin of `app-page-content`'s box model. `flex: 1` is " +
+        'what makes this box consume the height the chrome left; without it the app column ' +
+        'collapses to its content-based minimum and NO rendered test in either tier ' +
+        'notices. If you changed this block on purpose, update the expected string here in ' +
+        'the same commit.'
     ).toBe(
-      "display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, width: '100%', " +
+      "{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, width: '100%', " +
         'maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`, ' +
-        "marginInline: 'auto',"
+        "marginInline: 'auto', }"
     );
   });
 

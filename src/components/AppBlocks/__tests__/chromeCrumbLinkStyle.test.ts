@@ -188,9 +188,11 @@ describe('the app-chrome breadcrumb link uses the site link idiom, at the audite
     expect(
       schemeVar(css, 'light', '--mantine-color-blue-filled'),
       'the light-scheme anchor colour no longer resolves to blue-6. The app-chrome ' +
-        'breadcrumb inherited its WCAG AA contrast from that chain when it stopped ' +
-        'hard-coding `blue.6`; re-check the crumb against the light chrome surface before ' +
-        'accepting this.'
+        'breadcrumb inherited that exact shade from this chain when it stopped hard-coding ' +
+        '`blue.6`, which is what made the swap pixel-neutral on light; re-derive the crumb ' +
+        'colour and re-measure its contrast before accepting this. (Note blue-6 does NOT ' +
+        'clear AA on this bar — 3.37:1 measured, against 4.5:1 for 12px text — so a change ' +
+        'here is not bounded by "it was fine before".)'
     ).toBe('var(--mantine-color-blue-6)');
     expect(
       rootVar(css, '--mantine-color-blue-6'),

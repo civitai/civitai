@@ -109,10 +109,9 @@
      WHAT IT IS. `PageBlockHost` reads this as
      `max-width: var(--app-page-max-width, …)` with `margin-inline: auto`, so
      the app renders as a centred column with a neutral gutter either side once
-     the viewport is wider than this. Below it
-     the declaration is INERT — the box is `width: 100%`, which is already
-     narrower than the cap, and `margin-inline: auto` resolves to 0 on a box
-     that fills its parent. That inertness is the point: the great majority of
+     the viewport is wider than this. Below it the declaration is INERT — the box
+     is `width: 100%`, which is already narrower than the cap, and
+     `margin-inline: auto` resolves to 0 on a box that fills its parent. That inertness is the point: the great majority of
      traffic is below this width and must render byte-identically to before.
 
      🔴 THE ELEMENT THAT READS IT IS NOT THE ELEMENT THE LEDGER SELECTS, AND THAT

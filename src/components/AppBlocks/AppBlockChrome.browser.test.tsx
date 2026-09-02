@@ -201,19 +201,23 @@ describe('AppBlockChrome run-page breadcrumb (Marketplace / <app name>)', () => 
 
   // The "Apps" crumb must read as obviously CLICKABLE — visually distinct from the
   // static dimmed crumb text + separators. It carries the SITE'S link treatment
-  // (Mantine `Anchor`: the themed `--mantine-color-anchor`, underline on hover)
-  // plus an explicit `data-clickable` marker and a real `<a href>`. The trailing
-  // crumb (the app name) carries NONE of these.
+  // (Mantine `Anchor`: the themed `--mantine-color-anchor`, plus an explicit
+  // `underline="always"`) with a `data-clickable` marker and a real `<a href>`. The
+  // trailing crumb (the app name) carries NONE of these.
   //
-  // 🔴 WHAT THIS TEST DELIBERATELY NO LONGER ASSERTS, AND WHY. It used to require
-  // an inline `cursor: pointer` and a RESTING underline, because the crumb was a
-  // hand-styled `Text` carrying `td="underline"` + `style={{cursor:'pointer'}}`.
-  // Both were assertions about a one-off local style, and both had to go when the
-  // crumb adopted the site's `Anchor` (whose default is `underline="hover"`). What
-  // replaces them is a claim about the thing that actually matters and that the old
-  // pair never checked: the crumb is a real link AND it is visually SEPARATED from
-  // its dimmed neighbours. Asserting the separation rather than one particular way
-  // of achieving it is what stops the next restyle from being a silent regression.
+  // 🔴 WHAT MOVED, AND WHAT DELIBERATELY DID NOT. The crumb used to be a hand-styled
+  // `Text` with `td="underline"` + `style={{cursor:'pointer'}}`; both were assertions
+  // about a one-off local style and both are gone. The RESTING UNDERLINE ITSELF IS
+  // NOT — it is now asked for with `Anchor`'s own `underline` prop and asserted below,
+  // because dropping it (as an earlier revision of this change did, by taking the
+  // library default `hover`) leaves colour as the sole resting cue against dimmed
+  // neighbours at 1.07:1 and fails WCAG 1.4.1 F73. The inline `cursor: pointer` did go:
+  // a real `<a href>` gets that from the UA stylesheet.
+  //
+  // ⚠️ An earlier version of this note said the resting underline "had to go" when the
+  // crumb adopted `Anchor`. It did not, and a reader who acted on that would relax
+  // `always` back to `hover` and reintroduce the Level-A regression the assertion
+  // below exists to prevent.
   test('the "Apps" crumb carries a clickable link affordance distinguishing it from the static crumb', async () => {
     renderWithProviders(
       <AppBlockChrome
