@@ -13,6 +13,7 @@ import { IconFlask } from '@tabler/icons-react';
 import { dbRead } from '~/server/db/client';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { readListingBetaBySlugForRender } from '~/server/services/blocks/app-listing-beta.service';
+import { readListingIconBySlugForRender } from '~/server/services/blocks/app-listing-icon.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import { Page } from '~/components/AppLayout/Page';
@@ -60,6 +61,22 @@ interface PageProps {
    */
   isBeta: boolean;
   betaMessage: string | null;
+  /**
+   * The store listing's icon, for the "recently opened apps" entry this page writes.
+   *
+   * 🔴 THE LISTING'S ICON, NOT THE MANIFEST'S — and that is a TRUST choice, not a
+   * convenience one. The chrome that renders this is the spoof-proof surface: it exists
+   * to tell a viewer which app they are actually inside, and it already launders the
+   * app NAME through `sanitizeAppChromeName` for exactly that reason. A manifest-supplied
+   * image is publisher-controlled with no review step, so putting one in the trust chrome
+   * would hand a publisher a picture next to a name we deliberately sanitize. The listing
+   * icon is a moderator-approved asset, and it is the same one `toRecentAppFromListing`
+   * already writes from the store — so both writers now agree.
+   *
+   * `null` for a listing with no icon, and for any read that failed — see
+   * `readListingIconBySlugForRender`, which fails open rather than 500ing the launch path.
+   */
+  iconUrl: string | null;
 }
 
 export const getServerSideProps = createServerSideProps<PageProps>({
@@ -99,9 +116,17 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     // names this call site as the reason it exists. A listing row that does not exist
     // resolves to `isBeta: false` the same way, and a degraded read is logged rather than
     // silently swallowed.
-    const [page, beta] = await Promise.all([
+    // 🔴 THE ICON READ JOINS THIS `Promise.all` RATHER THAN FOLLOWING IT, for the reason
+    // the beta read is already here: this is the app-LAUNCH critical path, so the page
+    // must wait for the SLOWEST of these, never their sum. It is keyed on the SLUG — the
+    // value we already hold — so like the beta read it depends on nothing the block
+    // resolve returns and can be issued in the same tick. Both `app_listings` reads fail
+    // open; see `readListingIconBySlugForRender` for why a rejection here must never
+    // become a 500 on the page that runs the app.
+    const [page, beta, iconUrl] = await Promise.all([
       BlockRegistry.resolvePageBlockBySlug(slug, { db: 'read' }),
       readListingBetaBySlugForRender(slug, dbRead),
+      readListingIconBySlugForRender(slug, dbRead),
     ]);
     if (!page || !page.iframeSrc) return { notFound: true };
 
@@ -133,6 +158,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         // Only carried when the flag is set — the same rule every other projection of these
         // columns applies, so a stale note cannot reach a page through this one.
         betaMessage: beta.isBeta ? beta.betaMessage : null,
+        iconUrl,
       },
     };
   },
@@ -152,6 +178,7 @@ function AppPage(props: PageProps) {
     scopes,
     isBeta,
     betaMessage,
+    iconUrl,
   } = props;
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -172,10 +199,18 @@ function AppPage(props: PageProps) {
   //  - `kind`/`hasPage` — reaching THIS page means the app declares a full-page
   //    surface, so `hasPage` is true by construction; the rail uses it to decide
   //    between re-opening the run route and the detail page.
-  // No icon URL is plumbed to this SSR page (PageProps carries none), so
-  // `iconUrl` is omitted — consumers fall back to the seeded monogram / a
-  // generic app icon. Fires once per mount; the store dedups, so revisiting just
-  // moves the entry to the front.
+  //  - `iconUrl` — the store listing's moderator-approved icon, resolved in
+  //    `getServerSideProps`. 🔴 THIS USED TO BE OMITTED, AND ITS ABSENCE WAS THE
+  //    DEFECT, not a default: this is the ONE writer that means "the viewer actually
+  //    RAN this app", so the apps a viewer uses most were precisely the ones whose
+  //    chrome entry fell back to a generic glyph, while apps merely OPENED from the
+  //    store (via `toRecentAppFromListing`, which has always carried an icon) showed
+  //    the real one. `undefined` when the listing has no icon or the read failed —
+  //    `recordRecentlyOpenedApp` stores the field only when truthy, so a null must not
+  //    be passed through as one; consumers keep their generic-icon fallback for that
+  //    case exactly as before.
+  // Fires once per mount; the store dedups, so revisiting just moves the entry to the
+  // front.
   //
   // 🔴 STAMPED WITH THE VIEWER'S ACCOUNT (#4048). localStorage is per browser
   // PROFILE, so without an owner the next account to use this browser inherits
@@ -191,10 +226,18 @@ function AppPage(props: PageProps) {
         kind: 'onsite',
         hasPage: true,
         name: appName,
+        // Spread-when-truthy, never `iconUrl: iconUrl ?? undefined`. `RecentApp.iconUrl`
+        // is an OPTIONAL string, and the store's own writers use exactly this shape
+        // (`...(entry.iconUrl ? { iconUrl: entry.iconUrl } : {})`) so that an absent icon
+        // leaves the key off the persisted object rather than writing an explicit
+        // undefined into localStorage. Matters because `resolveRecentApp` upgrades an
+        // entry by preferring a previously-recorded icon over a missing one — a present
+        // key holding nothing would defeat that.
+        ...(iconUrl ? { iconUrl } : {}),
       },
       recentsOwnerId
     );
-  }, [appBlockId, blockId, appName, recentsOwnerId]);
+  }, [appBlockId, blockId, appName, iconUrl, recentsOwnerId]);
 
   // Synthetic page instance id — the mint resolves `page_<appBlockId>` directly
   // from the approved AppBlock (no install row).
