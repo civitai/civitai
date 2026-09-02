@@ -31,7 +31,13 @@ import { describe, expect, it } from 'vitest';
  *     flag is not on the line. Closing that needs a type-aware pass, which is a bigger thing than
  *     the bug;
  *   - the same mistake under a DIFFERENT key: `visible: … && features.X`, where `DescriptionTable`
- *     tests `visible === false`, is live at ResourceSelectCard.tsx today and is out of scope here.
+ *     tests `visible === false`, is live at ResourceSelectCard.tsx today and is out of scope here;
+ *   - a DEFAULT PARAMETER sink — `useQueryFollowedAnnouncements(enabled = true)`. Passing an absent
+ *     flag there selects the default, so the gate does not merely fail to disable, it reads as ON.
+ *     Its one instance is closed by coercing at the source, but the shape takes no `enabled:` key.
+ *
+ * `!!` is the only spelling this accepts. `Boolean(features.x)` and `features.x === true` are
+ * equally correct and will be reported — fail-loud, and one spelling keeps the pattern readable.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
@@ -62,17 +68,38 @@ const COERCED_GROUP = /!!\([^()]*\)/g;
 const COMMENT_LINE = /^\s*(\/\/|\/?\*)/;
 /**
  * An opt-out, so a site that must stay uncoerced is VISIBLE rather than dodged by narrowing the
- * pattern. Must carry a reason; the guard checks the marker exists, a human checks the reason.
+ * pattern — which would un-guard every other site at once.
+ *
+ * 🔴 It is RATCHETED: `every exemption is accounted for` below asserts the exact list, so adding one
+ * is a red diff rather than a silent green. An unratcheted opt-out re-opens the door this guard
+ * exists to hold shut, one line at a time.
  */
 const EXEMPT = /no-untruthy-query-gate-exempt:/;
+/** The only site allowed to stay uncoerced, and why — see the marker there for the pending call. */
+const EXEMPTED = ['src/components/Resource/Forms/TrainingSelectFile.tsx:438'];
 
 function uncoerced(value: string) {
   return UNCOERCED.test(value.replace(COERCED_GROUP, ''));
 }
 
+/**
+ * The comment block directly above a line — contiguous comment lines only, stopping at the first
+ * line of code.
+ *
+ * 🔴 Deliberately not "the last N lines". A fixed window exempts a WINDOW rather than a site: one
+ * marker silently covers every gate below it, code in between and all. It is also fragile in the
+ * other direction — the one live exemption's reason runs five lines, so a six-line window sits one
+ * sentence away from ceasing to apply.
+ */
+function precedingComments(lines: string[], index: number) {
+  const block: string[] = [];
+  for (let i = index - 1; i >= 0 && COMMENT_LINE.test(lines[i]); i--) block.push(lines[i]);
+  return block;
+}
+
 function hasBareGate(line: string, precedingLines: string[] = []) {
   if (COMMENT_LINE.test(line)) return false;
-  // The marker sits on its own comment line(s) above the gate, the way an eslint-disable does.
+  // The marker sits on its own comment line(s) directly above the gate, like an eslint-disable.
   if (precedingLines.some((l) => EXEMPT.test(l))) return false;
   for (const pattern of [ENABLED_VALUE, GATE_DECL]) {
     pattern.lastIndex = 0;
@@ -84,14 +111,14 @@ function hasBareGate(line: string, precedingLines: string[] = []) {
   return false;
 }
 
-let cached: { offenders: string[]; scanned: number; byExt: Record<string, number> } | undefined;
+let cached: { offenders: string[]; exempted: string[]; byExt: Record<string, number> } | undefined;
 
 function scan() {
   if (cached) return cached;
   const files = globSync('src/**/*.{ts,tsx}', { cwd: REPO_ROOT });
   const offenders: string[] = [];
+  const exempted: string[] = [];
   const byExt: Record<string, number> = { '.ts': 0, '.tsx': 0 };
-  let scanned = 0;
   for (const rel of files) {
     const file = rel.split(path.sep).join('/');
     if (file.endsWith('no-untruthy-query-gate.test.ts')) continue;
@@ -103,14 +130,18 @@ function scan() {
       // than assuming the walk only ever yields files.
       continue;
     }
-    scanned++;
     byExt[path.extname(file)] = (byExt[path.extname(file)] ?? 0) + 1;
     const lines = text.split(/\r?\n/);
     lines.forEach((line, i) => {
-      if (hasBareGate(line, lines.slice(Math.max(0, i - 6), i))) offenders.push(`${file}:${i + 1}`);
+      const comments = precedingComments(lines, i);
+      if (hasBareGate(line)) {
+        // Uncoerced on its own terms — either a violation, or an accounted-for exemption.
+        if (comments.some((l) => EXEMPT.test(l))) exempted.push(`${file}:${i + 1}`);
+        else offenders.push(`${file}:${i + 1}`);
+      }
     });
   }
-  cached = { offenders, scanned, byExt };
+  cached = { offenders, exempted, byExt };
   return cached;
 }
 
@@ -166,6 +197,28 @@ describe('a query gated on a feature flag must coerce the flag', () => {
     expect(hasBareGate('  const metricPrivacyEnabled = ctx.features.modelMetricPrivacy;')).toBe(
       true
     );
+  });
+
+  it('accounts for every exemption', () => {
+    // 🔴 The ratchet. Without this, pasting the marker above ANY gate turns the guard green and
+    // fails nothing — an opt-out nobody can see is the same as narrowing the pattern, which is the
+    // one thing this guard exists to prevent.
+    expect(
+      scan().exempted,
+      'an exemption was added or moved — it must be listed in EXEMPTED with a reason at the site'
+    ).toEqual(EXEMPTED);
+  });
+
+  it('reads only the contiguous comment block above a gate', () => {
+    // A marker must not exempt a WINDOW. With code between the marker and the gate, the block walk
+    // stops at the code and the gate is still guarded.
+    const marker = '  // no-untruthy-query-gate-exempt: reason';
+    const gate = '  const enabled = features.somethingElse;';
+    expect(precedingComments([marker, '  // continued', gate], 2)).toEqual([
+      '  // continued',
+      marker,
+    ]);
+    expect(precedingComments([marker, '  const other = 1;', gate], 2)).toEqual([]);
   });
 
   it('honours an exemption marker on the lines above', () => {
