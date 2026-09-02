@@ -94,6 +94,20 @@ describe('the spoke door is not cheaper than the onsite one', () => {
     expect(upsert).not.toHaveBeenCalled();
   });
 
+  // The arm above cannot tell stamp-gating from unverified-gating, because its fixture carries both.
+  // Relaxing the spoke to `!user.emailVerified` would refuse the 7.1M accounts the column was never
+  // populated for, and every assertion in this file would still pass except by accident: OK_USER
+  // happens to omit `emailVerified`, so the omission is what holds the invariant. This names it.
+  it('serves a legacy account that is unverified but was never stamped', async () => {
+    const res = await call(
+      { method: 'POST', body: validBody },
+      { ...OK_USER, emailVerified: null, meta: {} }
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(upsert).toHaveBeenCalled();
+  });
+
   it('refuses a creator the email gate would refuse onsite', async () => {
     const res = await call(
       { method: 'POST', body: validBody },
