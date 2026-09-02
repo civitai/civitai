@@ -8,7 +8,6 @@ import type * as Trpc from '~/utils/trpc';
 import { renderWithProviders } from '../../../test/component-setup';
 import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
 import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
-import { PANEL_LEFT_CONTROLS } from '~/components/Sticker/place-button-position';
 import type { StickerDraft } from '~/store/sticker-placement-draft.store';
 import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 
@@ -168,7 +167,7 @@ const renderDraft = async (
  * through the ordinary locator with its full actionability check.
  *
  * (A locator click on the stub does not succeed in this harness: the cluster is
- * absolutely positioned inside the rotated draft, and the measured failure was a
+ * absolutely positioned inside the draft, and the measured failure was a
  * negative **x**. Nothing in the component moves it horizontally —
  * `shouldFlipPlaceButton` is vertical only, as `DraftSticker.tsx` says where it is
  * used — so the flip is not the cause. Beyond that the mechanism is unestablished,
@@ -348,107 +347,114 @@ describe('the free option is a price, not a process', () => {
 });
 
 /**
- * The note and the payout line are the two pieces of PROSE in the draft's chrome,
- * and every one of its children is inside the element carrying `rotate(...)` —
- * so without a counter-rotation a sticker turned any distance leaves both of them
- * sideways, and at a half turn upside down. Placed stickers already counter-rotate
- * their marks; this is the draft's half.
+ * 🔴 THE FIX, AS A CLAIM ABOUT THE DOM. The rotation lives on an inner element
+ * and the chrome is that element's SIBLING, so nothing can turn the toolbar, the
+ * note or the payout line — and, more to the point, nothing can swing the point
+ * they are anchored to across the artwork.
  *
- * The fixture sits at 15 degrees, so the assertion is a specific angle rather
- * than "some transform": a counter-rotation by the wrong sign is the failure that
- * looks most like a fix.
+ * The previous shape held them level with a counter-rotation while leaving them
+ * inside the rotated element. That reads the same at a glance and is not the
+ * same thing: they were still anchored to the sticker's rotated bottom edge, so
+ * past about a quarter turn the anchor came round over the artwork and the
+ * upright cluster painted on top of the sticker being edited. A counter-rotation
+ * fixes which way up something reads; it does not move where it lands.
+ *
+ * So this asserts CONTAINMENT and the absence of any rotation in the chain,
+ * rather than an angle. An angle assertion passes against the shape that had the
+ * bug.
+ *
+ * Structural on purpose: component tests load no stylesheet, so any position or
+ * width measured in this harness is a lie.
  */
-describe('the note and the payout caption stay upright', () => {
-  test('counter-rotates by exactly the sticker angle', async () => {
-    await renderDraft(null, { ownerShare: 1 });
+describe('the editing chrome is outside the rotation', () => {
+  const rotatedElement = () =>
+    [...document.querySelectorAll<HTMLElement>('[style*="rotate"]')].find((element) =>
+      element.style.transform.includes('rotate(')
+    );
 
-    const note = (await page.getByRole('button', { name: /Add a note/ }).element()) as HTMLElement;
-    const caption = (await page.getByText(/proceeds go to/).element()) as HTMLElement;
-    // Anchored on the CAPTION, so both containment checks below are real. Taking
-    // the cluster from `note.closest(...)` made the note's own check true by
-    // construction — the anchor moves with the element, so a note relocated out
-    // of the cluster still "contains" itself in whatever its new home is.
-    const cluster = caption.closest<HTMLElement>('.w-max');
+  // The negative control for the pair below: both would pass against a component
+  // that had no rotation anywhere, and `draft.rotation` is a fixture anyone may
+  // edit.
+  test('the sticker really is rotated', async () => {
+    await renderDraft(null);
 
-    expect(cluster?.style.transform).toBe('translateX(-50%) rotate(-15deg)');
-    expect(cluster?.contains(note)).toBe(true);
-    expect(cluster?.contains(caption)).toBe(true);
+    expect(rotatedElement()?.style.transform).toContain('rotate(15deg)');
   });
 
-  /**
-   * 🔴 BOTH HALVES OF THE MECHANISM, because either one alone is a real bug.
-   *
-   * The first version of this counter-rotation wrote the individual `rotate`
-   * property and left the Tailwind `-translate-x-1/2` class in place, on the
-   * reasoning that the two compose. They do — as `translate · rotate · scale ·
-   * transform` — so the class's `transform` applies first and the element then
-   * orbits its already-shifted box. Measured in Chromium on a 200px cluster:
-   * 29px right and 71px down at 45 degrees, and a full cluster width to the side
-   * at 180. The other way to get it wrong is to write the combined transform and
-   * FORGET to drop the class, which doubles the centring.
-   *
-   * So: one `transform` carrying both, and no translate class beside it.
-   *
-   * ⚠️ A STRUCTURAL PIN, NOT A MEASUREMENT, and deliberately. The honest check is
-   * where the cluster's box actually lands, and this harness cannot give it: a
-   * rotated draft renders at negative coordinates outside the iframe (the note
-   * on `renderDraft` above records the same problem for clicks), so the rects
-   * come back describing a layout nobody would see. A geometric assertion here
-   * would be measuring the harness. The displacement was confirmed in a real
-   * browser instead; this holds the shape that fix depends on.
-   */
-  test('carries the centring and the counter-rotation in one transform', async () => {
+  test('the cluster is not a descendant of the rotated element', async () => {
+    await renderDraft(null, { ownerShare: 1 });
+
+    const caption = (await page.getByText(/proceeds go to/).element()) as HTMLElement;
+    // Anchored on the CAPTION rather than on the cluster, so the containment
+    // check below is about a real child: taking the cluster from an element that
+    // moved out of it would make its own membership true by construction.
+    const cluster = caption.closest<HTMLElement>('.w-max') as HTMLElement;
+    const rotated = rotatedElement() as HTMLElement;
+
+    expect(rotated.contains(cluster)).toBe(false);
+    expect(cluster.contains(caption)).toBe(true);
+  });
+
+  test('no element between the cluster and the media box rotates', async () => {
     await renderDraft(null, { ownerShare: 1 });
 
     const caption = (await page.getByText(/proceeds go to/).element()) as HTMLElement;
     const cluster = caption.closest<HTMLElement>('.w-max') as HTMLElement;
 
-    expect(cluster.style.transform).toBe('translateX(-50%) rotate(-15deg)');
-    // The class would compose with the inline transform and centre it twice.
-    expect(cluster.className).not.toContain('-translate-x-1/2');
-  });
+    const rotations: string[] = [];
+    for (
+      let node: HTMLElement | null = cluster;
+      node && node !== document.body;
+      node = node.parentElement
+    ) {
+      if (node.style.transform.includes('rotate(')) rotations.push(node.style.transform);
+    }
 
-  // The negative control for the pair above: they would both pass against a
-  // component that counter-rotated nothing if the sticker itself were never
-  // rotated, and `draft.rotation` is a fixture anyone may edit.
-  test('the sticker it sits in really is rotated', async () => {
-    await renderDraft(null);
-
-    const note = (await page.getByRole('button', { name: /Add a note/ }).element()) as HTMLElement;
-    const root = note.closest<HTMLElement>('.cursor-move');
-
-    expect(root?.style.transform).toContain('rotate(15deg)');
+    // Names what it found, so putting the chrome back inside the rotation fails
+    // with the offending transform rather than with a bare boolean.
+    expect(rotations).toEqual([]);
   });
 });
 
 /**
- * The left panel's width is what `STICKER_PANEL_MIN_WIDTH_PX` is derived from,
- * and the bug this PR fixed was that derivation going stale: Copy joined the
- * panel as a third icon and the constant stayed at the width computed for two,
- * so the panel painted over the rotate knob on a whole band of sticker widths.
+ * One toolbar, under the sticker, holding everything.
  *
- * The constant now moves with `PANEL_LEFT_CONTROLS`, but nothing tied that to
- * the JSX — a fourth control could be added and every test stay green while the
- * panel ate the knob again. This is that tie. It COUNTS rather than measures,
- * deliberately: component tests load no stylesheet, so every Tailwind width in
- * this environment is a lie and a measured assertion here would be worse than
- * none.
+ * It used to be two pills bracketing the sticker's top corners, which is where
+ * this ticket came from: children of the rotated element, so they turned with
+ * the sticker onto the artwork; a fixed band while everything else up there
+ * scales with the sticker, so on a small draft they converged on the rotate knob
+ * and on each other; and keeping the buy button clear of them needed a second
+ * derived offset that went stale the first time a control was added to one.
+ *
+ * 🔴 If you are about to split these back into two panels for the reason the old
+ * comment gave — that Delete should not sit a thumb's width from the controls
+ * you press while arranging — that was weighed and Justin chose one bar on
+ * 2026-09-02. Move Delete within the bar; do not put it back on the sticker.
+ *
+ * COUNTS AND GROUPS, never measures: no stylesheet loads here.
  */
-describe('the left control panel', () => {
-  test('holds exactly the number of controls the width constant assumes', async () => {
+describe('the control toolbar', () => {
+  const CONTROLS = [
+    'Duplicate this sticker',
+    'Flip this sticker',
+    "Set this sticker's opacity",
+    'Remove this sticker',
+  ];
+
+  test('holds every control in one bar, and that bar is in the cluster', async () => {
+    // Rendered directly rather than through `renderDraft`, which supplies no
+    // `onDuplicate` — without a handler that control is deliberately absent, and
+    // this is the test that says all four live together.
     renderWithProviders(
-      // Wide enough that the panels are drawn against the sticker's own edges at
-      // all: below STICKER_PANEL_MIN_WIDTH_PX the controls move into the buy
-      // cluster and there is no panel to count. 0.6 of 400 is 240.
-      <div style={{ position: 'relative', width: 400, height: 600 }}>
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
         <DraftSticker
-          draft={{ ...draft, scale: 0.6 }}
+          draft={draft}
           art={art}
           selected
           dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
           price={PRICE}
           freeOffer={null}
-          ownerShare={undefined}
+          ownerShare={1}
           ownerUsername="creator"
           onGesture={() => true}
           onDuplicate={() => null}
@@ -456,16 +462,30 @@ describe('the left control panel', () => {
       </div>
     );
 
-    await expect
-      .element(page.getByRole('button', { name: 'Duplicate this sticker' }))
-      .toBeInTheDocument();
+    // `element()` does not poll, so the render has to be awaited on a matcher
+    // first or every lookup below races the first paint.
+    await expect.element(page.getByRole('button', { name: CONTROLS[0] })).toBeInTheDocument();
 
-    const left = document.querySelector('[data-left-panel]');
+    const buttons = await Promise.all(
+      CONTROLS.map(
+        async (name) => (await page.getByRole('button', { name }).element()) as HTMLElement
+      )
+    );
 
-    // Present at all, so a panel that stopped being drawn reads as a failure
-    // here rather than as a count of zero matching a constant somebody zeroed.
-    expect(left).not.toBeNull();
-    expect(left?.querySelectorAll('button').length).toBe(PANEL_LEFT_CONTROLS);
+    // Present at all, so a control that stopped being rendered fails here rather
+    // than passing as an empty set that trivially shares a parent.
+    expect(buttons).toHaveLength(CONTROLS.length);
+
+    const bars = new Set(buttons.map((button) => button.closest('.rounded-full.bg-dark-7')));
+    expect(bars.size).toBe(1);
+
+    const caption = (await page.getByText(/proceeds go to/).element()) as HTMLElement;
+    const cluster = caption.closest<HTMLElement>('.w-max') as HTMLElement;
+    const [bar] = [...bars] as HTMLElement[];
+
+    expect(cluster.contains(bar)).toBe(true);
+    // First in the cluster, so it is the part nearest the sticker it acts on.
+    expect(cluster.firstElementChild).toBe(bar);
   });
 });
 
@@ -531,14 +551,10 @@ const removeIsSiblingOfDuplicate = async () => {
 
 describe('the duplicate control', () => {
   /**
-   * ⚠️ THE NARROW FIXTURE PUTS THE CONTROL IN THE BUY CLUSTER, NOT THE PILL.
-   *
-   * `panelsInside` needs the sticker to be at least 124px wide; the shared
-   * fixture is 0.25 of a 380px container, so 95px — the controls go to the buy
-   * cluster, which this file documents as landing at a negative x here. That is
-   * why this one is pressed through the DOM. The test below covers the pill
-   * branch with a wide draft and an ordinary locator click, so both render paths
-   * are exercised rather than one being described and neither checked.
+   * ⚠️ Pressed through the DOM: the whole draft renders at negative
+   * coordinates in this harness — measured at x = -73 for this control — so no
+   * locator click lands, and a passing "it is clickable" test would be a
+   * fiction.
    */
   test('asks the host for another copy, and places nothing', async () => {
     const duplicated: string[] = [];
@@ -568,8 +584,8 @@ describe('the duplicate control', () => {
     ((await locator.element()) as HTMLElement).click();
 
     expect(duplicated).toEqual([draft.id]);
-    // Pins WHICH branch this covers: at 95px the controls are in the buy
-    // cluster, where remove sits beside duplicate.
+    // One toolbar at every size, so remove is duplicate's sibling here and at
+    // any other scale. Two containers means the corner pills are back.
     expect(await removeIsSiblingOfDuplicate()).toBe(true);
     // 🔴 The half that matters for money: duplicating must not reach the
     // placement mutation.
@@ -580,49 +596,6 @@ describe('the duplicate control', () => {
     // mock would certify "charges nothing" forever.
     await pressPaid();
     expect(placed).toHaveLength(1);
-  });
-
-  /**
-   * The OTHER render path. Below 124px of sticker width the controls go to the
-   * buy cluster; above it they go to the pill. Both have to actually render the
-   * duplicate control, and only one of them was being exercised — deleting
-   * `{duplicateControl}` from the pill left every test green.
-   *
-   * ⚠️ What this does NOT assert is reachability. Measured in this harness, the
-   * control sits at x = -95 in the pill branch and x = -73 in the cluster
-   * branch: the whole draft renders at negative coordinates here, so no locator
-   * click succeeds on either path and a passing "it is clickable" test would be
-   * a fiction. Presence is what this harness can honestly check.
-   */
-  test('renders in the pill branch as well as the buy cluster', async () => {
-    renderWithProviders(
-      <div style={{ position: 'relative', width: 380, height: 600 }}>
-        <DraftSticker
-          // 0.5 of 380 is 190px, past the 124px threshold, so the controls sit
-          // in the pill above the sticker rather than in the buy cluster.
-          draft={{ ...draft, scale: 0.5, y: 0.5 }}
-          art={art}
-          selected
-          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
-          price={PRICE}
-          freeOffer={null}
-          ownerShare={undefined}
-          ownerUsername="creator"
-          onGesture={() => true}
-          onDuplicate={() => null}
-        />
-      </div>
-    );
-
-    await expect
-      .element(page.getByRole('button', { name: 'Duplicate this sticker' }))
-      .toBeInTheDocument();
-
-    // 🔴 The assertion that makes this a DIFFERENT test rather than a second
-    // copy of the one above. Both branches render a button of the same name, so
-    // presence alone is satisfied by the cluster; the pill keeps remove in its
-    // own container.
-    expect(await removeIsSiblingOfDuplicate()).toBe(false);
   });
 
   /**

@@ -2,14 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { Box } from '~/components/Sticker/place-button-position';
 import {
   candidateDistance,
-  flippedButtonOffset,
-  panelBandFor,
-  panelsFitInsideEdges,
+  chromeClearance,
   placeButtonBoxes,
   shouldFlipPlaceButton,
-  STICKER_PANEL_BAND_PX,
-  STICKER_PANEL_LEFT_WIDTH_PX,
-  STICKER_PANEL_MIN_WIDTH_PX,
 } from '~/components/Sticker/place-button-position';
 
 /** The real page at 1400x900: tray band, and the carousel viewport that clips. */
@@ -23,244 +18,197 @@ const box = (top: number, height = 36, left = 600, right = 732): Box => ({
   right,
 });
 
-describe('flippedButtonOffset', () => {
-  // The knob hangs `knobOffset` of the sticker's HEIGHT above it, so the
-  // clearance has to scale with the sticker. A constant is what made the knob
-  // dead at the default size, and a constant is what these cases forbid.
-  it('scales with the sticker so the button clears the rotate knob', () => {
-    expect(
-      flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.22, gap: 8, panelBand: 0 })
-    ).toBe(30);
-    expect(
-      flippedButtonOffset({ stickerHeight: 300, knobOffset: 0.22, gap: 8, panelBand: 0 })
-    ).toBe(74);
+const KNOB = 0.22;
+const OUTSET = 6;
+const GAP = 8;
+
+const clearance = (over: Partial<Parameters<typeof chromeClearance>[0]> = {}) =>
+  chromeClearance({
+    width: 100,
+    height: 200,
+    rotation: 0,
+    knobOffset: KNOB,
+    outset: OUTSET,
+    gap: GAP,
+    ...over,
   });
 
-  it('tracks the knob offset and the gap independently', () => {
-    expect(flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.5, gap: 8, panelBand: 0 })).toBe(
-      58
-    );
-    expect(
-      flippedButtonOffset({ stickerHeight: 100, knobOffset: 0.22, gap: 20, panelBand: 0 })
-    ).toBe(42);
+/**
+ * Where the furthest corner of the turned sticker actually lands on screen,
+ * derived from the corners rather than from the formula under test.
+ *
+ * The local rectangle is the artwork's box grown by the handles on every side
+ * and by the rotate knob on top, about the centre the sticker turns about. CSS
+ * `rotate` sends `(x, y)` to `(x·cos − y·sin, x·sin + y·cos)`, so the screen
+ * vertical of a corner is `x·sin + y·cos`.
+ */
+function rotatedReach({
+  width,
+  height,
+  rotation,
+}: {
+  width: number;
+  height: number;
+  rotation: number;
+}) {
+  const radians = (rotation * Math.PI) / 180;
+  const sin = Math.sin(radians);
+  const cos = Math.cos(radians);
+  const xs = [-(width / 2 + OUTSET), width / 2 + OUTSET];
+  const ys = [-(height / 2 + Math.max(KNOB * height, OUTSET)), height / 2 + OUTSET];
+  const screenY = xs.flatMap((x) => ys.map((y) => x * sin + y * cos));
+
+  return { down: Math.max(...screenY), up: Math.min(...screenY) };
+}
+
+/**
+ * 🔴 THE TICKET. The chrome is laid out against the sticker's UNROTATED box and
+ * has to clear its ROTATED one, because the rotation now lives on an inner
+ * element and the chrome is that element's sibling. Every case here is a
+ * position that was wrong before that split, and none of them may be satisfied
+ * by a constant.
+ */
+describe('chromeClearance', () => {
+  it('clears only the handles below and the rotate knob above at rest', () => {
+    // The knob hangs 0.22 of a 200px sticker — 44px — above the top edge, and
+    // the corner handles reach 6px past every edge.
+    expect(clearance()).toEqual({ below: OUTSET + GAP, above: 44 + GAP });
   });
 
-  it('clears the knob at every size in the measured dead band', () => {
-    // The knob's top edge sits at -knobOffset*height in the sticker's own space;
-    // the flipped button's bottom sits at -offset. Measured on the real page,
-    // heights from ~73 to ~236 put the knob's centre inside the button.
-    for (const stickerHeight of [73, 94, 150, 200, 236]) {
-      const offset = flippedButtonOffset({ stickerHeight, knobOffset: 0.22, gap: 8, panelBand: 0 });
-      expect(offset).toBeGreaterThan(0.22 * stickerHeight);
-    }
+  it('moves the knob-sized standoff to the BELOW side at half a turn', () => {
+    // The bug this fixes, stated as a number: at 180 degrees the knob is under
+    // the sticker on screen, so the side needing the bigger standoff is the one
+    // the toolbar sits on. Chrome that rides the rotation instead lands on the
+    // artwork here.
+    expect(clearance({ rotation: 180 })).toEqual({ below: 44 + GAP, above: OUTSET + GAP });
   });
 
-  // The knob is not the only thing up there any more. The two control panels
-  // occupy a band that does NOT scale with the sticker, so on a short one the
-  // knob clearance is the smaller of the two and clearing only it puts the
-  // button over the panels — where it paints last and swallows the pointer, so
-  // flip, opacity and delete are visibly present and completely dead.
-  it('clears the panel band on a sticker too short for the knob to be the obstacle', () => {
-    // 72px: a 2:1 sticker at the DEFAULT 18% scale on an 800px media box. The
-    // knob wants 15.8px of clearance and the panels want 36.
-    const offset = flippedButtonOffset({
-      stickerHeight: 72,
-      knobOffset: 0.22,
-      gap: 8,
-      panelBand: STICKER_PANEL_BAND_PX,
+  it('is driven by the WIDTH on its side, where height says nothing', () => {
+    // A wide, short sticker turned upright reaches further vertically than its
+    // own box ever does — the case a height-only clearance gets backwards.
+    const wide = chromeClearance({
+      width: 400,
+      height: 60,
+      rotation: 90,
+      knobOffset: KNOB,
+      outset: OUTSET,
+      gap: GAP,
     });
 
-    expect(offset).toBeGreaterThan(STICKER_PANEL_BAND_PX);
-    expect(offset).toBe(44);
+    expect(wide.below).toBeCloseTo(400 / 2 + OUTSET - 60 / 2 + GAP);
+    expect(wide.below).toBeGreaterThan(clearance({ rotation: 90 }).below);
   });
 
-  it('still clears the knob once the sticker is tall enough for it to win', () => {
-    const stickerHeight = 400;
-    const offset = flippedButtonOffset({
-      stickerHeight,
-      knobOffset: 0.22,
-      gap: 8,
-      panelBand: STICKER_PANEL_BAND_PX,
-    });
-
-    expect(offset).toBeGreaterThan(0.22 * stickerHeight);
-    expect(offset).toBe(96);
+  it('scales with the sticker rather than sitting at a fixed distance', () => {
+    // A constant passes the resting case above and fails here, which is the
+    // whole point of asserting two sizes.
+    expect(clearance({ height: 400 }).above).toBe(0.22 * 400 + GAP);
+    expect(clearance({ height: 100 }).above).toBe(0.22 * 100 + GAP);
   });
 
-  // Every height in the range a sticker can actually take, against BOTH
-  // obstacles at once — the pair above pins the two regimes, this pins that
-  // there is no gap between them.
-  it('clears both obstacles across the whole scale range', () => {
-    for (const stickerHeight of [20, 51, 72, 100, 127, 150, 236, 400]) {
-      const offset = flippedButtonOffset({
-        stickerHeight,
-        knobOffset: 0.22,
-        gap: 8,
-        panelBand: STICKER_PANEL_BAND_PX,
-      });
+  it('keeps the chrome exactly one gap clear of the turned sticker, at every angle', () => {
+    // The property, checked against corners derived independently of the
+    // formula: the cluster's near edge is the furthest the sticker reaches, plus
+    // the gap, and never less.
+    for (const rotation of [0, 12, 45, 90, 137, 180, -45, -90, -173]) {
+      for (const [width, height] of [
+        [100, 200],
+        [400, 60],
+        [51, 51],
+      ]) {
+        const { below, above } = chromeClearance({
+          width,
+          height,
+          rotation,
+          knobOffset: KNOB,
+          outset: OUTSET,
+          gap: GAP,
+        });
+        const reach = rotatedReach({ width, height, rotation });
 
-      expect(offset).toBeGreaterThan(0.22 * stickerHeight);
-      expect(offset).toBeGreaterThan(STICKER_PANEL_BAND_PX);
+        // Positions in the unrotated box's own frame, centre at 0.
+        expect(height / 2 + below).toBeCloseTo(reach.down + GAP);
+        expect(-(height / 2 + above)).toBeCloseTo(reach.up - GAP);
+      }
     }
-  });
-});
-
-describe('panelsFitInsideEdges', () => {
-  // Flush with the edges is the intended look, and it is only safe while the
-  // sticker is wide enough that the two panels cannot reach past each other —
-  // the delete button paints last, so an overlap means it lands on the opacity
-  // button and a misclick throws the draft away.
-  it('refuses the flush layout on the sizes where delete would cover opacity', () => {
-    // The 5% scale floor on a 1024px media box, and the default 18% on a
-    // phone-width one. Both are states the product actually produces.
-    expect(panelsFitInsideEdges(51)).toBe(false);
-    expect(panelsFitInsideEdges(65)).toBe(false);
-  });
-
-  // The rotate knob is centred and 16px wide, and the left panel reaches 78px
-  // in: below 172 the knob ends up under it, and the panel swallows the press.
-  it('is bounded by the knob, not merely by the two panels touching', () => {
-    expect(panelsFitInsideEdges(STICKER_PANEL_MIN_WIDTH_PX - 1)).toBe(false);
-    expect(panelsFitInsideEdges(STICKER_PANEL_MIN_WIDTH_PX)).toBe(true);
-    // 104 is where the panels alone stop overlapping (78 + 26). Wide enough for
-    // them, still too narrow for the knob — the case a fix aimed at the panels
-    // alone would get wrong.
-    expect(panelsFitInsideEdges(104)).toBe(false);
-  });
-
-  // 144 fit while the left panel held two icons. Adding Copy widened it to 78px
-  // and left this constant at 124, so a 144px sticker drew a panel over its own
-  // rotate knob — the reported bug, and a size the default scale reaches on a
-  // desktop media box.
-  it('refuses the widths that fit before Copy joined the left panel', () => {
-    expect(panelsFitInsideEdges(144)).toBe(false);
-    // The numbers, so a wrong control count reads as `expected 54 to be 78`
-    // rather than as `expected true to be false` on one width. Three icons:
-    // `4 + 22 + 2 + 22 + 2 + 22 + 4`, and the knob needs 8px of the half-width.
-    expect(STICKER_PANEL_LEFT_WIDTH_PX).toBe(78);
-    expect(STICKER_PANEL_MIN_WIDTH_PX).toBe(172);
-  });
-
-  // Literal widths, deliberately. `panelsFitInsideEdges` IS
-  // `w >= STICKER_PANEL_MIN_WIDTH_PX`, so a case written in terms of that
-  // constant holds for every value the constant could take and pins nothing.
-  it('allows it at the sizes the flush layout was designed for', () => {
-    expect(panelsFitInsideEdges(172)).toBe(true);
-    expect(panelsFitInsideEdges(400)).toBe(true);
-  });
-
-  // The band exists only where the panels do. Clearing one that is not there is
-  // not harmful in itself, but it shrinks the flipped candidate box and so makes
-  // the button decline a flip it could have taken.
-  it('reports no band to clear where no panels are drawn', () => {
-    expect(panelBandFor(51)).toBe(0);
-    // Literal, for the reason above.
-    expect(panelBandFor(172)).toBe(STICKER_PANEL_BAND_PX);
   });
 });
 
 describe('candidateDistance', () => {
-  // A second line of copy under the Buzz button makes the wrapper taller. The
-  // unflipped position moves down with it and the distance has to follow; the
-  // flipped position does not move, because it is anchored by its bottom edge.
-  it('grows with the button, one pixel for one pixel', () => {
-    const base = { stickerHeight: 200, flippedOffset: 52, gap: 8 };
-    expect(candidateDistance({ ...base, buttonHeight: 36 })).toBe(296);
-    expect(candidateDistance({ ...base, buttonHeight: 52 })).toBe(312);
-    expect(candidateDistance({ ...base, buttonHeight: 88 })).toBe(348);
+  // The caption under the button carries a creator's username, so the cluster
+  // has no reliable height. It is anchored by the edge nearest the sticker and
+  // grows away from it, so its height moves the far edge only — which is the
+  // distance between the two candidate positions, and nothing else.
+  it('grows with the cluster, one pixel for one pixel', () => {
+    const base = { height: 200, below: 14, above: 52 };
+    expect(candidateDistance({ ...base, clusterHeight: 36 })).toBe(302);
+    expect(candidateDistance({ ...base, clusterHeight: 52 })).toBe(318);
+    expect(candidateDistance({ ...base, clusterHeight: 88 })).toBe(354);
   });
 
-  it('tracks the sticker, the clearance and the gap independently', () => {
-    const base = { stickerHeight: 200, buttonHeight: 36, flippedOffset: 52, gap: 8 };
-    expect(candidateDistance({ ...base, stickerHeight: 300 })).toBe(396);
-    expect(candidateDistance({ ...base, flippedOffset: 74 })).toBe(318);
-    expect(candidateDistance({ ...base, gap: 20 })).toBe(308);
+  it('tracks the sticker and each standoff independently', () => {
+    const base = { height: 200, clusterHeight: 36, below: 14, above: 52 };
+    expect(candidateDistance({ ...base, height: 300 })).toBe(402);
+    expect(candidateDistance({ ...base, below: 30 })).toBe(318);
+    expect(candidateDistance({ ...base, above: 74 })).toBe(324);
   });
 
   it('is the real gap between the two positions the CSS produces', () => {
-    // Unflipped spans [H + gap, H + gap + button]; flipped spans
-    // [-offset - button, -offset]. The distance is between matching edges.
-    const stickerHeight = 94;
-    const buttonHeight = 52;
-    const gap = 8;
-    const flippedOffset = flippedButtonOffset({
-      stickerHeight,
-      knobOffset: 0.22,
-      gap,
-      panelBand: 0,
-    });
+    // Unflipped spans [H/2 + below, ... + cluster] from the box's centre;
+    // flipped spans [-H/2 - above - cluster, -H/2 - above]. The distance is
+    // between matching edges.
+    const height = 94;
+    const clusterHeight = 52;
+    const { below, above } = clearance({ height, width: 94, rotation: 30 });
 
-    const unflippedTop = stickerHeight + gap;
-    const flippedTop = -flippedOffset - buttonHeight;
+    const unflippedTop = height / 2 + below;
+    const flippedTop = -height / 2 - above - clusterHeight;
 
-    expect(candidateDistance({ stickerHeight, buttonHeight, flippedOffset, gap })).toBeCloseTo(
+    expect(candidateDistance({ height, clusterHeight, below, above })).toBeCloseTo(
       unflippedTop - flippedTop
     );
   });
 });
 
 describe('placeButtonBoxes', () => {
-  it('puts the alternative straight below at rotation 0', () => {
+  it('puts the alternative straight below', () => {
     const current = box(300);
-    const { below, above } = placeButtonBoxes({
-      current,
-      flipped: true,
-      rotationDeg: 0,
-      distance: 252,
-    });
+    const { below, above } = placeButtonBoxes({ current, flipped: true, distance: 252 });
 
     expect(above).toEqual(current);
     expect(below.top).toBeCloseTo(552);
     expect(below.bottom).toBeCloseTo(588);
   });
 
-  it('inverts at 180 degrees, where the CSS "below" is above on screen', () => {
-    // Measured in Chromium: a 200px sticker at rotate(180deg) put the unflipped
-    // button at 309-345 and the flipped one at 561-597 — the opposite way round.
-    const { below, above } = placeButtonBoxes({
-      current: box(561),
+  /**
+   * 🔴 VERTICAL WHATEVER THE STICKER IS DOING, and that is a claim about the DOM
+   * rather than about this function. The cluster used to be a child of the
+   * rotated element, so its "below" swung around the sticker and this had to
+   * take an angle to undo it. It is now a sibling of the rotated element, so
+   * screen-down is the only direction there is — a version of this that took an
+   * angle again would mean the chrome had been put back inside the rotation.
+   */
+  it('does not move sideways, because nothing above the cluster rotates', () => {
+    const current = box(300);
+    const { below } = placeButtonBoxes({ current, flipped: true, distance: 100 });
+
+    expect(below.left).toBe(current.left);
+    expect(below.right).toBe(current.right);
+    expect(below.top).toBeCloseTo(400);
+  });
+
+  it('gives the same pair whichever position the cluster is in', () => {
+    // The property the whole design rests on: no feedback, so flipping cannot
+    // remove its own cause.
+    const fromBelow = placeButtonBoxes({ current: box(300), flipped: false, distance: 252 });
+    const fromAbove = placeButtonBoxes({
+      current: fromBelow.above,
       flipped: true,
-      rotationDeg: 180,
       distance: 252,
     });
 
-    expect(above.top).toBeCloseTo(561);
-    expect(below.top).toBeCloseTo(309);
-    expect(below.top).toBeLessThan(above.top);
-  });
-
-  it('gives the same pair whichever position the button is in', () => {
-    // The property the whole design rests on: no feedback, so flipping cannot
-    // remove its own cause. Same geometry, described from both sides.
-    for (const rotationDeg of [0, 45, 90, 180, -135]) {
-      const fromBelow = placeButtonBoxes({
-        current: box(300),
-        flipped: false,
-        rotationDeg,
-        distance: 252,
-      });
-      const fromAbove = placeButtonBoxes({
-        current: fromBelow.above,
-        flipped: true,
-        rotationDeg,
-        distance: 252,
-      });
-
-      expect(fromAbove.below.top).toBeCloseTo(fromBelow.below.top);
-      expect(fromAbove.above.top).toBeCloseTo(fromBelow.above.top);
-    }
-  });
-
-  it('moves sideways when the sticker is turned on its side', () => {
-    const { below } = placeButtonBoxes({
-      current: box(300),
-      flipped: true,
-      rotationDeg: 90,
-      distance: 100,
-    });
-
-    expect(below.top).toBeCloseTo(300);
-    expect(below.left).toBeCloseTo(500);
+    expect(fromAbove.below.top).toBeCloseTo(fromBelow.below.top);
+    expect(fromAbove.above.top).toBeCloseTo(fromBelow.above.top);
   });
 });
 

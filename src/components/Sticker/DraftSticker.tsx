@@ -25,9 +25,7 @@ import type { Gesture, StartGesture } from '~/components/Sticker/draft-gesture';
 import { KNOB_OFFSET, rotate } from '~/components/Sticker/draft-gesture';
 import {
   candidateDistance,
-  flippedButtonOffset,
-  panelBandFor,
-  panelsFitInsideEdges,
+  chromeClearance,
   placeButtonBoxes,
   shouldFlipPlaceButton,
 } from '~/components/Sticker/place-button-position';
@@ -68,8 +66,15 @@ const BUY_BUTTON_MIN_WIDTH = 132;
  */
 const NOTE_WIDTH = 220;
 
-/** `mt-2`, in pixels, and the clearance the flipped side is built from. */
+/** Clear air between the sticker and the chrome, on whichever side it lands. */
 const BUY_BUTTON_GAP = 8;
+
+/**
+ * How far the corner handles stick out past the sticker's own box: `size-3` at
+ * `-1.5`, so 6px on every side. Part of what the chrome has to clear — a
+ * clearance measured to the artwork's edge puts the toolbar on the handles.
+ */
+const HANDLE_OUTSET = 6;
 
 /**
  * The nearest ancestor that clips — the carousel's viewport on the image detail
@@ -303,19 +308,13 @@ export function DraftSticker({
   const rootRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLDivElement>(null);
 
-  // Both the tray and the carousel's clipped viewport can swallow the button, so
-  // it moves above the sticker when that is the better of the two positions.
-  // `panelsInside` rides along because it is decided from the same measurement:
-  // the panels sit against the sticker's edges while there is room for them
-  // there, and a narrower draft hands its controls to the buy cluster instead.
-  const [{ flipped, flippedOffset, panelsInside }, setPosition] = useState({
+  // Both the tray and the carousel's clipped viewport can swallow the cluster,
+  // so it moves above the sticker when that is the better of the two positions.
+  // The two standoffs ride along because they come from the same measurement.
+  const [{ flipped, below, above }, setPosition] = useState({
     flipped: false,
-    flippedOffset: 0,
-    // Starts false, which puts the controls in the buy cluster — the layout
-    // that is correct at any size. The real value lands from the layout effect
-    // before paint, so this is never seen; it is the safe direction to be wrong
-    // in if that ever stops being true.
-    panelsInside: false,
+    below: 0,
+    above: 0,
   });
   const trayElement = useStickerPlacementDraftStore((state) => state.tray);
 
@@ -335,53 +334,51 @@ export function DraftSticker({
 
     const { flipped, rotation } = frame.current;
     const tray = useStickerPlacementDraftStore.getState().tray;
+    // Layout size, not the bounding box. This element no longer rotates — the
+    // artwork inside it does — so its own box is the sticker's unrotated one,
+    // which is what the chrome is laid out against and what the clearance turns
+    // into the rotated extent.
     const height = element.offsetHeight;
-    // Layout size, not the bounding box: `offsetWidth` ignores the CSS rotation,
-    // and the panels are children of the rotated element — they are laid out
-    // against the sticker's own width whatever angle it is at.
     const width = element.offsetWidth;
-    const offset = flippedButtonOffset({
-      stickerHeight: height,
+    const clearance = chromeClearance({
+      width,
+      height,
+      rotation,
       knobOffset: KNOB_OFFSET,
+      outset: HANDLE_OUTSET,
       gap: BUY_BUTTON_GAP,
-      // The panels are the other thing above the sticker, and the only one that
-      // does not scale with it — and on a narrow draft they are not drawn at
-      // all, so there is nothing there to clear. Clearing a band that is not
-      // there only costs the button a flip it could have taken.
-      panelBand: panelBandFor(width),
     });
-    // From the button's own measured rect, both times: the pair that comes out
-    // is the same whichever side the button is currently on, which is what stops
-    // a flip from removing its own cause and oscillating.
-    const { below, above } = placeButtonBoxes({
+    // From the cluster's own measured rect, both times: the pair that comes out
+    // is the same whichever side it is currently on, which is what stops a flip
+    // from removing its own cause and oscillating.
+    const boxes = placeButtonBoxes({
       current: button.getBoundingClientRect(),
       flipped,
-      rotationDeg: rotation,
       distance: candidateDistance({
-        stickerHeight: height,
-        buttonHeight: button.offsetHeight,
-        flippedOffset: offset,
-        gap: BUY_BUTTON_GAP,
+        height,
+        clusterHeight: button.offsetHeight,
+        below: clearance.below,
+        above: clearance.above,
       }),
     });
 
     const next = {
       flipped: shouldFlipPlaceButton({
-        below,
-        above,
+        below: boxes.below,
+        above: boxes.above,
         tray: tray?.getBoundingClientRect() ?? null,
         clip: clip.current?.getBoundingClientRect() ?? null,
       }),
-      flippedOffset: offset,
-      panelsInside: panelsFitInsideEdges(width),
+      below: clearance.below,
+      above: clearance.above,
     };
 
     // Every pointer move re-measures, so bail on an unchanged result rather
     // than handing React a new object to re-render for.
     setPosition((current) =>
       current.flipped === next.flipped &&
-      current.flippedOffset === next.flippedOffset &&
-      current.panelsInside === next.panelsInside
+      current.below === next.below &&
+      current.above === next.above
         ? current
         : next
     );
@@ -439,14 +436,9 @@ export function DraftSticker({
   // The cheap half, and the only one a gesture reaches: rect and offset reads,
   // no style recalc. Which ancestor clips is a property of the tree, not of the
   // sticker's own transform, so none of these deps can change it.
-  //
-  // `panelsInside` is in here because it moves the controls between the panels
-  // and the cluster, which changes the cluster's height — an input to the flip
-  // decision. The ResizeObserver would catch it a beat later; this measures on
-  // the same commit that moved them.
   useLayoutEffect(() => {
     measure();
-  }, [measure, draft.x, draft.y, draft.scale, draft.rotation, flipped, panelsInside]);
+  }, [measure, draft.x, draft.y, draft.scale, draft.rotation, flipped]);
 
   const begin =
     (mode: Gesture['mode'], corner?: { sx: number; sy: number }) => (event: React.PointerEvent) => {
@@ -511,9 +503,8 @@ export function DraftSticker({
       } else if (mode === 'resize' && corner) {
         const { bounds } = point;
         const width = draft.scale * bounds.width;
-        // Layout size, not the bounding box: `offsetWidth` ignores the CSS
-        // rotation, so this is the sticker's own aspect ratio rather than the
-        // ratio of the box its rotated form happens to occupy.
+        // `rootRef` is the unrotated frame, so this is the sticker's own aspect
+        // ratio rather than the ratio of the box its rotated form occupies.
         const aspect = element.offsetWidth / element.offsetHeight;
         const anchor = rotate(
           (-corner.sx * width) / 2,
@@ -570,33 +561,6 @@ export function DraftSticker({
       ...(note.trim() ? { comment: note } : {}),
     },
   });
-
-  /**
-   * Holds the caption cluster level while the artwork turns.
-   *
-   * Every child of the wrapper inherits its `rotate(...)`, so the note field,
-   * the payout line and the Buzz button all tilt with the sticker — a textarea
-   * at 40 degrees is awkward to read and worse to type into, and past a half
-   * turn the prose is upside down. The resize handles and the knob keep
-   * rotating: those belong to the box, and the caption is the part that reads
-   * wrong.
-   *
-   * 🔴 THE CENTRING AND THE ROTATION MUST BE ONE `transform`, IN THIS ORDER.
-   * The first version of this used the individual `rotate` property and left the
-   * Tailwind `-translate-x-1/2` class in place, on the reasoning that the two
-   * compose. They do compose — in the order `translate · rotate · scale ·
-   * transform` — so the class's `transform` applies FIRST and the element then
-   * orbits its already-shifted box about the original centre. Measured in
-   * Chromium on a 200px box: the painted centre moved 29px right and 71px down
-   * at 45 degrees, and at 180 degrees the cluster sits a full cluster width to
-   * the side of the sticker it belongs to. Offset is `w/2·(1-cos θ)` across and
-   * `w/2·sin θ` down.
-   *
-   * `offsetHeight` and the anchor are unaffected either way, so the flip
-   * geometry reads the same numbers — which is exactly why the wrong version was
-   * self-consistent about a wrong position rather than obviously broken.
-   */
-  const upright = `translateX(-50%)${draft.rotation ? ` rotate(${-draft.rotation}deg)` : ''}`;
 
   /**
    * A second copy of this sticker, already arranged.
@@ -715,107 +679,86 @@ export function DraftSticker({
   );
 
   return (
+    /**
+     * 🔴 THE ROTATION LIVES ON THE INNER ELEMENT, AND THAT IS THE WHOLE FIX.
+     *
+     * This outer box is the sticker's unrotated frame: it carries the position,
+     * the size and the stacking, and nothing else. Only the artwork and the
+     * handles that belong to the artwork's own box are inside the rotated child.
+     * The toolbar, the note, the payout caption and the Buzz button are its
+     * SIBLING, so no amount of rotation can reach them.
+     *
+     * They used to be inside it, held level by a counter-rotation. That is not
+     * the same thing: the cluster was still ANCHORED to the sticker's rotated
+     * bottom edge, so past about a quarter turn the anchor swung over the
+     * artwork and the upright cluster painted on top of the thing being edited.
+     * Un-rotating something anchored in a rotated frame fixes how it reads and
+     * not where it lands.
+     *
+     * Do not move the chrome back inside, and do not put the rotation back on
+     * this element — either one restores the bug.
+     */
     <div
       ref={rootRef}
-      className="pointer-events-auto absolute cursor-move"
+      className="pointer-events-none absolute"
       style={{
         left: `${draft.x * 100}%`,
         top: `${draft.y * 100}%`,
         width: `${draft.scale * 100}%`,
-        transform: `translate(-50%, -50%) rotate(${draft.rotation}deg)`,
-        touchAction: 'none',
+        transform: 'translate(-50%, -50%)',
         // Above the owner's pending controls (see placement-layers.ts).
         // Selection still decides between two drafts — close together they have
         // overlapping buy buttons, and the one just touched should be the one
         // the next click reaches.
         zIndex: selected ? DRAFT_STICKER_Z + 1 : DRAFT_STICKER_Z,
       }}
-      onPointerDown={begin('move')}
     >
-      {/* The wrapper's own transform makes it a stacking context, so a negative
-          z-index here stays behind the sticker without reaching behind the
-          artwork the sticker sits on. */}
-      {dressed.behind && (
+      <div
+        className="pointer-events-auto relative cursor-move"
+        style={{
+          transform: `rotate(${draft.rotation}deg)`,
+          touchAction: 'none',
+        }}
+        onPointerDown={begin('move')}
+      >
+        {/* The rotated wrapper's own transform makes it a stacking context, so a
+            negative z-index here stays behind the sticker without reaching
+            behind the artwork the sticker sits on. */}
+        {dressed.behind && (
+          <span
+            aria-hidden
+            className={dressed.behind.className}
+            style={{ zIndex: -1, ...dressed.behind.style, opacity: draft.opacity }}
+          />
+        )}
+
+        {/* Dressed exactly as it will be once bought. A draft drawn bare is a
+            preview of something else: the treatment changes the silhouette — a
+            die-cut edge and a plate both grow the sticker's apparent bounds — so
+            positioning against the undressed version means moving it again after
+            paying. */}
+        {dressed.animationClassName ? (
+          <div className={dressed.animationClassName}>{artworkImage}</div>
+        ) : (
+          artworkImage
+        )}
+
+        <span className="pointer-events-none absolute inset-0 border-2 border-dashed border-blue-5" />
+
+        {CORNERS.map((corner) => (
+          <span
+            key={corner.className}
+            onPointerDown={begin('resize', corner)}
+            className={`absolute size-3 rounded-full border-2 border-white bg-blue-5 ${corner.className}`}
+          />
+        ))}
+
         <span
-          aria-hidden
-          className={dressed.behind.className}
-          style={{ zIndex: -1, ...dressed.behind.style, opacity: draft.opacity }}
+          onPointerDown={begin('rotate')}
+          className="absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5"
+          style={{ top: `-${KNOB_OFFSET * 100}%` }}
         />
-      )}
-
-      {/* Dressed exactly as it will be once bought. A draft drawn bare is a
-          preview of something else: the treatment changes the silhouette — a
-          die-cut edge and a plate both grow the sticker's apparent bounds — so
-          positioning against the undressed version means moving it again after
-          paying. */}
-      {dressed.animationClassName ? (
-        <div className={dressed.animationClassName}>{artworkImage}</div>
-      ) : (
-        artworkImage
-      )}
-
-      <span className="pointer-events-none absolute inset-0 border-2 border-dashed border-blue-5" />
-
-      {CORNERS.map((corner) => (
-        <span
-          key={corner.className}
-          onPointerDown={begin('resize', corner)}
-          className={`absolute size-3 rounded-full border-2 border-white bg-blue-5 ${corner.className}`}
-        />
-      ))}
-
-      <span
-        onPointerDown={begin('rotate')}
-        className="absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5"
-        style={{ top: `-${KNOB_OFFSET * 100}%` }}
-      />
-
-      {/* Two panels, one per top corner, and the split is the point: removing
-          the draft throws work away, and it should not sit a thumb's width from
-          the two controls you press while arranging one.
-
-          Each is flush with its own edge and grows inward, so the pair reads as
-          bracketing the box. They clear the corner handles — all four resize, so
-          none can be spent on a button — and the buy button clears their band
-          through `flippedButtonOffset`. Dark rather than the handles' blue:
-          these act on the sticker, they are not part of positioning it.
-
-          Only while the sticker is wide enough to hold them. Every other piece
-          of chrome up here is a FRACTION of the sticker (the knob at
-          `KNOB_OFFSET` of the height, the flipped button derived from it) while
-          these are a fixed band, so on a small sticker all three converge: the
-          knob ends up under a panel and DELETE lands on opacity, because it
-          paints later. Narrow drafts hand their controls to the buy cluster
-          instead — the `!panelsInside` row inside `buttonRef` below. */}
-      {panelsInside && (
-        <>
-          {/* 🔴 Its width decides STICKER_PANEL_MIN_WIDTH_PX, which is what keeps
-              it off the rotate knob. Adding a control here without raising
-              PANEL_LEFT_CONTROLS in `place-button-position.ts` puts the panel
-              back over the knob on a new band of sticker widths — that is the
-              bug this file was fixed for. `data-left-panel` is what the browser
-              test counts to catch it. */}
-          <div
-            data-left-panel
-            className="absolute -top-9 left-0 flex cursor-auto items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
-            onPointerDown={pressPanel}
-          >
-            {duplicateControl}
-            {flipControl}
-            {opacityControl}
-          </div>
-
-          <div
-            // Padding equal on both axes, unlike the multi-icon panel beside it:
-            // a single icon in a pill sized `px`/`py` comes out wider than it is
-            // tall, so `rounded-full` reads as a lozenge rather than a circle.
-            className="absolute -top-9 right-0 flex cursor-auto items-center rounded-full bg-dark-7 p-0.5"
-            onPointerDown={pressPanel}
-          >
-            {removeControl}
-          </div>
-        </>
-      )}
+      </div>
 
       <div
         ref={buttonRef}
@@ -828,49 +771,45 @@ export function DraftSticker({
         // than the button, and a `w-max` box sized by whichever is longer leaves
         // the other one off-centre.
         className={clsx(
-          'absolute left-1/2 flex w-max cursor-auto flex-col items-center gap-1 whitespace-nowrap',
-          flipped ? 'bottom-full' : 'top-full mt-2'
+          'pointer-events-auto absolute left-1/2 flex w-max -translate-x-1/2 cursor-auto flex-col items-center gap-1 whitespace-nowrap',
+          flipped ? 'bottom-full' : 'top-full'
         )}
         style={{
-          // Not `-translate-x-1/2`: the centring has to share one `transform`
-          // with the counter-rotation. See `upright` above.
-          transform: upright,
           minWidth: BUY_BUTTON_MIN_WIDTH,
-          // Clears whichever obstacle is taller: the knob, which scales with the
-          // sticker, or the panel band, which does not. Below ~164px the
-          // constant wins, so this does NOT simply scale.
-          ...(flipped ? { marginBottom: flippedOffset } : null),
+          // The standoff from the sticker's own box out to the rotated artwork,
+          // the knob and the handles. Measured and derived — see
+          // `chromeClearance` — because no constant is right at both ends of the
+          // scale range or at both ends of the rotation range.
+          ...(flipped ? { marginBottom: above } : { marginTop: below }),
         }}
-        // The button is inside the draggable body, so without this every press
-        // on it would also start a move and the click would land mid-drag.
+        // Outside the rotated body but still inside the draft, and the layer
+        // starts a move from a press anywhere on it, so without this every press
+        // on the toolbar would also start a drag.
         onPointerDown={(event) => event.stopPropagation()}
       >
-        {/* Where a narrow draft's controls live, rather than a second position
-            for the panels above it.
+        {/* Every control, in one bar, always underneath — the arrangement Justin
+            asked for on 2026-09-02, replacing two pills bracketing the sticker's
+            top corners.
 
-            Anything anchored to a small sticker's own box is in trouble twice
-            over: inside it, the panels reach past each other and the knob;
-            outside it, they hang off the sticker and the carousel's viewport
-            clips them away near the image edges — which on a phone-width media
-            box is most of the frame, because almost every draft there is narrow.
-            This cluster is the one piece of chrome that already knows where it
-            is on screen: it measures itself against the tray and the clipping
-            ancestor and moves ABOVE or BELOW the sticker accordingly.
-            `shouldFlipPlaceButton` is vertical only — the horizontal position
-            follows the draft's own x with nothing clamping it — so handing it the
-            controls buys them the vertical avoidance and no more. Still better
-            than a third set of hand-derived offsets. */}
-        {!panelsInside && (
-          <div
-            className="flex items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
-            onPointerDown={pressPanel}
-          >
-            {duplicateControl}
-            {flipControl}
-            {opacityControl}
-            {removeControl}
-          </div>
-        )}
+            Those pills were children of the rotated element, so they turned with
+            the sticker and landed on the artwork; they were a fixed band while
+            everything else up there scales with the sticker, so on a small draft
+            they converged on the rotate knob and each other; and keeping the buy
+            button off them needed a second set of derived offsets that went
+            stale the first time a control was added. One bar outside the
+            rotation has none of those failure modes.
+
+            Sits closest to the sticker in the cluster, so it stays under the
+            thing it acts on. */}
+        <div
+          className="flex items-center gap-0.5 rounded-full bg-dark-7 px-1 py-0.5"
+          onPointerDown={pressPanel}
+        >
+          {duplicateControl}
+          {flipControl}
+          {opacityControl}
+          {removeControl}
+        </div>
 
         {/* Optional, and folded away until asked for: a field on every draft
             would sit over the artwork through the whole arrangement, which is
