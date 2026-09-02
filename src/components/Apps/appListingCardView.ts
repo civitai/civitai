@@ -272,6 +272,15 @@ export const LISTING_ACTION_ROW_GAP_PX = 10;
  * menu replaced was an icon-only Edit `ActionIcon` at the same `size={36}`. The
  * coincidence is worth naming, because "the number did not move" is also the
  * shape of a measurement nobody took.
+ *
+ * 🔴 THE NUMBER IS ABOUT A CARD THAT HAS A `⋮`; WHICH VIEWERS THOSE ARE IS A
+ * SEPARATE FACT, AND IT MOVED WITHOUT THE NUMBER MOVING. The card does not offer
+ * "Leave a review" or "Report" (`appListingMenuSurface.ts`), so the viewers whose
+ * cluster is 184 rather than 137.9 are exactly the OWNER and a MODERATOR — not,
+ * as this constant's arithmetic briefly implied on the way here, every signed-in
+ * shopper. Nothing derived below changes; the population does, and a stale
+ * population is the half of a derived number that gets quoted instead of
+ * re-measured.
  */
 export const LISTING_ACTIONS_WIDEST_PX = 184;
 

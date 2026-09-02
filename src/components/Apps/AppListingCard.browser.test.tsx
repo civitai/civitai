@@ -611,19 +611,60 @@ describe('AppListingCard', () => {
     await expect.element(edit).toHaveAttribute('href', '/apps/submit?edit=l1');
   });
 
-  test('🔴 a non-owner gets a menu WITHOUT an Edit item', async () => {
-    // A signed-in shopper DOES get a menu (Report, and Leave a review) — the
-    // predicate is "would it hold at least one item", not "is this the owner". What
-    // they must never get is Edit.
+  /**
+   * 🔴 THE CARD DOES NOT OFFER THE VIEWER ACTIONS — the narrowing, asserted on the
+   * viewer it is about.
+   *
+   * `useCanReportListing` is `!!useCurrentUser()`, so before `surface="card"` this
+   * viewer — an ordinary signed-in shopper, the single most common real visitor to
+   * the store — got a `⋮` holding Report and Leave a review, and the wider action
+   * row that comes with it. Both items now live only on the listing DETAIL page
+   * (`appListingMenuSurface.ts`), so this viewer's menu holds nothing and the
+   * trigger is suppressed.
+   *
+   * 🔴 THIS IS THE CASE THE SUITE COULD NOT SEE. The action-row width guard that
+   * was supposed to cover this pinned a SIGNED-OUT viewer, who has no menu either
+   * way — so it stayed green across the whole change. A guard that cannot reach the
+   * case it appears to cover is worse than no guard, which is why the geometry half
+   * below is now run over BOTH viewers from one assertion body.
+   */
+  test('🔴 a signed-in NON-owner, NON-moderator gets NO menu on the CARD', async () => {
     mocks.currentUser = SHOPPER;
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
-    await openCardMenu();
-    // Positive control FIRST: the dropdown really did open, so "no Edit" cannot be
-    // satisfied by a menu that rendered nothing.
-    await expect.element(page.getByTestId('apps-listing-report-action')).toBeInTheDocument();
+    // Render barrier — the card is really on screen, so the zeros below are about
+    // the menu and not about an empty document.
+    await expect.element(page.getByText('My App')).toBeInTheDocument();
     // 🔴 `.elements()).toHaveLength(0)`, NOT `expect.element(...).not.toBeInTheDocument()`
     // — the latter is INERT in this repo (civitai/civitai#4197).
+    expect(page.getByTestId('apps-listing-card-actions-menu').elements()).toHaveLength(0);
+    // 🔴 AND THE ITEMS THEMSELVES, not only the trigger. A Mantine `Menu.Dropdown`
+    // renders no DOM while closed, so these three zeros are weak on their own — they
+    // are here so a future change that keeps the trigger but empties it, or renders
+    // the items somewhere other than behind the trigger, still fails.
+    expect(page.getByTestId('apps-listing-report-action').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-listing-review-action').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-listing-owner-edit').elements()).toHaveLength(0);
+  });
+
+  /**
+   * 🔴 THE POSITIVE CONTROL FOR THE TEST ABOVE, AND IT IS NOT OPTIONAL. "No menu for
+   * a signed-in shopper" is also what a card renders when the menu is broken for
+   * everyone, when the fixture is malformed, or when the harness stopped mounting
+   * the component at all. The OWNER arm proves the card can still produce a menu
+   * from the very same fixture and the very same render path, so the zeros above are
+   * attributable to the viewer rather than to the machinery.
+   */
+  test('🔴 …while the OWNER, on the same fixture, still gets one', async () => {
+    mocks.currentUser = OWNER;
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    await expect.element(page.getByTestId('apps-listing-owner-edit')).toBeInTheDocument();
+    // …and the narrowing reaches INSIDE an open menu, not just the trigger: the
+    // owner is signed in, so `useCanReportListing` admits them, and Report is absent
+    // here only because the CARD does not offer it. On the detail page the same
+    // viewer does get it — `AppListingDetailBody.browser.test.tsx` pins that.
+    expect(page.getByTestId('apps-listing-report-action').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-listing-review-action').elements()).toHaveLength(0);
   });
 
   test('🔴 a signed-out viewer gets NO menu at all', async () => {
@@ -640,9 +681,14 @@ describe('AppListingCard', () => {
   });
 
   test('🔴 a MODERATOR viewing someone else’s card gets the moderator section', async () => {
-    // Accepted geometry consequence, asserted rather than left implicit: this viewer
-    // gets a `⋮` (and therefore a wider action cluster) on a card an anonymous
-    // shopper sees without one.
+    // Accepted geometry consequence, asserted rather than left implicit: with the
+    // viewer actions gone from this surface, the owner and a moderator are the ONLY
+    // viewers who get a `⋮` (and therefore a wider action cluster) on a card every
+    // other viewer sees without one.
+    //
+    // 🔴 THIS IS ALSO THE SUITE'S "a menu WITHOUT Edit" CASE. It used to be a signed-in
+    // shopper's; that viewer now has no menu at all, and a claim about what is inside a
+    // menu has to be made on a viewer who HAS one.
     mocks.currentUser = MODERATOR;
     renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
     await openCardMenu();
@@ -690,7 +736,15 @@ describe('AppListingCard', () => {
     // PORTALLED — which moves the DOM node but NOT React's event path, so a click
     // inside it still reaches an ancestor's `onClick`. A menu that navigates the
     // card when you open it is the obvious failure of this change.
-    mocks.currentUser = OWNER;
+    // 🔴 AN OWNER WHO IS ALSO A MODERATOR, AND THE COMBINATION IS FORCED BY THE
+    // NARROWING RATHER THAN CHOSEN. This test needs two things in one open dropdown:
+    // something to prove it opened, and a NON-NAVIGATING item to click, because a
+    // click on a `Link` would leave "did the card navigate?" unanswerable. It used to
+    // use Edit for the first and `Report` for the second — but the card no longer
+    // offers Report to anyone (`surface="card"`), and the only non-navigating items
+    // left on this surface are the moderator section's. So: Edit for the open proof,
+    // "Contact owner" for the propagation click.
+    mocks.currentUser = { ...OWNER, isModerator: true };
     const onCardClick = vi.fn();
     renderWithProviders(
       <div onClick={onCardClick}>
@@ -704,11 +758,8 @@ describe('AppListingCard', () => {
     // …and the click that opened it never reached the card.
     expect(onCardClick).toHaveBeenCalledTimes(0);
 
-    // A click INSIDE the dropdown must not reach it either. Asserted on a
-    // NON-NAVIGATING item so the assertion is about propagation rather than about a
-    // route change: `Report` is a plain button, and it is present for any signed-in
-    // viewer including the owner.
-    await page.getByTestId('apps-listing-report-action').click();
+    // A click INSIDE the dropdown must not reach it either.
+    await page.getByTestId('apps-listing-mod-message-owner').click();
     expect(onCardClick).toHaveBeenCalledTimes(0);
   });
 
@@ -1010,6 +1061,13 @@ describe('AppListingCard', () => {
      * details"), no reviews — the SHORTEST label the rollup can carry, so a
      * deficit here is structural rather than an artefact of a long string:
      *
+     * 🔴 WHICH VIEWERS EACH TABLE DESCRIBES — the numbers did not move when the card
+     * stopped offering Review/Report, but the POPULATIONS did, and a table whose
+     * caption is wrong is the kind of prose that gets cited instead of re-measured.
+     * "With a menu" is now exactly {owner, moderator}; "with no menu" is EVERY other
+     * viewer, signed in or signed out. Before `surface="card"` the split was
+     * {owner, moderator, any signed-in viewer} against {signed-out} alone.
+     *
      *   | card | container | actions nat/rendered | rollup | row h | rollup    |
      *   |------|-----------|----------------------|--------|-------|-----------|
      *   |  280 |       248 | 184 /  248 (grown)   |    0   |    46 | HIDDEN    |
@@ -1017,8 +1075,9 @@ describe('AppListingCard', () => {
      *   |  314 |       282 | 184 /  184           |   88.1 |    46 | clamped   |
      *   |  494 |       462 | 184 /  356.3 (grown) |   95.7 |    46 | natural   |
      *
-     * and the same widths with NO menu (an anonymous shopper), which is what the
-     * byte-unchanged claim below rests on:
+     * and the same widths with NO menu — a signed-OUT viewer OR an ordinary
+     * signed-IN one, which is what the byte-unchanged claim below rests on and why
+     * that claim is now asserted over both:
      *
      *   | card | container | actions nat/rendered | rollup (reviewed) | row h |
      *   |------|-----------|----------------------|-------------------|-------|
@@ -1352,71 +1411,63 @@ describe('AppListingCard', () => {
       });
 
       /**
-       * ⚠️ INVARIANT GUARD, NOT regression coverage — an anonymous viewer's card
-       * measured 95.7px here before the change and measures 95.7px after. It is here
-       * because the hide is scoped to cards that HAVE a menu, and a version that
-       * dropped that condition would delete the rollup from every anonymous
-       * shopper's card at the single most common desktop geometry — a failure no
-       * other test in this file could see.
+       * 🔴 THE MENU-LESS VIEWERS, MEASURED FROM ONE ASSERTION BODY — AND THAT SHAPE
+       * IS THE FIX, NOT A TIDY-UP.
        *
-       * 🔴 SIGNED-OUT, and that is load-bearing rather than incidental: a signed-IN
-       * shopper now gets a `⋮` (Report, and Leave a review), so their card is on the
-       * OTHER side of this invariant. See the signed-in test below, which measures it
-       * rather than leaving it to be discovered.
+       * This used to be two tests making two different claims: a SIGNED-OUT arm
+       * asserting the full rollup survives at the store's tightest real geometry, and
+       * a SIGNED-IN arm asserting the opposite, because `useCanReportListing` is
+       * `!!useCurrentUser()` and every signed-in shopper therefore got a `⋮`. With
+       * `surface="card"` the viewer actions are gone from this surface, so the two
+       * viewers are now the SAME case — and "the same" is a claim about a
+       * RELATIONSHIP, which two independently-written tests cannot make. Two literal
+       * tables drift; one body run twice cannot.
+       *
+       * 🔴 THE POPULATION THIS COVERS IS EVERY VIEWER EXCEPT {owner, moderator}. That
+       * is the whole point of running it over both: a narrowing implemented as "hide
+       * the menu when signed out" rather than "do not offer these items on the card"
+       * passes the signed-out arm and fails the signed-in one.
+       *
+       * ⚠️ STILL AN INVARIANT GUARD ON THE SIGNED-OUT ARM — that card measured 95.7px
+       * before this whole branch and measures 95.7px after. The SIGNED-IN arm is
+       * genuine regression coverage: it is red on `5a6d111a19`.
        */
-      test('⚠️ INVARIANT: at the SAME 1200 geometry a SIGNED-OUT card keeps its full rollup', async () => {
-        mocks.currentUser = null;
-        renderWithProviders(<Sized width={280} card={base(OFFSITE_CONNECT_NO_REVIEWS)} />);
-        await expect
-          .element(page.getByRole('link', { name: 'View details', exact: true }))
-          .toBeInTheDocument();
-        const { row, rollup } = actionRow('View details');
-        assertLayoutIsReal(row);
-        expect(Math.round(row.clientWidth)).toBe(248);
-        expect(getComputedStyle(rollup).display).toBe('flex');
-        // Literal pin from the measured table: 95.7px, i.e. the full natural width,
-        // because a menu-less action set is 137.9px rather than 184px.
-        expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(95);
-        const text = rollup.querySelector('[data-truncate]') as HTMLElement;
-        expect(text.scrollWidth).toBeLessThanOrEqual(text.clientWidth);
-        // …and no trigger is what makes that true.
-        expect(page.getByTestId('apps-listing-card-actions-menu').elements()).toHaveLength(0);
-      });
-
-      /**
-       * 🔴 THE GEOMETRY CONSEQUENCE OF THE MENU'S PREDICATE, MEASURED RATHER THAN
-       * ASSUMED — and it is NOT what the change was pitched as.
-       *
-       * The menu renders when it would hold at least one item, and
-       * `useCanReportListing` is `!!useCurrentUser()`. So an ORDINARY SIGNED-IN
-       * SHOPPER — the most common real viewer of the store — gets a `⋮`, and their
-       * action cluster goes from a 137.9px natural width to 184px, exactly like an
-       * owner's. Only a SIGNED-OUT viewer keeps the pre-change geometry.
-       *
-       * That is a real behaviour change on the most common path, so it is pinned
-       * here explicitly instead of being left to be discovered from a screenshot.
-       * Narrowing it — dropping review/report from the CARD's copy of the menu and
-       * leaving them on the detail page — is a one-line change to
-       * `useAppListingActionsMenuVisible`, and this test is where that decision
-       * would show up.
-       */
-      test('🔴 a SIGNED-IN shopper gets the menu, and the wider action cluster with it', async () => {
-        mocks.currentUser = SHOPPER;
-        renderWithProviders(<Sized width={280} card={base(OFFSITE_CONNECT_NO_REVIEWS)} />);
-        await expect
-          .element(page.getByRole('link', { name: 'View details', exact: true }))
-          .toBeInTheDocument();
-        const { row, actions, rollup } = actionRow('View details');
-        assertLayoutIsReal(row);
-        expect(Math.round(row.clientWidth)).toBe(248);
-        await expect
-          .element(page.getByTestId('apps-listing-card-actions-menu'))
-          .toBeInTheDocument();
-        // Same cluster width as an owner's, and the same consequence: below the
-        // threshold the rollup goes rather than being crushed.
-        expect(Math.round(actions.getBoundingClientRect().width)).toBe(248); // grown to fill
-        expect(getComputedStyle(rollup).display).toBe('none');
-        expect(Math.round(row.getBoundingClientRect().height)).toBe(46);
+      describe('🔴 a menu-less viewer keeps the full rollup at the 1200 geometry', () => {
+        // One test per viewer rather than a loop with `unmount()` — same reason as
+        // the floor sweep above.
+        for (const [label, user] of [
+          ['signed-out', null],
+          ['signed-in non-owner, non-moderator', SHOPPER],
+        ] as const) {
+          test(`${label}`, async () => {
+            mocks.currentUser = user;
+            renderWithProviders(<Sized width={280} card={base(OFFSITE_CONNECT_NO_REVIEWS)} />);
+            await expect
+              .element(page.getByRole('link', { name: 'View details', exact: true }))
+              .toBeInTheDocument();
+            const { row, actions, rollup } = actionRow('View details');
+            assertLayoutIsReal(row);
+            expect(Math.round(row.clientWidth)).toBe(248);
+            // No trigger is what makes everything below true.
+            expect(page.getByTestId('apps-listing-card-actions-menu').elements()).toHaveLength(0);
+            expect(getComputedStyle(rollup).display).toBe('flex');
+            // Literal pin from the measured table: 95.7px, i.e. the full natural
+            // width, because a menu-less action set is 137.9px rather than 184px.
+            expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(95);
+            const text = rollup.querySelector('[data-truncate]') as HTMLElement;
+            expect(text.scrollWidth).toBeLessThanOrEqual(text.clientWidth);
+            // 🔴 AND THE CLUSTER, BOUNDED RATHER THAN PINNED, BECAUSE THIS WIDTH IS
+            // NOT IN DEFICIT. 137.9 + 10 + 95.7 = 243.6 against a 248px row, so there
+            // are ~4px of slack for the CTA to grow into and the cluster's rendered
+            // width is legitimately a little over its 137.9 natural. What the bound
+            // excludes is the state the signed-in card was actually in before the
+            // narrowing — a cluster grown to the full 248 with the rollup gone. The
+            // exact 138 pin lives in the deficit-width test below, where growth is
+            // structurally impossible.
+            expect(actions.getBoundingClientRect().width).toBeLessThan(160);
+            expect(Math.round(row.getBoundingClientRect().height)).toBe(46);
+          });
+        }
       });
 
       test('a menu card + "Open" (the narrower CTA) also keeps the rollup legible', async () => {
@@ -1430,29 +1481,51 @@ describe('AppListingCard', () => {
         expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(80);
       });
 
-      test('🔴 SIGNED-OUT cards are byte-unchanged — no menu, same actions width', async () => {
-        // The `⋮` is what widens the row, and an anonymous viewer has no menu at all,
-        // so this card's geometry must be exactly what it was before this change.
-        //
-        // 🔴 IT SURVIVES `flex-grow` ONLY BECAUSE THIS WIDTH IS IN DEFICIT, which is
-        // worth stating rather than being quietly lucky about: at 282 the reviewed
-        // rollup's natural 139.1 + 10 + 137.9 = 287 exceeds the row, so there is no
-        // free space for the CTA to grow into and the cluster stays at its natural
-        // 137.9. The same card at 462 measures 312.9 — the CTA filling the slack, on
-        // an anonymous card, which is the whole S7 change and is NOT a regression.
-        mocks.currentUser = null;
-        renderWithProviders(<Sized width={314} card={base(OFFSITE_CONNECT)} />);
-        await expect
-          .element(page.getByRole('link', { name: 'View details', exact: true }))
-          .toBeInTheDocument();
-        const { row, actions, rollup } = actionRow('View details');
-        assertLayoutIsReal(row);
-        expect(page.getByTestId('apps-listing-owner-edit').elements()).toHaveLength(0);
-        expect(page.getByTestId('apps-listing-card-actions-menu').elements()).toHaveLength(0);
-        // Measured pre-change values, pinned so a menu-side change cannot leak.
-        expect(Math.round(actions.getBoundingClientRect().width)).toBe(138);
-        expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(130);
-        expect(Math.round(row.getBoundingClientRect().height)).toBe(46);
+      /**
+       * 🔴 THE 138 PIN — AND THE REASON IT IS NOW RUN OVER TWO VIEWERS.
+       *
+       * This is the guard that was supposed to say "a shopper's action row did not
+       * move", and for one branch it did not say that at all: it ran SIGNED-OUT only,
+       * and a signed-out viewer had no menu before the change and none after, so the
+       * assertion was structurally incapable of seeing the 137.9 → 184 shift that had
+       * just landed on every SIGNED-IN shopper. It stayed green through exactly the
+       * regression it reads as covering. A guard that cannot reach its own case is
+       * worse than no guard, because it stops anyone looking.
+       *
+       * The repair is not a second copy of the numbers — that reproduces the same
+       * failure one viewer over. It is the SAME body, run over both viewers, so the
+       * claim being made is "these two measure identically" rather than two
+       * independent claims that happen to be written with the same literals.
+       *
+       * 🔴 IT SURVIVES `flex-grow` ONLY BECAUSE THIS WIDTH IS IN DEFICIT, which is
+       * worth stating rather than being quietly lucky about: at 282 the reviewed
+       * rollup's natural 139.1 + 10 + 137.9 = 287 exceeds the row, so there is no
+       * free space for the CTA to grow into and the cluster stays at its natural
+       * 137.9. That is what makes an EXACT pin honest here. The same card at 462
+       * measures 312.9 — the CTA filling the slack, which is the S7 change and NOT a
+       * regression.
+       */
+      describe('🔴 a menu-less card is byte-unchanged — no menu, actions exactly 138', () => {
+        for (const [label, user] of [
+          ['signed-out', null],
+          ['signed-in non-owner, non-moderator', SHOPPER],
+        ] as const) {
+          test(`${label}`, async () => {
+            mocks.currentUser = user;
+            renderWithProviders(<Sized width={314} card={base(OFFSITE_CONNECT)} />);
+            await expect
+              .element(page.getByRole('link', { name: 'View details', exact: true }))
+              .toBeInTheDocument();
+            const { row, actions, rollup } = actionRow('View details');
+            assertLayoutIsReal(row);
+            expect(page.getByTestId('apps-listing-owner-edit').elements()).toHaveLength(0);
+            expect(page.getByTestId('apps-listing-card-actions-menu').elements()).toHaveLength(0);
+            // Measured pre-change values, pinned so a menu-side change cannot leak.
+            expect(Math.round(actions.getBoundingClientRect().width)).toBe(138);
+            expect(rollup.getBoundingClientRect().width).toBeGreaterThanOrEqual(130);
+            expect(Math.round(row.getBoundingClientRect().height)).toBe(46);
+          });
+        }
       });
 
       /**

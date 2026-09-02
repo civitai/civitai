@@ -29,6 +29,10 @@ import {
   useReportListingAffordance,
 } from '~/components/Apps/ReportListingModal';
 import { ReviewListingModal, useCanReviewListing } from '~/components/Apps/ReviewListingButton';
+import {
+  type AppListingMenuSurface,
+  surfaceOffersViewerActions,
+} from '~/components/Apps/appListingMenuSurface';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 
@@ -46,9 +50,20 @@ import { isAppReviewer } from '~/shared/utils/app-blocks-access';
  * is the defect this file is the fix for.
  *
  * WHAT IS PARAMETERISED, and nothing else: the trigger's size / variant / glyph
- * size / `data-testid`, and whether the trigger stops click propagation. The item
- * set, its order, its labels, its gating and its modals are IDENTICAL on both
- * surfaces by construction — that is the point.
+ * size / `data-testid`, whether the trigger stops click propagation, and — via
+ * {@link AppListingMenuSurface} — the ONE item-set difference between the two
+ * surfaces. The ORDER, the labels, the eligibility predicates and the modals are
+ * identical on both by construction; that is still the point.
+ *
+ * 🔴 THE ONE DIFFERENCE IS NAMED, CLOSED AND POLICED FROM A SINGLE MODULE, WHICH IS
+ * WHAT KEEPS IT FROM BECOMING THE DRIFT THIS FILE EXISTS TO PREVENT. It is not a
+ * per-call-site boolean: the caller says WHERE it is (`surface="card"` /
+ * `surface="detail"`) and `appListingMenuSurface.ts` decides what that means, so
+ * the answer cannot be spelled two ways. Today it decides exactly one thing —
+ * whether "Leave a review" and "Report" are offered — and the card says no: those
+ * two are about one app the viewer has chosen to look at, and the card is one tile
+ * of ~24 being scanned. Everything else, Edit and the whole moderator section
+ * included, is the same on both surfaces.
  *
  * 🔴 THE MODALS ARE OWNED HERE, AS SIBLINGS OF THE `Menu`, NOT OF A `Menu.Item`.
  * A Mantine `Menu.Dropdown` is UNMOUNTED when the menu closes, so a modal
@@ -82,6 +97,18 @@ export type AppListingMenuTarget = {
 
 export type AppListingActionsMenuProps = {
   listing: AppListingMenuTarget;
+  /**
+   * WHICH surface this menu is on — see `appListingMenuSurface.ts` for the single
+   * difference it makes and why it is a surface NAME rather than a feature boolean.
+   *
+   * 🔴 REQUIRED, WITH NO DEFAULT, ON PURPOSE. A default would silently pick one
+   * surface's policy for a new call site, and the wrong direction is the expensive
+   * one: defaulting to `'detail'` hands the viewer actions to any surface whose
+   * author never thought about it. Making it required means `tsc` asks the question
+   * at the moment a third surface is added, which is the only moment anyone knows
+   * the answer.
+   */
+  surface: AppListingMenuSurface;
   /**
    * Moderator listing-media review renders a listing READ-ONLY over an
    * UNAPPROVED shadow row. The whole menu is suppressed there — see
@@ -149,6 +176,7 @@ type AppListingMenuGates = {
  */
 function useAppListingMenuGates(
   listing: AppListingMenuTarget,
+  surface: AppListingMenuSurface,
   preview: boolean
 ): AppListingMenuGates {
   const currentUser = useCurrentUser();
@@ -166,11 +194,23 @@ function useAppListingMenuGates(
   // `listing.kind` is threaded in so the review affordance obeys the store-scope
   // kind rule the write gate applies — an external-only viewer is not offered a
   // review control on an onsite listing the server would NOT_FOUND.
-  const canReview = useCanReviewListing({
+  //
+  // 🔴 BOTH HOOKS ARE CALLED UNCONDITIONALLY AND THE SURFACE TERM IS APPLIED AFTER.
+  // `offersViewerActions && useCanReportListing()` would SHORT-CIRCUIT PAST A HOOK —
+  // legal-looking, and a rules-of-hooks violation the moment anything makes the left
+  // side vary. The surface is constant per call site today, which is exactly the
+  // property that would make such a bug invisible until it was not.
+  const offersViewerActions = surfaceOffersViewerActions(surface);
+  const viewerMayReview = useCanReviewListing({
     ownerUserId: listing.creatorUserId,
     listingKind: listing.kind as never,
   });
-  const canReport = useCanReportListing();
+  const viewerMayReport = useCanReportListing();
+  // 🔴 THE SURFACE TERM NARROWS; IT NEVER WIDENS. `&&`, so the card can only DROP an
+  // item the affordance's own predicate already admitted — an eligibility rule can
+  // never be bypassed by naming a surface. See `appListingMenuSurface.ts`.
+  const canReview = offersViewerActions && viewerMayReview;
+  const canReport = offersViewerActions && viewerMayReport;
 
   // MODERATOR section. The action SET is derived, never hand-rolled:
   // `appListingDetailModActions` intersects the shared lifecycle state machine
@@ -208,9 +248,10 @@ function useAppListingMenuGates(
  */
 export function useAppListingActionsMenuVisible(
   listing: AppListingMenuTarget,
+  surface: AppListingMenuSurface,
   preview = false
 ): boolean {
-  return useAppListingMenuGates(listing, preview).showMenu;
+  return useAppListingMenuGates(listing, surface, preview).showMenu;
 }
 
 /**
@@ -222,12 +263,14 @@ export function useAppListingActionsMenuVisible(
  *   - a viewer with nothing to do sees no control at all, rather than an empty
  *     menu that punishes the click; and
  *   - the trigger's ~36px therefore enters a surface's layout only for viewers
- *     who have an action. On the store card that means a MODERATOR viewing
- *     someone else's card gets a different action-row geometry from an anonymous
- *     shopper. That is accepted (see `AppListingCard`'s action-row note).
+ *     who have an action. On the store CARD, where the viewer actions are not
+ *     offered, that population is exactly the OWNER and a MODERATOR — so those two
+ *     get a different action-row geometry from everybody else, signed in or not.
+ *     That is accepted (see `AppListingCard`'s action-row note).
  */
 export function AppListingActionsMenu({
   listing,
+  surface,
   preview = false,
   triggerSize,
   triggerVariant = 'light',
@@ -239,6 +282,7 @@ export function AppListingActionsMenu({
 }: AppListingActionsMenuProps) {
   const { showEdit, editHref, canReview, canReport, modActions, showMenu } = useAppListingMenuGates(
     listing,
+    surface,
     preview
   );
 
@@ -327,7 +371,8 @@ export function AppListingActionsMenu({
             {/* Review affordance (thumbs/recommend) — hidden for the owner, signed-out
                 viewers, AND viewers whose resolved store scope does not admit this
                 listing's kind, all by `useCanReviewListing`. The write proc is
-                protected + STORE-SCOPE-gated + self-review-blocked server-side. */}
+                protected + STORE-SCOPE-gated + self-review-blocked server-side.
+                🔴 DETAIL SURFACE ONLY — see `appListingMenuSurface.ts`. */}
             {canReview && (
               <Menu.Item
                 leftSection={<IconThumbUp size={14} stroke={1.5} />}
@@ -338,7 +383,12 @@ export function AppListingActionsMenu({
               </Menu.Item>
             )}
             {/* Report affordance — the proc is protected + rate-limited +
-                reporter-bound server-side. 🔴 `triggerProps` carries BOTH the click
+                reporter-bound server-side. 🔴 DETAIL SURFACE ONLY (see
+                `appListingMenuSurface.ts`): `useCanReportListing` is
+                `!!useCurrentUser()`, so on the card this item alone would give every
+                signed-in shopper a menu — which is the geometry regression the
+                surface gate exists to stop.
+                🔴 `triggerProps` carries BOTH the click
                 and the spent `disabled` state; the modal below carries its
                 `onReported` counterpart. The pair is what stops a second report
                 returning the server's one-open-report-per-reporter CONFLICT as an

@@ -281,7 +281,7 @@ export function AppListingCard({
   };
   // Whether the trigger occupies the action row. Read from the shared predicate
   // rather than re-derived — see its comment.
-  const hasMenu = useAppListingActionsMenuVisible(menuTarget, preview);
+  const hasMenu = useAppListingActionsMenuVisible(menuTarget, 'card', preview);
 
   // OWNER-ONLY incompleteness hint. The public store DTO carries only nullable
   // iconUrl/coverUrl (no screenshot count), so this is scoped to a below-floor
@@ -678,15 +678,27 @@ export function AppListingCard({
                 click target; a portalled dropdown still propagates along the REACT
                 tree, so opening the menu would otherwise navigate the card.
 
+                🔴 THE CARD DOES NOT OFFER THE VIEWER ACTIONS — `surface="card"`,
+                and `appListingMenuSurface.ts` owns that decision. Review and
+                Report stay on the listing DETAIL page, where the viewer has
+                chosen to look at one app; on a grid of ~24 tiles they are an
+                invitation to review something nobody opened. The narrowing is
+                declared by NAMING the surface, not by re-deriving a predicate
+                here — re-deriving one is precisely the drift the shared module
+                exists to prevent.
+
                 🔴 GEOMETRY CONSEQUENCE, ACCEPTED AND STATED: the menu's predicate
-                is "would it hold at least one item", not "is the viewer the
-                owner". So a MODERATOR viewing someone else's card gets a `⋮` and
-                therefore a different action-row geometry from an anonymous
-                shopper. That is the same predicate the detail page has always
-                applied, and re-deriving a narrower one here is precisely the
-                drift this shared module exists to prevent. */}
+                is still "would it hold at least one item", not "is the viewer the
+                owner". With the viewer actions gone from this surface, the items
+                that remain are the owner's Edit and the moderator section — so
+                the population that gets a `⋮`, and therefore the wider action
+                row, is exactly {owner, moderator}. Every other viewer, signed in
+                or signed out, gets the identical menu-less row. That equality is
+                pinned in `AppListingCard.browser.test.tsx` by running one
+                assertion body over both viewers. */}
             <AppListingActionsMenu
               listing={menuTarget}
+              surface="card"
               preview={preview}
               triggerSize={36}
               triggerVariant="default"

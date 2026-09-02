@@ -987,7 +987,13 @@ export function AppListingDetailBody({
 
               🔴 SHARED WITH THE STORE CARD. This renders `AppListingActionsMenu`; the
               item set, order, labels, eligibility gates and modal ownership all live
-              there. Only the trigger's geometry is this surface's own. */}
+              there. This surface's own are the trigger's geometry and `surface`.
+
+              🔴 `surface="detail"` IS WHAT KEEPS "Leave a review" AND "Report" HERE.
+              They are offered to any eligible signed-in viewer on this page and to
+              nobody on the store card — see `appListingMenuSurface.ts`. Changing this
+              string silently removes both items from the one surface whose job is to
+              offer them. */}
           <AppListingActionsMenu
             listing={{
               id: detail.id,
@@ -996,6 +1002,7 @@ export function AppListingDetailBody({
               kindData: detail.kindData,
               creatorUserId: detail.creator?.id ?? null,
             }}
+            surface="detail"
             preview={preview}
           />
         </Group>
