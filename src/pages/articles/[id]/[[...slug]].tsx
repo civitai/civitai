@@ -28,6 +28,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { ArticleUnpublishedAlert } from '~/components/Article/ArticleUnpublishedAlert';
 import { Sidebar } from '~/components/Article/Detail/Sidebar';
 import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
 import {
@@ -62,7 +63,6 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { getArticleUnpublishReason } from '~/server/common/moderation-helpers';
 import { isArticlePublished } from '~/server/services/article.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
@@ -207,9 +207,6 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isModerator = currentUser?.isModerator ?? false;
   const isActualOwner = currentUser?.id === article?.user?.id;
   const isOwner = isActualOwner || isModerator;
-  const unpublishedReason = article?.metadata?.unpublishedReason
-    ? getArticleUnpublishReason(article.metadata.unpublishedReason)
-    : undefined;
 
   const disableArticles = !features.articles && !article?.user.isModerator;
 
@@ -444,35 +441,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             </AlertWithIcon>
           )}
           {article.status === ArticleStatus.UnpublishedViolation && (
-            <AlertWithIcon
-              size="lg"
-              icon={<IconAlertCircle />}
-              color={unpublishedReason?.type === 'quality' ? 'yellow' : 'red'}
-              iconColor={unpublishedReason?.type === 'quality' ? 'yellow' : 'red'}
-            >
-              <div>
-                <Text weight={600} size="lg" mb="xs">
-                  {unpublishedReason?.type === 'quality'
-                    ? `This article has been unpublished: ${unpublishedReason.optionLabel}`
-                    : 'This article has been unpublished due to a Terms of Service violation'}
-                </Text>
-                {unpublishedReason?.notificationMessage && (
-                  <Text>
-                    <strong>Reason:</strong> {unpublishedReason.notificationMessage}
-                  </Text>
-                )}
-                {article.metadata?.customMessage && (
-                  <Text>
-                    <strong>Additional details:</strong> {article.metadata.customMessage}
-                  </Text>
-                )}
-                {!isModerator && (
-                  <Text mt="sm" size="sm">
-                    If you believe this was done in error, please contact support.
-                  </Text>
-                )}
-              </div>
-            </AlertWithIcon>
+            <ArticleUnpublishedAlert
+              reason={article.metadata?.unpublishedReason}
+              customMessage={article.metadata?.customMessage}
+              showSupportHint={!isModerator}
+            />
           )}
           {isOwner && article.ingestion && article.ingestion !== ArticleIngestionStatus.Scanned && (
             <ArticleScanStatus

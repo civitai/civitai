@@ -192,6 +192,10 @@ export const articleUnpublishReasons = {
 
 export type ArticleUnpublishReason = keyof typeof articleUnpublishReasons;
 
+export function isArticleUnpublishReason(reason: string): reason is ArticleUnpublishReason {
+  return reason in articleUnpublishReasons;
+}
+
 /** Articles unpublished before this list existed store model-list reason keys, so fall back to that copy. */
 export function getArticleUnpublishReason(reason: string): UnpublishReasonDetail | undefined {
   return (
