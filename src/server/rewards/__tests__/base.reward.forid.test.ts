@@ -160,6 +160,19 @@ describe('buzzEvents columns narrower than BuzzEventLog', () => {
     expect(JSON.parse(row.transactionDetails)).not.toHaveProperty('multiplierRaw');
   });
 
+  // The raw is recorded from the ORIGINAL value, not from its coercion: `String(Number('4x'))` is
+  // `'NaN'`, which loses the only thing that would tell an operator which product is misconfigured.
+  it('records the original text when the multiplier is not a number at all', async () => {
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: '4x' } as any);
+    h.evalImpl.mockResolvedValue(NaN as any);
+
+    await stringKeyReward().apply({ userId: 7, jobId: 'job-abc' });
+
+    const row = insertedRow();
+    expect(row.multiplier).toBe(1);
+    expect(JSON.parse(row.transactionDetails)).toMatchObject({ multiplierRaw: '4x' });
+  });
+
   it('clamps a quoted multiplier past the ceiling and records the raw as a number', async () => {
     h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: '20.00' } as any);
     h.evalImpl.mockResolvedValue(80 as any);
