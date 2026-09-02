@@ -44,6 +44,8 @@ interface DevTunnelProps {
   scopes: string[];
   /** Set ONLY when an active tunnel exists — `https://<dev-host>/?dev=<token>`. */
   iframeSrc: string | null;
+  /** manifest.bootSkeleton — carried so the dev tunnel matches production. */
+  bootSkeleton: boolean;
   /** The assigned dev host (for the "no active tunnel" copy). */
   host: string | null;
 }
@@ -64,9 +66,8 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
         },
       };
     }
-    const { isAppBlocksDevTunnelEnabled, isAppBlocksDevTunnelUnsubmittedSpendEnabled } = await import(
-      '~/server/services/app-blocks-flag'
-    );
+    const { isAppBlocksDevTunnelEnabled, isAppBlocksDevTunnelUnsubmittedSpendEnabled } =
+      await import('~/server/services/app-blocks-flag');
     if (!(await isAppBlocksDevTunnelEnabled({ user }))) {
       return { notFound: true };
     }
@@ -130,6 +131,7 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
         sandbox: app.sandbox,
         scopes: app.scopes,
         iframeSrc,
+        bootSkeleton: app.bootSkeleton,
         host,
       },
     };
@@ -137,7 +139,18 @@ export const getServerSideProps = createServerSideProps<DevTunnelProps>({
 });
 
 export default function DevTunnelPage(props: DevTunnelProps) {
-  const { appBlockId, blockId, appId, appName, iframeSrc, sandbox, trustTier, scopes, host } = props;
+  const {
+    appBlockId,
+    blockId,
+    appId,
+    appName,
+    iframeSrc,
+    bootSkeleton,
+    sandbox,
+    trustTier,
+    scopes,
+    host,
+  } = props;
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const colorScheme = useComputedColorScheme('dark');
@@ -233,12 +246,10 @@ export default function DevTunnelPage(props: DevTunnelProps) {
             <Title order={3}>Can’t run this app in the dev tunnel</Title>
             <Alert color="red" variant="light">
               We couldn’t mint a dev token for <Code>{blockId}</Code>. This app isn’t runnable in
-              the dev tunnel — it may be suspended, pending review, or not owned by your account.
-              If you just started the tunnel, reload the page.
+              the dev tunnel — it may be suspended, pending review, or not owned by your account. If
+              you just started the tunnel, reload the page.
             </Alert>
-            <Text size="sm">
-              Restart your tunnel and reload if the problem persists:
-            </Text>
+            <Text size="sm">Restart your tunnel and reload if the problem persists:</Text>
             <Code block>civitai app dev:tunnel</Code>
           </Stack>
         ) : (
@@ -249,6 +260,7 @@ export default function DevTunnelPage(props: DevTunnelProps) {
             blockInstanceId={blockInstanceId}
             appName={appName}
             iframeSrc={iframeSrc}
+            bootSkeleton={bootSkeleton}
             // 🔴 The author dev tunnel. `resolveDevPageBlockForAuthor` applies NO
             // status filter, so this mounts ARBITRARY UNPUBLISHED code that no
             // query can enumerate. `blockInitFragmentEnabled` refuses this

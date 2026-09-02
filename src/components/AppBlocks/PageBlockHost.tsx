@@ -404,6 +404,47 @@ export interface PageBlockHostProps {
   /** The `<slug>.civit.ai` bundle URL (manifest.iframe.src), server-resolved. */
   iframeSrc: string;
   /**
+   * `manifest.bootSkeleton` — the app declares that its OWN shipped `index.html`
+   * paints its own boot state (THEMED only if the app is also enabled for the
+   * BLOCK_INIT fragment and reads it before first paint; otherwise it is
+   * guessing from prefers-color-scheme), so the host must stand back and let it show.
+   *
+   * 🔴 This does three things, not one, and all three are required: without any
+   * of them the app's boot state is invisible and the declaration is a lie.
+   *   1. no branded veil (it is opaque, `inset: 0`, until BLOCK_READY);
+   *   2. the iframe is visible from mount rather than `opacity: 0` until ready;
+   *   3. no `translateY` settle on reveal — that IS a layout shift, and the
+   *      point of an app-painted skeleton is that hydration moves nothing.
+   *
+   * The host's own skeleton stays the default for every app that does NOT
+   * declare this: an app with an empty `#root` and no veil is a blank white
+   * iframe for 300-1200ms, which is worse than what we had.
+   *
+   * 🔴 IT ALSO WIDENS WHAT AN APP CAN PAINT, AND WHEN. Without this the block
+   * could put no pixels on screen before BLOCK_READY (opacity 0 + an opaque
+   * veil); with it, publisher-controlled content is visible from mount, before
+   * the host holds a token. `pointerEvents` still blocks the mouse and
+   * AppBlockChrome still sits above, and an app can already paint freely once
+   * ready — so the change is to TIMING, not capability. It is named here
+   * because the surrounding comments discuss anti-spoof posture and this is
+   * part of it.
+   *
+   * 🔴 NOTHING VALIDATES THE DECLARATION TODAY — do not rest a safety argument
+   * on a build gate that does not exist yet. An app may set this over an empty
+   * `#root` and the result is that blank iframe, with no rejection anywhere in
+   * submit, approve or build. A platform-build check is planned (talos-infra);
+   * until it lands, the only thing standing between a false declaration and a
+   * blank run page is the author looking at their own app.
+   */
+  // REQUIRED, and passed explicitly by every call site — the same shape
+  // `surface` above uses, for the same reason. An optional prop with a
+  // `= false` default made the DEV route and the MODERATOR REVIEW preview
+  // silently render the veil: the author checking their own app and the
+  // moderator approving it both saw the pre-feature presentation, and the
+  // first person to see the real one would have been a user. Required means
+  // a new host is a type error until someone decides what it should do.
+  bootSkeleton: boolean;
+  /**
    * Which surface mounted this host. REQUIRED, and passed explicitly by each
    * call site rather than inferred, because it is one of the two axes the
    * init-fragment gate keys on — and the axis that refuses the DEV TUNNEL
@@ -597,6 +638,7 @@ export function PageBlockHost({
   blockInstanceId,
   appName,
   iframeSrc,
+  bootSkeleton,
   surface,
   sandbox,
   trustTier,
@@ -3911,7 +3953,8 @@ export function PageBlockHost({
         // non-interactive (pointerEvents:none). Overlay a centered branded
         // launch state (app initial + a content-shaped skeleton) on top
         // so the user sees a loading state instead of a blank page. The overlay
-        // is gated purely on `status === 'loading'`: it unmounts the instant the
+        // is gated on `(!bootSkeleton || reloadNonce > 0) && overlayMounted`
+        // inside `status === 'loading'`: it unmounts the instant the
         // status machine leaves loading — on BLOCK_READY (→ ready) AND on every
         // terminal path (timeout / fatal / no_token / error, which also flip
         // `showIframe` to false and render the BlockFallback below) — so it can
@@ -3953,6 +3996,18 @@ export function PageBlockHost({
             data-testid="app-page-iframe"
             data-block-instance-id={blockInstanceId}
             data-block-ready={isReady ? 'true' : 'false'}
+            /* 🔴 A11Y. The veil is the host's ONLY loading announcement
+                (role="status" + aria-busy). Standing it down for a bootSkeleton
+                app removed it with nothing in its place — measured, ZERO
+                elements matching [role="status"],[aria-busy],[role="alert"] —
+                and the host cannot borrow the app's, because that boot state is
+                inside a cross-origin frame it can never read. Marking the frame
+                itself busy restores a machine-readable "still loading" without
+                claiming to know what it says. `reloadNonce === 0` is what makes
+                "only while the veil is absent" TRUE rather than merely stated:
+                the retry path brings the veil (role="status") back, and without
+                that term both were busy at once — measured, 2 regions. */
+            aria-busy={bootSkeleton && reloadNonce === 0 && !isReady ? true : undefined}
             style={{
               flex: 1,
               display: 'block',
@@ -3963,15 +4018,44 @@ export function PageBlockHost({
               // cross-fading with the branded overlay below. Under reduced motion
               // `revealMs` is 0 → no transition is emitted and the opacity flip is
               // instantaneous (the pre-animation behaviour).
-              opacity: isReady ? 1 : 0,
-              transform: isReady || revealMs === 0 ? 'none' : 'translateY(8px)',
+              //
+              // 🔴 `bootSkeleton` apps opt OUT of the whole reveal. They paint
+              // their own boot state in the HTML they ship (themed only if they also
+              // read the BLOCK_INIT fragment; otherwise a prefers-color-scheme
+              // guess), so hiding the
+              // iframe until BLOCK_READY would hide exactly that, and the
+              // translateY settle would move it on arrival — a layout shift, at
+              // the one moment the app is trying not to move. Visible from mount,
+              // no transform, no transition: the app's skeleton is on screen at
+              // first paint and its own React render replaces it in place.
+              // `pointerEvents` is deliberately NOT opted out — a skeleton is not
+              // interactive, and the block must stay inert until it has a token.
+              opacity: bootSkeleton || isReady ? 1 : 0,
+              transform: bootSkeleton || isReady || revealMs === 0 ? 'none' : 'translateY(8px)',
               transition:
-                revealMs === 0
+                bootSkeleton || revealMs === 0
                   ? undefined
                   : `opacity ${revealMs}ms ease-out, transform ${revealMs}ms ease-out`,
             }}
           />
-          {overlayMounted && (
+          {/* 🔴 Suppressed for a `bootSkeleton` app. This veil is opaque and
+              `inset: 0` until BLOCK_READY, so leaving it up would cover the very
+              boot state the app ships — the declaration would be inert and the
+              app author would have no way to tell. For every other app it stays
+              exactly as it was, and it is the reason NOT declaring the field is
+              the safe default: no veil plus an empty `#root` is a blank white
+              iframe. */}
+          {/* 🔴 `reloadNonce > 0` deliberately RE-ENABLES the veil for a
+              bootSkeleton app. The opt-out is about FIRST boot, where the app's
+              own skeleton is about to paint. A RETRY is the opposite situation:
+              `key={reloadNonce}` remounts the iframe, so the app's document is
+              being re-fetched and its skeleton is NOT on screen — and the
+              "Retrying …" copy lives inside this veil, so suppressing it left
+              the user with an empty region and no indication anything had
+              happened, for the manual attempt and every automatic one.
+              Measured: veil absent, iframe blank, the string "Retrying" nowhere
+              in the document. */}
+          {(!bootSkeleton || reloadNonce > 0) && overlayMounted && (
             <Center
               data-testid="app-page-loading"
               // Announce the loading state on the REGION: role="status" +

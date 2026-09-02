@@ -189,6 +189,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -289,13 +292,34 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
       selected: Record<string, unknown>;
     };
     const sel = payload.selected;
-    const sensitiveAbsent = ['availability', 'hasAccess', 'canGenerate', 'image', 'name',
-      'nsfw', 'nsfwLevel', 'poi', 'minor', 'sfwOnly', 'userId', 'model'];
+    const sensitiveAbsent = [
+      'availability',
+      'hasAccess',
+      'canGenerate',
+      'image',
+      'name',
+      'nsfw',
+      'nsfwLevel',
+      'poi',
+      'minor',
+      'sfwOnly',
+      'userId',
+      'model',
+    ];
     for (const k of sensitiveAbsent) expect(sel).not.toHaveProperty(k);
-    expect(Object.keys(sel).sort()).toEqual(
-      ['baseModel', 'clipSkip', 'maxStrength', 'minStrength', 'modelId', 'modelName',
-        'modelType', 'strength', 'trainedWords', 'versionId', 'versionName']
-    );
+    expect(Object.keys(sel).sort()).toEqual([
+      'baseModel',
+      'clipSkip',
+      'maxStrength',
+      'minStrength',
+      'modelId',
+      'modelName',
+      'modelType',
+      'strength',
+      'trainedWords',
+      'versionId',
+      'versionName',
+    ]);
     replies.stop();
   });
 
@@ -444,7 +468,11 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
     postFromBlock('OPEN_RESOURCE_PICKER', { requestId: 'rq_a', resourceType: 'Checkpoint' });
     await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
     lastResourceModalProps().onSelect(
-      fakeResource({ id: 111, baseModel: 'Flux.1 D', model: { id: 11, name: 'CK', type: 'Checkpoint' } as any })
+      fakeResource({
+        id: 111,
+        baseModel: 'Flux.1 D',
+        model: { id: 11, name: 'CK', type: 'Checkpoint' } as any,
+      })
     );
     await vi.waitFor(() => {
       const r = replies.last('RESOURCE_PICKER_RESULT');
@@ -456,7 +484,11 @@ describe('PageBlockHost resource picker (Design 1 host-chrome)', () => {
     postFromBlock('OPEN_RESOURCE_PICKER', { requestId: 'rq_b', resourceType: 'LORA' });
     await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
     lastResourceModalProps().onSelect(
-      fakeResource({ id: 222, baseModel: 'SDXL 1.0', model: { id: 22, name: 'LoRA', type: 'LORA' } as any })
+      fakeResource({
+        id: 222,
+        baseModel: 'SDXL 1.0',
+        model: { id: 22, name: 'LoRA', type: 'LORA' } as any,
+      })
     );
 
     await vi.waitFor(() => {

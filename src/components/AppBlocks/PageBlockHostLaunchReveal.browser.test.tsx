@@ -120,6 +120,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. The DEFAULT (host-veil) presentation; the bootSkeleton tests
+  // below override it explicitly.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -241,6 +244,95 @@ describe('PageBlockHost launch reveal — branded loading', () => {
     for (const bar of bars) {
       expect(bar.getAttribute('data-animate')).toBeNull();
     }
+  });
+
+  // `bootSkeleton` stands down THREE separate things, and leaving any one of
+  // them in place makes the app's own boot state invisible — i.e. the flag is
+  // inert and the app author has no way to tell. One test each, so a failure
+  // names WHICH one regressed rather than just "the contract broke".
+  const renderBootSkeletonApp = async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} bootSkeleton onConsentGranted={vi.fn()} />);
+    await expect.element(page.getByTestId('app-page-iframe')).toBeInTheDocument();
+    // Every assertion below is about the PRE-ready window — the one the app
+    // paints its own skeleton in. If this ever went true the tests would be
+    // asserting the post-reveal state and would pass for the wrong reason.
+    expect(iframeEl().getAttribute('data-block-ready')).toBe('false');
+    return iframeEl();
+  };
+
+  test('bootSkeleton: the host renders NO veil over the app', async () => {
+    const frame = await renderBootSkeletonApp();
+    expect(page.getByTestId('app-page-loading').query()).toBeNull();
+    expect(page.getByTestId('app-page-loading-skeleton').query()).toBeNull();
+    // Still inert until it has a token — a skeleton is not interactive.
+    expect(frame.style.pointerEvents).toBe('none');
+  });
+
+  test('bootSkeleton: the iframe is VISIBLE from mount, not opacity 0', async () => {
+    const frame = await renderBootSkeletonApp();
+    expect(frame.style.opacity).toBe('1');
+  });
+
+  test('bootSkeleton: the frame is marked aria-busy while it boots', async () => {
+    // The veil was the host's ONLY loading announcement (role="status" +
+    // aria-busy). Standing it down removed it with nothing in its place — the
+    // app's boot state is cross-origin, so the host cannot borrow the app's.
+    const frame = await renderBootSkeletonApp();
+    expect(frame.getAttribute('aria-busy')).toBe('true');
+    // And it must not persist past the handshake, or the region claims to be
+    // loading forever.
+    await driveToReady();
+    expect(iframeEl().getAttribute('aria-busy')).toBeNull();
+  });
+
+  test('bootSkeleton: a RETRY brings the veil back, so the user gets feedback', async () => {
+    // `key={reloadNonce}` remounts the iframe, so on a retry the app's document
+    // is being re-fetched and its skeleton is NOT on screen. The "Retrying …"
+    // copy lives inside the veil, so suppressing the veil here left an empty
+    // region and no sign anything had happened.
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        bootSkeleton
+        token={null}
+        tokenError
+        onConsentGranted={vi.fn()}
+      />
+    );
+    // Terminal first — that is where Retry is offered.
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    await page.getByRole('button', { name: /Retry/i }).click();
+
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await expect.element(page.getByText(/Retrying/)).toBeInTheDocument();
+
+    // 🔴 EXACTLY ONE busy region. The veil is role="status" and the iframe
+    // carries aria-busy while booting; during a retry BOTH are on screen, so
+    // without the `reloadNonce === 0` term the page announces twice. Measured
+    // at 2 before that term existed — and the comment claimed the exclusion
+    // while the code did not implement it, which is the shape that survives a
+    // reviewer.
+    const busy = document.querySelectorAll('[aria-busy="true"],[role="status"]');
+    expect(busy.length).toBe(1);
+    expect((busy[0] as HTMLElement).getAttribute('role')).toBe('status');
+  });
+
+  test('bootSkeleton: no translateY settle and no reveal transition', async () => {
+    // The settle would move the app's skeleton on arrival — a layout shift at
+    // the exact moment an app-painted boot state exists to avoid one.
+    const frame = await renderBootSkeletonApp();
+    expect(frame.style.transform).toBe('none');
+    expect(frame.style.transition).toBe('');
+  });
+
+  test('an app that does NOT declare bootSkeleton keeps the veil (safe default)', async () => {
+    // The default matters more than the opt-in: no veil plus an empty #root is a
+    // blank white iframe, which is worse than what the veil was doing.
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-page-loading-skeleton')).toBeInTheDocument();
+    expect(iframeEl().style.opacity).toBe('0');
   });
 
   test('the branded copy runs appName through the chrome sanitizer (control/bidi stripped)', async () => {

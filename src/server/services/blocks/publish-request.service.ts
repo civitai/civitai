@@ -4465,6 +4465,11 @@ export type MintReviewBlockTokenResult = {
   /** The pending manifest's declared iframe sandbox (render fidelity). trustTier is
    *  forced 'unverified' at the host → allow-same-origin is dropped regardless. */
   sandbox: string;
+  /** The pending manifest's `bootSkeleton` (render fidelity, same reason as
+   *  `sandbox`): the app paints its own loading state, so the review host must
+   *  stand its veil down exactly as the run page will. Without this a moderator
+   *  approved against a presentation the shipped app does not have. */
+  bootSkeleton: boolean;
   /**
    * MOD REVIEW SANDBOX "run for real" (#2831) — true iff this token was minted
    * with `runForReal:true` (a mod's consent-gated opt-in to run the unapproved app
@@ -4555,6 +4560,13 @@ export async function mintReviewBlockToken(opts: {
     ? manifest.scopes.filter((s): s is string => typeof s === 'string')
     : [];
   const manifestName = typeof manifest.name === 'string' ? manifest.name : row.slug;
+  // 🔴 Carried so the MODERATOR reviews the presentation a user will get. The
+  // review preview mounts the real PageBlockHost; without this it rendered the
+  // host veil while the approved app will not, i.e. the one person deciding
+  // whether to ship it saw a different app. `manifest` is already loaded and
+  // already projected for name/sandbox/scopes — the key was simply omitted.
+  // Same strict `=== true` as every other read: publisher JSON.
+  const manifestBootSkeleton = (manifest as { bootSkeleton?: unknown }).bootSkeleton === true;
   const manifestSandbox =
     manifest.iframe && typeof manifest.iframe.sandbox === 'string'
       ? manifest.iframe.sandbox
@@ -4664,6 +4676,7 @@ export async function mintReviewBlockToken(opts: {
     blockInstanceId: `page_${row.id}`,
     appName: manifestName,
     sandbox: manifestSandbox,
+    bootSkeleton: manifestBootSkeleton,
     runForReal,
     buzzCap: runForReal ? REVIEW_RUN_FOR_REAL_BUZZ_CAP : null,
   };

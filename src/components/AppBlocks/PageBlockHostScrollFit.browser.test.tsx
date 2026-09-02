@@ -120,6 +120,9 @@ const baseProps = {
   appName: 'Scroll Fit App',
   iframeSrc: SAME_ORIGIN_SRC,
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'scroll-fit-app',

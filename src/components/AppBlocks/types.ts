@@ -422,6 +422,27 @@ export interface BlockManifest {
   contentRating?: string;
   name?: string;
   renderMode?: 'iframe' | 'inline' | 'hybrid';
+  /**
+   * The app's shipped `index.html` paints its own boot state inside `#root`, so
+   * the run host stands down its branded veil and shows the iframe from mount.
+   *
+   * 🔴 NOT necessarily THEMED. To paint in the host's theme the app must also be
+   * enabled for the BLOCK_INIT URL fragment and read it before first paint; the
+   * allowlist is empty today, so a boot skeleton currently guesses from
+   * `prefers-color-scheme` and can disagree with the host until BLOCK_INIT
+  lands.
+   *
+   * (This type is HOST-INTERNAL — two consumers, both in this repo. The type an
+   * external app author actually reads is the canonical schema at
+   * `public/schemas/app-block/v1.json`, which already carries this
+   * qualification. Corrected here because the first version of this note
+   * claimed the opposite, and a wrong "this is the author-facing site" is the
+   * kind of sentence that later gets cited as coverage.)
+   *
+   * Declared for discoverability — the index signature below would admit it
+   * anyway, which is exactly why it is easy to misspell.
+   */
+  bootSkeleton?: boolean;
   [key: string]: unknown;
 }
 

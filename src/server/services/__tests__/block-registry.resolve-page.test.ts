@@ -126,6 +126,40 @@ describe('BlockRegistry.resolvePageBlockBySlug — sandbox + scopes', () => {
     expect(res?.scopes).toEqual(['apps:storage:read', 'apps:storage:write']);
   });
 
+  // `bootSkeleton` makes the run host stand its branded veil down and show the
+  // iframe from mount. It is PUBLISHER-CONTROLLED JSON, so the coercion has to
+  // be strict — a truthy-but-not-boolean value must not switch a host behaviour
+  // on. These live in the UNIT tier deliberately: the browser suite that covers
+  // the rendering half is not run by CI (lint.yml excludes *.browser.test.tsx),
+  // so the coercion claim was previously untested in the only tier that gates.
+  it('bootSkeleton: true only for a literal boolean true', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue(
+      pageRow({ manifest: PAGE_MANIFEST({ bootSkeleton: true }), trustTier: 'verified' })
+    );
+    const res = await BlockRegistry.resolvePageBlockBySlug('hello-page', { db: 'read' });
+    expect(res?.bootSkeleton).toBe(true);
+  });
+
+  it('bootSkeleton: false when absent — the safe default', async () => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue(
+      pageRow({ manifest: PAGE_MANIFEST(), trustTier: 'verified' })
+    );
+    const res = await BlockRegistry.resolvePageBlockBySlug('hello-page', { db: 'read' });
+    expect(res?.bootSkeleton).toBe(false);
+  });
+
+  it('bootSkeleton: a TRUTHY non-boolean does NOT enable it', async () => {
+    // The whole point of `=== true`. Each of these is truthy in JS, and each
+    // would otherwise let publisher JSON suppress the host's loading state.
+    for (const value of ['true', 'false', 1, {}, [], 'yes']) {
+      mockDbRead.appBlock.findFirst.mockResolvedValue(
+        pageRow({ manifest: PAGE_MANIFEST({ bootSkeleton: value }), trustTier: 'verified' })
+      );
+      const res = await BlockRegistry.resolvePageBlockBySlug('hello-page', { db: 'read' });
+      expect(res?.bootSkeleton).toBe(false);
+    }
+  });
+
   it('returns scopes:[] when the manifest declares none', async () => {
     mockDbRead.appBlock.findFirst.mockResolvedValue(
       pageRow({ manifest: PAGE_MANIFEST(), trustTier: 'verified' })
