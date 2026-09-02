@@ -405,7 +405,9 @@ export interface PageBlockHostProps {
   iframeSrc: string;
   /**
    * `manifest.bootSkeleton` — the app declares that its OWN shipped `index.html`
-   * paints a themed boot state, so the host must stand back and let it show.
+   * paints its own boot state (THEMED only if the app is also enabled for the
+   * BLOCK_INIT fragment and reads it before first paint; otherwise it is
+   * guessing from prefers-color-scheme), so the host must stand back and let it show.
    *
    * 🔴 This does three things, not one, and all three are required: without any
    * of them the app's boot state is invisible and the declaration is a lie.
@@ -417,6 +419,15 @@ export interface PageBlockHostProps {
    * The host's own skeleton stays the default for every app that does NOT
    * declare this: an app with an empty `#root` and no veil is a blank white
    * iframe for 300-1200ms, which is worse than what we had.
+   *
+   * 🔴 IT ALSO WIDENS WHAT AN APP CAN PAINT, AND WHEN. Without this the block
+   * could put no pixels on screen before BLOCK_READY (opacity 0 + an opaque
+   * veil); with it, publisher-controlled content is visible from mount, before
+   * the host holds a token. `pointerEvents` still blocks the mouse and
+   * AppBlockChrome still sits above, and an app can already paint freely once
+   * ready — so the change is to TIMING, not capability. It is named here
+   * because the surrounding comments discuss anti-spoof posture and this is
+   * part of it.
    *
    * 🔴 NOTHING VALIDATES THE DECLARATION TODAY — do not rest a safety argument
    * on a build gate that does not exist yet. An app may set this over an empty
@@ -3932,7 +3943,8 @@ export function PageBlockHost({
         // non-interactive (pointerEvents:none). Overlay a centered branded
         // launch state (app initial + a content-shaped skeleton) on top
         // so the user sees a loading state instead of a blank page. The overlay
-        // is gated purely on `status === 'loading'`: it unmounts the instant the
+        // is gated on `(!bootSkeleton || reloadNonce > 0) && overlayMounted`
+        // inside `status === 'loading'`: it unmounts the instant the
         // status machine leaves loading — on BLOCK_READY (→ ready) AND on every
         // terminal path (timeout / fatal / no_token / error, which also flip
         // `showIframe` to false and render the BlockFallback below) — so it can
@@ -3981,9 +3993,11 @@ export function PageBlockHost({
                 and the host cannot borrow the app's, because that boot state is
                 inside a cross-origin frame it can never read. Marking the frame
                 itself busy restores a machine-readable "still loading" without
-                claiming to know what it says. Only while the veil is absent:
-                two busy regions would announce twice. */
-            aria-busy={bootSkeleton && !isReady ? true : undefined}
+                claiming to know what it says. `reloadNonce === 0` is what makes
+                "only while the veil is absent" TRUE rather than merely stated:
+                the retry path brings the veil (role="status") back, and without
+                that term both were busy at once — measured, 2 regions. */
+            aria-busy={bootSkeleton && reloadNonce === 0 && !isReady ? true : undefined}
             style={{
               flex: 1,
               display: 'block',

@@ -71,6 +71,7 @@ const RENDER_ONLY_MINT: MintReviewBlockTokenResult = {
   blockInstanceId: 'page_pubreq_X',
   appName: 'My App',
   sandbox: 'allow-scripts',
+  bootSkeleton: false,
   runForReal: false,
   buzzCap: null,
 };

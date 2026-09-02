@@ -160,6 +160,7 @@ const RENDER_ONLY_MINT: MintReviewBlockTokenResult = {
   blockInstanceId: 'page_pubreq_FIT',
   appName: 'Review Fit App',
   sandbox: 'allow-scripts',
+  bootSkeleton: false,
   runForReal: false,
   buzzCap: null,
 };

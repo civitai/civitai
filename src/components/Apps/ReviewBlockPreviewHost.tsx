@@ -229,15 +229,9 @@ export function ReviewBlockPreviewHost({
         // Remount on a mode flip so the new (render-only ↔ run-for-real) token
         // re-handshakes the iframe cleanly instead of swapping a token mid-session.
         key={runForRealActive ? 'run-for-real' : 'render-only'}
-        // 🔴 EXPLICIT false, and it is a KNOWN GAP, not a decision that this
-        // surface should differ. The mint response does not carry the
-        // manifest's `bootSkeleton`, so a moderator reviewing an app that
-        // declares it sees the host veil while a user will not — the review
-        // preview is exactly where that divergence is most costly. Plumbing
-        // it needs a field on the mint output; until that lands this is
-        // false so the reviewer at least sees a defined, documented state
-        // rather than an accidental default.
-        bootSkeleton={false}
+        // The app's own declaration, from the manifest under review — so the
+        // moderator sees the presentation the approved app will actually have.
+        bootSkeleton={mintData.bootSkeleton === true}
         appBlockId={mintData.appBlockId}
         blockId={mintData.blockId}
         appId={mintData.appId}

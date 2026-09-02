@@ -305,6 +305,16 @@ describe('PageBlockHost launch reveal — branded loading', () => {
 
     await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
     await expect.element(page.getByText(/Retrying/)).toBeInTheDocument();
+
+    // 🔴 EXACTLY ONE busy region. The veil is role="status" and the iframe
+    // carries aria-busy while booting; during a retry BOTH are on screen, so
+    // without the `reloadNonce === 0` term the page announces twice. Measured
+    // at 2 before that term existed — and the comment claimed the exclusion
+    // while the code did not implement it, which is the shape that survives a
+    // reviewer.
+    const busy = document.querySelectorAll('[aria-busy="true"],[role="status"]');
+    expect(busy.length).toBe(1);
+    expect((busy[0] as HTMLElement).getAttribute('role')).toBe('status');
   });
 
   test('bootSkeleton: no translateY settle and no reveal transition', async () => {

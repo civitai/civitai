@@ -366,8 +366,8 @@ export interface PageBlockSsr {
    *  column, set on approve). The SSR run-page gate 404s a mature (r/x) page app
    *  when the request host is not red-capable. NULL for pre-feature rows → SFW. */
   contentRating: string | null;
-  /** `manifest.bootSkeleton` — the app's shipped HTML paints its own themed boot
-   *  state, so the run host stands its veil down and shows the iframe from mount.
+  /** `manifest.bootSkeleton` — the app's shipped HTML paints its own boot state
+   *  (themed only if it also reads the BLOCK_INIT fragment; else a guess), so the run host stands its veil down and shows the iframe from mount.
    *  Publisher-controlled and read from the APPROVED manifest snapshot, so it is
    *  as trustworthy as the rest of that snapshot; the blast radius of a false
    *  declaration is cosmetic — a blank iframe on that app's own page. 🔴 Nothing
@@ -2091,9 +2091,22 @@ export class BlockRegistry {
     // keyCanSpend=true) is identical; the runtime author-flag re-check + per-call /
     // per-session / per-day Buzz caps remain the actual spend gates.
     let ephemeralScopes: string[] = [];
+    // 🔴 READ FROM THE PENDING MANIFEST. The dev tunnel is where an author
+    // checks their own app BEFORE approval, so hardcoding `false` here made the
+    // one surface that exists to show them the feature the one surface that
+    // could not — they set the flag, opened /apps/dev/<blockId>, saw the host
+    // veil and would reasonably conclude it does nothing. `pending.manifest` is
+    // already selected and already read below for `scopes`; there was nothing
+    // to fetch.
+    let ephemeralBootSkeleton = false;
     const ephemeralSource: 'pending' | 'brand-new' = pending ? 'pending' : 'brand-new';
     if (pending) {
-      const pendingManifest = (pending.manifest ?? {}) as { scopes?: unknown };
+      const pendingManifest = (pending.manifest ?? {}) as {
+        scopes?: unknown;
+        bootSkeleton?: unknown;
+      };
+      // Same strict `=== true` as every other read of this field.
+      ephemeralBootSkeleton = pendingManifest.bootSkeleton === true;
       const declared = Array.isArray(pendingManifest.scopes)
         ? pendingManifest.scopes.filter((s): s is string => typeof s === 'string')
         : [];
@@ -2113,11 +2126,12 @@ export class BlockRegistry {
       appBlockId: `ephemeral-${blockId}`,
       blockId,
       appId: `ephemeral-${blockId}`,
-      // No stored manifest on this path (unclaimed slug, or a pending request
-      // whose manifest is not the approved snapshot), so there is nothing to
-      // read a declaration from. False keeps the host veil, which is the safe
-      // side: it shows SOMETHING rather than trusting an empty #root.
-      bootSkeleton: false,
+      // From the PENDING manifest when there is one (an author's submitted app,
+      // pre-approval — the case the dev tunnel exists for). A truly unclaimed
+      // slug has no manifest at all and stays false, which keeps the host veil:
+      // the safe side, since it shows SOMETHING rather than trusting an empty
+      // #root.
+      bootSkeleton: ephemeralBootSkeleton,
       status: 'ephemeral',
       trustTier: 'unverified',
       name: blockId,

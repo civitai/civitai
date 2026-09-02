@@ -55,7 +55,15 @@
     "category": {
       "type": "string",
       "description": "Optional marketplace category for the app's `/apps` store listing. When present it flows to the listing automatically on moderator-approve (only when a moderator has not already curated a category). Omit to let a moderator categorise the app. Must be one of the known marketplace categories — this enum is kept in lockstep with MARKETPLACE_CATEGORIES in src/server/services/blocks/marketplace-categories.constants.ts (a drift-guard test enforces equality).",
-      "enum": ["generation", "games", "utility", "discovery", "moderation", "analytics", "other"]
+      "enum": [
+        "generation",
+        "games",
+        "utility",
+        "discovery",
+        "moderation",
+        "analytics",
+        "other"
+      ]
     },
     "renderMode": {
       "type": "string",
@@ -117,10 +125,7 @@
       "maxLength": 256,
       "allOf": [
         { "$comment": "no leading '/' (absolute path)", "not": { "pattern": "^/" } },
-        {
-          "$comment": "no backslash separators (Windows / '\\..' traversal)",
-          "not": { "pattern": "\\\\" }
-        },
+        { "$comment": "no backslash separators (Windows / '\\..' traversal)", "not": { "pattern": "\\\\" } },
         { "$comment": "no '..' path-traversal segment", "not": { "pattern": "(^|/)\\.\\.(/|$)" } },
         { "$comment": "no Windows drive prefix (e.g. C:)", "not": { "pattern": "^[A-Za-z]:" } }
       ]
