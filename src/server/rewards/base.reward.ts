@@ -1,4 +1,4 @@
-import { BUZZ_EVENTS_MAX_MULTIPLIER } from '@civitai/clickhouse';
+import { BUZZ_EVENTS_MAX_MULTIPLIER, clampBuzzEventMultiplier } from '@civitai/clickhouse';
 import type { ClickHouseClient } from '@clickhouse/client';
 import type { PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
@@ -624,14 +624,23 @@ export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
   }
 
   let multiplier = event.multiplier;
-  if (multiplier !== undefined && multiplier > BUZZ_EVENTS_MAX_MULTIPLIER) {
-    coerced.multiplierRaw = multiplier;
-    multiplier = BUZZ_EVENTS_MAX_MULTIPLIER;
-    // On the batch path this value is not audit — `process-rewards` reads it back out and
-    // `sendAward` pays `awardAmount * multiplier` from it, so a clamp UNDERPAYS rather than
-    // rounding a record. Reported once per batch by the caller, not here: the condition becomes
-    // reachable when a site-wide bonus event switches on, which clamps every gold member's pending
-    // events at once, and this function runs per event per retry.
+  if (multiplier !== undefined) {
+    // Shared with the moderator's writer so the two apps cannot disagree about what the column
+    // holds. That shared floor is also why an already-written row cannot arrive here with a
+    // `multiplierRaw` this function would then overwrite in the merge below: `process` never
+    // recomputes `multiplier`, so a row the other writer clamped comes back already in range.
+    const clamped = clampBuzzEventMultiplier(multiplier);
+    if (clamped !== multiplier) {
+      // `JSON.stringify` writes +/-Infinity and NaN as `null`, which reads as "the raw was absent"
+      // — the one case that most needs a legible audit trail records the least.
+      coerced.multiplierRaw = Number.isFinite(multiplier) ? multiplier : String(multiplier);
+      multiplier = clamped;
+      // On the batch path this value is not audit — `process-rewards` reads it back out and
+      // `sendAward` pays `awardAmount * multiplier` from it, so a clamp UNDERPAYS rather than
+      // rounding a record. Reported once per batch by the caller, not here: the condition becomes
+      // reachable when a site-wide bonus event switches on, which clamps every gold member's pending
+      // events at once, and this function runs per event per retry.
+    }
   }
 
   if (Object.keys(coerced).length === 0) return event;
@@ -665,10 +674,10 @@ function toClickhouseBuzzEvents(events: BuzzEventLog[]): BuzzEventLog[] {
     logToAxiom({
       name: 'buzz-rewards',
       type: 'error',
-      message: 'Buzz event multiplier exceeded the ClickHouse column and was clamped',
+      message: 'Buzz event multiplier fell outside the ClickHouse column range and was coerced',
       clampedEvents: clamped,
       batchSize: events.length,
-      clampedTo: BUZZ_EVENTS_MAX_MULTIPLIER,
+      clampedTo: [0, BUZZ_EVENTS_MAX_MULTIPLIER],
     }).catch(() => null);
   }
 
