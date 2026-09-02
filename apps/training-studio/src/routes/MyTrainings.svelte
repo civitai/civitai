@@ -1,21 +1,13 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
+  import RunStateBadge from '$lib/components/RunStateBadge.svelte';
+  import SampleGrid from '$lib/components/SampleGrid.svelte';
   import GradientTile from '$lib/components/GradientTile.svelte';
-  import type { RunState, TrainingRow } from '$lib/data/trainingRows';
+  import type { TrainingRow } from '$lib/data/trainingRows';
 
-  let {
-    rows,
-    onNew,
-    onOpen,
-  }: { rows: TrainingRow[]; onNew: () => void; onOpen: (name: string) => void } = $props();
-
-  const status: Record<RunState, { label: string; cls: string; dot: string }> = {
-    ready: { label: 'Ready', cls: 'text-emerald-400 bg-emerald-500/15', dot: 'bg-emerald-400' },
-    training: { label: 'Training', cls: 'text-primary bg-primary/15', dot: 'bg-primary animate-pulse' },
-    published: { label: 'Published', cls: 'text-[#f59f00] bg-[#f59f00]/15', dot: 'bg-[#f59f00]' },
-    failed: { label: 'Failed', cls: 'text-red-400 bg-red-500/15', dot: 'bg-red-400' },
-  };
+  let { rows, onNew }: { rows: TrainingRow[]; onNew: () => void } = $props();
 </script>
 
 <section class="flex flex-col gap-5">
@@ -43,11 +35,11 @@
           <ModelCodeBadge code={r.code} size="lg" />
           <div class="min-w-0">
             <div class="truncate text-sm font-bold text-dark-0">{r.name}</div>
-            <div class="truncate font-mono text-[11px] text-dark-2">{r.base} · {r.sub}</div>
+            <div class="truncate font-mono text-[11px] text-dark-2">
+              {r.base}{r.sub ? ` · ${r.sub}` : ''}
+            </div>
           </div>
-          <span class="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded px-2.5 py-1 text-[11px] font-semibold {status[r.state].cls}">
-            <span class="h-1.5 w-1.5 rounded-full {status[r.state].dot}"></span>{status[r.state].label}
-          </span>
+          <RunStateBadge state={r.state} class="ml-auto" />
         </div>
 
         <div class="p-3.5">
@@ -60,6 +52,14 @@
               {/if}
             </div>
             <div class="mt-2 font-mono text-[11px] text-dark-2">{r.progress}</div>
+          {:else if r.state === 'failed'}
+            <div
+              class="flex items-center gap-2 rounded-md border border-red-500/20 bg-red-500/5 px-3 py-4 text-[11px] text-dark-2"
+            >
+              <span>⚠️</span> This run didn't complete.
+            </div>
+          {:else if r.sampleUrls.length > 0}
+            <SampleGrid urls={r.sampleUrls} cols={4} />
           {:else}
             <div class="grid grid-cols-4 gap-1.5">
               {#each Array(4) as _, i (i)}
@@ -69,7 +69,14 @@
           {/if}
 
           <div class="mt-3 flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onclick={() => onOpen(r.name)}>Open</Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!r.workflowId}
+              onclick={() => r.workflowId && goto(`/${r.workflowId}`)}
+            >
+              Open
+            </Button>
             {#if r.state === 'ready' || r.state === 'published'}
               <Button variant="outline" size="sm">🎨 Generate</Button>
             {/if}

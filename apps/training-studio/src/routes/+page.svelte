@@ -24,7 +24,7 @@
 </header>
 
 {#if view === 'list'}
-  <MyTrainings rows={data.rows} onNew={() => (view = 'flow')} onOpen={() => (view = 'flow')} />
+  <MyTrainings rows={data.rows} onNew={() => (view = 'flow')} />
 {:else}
   <TrainingFlow onExit={() => (view = 'list')} />
 {/if}

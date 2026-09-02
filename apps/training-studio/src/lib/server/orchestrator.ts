@@ -1,6 +1,13 @@
-import { createCivitaiClient, queryWorkflows } from '@civitai/client';
+import { createCivitaiClient, getWorkflow, queryWorkflows } from '@civitai/client';
 import { env } from '$env/dynamic/private';
-import { CIVITAI_TAG, TRAINING_TAG, workflowToRow, type TrainingRow } from '$lib/data/trainingRows';
+import {
+  CIVITAI_TAG,
+  TRAINING_TAG,
+  workflowToDetail,
+  workflowToRow,
+  type TrainingDetail,
+  type TrainingRow,
+} from '$lib/data/trainingRows';
 
 /** Days of history the reconnect list pulls — matches the main app's 30-day workflow retention. */
 const RETENTION_DAYS = 30;
@@ -22,4 +29,20 @@ export async function listTrainingWorkflows(token: string): Promise<TrainingRow[
   });
   if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
   return (data.items ?? []).map(workflowToRow).filter((r): r is TrainingRow => r !== null);
+}
+
+/** One training run's detail (the Open screen), or null if it's gone / not the caller's / not mappable. */
+export async function getTrainingWorkflow(
+  token: string,
+  workflowId: string
+): Promise<TrainingDetail | null> {
+  const { data, error } = await getWorkflow({
+    client: orchestratorClient(token),
+    path: { workflowId },
+  });
+  if (!data) {
+    if (error?.status === 404) return null;
+    throw new Error(`getWorkflow failed: ${error?.detail ?? 'no data returned'}`);
+  }
+  return workflowToDetail(data);
 }

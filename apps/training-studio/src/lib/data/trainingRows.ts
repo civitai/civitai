@@ -1,5 +1,5 @@
 import type { Workflow, WorkflowStatus } from '@civitai/client';
-import { cardByType, type Media } from './trainingModels';
+import { cardByEcosystem, cardByType, findByAir, type Media } from './trainingModels';
 
 /** Tags every training workflow carries. `TRAINING_TAG` mirrors the main app's
  * `TRAINING_WORKFLOW_TAG`; `CIVITAI_TAG` is the platform namespace. The main app's queryWorkflows
@@ -16,6 +16,19 @@ export const META_VERSION = 1;
  * fact we store in the workflow metadata, not an orchestrator status. */
 export type RunState = 'ready' | 'training' | 'published' | 'failed';
 
+/** Badge presentation per run state, shared by the My-trainings list and the run detail page so the
+ * two can't drift when a state is added or recolored. */
+export const RUN_STATE_BADGE: Record<RunState, { label: string; cls: string; dot: string }> = {
+  ready: { label: 'Ready', cls: 'text-emerald-400 bg-emerald-500/15', dot: 'bg-emerald-400' },
+  training: {
+    label: 'Training',
+    cls: 'text-primary bg-primary/15',
+    dot: 'bg-primary animate-pulse',
+  },
+  published: { label: 'Published', cls: 'text-[#f59f00] bg-[#f59f00]/15', dot: 'bg-[#f59f00]' },
+  failed: { label: 'Failed', cls: 'text-red-400 bg-red-500/15', dot: 'bg-red-400' },
+};
+
 export interface TrainingRow {
   /** Orchestrator workflow id — the handle for reconnect/open. Absent only for sample rows. */
   workflowId?: string;
@@ -28,6 +41,9 @@ export interface TrainingRow {
    * shows an indeterminate bar rather than a misleading percentage. */
   pct: number;
   progress: string;
+  /** Real sample-image URLs from a finished run's last epoch (the list shows these instead of the
+   * gradient placeholders). Empty until a run produces samples. */
+  sampleUrls: string[];
 }
 
 /**
@@ -60,39 +76,164 @@ const STATE_BY_STATUS: Record<WorkflowStatus, RunState> = {
   expired: 'failed',
 };
 
+/** The fields we read off the workflow's `training` step. Read defensively — @civitai/client types
+ * `steps[].input/output` loosely, and a foreign/older workflow may not carry all of them. */
+interface TrainingStepInput {
+  model?: string;
+  ecosystem?: string;
+  epochs?: number;
+  steps?: number;
+  triggerWord?: string;
+  /** The fixed sample prompts (usually 3). Each epoch generates one image per prompt, positionally. */
+  samples?: { prompts?: string[] };
+}
+interface TrainingStepOutput {
+  epochs?: Array<{
+    epochNumber?: number;
+    model?: { url?: string | null; available?: boolean };
+    samples?: Array<{ url?: string | null; available?: boolean }>;
+  }>;
+}
+
 /**
- * Map one orchestrator workflow to a My-trainings row using our metadata + its status. Returns
- * null for a workflow we can't place (no id, or no usable metadata) so the caller filters it out
- * rather than rendering a blank card.
+ * Shared read of a workflow's `training` step + base-model resolution, used by both the list row and the
+ * detail. Data comes from the step (base model from its `air`/`ecosystem`, epochs from its output) plus our
+ * own `TrainingStudioMeta` when present — existing (main-app-created) runs carry no metadata, so the step is
+ * the source. `state` is undefined for a status we can't map; callers drop the workflow.
  */
+function resolveWorkflow(w: Workflow) {
+  const meta = (w.metadata ?? {}) as TrainingStudioMeta;
+  // `status` is typed non-null but the orchestrator can omit it on a run mid-transition (the main app's
+  // read paths guard `!workflow.status`), so an unmapped status yields no state and the caller drops it.
+  const state: RunState | undefined = meta.published ? 'published' : STATE_BY_STATUS[w.status];
+
+  const step = w.steps?.find((s) => (s as { $type?: string }).$type === 'training') ?? w.steps?.[0];
+  const input = ((step as { input?: TrainingStepInput } | undefined)?.input ??
+    {}) as TrainingStepInput;
+  const output = ((step as { output?: TrainingStepOutput } | undefined)?.output ??
+    {}) as TrainingStepOutput;
+
+  // Base model: the exact `air` the run trained on, else its ecosystem, else our metadata's card type.
+  const byAir = input.model ? findByAir(input.model) : undefined;
+  const card =
+    byAir?.card ??
+    (input.ecosystem ? cardByEcosystem(input.ecosystem) : undefined) ??
+    (meta.cardType ? cardByType(meta.cardType) : undefined);
+  const version = byAir?.version ?? card?.versions.find((v) => v.key === meta.versionKey);
+
+  return {
+    meta,
+    state,
+    input,
+    output,
+    media: card?.media ?? 'image',
+    base: card ? `${card.name}${version ? ` · ${version.label}` : ''}` : 'Training run',
+    code: card?.code ?? '??',
+    // TODO(write-path): main-app runs carry no name tag, so we show the trigger word or a fallback. The
+    // Start slice should stamp a `name` (and a `name:<slug>` workflow tag) so runs are titled properly.
+    name: meta.name || meta.trigger || input.triggerWord || 'Untitled training',
+  };
+}
+
+/** Map one orchestrator workflow to a My-trainings row. Returns null for a workflow we can't place. */
 export function workflowToRow(w: Workflow): TrainingRow | null {
   if (!w.id) return null;
-  const meta = (w.metadata ?? {}) as TrainingStudioMeta;
-
-  // `status` is typed non-null but the orchestrator can omit it on a run mid-transition (the main
-  // app's read paths guard `!workflow.status`). An unmapped status yields no row rather than an
-  // `undefined` state that throws when the list looks up its label/color.
-  const state: RunState | undefined = meta.published ? 'published' : STATE_BY_STATUS[w.status];
+  const { meta, state, input, output, base, code, name } = resolveWorkflow(w);
   if (!state) return null;
 
-  const card = meta.cardType ? cardByType(meta.cardType) : undefined;
-  const version = card?.versions.find((v) => v.key === meta.versionKey);
-  const base = card ? `${card.name}${version ? ` · ${version.label}` : ''}` : 'Training run';
-  const code = card?.code ?? '??';
-
+  const epochCount = output.epochs?.length ?? input.epochs;
   const parts: string[] = [];
   if (typeof meta.imageCount === 'number') parts.push(`${meta.imageCount} images`);
+  if (epochCount) parts.push(`${epochCount} epochs`);
   if (meta.loraType) parts.push(meta.loraType);
+
+  // Thumbnails: up to 4 sample images, newest epoch first (only `available` blobs carry a URL). A single
+  // epoch often has fewer than 4, so we fill from the most recent epochs backward.
+  const sampleUrls: string[] = [];
+  for (const epoch of [...(output.epochs ?? [])].reverse()) {
+    for (const s of epoch.samples ?? []) {
+      if (sampleUrls.length >= 4) break;
+      if (s.available && typeof s.url === 'string') sampleUrls.push(s.url);
+    }
+    if (sampleUrls.length >= 4) break;
+  }
 
   return {
     workflowId: w.id,
-    name: meta.name || meta.trigger || 'Untitled training',
+    name,
     base,
     code,
     state,
     sub: parts.join(' · '),
     pct: 0,
     progress: state === 'training' ? w.status : '',
+    sampleUrls,
+  };
+}
+
+/** One epoch/checkpoint of a finished run, for the detail screen. */
+export interface TrainingDetailEpoch {
+  /** Stable within a run — the loop key and the selection identity. `number` alone isn't safe: its
+   * `?? 0` fallback collapses numberless epochs, so we suffix the array position. */
+  id: string;
+  number: number;
+  /** One entry PER PROMPT, index-aligned to `TrainingDetail.prompts` — so `samples[i]` is this epoch's
+   * image for `prompts[i]`. `null` where that prompt's image is missing/unavailable for this epoch. */
+  samples: (string | null)[];
+  /** The trained weights blob (a signed URL), when the epoch produced an available one. */
+  modelUrl?: string;
+}
+
+/** A single training run's detail, for the Open screen. */
+export interface TrainingDetail {
+  workflowId: string;
+  name: string;
+  base: string;
+  code: string;
+  state: RunState;
+  createdAt: string;
+  /** Sample media type — video models (e.g. Effect) render their samples as `<video>`. */
+  isVideo: boolean;
+  /** The fixed sample prompts (usually 3). Rows of the compare grid; captions for each epoch's images. */
+  prompts: string[];
+  epochs: TrainingDetailEpoch[];
+}
+
+/** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
+export function workflowToDetail(w: Workflow): TrainingDetail | null {
+  if (!w.id) return null;
+  const { input, state, output, media, base, code, name } = resolveWorkflow(w);
+  if (!state) return null;
+
+  const prompts = input.samples?.prompts ?? [];
+  // Number of image slots per epoch = the prompt count (each prompt yields one image). Fall back to the
+  // widest observed sample array when a run carries no prompt list.
+  const slots =
+    prompts.length || Math.max(0, ...(output.epochs ?? []).map((e) => e.samples?.length ?? 0));
+
+  const epochs: TrainingDetailEpoch[] = (output.epochs ?? []).map((e, idx) => {
+    const raw = e.samples ?? [];
+    return {
+      id: `${e.epochNumber ?? 'x'}-${idx}`,
+      number: e.epochNumber ?? 0,
+      samples: Array.from({ length: slots }, (_, i) => {
+        const s = raw[i];
+        return s?.available && typeof s.url === 'string' ? s.url : null;
+      }),
+      modelUrl: e.model?.available && typeof e.model.url === 'string' ? e.model.url : undefined,
+    };
+  });
+
+  return {
+    workflowId: w.id,
+    name,
+    base,
+    code,
+    state,
+    createdAt: w.createdAt,
+    isVideo: media === 'video',
+    prompts,
+    epochs,
   };
 }
 
@@ -106,6 +247,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     sub: '12 images · character',
     pct: 0,
     progress: '',
+    sampleUrls: [],
   },
   {
     name: 'ink_wash_style',
@@ -115,6 +257,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     sub: '28 images · style',
     pct: 62,
     progress: 'step 5,120 / 8,400 · checkpoint 6/10',
+    sampleUrls: [],
   },
   {
     name: 'chibi_pack',
@@ -124,6 +267,7 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     sub: '40 images · 1.2k downloads',
     pct: 0,
     progress: '',
+    sampleUrls: [],
   },
   {
     name: 'retro_poster',
@@ -133,5 +277,32 @@ export const SAMPLE_ROWS: TrainingRow[] = [
     sub: 'refunded ⚡ 1,750',
     pct: 0,
     progress: '',
+    sampleUrls: [],
   },
 ];
+
+/** A finished-run detail for the dev-login preview (which has no real token to fetch one). */
+export const SAMPLE_DETAIL: TrainingDetail = {
+  workflowId: 'preview',
+  name: 'my_character',
+  base: 'SDXL · Standard',
+  code: 'XL',
+  state: 'ready',
+  createdAt: '2026-08-21T16:48:19.000Z',
+  isVideo: false,
+  prompts: [
+    '1girl, solo, blue eyes, long silver hair, standing in a sunlit forest, detailed background',
+    '1girl, close-up portrait, soft studio lighting, neutral expression, freckles',
+    '1girl, full body, dynamic pose, city street at night, neon reflections',
+  ],
+  // The standard 3 samples per epoch, index-aligned to the prompts above. Epoch 8 drops its middle image
+  // to exercise the missing-slot path.
+  epochs: [4, 6, 8, 10].map((n, idx) => ({
+    id: `${n}-${idx}`,
+    number: n,
+    samples: [0, 1, 2].map((i) =>
+      n === 8 && i === 1 ? null : `https://picsum.photos/seed/ts-${n}-${i}/400`
+    ),
+    modelUrl: '#',
+  })),
+};
