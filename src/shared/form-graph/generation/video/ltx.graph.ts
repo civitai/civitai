@@ -1,5 +1,4 @@
-import { z } from 'zod';
-import { branch, defFamily, defineGraph, type FieldDef } from 'form-graph';
+import { branch, defFamily, defineGraph } from 'form-graph';
 import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
 import { checkpointDef, type VersionGroup } from '../checkpoint';
 import { effectiveEcosystemOf } from '../reconcile';
@@ -15,7 +14,7 @@ import {
   workflowScoped,
   type AspectRatioOption,
   type ImageEntry,
-  type NumberMeta,
+  refusingRangeDef,
 } from '../defs';
 import { familyScope, textBlock, type FamilyExt } from '../shared';
 
@@ -217,13 +216,7 @@ const GUIDE_STRENGTH = sliderDef({
     { label: 'Strong', value: 1 },
   ],
 });
-// hand-written in ltx-graph.ts: out-of-range REFUSES (falls to default), no snap
-const NUM_FRAMES: FieldDef<number, NumberMeta> = {
-  input: z.coerce.number().min(1).max(120).optional(),
-  output: z.number().min(1).max(120),
-  default: 24,
-  meta: { min: 1, max: 120, step: 1 },
-};
+const NUM_FRAMES = refusingRangeDef({ min: 1, max: 120, default: 24 });
 const GENERATE_AUDIO = boolDef(true);
 const CFG = sliderDef({
   min: 1,

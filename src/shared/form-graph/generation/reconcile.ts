@@ -5,6 +5,7 @@ import {
 } from '~/shared/data-graph/generation/config';
 import { ecosystemKeyForBaseModel } from './checkpoint';
 import { booguVersionIds } from './image/boogu.graph';
+import { viduVersionIds } from '~/shared/data-graph/generation/version-ids';
 
 /**
  * Selector reconciliation: v1's cross-level effects — a model whose baseModel
@@ -99,8 +100,17 @@ export function deriveWorkflowFromModel(
   model: { id?: number } | undefined,
   current: { ecosystem: string | undefined; workflow: string | undefined }
 ): SelectorCorrection | undefined {
-  const table = current.ecosystem ? workflowScopedVersions[current.ecosystem] : undefined;
   const id = model?.id;
+  // Vidu Q3 has no reference-to-video operation: v1's effect drops the
+  // workflow back to plain img2vid when the Q3 build is picked (probed)
+  if (
+    current.ecosystem === 'Vidu' &&
+    id === viduVersionIds.q3 &&
+    current.workflow === 'img2vid:ref2vid'
+  ) {
+    return { workflow: 'img2vid' };
+  }
+  const table = current.ecosystem ? workflowScopedVersions[current.ecosystem] : undefined;
   if (!table || id == null) return undefined;
   const workflow = current.workflow ?? 'txt2img';
   const keys = Object.keys(table);

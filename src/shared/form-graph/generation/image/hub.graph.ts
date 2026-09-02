@@ -31,6 +31,8 @@ import { openai } from './openai.graph';
 import { lens } from './lens.graph';
 import { qwen } from './qwen.graph';
 import { nanoBanana } from './nano-banana.graph';
+import { wanImage } from './wan-image.graph';
+import { grokImage } from './grok.graph';
 import { sd } from './sd.graph';
 import { zimage } from './zimage.graph';
 
@@ -100,6 +102,10 @@ const families = branch((ext: FamilyExt) => {
       return qwen;
     case 'NanoBanana':
       return nanoBanana;
+    case 'WanImage27':
+      return wanImage;
+    case 'Grok':
+      return grokImage;
     case 'SD1':
     case 'SD2':
     case 'SDXL':

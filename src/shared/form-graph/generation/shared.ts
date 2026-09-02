@@ -84,6 +84,10 @@ export function makeTextBlock(
     negativePromptRegistersTarget?: boolean;
     /** hi-dream-o1 omits v1's snippetsGraph entirely — no snippets key at all. */
     snippets?: boolean;
+    /** wan-image caps its negative editor at 500 chars, not the shared 6000. */
+    negativePromptMaxLength?: number;
+    /** grok requires a prompt on every workflow, staged images included. */
+    promptAlwaysRequired?: boolean;
   } = {}
 ) {
   const {
@@ -91,6 +95,8 @@ export function makeTextBlock(
     negativePromptIsEditor = true,
     negativePromptRegistersTarget = negativePromptIsEditor,
     snippets: hasSnippets = true,
+    negativePromptMaxLength = MAX_NEGATIVE_PROMPT_LENGTH,
+    promptAlwaysRequired = false,
   } = opts;
   const hasNegative = (ext: TextBlockNeeds) =>
     typeof negativePrompt === 'function' ? negativePrompt(ext) : negativePrompt;
@@ -123,7 +129,7 @@ export function makeTextBlock(
       // graph's own fields, declared above. Meta mirrors v1's textNode contract:
       // the snippets slice's PRESENCE doubles as the wildcards feature flag.
       .field('prompt', ({ triggerWords, snippets, _ext }) => {
-        const required = !_ext.images?.length;
+        const required = promptAlwaysRequired || !_ext.images?.length;
         const base = textDef('prompt');
         return {
           ...base,
@@ -140,7 +146,7 @@ export function makeTextBlock(
       })
       .field('negativePrompt', ({ triggerWords, snippets, _ext }) => {
         if (!hasNegative(_ext)) return null;
-        const base = textDef('negativePrompt', MAX_NEGATIVE_PROMPT_LENGTH);
+        const base = textDef('negativePrompt', negativePromptMaxLength);
         // a plain (non-editor) negative prompt is not a snippet target and does
         // not track trigger words — v1's negativePromptNode vs negativePromptGraph
         return {

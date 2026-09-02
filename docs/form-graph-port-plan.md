@@ -437,8 +437,18 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 | image: lens (base/turbo) | DONE | DONE | raw resourcesNode (no filter); resolution above the variant branch, AR follows it |
 | image: qwen (Qwen/Qwen2/Qwen3) | DONE | DONE | one graph, untagged sub-branch on ecosystem; Qwen's workflow-scoped versions hit the LOCK (cross-workflow version substitutes to the current workflow's default — probed, a third semantics next to boogu/mageflow) |
 | image: nano-banana (standard/pro/v2/v2lite) | DONE | DONE | resolution-multiplied AR dims; negativePrompt only in pro, not a snippet target |
-| image: grok | OPEN | OPEN | spans BOTH output types (grokImageGraph + grokVideoGraph split on output) — needs a member in each hub sharing constants; the last image-hub family |
-| video: happy-horse, minimax, kling, veo3, vidu, sora, mochi, hunyuan, flux3-video, wan-image + audio/model3d hubs | OPEN | OPEN | the video/audio/3d tail — same loop as the image slice |
+| image: grok (+ video arm) | DONE | DONE | spans BOTH output types: grokImage + grokVideo share `grokHead` (flag-gated version list) and a promptAlwaysRequired text block; the dispatcher routes Grok by workflow prefix. Image hub COMPLETE |
+| image: wan-image (v2.7) | DONE | DONE | tagged v2.7 branch; negativePrompt max length 500, not a snippet target; AR hidden when edit images staged |
+| video: mochi | DONE | DONE | locked model, promptOnly; NO live workflows — excluded from the parity matrix like legacy WanVideo/SD2 |
+| video: sora2 | DONE | DONE | AR options per resolution (txt2vid only), usePro, durations 4/8 |
+| video: hunyuan (HyV1) | DONE | DONE | cfg/steps presets, familyResources, 480p AR set |
+| video: flux3-video | DONE | DONE | First/Last frame slots on img2vid; v1's draft→resolution forward dep is dead, resolution unconditional (probed) |
+| video: minimax (MiniMaxH3, api/comfy) | DONE | DONE | tagged branch on version: comfy carries loras/seed/turbo-shaped steps, api is bare; ref2vid takes up to 9 refs (`variantOf`, NOT a prefix match — bit us) |
+| video: happy-horse (v1.0/v1.1) | DONE | DONE | AR family keyed `resolution|version` (v1.1 widens the set); vid2vid:edit carries video + refs + audioSetting |
+| video: veo3 (fast/standard) | DONE | DONE | workflowVersions inert (same list both workflows); ref2vid pins duration to 8s at the boundary; version enum defaults '3.1' (3.0 endpoints retired) |
+| video: vidu (Q1/Q3) | DONE | DONE | image-driven workflows emit NO aspectRatio (v1 hides the node; handler derives from source — probed); Q3 ref2vid rewrites to img2vid in `reconcile.ts`; Q3 resolution-scaled AR dims |
+| video: kling (legacy/v3) | DONE | DONE | ref2vid FORCES model→v3 (`correct` on model — probed, workflow wins); legacy full text block (negative IS a snippet target), v3 promptAlwaysRequired + no negative; legacy duration is a STRING enum; multiShot/klingElements dead in v1, not ported. Video hub COMPLETE |
+| audio/model3d hubs (Ace, Tripo, Hunyuan3D, Pixal3D, PolyGen, Trellis2) + standalone workflows (upscale/interpolate/remove-background) | OPEN | OPEN | the remaining tail |
 | _…add a row per `*-graph.ts` file during Phase 2 inventory…_ | | | |
 
 ---

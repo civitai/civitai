@@ -18,7 +18,6 @@ import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControl
 import { videoHub } from '~/shared/form-graph/generation/video/hub.graph';
 import { wanVersionDefs, wanVersionOptions } from '~/shared/form-graph/generation/video/wan.graph';
 
-
 import { ControllerLabel, VersionGroupSelector, useWildcardHandlers } from './form-helpers';
 import type { GenerationStore } from './store';
 
@@ -232,7 +231,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
             return (
               <SliderInput
                 label="Duration (seconds)"
-                value={value}
+                value={typeof value === 'number' ? value : Number(value)}
                 onChange={onChange}
                 min={meta.min}
                 max={meta.max}
@@ -245,7 +244,10 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
               <Input.Label>Duration</Input.Label>
               <SegmentedControlWrapper
                 value={String(value)}
-                onChange={(v) => onChange(Number(v))}
+                onChange={(v) => {
+                  const opt = (meta?.options ?? []).find((o) => String(o.value) === v);
+                  if (opt) onChange(opt.value);
+                }}
                 data={(meta?.options ?? []).map((o) => ({
                   label: o.label,
                   value: String(o.value),

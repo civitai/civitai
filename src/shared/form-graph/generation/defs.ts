@@ -459,6 +459,27 @@ export function quantityDef(opts: { max: number; step?: number }) {
   } satisfies FieldDef<number, NumberMeta>;
 }
 
+/**
+ * A bounded number that REFUSES out-of-range input (falls to the default with
+ * the error recorded) instead of snapping — the v1 hand-written-node policy
+ * (grok/kling durations, ltx frame count, wan shift), distinct from
+ * `sliderDef`, which clamps.
+ */
+export function refusingRangeDef(opts: {
+  min: number;
+  max: number;
+  step?: number;
+  default: number;
+}) {
+  const { min, max, step = 1 } = opts;
+  return {
+    input: z.coerce.number().min(min).max(max).optional(),
+    output: z.number().min(min).max(max),
+    default: opts.default,
+    meta: { min, max, step },
+  } satisfies FieldDef<number, NumberMeta>;
+}
+
 // --- controlNets ----------------------------------------------------------------
 
 const controlNetImageObjectSchema = z.object({

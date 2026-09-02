@@ -280,6 +280,37 @@ const CASES: Record<string, unknown>[] = [
     enableWebSearch: true,
   },
   { workflow: 'txt2img', ecosystem: 'NanoBanana', prompt: 'a cat', seed: 42, model: 3086021 },
+  // WanImage 2.7: create + edit; Grok: image v1/v2 halves + video ops
+  { workflow: 'txt2img', ecosystem: 'WanImage27', prompt: 'a cat', negativePrompt: 'x', seed: 42 },
+  {
+    workflow: 'img2img:edit',
+    ecosystem: 'WanImage27',
+    prompt: 'a cat',
+    seed: 42,
+    images: [IMAGE],
+    enablePromptEnhancer: true,
+  },
+  { workflow: 'txt2img', ecosystem: 'Grok', prompt: 'a cat', seed: 42 },
+  { workflow: 'img2img:edit', ecosystem: 'Grok', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  { workflow: 'txt2vid', ecosystem: 'Grok', prompt: 'a cat', seed: 42, duration: 10 },
+  {
+    workflow: 'txt2vid',
+    ecosystem: 'Grok',
+    prompt: 'a cat',
+    seed: 42,
+    model: 3197990,
+    resolution: '1080p',
+  },
+  { workflow: 'img2vid', ecosystem: 'Grok', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  {
+    workflow: 'img2vid:ref2vid',
+    ecosystem: 'Grok',
+    prompt: 'a cat',
+    seed: 42,
+    model: 3197990,
+    images: [IMAGE],
+  },
+  { workflow: 'vid2vid:edit', ecosystem: 'Grok', prompt: 'a cat', seed: 42, video: VIDEO_INPUT },
   // Flux Kontext: both modes, img2img with source image
   { workflow: 'txt2img', ecosystem: 'Flux1Kontext', prompt: 'a cat', seed: 42 },
   {
@@ -376,9 +407,122 @@ const CASES: Record<string, unknown>[] = [
   { workflow: 'txt2vid', ecosystem: 'WanVideo27', prompt: 'a cat', seed: 42 },
   { workflow: 'img2vid', ecosystem: 'WanVideo27', prompt: 'a cat', seed: 42, images: [IMAGE] },
   { workflow: 'txt2vid', ecosystem: 'WanVideo30', prompt: 'a cat', seed: 42, usePrime: true },
+  // MiniMax H3: comfy (turbo/loras/frames) + API build; HappyHorse both versions
+  {
+    workflow: 'txt2vid',
+    ecosystem: 'MiniMaxH3',
+    prompt: 'a cat',
+    seed: 42,
+    turbo: true,
+    steps: 12,
+    resources: [{ id: 987, baseModel: 'MiniMax', model: { type: 'LORA' }, strength: 0.5 }],
+  },
+  { workflow: 'img2vid', ecosystem: 'MiniMaxH3', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  { workflow: 'txt2vid', ecosystem: 'MiniMaxH3', prompt: 'a cat', seed: 42, model: 3183239 },
+  {
+    workflow: 'img2vid:ref2vid',
+    ecosystem: 'MiniMaxH3',
+    prompt: 'a cat',
+    seed: 42,
+    images: [IMAGE],
+  },
+  { workflow: 'txt2vid', ecosystem: 'HappyHorse', prompt: 'a cat', seed: 42, resolution: '1080p' },
+  { workflow: 'img2vid', ecosystem: 'HappyHorse', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  { workflow: 'txt2vid', ecosystem: 'HappyHorse', prompt: 'a cat', seed: 42, model: 2902378 },
+  {
+    workflow: 'vid2vid:edit',
+    ecosystem: 'HappyHorse',
+    prompt: 'a cat',
+    seed: 42,
+    model: 2902378,
+    video: VIDEO_INPUT,
+    images: [IMAGE],
+    audioSetting: 'origin',
+  },
+  // Sora2 / HyV1 / Flux3Video (Mochi supports no live workflows)
+  { workflow: 'txt2vid', ecosystem: 'Sora2', prompt: 'a cat', seed: 42, usePro: true, duration: 8 },
+  { workflow: 'img2vid', ecosystem: 'Sora2', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  {
+    workflow: 'txt2vid',
+    ecosystem: 'HyV1',
+    prompt: 'a cat',
+    seed: 42,
+    resources: [{ id: 654, baseModel: 'Hunyuan Video', model: { type: 'LORA' }, strength: 0.7 }],
+  },
+  { workflow: 'txt2vid', ecosystem: 'Flux3Video', prompt: 'a cat', seed: 42, generateAudio: true },
+  {
+    workflow: 'txt2vid',
+    ecosystem: 'Flux3Video',
+    prompt: 'a cat',
+    seed: 42,
+    draft: true,
+    resolution: '1080p',
+  },
+  {
+    workflow: 'img2vid',
+    ecosystem: 'Flux3Video',
+    prompt: 'a cat',
+    seed: 42,
+    images: [IMAGE, { url: 'https://example.com/b.png', width: 1216, height: 832 }],
+  },
   // Seedance
   { workflow: 'txt2vid', ecosystem: 'Seedance', prompt: 'a cat', seed: 42 },
   { workflow: 'img2vid', ecosystem: 'Seedance', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  // Veo3: fast vs standard, ref2vid placeholder prompt
+  { workflow: 'txt2vid', ecosystem: 'Veo3', prompt: 'a cat', seed: 42, generateAudio: true },
+  { workflow: 'txt2vid', ecosystem: 'Veo3', prompt: 'a cat', seed: 42, model: 2827945 },
+  { workflow: 'img2vid', ecosystem: 'Veo3', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  { workflow: 'img2vid:ref2vid', ecosystem: 'Veo3', prompt: '', seed: 42, images: [IMAGE] },
+  // Vidu: Q1 engine vs Q3 engine
+  { workflow: 'txt2vid', ecosystem: 'Vidu', prompt: 'a cat', seed: 42, style: 'anime' },
+  { workflow: 'img2vid', ecosystem: 'Vidu', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  { workflow: 'img2vid:ref2vid', ecosystem: 'Vidu', prompt: '', seed: 42, images: [IMAGE] },
+  {
+    workflow: 'txt2vid',
+    ecosystem: 'Vidu',
+    prompt: 'a cat',
+    seed: 42,
+    model: 2741273,
+    resolution: '1080p',
+    draft: true,
+    enableAudio: true,
+  },
+  // Kling: legacy engine (v1.6 mode field, string durations) vs kling-v3
+  { workflow: 'txt2vid', ecosystem: 'Kling', prompt: 'a cat', seed: 42, duration: '10' },
+  {
+    workflow: 'txt2vid',
+    ecosystem: 'Kling',
+    prompt: 'a cat',
+    seed: 42,
+    model: 2623815,
+    mode: 'professional',
+    negativePrompt: 'blurry',
+  },
+  { workflow: 'img2vid', ecosystem: 'Kling', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  {
+    workflow: 'txt2vid',
+    ecosystem: 'Kling',
+    prompt: 'a cat',
+    seed: 42,
+    model: 2698632,
+    duration: 12,
+    generateAudio: true,
+  },
+  {
+    workflow: 'img2vid',
+    ecosystem: 'Kling',
+    prompt: 'a cat',
+    seed: 42,
+    model: 2698632,
+    images: [IMAGE, { url: 'https://example.com/b.png', width: 1216, height: 832 }],
+  },
+  {
+    workflow: 'img2vid:ref2vid',
+    ecosystem: 'Kling',
+    prompt: 'a cat',
+    seed: 42,
+    images: [IMAGE],
+  },
 ];
 
 async function bothLanes({ expectEcosystem, ...input }: Record<string, unknown>) {
@@ -430,7 +574,7 @@ describe('form-graph handlers emit the same steps as the data-graph handlers', (
   it('an unported ecosystem is a loud error, not a silent fallthrough', async () => {
     await expect(
       createFormGraphStepInput(
-        { ecosystem: 'Grok', workflow: 'txt2img', prompt: 'x', seed: 1 } as GenerationData,
+        { ecosystem: 'Ace', workflow: 'txt2music', prompt: 'x', seed: 1 } as GenerationData,
         ctx
       )
     ).rejects.toThrow(/no handler for ecosystem/);

@@ -125,6 +125,16 @@ const SEEDREAM_ONLY_SHAPES: AnyRecord[] = [
 
 const IMG = { url: 'https://example.com/a.png', width: 1216, height: 832 };
 
+/** WanImage 2.7 + Grok (image half): version-gated fields, edit images. */
+const WANIMAGE_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', negativePrompt: 'blurry', enablePromptEnhancer: true },
+  { prompt: 'a cat', aspectRatio: '16:9', cfgScale: 6 },
+];
+const GROK_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 2738377 }, // v1.0 explicit
+  { prompt: 'a cat', aspectRatio: '3:2' },
+];
+
 /** Nano Banana: four modes by version id, resolution-scaled dims. */
 const NANOBANANA_ONLY_SHAPES: AnyRecord[] = [
   { prompt: 'a cat', model: 2436219, resolution: '2K', aspectRatio: '16:9' }, // pro
@@ -251,6 +261,8 @@ const ECOSYSTEMS = [
   'Qwen2',
   'Qwen3',
   'NanoBanana',
+  'WanImage27',
+  'Grok',
 ];
 
 // the port's boundary = reconcile + parse, exactly as the server adapter composes it
@@ -280,6 +292,8 @@ const EXTRA_SHAPES: Record<string, AnyRecord[]> = {
   Flux2: FLUX2_ONLY_SHAPES,
   Flux1: FLUX_ONLY_SHAPES,
   FluxKrea: FLUX_ONLY_SHAPES,
+  WanImage27: WANIMAGE_ONLY_SHAPES,
+  Grok: GROK_ONLY_SHAPES,
 };
 
 type Combo = { name: string; input: AnyRecord; ext: GenerationCtx };

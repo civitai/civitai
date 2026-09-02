@@ -34,6 +34,17 @@ import { createOpenAIInput } from './openai.handler';
 import { createLensInput } from './lens.handler';
 import { createQwenInput } from './qwen.handler';
 import { createNanoBananaInput } from './nano-banana.handler';
+import { createWanImageInput } from './wan-image.handler';
+import { createGrokImageInput, createGrokVideoInput } from './grok.handler';
+import { createMochiInput } from './mochi.handler';
+import { createSoraInput } from './sora.handler';
+import { createHunyuanInput } from './hunyuan.handler';
+import { createFlux3VideoInput } from './flux3-video.handler';
+import { createMiniMaxInput } from './minimax.handler';
+import { createHappyHorseInput } from './happy-horse.handler';
+import { createVeo3Input } from './veo3.handler';
+import { createViduInput } from './vidu.handler';
+import { createKlingInput } from './kling.handler';
 import { createLTXInput } from './ltx.handler';
 import { createSeedanceInput } from './seedance.handler';
 import { createStableDiffusionInput } from './stable-diffusion.handler';
@@ -63,6 +74,17 @@ export { createOpenAIInput } from './openai.handler';
 export { createLensInput } from './lens.handler';
 export { createQwenInput } from './qwen.handler';
 export { createNanoBananaInput } from './nano-banana.handler';
+export { createWanImageInput } from './wan-image.handler';
+export { createGrokImageInput, createGrokVideoInput } from './grok.handler';
+export { createMochiInput } from './mochi.handler';
+export { createSoraInput } from './sora.handler';
+export { createHunyuanInput } from './hunyuan.handler';
+export { createFlux3VideoInput } from './flux3-video.handler';
+export { createMiniMaxInput } from './minimax.handler';
+export { createHappyHorseInput } from './happy-horse.handler';
+export { createVeo3Input } from './veo3.handler';
+export { createViduInput } from './vidu.handler';
+export { createKlingInput } from './kling.handler';
 export { createLTXInput } from './ltx.handler';
 export { createSeedanceInput } from './seedance.handler';
 export { createStableDiffusionInput } from './stable-diffusion.handler';
@@ -189,6 +211,19 @@ function createStep(
     case 'NanoBanana':
       return createNanoBananaInput(data, handlerCtx);
 
+    case 'WanImage27':
+      return createWanImageInput(data, handlerCtx);
+
+    case 'Grok': {
+      const isVideo =
+        (data.workflow ?? '').startsWith('txt2vid') ||
+        (data.workflow ?? '').startsWith('img2vid') ||
+        (data.workflow ?? '').startsWith('vid2vid');
+      return isVideo
+        ? createGrokVideoInput(data, handlerCtx)
+        : createGrokImageInput(data, handlerCtx);
+    }
+
     case 'LTXV2':
     case 'LTXV23':
     case 'LTXV25':
@@ -196,6 +231,33 @@ function createStep(
 
     case 'Seedance':
       return createSeedanceInput(data, handlerCtx);
+
+    case 'Mochi':
+      return createMochiInput(data, handlerCtx);
+
+    case 'Sora2':
+      return createSoraInput(data, handlerCtx);
+
+    case 'HyV1':
+      return createHunyuanInput(data, handlerCtx);
+
+    case 'Flux3Video':
+      return createFlux3VideoInput(data, handlerCtx);
+
+    case 'MiniMaxH3':
+      return createMiniMaxInput(data, handlerCtx);
+
+    case 'HappyHorse':
+      return createHappyHorseInput(data, handlerCtx);
+
+    case 'Veo3':
+      return createVeo3Input(data, handlerCtx);
+
+    case 'Vidu':
+      return createViduInput(data, handlerCtx);
+
+    case 'Kling':
+      return createKlingInput(data, handlerCtx);
 
     default:
       throw new Error(`form-graph lane has no handler for ecosystem "${ecosystem}"`);

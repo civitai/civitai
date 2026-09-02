@@ -122,6 +122,47 @@ const LTX_MODEL_SHAPES: AnyRecord[] = [
 ];
 
 const WORKFLOWS = ['txt2vid', 'img2vid', 'img2vid:ref2vid', 'vid2vid:edit', 'vid2vid:extend'];
+
+/** Veo3 / Vidu / Kling version-gated fields. */
+const VEO3_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 2827945, duration: 6, generateAudio: true },
+];
+const VIDU_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', style: 'anime', movementAmplitude: 'large' }, // q1 knobs
+  { prompt: 'a cat', model: 2741273, resolution: '1080p', duration: 12, draft: true }, // q3
+];
+const KLING_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 2623815, mode: 'professional' }, // v1.6 mode picker
+  { prompt: 'a cat', negativePrompt: 'blurry', cfgScale: 0.7, duration: '10' }, // legacy knobs
+  { prompt: 'a cat', model: 2698632, duration: 12, generateAudio: true }, // v3
+];
+
+/** MiniMax variants + HappyHorse versions. */
+const MINIMAX_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 3183239 }, // API build: no comfy knobs
+  { prompt: 'a cat', turbo: true, steps: 15 }, // comfy turbo reshapes steps
+  { prompt: 'a cat', steps: 45, duration: 10 },
+];
+const HAPPYHORSE_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 2902378 }, // v1.0: narrower AR set
+  { prompt: 'a cat', resolution: '1080p', aspectRatio: '21:9', audioSetting: 'origin' },
+];
+
+/** Sora/Flux3Video knobs: pro toggle, resolution tiers, draft hiding. */
+const SORA_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', usePro: true, resolution: '1080p', duration: 8 },
+];
+const FLUX3V_ONLY_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', draft: true, generateAudio: true },
+  { prompt: 'a cat', resolution: '1080p', aspectRatio: '21:9', duration: 12 },
+];
+
+/** Grok video: v1.5 1080p gate, duration bounds, ref2vid explicit ratio. */
+const GROK_VIDEO_SHAPES: AnyRecord[] = [
+  { prompt: 'a cat', model: 3197990, resolution: '1080p' }, // v1.5 unlocks 1080p
+  { prompt: 'a cat', duration: 12, aspectRatio: '3:2' },
+  { prompt: 'a cat', duration: 99 }, // out of range -> refused to default
+];
 // legacy 'WanVideo' is in the wan version map but supports no generation
 // workflows any more (like SD2 on the image side), so it can produce no rows
 const ECOSYSTEMS = [
@@ -130,6 +171,17 @@ const ECOSYSTEMS = [
   'LTXV23',
   'LTXV25',
   'Seedance',
+  'Grok',
+  // Mochi is still dispatchable in v1 but supports no generation workflows
+  // any more (like legacy WanVideo) — zero matrix rows
+  'Sora2',
+  'HyV1',
+  'Flux3Video',
+  'MiniMaxH3',
+  'HappyHorse',
+  'Veo3',
+  'Vidu',
+  'Kling',
 ];
 
 const port = {
@@ -152,7 +204,23 @@ for (const [ctxName, ctx] of CONTEXTS) {
         (ctx.gateRules ?? []).flatMap((r) => (r.presentation === 'hidden' ? r.ecosystems : []))
       );
       const shapes =
-        ecosystem.startsWith('LTX') && !hiddenHere.has(ecosystem)
+        ecosystem === 'Veo3'
+          ? [...INPUT_SHAPES, ...VEO3_ONLY_SHAPES]
+          : ecosystem === 'Vidu'
+          ? [...INPUT_SHAPES, ...VIDU_ONLY_SHAPES]
+          : ecosystem === 'Kling'
+          ? [...INPUT_SHAPES, ...KLING_ONLY_SHAPES]
+          : ecosystem === 'MiniMaxH3'
+          ? [...INPUT_SHAPES, ...MINIMAX_ONLY_SHAPES]
+          : ecosystem === 'HappyHorse'
+          ? [...INPUT_SHAPES, ...HAPPYHORSE_ONLY_SHAPES]
+          : ecosystem === 'Sora2'
+          ? [...INPUT_SHAPES, ...SORA_ONLY_SHAPES]
+          : ecosystem === 'Flux3Video'
+          ? [...INPUT_SHAPES, ...FLUX3V_ONLY_SHAPES]
+          : ecosystem === 'Grok'
+          ? [...INPUT_SHAPES, ...GROK_VIDEO_SHAPES]
+          : ecosystem.startsWith('LTX') && !hiddenHere.has(ecosystem)
           ? [...INPUT_SHAPES, ...LTX_MODEL_SHAPES]
           : INPUT_SHAPES;
       for (const [i, shape] of shapes.entries()) {

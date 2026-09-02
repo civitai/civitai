@@ -8,6 +8,16 @@ import type { RootCtx, FamilyExt } from '../shared';
 import { ltx } from './ltx.graph';
 import { seedance } from './seedance.graph';
 import { isWanEcosystem, wan } from './wan.graph';
+import { grokVideo } from './grok.graph';
+import { mochi } from './mochi.graph';
+import { sora } from './sora.graph';
+import { hunyuan } from './hunyuan.graph';
+import { flux3Video } from './flux3-video.graph';
+import { minimax } from './minimax.graph';
+import { happyHorse } from './happy-horse.graph';
+import { veo3 } from './veo3.graph';
+import { vidu } from './vidu.graph';
+import { kling } from './kling.graph';
 
 /**
  * The VIDEO hub: ecosystem selection scoped to video output, plus quantity for
@@ -37,6 +47,26 @@ const families = branch((ext: FamilyExt) => {
   switch (ext.ecosystem) {
     case 'Seedance':
       return seedance;
+    case 'Grok':
+      return grokVideo;
+    case 'Mochi':
+      return mochi;
+    case 'Sora2':
+      return sora;
+    case 'HyV1':
+      return hunyuan;
+    case 'Flux3Video':
+      return flux3Video;
+    case 'MiniMaxH3':
+      return minimax;
+    case 'HappyHorse':
+      return happyHorse;
+    case 'Veo3':
+      return veo3;
+    case 'Vidu':
+      return vidu;
+    case 'Kling':
+      return kling;
     case 'LTXV2':
     case 'LTXV23':
     case 'LTXV25':

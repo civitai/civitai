@@ -2,9 +2,8 @@ import { z } from 'zod';
 import { branch, defFamily, defineGraph } from 'form-graph';
 import { getAspectRatioOptions } from '~/shared/constants/generation.constants';
 import type { GenerationAspectRatio } from '~/shared/constants/generation.constants';
-import type { FieldDef } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import type { AspectRatioOption, NumberMeta } from '../defs';
+import type { AspectRatioOption } from '../defs';
 import {
   SEED,
   VIDEO,
@@ -14,6 +13,7 @@ import {
   enumDef,
   imagesDef,
   resourcesDef,
+  refusingRangeDef,
   sliderDef,
   type ImageEntry,
 } from '../defs';
@@ -232,13 +232,7 @@ const RES_30 = enumDef({
 const DURATION_WAN = enumDef({ options: wanDurations, default: 5 });
 const DURATION_25 = enumDef({ options: wan25Durations, default: 5 });
 const DURATION_30 = sliderDef({ min: 2, max: 30, step: 1, default: 5 });
-// hand-written in wan-graph.ts: out-of-range REFUSES (falls to default), no snap
-const SHIFT: FieldDef<number, NumberMeta> = {
-  input: z.coerce.number().min(1).max(20).optional(),
-  output: z.number().min(1).max(20),
-  default: 8,
-  meta: { min: 1, max: 20, step: 1 },
-};
+const SHIFT = refusingRangeDef({ min: 1, max: 20, default: 8 });
 const STEPS_5B = sliderDef({ min: 20, max: 60, default: 40 });
 const INTERPOLATOR = {
   input: z.enum(['none', 'film', 'rife']).optional(),
