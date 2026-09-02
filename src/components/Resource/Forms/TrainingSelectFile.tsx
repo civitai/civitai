@@ -430,7 +430,12 @@ export default function TrainingSelectFile({
   // only the window before it has answered, and the flag-off path.
   const { data: runState } = trpc.training.getRunState.useQuery(
     { modelVersionId: modelVersion.id },
-    { enabled: !!features.trainingOrchestratorState && !!modelVersion.id }
+    // no-untruthy-query-gate-exempt: coercing this REMOVES live orchestrator run state from
+    // non-mod trainers. `training.getRunState` is gated on `imageTraining`, not on this flag, so
+    // they receive it today despite the flag reading off; the fallback is the stored
+    // `trainingResults` metadata. Pending Justin's call on whether that fallback is good enough
+    // for an in-flight run — see ClickUp 868kw8959. Delete this line when he answers.
+    { enabled: features.trainingOrchestratorState && !!modelVersion.id }
   );
 
   const trainingResults = runState?.trainingResults ?? modelFile?.metadata?.trainingResults;

@@ -4,7 +4,9 @@ import { trpc } from '~/utils/trpc';
 
 export function useCreatorAnnouncementsFeature() {
   const features = useFeatureFlags();
-  return features.creatorAnnouncements;
+  // Coerced HERE rather than at the four call sites: the sparse payload reads `undefined` when
+  // the flag is absent, and `enabled: undefined` is ENABLED in React Query.
+  return !!features.creatorAnnouncements;
 }
 
 export function useQueryCreatorAnnouncements(userId?: number, limit = 10) {

@@ -23,6 +23,15 @@ import { describe, expect, it } from 'vitest';
  *
  * Text scan rather than a lint rule for the reason in (1), and because the repo already enforces
  * several conventions this way. ClickUp 868kw8959.
+ *
+ * WHAT IT STILL CANNOT SEE, so nobody reads a green run as "the class is closed":
+ *   - a value that continues on the NEXT line (prettier wraps any gate over ~100 chars, so this is
+ *     the likeliest future miss);
+ *   - a flag read behind a helper — `const enabled = useCreatorAnnouncementsFeature()` — where the
+ *     flag is not on the line. Closing that needs a type-aware pass, which is a bigger thing than
+ *     the bug;
+ *   - the same mistake under a DIFFERENT key: `visible: … && features.X`, where `DescriptionTable`
+ *     tests `visible === false`, is live at ResourceSelectCard.tsx today and is out of scope here.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
@@ -30,29 +39,58 @@ const REPO_ROOT = path.resolve(__dirname, '../../../..');
 /** The value of an `enabled:` key, up to the first `,` `}` or end of line. */
 const ENABLED_VALUE = /\benabled:\s*([^,}\n]*)/g;
 /**
- * A `features.` read that is not coerced. The lookbehind is what makes a COMPOUND work: anchoring
- * on the whole value instead would let `enabled: features.a && !!b` pass, because it contains a
- * `!!` — just not on the read that matters.
+ * A gate-shaped declaration — `const enabled = …`, `const stickersEnabled = …`. The flag is read
+ * here and the gate is passed on as `{ enabled }` or `enabled: someVar`, which the key scan cannot
+ * see. Five of the nine sites this guard was extended for had exactly this shape, one of them a
+ * line above a site the first revision fixed.
  */
-const UNCOERCED = /(?<!!!)\bfeatures\./;
+const GATE_DECL = /\b(?:const|let|var)\s+\w*(?:[eE]nabled|[aA]ctive)\b[^=\n]*=\s*([^;\n]*)/g;
+/**
+ * An uncoerced flag read. The lookbehind is what makes a COMPOUND work: testing the whole value
+ * instead would let `enabled: features.a && !!b` pass, because it contains a `!!` — just not on the
+ * read that matters. `features?.` is included because 20+ sites already write `!!features?.X`, so
+ * the uncoerced spelling is one keystroke away.
+ *
+ * The lookbehind spans an identifier chain because the coercion can sit ahead of one:
+ * `!!ctx.features.modelMetricPrivacyReadtime` IS coerced, and a bare `(?<!!!)` reads only the two
+ * characters before `features.` — which are `x.` — and calls it a violation. Two real sites.
+ */
+const UNCOERCED = /(?<!!![\w$.]{0,40})\b(?:features\??\.|useFeatureFlags\(\)\??\.)/;
 /** `!!(a || b)` coerces every read inside the group, so the group is removed before scanning. */
 const COERCED_GROUP = /!!\([^()]*\)/g;
 /** A line of prose rather than code — a jsdoc continuation, or a comment mentioning the pattern. */
 const COMMENT_LINE = /^\s*(\/\/|\/?\*)/;
+/**
+ * An opt-out, so a site that must stay uncoerced is VISIBLE rather than dodged by narrowing the
+ * pattern. Must carry a reason; the guard checks the marker exists, a human checks the reason.
+ */
+const EXEMPT = /no-untruthy-query-gate-exempt:/;
 
-function hasBareGate(line: string) {
+function uncoerced(value: string) {
+  return UNCOERCED.test(value.replace(COERCED_GROUP, ''));
+}
+
+function hasBareGate(line: string, precedingLines: string[] = []) {
   if (COMMENT_LINE.test(line)) return false;
-  ENABLED_VALUE.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = ENABLED_VALUE.exec(line))) {
-    if (UNCOERCED.test(match[1].replace(COERCED_GROUP, ''))) return true;
+  // The marker sits on its own comment line(s) above the gate, the way an eslint-disable does.
+  if (precedingLines.some((l) => EXEMPT.test(l))) return false;
+  for (const pattern of [ENABLED_VALUE, GATE_DECL]) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(line))) {
+      if (uncoerced(match[1])) return true;
+    }
   }
   return false;
 }
 
+let cached: { offenders: string[]; scanned: number; byExt: Record<string, number> } | undefined;
+
 function scan() {
+  if (cached) return cached;
   const files = globSync('src/**/*.{ts,tsx}', { cwd: REPO_ROOT });
   const offenders: string[] = [];
+  const byExt: Record<string, number> = { '.ts': 0, '.tsx': 0 };
   let scanned = 0;
   for (const rel of files) {
     const file = rel.split(path.sep).join('/');
@@ -66,17 +104,26 @@ function scan() {
       continue;
     }
     scanned++;
-    text.split(/\r?\n/).forEach((line, i) => {
-      if (hasBareGate(line)) offenders.push(`${file}:${i + 1}`);
+    byExt[path.extname(file)] = (byExt[path.extname(file)] ?? 0) + 1;
+    const lines = text.split(/\r?\n/);
+    lines.forEach((line, i) => {
+      if (hasBareGate(line, lines.slice(Math.max(0, i - 6), i))) offenders.push(`${file}:${i + 1}`);
     });
   }
-  return { offenders, scanned };
+  cached = { offenders, scanned, byExt };
+  return cached;
 }
 
 describe('a query gated on a feature flag must coerce the flag', () => {
-  it('actually scanned the app tree', () => {
-    // Without this, a glob that stopped matching reports a clean sweep over nothing.
-    expect(scan().scanned).toBeGreaterThan(3000);
+  it('actually scanned the app tree, BOTH extensions', () => {
+    // 🔴 Per extension, not a single total. A total floor is vacuous against the likeliest glob
+    // regression: `src/**` holds ~3950 `.ts` and ~1860 `.tsx`, so dropping `.tsx` from the brace
+    // expansion still clears any total under 3950 — while the scan covers zero `.tsx`, which is
+    // where every React Query gate in this app lives. The one regression the floor exists to catch
+    // is the one a total cannot catch.
+    const { byExt } = scan();
+    expect(byExt['.ts'], 'the .ts half of the glob stopped matching').toBeGreaterThan(3000);
+    expect(byExt['.tsx'], 'the .tsx half of the glob stopped matching').toBeGreaterThan(1500);
   });
 
   it('recognises the broken form', () => {
@@ -99,6 +146,36 @@ describe('a query gated on a feature flag must coerce the flag', () => {
     expect(hasBareGate('    { enabled: isActualOwner && features.articleRatingDispute }')).toBe(
       true
     );
+    // 🔴 The INDIRECTION form: the flag is read into a variable and the gate is passed on as
+    // `{ enabled }`, so the key scan never sees a flag. Five of the nine sites found in review had
+    // this shape — one of them a line above a site the first revision had already fixed.
+    expect(
+      hasBareGate('  const enabled = !!currentUser && features.isGreen && features.buzz;')
+    ).toBe(true);
+    expect(
+      hasBareGate('  const stickersEnabled = useFeatureFlags().stickers && addStickers;')
+    ).toBe(true);
+    expect(
+      hasBareGate(
+        '  const placementSurfaceEnabled = features.stickerPlacement || features.remixGallery;'
+      )
+    ).toBe(true);
+    // The optional-chain spelling, which 20+ sites already write with `!!`.
+    expect(hasBareGate('    enabled: features?.appBlocks,')).toBe(true);
+    // The uncoerced member chain, i.e. the negative control for the widened lookbehind above.
+    expect(hasBareGate('  const metricPrivacyEnabled = ctx.features.modelMetricPrivacy;')).toBe(
+      true
+    );
+  });
+
+  it('honours an exemption marker on the lines above', () => {
+    // The opt-out exists so a site that must stay uncoerced is VISIBLE. Without it the only way to
+    // keep such a site is to narrow the pattern, which silently un-guards every other site too.
+    const gate = '    { enabled: features.trainingOrchestratorState && !!modelVersion.id }';
+    expect(hasBareGate(gate)).toBe(true);
+    expect(
+      hasBareGate(gate, ['    // no-untruthy-query-gate-exempt: pending a product call'])
+    ).toBe(false);
   });
 
   it('passes the correct form, and does not fire on a non-gate', () => {
@@ -107,6 +184,14 @@ describe('a query gated on a feature flag must coerce the flag', () => {
     expect(hasBareGate('    enabled: !!features.stickers && showBalances,')).toBe(false);
     expect(hasBareGate('  if (!features.stickers) return null;')).toBe(false);
     expect(hasBareGate('  const canSee = features.stickers;')).toBe(false);
+    // A gate-shaped name whose flag read IS coerced.
+    expect(hasBareGate('  const enabled = !!currentUser && !!features.buzz;')).toBe(false);
+    // A gate-shaped declaration that reads no flag at all.
+    expect(hasBareGate('  const enabled = !!currentUser && canUpgrade;')).toBe(false);
+    // Coerced ahead of a member chain — two real sites in model.controller.ts.
+    expect(hasBareGate('  const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacy;')).toBe(
+      false
+    );
     // `!!` over a parenthesised group coerces every read inside it. Both of these are real lines
     // this guard flagged before it understood the form.
     expect(hasBareGate('    enabled: !!(features.appBlocks || features.appListings),')).toBe(false);
