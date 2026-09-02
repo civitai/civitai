@@ -260,19 +260,24 @@ export default function CivitaiLinkWizardModal() {
     pairingStatus,
   } = useCivitaiLink();
   const [name, setName] = useState('');
-  // `instance` is a provider-global, cross-tab broadcast, so latch the id we
-  // actually paired with — otherwise a join in another tab takes our typed name.
+  // `instance` and `pairingStatus` are both provider-global, cross-tab broadcasts.
+  // Latch the id we paired with, or a join in another tab takes our typed name;
+  // latch that we saw 'paired', or another tab arming its own wait sends this step
+  // back to the spinner it never leaves.
   const pairedIdRef = useRef<number | null>(null);
+  const [sawPaired, setSawPaired] = useState(false);
   const isNodePack = path === 'nodepack';
 
   const handleAdvance = () => {
     nextStep();
+    setSawPaired(false);
     if (isNodePack) createInstance();
     else awaitPairing();
   };
 
   const handleRetryPairing = () => {
     pairedIdRef.current = null;
+    setSawPaired(false);
     awaitPairing();
   };
 
@@ -295,6 +300,7 @@ export default function CivitaiLinkWizardModal() {
 
   useEffect(() => {
     if (active !== 2 || isNodePack || pairingStatus !== 'paired') return;
+    setSawPaired(true);
     if (pairedIdRef.current === null && instance?.id != null) pairedIdRef.current = instance.id;
     if (instance?.id === pairedIdRef.current) commitName();
   }, [active, isNodePack, pairingStatus, instance?.id]); // eslint-disable-line
@@ -605,7 +611,10 @@ export default function CivitaiLinkWizardModal() {
                   Approve the request in the browser tab that opens.
                 </NumberedStep>
               </Stack>
-              <PairingState status={pairingStatus} onRetry={handleRetryPairing} />
+              <PairingState
+                status={sawPaired ? 'paired' : pairingStatus}
+                onRetry={handleRetryPairing}
+              />
             </>
           )}
           <TextInput
