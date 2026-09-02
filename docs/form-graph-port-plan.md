@@ -248,6 +248,37 @@ shadows the same-named selection field off the wire implicitly — no
 reconcile-sequence probes through live stores. This is the effort's centerpiece test;
 budget real time for the case list.
 
+**Phase 4/5 groundwork (built 2026-09-01, uncommitted):** the handler lane lives at
+ — per-family  transcribed
+from the data-graph handlers but importing only ported modules, a dispatcher
+(, loud error on unported ecosystems), and a differential
+test feeding BOTH dispatchers the same parsed data and asserting identical steps.
+The client lane lives at  —
+BaseGenerationForm (owns the store over the composed root, switches on the computed) + Image/VideoGenerationForm rendering the store's active keys in
+declaration order with bespoke-component slots (resources/media/snippets are
+visible placeholders until the real inputs are wired). Storage-adapter parity and
+submit wiring are still open.
+
+**Phase 4/5 groundwork (built 2026-09-01, uncommitted):** the handler lane lives at
+`src/server/services/orchestrator/form-graph/` — per-family `*.handler.ts` transcribed
+from the data-graph handlers but importing only ported modules, a dispatcher
+(`createFormGraphStepInput`, loud error on unported ecosystems), and a differential
+test feeding BOTH dispatchers the same parsed data and asserting identical steps.
+The client lane lives at `src/components/form-graph/generation/` —
+BaseGenerationForm (owns the store over the composed root via FormProvider,
+renders the workflow picker + submit footer, switches on the `output` computed) +
+Image/VideoGenerationForm in the generation_v2 GenerationForm idiom: one
+`<Controller graph={imageHub|videoHub} name=...>` per field (typed from that
+hub's registry — and, for computeds/branch tags like `wanVersion`, from its
+state type), wired to the REAL generation_v2 input components
+(BaseModelInput, ResourceSelect*, ImageUploadMultipleInput, VideoInput,
+GenerationTextEditor, ControlNetsInput, AspectRatioInput, Priority/OutputFormat,
+ActiveWildcards with the ported add/remove flow, ResourceAlerts via
+MultiController). Demo at `/form-graph` (standalone page; mounts
+ResourceDataProvider itself). Not yet ported from v2's form: compatibility-confirm
+modal flows, prompt-enhance button, presets, tours, remix handling, the whatIf
+cost footer, and storage-adapter persistence; submit ends at `validate()`.
+
 ### Phase 4 — server swap (small, high-stakes)
 
 1. Write one adapter in `src/server/services/orchestrator/`: a function with the exact

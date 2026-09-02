@@ -16,7 +16,7 @@ import { makeTextBlock, type FamilyExt } from '../shared';
 
 // ---- copied from seedance-graph.ts, which dies with the data-graph engine ---
 
-const seedanceVersionIds = {
+export const seedanceVersionIds = {
   v2: 2864671,
   'v2-fast': 2868300,
   'v2-mini': 3069790,

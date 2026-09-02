@@ -90,7 +90,13 @@ export const imageHub = defineGraph<RootCtx>()
   })
   .field('priority', ({ _ext }) => {
     const isMember = _ext.user?.isMember ?? false;
-    const options = isMember
+    const options: {
+      label: string;
+      value: (typeof priorityOptions)[number];
+      offset: number;
+      lineThrough?: boolean;
+      memberOnly?: boolean;
+    }[] = isMember
       ? [
           { label: 'High', value: 'low', offset: 10, lineThrough: true },
           { label: 'Highest', value: 'high', offset: 20 },
@@ -119,8 +125,8 @@ export const imageHub = defineGraph<RootCtx>()
           default: 'jpeg' as const,
           meta: {
             options: [
-              { label: 'JPEG', value: 'jpeg', offset: 0 },
-              { label: 'PNG', value: 'png', offset: 2 },
+              { label: 'JPEG', value: 'jpeg' as const, offset: 0 },
+              { label: 'PNG', value: 'png' as const, offset: 2 },
             ],
             isMember: _ext.user?.isMember ?? false,
           },

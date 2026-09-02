@@ -13,8 +13,8 @@
 import { Container } from '@mantine/core';
 
 import { IsClient } from '~/components/IsClient/IsClient';
-import { GenerationForm } from '~/components/generation_v2/GenerationForm';
-import { GenerationFormProvider } from '~/components/generation_v2/GenerationFormProvider';
+import { GenerationFormV2 } from '~/components/generation_v2';
+import { ResourceDataProvider } from '~/components/generation_v2/inputs/ResourceDataProvider';
 
 // =============================================================================
 // Main Demo Component
@@ -24,9 +24,13 @@ function DataGraphV2Demo() {
   return (
     <Container size="xs" className="h-screen max-h-screen w-full overflow-hidden px-0 py-3">
       <IsClient>
-        <GenerationFormProvider debug>
-          <GenerationForm />
-        </GenerationFormProvider>
+        {/* GenerationFormV2 packages GenerationProvider + GenerationFormProvider
+            + GenerationForm; ResourceDataProvider is the one context the shell
+            (GenerationTabs) mounts ABOVE that package, so the standalone demo
+            must mount it too */}
+        <ResourceDataProvider>
+          <GenerationFormV2 debug />
+        </ResourceDataProvider>
       </IsClient>
     </Container>
   );

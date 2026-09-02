@@ -31,7 +31,7 @@ import { makeTextBlock, type FamilyExt } from '../shared';
 // ---- copied from wan-graph.ts, which dies with the data-graph engine --------
 
 /** Wan version definitions - single source of truth for versions, ecosystems, and models */
-const wanVersionDefs = [
+export const wanVersionDefs = [
   {
     version: 'v2.1',
     label: '2.1',
@@ -62,6 +62,9 @@ const wanVersionDefs = [
   { version: 'v2.7', label: '2.7', ecosystems: { t2v: 'WanVideo27', i2v: 'WanVideo27' } },
   { version: 'v3.0', label: '3.0', ecosystems: { t2v: 'WanVideo30', i2v: 'WanVideo30' } },
 ] as const;
+
+/** Version picker options, derived from the defs. */
+export const wanVersionOptions = wanVersionDefs.map((d) => ({ label: d.label, value: d.version }));
 
 /** Reverse lookup: ecosystem key → Wan version def */
 export const ecosystemToVersionDef = new Map(
@@ -126,7 +129,7 @@ const wanInterpolatorModels = [
   { label: 'None', value: 'none' },
   { label: 'FILM', value: 'film' },
   { label: 'RIFE', value: 'rife' },
-];
+] as const;
 
 // ---- end of wan-graph.ts copies ---------------------------------------------
 

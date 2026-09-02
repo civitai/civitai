@@ -297,7 +297,7 @@ export function vaeDef(opts: {
 export interface CheckpointMeta {
   options: { canGenerate: boolean; resources: ResourceSelectOption[]; excludeIds: number[] };
   modelLocked: boolean;
-  versions: unknown;
+  versions: import('./checkpoint').VersionGroup | undefined;
   defaultModelId: number | undefined;
 }
 

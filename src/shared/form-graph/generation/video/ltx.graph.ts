@@ -33,7 +33,7 @@ import { textBlock, type FamilyExt } from '../shared';
 // ---- copied from ltx-graph.ts / version-ids.ts, which die with the engine ----
 
 const LTXV2_DEV_ID = 2578325;
-const LTXV2_DISTILLED_ID = 2600562;
+export const LTXV2_DISTILLED_ID = 2600562;
 const LTXV23_DEV_ID = 2749908;
 const LTXV23_DISTILLED_ID = 2749948;
 const LTXV25_DEV_ID = 3220143;
@@ -43,7 +43,7 @@ const SULPHUR2_DEV_ID = 2921800;
 const SULPHUR2_DISTILLED_ID = 2923808;
 
 /** Set of all distilled version IDs (across every LTX ecosystem) */
-const DISTILLED_IDS = new Set<number>([
+export const DISTILLED_IDS = new Set<number>([
   LTXV2_DISTILLED_ID,
   LTXV23_DISTILLED_ID,
   LTXV25_DISTILLED_ID,
@@ -54,6 +54,9 @@ const DISTILLED_IDS = new Set<number>([
  * Registered base model names — must match `baseModelRecords` entries; the
  * checkpoint graph resolves an option's ecosystem via `baseModelByName`.
  */
+/** Sulphur 2 version IDs — route through LTXV23 with a diffusionModel AIR override. */
+export const SULPHUR2_IDS = new Set<number>([SULPHUR2_DEV_ID, SULPHUR2_DISTILLED_ID]);
+
 const LTXV2_BASE_MODEL = 'LTXV2';
 const LTXV23_BASE_MODEL = 'LTXV 2.3';
 const LTXV25_BASE_MODEL = 'LTXV 2.5';
@@ -116,7 +119,7 @@ const ltxVersionOptions: VersionGroup = {
   ],
 };
 
-const ltxv2AspectRatios: AspectRatioOption[] = [
+export const ltxv2AspectRatios: AspectRatioOption[] = [
   { label: '16:9', value: '16:9', width: 848, height: 480 },
   { label: '3:2', value: '3:2', width: 720, height: 480 },
   { label: '1:1', value: '1:1', width: 512, height: 512 },
@@ -130,7 +133,7 @@ const ltxv2Durations = [
   { label: '7 seconds', value: 7 },
 ];
 
-const ltxv23AspectRatiosByResolution: Record<string, AspectRatioOption[]> = {
+export const ltxv23AspectRatiosByResolution: Record<string, AspectRatioOption[]> = {
   '720p': [
     { label: '16:9', value: '16:9', width: 1280, height: 720 },
     { label: '3:2', value: '3:2', width: 1176, height: 784 },
@@ -153,7 +156,7 @@ const ltxv23Resolutions = [
 ];
 
 // same table as v23 in the source (declared separately there too)
-const ltxv25AspectRatiosByResolution: Record<string, AspectRatioOption[]> =
+export const ltxv25AspectRatiosByResolution: Record<string, AspectRatioOption[]> =
   ltxv23AspectRatiosByResolution;
 
 // ---- end of ltx-graph.ts copies ---------------------------------------------
