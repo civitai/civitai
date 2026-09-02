@@ -1,10 +1,7 @@
 import { Alert, Stack, Text } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 
-import {
-  getArticleUnpublishReason,
-  isArticleUnpublishReason,
-} from '~/server/common/moderation-helpers';
+import { getArticleUnpublishReason } from '~/server/common/moderation-helpers';
 
 export function ArticleUnpublishedAlert({
   reason,
@@ -16,12 +13,10 @@ export function ArticleUnpublishedAlert({
   showSupportHint?: boolean;
 }) {
   const detail = reason ? getArticleUnpublishReason(reason) : undefined;
-  const isPolicy = detail?.type !== 'quality';
+  // An unknown reason resolves no detail, and `!== 'quality'` would then head the banner as a ToS violation.
+  const isPolicy = detail?.type === 'policy';
   const color = isPolicy ? 'red' : 'yellow';
-  // Only the article list's labels are written for an author. A legacy key falls back to the model
-  // copy for its body, but heading the banner "Missing images" would put a model's vocabulary in the
-  // most prominent line on the page.
-  const label = reason && isArticleUnpublishReason(reason) ? detail?.optionLabel : undefined;
+  const isOther = reason === 'other';
 
   return (
     <Alert
@@ -35,21 +30,27 @@ export function ArticleUnpublishedAlert({
       title={
         isPolicy
           ? 'This article has been unpublished due to a Terms of Service violation'
-          : `This article has been unpublished${label ? `: ${label}` : ''}`
+          : `This article has been unpublished${detail ? `: ${detail.optionLabel}` : ''}`
       }
     >
       <Stack gap={6} maw="65ch">
-        {detail?.notificationMessage && (
+        {!detail && (
+          <Text size="sm" fw={500}>
+            A moderator unpublished this article.
+          </Text>
+        )}
+        {detail && !isOther && (
           <Text size="sm" fw={500}>
             {detail.notificationMessage}
           </Text>
         )}
-        {customMessage && (
+        {/* `other` has no canned copy, so the moderator's note is the only reason the author gets. */}
+        {isOther && (
           <Text size="sm">
             <Text span fw={600} inherit>
-              Additional details:
+              Removal reason:
             </Text>{' '}
-            {customMessage}
+            {customMessage || 'No reason provided.'}
           </Text>
         )}
         {showSupportHint && (

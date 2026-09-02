@@ -114,9 +114,10 @@ export type UnpublishReason = keyof typeof unpublishReasons;
 /**
  * The reasons a moderator may unpublish an ARTICLE, with copy addressed to an article's author.
  *
- * Deliberately a subset. Every omitted reason describes an uploaded resource rather than a piece of
- * writing — its files, versions or example images, what it does when it is run, or why it was uploaded
- * as a model — and none of those is a thing an article can be.
+ * Deliberately a subset. The omitted reasons describe an uploaded resource rather than a piece of
+ * writing — its files, its versions, where its example images came from, or what it does when it is
+ * run. `no-posts` is the exception: never offered, but stored on live articles, so
+ * `legacyArticleUnpublishReasons` below carries article wording for it.
  *
  * The declaration order is the picker's order: policy reasons, then the two quality ones, then `other`.
  * Grouping them means a misclick between neighbours can only swap two reasons that say roughly the same
@@ -171,6 +172,12 @@ export const articleUnpublishReasons = {
       'Spam, or advertisements disguised as articles, are strictly prohibited under our Terms of Service.',
     type: 'policy',
   },
+  'unintenteded-use': {
+    optionLabel: 'Unintended site use',
+    notificationMessage:
+      'Articles must be genuine written content intended for the community. Articles published solely for testing are prohibited.',
+    type: 'policy',
+  },
   'insufficient-description': {
     optionLabel: 'Insufficient content',
     notificationMessage:
@@ -193,6 +200,20 @@ export const articleUnpublishReasons = {
 export type ArticleUnpublishReason = keyof typeof articleUnpublishReasons;
 
 /**
+ * Reason keys stored on live articles that the picker no longer offers, worded for an article's
+ * author. Resolving these against `unpublishReasons` instead is what put "Your model does not
+ * include example images" on an article page in production.
+ */
+export const legacyArticleUnpublishReasons = {
+  'no-posts': {
+    optionLabel: 'Missing images',
+    notificationMessage:
+      "Your article's images are missing, or were removed for violating our Terms of Service. Please add images that adhere to our guidelines.",
+    type: 'quality',
+  },
+} as const satisfies Partial<Record<UnpublishReason, UnpublishReasonDetail>>;
+
+/**
  * `Object.hasOwn`, not a bare index: these are plain objects, so a reason like 'constructor' or
  * 'toString' resolves off `Object.prototype` and `??` does not reject the function it returns.
  */
@@ -207,11 +228,10 @@ export function getUnpublishReason(reason: string): UnpublishReasonDetail | unde
   return lookupReason(unpublishReasons, reason);
 }
 
-export function isArticleUnpublishReason(reason: string): reason is ArticleUnpublishReason {
-  return Object.hasOwn(articleUnpublishReasons, reason);
-}
-
-/** Articles unpublished before this list existed store model-list reason keys, so fall back to that copy. */
+/** Never falls back to `unpublishReasons` — everything it returns is safe to show an article's author. */
 export function getArticleUnpublishReason(reason: string): UnpublishReasonDetail | undefined {
-  return lookupReason(articleUnpublishReasons, reason) ?? lookupReason(unpublishReasons, reason);
+  return (
+    lookupReason(articleUnpublishReasons, reason) ??
+    lookupReason(legacyArticleUnpublishReasons, reason)
+  );
 }
