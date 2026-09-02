@@ -13,7 +13,11 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: mockD
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
 vi.mock('~/server/jobs/job', () => ({ createJob: (_n: string, _c: string, fn: unknown) => fn }));
 
-import { removeOldDrafts, ACTIVITY_WINDOW_DAYS } from '~/server/jobs/remove-old-drafts';
+import {
+  removeOldDrafts,
+  ACTIVITY_WINDOW_DAYS,
+  REAP_AGE_DAYS,
+} from '~/server/jobs/remove-old-drafts';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
@@ -107,16 +111,52 @@ describe('removeOldDrafts', () => {
       );
     });
 
-    // Seam guard: the SQL literal and the constant the TypeScript fence uses are
-    // two independent spellings of one rule. Nothing else makes them agree.
-    it('spells every interval with the same window the runtime fence uses', async () => {
+    // Seam guard: the SQL literals and the constants the TypeScript fence uses
+    // are two independent spellings of one rule. Nothing else makes them agree.
+    //
+    // 🔴 The fence clauses and the abandonment threshold are asserted SEPARATELY,
+    // against separate constants, even though both are 30 today. Pinning all four
+    // literals to ACTIVITY_WINDOW_DAYS made this guard actively dangerous: a
+    // maintainer narrowing the fence to 7 days would see it go red and "fix" it by
+    // rewriting the m."updatedAt" clause too — which does not narrow the fence, it
+    // widens what the reaper DESTROYS, from untouched-for-30-days to
+    // untouched-for-7-days, with the suite green. The guard must never point an
+    // edit at the deletion threshold.
+    it('spells the three fence intervals with the window the runtime fence uses', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([]);
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
-      const sql = readSql();
-      const intervals = sql.match(/INTERVAL '\d+ days'/g) ?? [];
-      expect(intervals).toEqual(Array(4).fill(`INTERVAL '${ACTIVITY_WINDOW_DAYS} days'`));
+      const sql = readSql().replace(/\s+/g, ' ');
+      const w = ACTIVITY_WINDOW_DAYS;
+      for (const clause of [
+        `mv."createdAt" > now() - INTERVAL '${w} days'`,
+        `mv."updatedAt" > now() - INTERVAL '${w} days'`,
+        `mf."createdAt" > now() - INTERVAL '${w} days'`,
+      ]) {
+        expect(sql, `fence clause must use ACTIVITY_WINDOW_DAYS (${w})`).toContain(clause);
+      }
+    });
+
+    it('spells the abandonment threshold with its own constant, not the fence window', async () => {
+      mockDbRead.$queryRaw.mockResolvedValue([]);
+
+      await (removeOldDrafts as unknown as () => Promise<void>)();
+
+      expect(
+        readSql().replace(/\s+/g, ' '),
+        'the age threshold is what the reaper DESTROYS on; it is not part of the fence'
+      ).toContain(`m."updatedAt" < now() - INTERVAL '${REAP_AGE_DAYS} days'`);
+    });
+
+    // Keeps the two assertions above exhaustive: a fifth interval appearing in
+    // this SELECT is a clause neither of them is looking at.
+    it('carries exactly four day intervals, so no clause escapes the two guards above', async () => {
+      mockDbRead.$queryRaw.mockResolvedValue([]);
+
+      await (removeOldDrafts as unknown as () => Promise<void>)();
+
+      expect(readSql().match(/INTERVAL '\d+ days'/g) ?? []).toHaveLength(4);
     });
 
     // The selected columns are what makes a loss report answerable — see the
@@ -213,6 +253,20 @@ describe('removeOldDrafts', () => {
       // out of the quarantine allowlist — the same loss by another route.
       expect(mockDeregisterBatch).toHaveBeenCalledTimes(1);
       expect(mockDeregisterBatch).toHaveBeenCalledWith([200]);
+
+      // The loss report has to be right in exactly this case — a batch where the
+      // fence actually fired. Every OTHER test of these two events uses a batch
+      // in which `deletable`, `skipped` and `batch` are the same list, so each
+      // one is satisfied by logging any of the three. Only here do they differ,
+      // which makes this the only place a mutant swapping them can be caught.
+      expect(
+        axiomEvents('Removed old draft models'),
+        'the destroyed-ids event must name the models actually deleted, not the whole batch'
+      ).toEqual([expect.objectContaining({ type: 'info', modelIds: [2], userIds: [22] })]);
+      expect(
+        axiomEvents('Skipped old draft models with recent version or file activity'),
+        'the spared-models warning must name the models actually spared, not the whole batch'
+      ).toEqual([expect.objectContaining({ type: 'warning', modelIds: [1], userIds: [11] })]);
     });
 
     it('spares the whole batch when a row cannot be attributed to a model', async () => {

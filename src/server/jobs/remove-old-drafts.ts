@@ -8,15 +8,30 @@ import { chunk } from 'lodash-es';
 const log = createLogger('remove-old-drafts');
 
 /**
- * How long a model must go untouched before the reaper may delete it.
+ * How recently something under a model must have moved for the model to count as
+ * still in use, and therefore be SPARED.
  *
- * Two places have to agree on this number: the `INTERVAL '30 days'` literals in
+ * Two places have to agree on this number: the three fence `INTERVAL` literals in
  * the SELECT below, and `filterModelsWithRecentActivity`. A Prisma tagged
  * template cannot bind an interval without turning the predicate into an opaque
  * expression, so the SQL keeps the literal and `remove-old-drafts.test.ts` pins
  * the two together instead.
+ *
+ * 🔴 Deliberately SEPARATE from `REAP_AGE_DAYS` even though both are 30 today.
+ * Raising this spares more; lowering it spares fewer. It must never be the same
+ * symbol as the age threshold, or a maintainer narrowing the fence would be
+ * steered by a failing test into narrowing what the reaper deletes as well.
  */
 export const ACTIVITY_WINDOW_DAYS = 30;
+
+/**
+ * How long a model's own row must have gone untouched before it is even a
+ * deletion CANDIDATE — the abandonment threshold, not part of the fence.
+ *
+ * Lowering this widens what the reaper destroys. It is read only by the
+ * `m."updatedAt"` clause in the SELECT below.
+ */
+export const REAP_AGE_DAYS = 30;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -124,6 +139,8 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
     FROM "Model" m
     JOIN "ModelMetric" mm ON mm."modelId" = m.id
     WHERE m.status IN ('Draft', 'Deleted')
+      -- REAP_AGE_DAYS. Abandonment threshold: lowering this WIDENS what is
+      -- destroyed. Not part of the fence below, and not tied to its window.
       AND m."updatedAt" < now() - INTERVAL '30 days'
       AND mm."downloadCount" < 10
       -- Private models are a creator's own workspace rather than an abandoned
