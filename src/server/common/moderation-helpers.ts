@@ -1,7 +1,7 @@
 type UnpublishReasonDetail = {
   optionLabel: string;
   notificationMessage: string;
-  /** `policy` reasons are Terms of Service violations; `quality` reasons are not. */
+  /** `policy` reasons are a rules violation — Terms of Service or content guidelines. `quality` reasons are not. */
   type: 'policy' | 'quality';
 };
 
@@ -192,14 +192,26 @@ export const articleUnpublishReasons = {
 
 export type ArticleUnpublishReason = keyof typeof articleUnpublishReasons;
 
+/**
+ * `Object.hasOwn`, not a bare index: these are plain objects, so a reason like 'constructor' or
+ * 'toString' resolves off `Object.prototype` and `??` does not reject the function it returns.
+ */
+function lookupReason(
+  map: Record<string, UnpublishReasonDetail>,
+  reason: string
+): UnpublishReasonDetail | undefined {
+  return Object.hasOwn(map, reason) ? map[reason] : undefined;
+}
+
+export function getUnpublishReason(reason: string): UnpublishReasonDetail | undefined {
+  return lookupReason(unpublishReasons, reason);
+}
+
 export function isArticleUnpublishReason(reason: string): reason is ArticleUnpublishReason {
-  return reason in articleUnpublishReasons;
+  return Object.hasOwn(articleUnpublishReasons, reason);
 }
 
 /** Articles unpublished before this list existed store model-list reason keys, so fall back to that copy. */
 export function getArticleUnpublishReason(reason: string): UnpublishReasonDetail | undefined {
-  return (
-    articleUnpublishReasons[reason as ArticleUnpublishReason] ??
-    unpublishReasons[reason as UnpublishReason]
-  );
+  return lookupReason(articleUnpublishReasons, reason) ?? lookupReason(unpublishReasons, reason);
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   articleUnpublishReasons,
   getArticleUnpublishReason,
+  isArticleUnpublishReason,
   unpublishReasons,
 } from '~/server/common/moderation-helpers';
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
@@ -65,6 +66,13 @@ describe('getArticleUnpublishReason', () => {
 
   it('returns nothing for a reason that was never a reason', () => {
     expect(getArticleUnpublishReason('not-a-reason')).toBeUndefined();
+  });
+
+  it('does not resolve a reason off Object.prototype', () => {
+    for (const inherited of ['toString', 'constructor', 'hasOwnProperty']) {
+      expect(getArticleUnpublishReason(inherited)).toBeUndefined();
+      expect(isArticleUnpublishReason(inherited)).toBe(false);
+    }
   });
 });
 

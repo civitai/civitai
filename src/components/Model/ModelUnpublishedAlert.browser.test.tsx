@@ -30,6 +30,16 @@ describe('ModelUnpublishedAlert', () => {
     await expect.element(page.getByText(/Removal reason: Reposted asset/)).toBeInTheDocument();
   });
 
+  test('never leaks the moderator note for a reason that is not "other"', async () => {
+    renderWithProviders(
+      <ModelUnpublishedAlert reason="not-a-deployed-reason" customMessage="internal note" />
+    );
+
+    await expect.element(page.getByText(/violation of our/i)).toBeInTheDocument();
+    expect(page.getByText(/internal note/).elements()).toHaveLength(0);
+    expect(page.getByText(/Removal reason/).elements()).toHaveLength(0);
+  });
+
   test('offers the appeal link only where the caller asks for it', async () => {
     const { rerender } = await renderWithProviders(<ModelUnpublishedAlert reason="spam" />);
 
