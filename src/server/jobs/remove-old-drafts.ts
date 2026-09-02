@@ -27,9 +27,17 @@ export const ACTIVITY_WINDOW_DAYS = 30;
 /**
  * How long a model's own row must have gone untouched before it is even a
  * deletion CANDIDATE — the abandonment threshold, not part of the fence.
+ * Lowering it WIDENS what the reaper destroys.
  *
- * Lowering this widens what the reaper destroys. It is read only by the
- * `m."updatedAt"` clause in the SELECT below.
+ * 🔴 This constant has NO runtime reader, and changing it alone changes NOTHING.
+ * The SELECT below spells the threshold as a SQL literal — a literal cannot read
+ * a TypeScript constant — so this is a documentation anchor that
+ * `remove-old-drafts.test.ts` pins the literal against, and nothing more. To
+ * actually move the threshold you must edit the `m."updatedAt"` literal in the
+ * SQL as well; the test will fail until you do.
+ *
+ * Note the asymmetry with `ACTIVITY_WINDOW_DAYS`, which IS read at runtime, by
+ * `filterModelsWithRecentActivity`. The two are not interchangeable.
  */
 export const REAP_AGE_DAYS = 30;
 

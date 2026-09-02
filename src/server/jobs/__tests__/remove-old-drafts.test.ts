@@ -52,14 +52,30 @@ function readSql() {
 }
 
 /**
+ * The replica SELECT with `--` comments stripped and whitespace collapsed —
+ * i.e. the SQL the database actually executes.
+ *
+ * 🔴 EVERY guard that matches SQL text must read THIS, never raw `readSql()`.
+ * A `--` comment is not a clause, and matching against un-stripped text gets it
+ * wrong in both directions: a comment that merely MENTIONS a clause is counted
+ * as one (the interval-count guard below then reports an escaped clause that
+ * does not exist, for a change that only added documentation), and a comment
+ * quoting a clause's exact text SATISFIES a `toContain` guard with the real
+ * clause deleted. This SELECT already carries `--` comments, so both are live.
+ */
+function readExecutableSql() {
+  return readSql()
+    .replace(/--[^\n]*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * The whole WHERE predicate of the replica SELECT, comments stripped and
  * whitespace collapsed.
  */
 function readPredicate() {
-  const flat = readSql()
-    .replace(/--[^\n]*/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const flat = readExecutableSql();
   return flat.slice(flat.indexOf('WHERE '), flat.indexOf(' ORDER BY'));
 }
 
@@ -111,8 +127,13 @@ describe('removeOldDrafts', () => {
       );
     });
 
-    // Seam guard: the SQL literals and the constants the TypeScript fence uses
-    // are two independent spellings of one rule. Nothing else makes them agree.
+    // Seam guard: the SQL literals and the two exported constants are independent
+    // spellings of one rule, and these tests are the only thing making them agree.
+    //
+    // The two constants are NOT symmetric, and the guards below are what makes the
+    // difference visible: ACTIVITY_WINDOW_DAYS is read at runtime, by
+    // filterModelsWithRecentActivity; REAP_AGE_DAYS has no runtime reader at all
+    // and is a documentation anchor for the m."updatedAt" literal.
     //
     // 🔴 The fence clauses and the abandonment threshold are asserted SEPARATELY,
     // against separate constants, even though both are 30 today. Pinning all four
@@ -120,14 +141,16 @@ describe('removeOldDrafts', () => {
     // maintainer narrowing the fence to 7 days would see it go red and "fix" it by
     // rewriting the m."updatedAt" clause too — which does not narrow the fence, it
     // widens what the reaper DESTROYS, from untouched-for-30-days to
-    // untouched-for-7-days, with the suite green. The guard must never point an
-    // edit at the deletion threshold.
+    // untouched-for-7-days. (The whole-predicate pin above would also have gone
+    // red in that world, so the hazard was one step longer than "suite green" —
+    // but the red it shows names no clause, and the repair it invites is the
+    // dangerous one.) The guard must never point an edit at the deletion threshold.
     it('spells the three fence intervals with the window the runtime fence uses', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([]);
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
-      const sql = readSql().replace(/\s+/g, ' ');
+      const sql = readExecutableSql();
       const w = ACTIVITY_WINDOW_DAYS;
       for (const clause of [
         `mv."createdAt" > now() - INTERVAL '${w} days'`,
@@ -144,19 +167,20 @@ describe('removeOldDrafts', () => {
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
       expect(
-        readSql().replace(/\s+/g, ' '),
+        readExecutableSql(),
         'the age threshold is what the reaper DESTROYS on; it is not part of the fence'
       ).toContain(`m."updatedAt" < now() - INTERVAL '${REAP_AGE_DAYS} days'`);
     });
 
-    // Keeps the two assertions above exhaustive: a fifth interval appearing in
-    // this SELECT is a clause neither of them is looking at.
-    it('carries exactly four day intervals, so no clause escapes the two guards above', async () => {
+    // Keeps the interval guards above exhaustive: an interval appearing in this
+    // SELECT that none of them names is a clause nobody is looking at. Counted
+    // against comment-stripped SQL, so documenting a clause is not adding one.
+    it('carries no day interval that the guards above do not name', async () => {
       mockDbRead.$queryRaw.mockResolvedValue([]);
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
-      expect(readSql().match(/INTERVAL '\d+ days'/g) ?? []).toHaveLength(4);
+      expect(readExecutableSql().match(/INTERVAL '\d+ days'/g) ?? []).toHaveLength(4);
     });
 
     // The selected columns are what makes a loss report answerable — see the
@@ -166,7 +190,7 @@ describe('removeOldDrafts', () => {
 
       await (removeOldDrafts as unknown as () => Promise<void>)();
 
-      expect(readSql().replace(/\s+/g, ' ')).toContain('SELECT DISTINCT m.id, m."userId"');
+      expect(readExecutableSql()).toContain('SELECT DISTINCT m.id, m."userId"');
     });
   });
 
