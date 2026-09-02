@@ -130,17 +130,45 @@ describe('buzzEvents columns narrower than BuzzEventLog', () => {
     ['NaN', NaN, 1],
     ['Infinity', Infinity, 1],
     ['-Infinity', -Infinity, 0],
-  ])('replaces a %s multiplier with a value the column can hold', async (label, raw, expected) => {
-    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: raw });
-    h.evalImpl.mockResolvedValue(raw as any);
+  ] as const)(
+    'replaces a %s multiplier with a value the column can hold',
+    async (label, raw, expected) => {
+      h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: raw });
+      h.evalImpl.mockResolvedValue(raw as any);
+
+      await stringKeyReward().apply({ userId: 7, jobId: 'job-abc' });
+
+      const row = insertedRow();
+      expect(row.multiplier).toBe(expected);
+      // Recorded as a string: `JSON.stringify` writes all three as `null`, which is
+      // indistinguishable from the raw having been absent.
+      expect(JSON.parse(row.transactionDetails)).toMatchObject({ multiplierRaw: label });
+    }
+  );
+
+  // `Number.isFinite` does not coerce where the `> ceiling` test it replaced did, so a multiplier
+  // read back out of the ClickHouse `Decimal(3, 2)` as a quoted string would take the non-finite
+  // fallback. That is an underpay, not a dropped row: `sendAward` pays `awardAmount * multiplier`.
+  it('leaves a quoted in-range multiplier alone rather than reading it as non-finite', async () => {
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: '4.00' } as any);
+    h.evalImpl.mockResolvedValue(16 as any);
 
     await stringKeyReward().apply({ userId: 7, jobId: 'job-abc' });
 
     const row = insertedRow();
-    expect(row.multiplier).toBe(expected);
-    // Recorded as a string: `JSON.stringify` writes all three as `null`, which is indistinguishable
-    // from the raw having been absent.
-    expect(JSON.parse(row.transactionDetails)).toMatchObject({ multiplierRaw: label });
+    expect(row.multiplier).toBe('4.00');
+    expect(JSON.parse(row.transactionDetails)).not.toHaveProperty('multiplierRaw');
+  });
+
+  it('clamps a quoted multiplier past the ceiling and records the raw as a number', async () => {
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: '20.00' } as any);
+    h.evalImpl.mockResolvedValue(80 as any);
+
+    await stringKeyReward().apply({ userId: 7, jobId: 'job-abc' });
+
+    const row = insertedRow();
+    expect(row.multiplier).toBe(9.99);
+    expect(JSON.parse(row.transactionDetails)).toMatchObject({ multiplierRaw: 20 });
   });
 });
 

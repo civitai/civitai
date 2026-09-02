@@ -629,11 +629,19 @@ export function toClickhouseBuzzEvent(event: BuzzEventLog): BuzzEventLog {
     // holds. That shared floor is also why an already-written row cannot arrive here with a
     // `multiplierRaw` this function would then overwrite in the merge below: `process` never
     // recomputes `multiplier`, so a row the other writer clamped comes back already in range.
-    const clamped = clampBuzzEventMultiplier(multiplier);
-    if (clamped !== multiplier) {
+    // `Number()` for the same reason as the `status === 0` read below: this value comes back out
+    // of a ClickHouse `Decimal(3, 2)` on the process path, and `Number.isFinite` does not coerce
+    // where the `>` test it replaced did. A quoted `'4.00'` would otherwise take the non-finite
+    // fallback and rewrite a legitimate multiplier to 1 — an underpay, since `sendAward` pays
+    // from it.
+    const raw = Number(multiplier);
+    const clamped = clampBuzzEventMultiplier(raw);
+    if (clamped !== raw) {
       // `JSON.stringify` writes +/-Infinity and NaN as `null`, which reads as "the raw was absent"
-      // — the one case that most needs a legible audit trail records the least.
-      coerced.multiplierRaw = Number.isFinite(multiplier) ? multiplier : String(multiplier);
+      // — the one case that most needs a legible audit trail records the least. The moderator's
+      // writer omits the key instead; it can, because it builds its row fresh. Here an omitted key
+      // would leave `coerced` empty and return the unclamped event below.
+      coerced.multiplierRaw = Number.isFinite(raw) ? raw : String(multiplier);
       multiplier = clamped;
       // On the batch path this value is not audit — `process-rewards` reads it back out and
       // `sendAward` pays `awardAmount * multiplier` from it, so a clamp UNDERPAYS rather than
@@ -677,7 +685,7 @@ function toClickhouseBuzzEvents(events: BuzzEventLog[]): BuzzEventLog[] {
       message: 'Buzz event multiplier fell outside the ClickHouse column range and was coerced',
       clampedEvents: clamped,
       batchSize: events.length,
-      clampedTo: [0, BUZZ_EVENTS_MAX_MULTIPLIER],
+      clampedTo: BUZZ_EVENTS_MAX_MULTIPLIER,
     }).catch(() => null);
   }
 
