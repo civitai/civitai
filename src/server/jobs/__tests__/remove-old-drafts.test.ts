@@ -52,8 +52,7 @@ function readSql() {
 }
 
 /**
- * The replica SELECT with `--` comments stripped and whitespace collapsed —
- * i.e. the SQL the database actually executes.
+ * The replica SELECT with `--` comments stripped and whitespace collapsed.
  *
  * 🔴 EVERY guard that matches SQL text must read THIS, never raw `readSql()`.
  * A `--` comment is not a clause, and matching against un-stripped text gets it
@@ -62,6 +61,16 @@ function readSql() {
  * does not exist, for a change that only added documentation), and a comment
  * quoting a clause's exact text SATISFIES a `toContain` guard with the real
  * clause deleted. This SELECT already carries `--` comments, so both are live.
+ *
+ * ⚠ This is an APPROXIMATION of what the database executes, not a SQL parser,
+ * and it is deliberately not one. `--` inside a quoted string literal is stripped
+ * here but is NOT a comment to PostgreSQL, so a clause written after one on the
+ * same line becomes invisible to every guard below — i.e. this trades the
+ * false-RED it exists to remove for a narrow false-GREEN. Reaching it takes a
+ * `--`-bearing string literal, on one line, before a new clause, OUTSIDE the
+ * `WHERE … ORDER BY` slice (inside it the whole-predicate pin still fails loudly).
+ * Nothing in this SELECT is near that shape. If one is ever added, assert that the
+ * raw SQL contains no quoted `--` rather than trying to parse it here.
  */
 function readExecutableSql() {
   return readSql()
