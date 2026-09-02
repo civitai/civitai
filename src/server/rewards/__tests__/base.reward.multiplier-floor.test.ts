@@ -3,9 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ---------------------------------------------------------------------------
 // The multiplier reaching the AWARD computation, not the ClickHouse audit row.
 //
-// `rewardsMultiplier` is read off operator-authored `Product.metadata`, and has THREE readers:
+// `rewardsMultiplier` is read off operator-authored `Product.metadata`. Three readers IN THIS FILE:
 // `processOnDemand` (which stringifies it into the Redis Lua cap script), `sendAward` (which pays
 // `awardAmount * multiplier`), and `getUserRewardDetails` (which advertises the award and cap).
+// `claimBuzz` is a fourth, in buzz.service.ts — not a complete census, so do not read it as one.
 // `toClickhouseBuzzEvent`'s clamp reaches none of them — it clamps a copy on its way to ClickHouse
 // and leaves the event alone.
 //
@@ -202,12 +203,16 @@ describe('the multiplier the rewards list advertises', () => {
   it('still applies a legitimate multiplier', async () => {
     // Negative control: without it the assertions above pass on an implementation that ignores the
     // multiplier entirely.
-    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: 4 } as any);
+    // 20, not 4: gold's 4x times a MAX_GLOBAL_BONUS of 5, i.e. above the shared helper's 9.99
+    // ceiling. At 4 the two helpers agree, so swapping in `clampBuzzEventMultiplier` here — the one
+    // edit this file's loudest comment forbids — passed. At 20 it advertises 9.99x for the 20x
+    // `sendAward` actually pays, and this reddens.
+    h.getMultipliersForUser.mockResolvedValue({ rewardsMultiplier: 20 } as any);
 
     const details = await reward().getUserRewardDetails(1);
 
-    expect(details?.awardAmount).toBe(AWARD_AMOUNT * 4);
-    expect(details?.cap).toBe(CAP * 4);
+    expect(details?.awardAmount).toBe(AWARD_AMOUNT * 20);
+    expect(details?.cap).toBe(CAP * 20);
   });
 });
 

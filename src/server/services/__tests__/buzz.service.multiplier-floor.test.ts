@@ -16,10 +16,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * `getBuzzBulkMultiplier`, where a 0 credits a paid Buzz purchase with nothing.
  */
 
+import type * as BuzzClient from '@civitai/buzz';
 import type * as Caches from '~/server/redis/caches';
 
 const h = vi.hoisted(() => ({
   fetch: vi.fn(),
+  createTransaction: vi.fn(),
+  getTransactionByExternalId: vi.fn(),
+  getAccount: vi.fn(),
   // `deleteMultipliersForUserCache` calls `.refresh` on the `refresh = true` branch. Absent, that
   // branch dies as "refresh is not a function" instead of a named assertion.
   refresh: vi.fn(),
@@ -31,11 +35,23 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   userMultipliersCache: { fetch: h.fetch, refresh: h.refresh },
 }));
 
+// Spread the real package and override only the client factory — a hand-listed factory would
+// couple this file to every export buzz.service happens to import from it.
+vi.mock('@civitai/buzz', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzClient>()),
+  createBuzzClient: () => ({
+    createTransaction: (...args: any[]) => h.createTransaction(...args),
+    getTransactionByExternalId: (...args: any[]) => h.getTransactionByExternalId(...args),
+    getAccount: (...args: any[]) => h.getAccount(...args),
+  }),
+}));
+
 vi.mock('~/server/services/rewards-bonus-event.service', () => ({
   getActiveRewardsBonusEvent: () => h.getActiveRewardsBonusEvent(),
 }));
 
-import { getMultipliersForUser } from '~/server/services/buzz.service';
+import { claimBuzz, getMultipliersForUser } from '~/server/services/buzz.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const USER = 77;
 
@@ -52,6 +68,9 @@ const cached = (rewardsMultiplier: number) =>
 beforeEach(() => {
   vi.clearAllMocks();
   h.getActiveRewardsBonusEvent.mockResolvedValue(null);
+  h.getTransactionByExternalId.mockResolvedValue(null);
+  h.createTransaction.mockResolvedValue({ transactionId: 'tx-1' });
+  h.getAccount.mockResolvedValue({ balance: 1_000_000, lifetimeBalance: 1_000_000 });
 });
 
 describe('getMultipliersForUser floors the value it pays with', () => {
@@ -90,6 +109,9 @@ describe('getMultipliersForUser floors the value it pays with', () => {
     expect(result.globalRewardsBonus).toBe(5);
     // The same 20x the `keeps no ceiling` test defends, arrived at independently.
     expect(result.rewardsMultiplier).toBe(20);
+    // Positive control for the banner gate. Without it, NARROWING the gate hides the banner for
+    // every user and every event with the whole suite green — the mirror of the `>= 1` case below.
+    expect(result.rewardsBonusEvent?.multiplier).toBe(200);
   });
 
   // 🔴 THE DECISION THIS PINS. If you are here because you are adding a `clampRewardMultiplier` to
@@ -185,5 +207,53 @@ describe('getMultipliersForUser floors the value it pays with', () => {
     cached(0.5);
 
     expect((await getMultipliersForUser(USER)).rewardsMultiplier).toBe(0.5);
+  });
+});
+
+describe('claimBuzz pays from a clamped multiplier', () => {
+  // The FOURTH reader, and the only one outside base.reward.ts that moves money. It reads
+  // `getMultipliersForUser` and multiplies a BuzzClaim amount by it, so it inherits the same
+  // non-finite product every other site clamps against.
+  const CLAIM_AMOUNT = 500;
+
+  const claimable = () => {
+    dbMock.dbWrite.buzzClaim.findUnique.mockResolvedValue({
+      key: 'test-claim',
+      title: 'Test claim',
+      description: 'Test claim',
+      amount: CLAIM_AMOUNT,
+      accountType: 'User',
+      useMultiplier: true,
+      availableStart: null,
+      availableEnd: null,
+      limit: null,
+      claimed: 0,
+      transactionIdQuery: 'SELECT 1',
+    } as any);
+    dbMock.dbWrite.$queryRawUnsafe.mockResolvedValue([{ transactionId: 'ext-1' }]);
+    dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as any);
+  };
+
+  it('does not ask for a non-finite amount', async () => {
+    claimable();
+    cached(1e308);
+    h.getActiveRewardsBonusEvent.mockResolvedValue({ multiplier: 50 } as any);
+
+    await claimBuzz({ id: 'test-claim', userId: USER });
+
+    const [payload] = h.createTransaction.mock.calls[0] as unknown as [{ amount: number }];
+    expect(payload.amount).toBe(CLAIM_AMOUNT);
+  });
+
+  it('still applies a legitimate multiplier', async () => {
+    // Negative control: without it the assertion above passes on an implementation that dropped the
+    // multiplier entirely.
+    claimable();
+    cached(4);
+
+    await claimBuzz({ id: 'test-claim', userId: USER });
+
+    const [payload] = h.createTransaction.mock.calls[0] as unknown as [{ amount: number }];
+    expect(payload.amount).toBe(CLAIM_AMOUNT * 4);
   });
 });

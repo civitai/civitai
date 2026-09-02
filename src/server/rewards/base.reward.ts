@@ -145,8 +145,9 @@ export function createBuzzEvent<T>({
       accountType: buzzEvent.toAccountType ?? 'blue',
     };
 
-    // The THIRD reader of this value. Display rather than money, but `getMultipliersForUser` can
-    // return a non-finite product, and an advertised award of `Infinity` is still a bug.
+    // Display rather than money, but `getMultipliersForUser` can return a non-finite product, and
+    // an advertised award of `Infinity` is still a bug. Not a complete census of readers: `claimBuzz`
+    // is a fourth, in buzz.service.ts, and it pays.
     const { rewardsMultiplier } = await getMultipliersForUser(userId);
     const multiplier = clampRewardMultiplier(rewardsMultiplier);
     if (multiplier !== 1) {
