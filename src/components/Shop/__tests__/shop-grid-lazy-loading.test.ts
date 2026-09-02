@@ -16,6 +16,7 @@ vi.mock('~/providers/BrowserSettingsProvider', () => ({
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
+import { PackCoverTiles } from '~/components/CreatorShop/Pack/PackCoverTiles';
 
 const repoRoot = path.resolve(__dirname, '../../../..');
 const read = (relative: string) =>
@@ -93,7 +94,21 @@ function renderSample(cosmetic: Record<string, unknown>, lazy?: boolean) {
   return container.querySelector('img');
 }
 
+function renderTiles(lazy?: boolean) {
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  act(() => {
+    createRoot(container).render(
+      createElement(PackCoverTiles, { tiles: ['abc-123'], lazy } as never)
+    );
+  });
+  return container.querySelector('img');
+}
+
 const BADGE = { id: 1, name: 'b', type: 'Badge', data: { url: 'abc-123' } };
+// No `data.type`, so getInferredMediaType resolves 'image' and an <img> renders. The
+// video-typed case is the one deliberately NOT covered - see the scope note below.
+const BACKGROUND = { id: 3, name: 'bg', type: 'ProfileBackground', data: { url: 'abc-123' } };
 const STICKER = { id: 2, name: 's', type: 'Sticker', data: { url: 'abc-123', animated: true } };
 
 /**
@@ -110,6 +125,7 @@ describe('CosmeticSample turns `lazy` into a loading attribute, per branch', () 
   it.each([
     ['badge', BADGE],
     ['sticker', STICKER],
+    ['image-typed profile background', BACKGROUND],
   ])('defers the %s branch', (_label, cosmetic) => {
     expect(renderSample(cosmetic, true)?.getAttribute('loading')).toBe('lazy');
   });
@@ -119,6 +135,7 @@ describe('CosmeticSample turns `lazy` into a loading attribute, per branch', () 
   it.each([
     ['badge', BADGE],
     ['sticker', STICKER],
+    ['image-typed profile background', BACKGROUND],
   ])('leaves the %s branch eager when not asked', (_label, cosmetic) => {
     const img = renderSample(cosmetic, undefined);
     expect(img).not.toBeNull();
@@ -127,31 +144,44 @@ describe('CosmeticSample turns `lazy` into a loading attribute, per branch', () 
 });
 
 /**
- * ⚠️ Pins a DECISION (868kzk7k7). Nine components render `ShopItem`; the grids that matter
- * are `Shop/OfficialShopSection`, `CreatorShop/Storefront/ShopItemGrid`,
- * `CosmeticShop/CommunityCosmeticsSection` and `Profile/Sections/ShopSection`. Measured on
- * live prod 2026-09-01: `/shop` ships **68 cards / 41 `<img>` / 29.3 MB**, all eager, and at
- * least 19.5 MB of that is in sections far below the fold.
+ * PackCoverTiles was the branch a source grep alone still covered: deleting its
+ * `loading={lazy ? 'lazy' : undefined}` left every other assertion in this file green,
+ * because nothing rendered the component. Exactly the "declared and ignored" gap the
+ * CosmeticSample block above exists to close.
+ */
+describe('PackCoverTiles turns `lazy` into a loading attribute', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('defers its tiles when asked', () => {
+    expect(renderTiles(true)?.getAttribute('loading')).toBe('lazy');
+  });
+
+  it('leaves them eager when not asked', () => {
+    const img = renderTiles(undefined);
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute('loading')).toBeNull();
+  });
+});
+
+/**
+ * ⚠️ Pins a DECISION (868kzk7k7). Nine components render `ShopItem`, all unvirtualised, so
+ * without these the card's artwork is fetched before anyone scrolls to it. Measurements are
+ * in PR #4565 rather than here — they are catalogue- and CDN-side, they decay silently, and
+ * three of them were wrong in an earlier revision of this very comment.
  *
  * The card has THREE mutually exclusive artwork branches and all three must defer; covering
- * two of them leaves a whole class of shop item eager, which is invisible in any screenshot
- * because the difference is only in what the network did.
+ * two leaves a whole class of shop item eager, which is invisible in any screenshot because
+ * the difference is only in what the network did. Each is rendered below, not grepped.
  *
- * Two scope limits, so this is not read as more than it is:
- *  - A ContentDecoration paints its artwork as a CSS `background-image`, which no `loading`
- *    attribute reaches. Costs nothing today — 0 of the 92 placed ContentDecoration items
- *    carry a `texture.url`.
- *  - A video-typed ProfileBackground routes to `EdgeVideo`, and `EdgeMedia` spreads
- *    `imgProps` into `EdgeImage` ONLY, so `loading` is dropped there. The `<video>` itself is
- *    `preload="none"` everywhere except Safari, which forces `'auto'`, and its `poster` is
- *    eager unconditionally: 17 of 24 live ProfileBackgrounds are video-typed, ~1.5 MB of
- *    posters. Not covered here.
+ * Two limits, so this is not read as more than it is: a ContentDecoration paints via a CSS
+ * `background-image`, and a video-typed ProfileBackground routes to `EdgeVideo`, which never
+ * receives `imgProps`. No `loading` attribute reaches either.
  *
- * Re-measure all of the above before relying on it; these are CDN- and catalogue-side facts.
- *
- * Deliberately opt-in rather than a default on EdgeImage: that component backs every image
- * on the site, including feeds that already virtualise, and flipping its default is a much
- * broader change than this ticket.
+ * Deliberately opt-in rather than a default on EdgeImage: that component backs every image on
+ * the site, including feeds that already virtualise, and there is no `loading="eager"` opt-out
+ * anywhere in the tree to escape a flipped default with.
  */
 describe('the shop card defers all three of its artwork branches', () => {
   const shopItem = () => read('src/components/Shop/ShopItem.tsx');
@@ -160,6 +190,12 @@ describe('the shop card defers all three of its artwork branches', () => {
   // so the negative lookahead rejects any `lazy=` form and requires the boolean shorthand.
   // String.raw, not a plain template literal: `\s` in one collapses to a literal `s`, which
   // silently produced `slazys*=` — a pattern that matches nothing and fails open.
+  //
+  // Existential, not universal: asserts SOME mount is lazy, not every one. Inert today (the
+  // card has exactly one mount per component) but it would not notice a second, eager mount
+  // added beside the first. `[^>]*` also stops at a `>` inside a prop expression, so a prop
+  // like `cosmetic={a > b}` would fail this on a correct mount — over-strict, fails safe.
+  // The rendered tests above pin the behaviour; these only pin the call site.
   const bare = (tag: string) => new RegExp(String.raw`<${tag}(?![^>]*\slazy\s*=)[^>]*\slazy[\s/>]`);
 
   it.each([

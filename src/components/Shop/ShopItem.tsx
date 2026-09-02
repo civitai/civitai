@@ -199,23 +199,17 @@ export const ShopItem = ({
             <div className={classes.cardHeader}>
               <div className={clsx(classes.sampleWrapper, outOfStock && classes.dim)}>
                 {/*
-                  Shop grids render this card unvirtualised, so every card they paint fetches
-                  its `<img>` up front. Bounded, though — /shop and the storefront cosmetics
-                  grid page at `COSMETIC_SHOP_DEFAULT_PAGE_SIZE` (24), which the reader can
-                  raise to 48 via `COSMETIC_SHOP_PAGE_SIZES`; featured sections cap at 6, and
-                  the homepage block slices to `maxItems` (6 over a 4-item section, measured
-                  2026-09-01). So this is worth 24-48 cards at a time, not a whole 94-row
-                  section. These are catalogue-side numbers — re-measure before relying on
-                  them.
-
-                  Animated artwork is what makes even 24 expensive: measured 2026-09-01, an
-                  animated cover is 1.7-4.6 MB at width=450 against 43.8 KB for a static one,
-                  because resizing an animated WebP barely compresses it.
+                  Shop grids render this card unvirtualised, so each one fetches its `<img>`
+                  up front. Deferring here rather than at EdgeImage: that component backs
+                  every image on the site, and no `loading="eager"` opt-out exists in the
+                  tree to escape a flipped default with.
 
                   Covers the `<img>` branches only. A ContentDecoration paints its artwork as
-                  a CSS `background-image` (TwCosmeticWrapper's `--bgImage`), which no
-                  `loading` attribute can defer — measured 2026-09-01, 0 of the 92 placed
-                  ContentDecoration items carry a `texture.url`, so today that costs nothing.
+                  a CSS `background-image` (TwCosmeticWrapper's `--bgImage`), and a
+                  video-typed ProfileBackground routes to EdgeVideo, which never receives
+                  imgProps — neither is reachable by a `loading` attribute. Sizes and counts
+                  are in PR #4565; they are catalogue-side and decay, so they are not pinned
+                  here.
                 */}
                 {cosmetic ? (
                   <CosmeticSample cosmetic={cosmetic} size="lg" lazy />

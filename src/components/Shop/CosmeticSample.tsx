@@ -111,11 +111,9 @@ export const CosmeticSample = ({
             type={backgroundData.type}
             anim={true}
             width={450}
-            // Inert when `type` is video: EdgeMedia spreads imgProps into EdgeImage only, so
-            // EdgeVideo never sees this. Its poster is eager unconditionally, and the video
-            // itself is preload="none" everywhere EXCEPT Safari, which forces 'auto'. So the
-            // video path is not already-cheap on Safari. 17 of 24 live ProfileBackgrounds
-            // are video-typed (measured 2026-09-01; re-measure before relying on it).
+            // Inert when `type` is video: EdgeMedia spreads imgProps into EdgeImage only,
+            // so EdgeVideo never sees this. Its poster is eager regardless, and the video is
+            // preload="none" except on Safari, which forces 'auto'.
             loading={loading}
             style={{
               objectFit: 'cover',
