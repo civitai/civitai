@@ -69,7 +69,7 @@ const MUST_NOT_BE_GUARDED: Record<string, string[]> = {
  * `MUST_STAY_GUARDED` and the alias ban both key on names at CALL SITES, and a downgrade does not
  * have to touch one. `comicProtectedProcedure = protectedProcedure.use(...)` carries **56** bindings;
  * editing that single line moves all 56 at once and no name changes anywhere, so every name-based
- * check stays green. This is the list that cannot grow with the codebase — 13 definitions against
+ * check stays green. This is the list that cannot grow with the codebase — 15 definitions against
  * 1,142 bindings — which is what makes maintaining it by hand reasonable where a call-site list is not.
  *
  * A red here is not automatically a bug. It means a procedure's effective gate moved, and someone has
@@ -77,6 +77,8 @@ const MUST_NOT_BE_GUARDED: Record<string, string[]> = {
  */
 const DERIVED_BASES: Record<string, string> = {
   auctionProcedure: 'protectedProcedure',
+  blurbProcedure: 'protectedProcedure',
+  blurbWriteProcedure: 'guardedProcedure',
   buzzMembershipProcedure: 'protectedProcedure',
   buzzProcedure: 'protectedProcedure',
   cashManagementProcedure: 'moderatorProcedure',
