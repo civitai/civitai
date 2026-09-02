@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActionIcon, Avatar, Box, Group, Text } from '@mantine/core';
+import { ActionIcon, Anchor, Avatar, Box, Group, Text } from '@mantine/core';
 import {
   IconApps,
   IconBuildingStore,
@@ -848,17 +848,41 @@ function ChromeDesktopLeadingGroup({
             <Text size="xs" c="dimmed" aria-hidden>
               /
             </Text>
-            {/* Link affordance: distinct link COLOR + underline so this crumb
-                reads as obviously clickable, visually separated from the static
-                dimmed crumb text + separators around it. Keeps the real anchor
-                semantics (it's a Next <Link>) for keyboard / middle-click. */}
-            <Text
+            {/* Link affordance: the SITE'S OWN `Anchor`, not a hand-styled `Text`. This
+                crumb used to carry `c="blue.6" td="underline"` — a link that was bluer and
+                permanently underlined in a way nothing else on the site is, which is what
+                made the chrome read as foreign inside its own page.
+
+                🔴 THE AA CONTRAST FIX THAT `blue.6` ENCODED IS PRESERVED, NOT DISCARDED —
+                that is the whole reason this swap is safe, and it is not obvious from the
+                diff. Mantine 7.17.8 resolves `--mantine-color-anchor` per COLOR SCHEME
+                (`@mantine/core/styles.css`):
+                  light → `--mantine-primary-color-filled` → `--mantine-color-blue-filled`
+                          → `--mantine-color-blue-6`   ← identical to the old hard-coded value
+                  dark  → `--mantine-color-blue-4`
+                So on the light chrome surface the rendered colour does not move at all, and
+                the audit-L3 finding this crumb was bumped to `blue.6` for is untouched. On
+                DARK it gets LIGHTER (blue-4), which is the direction contrast wants on a
+                dark surface and which the old fixed `blue.6` got wrong — the hard-coded
+                shade was only ever reasoned about against the light background.
+
+                ⚠️ THE RESTING UNDERLINE IS GONE, DELIBERATELY. `Anchor`'s default is
+                `underline="hover"` and that is the site's link idiom, so the crumb now
+                announces itself by colour at rest and underlines on hover/focus. It stays
+                distinguishable from its neighbours because they are `c="dimmed"` and it is
+                not; `data-clickable` remains the machine-readable marker that separates the
+                link affordance from the trailing crumb's POPOVER affordance. If a future
+                audit wants a resting underline back for WCAG 1.4.1, put it on the site's
+                `Anchor` rather than re-forking it here — a one-off underline in the chrome
+                is the exact drift this change removes.
+
+                Real anchor semantics (a Next `<Link>`) are unchanged: keyboard, middle-click
+                and long-press all still behave. */}
+            <Anchor
               component={Link}
               href="/apps"
               size="xs"
-              c="blue.6"
-              td="underline"
-              style={{ flexShrink: 0, cursor: 'pointer' }}
+              style={{ flexShrink: 0 }}
               data-testid="app-block-breadcrumb-apps"
               data-clickable="true"
             >
@@ -870,7 +894,7 @@ function ChromeDesktopLeadingGroup({
                   moved, so a future copy change does not churn every test that reaches
                   for it. */}
               Marketplace
-            </Text>
+            </Anchor>
             <Text size="xs" c="dimmed" aria-hidden>
               /
             </Text>
@@ -1667,34 +1691,31 @@ export function IframeHost({
   useEffect(() => {
     const off = onMessage<
       { requestId?: unknown; body?: unknown; idempotencyKey?: unknown } | undefined
-    >(
-      'SUBMIT_WORKFLOW',
-      async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string') return;
-        const requestId = raw.requestId;
-        // Idempotency (item 2, gen half): forward the OPTIONAL client key so a
-        // lost-response retry collapses to one Buzz charge. Host-first: accept it
-        // defensively (only a non-empty string) — older SDKs never send it.
-        const idempotencyKey =
-          typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
-            ? raw.idempotencyKey
-            : undefined;
-        try {
-          const { snapshot } = await submitWorkflowMutation.mutateAsync({
-            blockToken: token,
-            // Schema-validated server-side; the host never trusts this shape.
-            body: raw.body as never,
-            ...(idempotencyKey ? { idempotencyKey } : {}),
-          });
-          send('WORKFLOW_SUBMITTED', { requestId, snapshot });
-        } catch (err) {
-          send('WORKFLOW_SUBMITTED', {
-            requestId,
-            snapshot: failureSnapshot(err),
-          });
-        }
+    >('SUBMIT_WORKFLOW', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string') return;
+      const requestId = raw.requestId;
+      // Idempotency (item 2, gen half): forward the OPTIONAL client key so a
+      // lost-response retry collapses to one Buzz charge. Host-first: accept it
+      // defensively (only a non-empty string) — older SDKs never send it.
+      const idempotencyKey =
+        typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
+          ? raw.idempotencyKey
+          : undefined;
+      try {
+        const { snapshot } = await submitWorkflowMutation.mutateAsync({
+          blockToken: token,
+          // Schema-validated server-side; the host never trusts this shape.
+          body: raw.body as never,
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+        });
+        send('WORKFLOW_SUBMITTED', { requestId, snapshot });
+      } catch (err) {
+        send('WORKFLOW_SUBMITTED', {
+          requestId,
+          snapshot: failureSnapshot(err),
+        });
       }
-    );
+    });
     return off;
   }, [onMessage, send, token, submitWorkflowMutation]);
 
@@ -2041,23 +2062,20 @@ export function IframeHost({
   // block hangs; errors come back as `error: <string>` (mirrors the storage
   // handlers) rather than thrown upward.
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown } | undefined>(
-      'GET_BUZZ_BALANCE',
-      async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string') return;
-        const requestId = raw.requestId;
-        // NB: unlike PageBlockHost's `token: string | null`, IframeHost's `token` is non-null, so there is deliberately no explicit null-token guard here — an empty token just falls through to the router's `z.string().min(1)` reject → the `catch` → error reply (still no hang).
-        try {
-          const balance = await getMyBuzzBalanceMutation.mutateAsync({ blockToken: token });
-          send('BUZZ_BALANCE_RESULT', { requestId, balance });
-        } catch (err) {
-          send('BUZZ_BALANCE_RESULT', {
-            requestId,
-            error: err instanceof Error ? err.message : 'unknown',
-          });
-        }
+    const off = onMessage<{ requestId?: unknown } | undefined>('GET_BUZZ_BALANCE', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string') return;
+      const requestId = raw.requestId;
+      // NB: unlike PageBlockHost's `token: string | null`, IframeHost's `token` is non-null, so there is deliberately no explicit null-token guard here — an empty token just falls through to the router's `z.string().min(1)` reject → the `catch` → error reply (still no hang).
+      try {
+        const balance = await getMyBuzzBalanceMutation.mutateAsync({ blockToken: token });
+        send('BUZZ_BALANCE_RESULT', { requestId, balance });
+      } catch (err) {
+        send('BUZZ_BALANCE_RESULT', {
+          requestId,
+          error: err instanceof Error ? err.message : 'unknown',
+        });
       }
-    );
+    });
     return off;
   }, [onMessage, send, token, getMyBuzzBalanceMutation]);
 
@@ -2078,10 +2096,13 @@ export function IframeHost({
         if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.storage.get.fetch({
-            blockToken: token,
-            key: raw.key,
-          }, BLOCK_STORAGE_READ_OPTS);
+          const result = await trpcUtils.apps.storage.get.fetch(
+            {
+              blockToken: token,
+              key: raw.key,
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
           send('APP_STORAGE_GET_RESULT', { requestId, value: result.value });
         } catch (err) {
           send('APP_STORAGE_GET_RESULT', {
@@ -2178,12 +2199,15 @@ export function IframeHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 200)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
-        const result = await trpcUtils.apps.storage.list.fetch({
-          blockToken: token,
-          prefix,
-          limit,
-          cursor,
-        }, BLOCK_STORAGE_READ_OPTS);
+        const result = await trpcUtils.apps.storage.list.fetch(
+          {
+            blockToken: token,
+            prefix,
+            limit,
+            cursor,
+          },
+          BLOCK_STORAGE_READ_OPTS
+        );
         send('APP_STORAGE_LIST_RESULT', {
           requestId,
           keys: result.keys.map((k) => ({
@@ -2209,7 +2233,10 @@ export function IframeHost({
       if (!raw || typeof raw.requestId !== 'string') return;
       const requestId = raw.requestId;
       try {
-        const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token }, BLOCK_STORAGE_READ_OPTS);
+        const result = await trpcUtils.apps.storage.getQuota.fetch(
+          { blockToken: token },
+          BLOCK_STORAGE_READ_OPTS
+        );
         send('APP_STORAGE_QUOTA_RESULT', {
           requestId,
           usedBytes: result.usedBytes,
@@ -2266,12 +2293,15 @@ export function IframeHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 100)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
-        const result = await trpcUtils.apps.shared.list.fetch({
-          blockToken: token,
-          prefix,
-          limit,
-          cursor,
-        }, BLOCK_STORAGE_READ_OPTS);
+        const result = await trpcUtils.apps.shared.list.fetch(
+          {
+            blockToken: token,
+            prefix,
+            limit,
+            cursor,
+          },
+          BLOCK_STORAGE_READ_OPTS
+        );
         send('SHARED_LIST_RESULT', {
           requestId,
           items: result.items.map((it) => ({
@@ -2302,10 +2332,13 @@ export function IframeHost({
         if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.shared.getCount.fetch({
-            blockToken: token,
-            key: raw.key,
-          }, BLOCK_STORAGE_READ_OPTS);
+          const result = await trpcUtils.apps.shared.getCount.fetch(
+            {
+              blockToken: token,
+              key: raw.key,
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
           send('SHARED_GET_COUNT_RESULT', { requestId, count: result.count });
         } catch (err) {
           send('SHARED_GET_COUNT_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2322,10 +2355,13 @@ export function IframeHost({
         if (!raw || typeof raw.requestId !== 'string' || !Array.isArray(raw.keys)) return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.shared.getCounts.fetch({
-            blockToken: token,
-            keys: raw.keys as string[],
-          }, BLOCK_STORAGE_READ_OPTS);
+          const result = await trpcUtils.apps.shared.getCounts.fetch(
+            {
+              blockToken: token,
+              keys: raw.keys as string[],
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
           send('SHARED_GET_COUNTS_RESULT', { requestId, counts: result.counts });
         } catch (err) {
           send('SHARED_GET_COUNTS_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2429,7 +2465,10 @@ export function IframeHost({
         if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
         const requestId = raw.requestId;
         try {
-          const result = await sharedUnvoteMutation.mutateAsync({ blockToken: token, key: raw.key });
+          const result = await sharedUnvoteMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+          });
           // Invalidate BEFORE replying: the block may re-read the moment this
           // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
           await invalidateSharedStorageReads(trpcUtils);
@@ -2475,7 +2514,10 @@ export function IframeHost({
         if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.shared.get.fetch({ blockToken: token, key: raw.key }, BLOCK_STORAGE_READ_OPTS);
+          const result = await trpcUtils.apps.shared.get.fetch(
+            { blockToken: token, key: raw.key },
+            BLOCK_STORAGE_READ_OPTS
+          );
           const it = result.item;
           send('SHARED_GET_RESULT', {
             requestId,
@@ -2486,9 +2528,13 @@ export function IframeHost({
                   value: it.value,
                   count: it.count,
                   createdAt:
-                    it.createdAt instanceof Date ? it.createdAt.toISOString() : String(it.createdAt),
+                    it.createdAt instanceof Date
+                      ? it.createdAt.toISOString()
+                      : String(it.createdAt),
                   updatedAt:
-                    it.updatedAt instanceof Date ? it.updatedAt.toISOString() : String(it.updatedAt),
+                    it.updatedAt instanceof Date
+                      ? it.updatedAt.toISOString()
+                      : String(it.updatedAt),
                   viewerVoted: it.viewerVoted,
                 }
               : null,
