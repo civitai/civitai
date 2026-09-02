@@ -27,7 +27,7 @@ import {
   IconLink,
   IconRefresh,
 } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AppRow } from '~/components/CivitaiLink/CivitaiLinkAppRow';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import type { CivitaiLinkConnectPath } from '~/components/CivitaiLink/civitai-link-paths';
@@ -260,12 +260,20 @@ export default function CivitaiLinkWizardModal() {
     pairingStatus,
   } = useCivitaiLink();
   const [name, setName] = useState('');
+  // `instance` is a provider-global, cross-tab broadcast, so latch the id we
+  // actually paired with — otherwise a join in another tab takes our typed name.
+  const pairedIdRef = useRef<number | null>(null);
   const isNodePack = path === 'nodepack';
 
   const handleAdvance = () => {
     nextStep();
     if (isNodePack) createInstance();
     else awaitPairing();
+  };
+
+  const handleRetryPairing = () => {
+    pairedIdRef.current = null;
+    awaitPairing();
   };
 
   const commitName = () => {
@@ -280,12 +288,15 @@ export default function CivitaiLinkWizardModal() {
   useEffect(() => {
     if (active !== 2 || isNodePack) return;
     return () => {
+      pairedIdRef.current = null;
       cancelAwaitPairing();
     };
   }, [active, isNodePack]); // eslint-disable-line
 
   useEffect(() => {
-    if (active === 2 && !isNodePack && pairingStatus === 'paired') commitName();
+    if (active !== 2 || isNodePack || pairingStatus !== 'paired') return;
+    if (pairedIdRef.current === null && instance?.id != null) pairedIdRef.current = instance.id;
+    if (instance?.id === pairedIdRef.current) commitName();
   }, [active, isNodePack, pairingStatus, instance?.id]); // eslint-disable-line
 
   useEffect(() => {
@@ -594,7 +605,7 @@ export default function CivitaiLinkWizardModal() {
                   Approve the request in the browser tab that opens.
                 </NumberedStep>
               </Stack>
-              <PairingState status={pairingStatus} onRetry={awaitPairing} />
+              <PairingState status={pairingStatus} onRetry={handleRetryPairing} />
             </>
           )}
           <TextInput
