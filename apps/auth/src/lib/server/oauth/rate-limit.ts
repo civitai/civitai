@@ -4,7 +4,8 @@ import { checkRateLimit } from '$lib/server/auth/rate-limit';
 // The limiter itself (fixed-window, fail-open) is the hub's SHARED checkRateLimit — we don't fork a
 // second implementation, we just carry the per-endpoint limits + identifier policy here:
 //   - authorize: per-user   (10/min)
-//   - token:     per-client (20/min)
+//   - token:     per-IP     (20/min) — /device and /device-token charge this SAME bucket keyed on
+//                client_id instead, so every install of an app shares one device-flow budget.
 //   - revoke:    per-IP     (20/min)
 //   - introspect: per-client (60/min) — server-to-server; one call per Civitai Link pairing. Charged only
 //                AFTER client auth succeeds: the id is attacker-supplied until then, so charging it earlier
