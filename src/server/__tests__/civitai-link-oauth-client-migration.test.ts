@@ -21,8 +21,10 @@ const LINK_DESKTOP_SCOPE =
 function migrationSql(): string {
   const dirs = fs.readdirSync(MIGRATIONS).filter((d) => d.endsWith(SUFFIX));
   // Positive control: two copies would make "the literal is present" true of the wrong file.
-  expect(dirs, `expected exactly one *${SUFFIX} migration, found ${dirs.join(', ') || 'none'}`)
-    .toHaveLength(1);
+  expect(
+    dirs,
+    `expected exactly one *${SUFFIX} migration, found ${dirs.join(', ') || 'none'}`
+  ).toHaveLength(1);
   return fs.readFileSync(path.join(MIGRATIONS, dirs[0], 'migration.sql'), 'utf8');
 }
 
