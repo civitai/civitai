@@ -448,7 +448,13 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 | video: veo3 (fast/standard) | DONE | DONE | workflowVersions inert (same list both workflows); ref2vid pins duration to 8s at the boundary; version enum defaults '3.1' (3.0 endpoints retired) |
 | video: vidu (Q1/Q3) | DONE | DONE | image-driven workflows emit NO aspectRatio (v1 hides the node; handler derives from source — probed); Q3 ref2vid rewrites to img2vid in `reconcile.ts`; Q3 resolution-scaled AR dims |
 | video: kling (legacy/v3) | DONE | DONE | ref2vid FORCES model→v3 (`correct` on model — probed, workflow wins); legacy full text block (negative IS a snippet target), v3 promptAlwaysRequired + no negative; legacy duration is a STRING enum; multiShot/klingElements dead in v1, not ported. Video hub COMPLETE |
-| audio/model3d hubs (Ace, Tripo, Hunyuan3D, Pixal3D, PolyGen, Trellis2) + standalone workflows (upscale/interpolate/remove-background) | OPEN | OPEN | the remaining tail |
+| audio: ace (5 versions, simple/custom modes) | DONE | DONE | untagged mode branch on the `aceAudioMode` FIELD (user-selected, not computed); v1's model effect stomps cfg/steps to variant defaults AT PARSE — ported as `correct` policies, the interactive reset as a `.effect` rule. No snippets (v1 merges triggerWordsGraph only) |
+| audio: minimax-music (MiniMaxMusic3) | DONE | DONE | simple/custom on `minimaxMusicMode`; custom requires BOTH musicDescription and lyrics; duration clamps (sliderDef) so a carried-over video duration can't fail invisibly |
+| audio hub | DONE | DONE | ecosystem scoped 'audio', default Ace; no quantity/priority/outputFormat (image/video concerns) |
+| model3d: polygen (Meshy v6/v7) | DONE | DONE | `polygenVersion` flag-gated (meshyV7Generator) AND workflow-clamped (v7-on-text → v6) in both input and output transforms; v7-only knobs null out per version/image-count; v7 has no seed |
+| model3d: tripo / hunyuan3d / pixal3d / trellis2 | DONE | DONE | image-to-3D only; pixal3d and trellis2 are field-identical (one factory, two instances for their own family scopes); hunyuan keeps its `hunyuan*` field prefixes, mapped back in the handler |
+| model3d hub | DONE | DONE | ecosystem scoped 'model3d', default PolyGen; the four newer 3D ecosystems are flag-hidden fail-closed via the shared getEcosystemStates |
+| standalone workflow graphs (upscale/interpolate/remove-background) | OPEN | OPEN | the last tail — enhancement workflows, not ecosystem families |
 | _…add a row per `*-graph.ts` file during Phase 2 inventory…_ | | | |
 
 ---

@@ -530,10 +530,107 @@ const CASES: Record<string, unknown>[] = [
     seed: 42,
     images: [IMAGE],
   },
+  // Ace: simple (chat step) vs custom, cover generation vs uploaded cover
+  { workflow: 'txt2music', ecosystem: 'Ace', prompt: 'an upbeat song', seed: 42 },
+  {
+    workflow: 'txt2music',
+    ecosystem: 'Ace',
+    prompt: 'an upbeat song',
+    seed: 42,
+    generateCover: true,
+  },
+  { workflow: 'txt2music', ecosystem: 'Ace', prompt: 'an upbeat song', seed: 42, images: [IMAGE] },
+  {
+    workflow: 'txt2music',
+    ecosystem: 'Ace',
+    seed: 42,
+    aceAudioMode: 'custom',
+    musicDescription: 'synthwave with heavy bass',
+    lyrics: '[Verse] la la la',
+    bpm: 128,
+    instrumentalWeight: 0.7,
+    vocalWeight: 0.2,
+    model: 2864864,
+  },
+  // MiniMax Music 3: simple (chat step) vs custom
+  { workflow: 'txt2music', ecosystem: 'MiniMaxMusic3', prompt: 'an upbeat song', seed: 42 },
+  {
+    workflow: 'txt2music',
+    ecosystem: 'MiniMaxMusic3',
+    seed: 42,
+    minimaxMusicMode: 'custom',
+    musicDescription: 'jazz trio',
+    lyrics: '[Chorus] doo doo doo',
+    duration: 120,
+  },
+  // 3D: polygen v6 text + image, v7 single + multi image; the flag-gated four
+  { workflow: 'txt2model3d', ecosystem: 'PolyGen', prompt: 'a treasure chest', seed: 42 },
+  { workflow: 'img2model3d', ecosystem: 'PolyGen', seed: 42, images: [IMAGE] },
+  {
+    workflow: 'img2model3d',
+    ecosystem: 'PolyGen',
+    polygenVersion: 'v7',
+    images: [IMAGE],
+    ultraMode: true,
+    modelType: 'lowpoly',
+    poseMode: 'a-pose',
+    expectFlags: { meshyV7Generator: true },
+  },
+  {
+    workflow: 'img2model3d',
+    ecosystem: 'PolyGen',
+    polygenVersion: 'v7',
+    images: [IMAGE, { url: 'https://example.com/b.png', width: 1216, height: 832 }],
+    enableAnimation: true,
+    riggingHeightMeters: 2,
+    animationActionId: 3,
+    expectFlags: { meshyV7Generator: true },
+  },
+  {
+    workflow: 'img2model3d',
+    ecosystem: 'Tripo',
+    seed: 42,
+    images: [IMAGE],
+    texture: 'HD',
+    pbr: true,
+    faceLimit: 20000,
+    expectFlags: { tripoGenerator: true },
+  },
+  {
+    workflow: 'img2model3d',
+    ecosystem: 'Hunyuan3D',
+    seed: 42,
+    images: [IMAGE],
+    hunyuanPrompt: 'shiny metal',
+    hunyuanModelVersion: 'v2',
+    hunyuanSteps: 45,
+    expectFlags: { hunyuan3dGenerator: true },
+  },
+  {
+    workflow: 'img2model3d',
+    ecosystem: 'Pixal3D',
+    seed: 42,
+    images: [IMAGE],
+    enablePbr: true,
+    expectFlags: { pixal3dGenerator: true },
+  },
+  {
+    workflow: 'img2model3d',
+    ecosystem: 'Trellis2',
+    seed: 42,
+    images: [IMAGE],
+    shouldTexture: false,
+    expectFlags: { trellis2Generator: true },
+  },
 ];
 
-async function bothLanes({ expectEcosystem, ...input }: Record<string, unknown>) {
-  const parsed = generationHub.parse(input, BASE);
+async function bothLanes({ expectEcosystem, expectFlags, ...input }: Record<string, unknown>) {
+  // flag-gated ecosystems (v7 meshy, the newer 3D generators) need their flag
+  // in ext or the selection is hidden and falls back to the default
+  const ext = expectFlags
+    ? { ...BASE, flags: { ...BASE.flags, ...(expectFlags as object) } as GenerationCtx['flags'] }
+    : BASE;
+  const parsed = generationHub.parse(input, ext);
   if (!parsed.success) throw new Error(`parse failed: ${JSON.stringify(parsed.errors)}`);
   // a hub redirect (unsupported workflow x ecosystem) would silently route the
   // case to a DIFFERENT family's handler and the comparison would be vacuous
@@ -578,10 +675,17 @@ describe('form-graph handlers emit the same steps as the data-graph handlers', (
     }
   });
 
-  it('an unported ecosystem is a loud error, not a silent fallthrough', async () => {
+  it('an unknown ecosystem is a loud error, not a silent fallthrough', async () => {
+    // every real ecosystem is ported now — this pins the dispatcher's default
+    // branch so a future v1 family added without a port case still throws
     await expect(
       createFormGraphStepInput(
-        { ecosystem: 'Ace', workflow: 'txt2music', prompt: 'x', seed: 1 } as GenerationData,
+        {
+          ecosystem: 'NotARealEcosystem',
+          workflow: 'txt2img',
+          prompt: 'x',
+          seed: 1,
+        } as GenerationData,
         ctx
       )
     ).rejects.toThrow(/no handler for ecosystem/);

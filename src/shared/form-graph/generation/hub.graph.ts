@@ -10,6 +10,8 @@ import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 
 import { imageHub } from './image/hub.graph';
 import { videoHub } from './video/hub.graph';
+import { audioHub } from './audio/hub.graph';
+import { model3dHub } from './model3d/hub.graph';
 import type { RootCtx } from './shared';
 
 /**
@@ -17,8 +19,7 @@ import type { RootCtx } from './shared';
  * migration + gate refusal) and the output/input computeds, then a dispatch to
  * ONE hub per output type — each hub owns only its own ecosystems, defaults,
  * and head fields (v1 serves all four output types from one shared ecosystem
- * field; the port deliberately does not). Audio and model3d hubs arrive with
- * their families.
+ * field; the port deliberately does not).
  */
 
 // ---- copied from generation-graph.ts, which dies with the data-graph engine
@@ -61,8 +62,11 @@ const outputHubs = branch((ext: RootCtx) => {
   switch (ext.output) {
     case 'video':
       return videoHub;
+    case 'audio':
+      return audioHub;
+    case 'model3d':
+      return model3dHub;
     case 'image':
-    // audio and model3d hubs arrive with their families
     default:
       return imageHub;
   }

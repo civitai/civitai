@@ -8,6 +8,7 @@
 import { Container } from '@mantine/core';
 
 import { IsClient } from '~/components/IsClient/IsClient';
+import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { ResourceDataProvider } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { BaseGenerationForm } from '~/components/form-graph/generation/BaseGenerationForm';
 
@@ -17,9 +18,12 @@ export default function FormGraphDemoPage() {
       <IsClient>
         {/* the resource-select components the bespoke slots will host read this
             context — mounted here the way GenerationTabs mounts it for v1 */}
-        <ResourceDataProvider>
-          <BaseGenerationForm />
-        </ResourceDataProvider>
+        {/* queue state + rate limiting for the footer, same as GenerationTabs */}
+        <GenerationProvider>
+          <ResourceDataProvider>
+            <BaseGenerationForm />
+          </ResourceDataProvider>
+        </GenerationProvider>
       </IsClient>
     </Container>
   );

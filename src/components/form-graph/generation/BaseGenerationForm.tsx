@@ -1,4 +1,4 @@
-import { Paper, Stack, Text } from '@mantine/core';
+import { Stack } from '@mantine/core';
 import { useEffect, useMemo } from 'react';
 import { persistedStorage } from 'form-graph';
 import { FormProvider, useForm } from 'form-graph/react';
@@ -18,7 +18,10 @@ import { WorkflowInput } from '~/components/generation_v2/inputs/WorkflowInput';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { ImageGenerationForm } from './ImageGenerationForm';
 import { VideoGenerationForm } from './VideoGenerationForm';
-import { SubmitFooter } from './form-helpers';
+import { AudioGenerationForm } from './AudioGenerationForm';
+import { Model3dGenerationForm } from './Model3dGenerationForm';
+import { FormFooter } from './FormFooter';
+import { WhatIfProvider } from './WhatIfProvider';
 import { useOutputType, type GenerationStore } from './store';
 
 /**
@@ -81,36 +84,38 @@ export function BaseGenerationForm() {
 
   return (
     <FormProvider store={store}>
-      <Stack gap="md">
-        <Controller
-          graph={generationHub}
-          name="workflow"
-          render={({ value, onChange }) => {
-            const snap = store.getSnapshot().state as { ecosystem?: string };
-            const ecosystemId = snap.ecosystem ? ecosystemByKey.get(snap.ecosystem)?.id : undefined;
-            return (
-              <WorkflowInput
-                value={value}
-                ecosystemId={ecosystemId}
-                onChange={(graphKey) => onChange(graphKey)}
-                isMember={isMember}
-              />
-            );
-          }}
-        />
-        {output === 'image' ? (
-          <ImageGenerationForm store={store} />
-        ) : output === 'video' ? (
-          <VideoGenerationForm store={store} />
-        ) : (
-          <Paper p="md" withBorder>
-            <Text size="sm" c="dimmed">
-              The {output} form arrives with its families.
-            </Text>
-          </Paper>
-        )}
-        <SubmitFooter store={store} />
-      </Stack>
+      <WhatIfProvider store={store} ext={ext}>
+        <Stack gap="md">
+          <Controller
+            graph={generationHub}
+            name="workflow"
+            render={({ value, onChange }) => {
+              const snap = store.getSnapshot().state as { ecosystem?: string };
+              const ecosystemId = snap.ecosystem
+                ? ecosystemByKey.get(snap.ecosystem)?.id
+                : undefined;
+              return (
+                <WorkflowInput
+                  value={value}
+                  ecosystemId={ecosystemId}
+                  onChange={(graphKey) => onChange(graphKey)}
+                  isMember={isMember}
+                />
+              );
+            }}
+          />
+          {output === 'image' ? (
+            <ImageGenerationForm store={store} />
+          ) : output === 'video' ? (
+            <VideoGenerationForm store={store} />
+          ) : output === 'audio' ? (
+            <AudioGenerationForm />
+          ) : (
+            <Model3dGenerationForm store={store} />
+          )}
+          <FormFooter store={store} />
+        </Stack>
+      </WhatIfProvider>
     </FormProvider>
   );
 }

@@ -1,7 +1,7 @@
-import { Button, Group, Input, Menu, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { Input, Menu, Tooltip, UnstyledButton } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
 import clsx from 'clsx';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -225,29 +225,4 @@ export function useWildcardHandlers(store: GenerationStore) {
   }, [store, loadFromModelVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { removeWildcardSet, addWildcardSet, isAdding: loadFromModelVersion.isPending };
-}
-
-export function SubmitFooter({
-  store,
-  onSubmit,
-}: {
-  store: GenerationStore;
-  onSubmit?: (result: ReturnType<GenerationStore['validate']>) => void;
-}) {
-  const [errorCount, setErrorCount] = useState<number | null>(null);
-  const submit = () => {
-    const result = store.validate();
-    setErrorCount(result.success ? 0 : Object.keys(result.errors).length);
-    onSubmit?.(result);
-  };
-  return (
-    <Group justify="flex-end" mt="xs">
-      {errorCount != null && errorCount > 0 && (
-        <Text size="sm" c="red">
-          {errorCount} field{errorCount === 1 ? '' : 's'} need attention
-        </Text>
-      )}
-      <Button onClick={submit}>Generate</Button>
-    </Group>
-  );
 }

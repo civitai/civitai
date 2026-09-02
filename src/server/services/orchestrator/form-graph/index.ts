@@ -45,6 +45,15 @@ import { createHappyHorseInput } from './happy-horse.handler';
 import { createVeo3Input } from './veo3.handler';
 import { createViduInput } from './vidu.handler';
 import { createKlingInput } from './kling.handler';
+import { createAceAudioInput } from './ace.handler';
+import { createMiniMaxMusicInput } from './minimax-music.handler';
+import {
+  createPolyGenInput,
+  createTripoInput,
+  createHunyuan3dInput,
+  createPixal3dInput,
+  createTrellis2Input,
+} from './model3d.handler';
 import { createLTXInput } from './ltx.handler';
 import { createSeedanceInput } from './seedance.handler';
 import { createStableDiffusionInput } from './stable-diffusion.handler';
@@ -85,6 +94,15 @@ export { createHappyHorseInput } from './happy-horse.handler';
 export { createVeo3Input } from './veo3.handler';
 export { createViduInput } from './vidu.handler';
 export { createKlingInput } from './kling.handler';
+export { createAceAudioInput } from './ace.handler';
+export { createMiniMaxMusicInput } from './minimax-music.handler';
+export {
+  createPolyGenInput,
+  createTripoInput,
+  createHunyuan3dInput,
+  createPixal3dInput,
+  createTrellis2Input,
+} from './model3d.handler';
 export { createLTXInput } from './ltx.handler';
 export { createSeedanceInput } from './seedance.handler';
 export { createStableDiffusionInput } from './stable-diffusion.handler';
@@ -258,6 +276,27 @@ function createStep(
 
     case 'Kling':
       return createKlingInput(data, handlerCtx);
+
+    case 'Ace':
+      return createAceAudioInput(data, handlerCtx);
+
+    case 'MiniMaxMusic3':
+      return createMiniMaxMusicInput(data, handlerCtx);
+
+    case 'PolyGen':
+      return createPolyGenInput(data, handlerCtx);
+
+    case 'Tripo':
+      return createTripoInput(data, handlerCtx);
+
+    case 'Hunyuan3D':
+      return createHunyuan3dInput(data, handlerCtx);
+
+    case 'Pixal3D':
+      return createPixal3dInput(data, handlerCtx);
+
+    case 'Trellis2':
+      return createTrellis2Input(data, handlerCtx);
 
     default:
       throw new Error(`form-graph lane has no handler for ecosystem "${ecosystem}"`);
