@@ -82,7 +82,14 @@ export function useDeleteCreatorAnnouncement() {
   const mutation = trpc.announcement.deleteCreatorAnnouncement.useMutation({
     onSuccess: async () => {
       showSuccessNotification({ message: 'Announcement deleted' });
-      await queryUtils.announcement.getCreatorAnnouncements.invalidate();
+      // Both feeds, as the mute mutation above already does. The panel reads the followed
+      // feed, and trpc sets `staleTime: Infinity` with `refetchOnWindowFocus: false` — so
+      // without this a delete from the panel reports success and leaves the card on screen
+      // for the rest of the session, where a second click reports failure.
+      await Promise.all([
+        queryUtils.announcement.getCreatorAnnouncements.invalidate(),
+        queryUtils.announcement.getFollowedAnnouncements.invalidate(),
+      ]);
     },
     onError: (error) => {
       showErrorNotification({
