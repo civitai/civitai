@@ -5,11 +5,12 @@ import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.c
 import { useServerDomains } from '~/providers/AppProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { QS } from '~/utils/qs';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 
 export function YellowMembershipUnavailable() {
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const greenPricingUrl = syncAccount(
     `//${serverDomains.green}/pricing?${QS.stringify({ buzzType: 'green' })}`
   );

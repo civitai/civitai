@@ -1,5 +1,5 @@
 import { Menu } from '@mantine/core';
-import { IconBabyCarriage, IconTagOff } from '@tabler/icons-react';
+import { IconBabyCarriage, IconShieldCheck, IconTagOff } from '@tabler/icons-react';
 import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
@@ -13,6 +13,7 @@ import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
 import { ToggleMinorModel } from '~/components/Model/Actions/ToggleMinorModel';
+import { ToggleSfwOnlyModel } from '~/components/Model/Actions/ToggleSfwOnlyModel';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -182,6 +183,28 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
         </ToggleMinorModel>
       ),
     });
+    // Minor already forces (and locks) sfwOnly, so the toggle would only ever offer an
+    // "Unset" the server refuses.
+    if (!data.minor)
+      contextMenuItems.push({
+        key: 'set-sfw-only',
+        component: (
+          <ToggleSfwOnlyModel key="set-sfw-only" modelId={data.id} sfwOnly={data.sfwOnly}>
+            {({ onClick }) => (
+              <Menu.Item
+                leftSection={<IconShieldCheck size={14} stroke={1.5} />}
+                onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onClick();
+                }}
+              >
+                {data.sfwOnly ? 'Unset as SFW' : 'Set as SFW'}
+              </Menu.Item>
+            )}
+          </ToggleSfwOnlyModel>
+        ),
+      });
   }
 
   if (setMenuItems) {

@@ -68,7 +68,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import {
   encodeGenerationHandoff,
   GENERATION_HANDOFF_PARAM,
@@ -104,6 +104,8 @@ const POLYGEN_ECOSYSTEM_MODEL_LABELS: Record<string, string> = {
   PolyGen: 'Meshy',
   Tripo: 'Tripo',
   Hunyuan3D: 'Hunyuan3D',
+  Pixal3D: 'Pixal3D',
+  Trellis2: 'Trellis.2',
 };
 
 export function QueueItem({
@@ -783,6 +785,7 @@ function countOccurrences(arr: string[]): Record<string, number> {
  */
 function SiteRestrictedBlock({ image }: { image: BlobData }) {
   const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
 
   const buildRedUrl = () => {
     const base = `//${redDomain}/generate`;
@@ -908,6 +911,7 @@ function CanUpgradeBlock({
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const isPaidMember = currentUser?.tier && currentUser.tier !== 'free';
   const pricingHref = syncAccount(`//${serverDomains.green}/pricing`);
 

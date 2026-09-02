@@ -1,0 +1,24 @@
+-- Serves the collection feeds' "Recently Added" sort, which orders on the CollectionItem
+-- row's own id rather than the entity's. No existing index can produce that order: the
+-- closest, CollectionItem_image_idx ("collectionId", "imageId"), is why the pre-existing
+-- Newest sort on images is cheap — imageId order IS id order there — and it says nothing
+-- about the order items were added in.
+--
+-- Not partial on an entity column, unlike the four ("collectionId", <entity>Id) uniques
+-- beside it. Collection.tsx dispatches a collection to exactly one feed by Collection.type,
+-- so within a single collectionId the entity filter drops nothing in practice, and one
+-- index serves images, models, posts and articles instead of four over the same table.
+--
+-- Cost of the full feed query without it, prod replica, most-viewed image collection
+-- (~16.5k items): 448ms warm, 1.4s cold, against 2-3ms for Newest. On a collection whose
+-- newest item is far behind the table's max id the planner switches to a backward scan of
+-- CollectionItem_pkey and the cost is unbounded — one 191k-item model collection did not
+-- return in 45s.
+--
+-- CONCURRENTLY, because the table is 15 GB / ~204M rows. Run it OUTSIDE a transaction:
+-- psql's -c with two statements opens one implicitly and the server refuses. A cancelled
+-- CONCURRENTLY build leaves an INVALID index; IF NOT EXISTS will then skip creation and
+-- exit 0 with the invalid index still in place, so check indisvalid before trusting a
+-- successful re-run.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "CollectionItem_collectionId_id_idx"
+  ON "CollectionItem" ("collectionId", id DESC);

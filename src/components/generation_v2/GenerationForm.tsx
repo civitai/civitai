@@ -140,6 +140,7 @@ import {
   remixContentGenerationTour,
 } from '~/components/Tours/tours/content-gen.tour';
 import { useTourContext } from '~/components/Tours/ToursProvider';
+import { nextTourSteps } from '~/components/Tours/tour-step-updates';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useRemixStore } from '~/store/remix.store';
@@ -249,7 +250,7 @@ export function GenerationForm() {
   }, [graph, loadFromModelVersion]);
 
   // Tour initialization
-  const { runTour, running, currentStep, setSteps, activeTour } = useTourContext();
+  const { runTour, running, paused, currentStep, steps, setSteps, activeTour } = useTourContext();
   const status = useGenerationStatus();
   const loadingGeneratorData = useGenerationGraphStore((state) => state.loading);
   const remixOfId = useRemixStore((state) => state.data?.remixOfId);
@@ -261,7 +262,12 @@ export function GenerationForm() {
   // Trigger tour when form is ready
   useEffect(() => {
     if (!status.available || status.isLoading || loadingGeneratorData) return;
-    if (!running) runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation' });
+    // `paused` is a tour mid-step, waiting on its own `onNext` hook — and picking a remix
+    // option moves `remixOfId` inside exactly that window. Reading only `running` there
+    // re-entered `runTour({ key })`, which reinstates the UNFILTERED step array under a
+    // step index meant for the filtered one.
+    if (!running && !paused)
+      runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation' });
   }, [
     status.isLoading,
     status.available,
@@ -269,6 +275,7 @@ export function GenerationForm() {
     hasGeneratedImages,
     remixOfId,
     loadingGeneratorData,
+    paused,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Configure tour steps based on user state
@@ -278,7 +285,7 @@ export function GenerationForm() {
       return end === -1 ? steps : steps.slice(0, end + 1);
     };
 
-    if (!running || currentStep > 0 || loadingGeneratorData) return;
+    if (!running || loadingGeneratorData) return;
     const isRemix = remixOfId && activeTour === 'remix-content-generation';
     let genSteps = isRemix ? remixContentGenerationTour : contentGenerationTour;
 
@@ -293,7 +300,12 @@ export function GenerationForm() {
     if (alreadyReviewedTerms)
       genSteps = genSteps.filter((x) => x.target !== '[data-tour="gen:terms"]');
 
-    setSteps(genSteps);
+    // Recomputed on every input change, not only at step 0: `hasGeneratedImages` flips the
+    // moment the user generates — which this tour asks them to do — and freezing the array
+    // there left a first-timer's tour permanently cut at `gen:feed`, without the select and
+    // post steps that hand over to the post-generation tour.
+    const next = nextTourSteps(steps, genSteps, currentStep);
+    if (next) setSteps(next);
   }, [
     loadingGenQueueRequests,
     hasGeneratedImages,
@@ -302,6 +314,7 @@ export function GenerationForm() {
     running,
     activeTour,
     loadingGeneratorData,
+    currentStep,
   ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Get compatibility info based on current workflow and ecosystem
@@ -973,6 +986,28 @@ export function GenerationForm() {
             <Controller
               graph={graph}
               name="aceAudioMode"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Mode</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={
+                      meta.options?.map((o: { label: string; value: string }) => ({
+                        label: o.label,
+                        value: o.value,
+                      })) ?? []
+                    }
+                  />
+                </div>
+              )}
+            />
+
+            {/* MiniMax Music 3 mode picker (simple | custom). A separate node
+                from aceAudioMode so each ecosystem keeps its own stored value. */}
+            <Controller
+              graph={graph}
+              name="minimaxMusicMode"
               render={({ value, meta, onChange }) => (
                 <div className="flex flex-col gap-1">
                   <Input.Label>Mode</Input.Label>
@@ -1838,6 +1873,20 @@ export function GenerationForm() {
                     }))}
                   />
                 </div>
+              )}
+            />
+
+            {/* Prime (Wan 3.0) */}
+            <Controller
+              graph={graph}
+              name="usePrime"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Prime"
+                  description="Faster generation for a higher cost. Output quality is unchanged."
+                  checked={value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
               )}
             />
 

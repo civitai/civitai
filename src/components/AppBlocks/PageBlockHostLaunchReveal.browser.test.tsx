@@ -174,12 +174,73 @@ describe('PageBlockHost launch reveal — branded loading', () => {
     await expect.element(page.getByText('Starting Budgeted Generator…')).toBeInTheDocument();
     // Its initial, in the same Avatar treatment the store card uses.
     await expect.element(page.getByText('B', { exact: true })).toBeInTheDocument();
-    // The existing a11y contract is preserved: a busy live REGION, plus a
-    // labelled graphic.
+    // The a11y contract: the REGION announces, and it is the only thing that
+    // does. The skeleton group is decorative and stays out of the tree.
     const overlay = overlayEl();
     expect(overlay.getAttribute('role')).toBe('status');
     expect(overlay.getAttribute('aria-busy')).toBe('true');
-    await expect.element(page.getByLabelText('Loading Budgeted Generator')).toBeInTheDocument();
+
+    // Asserted as STATE, not via a label query. `getByLabelText` does NOT
+    // filter aria-hidden, so an assertion phrased that way passes identically
+    // whether the group is an exposed labelled graphic or a hidden decorative
+    // box — i.e. it reads as a11y coverage while pinning nothing. Giving this
+    // group a role is the specific regression: its name would then be read as
+    // part of the live region and the app name would announce twice.
+    const group = page.getByTestId('app-page-loading-skeleton').element();
+    expect(group.getAttribute('aria-hidden')).toBe('true');
+    expect(group.getAttribute('role')).toBeNull();
+    expect(group.getAttribute('aria-label')).toBeNull();
+  });
+
+  test('the launch state is a content-shaped SKELETON, not a spinner', async () => {
+    // The sidebar slot already gets this for free — `IframeHost` renders
+    // BlockFallback's <Skeleton> while its block loads. This page was the only
+    // block surface still showing a bare spinner, so the two hosts disagreed
+    // about what a loading app looks like. Pinning the shape, not the styling:
+    // a spinner reappearing here is the regression this catches.
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    await expect.element(page.getByTestId('app-page-loading-skeleton')).toBeInTheDocument();
+    const group = page.getByTestId('app-page-loading-skeleton').element();
+    // Mantine's Skeleton is the shared primitive both hosts use; asserting the
+    // rendered elements rather than a class keeps this about "there are
+    // placeholder bars", not about Mantine's internals.
+    const bars = Array.from(group.querySelectorAll('.mantine-Skeleton-root'));
+    expect(bars.length).toBeGreaterThan(1);
+
+    // POSITIVE CONTROL for the reduced-motion test below. Asserting only that
+    // `data-animate` is ABSENT under reduce-motion is satisfied by a build
+    // where NOBODY ever sees the shimmer: `animate={false}` on all four bars
+    // survives the whole file. One direction of a boolean is not a pin, and
+    // this is the direction the feature actually exists for.
+    for (const bar of bars) {
+      expect(bar.getAttribute('data-animate')).toBe('true');
+    }
+
+    // …and the spinner it replaced is GONE. Without this the test passes with
+    // BOTH rendered, which is the half-done state a partial revert produces.
+    expect(overlayEl().querySelector('.mantine-Loader-root')).toBeNull();
+  });
+
+  test('the skeleton stops shimmering under prefers-reduced-motion', async () => {
+    // Same call the fallback makes (`animate={!reduceMotion}`). An overlay that
+    // keeps shimmering under reduce-motion is a real a11y defect, and it is
+    // invisible to every other test here because they all run with it false.
+    mocks.reduceMotion = true;
+    renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
+
+    await expect.element(page.getByTestId('app-page-loading-skeleton')).toBeInTheDocument();
+    const group = page.getByTestId('app-page-loading-skeleton').element();
+    const bars = Array.from(group.querySelectorAll('.mantine-Skeleton-root'));
+    expect(bars.length).toBeGreaterThan(1);
+    // Mantine renders `data-animate="true"` when animating and omits the
+    // attribute entirely when not (`Skeleton.mjs` `mod: [{ visible, animate }]`
+    // in 7.17.8 — confirmed against the rendered DOM, not assumed). The
+    // OPPOSITE direction is asserted in the test above; without that pair this
+    // one alone is satisfied by never animating at all.
+    for (const bar of bars) {
+      expect(bar.getAttribute('data-animate')).toBeNull();
+    }
   });
 
   test('the branded copy runs appName through the chrome sanitizer (control/bidi stripped)', async () => {

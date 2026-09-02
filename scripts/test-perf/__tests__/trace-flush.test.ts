@@ -44,7 +44,10 @@ import {
  */
 
 const repoRoot = resolve(__dirname, '../../..');
-const VITEST_BIN = resolve(repoRoot, 'node_modules/.bin/vitest');
+// The package's own JS entry, not node_modules/.bin/vitest: that shim is an extensionless shell
+// script on Windows, which spawnSync cannot execute — the child produces no output at all, so
+// every assertion here fails as an empty stdout rather than as anything about the tracer.
+const VITEST_CLI = resolve(repoRoot, 'node_modules/vitest/vitest.mjs');
 const TRACE_CONFIG = 'scripts/test-perf/trace-config.mts';
 const FIXTURES = [
   'scripts/test-perf/__tests__/trace-smoke-fixture.test.ts',
@@ -79,8 +82,8 @@ function runTraced({
   extraArgs?: string[];
 }) {
   return spawnSync(
-    VITEST_BIN,
-    ['run', '--project', project, '--config', TRACE_CONFIG, ...extraArgs, ...files],
+    process.execPath,
+    [VITEST_CLI, 'run', '--project', project, '--config', TRACE_CONFIG, ...extraArgs, ...files],
     {
       cwd: repoRoot,
       encoding: 'utf8',
@@ -116,7 +119,7 @@ function mergeSnapshots(traceDir: string) {
 
 describe('module tracer flush', () => {
   it('writes a snapshot for a traced run that ends normally', () => {
-    expect(existsSync(VITEST_BIN)).toBe(true);
+    expect(existsSync(VITEST_CLI)).toBe(true);
     const traceDir = freshTraceDir();
 
     // The clear must remove this tool's snapshots and NOTHING else: TESTPERF_TRACE_DIR is

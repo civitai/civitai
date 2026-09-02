@@ -126,6 +126,17 @@ export enum FLIPT_FEATURE_FLAGS {
   // context, so a segment rule here returns the flag default and looks exactly like "blurbs are
   // off". The site is recorded in ENTITY_WITHOUT_CONTEXT_LEDGER (flipt-eval-context.test.ts).
   TEXT_BLURBS = 'text-blurbs',
+
+  // 🔴 BOOLEAN ONLY — neither a segment NOR a percentage rollout works on this one.
+  // `throwOnBlockedUserContent` evaluates it with no context AND no entityId, because several of
+  // its call sites are content fan-outs with no session in scope. A segment rollout reads the
+  // context and so matches nothing; a threshold rollout buckets on `hash(entityId + flagKey)` and
+  // the entityId defaults to the literal `'global'`, so every evaluation in production hashes one
+  // constant and the flag is 0% or 100% with nothing in between. Set the boolean, not a ramp.
+  //
+  // OFF is the shipped default and means the pattern list is recorded but not enforced on these
+  // surfaces. The link-domain half throws either way — this flag has never governed it.
+  USER_CONTENT_PATTERN_ENFORCE = 'user-content-pattern-enforce',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a

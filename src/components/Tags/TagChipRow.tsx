@@ -1,5 +1,6 @@
 import { Button, useComputedColorScheme } from '@mantine/core';
 import clsx from 'clsx';
+import type { ReactNode } from 'react';
 
 import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
 
@@ -56,6 +57,7 @@ export function TagChipRow({
   onClear,
   includeAll = true,
   loading = false,
+  placeholder = null,
 }: {
   items: TagChipRowItem[];
   /** `undefined` means nothing is selected, which is what fills the All chip. */
@@ -70,6 +72,13 @@ export function TagChipRow({
    * `CategoryTags` did before this row was extracted.
    */
   loading?: boolean;
+  /**
+   * What to draw in the reservation while `loading`. It goes INSIDE the reserved height
+   * rather than beside the row, so a caller substituting a control for the chips does not
+   * add height the reservation was sized without — which is the shift this row exists to
+   * prevent, arriving by the other door.
+   */
+  placeholder?: ReactNode;
 }) {
   // The reservation sits on ONE wrapper both branches share, rather than on the
   // placeholder and the scroller separately. Two elements holding the same height is a
@@ -81,7 +90,9 @@ export function TagChipRow({
   // `min-width: 0` that lets the row shrink and scroll instead of pushing its siblings out.
   return (
     <div className={clsx('min-w-0', CHIP_ROW_MIN_HEIGHT)}>
-      {!loading && (
+      {loading ? (
+        placeholder
+      ) : (
         <TwScrollX className="flex gap-1">
           {includeAll && <TagChip label="All" active={activeId === undefined} onClick={onClear} />}
           {items.map((item) => (

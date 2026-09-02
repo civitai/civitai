@@ -10,7 +10,7 @@
  * - v2-mini: Smaller/cheaper variant (480p/720p only)
  * - v2.5: Latest generation, up to 30s clips (480p/720p only)
  *
- * Supports txt2vid and img2vid workflows.
+ * Supports txt2vid, img2vid and img2vid:ref2vid workflows.
  * Features: aspect ratio, duration, resolution (480p/720p),
  * generateAudio toggle, seed, and images (for I2V).
  */
@@ -94,15 +94,23 @@ const seedanceResolutionsV2 = [
  * Workflow-specific behavior:
  * - txt2vid: Hides images node
  * - img2vid: Shows images input for source frames
+ * - img2vid:ref2vid: Shows images input for up to nine reference images
  */
 export const seedanceGraph = new DataGraph<{ ecosystem: string; workflow: string }, GenerationCtx>()
   // Images node - shown for img2vid, hidden for txt2vid
   .node(
     'images',
-    (ctx) => ({
-      ...imagesNode({ max: 1 }),
-      when: isWorkflowOrVariant(ctx.workflow, 'img2vid'),
-    }),
+    (ctx) => {
+      // ref2vid must be matched before the img2vid check below, which treats it
+      // as a variant and would cap it at one.
+      if (ctx.workflow === 'img2vid:ref2vid') {
+        return { ...imagesNode({ max: 9, warnOnMissingAiMetadata: true }), when: true };
+      }
+      return {
+        ...imagesNode({ max: 1 }),
+        when: isWorkflowOrVariant(ctx.workflow, 'img2vid'),
+      };
+    },
     ['workflow']
   )
   .merge(

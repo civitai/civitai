@@ -8,7 +8,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { BuzzBoltSvg } from '~/components/User/BuzzBoltSvg';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 
 /**
  * Floating popover card that wraps children (e.g. UserMenu) and shows
@@ -18,6 +18,7 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
 
   const enabled = !!currentUser && features.isGreen && features.buzz;
   const ready = useFeatureFlagsReady();

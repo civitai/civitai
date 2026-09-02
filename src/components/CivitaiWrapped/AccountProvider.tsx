@@ -7,7 +7,6 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
 import { createContext, useContext, useEffect, useMemo } from 'react';
-import type { EncryptedDataSchema } from '~/server/schema/civToken.schema';
 import { deleteCookies } from '~/utils/cookies-helpers';
 
 // DEVICE-LEVEL account switching (docs/main-app-auth-cutover.md, section E). Two stores, by design:
@@ -16,8 +15,7 @@ import { deleteCookies } from '~/utils/cookies-helpers';
 //     even after a session expires. Holds NO tokens.
 //   • HUB DEVICE SET (Redis, 30d rolling) — which of those accounts can be switched to WITHOUT re-login. An
 //     account that ages out of this window stays in the roster but, when clicked, re-authenticates at the hub.
-// Plus a one-time MIGRATION read of the legacy `civitai-accounts` (token-per-account) so pre-existing users
-// keep their links: it seeds the roster and lets us switch seamlessly until each account re-links to the set.
+// The pre-cutover `civitai-accounts` store (token-per-account) is RETIRED — see purgeLegacyAccountStore.
 export type CivitaiAccount = {
   id: number;
   active: boolean;
@@ -33,16 +31,23 @@ type RosterEntry = { id: number; username: string; avatarUrl?: string };
 type Roster = Record<string, RosterEntry>;
 const rosterKey = 'civitai-account-roster';
 
-// Legacy token-per-account store (migration only — read, redeem, drain). No new writes.
-type LegacyAccount = {
-  token: EncryptedDataSchema;
-  active: boolean;
-  email: string;
-  username: string;
-  avatarUrl?: string;
-};
-type LegacyAccounts = Record<string, LegacyAccount>;
+// RETIRED pre-cutover token-per-account store. Nothing redeems it any more — its seamless redeem went with
+// next-auth, so `swapAccount` has honoured the hub device set alone since the cutover (2026-06-22, more than
+// three 30-day session lifetimes ago). Leaving it in the `seamless` test only made an entry LOOK switchable
+// while clicking it bounced to the hub login: the display/behaviour mismatch behind ClickUp 868kxch09
+// report 1. PURGED rather than merely ignored, because it holds per-account tokens that would otherwise sit
+// in localStorage indefinitely for credentials nothing can use.
 const legacyAccountsKey = 'civitai-accounts';
+
+/** Remove the retired store from this browser. Safe to call on every mount; a no-op once it is gone. */
+function purgeLegacyAccountStore() {
+  try {
+    if (localStorage.getItem(legacyAccountsKey) !== null)
+      localStorage.removeItem(legacyAccountsKey);
+  } catch {
+    // private mode / storage disabled — nothing to clean up that we could reach anyway
+  }
+}
 
 const accountsQueryKey = ['device-accounts'] as const;
 // Stable empty reference for the device-account set — using a `= {}` destructuring default would mint a NEW
@@ -55,8 +60,8 @@ type AccountState = {
   accounts: CivitaiAccounts;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
-  // Switch by userId: seamless device switch if fresh in the set, legacy-token redeem if mid-migration, else
-  // re-authenticate at the hub. (Cross-domain .red now goes through the server auth-code flow, not here.)
+  // Switch by userId: seamless device switch if fresh in the hub set, else re-authenticate at the hub.
+  // (Cross-domain .red goes through the server auth-code flow, not here.)
   swapAccount: (userId: number, callbackUrl?: string) => Promise<void>;
   removeAccount: (id: number) => Promise<void>;
   // Moderator impersonation (F) — start acting as `userId` / return to your own account. Both reload on success
@@ -112,26 +117,11 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
     defaultValue: {},
     getInitialValueInEffect: false,
   });
-  // Legacy token store — read for seamless migration only.
-  const [legacyAccounts, setLegacyAccounts] = useLocalStorage<LegacyAccounts>({
-    key: legacyAccountsKey,
-    defaultValue: {},
-    getInitialValueInEffect: false,
-  });
-  // Seed the roster from the legacy store (one-time; copies identity only, never the token).
+  // Drop the retired store from this browser, once. Deleting only the code that reads it would leave the
+  // per-account tokens sitting in localStorage forever.
   useEffect(() => {
-    const ids = Object.keys(legacyAccounts).filter((id) => !(id in roster));
-    if (!ids.length) return;
-    setRoster((prev) => {
-      const next = { ...prev };
-      for (const id of ids) {
-        const a = legacyAccounts[id];
-        next[id] = { id: Number(id), username: a.username, avatarUrl: a.avatarUrl };
-      }
-      return next;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [legacyAccounts]);
+    purgeLegacyAccountStore();
+  }, []);
 
   // Remember the current user + every seamlessly-switchable account in the durable roster. Returns the SAME
   // object when nothing changed so setState bails (no re-render / no localStorage churn / no render loop).
@@ -215,33 +205,21 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
     setRoster,
   ]);
 
-  // Drop legacy tokens once that account is in the device set (migrated). The roster keeps the account.
-  useEffect(() => {
-    const migrated = Object.keys(legacyAccounts).filter((id) => id in deviceAccounts);
-    if (!migrated.length) return;
-    setLegacyAccounts((prev) => {
-      const next = { ...prev };
-      for (const id of migrated) delete next[id];
-      return next;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deviceAccounts]);
-
   // Display list = the durable roster, with active/needsLogin resolved against the live session + device set.
   const accounts = useMemo<CivitaiAccounts>(() => {
     const out: CivitaiAccounts = {};
     for (const [id, r] of Object.entries(roster)) {
-      const seamless = id in deviceAccounts || id in legacyAccounts; // switchable without re-login
+      // The hub device set alone: it is exactly what swapAccount honours, so the badge matches the click.
       out[id] = {
         id: r.id,
         username: r.username,
         avatarUrl: r.avatarUrl,
         active: String(currentUserId) === id,
-        needsLogin: !seamless,
+        needsLogin: !(id in deviceAccounts),
       };
     }
     return out;
-  }, [roster, deviceAccounts, legacyAccounts, currentUserId]);
+  }, [roster, deviceAccounts, currentUserId]);
 
   // Log out of the CURRENT account only — never auto-switch into another. The roster keeps the others listed.
   const logout = async () => {
@@ -265,9 +243,8 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
     // Best-effort: remove every seamlessly-switchable account from the hub device set. Awaited so the requests
     // land before the logout redirect tears the page down. `authProxy.removeAccount` already swallows errors.
     await Promise.all(Object.keys(deviceAccounts).map((id) => authProxy.removeAccount(Number(id))));
-    // Drop the durable display roster and the legacy token store — the user asked to forget all accounts here.
+    // Drop the durable display roster — the user asked to forget all accounts on this browser.
     setRoster({});
-    setLegacyAccounts({});
     await logout();
   };
 
@@ -293,13 +270,6 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
       delete next[String(id)];
       return next;
     });
-    if (String(id) in legacyAccounts) {
-      setLegacyAccounts((prev) => {
-        const next = { ...prev };
-        delete next[String(id)];
-        return next;
-      });
-    }
     await authProxy.removeAccount(id).catch(() => undefined);
     await queryClient.invalidateQueries({ queryKey: accountsQueryKey });
   };

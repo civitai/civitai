@@ -21,7 +21,7 @@ import {
 import { IconClockCheck, IconExclamationMark, IconGlobe } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
@@ -50,15 +50,19 @@ import { TagSort } from '~/server/common/enums';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { modelUpsertSchema } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   CheckpointType,
   CommercialUse,
   ModelStatus,
-  ModelType,
   ModelUploadType,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
+import {
+  getModelTypeSelectData,
+  resolveModelTypeDefaults,
+} from '~/shared/constants/model-type.constants';
 import type { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
@@ -145,13 +149,18 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const colorScheme = useComputedColorScheme('dark');
 
   const defaultCategory = result.success ? result.data.category ?? 0 : 0;
+  // One snapshot feeds both: `initialType` reaches the form once through defaultValues, so a
+  // `grandfatheredType` that kept recomputing could drift from it if a caller ever mounted this
+  // form before `model` arrived.
+  const initialModel = useRef(model).current;
+  const { grandfatheredType, initialType, replacedType } = resolveModelTypeDefaults(initialModel);
   const defaultValues: ModelUpsertSchema = {
     ...model,
     name: model?.name ?? '',
     description: model?.description ?? '',
     tagsOnModels: model?.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
     status: model?.status ?? 'Draft',
-    type: model?.type ?? 'Checkpoint',
+    type: initialType,
     checkpointType: model?.checkpointType,
     uploadType: model?.uploadType ?? 'Created',
     poi: model?.poi == null ? '' : model?.poi ? 'true' : 'false',
@@ -339,17 +348,27 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
           <Stack>
             <InputText name="name" label="Name" placeholder="Name" withAsterisk />
             <Stack gap={5}>
+              {replacedType && (
+                <AlertWithIcon
+                  color="yellow"
+                  iconColor="yellow"
+                  icon={<IconExclamationMark />}
+                  size="sm"
+                >
+                  {`This template is ${getDisplayName(
+                    replacedType
+                  )}, which new models can no longer be. The type has been set to Other. Pick the one that fits before you publish.`}
+                </AlertWithIcon>
+              )}
               <Group gap="sm" grow>
                 <InputSelect
                   name="type"
                   label="Type"
                   placeholder="Type"
-                  data={Object.values(ModelType).map((type) => ({
-                    label: getDisplayName(type),
-                    value: type,
-                  }))}
+                  data={getModelTypeSelectData(grandfatheredType)}
                   onChange={handleModelTypeChange}
                   disabled={isTrained}
+                  allowDeselect={false}
                   withAsterisk
                 />
                 {type === 'Checkpoint' && (

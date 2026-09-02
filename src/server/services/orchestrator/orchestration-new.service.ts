@@ -74,6 +74,7 @@ import {
   submitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
 } from '~/server/services/orchestrator/workflows';
+import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
@@ -95,6 +96,7 @@ import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { submitSourceForSurface } from '~/server/services/orchestrator/orchestrator-submit-metrics';
+import { clampExternalModerationSource } from '~/server/prom/external-moderation.metrics';
 import { logToAxiom } from '~/server/logging/client';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { expandSnippetsToTargets } from '~/server/services/wildcard-set-resolver.service';
@@ -1542,6 +1544,15 @@ export async function generateFromGraph({
         inputImages,
         inputVideo,
         acknowledgedSoftBlock,
+        // Observability only — see `~/server/prom/external-moderation.metrics`. Reuses the ONE
+        // surface→source mapping that already exists for the submit metric rather than inventing a
+        // parallel vocabulary, so the two families can never disagree about which requests are
+        // preset/cron work. The clamp is the type-safe bridge between the two label sets: any value
+        // the submit family gains that this one does not have falls to `other` instead of failing
+        // to compile or minting an unbounded label.
+        moderationSource: clampExternalModerationSource(
+          submitSourceForSurface(externalCtx.modelSubstitutions?.surface)
+        ),
       });
     } catch (err) {
       // Legacy regex/external audit blocked the prompt. Fire-and-forget an
@@ -1582,6 +1593,12 @@ export async function generateFromGraph({
       isModerator,
       track,
       acknowledgedSoftBlock,
+      // Same population as the prompt audit above — the ACE Audio creative fields go through the
+      // same auditor on the same submission, so they must carry the same label or the `generate`
+      // count would undercount its own calls.
+      moderationSource: clampExternalModerationSource(
+        submitSourceForSurface(externalCtx.modelSubstitutions?.surface)
+      ),
     });
   }
 
@@ -1682,6 +1699,8 @@ export async function generateFromGraph({
       externalId,
     },
   })) as TextToImageResponse;
+
+  await assertWorkflowOwner(workflow, userId, token);
 
   // Format and return response
   const [formatted] = await formatGenerationResponse2([workflow], { id: userId } as any);

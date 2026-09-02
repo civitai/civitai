@@ -1,34 +1,53 @@
-import ExifReader from 'exifreader';
+import type { Generator, MetadataParser } from '@civitai/generation-metadata';
+/* eslint-disable no-restricted-imports -- this adapter IS the sanctioned wrapper */
+import {
+  applyPlugins,
+  createParserContext,
+  defaultParsers,
+  encodeMetadata as encodePackageMetadata,
+  generationMetadataSchema,
+  parseGenerationText,
+} from '@civitai/generation-metadata';
+/* eslint-enable no-restricted-imports */
+import { civitai, readCivitaiMetadata } from '@civitai/generation-metadata/civitai';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
-import { automaticMetadataProcessor } from '~/utils/metadata/automatic.metadata';
-import { comfyMetadataProcessor } from '~/utils/metadata/comfy.metadata';
-import { rfooocusMetadataProcessor } from '~/utils/metadata/rfooocus.metadata';
-import { swarmUIMetadataProcessor } from '~/utils/metadata/swarmui.metadata';
 import { readVideoMetadata } from '~/utils/metadata/video-metadata';
 
-const parsers = {
-  automatic: automaticMetadataProcessor,
-  swarmui: swarmUIMetadataProcessor,
-  rfooocus: rfooocusMetadataProcessor,
-  comfy: comfyMetadataProcessor,
-};
+const PLUGINS = [civitai()];
+const videoParserSetup = applyPlugins(PLUGINS, defaultParsers);
+const VIDEO_PARSERS: MetadataParser[] = videoParserSetup.parsers;
+const VIDEO_PARSER_CONTEXT = createParserContext(videoParserSetup.context);
+
+export const legacyTypeToGenerator = {
+  automatic: 'automatic1111',
+  swarmui: 'swarmui',
+  rfooocus: 'ruinedfooocus',
+  comfy: 'comfyui',
+} as const satisfies Record<string, Generator>;
+type LegacyParserType = keyof typeof legacyTypeToGenerator;
 
 function createMetadataParser(exif: Record<string, unknown>) {
-  let matchedExif = exif;
-  let matchedParser: (typeof parsers)[keyof typeof parsers] | undefined;
-  for (const p of Object.values(parsers)) {
-    const exifCopy = { ...exif };
-    if (p.canParse(exifCopy)) {
-      matchedParser = p;
-      matchedExif = exifCopy;
+  let matchedParser: MetadataParser | undefined;
+  let matchedState: unknown;
+  for (const parser of VIDEO_PARSERS) {
+    try {
+      const state = parser.detect(exif, VIDEO_PARSER_CONTEXT);
+      if (!state) continue;
+      matchedParser = parser;
+      matchedState = state;
       break;
+    } catch {
+      continue;
     }
   }
 
   function parse() {
+    if (!matchedParser) return;
     try {
-      return matchedParser?.parse(matchedExif);
+      const raw = matchedParser.parse(matchedState, VIDEO_PARSER_CONTEXT);
+      const result = generationMetadataSchema.safeParse(raw);
+      return result.success ? result.data : {};
     } catch (e) {
       console.error('Error parsing metadata', e);
     }
@@ -45,46 +64,31 @@ function createMetadataParser(exif: Record<string, unknown>) {
     }
   }
 
-  return { parse, getMetadata, matchedParser };
+  return { parse, getMetadata };
 }
 
 export async function ExifParser(file: File | string) {
-  let tags: ExifReader.Tags = {} as ExifReader.Tags;
-  try {
-    tags = await ExifReader.load(file, { includeUnknown: true });
-  } catch (e) {
-    console.error('failed to read exif data');
+  const md = await readCivitaiMetadata(file);
+
+  function parse() {
+    return Object.keys(md.raw).length > 0 ? (md.raw as ImageMetaProps) : undefined;
   }
-
-  const exif = Object.entries(tags).reduce((acc, [key, value]) => {
-    acc[key] = value.value;
-    return acc;
-  }, {} as Record<string, any>); //eslint-disable-line
-
-  if (exif.UserComment) {
-    // @ts-ignore - this is a hack to not have to rework our downstream code
-    exif.userComment = Uint8Array.from(exif.UserComment);
-  }
-
-  // Clone exif before each canParse to prevent cross-parser mutation
-  const { parse, getMetadata, matchedParser: parser } = createMetadataParser(exif);
 
   function encode(meta: ImageMetaProps) {
-    try {
-      return parser?.encode(meta) ?? '';
-    } catch (e) {
-      console.error('Error encoding metadata', e);
-      return '';
-    }
+    if (!md.generator) return '';
+    return encodePackageMetadata(meta, md.generator, { plugins: PLUGINS });
   }
 
   function isMadeOnSite() {
-    if (!exif.Artist) return false;
-    const artist = Array.isArray(exif.Artist) ? exif.Artist.join(', ') : exif.Artist;
-    return artist === 'ai';
+    return md.civitai?.madeOnSite ?? false;
   }
 
-  return { exif, parse, encode, getMetadata, isMadeOnSite };
+  async function getMetadata() {
+    const result = imageMetaSchema.safeParse(md.raw ?? {});
+    return result.success ? result.data : {};
+  }
+
+  return { exif: md.exif, parse, encode, getMetadata, isMadeOnSite, media: md };
 }
 
 export async function VideoMetadataParser(file: Blob) {
@@ -98,12 +102,14 @@ export async function getMetadata(file: File | string) {
   return parser.getMetadata();
 }
 
-export function encodeMetadata(meta: ImageMetaProps, type: keyof typeof parsers = 'automatic') {
-  return parsers[type]?.encode(meta);
+export function encodeMetadata(meta: ImageMetaProps, type: LegacyParserType = 'automatic') {
+  return encodePackageMetadata(meta, legacyTypeToGenerator[type], { plugins: PLUGINS });
 }
 
 export const parsePromptMetadata = (generationDetails: string) => {
-  return automaticMetadataProcessor.parse({ generationDetails });
+  const raw = parseGenerationText(generationDetails, { plugins: PLUGINS }).raw;
+  const result = imageMetaSchema.safeParse(raw);
+  return (result.success ? result.data : raw) as ImageMetaProps;
 };
 
 // #region [clipboard utilities]

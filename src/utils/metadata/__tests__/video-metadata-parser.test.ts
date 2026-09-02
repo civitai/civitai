@@ -192,7 +192,7 @@ async function expectComfyMetadata(file: Blob) {
     width: 640,
     height: 480,
   });
-  expect(parsed?.civitaiResources).toEqual([{ modelVersionId: 0, type: 'model' }]);
+  expect(parsed?.civitaiResources).toEqual([{ modelVersionId: 34, type: 'checkpoint' }]);
   expect(metadata).toMatchObject({
     prompt: 'video prompt',
     negativePrompt: 'video negative',
@@ -241,7 +241,7 @@ describe('VideoMetadataParser MP4', () => {
     expect(parser.parse()).toMatchObject({
       prompt: 'an mp4 prompt',
       negativePrompt: 'blur',
-      steps: '12',
+      steps: 12,
       sampler: 'Euler',
     });
   });
@@ -306,7 +306,7 @@ describe('VideoMetadataParser WebM', () => {
         PaRaMeTeRs: 'a webm prompt\nSteps: 8, Sampler: Euler',
       })
     );
-    expect(parser.parse()).toMatchObject({ prompt: 'a webm prompt', steps: '8', sampler: 'Euler' });
+    expect(parser.parse()).toMatchObject({ prompt: 'a webm prompt', steps: 8, sampler: 'Euler' });
   });
 
   it('preserves metadata parsed before a malformed element', async () => {

@@ -15,6 +15,8 @@ import {
 import {
   IconArrowBackUp,
   IconArrowRight,
+  IconBell,
+  IconBellOff,
   IconCaretDownFilled,
   IconDotsVertical,
   IconEdit,
@@ -119,7 +121,21 @@ export function CommentContent({
   const currentUser = useCurrentUser();
   const clipboard = useClipboard();
 
-  const { toggleHide, togglePinned, setTosViolation, settingTosViolation } = useMutateComment();
+  const {
+    toggleHide,
+    togglePinned,
+    setTosViolation,
+    settingTosViolation,
+    toggleThreadMute,
+    togglingThreadMute,
+  } = useMutateComment();
+
+  // Fetched only while the menu is open: the alternative is one query per comment on every feed.
+  const [menuOpened, setMenuOpened] = useState(false);
+  const { data: threadMute } = trpc.commentv2.getThreadMuted.useQuery(
+    { commentId: comment.id },
+    { enabled: menuOpened && !!currentUser }
+  );
 
   const handleCopyLink = () => {
     const url = new URL(window.location.href);
@@ -248,7 +264,7 @@ export function CommentContent({
           </Group>
 
           {/* CONTROLS */}
-          <Menu position="bottom-end" withinPortal>
+          <Menu position="bottom-end" withinPortal opened={menuOpened} onChange={setMenuOpened}>
             <Menu.Target>
               <LegacyActionIcon size="xs" variant="subtle">
                 <IconDotsVertical size={14} />
@@ -322,6 +338,36 @@ export function CommentContent({
                     Report
                   </Menu.Item>
                 </LoginRedirect>
+              )}
+              {currentUser && (
+                // Already silenced from further up, so unmuting here would delete nothing and then
+                // claim the notifications were back on. Says where the mute lives instead.
+                <Menu.Item
+                  leftSection={
+                    threadMute?.muted ? (
+                      <IconBell size={14} stroke={1.5} />
+                    ) : (
+                      <IconBellOff size={14} stroke={1.5} />
+                    )
+                  }
+                  // Not merely cosmetic: the mutation toggles from DB state, so clicking a control
+                  // labelled "Mute" before the query lands UNMUTES an already-muted thread.
+                  disabled={
+                    !threadMute ||
+                    threadMute.viaAncestor ||
+                    togglingThreadMute ||
+                    !threadMute.canMute
+                  }
+                  onClick={() => toggleThreadMute({ commentId: comment.id }).catch(() => null)}
+                >
+                  {threadMute?.viaAncestor
+                    ? 'Muted with the thread above'
+                    : threadMute && !threadMute.canMute
+                    ? 'No replies to mute yet'
+                    : threadMute?.muted
+                    ? 'Unmute this thread'
+                    : 'Mute this thread'}
+                </Menu.Item>
               )}
               <Menu.Item leftSection={<IconLink size={14} stroke={1.5} />} onClick={handleCopyLink}>
                 Copy link

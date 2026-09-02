@@ -102,7 +102,7 @@ import {
 } from '@civitai/buzz';
 import { applyModelMonetizationPolicy } from '~/server/services/model-monetization-policy';
 import { resolveRightsAffirmation } from '~/server/services/monetization-rights.service';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -534,7 +534,21 @@ export const upsertModelVersion = async ({
    */
   licensingSourceCoercedReason?: LicensingSourceRejection;
 }) => {
-  if (data.description) await throwOnBlockedLinkDomain(data.description);
+  // Description only. `data.name` and `data.trainedWords` are both deliberately absent, for one
+  // reason: `requestReviewHandler` and `declineReviewHandler` select BOTH and replay the stored row
+  // through here with no moderator flag. The link half never exempts moderators and is not behind
+  // the enforcement flag, so scanning either field would let a version that trips a list become
+  // impossible to decline or resubmit — the guard would block the remedy for the abuse it found.
+  //
+  // So a version's name and trained words are scanned NOWHERE, while a model's name IS scanned in
+  // `upsertModel`. That is a known gap rather than a rule, tracked on 868kz1yt1.
+  //
+  // 🔴 Adding either field here looks obviously right and was tried. Closing it needs the replay
+  // callers to say they are replaying, not a wider argument list.
+  await throwOnBlockedUserContent(data.description, {
+    isModerator,
+    surface: 'modelVersion',
+  });
 
   // `undefined` means the caller didn't send a fee at all — requestReviewHandler / declineReviewHandler
   // pass a partial version — so only an explicitly supplied fee may rewrite fee state below. Treating
@@ -611,7 +625,7 @@ export const upsertModelVersion = async ({
     data.description = expansion.html;
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
     // since, so the string about to be written is one it never checked.
-    await throwOnBlockedLinkDomain(data.description);
+    await throwOnBlockedUserContent(data.description, { isModerator, surface: 'modelVersion' });
   }
 
   // Validate NSFW + restricted base model combination
@@ -1047,7 +1061,7 @@ export async function applyModelVersionContentChange({
 }) {
   // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
-  await throwOnBlockedLinkDomain(description);
+  await throwOnBlockedUserContent(description, { surface: 'modelVersion' });
 
   let modelId: number;
   if (context) {
@@ -2015,6 +2029,8 @@ export const upsertExplorationPrompt = async ({
   index,
   prompt,
 }: UpsertExplorationPromptInput) => {
+  await throwOnBlockedUserContent([name, prompt], { surface: 'explorationPrompt' });
+
   try {
     const explorationPrompt = await dbWrite.modelVersionExploration.upsert({
       where: { modelVersionId_name: { modelVersionId, name } },

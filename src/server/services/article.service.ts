@@ -34,7 +34,7 @@ import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { deriveArticleIngestionState } from '~/server/services/article-ingestion.helpers';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -202,6 +202,11 @@ export const getArticles = async ({
       (!ids && !username && !collectionId && !followed && !hidden && !favorites && !userIds);
 
     const AND: Prisma.Sql[] = [];
+    let collectionJoin = Prisma.empty;
+
+    if (sort === ArticleSort.RecentlyAdded && !collectionId) {
+      throw throwBadRequestError('Recently Added sort requires a collectionId');
+    }
 
     if (query) {
       AND.push(Prisma.sql`a."title" ILIKE ${'%' + query + '%'}`);
@@ -264,13 +269,22 @@ export const getArticles = async ({
         userId: sessionUser?.id,
       });
 
-      AND.push(
-        Prisma.sql`EXISTS (
+      // A semi-join cannot expose ci."id" to the ORDER BY. Safe to widen: CollectionItem_article_idx
+      // is unique on ("collectionId", "articleId"), so the join cannot multiply rows.
+      // schema.full.prisma does not declare it — see containers/db/docker-init/02_all_dll.sql.
+      if (sort === ArticleSort.RecentlyAdded) {
+        collectionJoin = Prisma.sql`JOIN "CollectionItem" ci ON ci."articleId" = a."id"
+          AND ci."collectionId" = ${collectionId}
+          AND ${Prisma.join(collectionItemModelsRawAND, ' AND ')}`;
+      } else {
+        AND.push(
+          Prisma.sql`EXISTS (
         SELECT 1 FROM "CollectionItem" ci
         WHERE ci."articleId" = a."id"
         AND ci."collectionId" = ${collectionId}
         AND ${Prisma.join(collectionItemModelsRawAND, ' AND ')})`
-      );
+        );
+      }
     }
 
     if (!isOwnerRequest) {
@@ -385,6 +399,10 @@ export const getArticles = async ({
         sortExpr = `extract(epoch from a."updatedAt")`;
         sortDir = 'DESC';
         break;
+      case ArticleSort.RecentlyAdded:
+        sortExpr = `ci."id"`;
+        sortDir = 'DESC';
+        break;
       case ArticleSort.Newest:
       default:
         sortExpr = `extract(epoch from a."publishedAt")`;
@@ -411,6 +429,7 @@ export const getArticles = async ({
       FROM "Article" a
       LEFT JOIN "User" u ON a."userId" = u.id
       LEFT JOIN "ArticleRank" rank ON rank."articleId" = a.id
+      ${collectionJoin}
       WHERE ${Prisma.join(AND, ' AND ')}
     `;
     const articles = await dbRead.$queryRaw<(ArticleRaw & { cursorV: number })[]>`
@@ -790,7 +809,10 @@ export const upsertArticle = async ({
   scanContent?: boolean;
 }) => {
   try {
-    await throwOnBlockedLinkDomain(data.content);
+    await throwOnBlockedUserContent([data.title, data.content], {
+      isModerator,
+      surface: 'article',
+    });
 
     // For updates, fetch article early so we can enforce its stored locks and check cover
     // image ownership and NSFW level
@@ -863,7 +885,7 @@ export const upsertArticle = async ({
 
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
     // spliced in above, so the string about to be written is one it never checked.
-    await throwOnBlockedLinkDomain(data.content);
+    await throwOnBlockedUserContent(data.content, { isModerator, surface: 'article' });
 
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
@@ -1294,7 +1316,7 @@ export async function applyArticleContentChange({
    */
   context?: ArticleContentChangeContext;
 }) {
-  await throwOnBlockedLinkDomain(content);
+  await throwOnBlockedUserContent(content, { surface: 'article' });
 
   let resolved = context;
   if (!resolved) {
@@ -2605,6 +2627,8 @@ export async function createArticleRatingReview({
   userId: number;
   isModerator?: boolean;
 }) {
+  await throwOnBlockedUserContent(userComment, { isModerator, surface: 'articleRatingReview' });
+
   // --- Validate the suggested level against the canonical bitwise set ---
   if (!VALID_NSFW_LEVELS.has(suggestedLevel)) {
     throw throwBadRequestError(

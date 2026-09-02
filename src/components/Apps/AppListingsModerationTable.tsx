@@ -345,10 +345,41 @@ export function AppListingsModerationTable({
                       <Badge size="xs" color={statusChip.color} variant="light">
                         {statusChip.label}
                       </Badge>
+                      {/* 🔴 THE ONLY MODERATOR SURFACE THAT SHOWS THE BETA DECLARATION.
+                          `betaMessage` is author-controlled PUBLIC copy that no moderator
+                          reviews before it goes live — beta is a TRIVIAL patch field, so it
+                          never enters the review queue, and the mod review preview only
+                          renders listings that are already IN review. Without this the DTO
+                          carried the fields and nothing branched on them, so the feature's
+                          only claimed human mitigation did not exist. The delist / takedown
+                          actions in this same table are the remedy. */}
+                      {row.isBeta && (
+                        <Badge
+                          size="xs"
+                          color="violet"
+                          variant="light"
+                          data-testid="apps-listing-mod-beta"
+                        >
+                          Beta
+                        </Badge>
+                      )}
                     </Group>
                     {row.name && (
                       <Text size="xs" c="dimmed">
                         {row.name}
+                      </Text>
+                    )}
+                    {/* Rendered as PLAIN TEXT, like every other consumer of this string —
+                        never markdown, never innerHTML. Only shown when the flag is on,
+                        matching the projection, so a stale note cannot surface here either. */}
+                    {row.isBeta && row.betaMessage && (
+                      <Text
+                        size="xs"
+                        c="dimmed"
+                        fs="italic"
+                        data-testid="apps-listing-mod-beta-message"
+                      >
+                        “{row.betaMessage}”
                       </Text>
                     )}
                   </Table.Td>

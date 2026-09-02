@@ -108,7 +108,7 @@ import { createJob } from './job';
  *
  *   (time() - max_over_time((max(monitor_last_run_timestamp_seconds != 0))[24h:1m])) > 900
  *
- * Both rules ship in talos-infra#1072 with promtool tests.
+ * Both rules ship from the infra repo, with promtool tests.
  */
 
 const HOUR = 3600;

@@ -319,6 +319,47 @@ describe('patchUserSettings — the nested merge', () => {
   });
 });
 
+describe('patchUserSettings — the deep nested merge', () => {
+  it('merges INTO the named sub-key rather than replacing it', async () => {
+    await patchUserSettings(USER_ID, {
+      deepMergeInto: { tourSettings: { welcome: { completed: true } } },
+    });
+
+    expect(statements).toHaveLength(1);
+    const [write] = statements;
+    // `mergeInto`'s guard above stops at the top-level key; this is a SEPARATE
+    // SQL-construction path that reads and guards one level further — the sub-key
+    // itself — so a sibling sub-key another writer just added to the same tour survives.
+    expect(write.text).toMatch(
+      /CASE WHEN jsonb_typeof\(settings->\$\d+::text->\$\d+::text\) = *'object' *THEN *settings->\$\d+::text->\$\d+::text *ELSE *'\{\}'::jsonb *END *\|\| *\$\d+::jsonb/
+    );
+    expect(write.values).toContainEqual('tourSettings');
+    expect(write.values).toContainEqual('welcome');
+    expect(write.values).toContainEqual(JSON.stringify({ completed: true }));
+    expect(write.text).not.toContain('tourSettings');
+    expect(write.text).not.toContain('welcome');
+  });
+
+  it('preserves an apostrophe in both the tour key and its value', async () => {
+    const tourKey = "d'artagnan-tour";
+    const value = { reason: "it's done" };
+
+    await patchUserSettings(USER_ID, {
+      deepMergeInto: { tourSettings: { [tourKey]: value } },
+    });
+
+    expect(statements).toHaveLength(1);
+    const [write] = statements;
+    // `tourSettingsSchema` types the tour key as an unconstrained `z.string()`; unlike
+    // `mergeInto`'s fixed top-level keys, this one can carry whatever `user.setSettings`
+    // is given — apostrophe included — so it has to bind rather than splice too.
+    expect(write.values).toContainEqual(tourKey);
+    expect(write.values).toContainEqual(JSON.stringify(value));
+    expect(write.text).not.toContain(tourKey);
+    expect(write.text).not.toContain("it's done");
+  });
+});
+
 describe('setAlertDismissed — the set operation', () => {
   it('appends to the STORED array, guarded against a duplicate', async () => {
     await setAlertDismissed(USER_ID, 'notice-a', true);

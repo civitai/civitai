@@ -1665,6 +1665,12 @@ export const getAllImages = async (
       new Error('getAllImages cannot serve a hub; hub queries must use the index path')
     );
 
+  // Ahead of every early empty return below: the point of throwing rather than falling back is
+  // that the misuse is legible, and an empty page from one of those branches hides it.
+  if (input.sort === ImageSort.RecentlyAdded && !input.collectionId) {
+    throw throwBadRequestError('Recently Added sort requires a collectionId');
+  }
+
   const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
     id: input.user?.id,
     username: input.user?.username,
@@ -2103,13 +2109,14 @@ export const getAllImages = async (
     WITH.push(
       Prisma.sql`
         ct AS (
-          SELECT "imageId", note, status, "addedById", "sortKey"
+          SELECT "imageId", note, status, "addedById", "collectionItemId", "sortKey"
           FROM (
             SELECT
               ci."imageId",
               ci.note,
               ci.status,
               ci."addedById",
+              ci.id as "collectionItemId",
               abs(mod(hashtext(concat(ci.id::text, '${Prisma.raw(
                 seedStr
               )}')), 1000000000)) as "sortKey"
@@ -2160,6 +2167,8 @@ export const getAllImages = async (
     if (sort === ImageSort.Random) {
       isPersonalized = true; // random ordering should not be pinned by a cache
       orderBy = 'ct."sortKey" DESC, i."id" DESC';
+    } else if (sort === ImageSort.RecentlyAdded) {
+      orderBy = 'ct."collectionItemId" DESC';
     }
     // TODO this causes the app to spike
     // else if (sort === ImageSort.Oldest) {
@@ -6502,7 +6511,19 @@ export const getImage = async ({
     );
 
     if (!withoutPost) {
-      AND.push(Prisma.sql`(p."availability" != 'Private' OR p."userId" = ${userId})`);
+      // Post gates sit in the WHERE, not the JOIN: an image outlives a deleted post (`Image.postId`
+      // is ON DELETE SET NULL) and an inner join drops it before ownership is tested. Nothing on
+      // `Image` separates that from a never-posted upload, so only the owner may fetch a postless one.
+      AND.push(
+        Prisma.sql`(
+          p."publishedAt" < now()
+          OR p."userId" = ${userId}
+          OR (i."postId" IS NULL AND i."userId" = ${userId})
+        )`
+      );
+      AND.push(
+        Prisma.sql`(i."postId" IS NULL OR p."availability" != 'Private' OR p."userId" = ${userId})`
+      );
     }
 
     // A Blocked-level rating is a ToS removal (or a pending-Blocked verdict awaiting
@@ -6559,7 +6580,7 @@ export const getImage = async ({
       ${
         !withoutPost
           ? Prisma.sql`
-            p."availability" "availability",
+            COALESCE(p."availability", 'Public') "availability",
             GREATEST(p."publishedAt", i."scannedAt", i."createdAt") "publishedAt",
           `
           : Prisma.sql`'Public' "availability",`
@@ -6572,17 +6593,7 @@ export const getImage = async ({
       ) reactions
     FROM "Image" i
     JOIN "User" u ON u.id = i."userId"
-    ${Prisma.raw(
-      withoutPost
-        ? ''
-        : // Now that moderators can review images without post, we need to make this optional
-          // in case they land in an image-specific review flow
-          `${isModerator ? 'LEFT ' : ''}JOIN "Post" p ON p.id = i."postId" ${
-            !isModerator
-              ? `AND (p."publishedAt" < now()${userId ? ` OR p."userId" = ${userId}` : ''})`
-              : ''
-          }`
-    )}
+    ${Prisma.raw(withoutPost ? '' : `LEFT JOIN "Post" p ON p.id = i."postId"`)}
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
   if (!rawImages.length) throw throwNotFoundError(`No image with id ${id}`);

@@ -26,7 +26,7 @@ import { useCurrentUserSettings, useMutateUserSettings } from '~/components/User
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 
 /**
  * Creator Controls: USER-default metric privacy (level 1 of 3). Sets the baseline
@@ -42,6 +42,7 @@ export function CreatorControlsCard() {
   const user = useCurrentUser();
   const flags = useFeatureFlags();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const { requirements } = useCreatorProgramRequirements();
   const { hideModelBuzz, hideModelDownloads, hideModelGenerations, hideDonationGoals } =
     useCurrentUserSettings();

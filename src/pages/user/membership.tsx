@@ -70,7 +70,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { trpc } from '~/utils/trpc';
 import { booleanString } from '~/utils/zod-helpers';
 import styles from './membership.module.scss';
@@ -142,6 +142,7 @@ export default function UserMembership() {
   const paymentProvider = usePaymentProvider();
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
   const canUpgrade = useCanUpgrade();
   const router = useRouter();
   const { classNames: buzzClassNames, colorRgb: buzzColorRgb } =

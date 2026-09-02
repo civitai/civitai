@@ -60,7 +60,7 @@ export type LicensingFeeSettlementCurrency = "Buzz" | "Cash";
 
 export type ModelVersionEngagementType = "Notify";
 
-export type ModelHashType = "AutoV1" | "AutoV2" | "AutoV3" | "SHA256" | "CRC32" | "BLAKE3" | "SHA256_12";
+export type ModelHashType = "AutoV1" | "AutoV2" | "AutoV3" | "SHA256" | "CRC32" | "BLAKE3" | "SHA256_12" | "SSHS_12";
 
 export type ScanResultCode = "Pending" | "Success" | "Danger" | "Error";
 
@@ -545,6 +545,7 @@ export interface User {
   questionReactions?: QuestionReaction[];
   answerReactions?: AnswerReaction[];
   commentV2Reactions?: CommentV2Reaction[];
+  threadMutes?: ThreadMute[];
   answerVotes?: AnswerVote[];
   tagsEngaged?: TagEngagement[];
   imageReactions?: ImageReaction[];
@@ -2020,6 +2021,8 @@ export interface AppListing {
   contentRating: string | null;
   externalUrl: string | null;
   sourceRepoUrl: string | null;
+  isBeta: boolean;
+  betaMessage: string | null;
   connectClientId: string | null;
   connectClient?: OauthClient | null;
   connectRequestedScopes: number | null;
@@ -2572,6 +2575,15 @@ export interface Thread {
   comments?: CommentV2[];
   directChildren?: Thread[];
   children?: Thread[];
+  mutes?: ThreadMute[];
+}
+
+export interface ThreadMute {
+  userId: number;
+  user?: User;
+  threadId: number;
+  thread?: Thread;
+  mutedAt: Date;
 }
 
 export interface QuestionReaction {

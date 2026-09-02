@@ -130,6 +130,7 @@ async function postJson(opts: {
 export type ModEndpoint =
   | 'comment/bulk-delete'
   | 'comment/remove-as-tos'
+  | 'comment/restore-from-tos'
   | 'csam/training-data-report'
   | 'image/tag-vote'
   | 'minor-flag/confirm'
@@ -224,7 +225,7 @@ const countOf = (body: Record<string, unknown>, keys: string[]) =>
 // BULK COMMENT ACTIONS (Retool's DeleteComments / ToSComments). Both tables in one call, matching the
 // endpoint's contract and Retool's Model Comments / Other Comments split.
 export async function bulkCommentAction(input: {
-  action: 'bulkDelete' | 'removeAsTos';
+  action: 'bulkDelete' | 'removeAsTos' | 'restoreFromTos';
   commentIds: number[];
   commentV2Ids: number[];
   userId: number;
@@ -233,10 +234,17 @@ export async function bulkCommentAction(input: {
   if (!input.commentIds.length && !input.commentV2Ids.length)
     return { ok: false, error: 'Select at least one comment.' };
 
+  const ENDPOINTS = {
+    bulkDelete: ['comment/bulk-delete', 'Comment delete'],
+    removeAsTos: ['comment/remove-as-tos', 'Comment ToS'],
+    restoreFromTos: ['comment/restore-from-tos', 'Comment ToS restore'],
+  } as const;
+  const [path, label] = ENDPOINTS[input.action];
+
   const result = await callModEndpoint(
-    input.action === 'bulkDelete' ? 'comment/bulk-delete' : 'comment/remove-as-tos',
+    path,
     { commentIds: input.commentIds, commentV2Ids: input.commentV2Ids },
-    input.action === 'bulkDelete' ? 'Comment delete' : 'Comment ToS'
+    label
   );
   if (!result.ok) return result;
 
@@ -247,6 +255,7 @@ export async function bulkCommentAction(input: {
       ? countOf(section as Record<string, unknown>, ['count'])
       : 0;
   };
+  // `restoreFromTos` nests per table exactly like `removeAsTos`; only `bulkDelete` is flat.
   const affected =
     input.action === 'bulkDelete'
       ? countOf(result.body, ['commentDeleted', 'commentV2Deleted'])
@@ -254,7 +263,13 @@ export async function bulkCommentAction(input: {
 
   // Reporting success on zero would write a ModActivity row attributing a deletion that did not happen.
   if (affected === 0)
-    return { ok: false, error: 'Nothing changed — those comments may already be gone. Reload.' };
+    return {
+      ok: false,
+      error:
+        input.action === 'restoreFromTos'
+          ? 'Nothing changed — those comments may not be flagged. Reload.'
+          : 'Nothing changed — those comments may already be gone. Reload.',
+    };
 
   await logAction(`comments:${input.action}:${affected}`, input.userId, input.moderatorId);
   // Both endpoints count rows they actually wrote, so a short count is real.
@@ -439,16 +454,27 @@ export const alreadyBannedError = (ban: boolean) =>
  *
  * Polls rather than reading once, and reads the PRIMARY: the write is in flight, so a replica can
  * answer from before it. A false negative withholds a caller's follow-up action; it never bans twice.
+ *
+ * 🔴 Polls `banDetails.completedAt`, NOT `bannedAt`. `toggleBan` writes `bannedAt` before any of the
+ * fan-out — model unpublish, media block, comment flagging, index removal, subscription cancels — so
+ * confirming on it returns while every one of those is still running on the primary, and Bulk Ban's
+ * checkpoint paced the loop without bounding what overlapped. `completedAt` is stamped as the last
+ * statement of the ban branch, so it is the only signal that means the expensive half is done.
+ *
+ * ⚠️ **Deploy the main app first.** An older `toggleBan` never writes `completedAt`, so this reports
+ * every ban unconfirmed and Bulk Ban stops with a 502 after its first checkpoint. There is deliberately
+ * no fall back to `bannedAt`: from here a missing stamp is indistinguishable from a fan-out still in
+ * flight, and falling back would silently restore the unbounded behaviour this exists to end.
  */
-export async function banConfirmed(userId: number, attempts = 6): Promise<boolean> {
+export async function banConfirmed(userId: number, attempts = 20): Promise<boolean> {
   for (let attempt = 0; attempt < attempts; attempt++) {
     await new Promise((resolve) => setTimeout(resolve, 500));
     const row = await dbWrite
       .selectFrom('User')
-      .select('bannedAt')
+      .select(sql<string | null>`meta #>> '{banDetails,completedAt}'`.as('completedAt'))
       .where('id', '=', userId)
       .executeTakeFirst();
-    if (row?.bannedAt) return true;
+    if (row?.completedAt) return true;
   }
   return false;
 }

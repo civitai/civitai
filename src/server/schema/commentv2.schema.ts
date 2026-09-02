@@ -1,4 +1,6 @@
 import * as z from 'zod';
+import { CacheTTL } from '~/server/common/constants';
+import type { RateLimit } from '~/server/middleware.trpc';
 import { constants } from '~/server/common/constants';
 import { ThreadSort } from '~/server/common/enums';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
@@ -84,3 +86,36 @@ export const getCommentsInfiniteSchema = commentConnectorSchema.extend({
   repliesDepth: z.number().min(0).max(20).optional(),
   repliesLimit: z.number().min(1).max(50).default(constants.comments.replyPageSize),
 });
+
+export const toggleThreadMuteSchema = z.object({
+  commentId: z.number(),
+});
+export type ToggleThreadMuteInput = z.infer<typeof toggleThreadMuteSchema>;
+
+/**
+ * Muting is a normal, repeatable user action, so this is generous by design — it exists to bound
+ * enumeration, not to ration the feature. Both mute endpoints share one budget (see the router), or
+ * the budget is simply twice as large as it reads.
+ */
+export const muteRateLimits: RateLimit[] = [
+  { limit: 60, period: CacheTTL.hour },
+  { limit: 300, period: CacheTTL.day },
+];
+
+/**
+ * The entity types a section mute can address: every one whose `Thread` row is findable by a single
+ * unique column, `<entityType>Id`.
+ *
+ * `comicChapter` is excluded because there is no `comicChapterId` — comic threads hang off
+ * `@@unique([comicProjectId, comicChapterPosition])`. Passing it builds `where: { comicChapterId }`,
+ * which Prisma rejects as an unknown argument, so the endpoint 500s rather than returning "not
+ * muted". The comics page does supply that entityType, so this is reachable rather than theoretical.
+ *
+ * `comment` is excluded for a different reason: a comment's thread is muted through
+ * `toggleThreadMute`, which takes the comment id. Routing it here as well would give one thread two
+ * doors with different names.
+ */
+export const sectionMuteSchema = commentConnectorSchema.pick({ entityId: true }).extend({
+  entityType: commentConnectorSchema.shape.entityType.exclude(['comicChapter', 'comment']),
+});
+export type SectionMuteInput = z.infer<typeof sectionMuteSchema>;

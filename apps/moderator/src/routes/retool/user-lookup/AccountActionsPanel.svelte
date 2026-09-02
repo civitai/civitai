@@ -19,7 +19,16 @@
     identity,
     canAct,
     canToggleModerator,
-  }: { identity: Identity; canAct: boolean; canToggleModerator: boolean; } =
+    canBan,
+    canPurge,
+  }: {
+    identity: Identity;
+    canAct: boolean;
+    canToggleModerator: boolean;
+    /** Ban and purge are separate grants, not one "enforcement" right: purge has no way back. */
+    canBan: boolean;
+    canPurge: boolean;
+  } =
     $props();
 
 
@@ -130,15 +139,23 @@
         <Button type="submit" size="sm" disabled={form.submitting}>Refresh session</Button>
       </form>
 
-      {#if identity.bannedAt}
-        <Button size="sm" onclick={() => (confirming = 'unban')}>Unban</Button>
-      {:else}
-        <Button size="sm" variant="destructive" onclick={() => (confirming = 'ban')}>Ban</Button>
+      <!-- Gated on the action's own grant, not on `canAct`: reaching this page and being allowed to end
+           an account are different rights, and the server now enforces them separately. Showing a
+           control the action will refuse is how an operator learns a permission exists by being told
+           no. -->
+      {#if canBan}
+        {#if identity.bannedAt}
+          <Button size="sm" onclick={() => (confirming = 'unban')}>Unban</Button>
+        {:else}
+          <Button size="sm" variant="destructive" onclick={() => (confirming = 'ban')}>Ban</Button>
+        {/if}
       {/if}
 
-      <Button size="sm" variant="destructive" onclick={() => (confirming = 'purge')}>
-        Purge content
-      </Button>
+      {#if canPurge}
+        <Button size="sm" variant="destructive" onclick={() => (confirming = 'purge')}>
+          Purge content
+        </Button>
+      {/if}
     </div>
 
     <div class="mt-4 border-t border-dark-4 pt-4">

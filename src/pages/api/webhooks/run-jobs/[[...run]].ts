@@ -89,6 +89,7 @@ import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
 import { refreshFeaturedCollectionsEligibility } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { autoFeatureImages } from '~/server/jobs/auto-feature-images';
+import { autoFeatureHealthCheckJob } from '~/server/jobs/auto-feature-health-check';
 import { reemitBitdexOps } from '~/server/jobs/reemit-bitdex-ops';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
@@ -100,6 +101,7 @@ import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
 import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
+import { searchIndexQueueDrainJob } from '~/server/jobs/search-index-queue-drain';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
 import { sendCollectionNotifications } from '~/server/jobs/send-collection-notifications';
@@ -158,10 +160,12 @@ export const jobs: Job[] = [
   updateCollectionItemRandomId,
   refreshFeaturedCollectionsEligibility,
   autoFeatureImages,
+  autoFeatureHealthCheckJob,
   ...metricJobs,
   ...searchIndexJobs,
   searchIndexUserCleanupJob,
   searchIndexCleanupJob,
+  searchIndexQueueDrainJob,
   processRewards,
   rewardsDailyReset,
   ...bountyJobs,

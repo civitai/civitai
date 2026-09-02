@@ -42,11 +42,13 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
+import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { useMembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
+import { GEN_BUZZ_KEY, GEN_SUBMIT_KEY, GEN_SUBMIT_TARGET } from '~/components/Tours/tour-targets';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -212,11 +214,14 @@ export function BuzzTypeSelector({
   loading,
   error,
   onRetry,
+  tourTarget,
 }: {
   cost: number;
   loading: boolean;
   error?: boolean;
   onRetry?: () => void;
+  /** `data-tour` for the cost button. Only the generator's tour spotlights it. */
+  tourTarget?: string;
 }) {
   const { availableTypes, selectedType, setBuzzType } = useSelectedBuzzType();
   const buzzConfig = useBuzzCurrencyConfig(selectedType);
@@ -255,6 +260,7 @@ export function BuzzTypeSelector({
     return (
       <Tooltip label="Failed to estimate cost. Click to retry.">
         <Button
+          data-tour={tourTarget}
           variant="default"
           size="compact-sm"
           className="h-full gap-1 px-2"
@@ -272,6 +278,7 @@ export function BuzzTypeSelector({
     <Menu position="top" withinPortal onChange={handleMenuOpen}>
       <Menu.Target>
         <Button
+          data-tour={tourTarget}
           variant="default"
           size="compact-sm"
           className={clsx('h-full gap-1 px-2', showGlow && 'animate-buzz-glow')}
@@ -317,7 +324,13 @@ function ConnectedBuzzTypeSelector() {
   const { isLoading, isError, refetch } = useWhatIfContext();
   const cost = useTotalGenerationCost();
   return (
-    <BuzzTypeSelector cost={cost} loading={isLoading} error={isError} onRetry={() => refetch()} />
+    <BuzzTypeSelector
+      cost={cost}
+      loading={isLoading}
+      error={isError}
+      onRetry={() => refetch()}
+      tourTarget={GEN_BUZZ_KEY}
+    />
   );
 }
 
@@ -378,6 +391,7 @@ export function useSelfHostedBlock() {
 export function SelfHostedBlockedAlert() {
   const { blockedEcosystem, state, message } = useSelfHostedBlock();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
 
   if (!blockedEcosystem) return null;
 
@@ -661,7 +675,7 @@ interface SubmitButtonProps {
 }
 
 function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) {
-  const { running, helpers } = useTourContext();
+  const { running, helpers, setBlockedTarget } = useTourContext();
   const { selectedType } = useSelectedBuzzType();
   const { color } = useBuzzCurrencyConfig(selectedType);
 
@@ -676,6 +690,23 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   } = useQueryBuzz([selectedType]);
   const balance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
   const insufficientBuzz = !isBuzzLoading && totalCost > 0 && balance < totalCost;
+  const canGenerate = useGenerationContext((state) => state.canGenerate);
+
+  const submitBlocked =
+    !canGenerate ||
+    isWhatIfLoading ||
+    isBuzzLoading ||
+    isError ||
+    !canEstimateCost ||
+    insufficientBuzz;
+
+  // This hideFooter step's only way forward is this button, so it needs Next back when
+  // the button is legitimately disabled — scoped to this step's own target so an unrelated
+  // hideFooter step doesn't inherit the block. See ToursProvider's blockedTarget doc.
+  useEffect(() => {
+    setBlockedTarget(running && submitBlocked ? GEN_SUBMIT_TARGET : null);
+    return () => setBlockedTarget(null);
+  }, [running, submitBlocked, setBlockedTarget]);
 
   const handleClick = () => {
     if (running) helpers?.next();
@@ -685,14 +716,11 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   return (
     <GenerateButton
       type="button"
-      data-tour="gen:submit"
+      data-tour={GEN_SUBMIT_KEY}
       className="h-full flex-1 px-2"
       color={color}
       loading={isSubmitting}
-      disabled={
-        !running &&
-        (isWhatIfLoading || isBuzzLoading || isError || !canEstimateCost || insufficientBuzz)
-      }
+      disabled={submitBlocked}
       onClick={handleClick}
     />
   );
@@ -961,6 +989,7 @@ function QuantityFieldInner({
 function BlueBuzzMatureReminder() {
   const { variant, acknowledged } = useMembershipUpsell();
   const serverDomains = useServerDomains();
+  const syncAccount = useSyncAccount();
 
   if (variant !== 'blue-on-red' || !acknowledged) return null;
 

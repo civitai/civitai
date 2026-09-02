@@ -135,6 +135,9 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
       id: true,
       type: true,
       modelVersionId: true,
+      // SSHS_12 comes from the metadata-parse step, but the hash rebuild below deletes every row
+      // for the file — so a hash-only rescan has to re-derive it from what is already stored.
+      headerData: true,
       modelVersion: { select: { modelId: true, model: { select: { userId: true } } } },
     },
   });
@@ -205,7 +208,11 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   // Hash upsert (delete + createMany) — same pattern as legacy.
   if (outcome.hashes) {
     const hashRows = (
-      Object.entries(normalizeScanHashes(outcome.hashes)) as Array<[ModelHashType, string]>
+      Object.entries(
+        // outcome.headerData is absent on a hash-only rescan, and this rebuild deletes every row
+        // for the file — so the stored column is what keeps SSHS_12 from being dropped.
+        normalizeScanHashes(outcome.hashes, outcome.headerData ?? file.headerData)
+      ) as Array<[ModelHashType, string]>
     )
       .filter(([, hash]) => Boolean(hash))
       .map(([type, hash]) => ({ fileId, type, hash }));
@@ -423,6 +430,26 @@ type ModelScanStep =
 
 const AUTOV3_LENGTH = 12;
 const SHA256_12_LENGTH = 12;
+const SSHS_12_LENGTH = 12;
+
+/**
+ * `left(sshs_model_hash, 12)` from a safetensors header, or undefined when the file has no such key.
+ *
+ * Stored verbatim, prefix included. A1111/Forge read `sshs_model_hash` out of the header in
+ * preference to hashing the file and truncate it to 12 characters for the infotext, so when the
+ * trainer wrote a `0x` prefix only 10 hex digits survive — and the value under that prefix is
+ * computed at training time over a re-serialisation, so it is not derivable from the shipped file's
+ * bytes and does not equal AutoV3. Measured on prod: of 3,109 prefixed files, stripping `0x` and
+ * comparing against AutoV3 matched 1. See docs/image-resource-hash-matching.md.
+ */
+export function deriveSshsHash(headerData: unknown): string | undefined {
+  if (!headerData || typeof headerData !== 'object' || Array.isArray(headerData)) return undefined;
+  const raw = (headerData as Record<string, unknown>).sshs_model_hash;
+  if (typeof raw !== 'string') return undefined;
+
+  const short = raw.trim().toLowerCase().slice(0, SSHS_12_LENGTH);
+  return short.length === SSHS_12_LENGTH ? short : undefined;
+}
 
 const orchestratorHashFieldMap: Record<string, ModelHashType> = {
   sha256: ModelHashType.SHA256,
@@ -468,7 +495,8 @@ const orchestratorHashFieldMap: Record<string, ModelHashType> = {
  * authority for those, and re-deriving them here would put two systems in charge of one value.
  */
 export function normalizeScanHashes(
-  hashes: Partial<Record<ModelHashType, string>>
+  hashes: Partial<Record<ModelHashType, string>>,
+  headerData?: unknown
 ): Partial<Record<ModelHashType, string>> {
   const out: Partial<Record<ModelHashType, string>> = { ...hashes };
 
@@ -478,6 +506,11 @@ export function normalizeScanHashes(
   // from it would give every such file the same 12-char hash and make them match each other.
   const sha256 = out.SHA256;
   if (sha256 && !/^0+$/.test(sha256)) out.SHA256_12 = sha256.slice(0, SHA256_12_LENGTH);
+
+  // Only added when no other row already carries the value — sshs_model_hash equals AutoV3 for
+  // ~98% of files, and a duplicate row matches nothing the sibling would not have matched.
+  const sshs = deriveSshsHash(headerData);
+  if (sshs && !Object.values(out).some((hash) => hash?.toLowerCase() === sshs)) out.SSHS_12 = sshs;
 
   return out;
 }

@@ -202,6 +202,7 @@ export const ECO = {
 
   // Root ecosystems - Audio models
   AceAudio: 68,
+  MiniMaxMusic3: 85,
 
   // Root ecosystems - 3D Model providers
   // PolyGen has been displaced twice on main merges:
@@ -211,6 +212,8 @@ export const ECO = {
   PolyGen: 73,
   Tripo: 75,
   Hunyuan3D: 76,
+  Pixal3D: 83,
+  Trellis2: 84,
 
   // Utility ecosystems
   Upscaler: 66,
@@ -834,6 +837,13 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'ACE Audio',
     sortOrder: 300,
   },
+  {
+    id: ECO.MiniMaxMusic3,
+    key: 'MiniMaxMusic3',
+    displayName: 'MiniMax Music 3',
+    // 301-305 were taken by the 3D block before this landed.
+    sortOrder: 306,
+  },
 
   // 3D Model ecosystems
   {
@@ -854,6 +864,18 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Hunyuan3D',
     sortOrder: 303,
   },
+  {
+    id: ECO.Pixal3D,
+    key: 'Pixal3D',
+    displayName: 'Pixal3D',
+    sortOrder: 304,
+  },
+  {
+    id: ECO.Trellis2,
+    key: 'Trellis2',
+    displayName: 'Trellis.2',
+    sortOrder: 305,
+  },
 ];
 
 export const ecosystemById = new Map(ecosystems.map((e) => [e.id, e]));
@@ -866,7 +888,13 @@ export const ecosystemByKey = new Map(ecosystems.map((e) => [e.key, e]));
  * (their `BaseModelRecord`s register as `type: 'image'`). Single source of
  * truth for the 3D ecosystem picker filter in `getEcosystemDisplayItems`.
  */
-export const MODEL3D_ECOSYSTEM_IDS = new Set<number>([ECO.PolyGen, ECO.Tripo, ECO.Hunyuan3D]);
+export const MODEL3D_ECOSYSTEM_IDS = new Set<number>([
+  ECO.PolyGen,
+  ECO.Tripo,
+  ECO.Hunyuan3D,
+  ECO.Pixal3D,
+  ECO.Trellis2,
+]);
 
 /** Ecosystem keys for the 3D-model ecosystems (`model3d` output). */
 export const MODEL3D_ECOSYSTEM_KEYS = new Set<string>(
@@ -926,8 +954,13 @@ export const SELF_HOSTED_ECOSYSTEM_KEYS = [
   'LTXV25',
   // AceStepAudioInput
   'Ace',
+  // MiniMaxMusic3Input
+  'MiniMaxMusic3',
   // Hunyuan3dComfyPolyGenInput (3D; Meshy/Tripo are FAL and stay external)
   'Hunyuan3D',
+  // Trellis2ImageTo3dComfyPolyGenInput (3D; Pixal3D + Trellis.2 are modelVersions of trellis2)
+  'Pixal3D',
+  'Trellis2',
 ] as const;
 
 const selfHostedEcosystemKeySet = new Set<string>(SELF_HOSTED_ECOSYSTEM_KEYS);
@@ -1178,6 +1211,11 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // AceAudio - checkpoint only (audio generation)
   { ecosystemId: ECO.AceAudio, supportType: 'generation', modelTypes: checkpointOnly },
 
+  // MiniMax Music 3 - checkpoint only. The miniMaxMusic3 step takes `loras`, but
+  // the graph exposes no resources node, so advertising LoRA support would offer
+  // resources the form cannot send.
+  { ecosystemId: ECO.MiniMaxMusic3, supportType: 'generation', modelTypes: checkpointOnly },
+
   // PolyGen - remote 3D generator (Meshy via Fal). No Civitai checkpoint/LoRA;
   // entry exists so the unified generator picker can route 3D-Models workflows
   // and the dev-time `getEcosystemSupport` audit in workflows.ts stays clean.
@@ -1188,6 +1226,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // route the img2model3d workflow to these ecosystems.
   { ecosystemId: ECO.Tripo, supportType: 'generation', modelTypes: [] },
   { ecosystemId: ECO.Hunyuan3D, supportType: 'generation', modelTypes: [] },
+  { ecosystemId: ECO.Pixal3D, supportType: 'generation', modelTypes: [] },
+  { ecosystemId: ECO.Trellis2, supportType: 'generation', modelTypes: [] },
 
   // Upscaler - upscaler models only
   { ecosystemId: ECO.Upscaler, supportType: 'generation', modelTypes: [ModelType.Upscaler] },
@@ -1629,6 +1669,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Other,
     defaults: {
       model: { id: 164821 },
+    },
+  },
+  {
+    ecosystemId: ECO.MiniMaxMusic3,
+    defaults: {
+      model: { id: 3225593 },
+      modelLocked: true,
     },
   },
   {
@@ -2143,6 +2190,9 @@ export const BM = {
   Reve: 96,
   MageFlow: 97,
   Flux3Video: 98,
+  Pixal3D: 102,
+  Trellis2: 103,
+  MiniMaxMusic3: 104,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2433,6 +2483,17 @@ export const licenses: LicenseRecord[] = [
     // MiniMax H3" is the separate, merely encouraged notice in III.3(a).
     attribution: 'MiniMax H3',
     poweredBy: 'MiniMax H3',
+  },
+  {
+    id: 42,
+    // Separate from ids 33 and 41: 33 is the Hailuo hosted-service ToS, 41 covers
+    // the H3 weights. Unlike 41 this one has no Applicable Territory clause.
+    name: 'MiniMax-Music3 Community License',
+    // Permalinked to the revision we read. Section 5.2 lets MiniMax amend the
+    // published text, so the `main` link is not a stable record of what we agreed to.
+    url: 'https://huggingface.co/MiniMaxAI/MiniMax-Music3/blob/fbdf52fbaaca799592917417eb05f1899f1255ec/LICENSE',
+    // Section 3.1 demands this exact string on the UI of a commercial product.
+    attribution: 'MiniMax-Music3',
   },
 ];
 
@@ -3496,6 +3557,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 13,
   },
 
+  // MiniMax Music 3
+  {
+    id: BM.MiniMaxMusic3,
+    name: 'MiniMax Music 3',
+    description: "MiniMax's full-song music generation model",
+    type: 'audio',
+    ecosystemId: ECO.MiniMaxMusic3,
+    licenseId: 42,
+  },
+
   // PolyGen (Meshy via Fal) — remote 3D model generator. Type='image' matches
   // the Upscaler base-model convention for "no Civitai checkpoint" ecosystems
   // (Prisma's MediaType enum has no 'model3d' variant). Hidden from the
@@ -3524,6 +3595,22 @@ export const baseModelRecords: BaseModelRecord[] = [
     description: 'Hunyuan3D image-to-3D generation (via Comfy)',
     type: 'image',
     ecosystemId: ECO.Hunyuan3D,
+    hidden: true,
+  },
+  {
+    id: BM.Pixal3D,
+    name: 'Pixal3D',
+    description: 'Pixal3D image-to-3D generation (via Comfy)',
+    type: 'image',
+    ecosystemId: ECO.Pixal3D,
+    hidden: true,
+  },
+  {
+    id: BM.Trellis2,
+    name: 'Trellis.2',
+    description: 'Trellis.2 image-to-3D generation (via Comfy)',
+    type: 'image',
+    ecosystemId: ECO.Trellis2,
     hidden: true,
   },
 ];

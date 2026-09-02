@@ -30,6 +30,9 @@ export type UserIdentity = {
   bannedAt: Date | null;
   banReason: string | null;
   banDetails: string | null;
+  /** A contest ban is a SEPARATE state from `bannedAt` — the account is otherwise in good standing
+   *  and can still post — so it has to be its own badge rather than a detail under the ban one. */
+  contestBannedAt: string | null;
   customerId: string | null;
   rewardsEligibility: string | null;
   /** Retool showed both as header chips on every section. */
@@ -408,6 +411,7 @@ async function getIdentity(userId: number): Promise<UserIdentity | null> {
       // jsonb path extraction has no builder equivalent.
       sql<string | null>`u.meta #>> '{banDetails,reasonCode}'`.as('banReason'),
       sql<string | null>`u.meta #>> '{banDetails,detailsInternal}'`.as('banDetails'),
+      sql<string | null>`u.meta #>> '{contestBanDetails,bannedAt}'`.as('contestBannedAt'),
       // Retool joined both of these into the LANDING query — they are header chips there, not
       // something a moderator has to go looking for. Without them an account with a CSAM report filed
       // against it renders as clean, and a system auto-mute is indistinguishable from a manual one.

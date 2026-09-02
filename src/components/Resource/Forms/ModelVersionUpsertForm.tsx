@@ -109,32 +109,13 @@ import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-
-// The form keeps paid-access config — the timed early-access window AND the permanent gate — in this
-// UX-shaped local field; the API contract is `paidAccess` + `donationGoal`. These transforms map across
-// the boundary (submit / initial values).
-const formPaidAccessConfigSchema = z.object({
-  // Permanent = never-expiring gate (always paid); false = a timed Early Access window that becomes free.
-  permanent: z.boolean().default(false),
-  timeframe: z.number(),
-  // "Price for access" — unlocks download + generation (the bundle). Required when charging.
-  accessPrice: z.number().optional(),
-  // Optional cheaper generation-only tier; defaults to the access price when unset.
-  generationPrice: z.number().optional(),
-  // Gate the download but leave generation free for everyone (no price, no trial limit).
-  freeGeneration: z.boolean().default(false),
-  // Accept Blue Buzz as payment at the same price — and be paid in it.
-  acceptsBlueBuzz: z.boolean().default(false),
-  // Free preview generations before purchase is required (the trial limit). Cleared/empty = 0 (no trial),
-  // matching Creator Studio; a new gate seeds the default via the enable switch.
-  freePreviewGenerations: z.preprocess(
-    (v) => (v === '' || v == null || (typeof v === 'number' && Number.isNaN(v)) ? 0 : v),
-    z.number().int()
-  ),
-  donationGoalEnabled: z.boolean().default(false),
-  donationGoal: z.number().optional(),
-});
-type FormPaidAccessConfig = z.infer<typeof formPaidAccessConfigSchema>;
+import {
+  type FormPaidAccessConfig,
+  type MonetizationDefaults,
+  formPaidAccessConfigSchema,
+  monetizationDefaultsSchema,
+} from '~/components/Resource/Forms/model-version-monetization-defaults';
+import { monetizationDefaultsStore } from '~/store/model-version-monetization-defaults.store';
 
 // Wrap the terms in the permanent/timed gate shape (or null for an off/invalid gate).
 function toGate(
@@ -795,6 +776,18 @@ export function ModelVersionUpsertForm({
         bountyId,
       });
 
+      // Remembered only once the server has taken it, so what comes back next time is a configuration
+      // that already cleared the eligibility floor, the fee ceiling and the affirmation — and read off
+      // the submitted values rather than form state, which can still hold a charge the payload dropped.
+      if (model?.type && (submittedFee > 0 || submittedGate)) {
+        let paidAccess: MonetizationDefaults['paidAccess'] = null;
+        if (submittedGate && gatedConfig) {
+          const { donationGoalEnabled, donationGoal, ...rest } = gatedConfig;
+          paidAccess = rest;
+        }
+        monetizationDefaultsStore.set(model.type, { fee: feeToRatio(submittedFee), paidAccess });
+      }
+
       await queryUtils.modelVersion.getById.invalidate({ id: result.id, withFiles: true });
       await queryUtils.modelVersion.getById.invalidate({ id: result.id });
       await queryUtils.modelVersion.getByIdForEdit.invalidate({ id: result.id, withFiles: true });
@@ -957,13 +950,73 @@ export function ModelVersionUpsertForm({
 
   // Removals the creator cannot prevent — the gate goes on save whatever they do, whether the submit
   // substitutes null (suppressed model, ungatable usage control) or an effect already cleared the config
-  // (non-commercial base model). Nothing to offer them, so say why instead. Anything reachable here
-  // without an arm below reads as the reversible early-access loss, which is the wrong sentence.
+  // (non-commercial base model). Nothing to offer them, so say why instead.
   const gateRemovalIsStructural = removingStoredGate && (gateSuppressed || !paidAccessUsageOk);
+  // The one thing a gate removal actually costs. A timed Early Access window can't be started again
+  // after publish (`canChooseTimed`), so dropping one is one-way; permanent Paid Access can be re-added
+  // whenever, so there is nothing to warn about there.
+  const gateRemovalLosesTimedWindow =
+    removingStoredGate && !gateRemovalIsStructural && isPublished && timedAlreadySet;
   // Whether the control each sentence is about is actually on screen (see the colour rule below).
   const removalControlsVisible =
     (!removingStoredFee || (showChargeSettings && showLicensingFeeBlock)) &&
     (!removingStoredGate || (showChargeSettings && showPaidAccessInput));
+
+  // What the creator last saved a charge with for this model type, offered back on a new version — the
+  // settings block otherwise resets on every model. Only ever a starting point: nothing is applied until
+  // they save, and the affirmation is never remembered, because it is a statement about THIS model.
+  //
+  // A version that already charges is left alone. Switching the section back on there is the explicit
+  // `restoreStoredCharges` path, and overwriting a stored price with a remembered one would be the
+  // silent re-pricing that path exists to avoid.
+  const applyMonetizationDefaults = () => {
+    if (hasExistingCharge) return;
+    const parsed = monetizationDefaultsSchema.safeParse(monetizationDefaultsStore.get(model?.type));
+    if (!parsed.success) return;
+    const { fee, paidAccess } = parsed.data;
+
+    // Clamped, not rejected: the ceiling is 5x on a video base model, so a fee remembered from one can
+    // exceed what this version may charge. The denominator has no such fallback — one the select cannot
+    // offer would seed an option with no item.
+    if (fee.buzz > 0 && showLicensingFeeBlock && feeImageOptions.includes(fee.images)) {
+      feeSeededRef.current = true;
+      setFeeEnabled(true);
+      applyFeeRatio({
+        buzz: Math.min(fee.buzz, feeMaxFor(limits, fee.images)),
+        images: fee.images,
+      });
+    }
+
+    // A remembered timed window is dropped rather than coerced when this version cannot offer it (past
+    // publish, or a length this creator hasn't unlocked): shortening someone's early-access window on
+    // their behalf is a worse answer than leaving the gate for them to set.
+    const timeframe = paidAccess?.timeframe;
+    const timedOfferable =
+      canChooseTimed &&
+      timeframe != null &&
+      earlyAccessUnlockedDays.includes(timeframe) &&
+      timeframe <= maxEarlyAccessValue;
+    if (paidAccess && showPaidAccessInput && (paidAccess.permanent || timedOfferable)) {
+      const config: FormPaidAccessConfig = {
+        ...paidAccess,
+        donationGoalEnabled: false,
+        donationGoal: undefined,
+      };
+      form.setValue('paidAccessConfig', config, { shouldDirty: true });
+      setGenMode(generationModeOf(config));
+    }
+  };
+
+  // Keyed to the pricing controls mounting, NOT to the switch: at the switch the creator has only the
+  // affirmation on screen, so a fee restored there is a charge with no control to see it by — and one
+  // `requiresRightsAffirmation` then refuses the save over. Same disclosure rule the seeded suggestion
+  // follows, and once per mount for the same reason: re-applying after a clear would undo it.
+  const monetizationDefaultsAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!showChargeSettings || monetizationDefaultsAppliedRef.current) return;
+    monetizationDefaultsAppliedRef.current = true;
+    applyMonetizationDefaults();
+  }, [showChargeSettings]);
 
   return (
     <>
@@ -1381,12 +1434,13 @@ export function ModelVersionUpsertForm({
                             ? "A private model can't have paid access, so this can't be kept."
                             : "This version's usage control can't be gated, so this can't be kept."}
                         </Text>
-                      ) : (
+                      ) : gateRemovalLosesTimedWindow ? (
                         <Text size="xs" c="red">
-                          You will not be able to add this model to early access again after
-                          removing it. Also, your payment for early access will be lost.
+                          This version is already published, so its Early Access window can&apos;t
+                          be started again once removed. Permanent paid access can still be added
+                          back at any time.
                         </Text>
-                      ))}
+                      ) : null)}
                     {/* No affordance for a removal the creator cannot prevent: the submit substitutes
                         null for these regardless, so restoring would clear nothing and read as broken.
                         The fully-blocked reasons (POI, non-commercial) never reach here — they render the

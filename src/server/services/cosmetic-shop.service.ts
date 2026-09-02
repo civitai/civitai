@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -200,6 +200,7 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
 
 export const upsertCosmeticShopItem = async ({
   userId,
+  isModerator,
   availableQuantity,
   availableTo,
   availableFrom,
@@ -207,7 +208,7 @@ export const upsertCosmeticShopItem = async ({
   archived,
   videoUrl,
   ...cosmeticShopItem
-}: UpsertCosmeticShopItemInput & { userId: number }) => {
+}: UpsertCosmeticShopItemInput & { userId: number; isModerator?: boolean }) => {
   // Read on the writer: this row gates a write (the pack refusal and the
   // quantity check below), and a lagging replica returning nothing would skip
   // both while the update still ran against the primary.
@@ -256,11 +257,21 @@ export const upsertCosmeticShopItem = async ({
     existingItem && ownerId !== userId
       ? () => getReferencedBlurbIds({ entityType: 'CosmeticShopItem', entityId: existingItem.id })
       : undefined;
+  await throwOnBlockedUserContent([cosmeticShopItem.title, cosmeticShopItem.description], {
+    isModerator,
+    surface: 'cosmeticShop',
+  });
+
   const expansion = await expandBlurbs({
     userId: ownerId,
     html: cosmeticShopItem.description ?? '',
     restrictToBlurbIds,
   });
+
+  // The guard above saw the CLIENT's html. A creator's blurb body was spliced in since, so the
+  // string about to be written is one it never checked — the same second call its four sibling
+  // upserts make, and the reason this file's guard count is three rather than one.
+  await throwOnBlockedUserContent(expansion.html, { isModerator, surface: 'cosmeticShop' });
 
   const data = {
     ...cosmeticShopItem,
@@ -351,7 +362,11 @@ export async function applyCosmeticShopItemContentChange({
 }) {
   // The blocklist can move after a blurb was saved, and this path has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
-  await throwOnBlockedLinkDomain(description);
+  //
+  // The shop copy itself is moderator-authored, but THIS argument is not: it is the body after a
+  // creator's blurb has been spliced into it, which is the whole reason the re-check is here. The
+  // four sibling fan-out adapters run the same guard.
+  await throwOnBlockedUserContent(description, { surface: 'cosmeticShop' });
 
   const updated = await dbWrite.cosmeticShopItem.updateMany({
     where: expectedDescription === undefined ? { id } : { id, description: expectedDescription },
@@ -1139,14 +1154,16 @@ export const purchaseCosmeticShopItem = async ({
         // the kickback would be a self-discount.
         // Every purchase declares its shop context: CIVITAI_SHOP_ATTRIBUTION
         // (-1) = the official Civitai shop (platform acts as the reseller and
-        // keeps the seller share), a user id = that user's storefront. Positive
-        // attributions are verified against the shop owner's settings; anything
-        // unverified, missing, or spoofed falls back to the official-shop split
-        // so bad attribution can never dodge the platform's share.
+        // keeps the seller share), a user id = that user's storefront. A positive
+        // attribution to another creator only diverts a share when a resale
+        // listing backs it; anything unverified, missing, or spoofed falls back to
+        // the official-shop split so bad attribution can never dodge the platform's
+        // share.
         //
-        // Verified attributions that keep the creator on the full pool: their
-        // own open shop, and a buyer purchasing through their OWN resell
-        // listing (no kickback — the seller share would be a self-discount).
+        // Attributions that keep the creator on the full pool: their own
+        // storefront (their own item, no reseller to pay), and a buyer purchasing
+        // through their OWN resell listing (no kickback — the seller share would
+        // be a self-discount).
         let resellerId: number | undefined;
         let creatorKeepsPool = false;
         // A reseller is paid the share recorded on their listing, not the item's
@@ -1157,13 +1174,11 @@ export const purchaseCosmeticShopItem = async ({
         let payoutShare = meta?.sellerShare ?? 0;
         if (creatorId && viaShopUserId && viaShopUserId > 0) {
           if (viaShopUserId === creatorId) {
-            const viaUser = await dbRead.user.findUnique({
-              where: { id: viaShopUserId },
-              select: { settings: true },
-            });
-            const viaShop = (viaUser?.settings as { creatorShop?: { enabled?: boolean } } | null)
-              ?.creatorShop;
-            creatorKeepsPool = viaShop?.enabled === true;
+            // A creator selling their own item on their own storefront keeps the
+            // full 70% pool by default — there is no other creator reselling, so
+            // no seller share is diverted (the shop's `enabled` flag is a
+            // visibility setting, not a payout term).
+            creatorKeepsPool = true;
           } else if (resaleListing) {
             payoutShare = resaleListing.sellerShare;
             if (viaShopUserId === userId) creatorKeepsPool = true;

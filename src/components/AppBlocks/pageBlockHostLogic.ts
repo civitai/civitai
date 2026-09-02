@@ -4,6 +4,7 @@
 // collects `*.test.ts`). Mirrors the IframeHost `hostRenderDecision` pattern.
 
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+import { maxInitPostsWithin } from './iframeInitController';
 import type { HostStatus } from './openBuzzPurchaseGate';
 
 export type PageHostStatus = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token' | 'error';
@@ -690,6 +691,48 @@ export function worstReachableLaunchMs(): number {
   // Every later attempt already holds a token, so it is ready-bounded only.
   const tokenHoldingAttempts = Math.max(0, MAX_AUTO_RETRIES - MAX_AUTO_REMINTS);
   return first + remintedAttempt + tokenHoldingAttempts * BLOCK_READY_TIMEOUT_MS + backoffs;
+}
+
+/**
+ * The most BLOCK_INIT posts one successful launch can make **via the bounded
+ * AUTOMATIC retry path**.
+ *
+ * 🔴 THAT QUALIFIER IS LOAD-BEARING — this is NOT an absolute maximum, and an
+ * earlier revision of this docstring wrongly claimed it was. A MANUAL retry is
+ * deliberately uncapped (`handleRetry` spends no automatic budget), and
+ * `performRetry` resets neither the launch marks nor `blockRenderEmittedRef`.
+ * So a user who clicks Retry repeatedly *inside the auto-retry backoff window*
+ * keeps `autoRetryBudget.attempts` at 0, emits no beacon yet, and accumulates
+ * posts across unboundedly many attempts into ONE launch sample.
+ *
+ * The consequence is bounded and lands in the safe direction: past
+ * `MAX_LAUNCH_INIT_POSTS` the count is DROPPED, never clamped, so no wrong value
+ * is ever published. What it does cost is a launch counted in
+ * `launch_total_seconds` but absent from `launch_init_posts` — which is exactly
+ * why the histogram's help text insists on its OWN `_count` as the denominator.
+ *
+ * 🔴 THE POST-COUNT SIBLING OF `worstReachableLaunchMs`, and it exists for the
+ * identical reason: `boundedInitPosts` DROPS anything past `MAX_LAUNCH_INIT_POSTS`,
+ * so a cap below this bound would silently discard the launches that posted the
+ * most — i.e. precisely the quantization-bound ones the field was added to find.
+ * The discard would be signal-correlated and would make the metric answer "no
+ * quantization here" by construction.
+ *
+ * 🔴 THE COUNT IS PER LAUNCH, NOT PER CONTROLLER. The auto-retry path builds a
+ * fresh `IframeInitController` per attempt but does NOT reset the launch marks,
+ * so the posts accumulate across every attempt of one launch. The bound is
+ * therefore `attempts x per-attempt-max`, plus one `BLOCK_HELLO` push per
+ * attempt (`notifyHello` is honored at most once per controller).
+ *
+ * Each attempt's controller is bounded by its own readiness timeout: it stops
+ * at `BLOCK_READY_TIMEOUT_MS`, whatever else the attempt spent waiting on a
+ * token. So `TOKEN_WAIT_TIMEOUT_MS` deliberately does NOT appear here — that is
+ * the one place this bound's shape differs from `worstReachableLaunchMs`'s.
+ */
+export function worstReachableInitPosts(): number {
+  const attempts = MAX_AUTO_RETRIES + 1;
+  const perAttempt = maxInitPostsWithin(BLOCK_READY_TIMEOUT_MS) + 1; // +1 = the BLOCK_HELLO push
+  return attempts * perAttempt;
 }
 
 /** Terminal statuses a bounded auto-retry may attempt to recover from. */

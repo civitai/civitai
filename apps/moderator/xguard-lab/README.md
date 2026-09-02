@@ -40,12 +40,16 @@ Everything above except reviewing is also an HTTP endpoint under `/api/xguard/*`
 There is no user behind it: calls are not attributed to anybody, and revoking access means rotating
 the token for everyone holding it.
 
-🔴 **Hand out `MOD_INBOUND_TOKEN`, not `WEBHOOK_TOKEN`.** Both are accepted — `acceptedTokens()` in
-`$lib/server/webhook-endpoint` returns both — but only the first is inbound-only: nothing outside
-this app accepts it, and nothing in this app sends it anywhere. `WEBHOOK_TOKEN` is shared with the
-main app and is kept accepted for compatibility while callers migrate. Since revocation here means
-rotating for every holder, which token an agent operator holds decides how much a rotation costs and
-how far a leak reaches.
+🔴 **Hand out `MOD_INBOUND_TOKEN`. It is the only credential these endpoints accept.**
+`acceptedTokens()` in `$lib/server/webhook-endpoint` returns it and nothing else. It is
+inbound-only: nothing outside this app accepts it, and nothing in this app sends it anywhere.
+`WEBHOOK_TOKEN` **used to be accepted here and no longer is** — it is shared with the main app and
+reaches far beyond this one, which is why it was dropped once no caller still presented it inbound.
+A caller that _starts_ returning 401 against `/api/xguard/*` is most likely presenting the retired
+token — check that first, but it is not the only cause: a rotated or mistyped secret, a wrong token,
+and a non-Bearer `Authorization` scheme all 401 the same way. Since
+revocation here means rotating for every holder, which token an agent operator holds decides how
+much a rotation costs and how far a leak reaches.
 
 `/xguard/docs` is the operator guide, and its endpoint list is generated from the routes rather than
 written down. Read it there; a copy here would be the version that goes stale.

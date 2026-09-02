@@ -140,10 +140,11 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // in browser mode.)
 vi.mock('~/providers/AppProvider', () => ({
   useAppContext: () => ({
+    domain: { green: false, blue: true, red: false },
     serverDomains: {
-      green: { primary: 'civitai.green' },
-      blue: { primary: 'civitai.com' },
-      red: { primary: 'civitai.red' },
+      green: { primary: 'civitai.green', aliases: [] },
+      blue: { primary: 'civitai.com', aliases: [] },
+      red: { primary: 'civitai.red', aliases: [] },
     },
     canIndex: true,
     seed: Date.now(),
@@ -152,8 +153,6 @@ vi.mock('~/providers/AppProvider', () => ({
   }),
   useServerDomains: () => ({ green: 'civitai.com', red: 'civitai.red', blue: 'civitai.blue' }),
 }));
-
-vi.mock('~/utils/sync-account', () => ({ syncAccount: (url: string) => url }));
 
 vi.mock('~/components/Payments/usePaymentProvider', () => ({
   usePaymentProvider: () => 'Paddle',

@@ -78,6 +78,45 @@ const videoWorkflow = {
   ],
 };
 
+/**
+ * Comfy Cloud. `metadata` really is empty — the prompt lives only inside the node graph — and the step
+ * declares no media type, so the only thing naming one is the blob's filename. Fixture taken from a real
+ * `customComfy` response (2026-09-01).
+ */
+const comfyWorkflow = {
+  id: '1637892-20260901071941000',
+  createdAt: '2026-09-01T07:19:41.782Z',
+  status: 'Succeeded',
+  metadata: {},
+  steps: [
+    {
+      $type: 'customComfy',
+      input: {
+        sessionId: 'vym-btRLKkcZN9toKPDvuw',
+        workflow: { '9': { class_type: 'SaveImage' } },
+      },
+      output: {
+        blobs: [
+          {
+            id: 'customcomfy-XYZ-asset-ComfyUI_00002_.png',
+            url: 'https://blobs/e.png?sig=x',
+            available: true,
+            nsfwLevel: 'pg13',
+          },
+          {
+            id: 'customcomfy-XYZ-asset-AnimateDiff_00001.mp4',
+            url: 'https://blobs/f.mp4?sig=y',
+            available: true,
+          },
+          { id: 'customcomfy-XYZ-asset-gone.png', url: 'https://blobs/g.png', available: false },
+        ],
+        // Intermediates the graph wrote on its way through. Not what the account set out to make.
+        tempBlobs: [{ id: 'temp.png', url: 'https://blobs/temp.png', available: true }],
+      },
+    },
+  ],
+};
+
 describe('getUserGeneratedWorkflows', () => {
   it('reads prompts, params and media, and counts what cannot be served', async () => {
     respond({ items: [imageWorkflow, videoWorkflow], next: 'cursor-2' });
@@ -116,6 +155,33 @@ describe('getUserGeneratedWorkflows', () => {
     expect(url.searchParams.get('Tags')).toBe('gen');
     expect(url.searchParams.get('ExcludeFailed')).toBe('true');
     expect(url.searchParams.get('Cursor')).toBe('abc');
+  });
+
+  it('asks for Comfy Cloud under its own tag, not the on-site one', async () => {
+    respond({ items: [], next: null });
+
+    await getUserGeneratedWorkflows(42, { source: 'comfy' });
+
+    // The whole point of the second tab: Comfy Cloud submits under the same account id, so only the tag
+    // separates it — querying `gen` here returns the on-site feed and reports it as Comfy Cloud.
+    const url = new URL(fetchMock.mock.calls[0][0] as string);
+    expect(url.searchParams.get('Tags')).toBe('civitai-comfy-nodes');
+  });
+
+  it('reads customComfy output, typing each blob by its filename', async () => {
+    respond({ items: [comfyWorkflow], next: null });
+
+    const [comfy] = (await getUserGeneratedWorkflows(1, { source: 'comfy' })).items;
+
+    // The step carries no media type at all, so a `.mp4` served as an <img> is the failure this guards.
+    expect(comfy.media.map((m) => m.type)).toEqual(['image', 'video']);
+    expect(comfy.media[0]).toMatchObject({ nsfwLevel: 'pg13', width: null, height: null });
+    // `tempBlobs` are the graph's intermediates; counting them would overstate what the account made.
+    expect(comfy.media.map((m) => m.url)).not.toContain('https://blobs/temp.png');
+    expect(comfy.unavailable).toBe(1);
+    // `metadata: {}` — asserted so a future parser that invents a prompt for these is caught here.
+    expect(comfy.prompt).toBeNull();
+    expect(comfy.ecosystem).toBeNull();
   });
 
   it('clamps `take` rather than passing a caller-supplied page size through', async () => {

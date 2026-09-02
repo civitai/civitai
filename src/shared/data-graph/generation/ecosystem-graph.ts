@@ -78,9 +78,12 @@ import { seedanceGraph } from './seedance-graph';
 import { flux3VideoGraph } from './flux3-video-graph';
 import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
+import { minimaxMusicGraph } from './minimax-music-graph';
 import { polyGenGraph } from './polygen-graph';
 import { tripoGraph } from './tripo-graph';
 import { hunyuan3dGraph } from './hunyuan3d-graph';
+import { pixal3dGraph } from './pixal3d-graph';
+import { trellis2Graph } from './trellis2-graph';
 
 // =============================================================================
 // Helper Functions
@@ -143,6 +146,8 @@ type EcosystemGateExt = Pick<
 const FEATURE_FLAG_GATED_ECOSYSTEMS: Array<{ key: string; flag: keyof FeatureAccess }> = [
   { key: 'Tripo', flag: 'tripoGenerator' },
   { key: 'Hunyuan3D', flag: 'hunyuan3dGenerator' },
+  { key: 'Pixal3D', flag: 'pixal3dGenerator' },
+  { key: 'Trellis2', flag: 'trellis2Generator' },
 ];
 
 /**
@@ -428,6 +433,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Flux3Video'] as const, graph: flux3VideoGraph },
     // Audio ecosystems
     { values: ['Ace'] as const, graph: aceAudioGraph },
+    { values: ['MiniMaxMusic3'] as const, graph: minimaxMusicGraph },
     // 3D Model ecosystems — PolyGen (Meshy via Fal). Field rendering for the
     // PolyGen graph lives in `GenerationForm.tsx`, auto-hidden via Controller
     // when the active ecosystem isn't PolyGen (same pattern as ACE audio).
@@ -437,6 +443,8 @@ export const ecosystemGraph = new DataGraph<
     // the active ecosystem isn't the matching one (same pattern as PolyGen).
     { values: ['Tripo'] as const, graph: tripoGraph },
     { values: ['Hunyuan3D'] as const, graph: hunyuan3dGraph },
+    { values: ['Pixal3D'] as const, graph: pixal3dGraph },
+    { values: ['Trellis2'] as const, graph: trellis2Graph },
   ])
   // Enhanced compatibility mode - txt2img only, supported ecosystems, hidden for Flux Ultra
   .node(

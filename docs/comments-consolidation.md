@@ -20,6 +20,10 @@ Status: **proposal, decisions settled 2026-08-24** (Briant):
 6. Deletion semantics (settled 2026-08-25, via Koen's counter-proposal): **tombstone when a
    comment has replies, hard-delete when childless**, enforced by `deletedAt` +
    `parentId ON DELETE RESTRICT`.
+7. Per-thread notification mute is **in scope** (added 2026-09-01, Briant). PR #4524 shipped it for
+   CommentsV2 after this plan was written; consolidation must carry it rather than rediscover it.
+   Two tables, `CommentMute` + `CommentTopicMute` — settled 2026-09-01, to be re-reviewed with the
+   rest of the schema before Phase 1 starts. See [Thread mute](#thread-mute-phase-5-detail).
 
 The target schema below is the **merged design** (2026-08-25): Koen's counter-proposal — ltree
 path as the single source of tree truth, with `rootId`/`depth` generated from it — adopted with
@@ -208,6 +212,57 @@ model CommentV3Report {
 }
 ```
 
+Notification mutes get two tables, replacing `ThreadMute` (shipped for CommentsV2 in PR #4524,
+commit `017e35fa03`) — see [Thread mute](#thread-mute-phase-5-detail):
+
+```prisma
+model CommentMute {          // one conversation: this comment and its whole subtree
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commentId Int
+  comment   CommentV3 @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  mutedAt   DateTime  @default(now())
+
+  @@id([userId, commentId])
+  @@index([commentId])
+}
+
+model CommentTopicMute {     // the whole section on one entity
+  userId     Int
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityType CommentEntityType
+  entityId   Int
+  mutedAt    DateTime          @default(now())
+
+  @@id([userId, entityType, entityId])
+  @@index([entityType, entityId])
+}
+```
+
+**Two tables, not one.** A single table keyed `(userId, entityType, entityId, commentId)` with a
+nullable `commentId` was the first draft and does not compile: Postgres forbids a nullable column in
+a PRIMARY KEY. The fallback — a unique index — treats NULLs as distinct, so one user could insert
+unlimited duplicate section mutes. PG 17 has `UNIQUE NULLS NOT DISTINCT`, but Prisma cannot express
+it, so the single table costs a hand-written index to save one lookup. Split, both keys are natural,
+and a comment-level row stops carrying `entityType`/`entityId` it can already read off the comment.
+
+The extra lookup is cheaper than the one it sits beside: every notification processor knows its own
+`entityType` and already has `entityId` in the query, so the section arm is a single-row PK probe on
+constants. Evaluate it first and a section-muted recipient never reaches the subtree test.
+
+Keep `userId` leading in both, as `ThreadMute` does and for the reason its migration records: the
+check joins from "rows this user muted", so a user with no mutes yields an empty side.
+
+Rejected: **folding the comment-level mute into `CommentV3Reaction`**, which is structurally exact
+(`(commentId, userId, <enum>)`) and the only table in this design that is. `ReviewReactions` is
+shared by ten reaction tables, so a `Mute` value lands in the type union and reaction pickers of
+image/article/model/post/question/answer as well; `reactionCount` is trigger-maintained off row
+count and is a **sort key** (`commentv3_top_reactions`), so a mute row would inflate the visible
+count and reorder the page unless the trigger learns to filter; and reactions are public where mutes
+are private, so every reaction read path would have to remember to exclude them — the exact
+"remember to filter" duplication this consolidation exists to delete. The reaction unique is also
+`(commentId, userId, reaction)`, deliberately multi-row per user, where a mute wants at most one.
+
 Reaction rows get fresh ids (nothing durable references a reaction row id); `commentId` maps 1:1
 for v2 and via `legacyV1Id` for v1. Report rows re-point the same way — the `Report` row itself
 (status, reason, rewards history) is untouched, only the join moves.
@@ -255,6 +310,7 @@ Every interaction is one index-backed query on one table:
 | Auto-expand replies d levels deep for a page of roots | `WHERE rootId = ANY(pageIds) AND depth <= d AND NOT hidden` — **no recursive CTE**; the existing budget selector (`selectReplyThreadsWithinBudget`) ports over |
 | Drill into / re-root on a deep comment | subtree via `path <@ comment.path` on the GiST index, or `parentId = commentId` page-by-page |
 | Is any ancestor locked? (write-time check) | `WHERE path @> new.path AND locked` — one GiST lookup |
+| Is this recipient muted at or above this comment? | `CommentTopicMute` PK probe on `(userId, entityType, entityId)`, else `CommentMute` joined on `path @> c.path` — **the same GiST lookup as the lock check**, replacing v2's recursive ancestor walk |
 | Deep-link / notification / moderation "what is this on?" | the row itself carries `entityType`, `entityId`, `rootId` — **single-row read**, replaces the 15-column COALESCE chain in 9 call sites |
 | Entity comment count / locked | one `CommentTopic` row |
 
@@ -389,8 +445,8 @@ lists (`Model.threads Thread[]` etc.) — verify they are truly 1:1 in prod befo
 ULID) because its Thread key is composite `(projectId, position)`.
 
 **Phase 1 — schema.** `CREATE EXTENSION ltree` (infra sign-off), then the DDL above: new tables
-(`CommentV3`, `CommentTopic`, `CommentV3Reaction`, `CommentV3Report`), indexes, `CHECK`
-constraints, the `commentv3_set_path` tree trigger, plus the count triggers
+(`CommentV3`, `CommentTopic`, `CommentV3Reaction`, `CommentV3Report`, `CommentMute`,
+`CommentTopicMute`), indexes, `CHECK` constraints, the `commentv3_set_path` tree trigger, plus the count triggers
 (`CommentTopic.commentCount`, and a port of `update_comment_reaction_count` — the trigger on
 `CommentV2Reaction` from migration `20251020155046` — onto `CommentV3Reaction`). Prisma models
 `path` as `Unsupported("ltree")` and `rootId`/`depth` as `dbgenerated` — confirm
@@ -596,6 +652,97 @@ Also fix in passing: `reaction.notifications.ts` links `?dialog=commentThread&co
 verify the root-resolution logic against `rootId` on the new row (it currently self-joins to find
 the v1 root).
 
+### Thread mute (Phase 5 detail)
+
+Added 2026-08-31, after this plan was written: **PR #4524** (commit `017e35fa03`) shipped per-thread
+notification mute for CommentsV2. It is merged and its migration is applied to **dev only**. The plan
+above predates it, so everything in this section is new scope, not a restatement.
+
+What v2 has today:
+
+- `ThreadMute (userId, threadId)`, FK'd to `Thread` with `ON DELETE CASCADE` on both sides.
+- `muteableThreadsCte` in `src/server/common/thread-chain.ts` — a `WITH RECURSIVE` ancestor walk up
+  `Thread.commentId → CommentV2.threadId`, capped at `MAX_THREAD_CHAIN_DEPTH = 100`.
+- `notThreadMuted(recipient, threadId)` in `base.notifications.ts`, applied at **13 sites** in
+  `comment.notifications.ts`, producer-side.
+- Two controls: per-comment (overflow menu) via `toggleThreadMute`, and section-level (beside the
+  top-level composer) via `toggleSectionMute`, which is the only writer that targets an entity-root
+  thread.
+- `getThreadMuted` / `getSectionMuted` read the same shared CTE so the menu label and the
+  suppression cannot disagree.
+- A convention guard, `no-unmuteable-comment-processor`, wired into `test:lint-rules`.
+
+#### What consolidation changes
+
+**The recursive walk disappears.** v2 has to climb thread-by-thread because nesting is modeled as a
+child `Thread` per comment. In CommentV3 ancestry *is* `path`, so suppression is one `@>` GiST
+containment test — the identical shape as the lock check, and a natural row in the interactions
+table above. That deletes `thread-chain.ts` outright and takes three properties with it:
+
+- **The depth cap stops being a correctness hole.** `MAX_THREAD_CHAIN_DEPTH` is a bound on work, not
+  a proof; past it `notThreadMuted` fails open and sends. Measured on prod 2026-08-27: 149 chains are
+  past the cap, where a mute silently stops suppressing today. A containment test has no cap, and the
+  stored depth cap of 20 makes the question moot regardless.
+- **The `parentThreadId` exclusion becomes unnecessary.** The v2 walk deliberately refuses that edge
+  because it is written from client input, so trusting it would let a replier steer their reply into
+  a chain the recipient muted and have the notification dropped — a suppression operated by someone
+  other than its owner. The cost is 3,110 orphaned threads (0.057% of all threads) whose mutes go
+  unrecognised. `CommentV3.parentId` is server-derived and `path` is set by a DB trigger, so there is
+  no client-steerable edge and no trade to make.
+- **The section mute stops depending on lazy row creation.** `toggleSectionMute` today returns
+  `hasThread: false` and does nothing on an entity with no comments yet. `CommentTopicMute` keys off
+  `(entityType, entityId)` and needs no row to exist, so it works before the first comment.
+
+**The 13 filter sites ride on the notification rewrite.** Phase 3 re-points every notification
+`prepareQuery` at CommentV3, and Phase 5 offers to collapse the per-entity queries into one
+parameterized builder. Both must carry the mute filter — a rewrite that drops it reads as a clean
+diff and silently un-mutes every user who set a mute, with no failing test unless the guard is
+re-pointed in the same change. Do the collapse *because* of this rather than as optional cleanup:
+one builder is one place the filter can be missing.
+
+**`no-unmuteable-comment-processor` must be re-pointed in lockstep.** It asserts over the v2 SQL
+text. Left alone it either fails on the rewrite or, worse, passes vacuously against v3 SQL it no
+longer recognises. It also pins one deliberate *exclusion* — `new-mention` is intentionally not
+muteable — which is a product decision the rewrite must preserve, not a gap.
+
+🔴 **`ThreadMute` cascades to nothing in Phase 6.** The teardown drops `Thread`, and
+`ThreadMute_threadId_fkey` is `ON DELETE CASCADE` — so unless mutes are migrated first, teardown
+deletes every mute a user ever set, quietly and unrecoverably. The backfill runs in Phase 3 with the
+rest, and Phase 6 must verify the new table is populated before the drop, not after.
+
+#### Backfilling mutes
+
+`ThreadMute.threadId` maps three ways, and only two of them work:
+
+1. **Comment-level** — thread's `commentId` is set: that comment's new id is the `CommentMute.commentId`
+   (v2 ids are preserved, so this is identity). Note the off-by-one: v2 mutes the comment's *child*
+   thread, so the mute belongs on the comment that thread hangs off, not on the thread's own parent.
+2. **Section-level** — thread has an entity FK and no `commentId`: becomes a `CommentTopicMute` row
+   on `(userId, entityType, entityId)`.
+3. **Orphaned** — neither: nothing to map to. Skip and log the count, same policy as orphaned-thread
+   comments in Phase 3.
+
+Volume is small (the feature is days old and dev-only), so this is a one-shot copy, not a batched
+resumable job. It still needs the parity check, because the failure mode is invisible to the user
+until a notification they muted arrives.
+
+#### Open questions
+
+- **Naming — settled 2026-09-01 as `CommentMute` / `CommentTopicMute`.** The alternative was
+  `CommentEngagement` / `CommentTopicEngagement` with a type enum, matching the repo's ten
+  `*Engagement` tables (`ChallengeEngagement` ships a single-value enum, so precedent covers one
+  state) and leaving room for a `Follow`. Rejected: a `Follow` state is speculative — the ticket's
+  "mute/unfollow" is two words for one feature — and if it is ever wanted, a second table costs then
+  what the enum costs now, so nothing is bought by deciding early. Whichever pair is used, keep both
+  halves in the same lane: `*Engagement` is named for the id it holds, so `CommentEngagement` on the
+  section table (which holds `entityType`/`entityId`) would read as the comment-level one.
+- **Does drilling in / re-rooting change what "this thread" means to a user?** v2's mute anchors on a
+  thread the user can see in the UI. In v3, subtree semantics are exact — muting a comment silences
+  everything under it forever, including replies added after a re-root. That is the same behavior,
+  but it is worth stating in the UI copy, which today says "thread".
+- **Is per-notification-type mute wanted?** Out of scope here; noted because a `CommentMute` row is
+  all-or-nothing per subtree and adding a type dimension later is a PK change.
+
 ### Moderator app impact (Phase 5 detail)
 
 `apps/moderator` (Kysely, direct DB) has the v1/v2 split baked into six modules; consolidation
@@ -648,7 +795,8 @@ the comment tables), then `Comment`/`CommentV2`, then `Thread`. Also:
 `as unknown as Prisma.ThreadWhereUniqueInput` casts (5 sites); the 15-column COALESCE chain (9
 sites); the v1/v2 UNIONs in notifications; one CDC handler; the duplicate reaction and report join
 tables (four tables become two); the `commentOld` reaction type and one `ReportEntity` value; the `{ commentIds, commentV2Ids }` dual-id API shape; the duplicated exclusion logic; the
-per-page reply-count `GROUP BY`.
+per-page reply-count `GROUP BY`; `src/server/common/thread-chain.ts` and its 100-deep ancestor walk,
+which `path @>` replaces for both the lock check and the mute check.
 
 ### Explicitly not migrated
 

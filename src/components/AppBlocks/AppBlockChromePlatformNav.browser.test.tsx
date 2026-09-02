@@ -2,7 +2,7 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 
 // Part A: the app icon opens a Menu of the Civitai App PLATFORM's own pages
-// (Apps home / Installed apps / My apps / Review). "Review" is gated on
+// (Marketplace / Installed apps / My apps / Review). "Review" is gated on
 // the viewer's moderator flag. Part B: the ⋯ menu gains a "Permissions &
 // activity" item (only when an appBlockId is threaded) that opens a per-app
 // transparency drawer.
@@ -54,14 +54,27 @@ import { AppBlockChrome } from '~/components/AppBlocks/IframeHost';
 // eslint-disable-next-line import/first
 import { renderWithProviders } from '../../../test/component-setup';
 
-beforeEach(() => {
+/**
+ * 🔴 A DESKTOP VIEWPORT, PINNED — every render below is `slotId="app.page"`, and F3
+ * gives that surface a different chrome below the `sm` breakpoint (768): no separate
+ * platform-nav trigger at all, because the nav folds into the ⋮ bottom sheet.
+ *
+ * This file pinned no viewport before F3 and therefore inherited Vitest's default of
+ * **414×896**, which is below `sm` — so without this line every test here would be
+ * asserting the desktop dropdown against the mobile shell. The claims are about the
+ * dropdown, so the viewport that produces a dropdown is now named. The folded-nav
+ * behaviour has its own coverage in `AppBlockChromeMobileShell.browser.test.tsx`.
+ */
+const DESKTOP: [number, number] = [1440, 900];
+beforeEach(async () => {
   holder.user = null;
+  await page.viewport(...DESKTOP);
 });
 
 async function openPlatformNav() {
   await page.getByRole('button', { name: 'Apps menu' }).click();
-  // "Apps home" is present for every viewer — wait on it so the dropdown mounted.
-  await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+  // "Marketplace" is present for every viewer — wait on it so the dropdown mounted.
+  await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).toBeInTheDocument();
 }
 
 describe('AppBlockChrome platform-nav menu (Part A)', () => {
@@ -72,7 +85,7 @@ describe('AppBlockChrome platform-nav menu (Part A)', () => {
     );
     await openPlatformNav();
 
-    const home = page.getByRole('menuitem', { name: 'Apps home' }).element();
+    const home = page.getByRole('menuitem', { name: 'Marketplace' }).element();
     expect(home.getAttribute('href')).toBe('/apps');
 
     const installed = page.getByRole('menuitem', { name: 'Installed apps' }).element();

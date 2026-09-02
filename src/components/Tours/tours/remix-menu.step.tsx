@@ -33,8 +33,11 @@ export function remixMenuStep(target: string, data?: StepData): StepWithData {
     spotlightClicks: true,
     disableOverlayClose: true,
     spotlightPadding: 6,
-    // No `hideFooter`: an image every engine refuses opens a menu with nothing
-    // clickable in it, and this step would otherwise have no way forward.
+    // The only way on is picking an option, so that a `Next` cannot walk the tour
+    // onto the generator before one has opened it. `RemixMenu` reports the menu as
+    // a blocked target when an engine refusal leaves nothing clickable, which is
+    // what restores the footer for that case.
+    hideFooter: true,
     ...(data ? { data } : {}),
     styles: {
       spotlight: {

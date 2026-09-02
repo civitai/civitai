@@ -39,6 +39,20 @@ import { WorkflowLookup } from '~/components/generation_v2/WorkflowLookup';
 
 type GenerationPanelView = 'queue' | 'generate' | 'feed';
 
+// Exported so `tour-steps.test.ts` can check `gen:<key>` step targets against the tabs
+// that actually render. The `data-tour` is built by template literal below, so no
+// source file holds the whole string for the orphan guard to grep.
+export const GENERATION_TAB_KEYS = ['generate', 'queue', 'feed'] as const;
+
+// Keep in sync with GENERATION_TAB_KEYS above, or this fails to compile.
+type _EveryViewListed = Exclude<
+  GenerationPanelView,
+  (typeof GENERATION_TAB_KEYS)[number]
+> extends never
+  ? true
+  : never;
+const _everyViewListed: _EveryViewListed = true;
+
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   // Pre-seed the ResourceDataProvider with ecosystem defaults + last-used models.
   // The provider keeps resources alive across tab switches and fires the initial
@@ -152,6 +166,7 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
                     key: remixOfId ? 'remix-content-generation' : 'content-generation',
                     step: 0,
                     forceRun: true,
+                    trigger: 'help',
                   });
                 }}
               />

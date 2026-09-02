@@ -334,6 +334,7 @@ export const workflowConfigs: WorkflowConfigs = {
       ECO.HappyHorse,
       ECO.MiniMaxH3,
       ECO.Grok,
+      ECO.Seedance,
     ],
     // Grok referenceToVideo is a v1.5-only operation.
     excludeModelVersionIds: [viduVersionIds.q3, grokVersionIds['v1.0'], grokVersionIds['v2.0']],
@@ -392,7 +393,7 @@ export const workflowConfigs: WorkflowConfigs = {
     modeLabel: 'Text to Music',
     description: 'Generate music from text description and lyrics',
     category: 'audio',
-    ecosystemIds: [ECO.AceAudio],
+    ecosystemIds: [ECO.AceAudio, ECO.MiniMaxMusic3],
     stepDisplay: 'separate',
     memberOnly: true,
   },
@@ -423,13 +424,14 @@ export const workflowConfigs: WorkflowConfigs = {
     // Image segment, where txt2img/img2img both title as "Create Image").
     label: 'Create 3D Model',
     modeLabel: 'Image to 3D',
-    description: 'Generate a 3D model from a source image (Meshy, Tripo, or Hunyuan3D)',
+    description:
+      'Generate a 3D model from a source image (Meshy, Tripo, Hunyuan3D, Pixal3D, or Trellis.2)',
     category: 'model3d',
-    // Image-to-3D is supported by all three 3D ecosystems; the user picks one
+    // Image-to-3D is supported by all the 3D ecosystems; the user picks one
     // via the `BaseModelInput` "Eco" picker. Text-to-3D (txt2model3d) stays
-    // PolyGen-only — Tripo/Hunyuan3D have no text-to-3D operation, and neither
-    // does Meshy v7 (a version inside PolyGen, see polygen-graph.ts).
-    ecosystemIds: [ECO.PolyGen, ECO.Tripo, ECO.Hunyuan3D],
+    // PolyGen-only — Tripo/Hunyuan3D/Pixal3D/Trellis.2 have no text-to-3D
+    // operation, and neither does Meshy v7 (a version inside PolyGen).
+    ecosystemIds: [ECO.PolyGen, ECO.Tripo, ECO.Hunyuan3D, ECO.Pixal3D, ECO.Trellis2],
     featureFlag: 'model3dGenerator',
     isNew: true,
   },
@@ -730,6 +732,21 @@ export function getInputTypeForWorkflow(workflowId: string): 'text' | 'image' | 
 export function getOutputTypeForWorkflow(workflowId: string): OutputType {
   const config = workflowConfigByKey.get(workflowId);
   return config?.category ?? 'image';
+}
+
+/**
+ * The output scope a workflow's ecosystem was persisted under, for reading back
+ * `generation-graph.output.<scope>` from localStorage.
+ *
+ * Only differs from `getOutputTypeForWorkflow` for a stored workflow key that no
+ * longer exists — that falls back to 'image', which would read some other
+ * scope's ecosystem and read as a mismatch. Guessing from the key is right for
+ * exactly that case and wrong for every known one: it misfiles audio and 3D as
+ * 'image', which spuriously fires the compatibility modal on load.
+ */
+export function getStoredOutputScope(storedWorkflow: string): OutputType {
+  if (workflowConfigByKey.has(storedWorkflow)) return getOutputTypeForWorkflow(storedWorkflow);
+  return storedWorkflow.includes('2vid') ? 'video' : 'image';
 }
 
 /**

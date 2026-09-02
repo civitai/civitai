@@ -10,7 +10,7 @@
  * date that quietly failed inside a batch, or a job that was never invoked — and none of those raise.
  */
 
-import { env } from '~/env/server';
+import { notifyModAlert } from '~/server/common/mod-alert';
 import { dbRead } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createJob } from '~/server/jobs/job';
@@ -20,7 +20,16 @@ import { createLogger } from '~/utils/logging';
 const log = createLogger('jobs:challenge-health-check', 'yellow');
 
 const UPCOMING_WINDOW_HOURS = 48;
-const RECENT_WINDOW_HOURS = 24;
+
+// Must exceed the 24h challenge cadence. This job shares the 00:00 tick with `challenge-activation`,
+// so the incoming challenge is still `Scheduled` while the outgoing one's `startsAt` is already
+// *exactly* 24h old — under a 24h window neither answers, which false-alarmed daily 2026-08-28..31.
+const RECENT_WINDOW_HOURS = 26;
+
+// A challenge that started and has since finished still answers "did one start" — the outgoing one
+// is often mid-completion at the handover. `Scheduled` stays out: past its own `startsAt`, that IS
+// the failure being watched for.
+const STARTED_STATUSES = ['Active', 'Completing', 'Completed'];
 
 type HealthRow = {
   hasUpcoming: boolean;
@@ -40,7 +49,7 @@ async function readChallengeHealth() {
       ) AS "hasUpcoming",
       EXISTS (
         SELECT 1 FROM "Challenge"
-        WHERE status = 'Active' AND source = 'System'
+        WHERE status::text = ANY(${STARTED_STATUSES}::text[]) AND source = 'System'
           AND "startsAt" <= now()
           AND "startsAt" > now() - (${RECENT_WINDOW_HOURS} || ' hours')::interval
       ) AS "hasRecent",
@@ -50,23 +59,12 @@ async function readChallengeHealth() {
       ) AS "nextScheduledAt",
       (
         SELECT max("startsAt") FROM "Challenge"
-        WHERE status = 'Active' AND source = 'System' AND "startsAt" <= now()
+        WHERE status::text = ANY(${STARTED_STATUSES}::text[]) AND source = 'System'
+          AND "startsAt" <= now()
       ) AS "lastActivatedAt"
   `;
 
   return row;
-}
-
-async function alertDiscord(title: string, description: string) {
-  if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return;
-
-  await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      embeds: [{ title, description, color: 0xf44336, timestamp: new Date().toISOString() }],
-    }),
-  }).catch(() => null);
 }
 
 async function checkChallengeHealth() {
@@ -95,7 +93,7 @@ async function checkChallengeHealth() {
 
   if (!health.hasRecent) {
     failures.push(
-      `**Not started** — no \`Active\` system challenge began in the last ${RECENT_WINDOW_HOURS}h. ` +
+      `**Not started** — no system challenge began in the last ${RECENT_WINDOW_HOURS}h. ` +
         `Check \`challenge-activation\` (0 * * * *). ` +
         `Last activated: ${health.lastActivatedAt?.toISOString() ?? 'never'}.`
     );
@@ -120,7 +118,7 @@ async function checkChallengeHealth() {
     message: failures.join(' | '),
   }).catch(() => null);
 
-  await alertDiscord(
+  await notifyModAlert(
     `🚨 Daily challenge pipeline — ${failures.length} check(s) failing`,
     failures.join('\n\n')
   );

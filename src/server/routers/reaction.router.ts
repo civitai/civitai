@@ -2,7 +2,6 @@ import { toggleReactionHandler } from './../controllers/reaction.controller';
 import { toggleReactionSchema, reactionRateLimits } from './../schema/reaction.schema';
 import { router, guardedProcedure } from '~/server/trpc';
 import { rateLimit } from '~/server/middleware.trpc';
-import { handleLogError } from '~/server/utils/errorHandling';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const reactionRouter = router({
@@ -10,10 +9,8 @@ export const reactionRouter = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(toggleReactionSchema)
     .use(rateLimit(reactionRateLimits))
-    .mutation(({ ctx, input }) => {
-      // Fire-and-forget: frontend already does optimistic updates via Zustand
-      // and ignores the response value entirely (no onSuccess/onError callbacks).
-      // Auth + rate limit middleware have already run at this point.
-      toggleReactionHandler({ ctx, input }).catch(handleLogError);
-    }),
+    // Must stay awaited: the handler backgrounds its slow work (rewards, notifications)
+    // internally. Detaching the whole handler dropped the toggle write on pod drain and
+    // returned a null payload.
+    .mutation(toggleReactionHandler),
 });

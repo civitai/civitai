@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   // Sparse, exactly as FeatureAccess is: an off flag is ABSENT, so it reads `undefined`.
   // Driving the off case with `false` would test a state production never produces.
   feedTagBar: true as boolean | undefined,
+  chipsLoading: false,
   getFeedTagBar: vi.fn(),
 }));
 
@@ -40,7 +41,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         // markup would still be caught here rather than looking like a skipped fetch.
         useQuery: (input: unknown, options?: { enabled?: boolean }) => {
           mocks.getFeedTagBar(input, options);
-          return { data: mocks.tags };
+          return { data: mocks.tags, isLoading: mocks.chipsLoading };
         },
       },
     },
@@ -136,6 +137,7 @@ describe('ImageFeedTagBar', () => {
     mocks.hiddenTagIds = [];
     mocks.maxNsfwLevel = 1;
     mocks.loadingPreferences = false;
+    mocks.chipsLoading = false;
     mocks.tags = [
       { id: 4, name: 'anime', nsfwLevel: 1 },
       { id: 5248, name: 'realistic', nsfwLevel: 1 },
@@ -150,7 +152,7 @@ describe('ImageFeedTagBar', () => {
   // Gated so the bar can be switched off without a deploy, after its click-through came
   // in under the floor it shipped on (868kv1b9m). `feedTagBar` fails OPEN, so the case
   // that needs pinning is that OFF actually removes it.
-  it('renders nothing when the feedTagBar flag is off', () => {
+  it('renders nothing when the feedTagBar flag is off and no tag filter is active', () => {
     mocks.feedTagBar = undefined;
     const container = render();
 
@@ -158,6 +160,23 @@ describe('ImageFeedTagBar', () => {
     // The reserved row too, not just the chips: the bar holds height while its tags load,
     // so a gate that only emptied the chip list would still push the feed down by 26px.
     expect(reservedRows(container)).toHaveLength(0);
+  });
+
+  // The flag is a kill switch for the bar, not for the escape hatch. Switching it off
+  // must not put /images and /videos back in the state 868kuq3jk describes, where a
+  // `?tags=` deep link narrows the feed with no UI that can widen it. The test above is
+  // this one's negative control: same flag state, no `tags`, no button.
+  it('falls back to the clear control when the flag is off and ?tags= is set', () => {
+    mocks.feedTagBar = undefined;
+    mocks.query = { tags: ['999999'], sort: 'Newest' };
+    const container = render();
+
+    expect(buttonLabels(container)).toEqual(['Clear 1 tag filter']);
+
+    clickButton(container, 'Clear 1 tag filter');
+
+    expect(mocks.replace).toHaveBeenCalledTimes(1);
+    expect(lastReplacedQuery()).toEqual({ sort: 'Newest' });
   });
 
   it('does not request the chip list when the flag is off, and does when it is on', () => {
@@ -177,6 +196,69 @@ describe('ImageFeedTagBar', () => {
     // The control. Without it the arm above passes for a bar that can never fetch.
     expect(mocks.getFeedTagBar).toHaveBeenCalledTimes(1);
     expect(mocks.getFeedTagBar).toHaveBeenCalledWith(undefined, { enabled: true });
+  });
+
+  // The other state with no `All` chip: `TagChipRow` draws the reservation and no
+  // children while `loading`, and a failed or empty `getFeedTagBar` leaves the bar there
+  // for good. The control goes INSIDE the reservation, so it costs no extra height.
+  it('falls back to the clear control once the chip fetch has settled empty', () => {
+    mocks.tags = [];
+    mocks.query = { tags: ['999999'], sort: 'Newest' };
+    const container = render();
+
+    expect(buttonLabels(container)).toEqual(['Clear 1 tag filter']);
+    expect(reservedRows(container)).toHaveLength(1);
+    // Inside the reserved row, not beside it — beside it is a shift on a page whose
+    // whole reason for reserving 26px is not to have one.
+    expect(reservedRows(container)[0].querySelector('button')).not.toBeNull();
+  });
+
+  // 🔴 The two states this must NOT fire in, and why the flag is `chipsGone` rather than
+  // `chipsHeld`: both are in-flight, both end with chips on screen, and rendering the
+  // control in either one puts a button on first paint and takes it away again.
+  // `loadingPreferences` is the preferences query's `isLoading` — true on mount for
+  // EVERY viewer — so the naive version flashes on every `?tags=` deep link, not just
+  // the failure case.
+  it('does not render the clear control while the chip fetch is in flight', () => {
+    mocks.tags = [];
+    mocks.chipsLoading = true;
+    mocks.query = { tags: ['999999'], sort: 'Newest' };
+    const container = render();
+
+    expect(buttonLabels(container)).toEqual([]);
+  });
+
+  it('does not render the clear control while hidden preferences are loading', () => {
+    mocks.loadingPreferences = true;
+    mocks.query = { tags: ['999999'], sort: 'Newest' };
+    const container = render();
+
+    expect(buttonLabels(container)).toEqual([]);
+  });
+
+  // A decision, not an oversight: `Feed_TagBar_Click` is the series the bar's removal is
+  // being decided on (868kv1b9m), and it measures the BAR. A press of a control that only
+  // appears when the bar has no chips is not a press of the bar. Whoever reads that number
+  // should not have to wonder whether it includes these.
+  it('does not report a fallback clear as a tag-bar click', () => {
+    mocks.tags = [];
+    mocks.query = { tags: ['999999'], sort: 'Newest' };
+    const container = render();
+
+    clickButton(container, 'Clear 1 tag filter');
+
+    expect(mocks.trackAction).not.toHaveBeenCalled();
+    // Control for the assertion above, which passes for free if nothing was pressed.
+    expect(mocks.replace).toHaveBeenCalledTimes(1);
+  });
+
+  // Negative control: chips present, same deep link. The All chip is the escape hatch
+  // here, and a second one beside it would be the bug this pair is checking for.
+  it('does not add the clear control when the All chip is on the page', () => {
+    mocks.query = { tags: ['999999'], sort: 'Newest' };
+    const container = render();
+
+    expect(buttonLabels(container)).toEqual(['All', 'anime', 'realistic']);
   });
 
   it('writes ?tags=<id> on select, preserving the rest of the query', () => {
@@ -208,9 +290,9 @@ describe('ImageFeedTagBar', () => {
     expect(lastReplacedQuery()).not.toHaveProperty('tags');
   });
 
-  // The reason the All chip is not decoration: ActiveTagFilter is mounted nowhere
-  // (868kuq3jk), so before this bar a ?tags= deep link on /images could not be widened
-  // by any UI. An id that is not a chip here is exactly that case.
+  // The reason the All chip is not decoration: it is what widens a ?tags= deep link on
+  // /images, and an id that is not a chip here is exactly that case. `ActiveTagFilter`
+  // covers only the states where this chip is absent — see the two tests below.
   it('clears a ?tags= deep link whose id is not one of the chips', () => {
     mocks.query = { tags: ['999999'], sort: 'Newest' };
     const container = render();

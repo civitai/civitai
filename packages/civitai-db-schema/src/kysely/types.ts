@@ -404,6 +404,8 @@ export type AppListing = {
   content_rating: string | null;
   external_url: string | null;
   source_repo_url: string | null;
+  is_beta: Generated<boolean>;
+  beta_message: string | null;
   connect_client_id: string | null;
   connect_requested_scopes: number | null;
   connect_scope_justifications: unknown | null;
@@ -3906,6 +3908,11 @@ export type Thread = {
   metadata: Generated<unknown>;
   commentCount: Generated<number>;
 };
+export type ThreadMute = {
+  userId: number;
+  threadId: number;
+  mutedAt: Generated<Timestamp>;
+};
 export type TipConnection = {
   transactionId: string;
   entityId: number;
@@ -4572,6 +4579,7 @@ export type DB = {
   TagStat: TagStat;
   Technique: Technique;
   Thread: Thread;
+  ThreadMute: ThreadMute;
   TipConnection: TipConnection;
   Tool: Tool;
   TrustedSpokeDomain: TrustedSpokeDomain;

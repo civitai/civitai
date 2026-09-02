@@ -9,33 +9,40 @@ import {
   Paper,
   Indicator,
   ScrollArea,
-  Divider,
   Center,
+  CopyButton,
   Button,
   Tooltip,
-  CopyButton,
-  ColorSwatch,
-  useMantineTheme,
   List,
-  defaultVariantColorsResolver,
+  Menu,
+  TextInput,
 } from '@mantine/core';
+import clsx from 'clsx';
+import classes from './civitai-link.module.scss';
+import { AppRow } from '~/components/CivitaiLink/CivitaiLinkAppRow';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification } from '@mantine/notifications';
 import {
+  IconChevronLeft,
+  IconBoxMultiple,
+  IconCheck,
+  IconCopy,
+  IconDeviceDesktop,
+  IconDotsVertical,
+  IconPencil,
   IconDownload,
-  IconLink,
+  IconWorld,
   IconPlus,
   IconTrash,
   IconX,
-  IconSettings,
   IconLinkOff,
-  IconCheck,
-  IconCopy,
   IconAlertTriangle,
+  IconInfoCircle,
   IconNetworkOff,
   IconScreenShare,
   IconHeart,
-  IconVideo,
+  IconPlayerPlay,
+  IconRefresh,
 } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import dynamic from 'next/dynamic';
@@ -45,12 +52,10 @@ import {
   useCivitaiLink,
   useCivitaiLinkStore,
 } from '~/components/CivitaiLink/CivitaiLinkProvider';
-import { CivitaiLinkSvg } from '~/components/CivitaiLink/CivitaiLinkSvg';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatBytes, formatSeconds } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
-import classes from './CivitaiLinkPopover.module.scss';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
@@ -61,16 +66,20 @@ const CivitaiLinkWizardModal = dynamic(() => import('~/components/CivitaiLink/Ci
 const openCivitaiLinkWizardModal = createDialogTrigger(CivitaiLinkWizardModal);
 
 export function CivitaiLinkPopover() {
+  const [opened, setOpened] = useState(false);
+
   return (
     <Popover
       position="bottom-end"
       width={400}
       zIndex={imageGenerationDrawerZIndex + 1}
       withinPortal
+      opened={opened}
+      onChange={setOpened}
     >
-      <LinkButton />
+      <LinkButton onToggle={() => setOpened((o) => !o)} />
       <Popover.Dropdown p={0}>
-        <LinkDropdown />
+        <LinkDropdown onClose={() => setOpened(false)} />
       </Popover.Dropdown>
     </Popover>
   );
@@ -133,6 +142,77 @@ function SupporterHelp() {
   );
 }
 
+function Chip({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <Group
+      gap={6}
+      wrap="nowrap"
+      px={10}
+      py={6}
+      className={classes.surface}
+      style={{ borderRadius: 999 }}
+    >
+      {icon}
+      <Text fz={11} fw={500} c="var(--mantine-color-text)">
+        {label}
+      </Text>
+    </Group>
+  );
+}
+
+function LinkPitchArt() {
+  return (
+    <Group gap={12} justify="center" align="center">
+      <Center
+        w={52}
+        h={52}
+        bg="var(--mantine-color-blue-light)"
+        style={{ borderRadius: 'var(--mantine-radius-md)' }}
+      >
+        <IconWorld size={24} className={classes.accentIcon} />
+      </Center>
+      <Group gap={5}>
+        {Array.from({ length: 5 }, (_, i) => (
+          <div key={i} className={clsx('size-1 rounded-full', classes.dot)} />
+        ))}
+      </Group>
+      <Center
+        w={52}
+        h={52}
+        className={classes.surface}
+        style={{ borderRadius: 'var(--mantine-radius-md)' }}
+      >
+        <IconDeviceDesktop size={24} className={classes.neutralIcon} />
+      </Center>
+    </Group>
+  );
+}
+
+function LinkPitch({ children }: { children?: React.ReactNode }) {
+  return (
+    <Stack pt="lg" pb="md" px="lg" gap="sm" align="center">
+      <LinkPitchArt />
+      <Text fw={600} ta="center" mt={4}>
+        Send models straight to your machine
+      </Text>
+      <Text size="xs" c="dimmed" ta="center">
+        {children ??
+          `One click on any model page and it lands in the app you generate with — no downloading, no moving files.`}
+      </Text>
+      <Group gap={8} justify="center" mt={4}>
+        <Chip
+          icon={<IconBoxMultiple size={13} className={classes.dimIcon} />}
+          label="ComfyUI node pack"
+        />
+        <Chip
+          icon={<IconDeviceDesktop size={13} className={classes.dimIcon} />}
+          label="Link desktop app"
+        />
+      </Group>
+    </Stack>
+  );
+}
+
 function AboutCivitaiLink() {
   return (
     <>
@@ -143,25 +223,21 @@ function AboutCivitaiLink() {
         size="md"
         color="yellow"
       >
-        This feature is currently in early access and only available to Supporters.
+        Civitai Link is a Supporter feature, still in early access.
       </AlertWithIcon>
       <SupporterHelp />
-      <Stack py="sm" px="lg" gap={4}>
-        <Center p="md" pb={0}>
-          <CivitaiLinkSvg />
-        </Center>
-        <Text my="xs">Interact with any Stable Diffusion instance in realtime from Civitai</Text>
-      </Stack>
-      <Divider />
+      <LinkPitch>
+        Supporters get one-click sending to the ComfyUI node pack or the Link desktop app.
+      </LinkPitch>
       <Group gap={0} grow>
         <Button
-          leftSection={<IconVideo size={18} />}
+          leftSection={<IconPlayerPlay size={18} />}
           radius={0}
           component="a"
           href="/v/civitai-link-intro"
           variant="light"
         >
-          Video Demo
+          See how it works
         </Button>
         <Button rightSection={<IconHeart size={18} />} radius={0} component={Link} href="/pricing">
           Become a Supporter
@@ -171,52 +247,138 @@ function AboutCivitaiLink() {
   );
 }
 
-function LinkDropdown() {
-  const [manage, setManage] = useState(false);
-  const { instance, instances, status, error } = useCivitaiLink();
+function AppHeader({ onBack, showBack }: { onBack: () => void; showBack: boolean }) {
+  const { instance, status, deselectInstance, deleteInstance, renameInstance } = useCivitaiLink();
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState('');
+
+  if (!instance?.id) return null;
+
+  const instanceId = instance.id;
+
+  const commitRename = () => {
+    const name = draft.trim();
+    if (name && name !== instance.name) renameInstance(instanceId, name);
+    setRenaming(false);
+  };
+
+  return (
+    <Group justify="space-between" wrap="nowrap" gap="xs" px="xs" pt="xs" pb={4}>
+      <Group gap="xs" wrap="nowrap" style={{ minWidth: 0, flex: 1 }}>
+        {showBack && (
+          <Tooltip label="All apps" withinPortal>
+            <LegacyActionIcon onClick={onBack} aria-label="All apps">
+              <IconChevronLeft size={20} />
+            </LegacyActionIcon>
+          </Tooltip>
+        )}
+        {renaming ? (
+          <TextInput
+            size="xs"
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.currentTarget.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') commitRename();
+              if (e.key === 'Escape') setRenaming(false);
+            }}
+            style={{ flex: 1 }}
+          />
+        ) : (
+          <Stack gap={0} style={{ minWidth: 0 }}>
+            <Title order={4} size="sm" lineClamp={1}>
+              {instance.name}
+            </Title>
+            <Text c="dimmed" size="xs">
+              {status === 'link-ready' ? 'Connected' : 'Not connected'}
+            </Text>
+          </Stack>
+        )}
+      </Group>
+      {/* Not portaled: a portaled dropdown counts as a click OUTSIDE the
+          controlled Popover, which closes the whole thing on first click. */}
+      <Menu position="bottom-end" withinPortal={false}>
+        <Menu.Target>
+          <LegacyActionIcon aria-label="App actions">
+            <IconDotsVertical size={20} />
+          </LegacyActionIcon>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Item
+            leftSection={<IconPencil size={16} />}
+            onClick={() => {
+              setDraft(instance.name ?? '');
+              setRenaming(true);
+            }}
+          >
+            Rename
+          </Menu.Item>
+          <Menu.Item leftSection={<IconLinkOff size={16} />} onClick={deselectInstance}>
+            Disconnect
+          </Menu.Item>
+          <Menu.Item
+            color="red"
+            leftSection={<IconTrash size={16} />}
+            onClick={() => {
+              deleteInstance(instanceId);
+              onBack();
+            }}
+          >
+            Remove app
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+    </Group>
+  );
+}
+
+function LinkDropdown({ onClose }: { onClose: () => void }) {
+  const [showList, setShowList] = useState(false);
+  const { instance, status, error, deselectInstance } = useCivitaiLink();
   const features = useFeatureFlags();
   const notAllowed = !features.civitaiLink;
 
-  const handleManageClick = () => {
-    setManage((o) => !o);
-  };
+  const inAppView = !notAllowed && !!instance?.id && !showList;
+  const inListView = !notAllowed && (showList || status === 'no-selected-instance');
 
-  const canToggleManageInstances = !!instances?.length && status !== 'no-selected-instance';
+  const handleAddClick = () => {
+    deselectInstance();
+    onClose();
+    openCivitaiLinkWizardModal();
+  };
 
   return (
     <Paper style={{ overflow: 'hidden' }}>
-      <Stack gap={0} p="xs">
-        <Group justify="space-between" wrap="nowrap">
-          <Group gap="xs">
-            <Title order={4} size="sm">
-              Civitai Link
-            </Title>
-          </Group>
-          {canToggleManageInstances && (
-            <Tooltip label="Manage instances">
-              <LegacyActionIcon onClick={handleManageClick}>
-                <IconSettings size={20} />
-              </LegacyActionIcon>
-            </Tooltip>
+      {inAppView ? (
+        <AppHeader onBack={() => setShowList(true)} showBack />
+      ) : (
+        <Group justify="space-between" wrap="nowrap" px="xs" pt="xs" pb={4}>
+          <Title order={4} size="sm">
+            {inListView ? 'Connected apps' : 'Civitai Link'}
+          </Title>
+          {inListView && status !== 'no-socket-connection' && (
+            <Button
+              size="compact-xs"
+              variant="outline"
+              leftSection={<IconPlus size={18} />}
+              onClick={handleAddClick}
+            >
+              Add app
+            </Button>
           )}
         </Group>
-        {!!instances?.length && (
-          <Text c="dimmed" size="xs">
-            {instance?.name ?? 'no instance selected'}
-          </Text>
-        )}
-      </Stack>
-      <Divider />
-      {manage ? (
-        <InstancesManager />
-      ) : notAllowed ? (
+      )}
+      {notAllowed ? (
         <AboutCivitaiLink />
+      ) : showList ? (
+        <InstancesManager onSelect={() => setShowList(false)} />
       ) : (
         {
           'not-connected': <NotConnected error={error} />,
           'no-socket-connection': <LostConnection error={error} />,
-          'no-instances': <GetStarted />,
-          'no-selected-instance': <InstancesManager />,
+          'no-instances': <GetStarted onClose={onClose} />,
+          'no-selected-instance': <InstancesManager onSelect={() => setShowList(false)} />,
           'link-pending': <GetReconnected />,
           'link-ready': <ActivityList />,
         }[status]
@@ -261,105 +423,54 @@ function LostConnection({ error }: { error?: string }) {
   );
 }
 
-function InstancesManager() {
-  const {
-    instances,
-    instance: selectedInstance,
-    deselectInstance,
-    deleteInstance,
-    selectInstance,
-    status,
-  } = useCivitaiLink();
-
-  const handleAddClick = () => {
-    deselectInstance();
-    openCivitaiLinkWizardModal();
-  };
-
-  const showControls = status !== 'no-socket-connection';
+function InstancesManager({ onSelect }: { onSelect: () => void }) {
+  const { instances, instance: selectedInstance, selectInstance, status } = useCivitaiLink();
 
   return (
     <Stack gap={0}>
-      <Group justify="space-between" p="xs">
-        <Text fw={500}>Stable Diffusion Instances</Text>
-        {showControls && (
-          <Button
-            size="compact-xs"
-            variant="outline"
-            leftSection={<IconPlus size={18} />}
-            onClick={handleAddClick}
-          >
-            Add Instance
-          </Button>
-        )}
-      </Group>
       <ScrollArea.Autosize mah={410}>
-        {instances?.map((instance) => {
-          const isSelected = instance.id === selectedInstance?.id;
-          return (
-            <Group key={instance.id} className={classes.listItem} justify="space-between" p="xs">
-              <Text>{instance.name}</Text>
-              <Group gap="xs">
-                {isSelected && <BigIndicator />}
-                {showControls && (
-                  <>
-                    {isSelected ? (
-                      <Tooltip label="disconnect" withinPortal>
-                        <LegacyActionIcon onClick={deselectInstance}>
-                          <IconLinkOff size={20} />
-                        </LegacyActionIcon>
-                      </Tooltip>
-                    ) : (
-                      <Tooltip label="connect" withinPortal>
-                        <LegacyActionIcon onClick={() => selectInstance(instance.id)}>
-                          <IconLink size={20} />
-                        </LegacyActionIcon>
-                      </Tooltip>
-                    )}
-                    <Tooltip label="delete" withinPortal>
-                      <LegacyActionIcon color="red" onClick={() => deleteInstance(instance.id)}>
-                        <IconTrash size={20} />
-                      </LegacyActionIcon>
-                    </Tooltip>
-                  </>
-                )}
-              </Group>
-            </Group>
-          );
-        })}
+        <Stack gap={6} px="xs" py={6}>
+          {instances?.map((instance) => (
+            <AppRow
+              key={instance.id}
+              name={instance.name ?? 'Unnamed app'}
+              connected={instance.id === selectedInstance?.id && status === 'link-ready'}
+              onClick={() => {
+                selectInstance(instance.id);
+                onSelect();
+              }}
+            />
+          ))}
+        </Stack>
       </ScrollArea.Autosize>
+      <Group gap="xs" align="flex-start" wrap="nowrap" px="xs" pb="xs" pt={4}>
+        <IconInfoCircle size={14} className="mt-0.5 shrink-0 opacity-60" />
+        <Text size="xs" c="dimmed">
+          Sending goes to the app marked Connected.
+        </Text>
+      </Group>
     </Stack>
   );
 }
 
-function BigIndicator() {
-  const theme = useMantineTheme();
-  const { status } = useCivitaiLink();
-  const swatch = defaultVariantColorsResolver({
-    variant: 'filled',
-    color: civitaiLinkStatusColors[status],
-    theme,
-  });
-  return swatch.background ? <ColorSwatch color={swatch.background} size={20} /> : null;
-}
+function GetStarted({ onClose }: { onClose: () => void }) {
+  const handleSetupClick = () => {
+    onClose();
+    openCivitaiLinkWizardModal();
+  };
 
-function GetStarted() {
   return (
     <>
-      <Stack py="sm" px="lg" gap={4}>
-        <Center p="md" pb={0}>
-          <CivitaiLinkSvg />
-        </Center>
-        <Text my="xs">Interact with any Stable Diffusion instance in realtime from Civitai</Text>
-      </Stack>
-      <Divider />
+      <LinkPitch />
       <Stack>
         <Button
-          leftSection={<IconPlus size={18} />}
+          leftSection={<IconPlus size={16} />}
           radius={0}
-          onClick={() => openCivitaiLinkWizardModal()}
+          size="md"
+          fullWidth
+          onClick={handleSetupClick}
         >
-          Get Started
+          Set up Civitai Link
         </Button>
       </Stack>
     </>
@@ -372,75 +483,98 @@ function GetReconnected() {
 
   return (
     <>
-      <AlertWithIcon
-        iconColor="yellow"
-        icon={<IconAlertTriangle />}
-        radius={0}
-        size="md"
-        color="yellow"
-      >{`Couldn't connect to SD instance!`}</AlertWithIcon>
-      <Stack p="sm" gap={4}>
-        {instance?.key && (
-          <Stack gap={0} align="center" mb="md">
-            <Text size="md" fw={700}>
-              Link Key
-            </Text>
-            <CopyButton value={instance.key}>
-              {({ copied, copy }) => (
-                <Tooltip label="Copy" withinPortal>
-                  <Button
-                    onClick={copy}
-                    variant="default"
-                    size="lg"
-                    px="sm"
-                    rightSection={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
-                  >
-                    {!copied ? instance.key : 'Copied'}
-                  </Button>
-                </Tooltip>
-              )}
-            </CopyButton>
-          </Stack>
-        )}
-        <Text size="md" fw={500}>
-          Troubleshooting
+      <Group
+        align="flex-start"
+        wrap="nowrap"
+        gap={9}
+        px={14}
+        py={10}
+        bg="var(--mantine-color-yellow-light)"
+      >
+        <IconAlertTriangle size={15} className="mt-0.5 shrink-0 text-yellow-6" />
+        <Text fz={11} c="var(--mantine-color-text)" lh={1.5}>
+          {`${instance?.name ?? 'This app'} hasn't checked in. Sending is paused until it's back.`}
         </Text>
-        <List type="unordered">
-          <List.Item>Make sure your SD instance is up and running.</List.Item>
-          <List.Item>
-            If your instance is running and you are still unable to connect,{' '}
-            <Text
-              c="blue.4"
-              display="inline"
-              style={{ cursor: 'pointer' }}
-              onClick={handleGenerateKey}
-            >
-              generate a new connection key
-            </Text>{' '}
-            and add it to your SD instance.
-          </List.Item>
+      </Group>
+      {instance?.key && (
+        <Stack align="center" gap={6} px="xs" pt="sm">
+          <Text fz={11} c="dimmed">
+            Pair with this code
+          </Text>
+          <CopyButton value={instance.key}>
+            {({ copied, copy }) => (
+              <Tooltip label="Copy" withinPortal>
+                <Button
+                  variant="default"
+                  onClick={copy}
+                  px="sm"
+                  rightSection={copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                >
+                  {!copied ? instance.key : 'Copied'}
+                </Button>
+              </Tooltip>
+            )}
+          </CopyButton>
+        </Stack>
+      )}
+      <Stack px="xs" py="sm" gap={6}>
+        <Text size="sm" fw={500}>
+          Try this
+        </Text>
+        <List type="unordered" size="xs" spacing={6} c="dimmed">
+          <List.Item>Make sure the app is running on that machine.</List.Item>
+          <List.Item>{`Open its Civitai Link panel and check it's still paired.`}</List.Item>
+          <List.Item>{`Still stuck? Reconnect for a fresh code, then paste it into the app.`}</List.Item>
         </List>
       </Stack>
+      <Button
+        leftSection={<IconRefresh size={18} />}
+        radius={0}
+        fullWidth
+        onClick={handleGenerateKey}
+      >
+        Reconnect
+      </Button>
     </>
   );
 }
 
 function ActivityList() {
   const ids = useCivitaiLinkStore((state) => state.ids);
-  return ids.length > 0 ? (
-    <ScrollArea.Autosize mah={410}>
-      {ids.map((id) => (
-        <LinkActivity key={id} id={id} p="xs" pr="sm" className={classes.listItem} />
-      ))}
-    </ScrollArea.Autosize>
-  ) : (
-    <Center p="lg">
-      <Text c="dimmed">No activity for this instance</Text>
-    </Center>
+  const { runCommand } = useCivitaiLink();
+
+  if (!ids.length)
+    return (
+      <Center p="lg">
+        <Text c="dimmed">No activity for this app</Text>
+      </Center>
+    );
+
+  return (
+    <>
+      <ScrollArea.Autosize mah={410}>
+        {ids.map((id) => (
+          <LinkActivity key={id} id={id} px={14} py={12} />
+        ))}
+      </ScrollArea.Autosize>
+      <Group justify="flex-end" px="xs" pb="xs" pt={4}>
+        <Text
+          size="xs"
+          c="blue.4"
+          style={{ cursor: 'pointer' }}
+          onClick={() => runCommand({ type: 'activities:clear' })}
+        >
+          Clear activity
+        </Text>
+      </Group>
+    </>
   );
 }
 
-function LinkButton() {
+// Mantine only wires the target's click handler when the Popover is
+// uncontrolled (`PopoverTarget`: `...!ctx.controlled ? { onClick: ctx.onToggle }`),
+// so a controlled Popover has to toggle itself.
+function LinkButton({ onToggle }: { onToggle: () => void }) {
   // only show the connected indicator if there are any instances
   const { status } = useCivitaiLink();
   const activityProgress = useCivitaiLinkStore((state) => state.activityProgress);
@@ -450,7 +584,12 @@ function LinkButton() {
     <div className="relative">
       <Indicator className="flex items-center" color={color} disabled={!color}>
         <Popover.Target>
-          <LegacyActionIcon variant="subtle" color="gray" aria-label="Civitai Link">
+          <LegacyActionIcon
+            variant="subtle"
+            color="gray"
+            aria-label="Civitai Link"
+            onClick={onToggle}
+          >
             <IconScreenShare />
           </LegacyActionIcon>
         </Popover.Target>
@@ -482,10 +621,21 @@ function LinkActivity({ id, ...props }: { id: string } & GroupProps) {
   };
 
   return (
-    <Group align="center" wrap="nowrap" gap="xs" {...props}>
-      {isAdd ? <IconDownload /> : <IconTrash />}
-      <Stack style={{ flex: 1 }} gap={0}>
-        <Text lineClamp={1} size="md" fw={500} style={{ lineHeight: 1 }}>
+    <Group align="center" wrap="nowrap" gap={12} {...props}>
+      <Center
+        w={40}
+        h={40}
+        className={classes.surfaceRaised}
+        style={{ borderRadius: 'var(--mantine-radius-sm)', flexShrink: 0 }}
+      >
+        {isAdd ? (
+          <IconDownload size={16} className={classes.dimIcon} />
+        ) : (
+          <IconTrash size={16} className={classes.dimIcon} />
+        )}
+      </Center>
+      <Stack style={{ flex: 1, minWidth: 0 }} gap={5}>
+        <Text lineClamp={1} fz="sm" fw={500} c="var(--mantine-color-bright)">
           {activity.resource.modelName || (isAdd ? activity.resource.name : undefined)}
         </Text>
         {isAdd && activity.status === 'processing' ? (

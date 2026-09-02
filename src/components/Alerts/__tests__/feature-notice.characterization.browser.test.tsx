@@ -135,9 +135,15 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 
 vi.mock('~/providers/AppProvider', () => ({
   useServerDomains: () => ({ green: 'civitai.com', red: 'civitai.red', blue: 'civitai.blue' }),
+  useAppContext: () => ({
+    domain: { green: false, blue: true, red: false },
+    serverDomains: {
+      green: { primary: 'civitai.green', aliases: [] },
+      blue: { primary: 'civitai.com', aliases: [] },
+      red: { primary: 'civitai.red', aliases: [] },
+    },
+  }),
 }));
-
-vi.mock('~/utils/sync-account', () => ({ syncAccount: (url: string) => url }));
 
 import { renderWithProviders } from '../../../../test/component-setup';
 import { NavTidyNotice } from '~/components/Alerts/NavTidyNotice';

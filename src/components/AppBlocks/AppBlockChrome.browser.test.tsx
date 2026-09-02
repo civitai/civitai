@@ -30,6 +30,30 @@ import {
 // eslint-disable-next-line import/first
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 
+/**
+ * 🔴 THIS FILE PINS A DESKTOP VIEWPORT, AND UNTIL F3 IT PINNED NONE — WHICH MEANT
+ * IT HAD BEEN RUNNING ON A PHONE ALL ALONG WITHOUT SAYING SO.
+ *
+ * `test/component-setup.tsx` sets no viewport, so every test here inherited Vitest's
+ * default of **414×896** (`resolved.browser.viewport.width ??= 414` in
+ * `vitest/dist/chunks/coverage.*.js`). Nothing depended on that while the chrome was
+ * width-blind, so nothing said which width these claims were about. F3 makes the
+ * page-surface chrome swap its whole structure below the `sm` breakpoint (768), and
+ * 414 is below it — so the breadcrumb, the platform-nav trigger and the ⋮ DROPDOWN
+ * that this file asserts are, at the inherited viewport, the mobile shell's back
+ * chevron, folded nav and bottom SHEET instead.
+ *
+ * Every assertion in this file is about the DESKTOP chrome, so it says so now. The
+ * mobile shell has its own suite (`AppBlockChromeMobileShell.browser.test.tsx`) that
+ * names its viewport in the same way. Naming the viewport is the fix; leaving it
+ * unnamed and adjusting the assertions to whatever 414 produces would have quietly
+ * moved this file's subject.
+ */
+const DESKTOP: [number, number] = [1440, 900];
+beforeEach(async () => {
+  await page.viewport(...DESKTOP);
+});
+
 // H2: the host-rendered "trust frame" around an in-model app block must NAME the
 // app (host-side, spoof-proof) — not just carry it in the invisible iframe
 // `title`. `AppBlockChrome` is exported from IframeHost solely so this renders in
@@ -135,24 +159,39 @@ describe('AppBlockChrome "Hide" item is surface-aware (page vs model)', () => {
   });
 });
 
-// New: the run-page frame border carries an `Apps / <app name>` breadcrumb on
-// the full-page run surface (`/apps/run/<slug>`, slot kind `page`) — "Apps"
-// links back to /apps, the app name reuses the SAME sanitized (spoof-proof)
-// chrome name as the provenance badge. The breadcrumb is page-only: the compact
-// model-slot chrome (badge + ⋯ menu) gets nothing extra. The page-context
-// predicate is `isPageSlot(slotId)`, the same signal that suppresses "Hide".
-describe('AppBlockChrome run-page breadcrumb (Apps / <app name>)', () => {
-  test('page surface (app.page) renders the breadcrumb with the app name + an "Apps" link to /apps', async () => {
+// The run-page frame border carries a `Marketplace / <app name>` breadcrumb on
+// the full-page run surface (`/apps/run/<slug>`, slot kind `page`) —
+// "Marketplace" links back to /apps, the app name reuses the SAME sanitized
+// (spoof-proof) chrome name as the provenance badge. The breadcrumb is page-only:
+// the compact model-slot chrome (badge + ⋯ menu) gets nothing extra. The
+// page-context predicate is `isPageSlot(slotId)`, the same signal that suppresses
+// "Hide".
+//
+// 🔴 WHICH BRANCH OF THE TRAILING CRUMB THIS SUITE ACTUALLY EXERCISES — read this
+// before adding a popover assertion here and wondering why it never fires. F2 made
+// that crumb a control whose whole cluster is gated on `hasAppsStoreAccess`, read
+// through `useOptionalFeatureFlags`. This file renders via `renderWithProviders`,
+// which supplies Mantine + React-Query and NOT a `FeatureFlagsProvider` — so the
+// optional hook returns `null`, the gate fails closed, and every test below sees
+// the STATIC `<Text>` crumb. That is deliberate and is itself the coverage for the
+// ineligible-viewer branch: it proves the pre-change rendering survives untouched
+// for a viewer the store would refuse. The CONTROL branch (button semantics,
+// popover, keyboard, blur-close, store href) is covered in
+// `AppNameCrumb.browser.test.tsx`, which mounts the flags.
+describe('AppBlockChrome run-page breadcrumb (Marketplace / <app name>)', () => {
+  test('page surface (app.page) renders the breadcrumb with the app name + a "Marketplace" link to /apps', async () => {
     renderWithProviders(
       <AppBlockChrome blockInstanceId="inst-bc-page" appName="Budgeted Generator" slotId="app.page" />
     );
     // The breadcrumb container is present on the page surface.
     await expect.element(page.getByTestId('app-block-breadcrumb')).toBeInTheDocument();
-    // "Apps" is a link back to the apps list.
+    // The leading crumb is a link back to the store, and it NAMES the store the way
+    // the store's own subnav does ("Marketplace"), not "Apps". The testid keeps its
+    // `-apps` spelling: it addresses the crumb by ROUTE, which has not moved.
     const appsLink = page.getByTestId('app-block-breadcrumb-apps').element();
     expect(appsLink.tagName.toLowerCase()).toBe('a');
     expect(appsLink.getAttribute('href')).toBe('/apps');
-    expect((appsLink.textContent ?? '').trim()).toBe('Apps');
+    expect((appsLink.textContent ?? '').trim()).toBe('Marketplace');
     // The current app's (sanitized) name is the trailing crumb.
     const crumbName = page.getByTestId('app-block-breadcrumb-name').element();
     expect((crumbName.textContent ?? '').trim()).toBe('Budgeted Generator');
@@ -184,8 +223,13 @@ describe('AppBlockChrome run-page breadcrumb (Apps / <app name>)', () => {
       getComputedStyle(appsLink).textDecorationLine.includes('underline');
     expect(decorated).toBe(true);
 
-    // The static trailing crumb (app name) is NOT styled as a link — no clickable
-    // marker — so the two are visually distinguishable.
+    // The trailing crumb (app name) is NOT styled as a LINK — no clickable marker —
+    // so the two stay visually distinguishable. 🔴 That remains true after F2 made
+    // the trailing crumb a popover TRIGGER: `data-clickable` marks the link
+    // affordance specifically (distinct color + underline + pointer), and a button
+    // that opens a panel is a different affordance from a link that navigates. If
+    // this ever goes red because the crumb grew `data-clickable`, the fix is to
+    // remove it from the button, not to relax this.
     const crumbName = page.getByTestId('app-block-breadcrumb-name').element() as HTMLElement;
     expect(crumbName.getAttribute('data-clickable')).toBeNull();
   });
@@ -312,7 +356,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
   // is "Apps menu", distinct from the ⋯ "App menu").
   async function openPlatformNav() {
     await page.getByRole('button', { name: 'Apps menu' }).click();
-    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).toBeInTheDocument();
   }
 
   test('renders recents (icon + name), EXCLUDES the current app, links to /apps/run/<blockId>', async () => {
@@ -393,7 +437,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
 
     // The menu really did mount its dropdown (otherwise every `not.toBe…`
     // below would pass against an empty document) …
-    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).toBeInTheDocument();
     // … and neither the label nor the section wrapper renders in it.
     await expect.element(page.getByText('Recently run', { exact: true })).not.toBeInTheDocument();
     await expect.element(page.getByTestId('app-recently-run')).not.toBeInTheDocument();
@@ -412,7 +456,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
       />
     );
     await openPlatformNav();
-    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).toBeInTheDocument();
     await expect.element(page.getByTestId('app-recently-run')).not.toBeInTheDocument();
   });
 
@@ -442,7 +486,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     );
     await openPlatformNav();
 
-    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).toBeInTheDocument();
     await expect.element(page.getByTestId('app-recently-run')).not.toBeInTheDocument();
     // And no `/apps/run/` link leaked in via some other menu item.
     const hrefs = page
@@ -513,7 +557,7 @@ describe('AppBlockChrome "Recently run" section (platform-nav dropdown)', () => 
     // Close the menu (Escape), then a NEW app is recorded mid-session (simulating
     // the viewer running another app via client-nav elsewhere in the SPA).
     await page.getByRole('button', { name: 'Apps menu' }).click();
-    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).not.toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).not.toBeInTheDocument();
     recordRecentlyOpenedApp(
       { id: 'fresh', blockId: 'fresh-block', name: 'Fresh App' },
       SESSION_OWNER_ID
@@ -544,18 +588,18 @@ describe('AppBlockChrome platform-nav closes on window blur (iframe-aware)', () 
 
     // Target toggles the menu open.
     await page.getByRole('button', { name: 'Apps menu' }).click();
-    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).toBeInTheDocument();
 
     // Simulate the click landing INSIDE the cross-origin iframe: the parent
     // window loses focus → `blur`. The controlled menu must close.
     window.dispatchEvent(new Event('blur'));
     await expect
-      .element(page.getByRole('menuitem', { name: 'Apps home' }))
+      .element(page.getByRole('menuitem', { name: 'Marketplace' }))
       .not.toBeInTheDocument();
 
     // The target still opens the menu again after the blur-close (toggle intact).
     await page.getByRole('button', { name: 'Apps menu' }).click();
-    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).toBeInTheDocument();
   });
 });
 
@@ -641,10 +685,10 @@ describe('AppBlockChrome ⋮ overflow menu closes on window blur (iframe-aware)'
       .not.toBeInTheDocument();
 
     await page.getByRole('button', { name: 'Apps menu' }).click();
-    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).toBeInTheDocument();
     // …and that one still closes on blur too (the pre-existing behaviour is not
     // regressed by moving it onto the shared hook).
     window.dispatchEvent(new Event('blur'));
-    await expect.element(page.getByRole('menuitem', { name: 'Apps home' })).not.toBeInTheDocument();
+    await expect.element(page.getByRole('menuitem', { name: 'Marketplace' })).not.toBeInTheDocument();
   });
 });

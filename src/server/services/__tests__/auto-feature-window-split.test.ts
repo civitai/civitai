@@ -40,7 +40,10 @@ const metadata = (autoFeature: Record<string, unknown>) =>
 const queries = () =>
   dbMock.dbRead.$queryRaw.mock.calls.map((call) => (call[0] as { sql?: string })?.sql ?? '');
 const candidateQuery = () => queries().find((q) => q.includes('ImageReaction')) ?? '';
-const capCountQuery = () => queries().find((q) => q.includes('split_part')) ?? '';
+// Identified by exclusion rather than by `split_part`, which the counts query no longer contains:
+// the auto-featured marker is parsed in JS now, through the same helper the removal paths use.
+const capCountQuery = () =>
+  queries().find((q) => !q.includes('ImageReaction') && q.includes('"CollectionItem"')) ?? '';
 
 /**
  * Pins that BOTH queries were issued. Without it the two `.not.toContain` assertions below could

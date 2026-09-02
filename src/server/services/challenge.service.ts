@@ -18,6 +18,7 @@ import { resolveChallengeCollectionOwnerId } from '~/server/games/daily-challeng
 // Re-export getChallengeWinners so router can import from service (separation of concerns)
 export { getChallengeWinners } from '~/server/games/daily-challenge/challenge-helpers';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
+import { detachPostsFromCollection } from '~/server/services/collection-post-detach';
 import {
   recordChallengeCreated,
   recordChallengeScanResult,
@@ -2150,7 +2151,7 @@ export async function updateChallengeStatus(id: number, status: ChallengeStatus)
   return challenge;
 }
 
-export async function deleteChallenge(id: number) {
+export async function deleteChallenge(id: number, { force = false }: { force?: boolean } = {}) {
   // Read on the primary, not the read replica: replica lag let a delete see a stale `Scheduled`
   // status for a challenge the activation job had just flipped to `Active`, then refund + delete a
   // now-live challenge out from under its entrants.
@@ -2171,6 +2172,24 @@ export async function deleteChallenge(id: number) {
     throw new TRPCError({
       code: 'PRECONDITION_FAILED',
       message: 'Cannot delete an active challenge. Cancel it first.',
+    });
+  }
+
+  // `ChallengeWinner` is ON DELETE CASCADE, so deleting a challenge that has paid out erases who
+  // won while the Buzz stays spent in the ledger and the winners keep their cosmetics — a badge
+  // with no surviving explanation. `Completing` is mid-payout, which is worse. Neither is voidable
+  // (`voidChallenge` takes Active/Scheduled/Cancelled only), so this cannot be a hard block without
+  // stranding moderators on a challenge that has to come down; `force` is the deliberate override
+  // and no UI passes it.
+  if (
+    !force &&
+    (challenge.status === ChallengeStatus.Completed ||
+      challenge.status === ChallengeStatus.Completing)
+  ) {
+    throw new TRPCError({
+      code: 'PRECONDITION_FAILED',
+      message:
+        'This challenge has already awarded prizes. Deleting it would erase its winner records.',
     });
   }
 
@@ -2205,20 +2224,21 @@ export async function deleteChallenge(id: number) {
 
   const collectionId = challenge.collectionId;
 
+  // Outside the transaction on purpose — see detachPostsFromCollection.
+  if (collectionId) await detachPostsFromCollection(collectionId);
+
   // Keep challenge + collection deletion in one transaction so a failed collection delete
   // cannot leave an orphaned contest collection after the challenge row is removed.
   await dbWrite.$transaction(async (tx) => {
     // Delete challenge first (cascades to ChallengeWinner)
     await tx.challenge.delete({ where: { id } });
 
-    // Delete the associated collection and all its data
     if (collectionId) {
       await tx.collection.delete({ where: { id: collectionId } });
     }
   });
 
   if (collectionId) {
-    // Remove from search index
     await collectionsSearchIndex.queueUpdate([
       { id: collectionId, action: SearchIndexUpdateQueueAction.Delete },
     ]);

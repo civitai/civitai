@@ -86,7 +86,7 @@ export function ResourceReviewCarousel({
                                 name={image.name ?? image.id.toString()}
                                 alt={image.name ?? undefined}
                                 type={image.type}
-                                width={450}
+                                width={800}
                                 placeholder="empty"
                                 style={{ width: '100%', objectPosition: 'top' }}
                               />
