@@ -287,3 +287,72 @@ describe('shouldFlipPlaceButton', () => {
     expect(decide(box(800), box(300), null, null)).toBe(false);
   });
 });
+
+/**
+ * 🔴 THE DERIVED BOX IS A WHOLE BOX, INCLUDING THE EDGES NOTHING MOVES.
+ *
+ * `placeButtonBoxes` is handed a real `DOMRect`, whose properties are getters on
+ * the PROTOTYPE rather than own enumerable ones. `{ ...rect }` therefore copies
+ * nothing, and a derived box built that way has `left`/`right` undefined —
+ * `overlaps` evaluates `undefined > tray.left` as `false`, so the tray goes
+ * invisible to whichever box was derived.
+ *
+ * Measured on the image detail page at the flip boundary: unflipped, `below` was
+ * the real rect, saw the tray and flipped; flipped, `below` was derived, could
+ * not see the tray and unflipped. 39 alternations and "Maximum update depth
+ * exceeded". The numbers below are that capture.
+ *
+ * ⚠️ THE FIXTURE MUST NOT BE AN OBJECT LITERAL. Spreading a literal works, so a
+ * literal passes with or without the bug and pins nothing. `rectLike` puts the
+ * edges on a prototype, the way the browser does.
+ */
+describe('the candidate boxes survive coming from a DOMRect', () => {
+  const rectLike = (top: number, bottom: number, left: number, right: number): Box =>
+    Object.create(
+      Object.defineProperties(
+        {},
+        {
+          top: { get: () => top },
+          bottom: { get: () => bottom },
+          left: { get: () => left },
+          right: { get: () => right },
+        }
+      )
+    ) as Box;
+
+  const MEASURED_TRAY: Box = { top: 1087, bottom: 1355, left: 0, right: 1270 };
+  const MEASURED_CLIP: Box = { top: 92, bottom: 1301, left: 0, right: 820 };
+  const DISTANCE = 319;
+
+  it('spreads to nothing, which is why the fixture is not a literal', () => {
+    // The negative control for the two cases below: if this ever starts copying
+    // edges, they pass for a reason that has nothing to do with the fix.
+    expect({ ...rectLike(1, 2, 3, 4) }).toEqual({});
+  });
+
+  it('keeps left and right on the box it derives', () => {
+    const { above } = placeButtonBoxes({
+      current: rectLike(969, 1096, 322, 454),
+      flipped: false,
+      distance: DISTANCE,
+    });
+
+    expect(above.left).toBe(322);
+    expect(above.right).toBe(454);
+  });
+
+  it('decides the same thing whichever side the cluster is currently on', () => {
+    const decide = (current: Box, flipped: boolean) =>
+      shouldFlipPlaceButton({
+        ...placeButtonBoxes({ current, flipped, distance: DISTANCE }),
+        tray: MEASURED_TRAY,
+        clip: MEASURED_CLIP,
+      });
+
+    // Same sticker, same frame, one measurement from each side. The second was
+    // `false` while the derived box could not see the tray, and the pair of
+    // answers is what the loop was made of.
+    expect(decide(rectLike(969, 1096, 322, 454), false)).toBe(true);
+    expect(decide(rectLike(651, 778, 322, 454), true)).toBe(true);
+  });
+});

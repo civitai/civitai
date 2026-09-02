@@ -310,7 +310,16 @@ export function DraftSticker({
 
   // Both the tray and the carousel's clipped viewport can swallow the cluster,
   // so it moves above the sticker when that is the better of the two positions.
-  // The two standoffs ride along because they come from the same measurement.
+  //
+  // 🔴 THE SIDE IS STATE; THE DISTANCE IS NOT, AND MUST NOT BECOME STATE. The
+  // standoff is a float off `cos`/`sin` of a rotation nothing quantises, so it
+  // changes on every frame of a rotate drag. Held in state it made `measure` —
+  // which runs from a layout effect — commit a fresh render each frame, and
+  // Mantine's `SegmentedControl` turns a repeatedly re-rendering parent into
+  // "Maximum update depth exceeded": its ref callback is an inline arrow
+  // (`useMergedRef(ref, (node) => setParent(node))`), so React detaches and
+  // reattaches it every render, setting state each time. Writing the margin
+  // straight to the node keeps the whole standoff off React's update path.
   const [{ flipped, below, above }, setPosition] = useState({
     flipped: false,
     below: 0,
@@ -340,6 +349,15 @@ export function DraftSticker({
     // into the rotated extent.
     const height = element.offsetHeight;
     const width = element.offsetWidth;
+    // 🔴 AN UNMEASURED STICKER DECIDES NOTHING. `EdgeImage` has no intrinsic
+    // size until it loads, so a draft dragged in from the tray measures 0 tall
+    // for its first frames. Every number below is derived from that box, and a
+    // flip decided from a zero-height sticker put the two candidate positions
+    // close enough together that each one argued for the other: measured on the
+    // real page, 39 straight alternating decisions and "Maximum update depth
+    // exceeded". Keeping the current side until the sticker has a size is the
+    // same rule `placementControlPosition` states for the same reason.
+    if (!(height > 0) || !(width > 0)) return;
     const clearance = chromeClearance({
       width,
       height,
@@ -362,16 +380,19 @@ export function DraftSticker({
       }),
     });
 
-    const next = {
-      flipped: shouldFlipPlaceButton({
-        below: boxes.below,
-        above: boxes.above,
-        tray: tray?.getBoundingClientRect() ?? null,
-        clip: clip.current?.getBoundingClientRect() ?? null,
-      }),
-      below: clearance.below,
-      above: clearance.above,
-    };
+    const willFlip = shouldFlipPlaceButton({
+      below: boxes.below,
+      above: boxes.above,
+      tray: tray?.getBoundingClientRect() ?? null,
+      clip: clip.current?.getBoundingClientRect() ?? null,
+    });
+    // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
+    // to the node while the class comes from state splits them across a render:
+    // the element then carries the standoff for the side it just left, and the
+    // real distance between the two candidate positions is off by exactly
+    // `below + above` — 127px of movement against a model that says 155. That
+    // mismatch is what a flip decision feeds on.
+    const next = { flipped: willFlip, below: clearance.below, above: clearance.above };
 
     // Every pointer move re-measures, so bail on an unchanged result rather
     // than handing React a new object to re-render for.
@@ -777,9 +798,10 @@ export function DraftSticker({
         style={{
           minWidth: BUY_BUTTON_MIN_WIDTH,
           // The standoff from the sticker's own box out to the rotated artwork,
-          // the knob and the handles. Measured and derived — see
-          // `chromeClearance` — because no constant is right at both ends of the
-          // scale range or at both ends of the rotation range.
+          // the knob and the handles. Derived — see `chromeClearance` — because
+          // no constant is right at both ends of the scale range or at both ends
+          // of the rotation range. Set from the same state as the class above,
+          // never written to the node separately.
           ...(flipped ? { marginBottom: above } : { marginTop: below }),
         }}
         // Outside the rotated body but still inside the draft, and the layer

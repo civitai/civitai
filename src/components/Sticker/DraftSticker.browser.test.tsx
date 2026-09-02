@@ -775,3 +775,86 @@ describe('the pack purchase key across one session', () => {
     );
   });
 });
+
+/**
+ * 🔴 THE JOIN BETWEEN THE ARITHMETIC AND THE DOM.
+ *
+ * `chromeClearance` is proven as a pure function in its own suite, and the
+ * describes above prove the tree shape. Neither sees the wire between them:
+ * swapping `marginTop` and `marginBottom` at the call site, or deleting the
+ * margins outright, left every one of those tests green while the toolbar sat
+ * on the artwork. That gap is the actual ticket, so it gets its own case.
+ *
+ * ⚠️ THIS TEST INJECTS A STYLESHEET, AND THAT IS THE POINT. Component tests here
+ * load none, so `EdgeImage` has no intrinsic size, the draft measures 0 tall,
+ * and `measure` correctly refuses to derive anything from it — no margin is ever
+ * written. One rule giving the artwork a size is what makes the layout real
+ * enough to answer the question.
+ *
+ * It still asserts a RELATIONSHIP, never a pixel count: the absolute numbers
+ * depend on the injected rule, the comparison does not.
+ */
+describe('the clearance reaches the element', () => {
+  const sizeArtwork = () => {
+    const style = document.createElement('style');
+    // 120px square, so the sticker has a height for the knob term to scale off.
+    style.textContent = '.sticker-sized img { width: 120px !important; height: 120px !important; }';
+    document.head.appendChild(style);
+    return () => style.remove();
+  };
+
+  const renderAt = async (rotation: number) => {
+    renderWithProviders(
+      <div className="sticker-sized" style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          draft={{ ...draft, rotation, y: 0.4 }}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+          onDuplicate={() => null}
+        />
+      </div>
+    );
+
+    // `.last()`, because this test renders twice and the harness only cleans up
+    // between tests — the second render leaves both drafts mounted, and a bare
+    // locator is a strict-mode violation rather than the newest one.
+    // `element()` does not poll either, so the render has to be awaited on a
+    // matcher first or the lookup below races the first paint.
+    const locator = page.getByRole('button', { name: 'Remove this sticker' }).last();
+    await expect.element(locator).toBeInTheDocument();
+
+    const remove = (await locator.element()) as HTMLElement;
+    return remove.closest<HTMLElement>('.w-max') as HTMLElement;
+  };
+
+  test('puts the standoff on the side the cluster is on, and scales it with the sticker', async () => {
+    const cleanup = sizeArtwork();
+    try {
+      const upright = await renderAt(0);
+      await expect.poll(() => upright.style.marginTop).not.toBe('');
+
+      // On the side it is actually on. The swap mutant reddens here.
+      expect(upright.style.marginBottom).toBe('');
+      expect(parseFloat(upright.style.marginTop)).toBeGreaterThan(0);
+
+      const turned = await renderAt(180);
+      await expect.poll(() => turned.style.marginTop).not.toBe('');
+
+      // 🔴 A RELATIONSHIP, NOT A MEASUREMENT. At half a turn the rotate knob
+      // hangs BELOW the sticker on screen, so the below-standoff has to grow
+      // from clearing the handles to clearing the knob. A constant offset — the
+      // thing this ticket forbids — gives the same number at both angles.
+      expect(parseFloat(turned.style.marginTop)).toBeGreaterThan(
+        parseFloat(upright.style.marginTop)
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
