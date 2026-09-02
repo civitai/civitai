@@ -335,7 +335,7 @@ Scopes are represented as a bitmask integer. Combine scopes with bitwise OR.
 | `/.well-known/openid-configuration`     | GET    | OpenID Connect discovery               |
 | `/.well-known/jwks.json`                | GET    | JSON Web Key Set (token-signing keys)  |
 
-> Endpoints are served from `https://auth.civitai.com` (e.g. `https://auth.civitai.com/api/auth/oauth/authorize`). Discovery: `https://auth.civitai.com/.well-known/openid-configuration`; JWKS: `https://auth.civitai.com/.well-known/jwks.json`. The matching `https://civitai.com/api/auth/oauth/...` paths are legacy 308-redirect shims.
+> Endpoints are served from `https://auth.civitai.com` (e.g. `https://auth.civitai.com/api/auth/oauth/authorize`). Discovery: `https://auth.civitai.com/.well-known/openid-configuration`; JWKS: `https://auth.civitai.com/.well-known/jwks.json`. The matching `https://civitai.com/api/auth/oauth/...` paths still work for pre-cutover clients: `authorize` 308-redirects to the hub, and every other path is a transparent reverse proxy that forwards method, body and headers unchanged. Only `authorize` redirects, because a cross-origin redirect makes clients strip `Authorization` — which would break `client_secret_basic` and `Bearer` auth.
 
 ## Rate Limits
 
@@ -344,7 +344,7 @@ Scopes are represented as a bitmask integer. Combine scopes with bitwise OR.
 - Revocation endpoint: 20 requests/minute per client
 - Introspection endpoint: 60 requests/minute per client
 
-Rate limit headers are included in responses: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
+The hub sends no rate-limit headers and no `Retry-After`. A throttled request is `429` with `{"error":"rate_limited"}` — back off on the 429 itself.
 
 ## Token Lifetime
 

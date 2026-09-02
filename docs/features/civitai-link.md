@@ -31,7 +31,7 @@ An **instance** is one paired client. link-service owns the row; the site sees i
 | `activated` | whether the key has been upgraded to its long form |
 | `origin`, `createdAt` | provenance |
 
-The OAuth pairing path adds one more column on the link-service side, not surfaced in the site's
+The OAuth pairing path will add one more column on the link-service side, not surfaced in the site's
 type: `installId`, the desktop app's per-install uuid. `(userId, installId)` is unique, so
 re-pairing the same install re-keys it instead of adding a row.
 
@@ -41,10 +41,14 @@ room when the second party joins if that does not match `activated` — a short 
 `activated: false`, a long key `activated: true`. This is why the OAuth path creates instances with
 a full-length key and `activated: true` in one step.
 
-`INSTANCE_LIMIT` (link-service, default 10) caps instances per user; both create paths are
-count-then-create.
+`INSTANCE_LIMIT` (link-service, default 10) caps instances per user, counted before each create.
 
 ## Pairing: the desktop app (OAuth device grant)
+
+> **Status.** The hub half is in place: the `LinkConnect` scope, the introspection endpoint, and the
+> registered `civitai-link-desktop` client. The link-service half — `POST /api/link/self`, the Bearer
+> path, and the `installId` column — ships in that repo's own PR. The flow below is the design, not
+> something you can call today.
 
 From Civitai Link 1.21.0 the desktop app never shows a code. It signs in.
 
@@ -102,10 +106,9 @@ arrive; callers disable the feature rather than fire a request that always 401s.
 Once an instance is selected the shared worker joins its room by key and the connection is a
 socket, not polling.
 
-> The link-service half (`POST /api/link/self`, the Bearer path, the `installId` column) ships in
-> its own PR in that repo. The "sign in from the app" wizard step, the worker's await-pairing
-> message, and the popover's reconnect copy for OAuth-paired instances land in a **second PR here**,
-> after the desktop release, so the copy matches a shipped app.
+> The "sign in from the app" wizard step, the worker's await-pairing message, and the popover's
+> reconnect copy for OAuth-paired instances land in a **second PR here**, after the desktop release,
+> so the copy matches a shipped app.
 
 ## Design record
 
