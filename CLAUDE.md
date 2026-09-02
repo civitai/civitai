@@ -790,6 +790,7 @@ Operational runbooks, security reviews, incident handoffs, and content-policy re
 | Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |
 | Civitai LLM Client | [docs/features/civitai-llm-client.md](docs/features/civitai-llm-client.md) |
 | Challenge Platform | [docs/features/challenge-platform.md](docs/features/challenge-platform.md) |
+| Civitai Link | [docs/features/civitai-link.md](docs/features/civitai-link.md) |
 
 ## Troubleshooting
 

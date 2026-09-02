@@ -192,6 +192,10 @@ Responses:
 - `expired_token` — device code expired
 - Success — returns access token + refresh token
 
+> **Over-polling returns HTTP `429` with `{"error":"rate_limited"}`, not `slow_down`.** Poll no
+> faster than `interval`; on a 429, add 5 seconds to your interval and keep polling. The limit is
+> per client id, so every instance of an app shares one budget.
+
 ## Client Credentials Flow
 
 For server-to-server communication (no user context):
@@ -219,6 +223,56 @@ token=civitai_abc123...
 ```
 
 Always returns 200, even if the token was already revoked.
+
+## Token Introspection
+
+RFC 7662. Lets a **first-party backend service** ask the hub whether an opaque `civitai_…` access
+token is still live, and what it carries. Access tokens are random strings — nothing about them can
+be checked offline — so a service that is handed one has no alternative.
+
+**Not open to third-party apps.** The caller must be a **confidential** OAuth client *and* its
+client id must be on the hub's `OAUTH_INTROSPECTION_CLIENT_IDS` allowlist. Everything else gets
+`401 {"error":"invalid_client"}`. Today the only caller is `link-service`, which validates the
+Civitai Link desktop app's token before minting an instance key. Ask us if you have a service that
+needs it.
+
+```
+POST https://auth.civitai.com/api/auth/oauth/introspect
+Authorization: Basic base64(client_id:client_secret)
+Content-Type: application/x-www-form-urlencoded
+
+token=civitai_abc123...
+```
+
+Client credentials go in HTTP Basic (above) **or** as `client_id` / `client_secret` in the body.
+The body may be form-encoded or JSON.
+
+Active token:
+
+```json
+{
+  "active": true,
+  "sub": "123",
+  "username": "manuel",
+  "scope": "159383553",
+  "client_id": "civitai-link-desktop",
+  "exp": 1756800000,
+  "token_type": "Bearer"
+}
+```
+
+- `scope` is the **decimal bitmask string** this provider uses everywhere, not the RFC's
+  space-separated list. Test a permission with a bitwise AND against the values in
+  [Scopes](#scopes).
+- `exp` is Unix seconds, and is **omitted** for a token with no expiry.
+- `client_id` is the OAuth client the token was issued to.
+
+Anything else returns `200 {"active": false}` — unknown token, expired token, a refresh token, a
+personal API key (a different key type; only OAuth **access** tokens introspect as active), or a
+missing `token` parameter. The endpoint never distinguishes those cases.
+
+Responses are `Cache-Control: no-store`, and the endpoint adds none of the wildcard CORS headers the
+token endpoints carry: this is a server-to-server call.
 
 ## Scopes
 
@@ -255,6 +309,10 @@ Scopes are represented as a bitmask integer. Combine scopes with bitwise OR.
 | VaultWrite         | 16777216     | Manage vault                                    |
 | **Full**           | **33554431** | All permissions                                 |
 
+> **Opt-in scopes are not in `Full`.** `AppBlocksSubmit` (33554432), `AppBlocksDevTunnel`
+> (67108864) and `LinkConnect` (134217728) are granted only to clients whose registration lists
+> them, and are deliberately excluded from `Full` so an existing key is never silently widened.
+
 ### Common Scope Combinations
 
 | Use Case           | Scopes                                                                                                                               | Value                            |
@@ -271,6 +329,7 @@ Scopes are represented as a bitmask integer. Combine scopes with bitwise OR.
 | `/api/auth/oauth/token`                 | POST   | Exchange code for token, refresh token |
 | `/api/auth/oauth/userinfo`              | GET    | Get authenticated user profile         |
 | `/api/auth/oauth/revoke`                | POST   | Revoke a token                         |
+| `/api/auth/oauth/introspect`            | POST   | Introspect a token (allowlisted)       |
 | `/api/auth/oauth/device`                | POST   | Start device authorization             |
 | `/api/auth/oauth/device-token`          | POST   | Poll for device token                  |
 | `/.well-known/openid-configuration`     | GET    | OpenID Connect discovery               |
@@ -283,6 +342,7 @@ Scopes are represented as a bitmask integer. Combine scopes with bitwise OR.
 - Token endpoint: 20 requests/minute per client
 - Authorization endpoint: 10 requests/minute per user
 - Revocation endpoint: 20 requests/minute per client
+- Introspection endpoint: 60 requests/minute per client
 
 Rate limit headers are included in responses: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
 
