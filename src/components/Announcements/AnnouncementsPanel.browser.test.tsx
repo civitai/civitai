@@ -11,8 +11,8 @@ import type * as BrowserSettingsProvider from '~/providers/BrowserSettingsProvid
 import type * as BrowsingLevelProvider from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type * as Trpc from '~/utils/trpc';
 import {
+  clearDismissedCreatorAnnouncements,
   CREATOR_ANNOUNCEMENTS_DISMISSED_KEY,
-  pruneDismissedCreatorAnnouncements,
 } from '~/components/Announcements/creator-announcement-dismissals';
 
 /**
@@ -145,10 +145,10 @@ describe('AnnouncementsPanel', () => {
     // The dismissal store is module-scope and reads localStorage ONCE, at import. In browser
     // mode the module is not re-evaluated between tests — `vi.resetModules()` does not do it,
     // measured: moving the dismissal test to run first made four later tests fail on a leaked
-    // dismissal. Pruning against an empty live set clears the set through the store's own
-    // API, which is the only thing that actually resets it. The localStorage key goes too, so
-    // a fresh import in some later run does not read a stale set back.
-    pruneDismissedCreatorAnnouncements([]);
+    // dismissal. Reset through the store's state rather than by pruning against an empty live
+    // set: that is the behaviour the panel deliberately guards against, so a reset built on it
+    // would no-op the day anyone moves that guard down into the store.
+    clearDismissedCreatorAnnouncements();
     window.localStorage.removeItem(CREATOR_ANNOUNCEMENTS_DISMISSED_KEY);
   });
 
@@ -235,8 +235,9 @@ describe('AnnouncementsPanel', () => {
 
   // The prune's whole contract is the early return on an empty live set: `pruneDismissals`
   // cannot tell "nothing is live" from "nothing has loaded", so pruning against an empty
-  // load would drop every dismissal the user has made. Deleting that guard, or the effect,
-  // makes this test fail — the card comes back.
+  // load would drop every dismissal the user has made. Deleting THAT GUARD makes this test
+  // fail — the card comes back. Deleting the effect does not; the test below is the one that
+  // covers the effect, and the two are separate arms on purpose.
   test('a load with no creator announcements does not resurrect a dismissal', async () => {
     await renderPanel(['civitai', 'creators']);
     await page.getByRole('button', { name: 'Dismiss creator announcement' }).click();
@@ -252,5 +253,24 @@ describe('AnnouncementsPanel', () => {
     await renderPanel(['civitai', 'creators']);
     await expect.element(page.getByText('Civitai says hello')).toBeInTheDocument();
     expect(page.getByText('Creator says hello').elements()).toHaveLength(0);
+  });
+
+  // The other arm: the effect has to actually run, or dismissals accumulate forever in a
+  // store that is never swept. A load that no longer carries a dismissed id must drop it,
+  // so the id coming back later is visible again rather than dismissed by a stale entry.
+  test('an id that leaves the feed is pruned, so it is visible again if it returns', async () => {
+    await renderPanel(['civitai', 'creators']);
+    await page.getByRole('button', { name: 'Dismiss creator announcement' }).click();
+    await expect.element(page.getByText('Creator says hello')).not.toBeInTheDocument();
+
+    cleanup();
+    mocks.creators = [{ ...creatorAnnouncement, id: 7, title: 'Someone else' }];
+    await renderPanel(['civitai', 'creators']);
+    await expect.element(page.getByText('Someone else')).toBeInTheDocument();
+
+    cleanup();
+    mocks.creators = [creatorAnnouncement];
+    await renderPanel(['civitai', 'creators']);
+    await expect.element(page.getByText('Creator says hello')).toBeInTheDocument();
   });
 });

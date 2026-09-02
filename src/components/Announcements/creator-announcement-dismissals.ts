@@ -32,3 +32,13 @@ export function dismissCreatorAnnouncement(id: number) {
 export function pruneDismissedCreatorAnnouncements(live: Iterable<number>) {
   store.prune(live);
 }
+
+/**
+ * Drop every dismissal. Exists for tests: resetting by pruning against an empty live set
+ * would depend on the very behaviour `AnnouncementsPanel` guards against, so the day anyone
+ * hardens `pruneDismissals` to refuse an empty set, the reset would silently no-op and the
+ * leak would surface as a timeout on an unrelated control.
+ */
+export function clearDismissedCreatorAnnouncements() {
+  store.useStore.setState({ dismissed: { [BUCKET]: [] } });
+}
