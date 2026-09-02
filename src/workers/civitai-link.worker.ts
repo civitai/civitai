@@ -382,9 +382,9 @@ const pollPairing = async () => {
   // Cancelled or resolved while the request was in flight.
   if (pairingSnapshot !== snapshot) return;
 
-  // The arming fetch failed, so this is the first list we have seen. It is the
+  // The arming fetch failed and left us no baseline, so this first list is the
   // baseline, not a pairing — detectPairing matches every row of it otherwise.
-  if (!pairingSeeded) {
+  if (!pairingSeeded && snapshot.ids.length === 0) {
     pairingSnapshot = mergeSnapshot(snapshot, result);
     pairingSeeded = true;
     updateSharedValue({ type: 'instances', value: result });
@@ -403,6 +403,7 @@ const pollPairing = async () => {
 const handleAwaitPairing = async (knownIds: number[], knownKeys: Record<number, string>) => {
   stopPairingPoll();
   const generation = pairingGeneration;
+  pairingDeadline = Date.now() + PAIRING_TIMEOUT_MS;
   emitPairing('waiting');
 
   let current: CivitaiLinkInstance[] | null = null;
@@ -422,7 +423,6 @@ const handleAwaitPairing = async (knownIds: number[], knownKeys: Record<number, 
   }
 
   pairingSnapshot = snapshot;
-  pairingDeadline = Date.now() + PAIRING_TIMEOUT_MS;
   pairingTimer = setInterval(pollPairing, PAIRING_POLL_MS);
 };
 

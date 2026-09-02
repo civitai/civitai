@@ -323,14 +323,6 @@ const Provider = ({ children }: { children: React.ReactNode }) => {
     boot();
   }, []); // eslint-disable-line
 
-  // The SharedWorker outlives this tab, so an un-cancelled poll keeps hitting
-  // GET /api/link and can join an instance on every other tab's behalf.
-  useEffect(() => {
-    return () => {
-      cancelAwaitPairing();
-    };
-  }, []); // eslint-disable-line
-
   return (
     <CivitaiLinkCtx.Provider
       value={{
