@@ -1,4 +1,5 @@
 import { Button, Flex, Text, Anchor } from '@mantine/core';
+import { CIVITAI_LINK_DESKTOP_RELEASES } from '~/components/CivitaiLink/civitai-link-paths';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 type LinkDownloadButtonProps = {
@@ -34,8 +35,10 @@ export function CivitaiLinkDownloadButton({
         <Text fz={10} mt={10}>
           Not your OS? Check out all{' '}
           <Anchor
-            href="https://github.com/civitai/civitai-link-desktop/releases/latest"
+            inherit
+            href={CIVITAI_LINK_DESKTOP_RELEASES}
             target="_blank"
+            rel="nofollow noreferrer"
           >
             releases
           </Anchor>
