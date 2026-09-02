@@ -1,7 +1,6 @@
-import { Text } from '@mantine/core';
-import { IconExclamationMark } from '@tabler/icons-react';
+import { Alert, Anchor, Stack, Text } from '@mantine/core';
+import { IconAlertTriangle } from '@tabler/icons-react';
 
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { getUnpublishReason } from '~/server/common/moderation-helpers';
 
 /** Copy says "model" at both call sites, the version panel's version-level take-down included — don't narrow it to "version" there. */
@@ -26,36 +25,51 @@ export function ModelUnpublishedAlert({
       : detail?.notificationMessage;
 
   return (
-    <AlertWithIcon color={color} iconColor={color} icon={<IconExclamationMark />} size="sm">
-      <Text>
-        {isPolicy ? (
-          <>
-            This model has been unpublished due to a violation of our{' '}
-            <Text component="a" c="blue.4" href="/content/tos" target="_blank">
-              guidelines
-            </Text>{' '}
-            and is not visible to the community.
-          </>
-        ) : (
-          <>This model has been unpublished and is not visible to the community.</>
-        )}{' '}
-        {message}
-      </Text>
-      <Text>
-        {isPolicy
-          ? 'If you adjust your model to comply with our guidelines, you can request a review from one of our moderators.'
-          : 'Once you have addressed this, you can request a review from one of our moderators.'}
-        {showAppeal && (
-          <>
-            {' '}
-            If you believe this was done in error, you can{' '}
-            <Text component="a" c="blue.4" href="/content/content-appeal" target="_blank">
-              submit an appeal
-            </Text>
-            .
-          </>
+    <Alert
+      variant="light"
+      color={color}
+      icon={<IconAlertTriangle size={20} />}
+      // Mantine tints the title with the alert colour, which lands at 2.9:1 on the light-mode
+      // background — under AA at 14px. The icon and the tint carry the severity; the title carries
+      // the words, so it keeps the body colour.
+      styles={{ title: { color: 'var(--mantine-color-text)' } }}
+      title={
+        isPolicy
+          ? 'This model has been unpublished due to a violation of our guidelines'
+          : 'This model has been unpublished'
+      }
+    >
+      <Stack gap={6} maw="65ch">
+        {message && (
+          <Text size="sm" fw={500}>
+            {message}
+          </Text>
         )}
-      </Text>
-    </AlertWithIcon>
+        <Text size="sm">
+          It is not visible to the community.{' '}
+          {isPolicy ? (
+            <>
+              If you adjust your model to comply with our{' '}
+              <Anchor href="/content/tos" target="_blank" inherit>
+                guidelines
+              </Anchor>
+              , you can request a review from one of our moderators.
+            </>
+          ) : (
+            'Once you have addressed this, you can request a review from one of our moderators.'
+          )}
+          {showAppeal && (
+            <>
+              {' '}
+              If you believe this was done in error, you can{' '}
+              <Anchor href="/content/content-appeal" target="_blank" inherit>
+                submit an appeal
+              </Anchor>
+              .
+            </>
+          )}
+        </Text>
+      </Stack>
+    </Alert>
   );
 }

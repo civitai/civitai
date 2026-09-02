@@ -1,7 +1,6 @@
-import { Text } from '@mantine/core';
-import { IconAlertCircle } from '@tabler/icons-react';
+import { Alert, Stack, Text } from '@mantine/core';
+import { IconAlertTriangle } from '@tabler/icons-react';
 
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import {
   getArticleUnpublishReason,
   isArticleUnpublishReason,
@@ -25,29 +24,38 @@ export function ArticleUnpublishedAlert({
   const label = reason && isArticleUnpublishReason(reason) ? detail?.optionLabel : undefined;
 
   return (
-    <AlertWithIcon size="lg" icon={<IconAlertCircle />} color={color} iconColor={color}>
-      <div>
-        <Text weight={600} size="lg" mb="xs">
-          {isPolicy
-            ? 'This article has been unpublished due to a Terms of Service violation'
-            : `This article has been unpublished${label ? `: ${label}` : ''}`}
-        </Text>
+    <Alert
+      variant="light"
+      color={color}
+      icon={<IconAlertTriangle size={20} />}
+      // Mantine tints the title with the alert colour, which lands at 2.9:1 on the light-mode
+      // background — under AA at 14px. The icon and the tint carry the severity; the title carries
+      // the words, so it keeps the body colour.
+      styles={{ title: { color: 'var(--mantine-color-text)' } }}
+      title={
+        isPolicy
+          ? 'This article has been unpublished due to a Terms of Service violation'
+          : `This article has been unpublished${label ? `: ${label}` : ''}`
+      }
+    >
+      <Stack gap={6} maw="65ch">
         {detail?.notificationMessage && (
-          <Text>
-            <strong>Reason:</strong> {detail.notificationMessage}
+          <Text size="sm" fw={500}>
+            {detail.notificationMessage}
           </Text>
         )}
         {customMessage && (
-          <Text>
-            <strong>Additional details:</strong> {customMessage}
+          <Text size="sm">
+            <Text span fw={600} inherit>
+              Additional details:
+            </Text>{' '}
+            {customMessage}
           </Text>
         )}
         {showSupportHint && (
-          <Text mt="sm" size="sm">
-            If you believe this was done in error, please contact support.
-          </Text>
+          <Text size="sm">If you believe this was done in error, please contact support.</Text>
         )}
-      </div>
-    </AlertWithIcon>
+      </Stack>
+    </Alert>
   );
 }
