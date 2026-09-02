@@ -1,4 +1,5 @@
 import { dbRead, dbWrite } from '~/server/db/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { decodeHubId, encodeHubId } from '~/server/utils/hub-id';
 import { Prisma } from '@prisma/client';
 import type {
@@ -271,6 +272,13 @@ export async function upsertUserHub({
   const writable = hubWriterWhere({ userId, isModerator });
   const { id, sources, description, filters, ...data } = input;
 
+  // `sources[].alias` too: it is user-supplied, it is written by this same call, and a guard that
+  // scans only some of its writer's fields is invisible to a test that counts CALLS.
+  await throwOnBlockedUserContent(
+    [data.name, description, ...(sources?.map((source) => source.alias) ?? [])],
+    { isModerator, surface: 'userHub' }
+  );
+
   if (sources) {
     const duplicate = new Set<string>();
     for (const source of sources) {
@@ -376,6 +384,8 @@ export async function addUserHubSource({
   hubId,
   ...source
 }: AddUserHubSourceInput & { userId: number }) {
+  await throwOnBlockedUserContent(source.alias, { surface: 'userHub' });
+
   // Read through the WRITER, like `upsertUserHub` above and for the same reason: the
   // duplicate check, the cap and the next index all come off this row, and a modal of
   // checkboxes invites a second write inside the replica's lag window.
@@ -656,9 +666,8 @@ export async function resolveHubSources({
  * allowed. Returns 0 for "this viewer can see nothing in this hub", which callers
  * must serve as an empty page rather than as an uncapped one.
  *
- * Extracted because three filter builders apply it — the two Meilisearch paths and
- * BitDex — and a cap missing from one of them is a hub quietly serving past its
- * own setting on whichever backend that request happened to take.
+ * Extracted because both Meilisearch filter builders apply it, and a cap missing
+ * from one of them is a hub quietly serving past its own setting.
  */
 export function hubBrowsingLevel(browsingLevel: number | undefined, sources: ResolvedHubSources) {
   if (!sources.forcedBrowsingLevel) return browsingLevel;

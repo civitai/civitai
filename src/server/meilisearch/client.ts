@@ -75,7 +75,7 @@ export function getMetricsSearchClient(actor: string) {
  * deadline at runtime via the civitai-cfg ConfigMap without a code redeploy.
  *
  * The structural fix for backend slowness lives elsewhere (feeds-proxy index
- * sharding, BitDex migration); this constant is the *defensive* cap that
+ * sharding, an index migration); this constant is the *defensive* cap that
  * keeps civitai-dp-prod-api pods from holding the event loop for 30 s when
  * upstream goes sideways.
  */

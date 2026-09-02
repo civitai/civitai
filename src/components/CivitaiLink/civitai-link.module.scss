@@ -1,0 +1,56 @@
+// Surface + ink tokens from designs/civitai-link.pen. The canvas defines a light
+// and a dark value for each; Mantine palette shades (`dark.6`) are fixed in both
+// schemes, so they have to be resolved per scheme here.
+
+// $bg-card
+.surface {
+  background-color: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+}
+
+// $bg-hover
+.surfaceRaised {
+  background-color: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
+}
+
+// $border-strong
+.dot {
+  background-color: light-dark(var(--mantine-color-gray-4), var(--mantine-color-dark-3));
+}
+
+// $color-blue-3 reads as low contrast on the light $primary-subtle fill
+.accentIcon {
+  color: light-dark(var(--mantine-color-blue-7), var(--mantine-color-blue-3));
+}
+
+// $text-primary
+.neutralIcon {
+  color: var(--mantine-color-text);
+}
+
+// $text-dimmed
+.dimIcon {
+  color: var(--mantine-color-dimmed);
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 0.9;
+  }
+}
+
+.pairingHalo {
+  animation: breathe 2.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pairingHalo {
+    animation: none;
+    opacity: 0.7;
+  }
+}

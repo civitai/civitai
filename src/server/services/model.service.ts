@@ -70,6 +70,7 @@ import type {
   PublishPrivateModelInput,
   SetModelCollectionShowcaseInput,
   SetModelMinorInput,
+  SetModelSfwOnlyInput,
   SetModelOfficialInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
@@ -91,7 +92,7 @@ import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/us
 import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { getNewCreatorUserIds } from '~/server/services/new-creators.service';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -350,6 +351,12 @@ export const getModelsRaw = async ({
   /** For testing only: force the ModelBaseModelMetric query path regardless of feature flag */
   _forceBaseModelMetrics?: boolean;
 }) => {
+  // Ahead of every early empty return below, including the Meilisearch no-hits one: the point of
+  // throwing rather than falling back is that the misuse is legible, and an empty page hides it.
+  if (input.sort === ModelSort.RecentlyAdded && !input.collectionId) {
+    throw throwBadRequestError('Recently Added sort requires a collectionId');
+  }
+
   const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(
     input,
     {
@@ -483,6 +490,7 @@ export const getModelsRaw = async ({
 
   let isPrivate = false;
   const AND: Prisma.Sql[] = [];
+  let collectionJoin = Prisma.empty;
 
   const userId = sessionUser?.id;
   const isModerator = sessionUser?.isModerator ?? false;
@@ -832,15 +840,26 @@ export const getModelsRaw = async ({
     const { rawAND: collectionItemModelsAND }: { rawAND: Prisma.Sql[] } =
       getAvailableCollectionItemsFilterForUser({ permissions, userId: sessionUser?.id });
 
-    AND.push(
-      Prisma.sql`EXISTS (
+    // A semi-join cannot expose ci."id" to the ORDER BY. Safe to widen: CollectionItem is unique on
+    // ("collectionId", "modelId"), so the join cannot multiply rows. schema.full.prisma does not
+    // declare it, and the name has drifted — CollectionItem_model_idx in
+    // containers/db/docker-init/02_all_dll.sql, CollectionItem_model on prod.
+    if (sort === ModelSort.RecentlyAdded) {
+      collectionJoin = Prisma.sql`JOIN "CollectionItem" ci ON ci."modelId" = mm."modelId"
+        AND ci."collectionId" = ${collectionId}
+        AND ${Prisma.join(collectionItemModelsAND, ' AND ')}
+        ${collectionTagId ? Prisma.sql`AND ci."tagId" = ${collectionTagId}` : Prisma.empty}`;
+    } else {
+      AND.push(
+        Prisma.sql`EXISTS (
         SELECT 1 FROM "CollectionItem" ci
         WHERE ci."modelId" = mm."modelId"
         AND ci."collectionId" = ${collectionId}
         AND ${Prisma.join(collectionItemModelsAND, ' AND ')}
         ${collectionTagId ? Prisma.sql`AND ci."tagId" = ${collectionTagId}` : Prisma.empty}
       )`
-    );
+      );
+    }
 
     isPrivate = !permissions.publicCollection;
   }
@@ -867,6 +886,7 @@ export const getModelsRaw = async ({
   else if (sort === ModelSort.ImageCount)
     orderBy = `${pAlias}."imageCount" DESC, ${pAlias}."thumbsUpCount" DESC, ${pAlias}."modelId"`;
   else if (sort === ModelSort.Oldest) orderBy = `mm."lastVersionAt" ASC, ${pAlias}."modelId"`;
+  else if (sort === ModelSort.RecentlyAdded) orderBy = `ci."id" DESC`;
 
   // Cursor predicate split (perf): we build two branches that are combined with
   // UNION ALL when there is a multi-field sort + cursor. The OR-form predicate
@@ -999,7 +1019,8 @@ export const getModelsRaw = async ({
       mm."userId",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"`;
 
-  const fromAndJoin = fromClause;
+  const fromAndJoin = Prisma.sql`${fromClause}
+      ${collectionJoin}`;
 
   const limitValue = (take ?? 100) + 1;
   const orderByRaw = Prisma.raw(orderBy);
@@ -2314,6 +2335,92 @@ export async function setModelMinor({
   return result;
 }
 
+// Kept in sync with `lockableProperties` in ModelUpsertForm.tsx — these are the
+// fields the "Set as SFW" quick action locks against creator edits.
+export const SFW_ONLY_LOCKED_PROPERTIES = ['nsfw', 'sfwOnly'];
+
+export async function setModelSfwOnly({
+  id,
+  sfwOnly,
+  userId,
+}: SetModelSfwOnlyInput & { userId: number }) {
+  const before = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      poi: true,
+      minor: true,
+      sfwOnly: true,
+      nsfw: true,
+      availability: true,
+      gallerySettings: true,
+      lockedProperties: true,
+    },
+  });
+  if (!before) throw throwNotFoundError(`No model with id ${id}`);
+
+  // Both invariants are enforced by `ModelUpsertForm`'s schema, so clearing the flag here
+  // would leave a model no creator could save again.
+  if (!sfwOnly) {
+    if (before.minor)
+      throw throwBadRequestError('Minor models are SFW only. Unset as Minor first.');
+    if (before.availability === Availability.Private)
+      throw throwBadRequestError('Private models must be SFW only.');
+  }
+
+  const prevLockedProperties = before.lockedProperties ?? [];
+  const lockedProperties = sfwOnly
+    ? uniq([...prevLockedProperties, ...SFW_ONLY_LOCKED_PROPERTIES])
+    : prevLockedProperties.filter((prop) => !SFW_ONLY_LOCKED_PROPERTIES.includes(prop));
+
+  const prevGallerySettings = before.gallerySettings as ModelGallerySettingsSchema;
+
+  const result = await dbWrite.model.update({
+    where: { id },
+    // Unset deliberately leaves nsfw/gallerySettings untouched — the model may have been
+    // legitimately SFW before it was flagged, and guessing wrong would silently re-open
+    // NSFW generation nobody asked to re-open.
+    data: sfwOnly
+      ? {
+          sfwOnly: true,
+          nsfw: false,
+          gallerySettings: { ...prevGallerySettings, level: sfwBrowsingLevelsFlag },
+          lockedProperties,
+        }
+      : {
+          sfwOnly: false,
+          lockedProperties,
+        },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      poi: true,
+      nsfw: true,
+      minor: true,
+      sfwOnly: true,
+      status: true,
+      gallerySettings: true,
+    },
+  });
+
+  await preventReplicationLag('model', id);
+  await trackModActivity(userId, {
+    entityType: 'model',
+    entityId: id,
+    activity: sfwOnly ? 'setSfwOnly' : 'unsetSfwOnly',
+  }).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'set-model-sfw-only-track-activity',
+      message: `Failed to track mod activity for model ${id}`,
+      error,
+    })
+  );
+  await applyModelFlagSideEffects({ before, after: result });
+
+  return result;
+}
+
 // Model columns the GenerationCoverage view reads. `poi` belongs to the same set but is left out
 // here because applyModelFlagSideEffects already busts the version caches when it moves.
 const coverageModelFields = ['allowCommercialUse', 'availability', 'type', 'uploadType'] as const;
@@ -2327,7 +2434,10 @@ export const upsertModel = async (
     tracker?: Tracker;
   }
 ) => {
-  if (input.description) await throwOnBlockedLinkDomain(input.description);
+  await throwOnBlockedUserContent([input.name, input.description], {
+    isModerator: input.isModerator,
+    surface: 'model',
+  });
 
   const {
     id,
@@ -2400,7 +2510,7 @@ export const upsertModel = async (
     data.description = expansion.html;
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were spliced in
     // since, so the string about to be written is one it never checked.
-    await throwOnBlockedLinkDomain(data.description);
+    await throwOnBlockedUserContent(data.description, { isModerator, surface: 'model' });
   }
 
   let profanityAutoNsfw = false;
@@ -2858,7 +2968,7 @@ export async function applyModelContentChange({
 }) {
   // The blocklist can move after a blurb was saved, and the fan-out has no user in the loop to
   // catch it — same reason `applyArticleContentChange` re-checks.
-  await throwOnBlockedLinkDomain(description);
+  await throwOnBlockedUserContent(description, { surface: 'model' });
 
   let resolved = context;
   if (!resolved) {

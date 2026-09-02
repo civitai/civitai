@@ -64,6 +64,34 @@ export type ChromeSizeTier = 'base' | 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 export interface ChromeGeometry {
   tier: ChromeSizeTier;
   /**
+   * F3 — render the NATIVE MOBILE SHELL (back chevron · centered tappable app name ·
+   * ⋮ that also carries the platform nav) instead of the desktop breadcrumb chrome.
+   * True when the bar's own measured inline size is below `sm` (768).
+   *
+   * 🔴 IT IS NOT `tier === 'base' || tier === 'xs'`, AND THE DIFFERENCE IS THE WHOLE
+   * POINT: AN UNMEASURED BAR IS NOT COMPACT. `tier` resolves an unmeasured width (0 —
+   * SSR, and the first client render before the `ResizeObserver` fires) to `base`,
+   * which is correct for `tier`'s job: `base` reproduces the pre-F1 pinned name/menu
+   * widths, so the server HTML is byte-identical to what it always was. Reusing that
+   * for `compact` would make the SERVER render the mobile shell for everyone and then
+   * swap it for a breadcrumb one frame later on every desktop page load — a
+   * structural DOM swap, not a `max-width` change, on the majority surface.
+   *
+   * So `compact` is false at width 0 and the unmeasured render is the DESKTOP one.
+   * The cost is the mirror image and it is the one worth paying: a phone paints the
+   * breadcrumb for the single frame before the observer reports, then swaps. The
+   * measurement lands in the `requestAnimationFrame` `useResizeObserver` batches into,
+   * so it is one frame, and it lands on the smaller audience.
+   *
+   * Consequence worth stating because it is easy to misread from the tier table: a
+   * 340px MODEL SIDEBAR is `tier: 'base'` AND `compact: true`. The chrome still does
+   * not give it the mobile shell — the caller gates on `isPage && compact`, because
+   * the shell REPLACES a breadcrumb that only the full-page surface has, and "back to
+   * the Marketplace" is not a meaningful action from a model page. `compact` answers
+   * "is this bar narrow"; the surface question is the caller's.
+   */
+  compact: boolean;
+  /**
    * `max-width` (px) for the host-rendered app-name label and for the
    * breadcrumb's trailing app-name crumb — the two places a publisher-controlled
    * string is rendered in the bar. `undefined` means UNCAPPED: at `xl` the row
@@ -96,7 +124,13 @@ export interface ChromeGeometry {
  * And the narrow model sidebar, the common case, keeps exactly the geometry it
  * shipped with.
  */
-const TIERS: ReadonlyArray<{ tier: ChromeSizeTier; min: number } & Omit<ChromeGeometry, 'tier'>> = [
+// `compact` is omitted from the row shape on purpose: it is NOT a tier property. It is
+// derived from the raw width in `resolveChromeGeometry`, because it has to distinguish
+// "measured narrow" from "not measured yet" and both of those resolve to the `base`
+// row. Putting it in the table would collapse that distinction.
+const TIERS: ReadonlyArray<
+  { tier: ChromeSizeTier; min: number } & Omit<ChromeGeometry, 'tier' | 'compact'>
+> = [
   { tier: 'xl', min: CHROME_BREAKPOINTS.xl, nameMaxWidth: undefined, navMenuWidth: 280 },
   { tier: 'lg', min: CHROME_BREAKPOINTS.lg, nameMaxWidth: 560, navMenuWidth: 280 },
   { tier: 'md', min: CHROME_BREAKPOINTS.md, nameMaxWidth: 440, navMenuWidth: 260 },
@@ -118,13 +152,22 @@ export function resolveChromeTier(inlineSize: number): ChromeSizeTier {
 /** Resolve the whole geometry set from the chrome's own measured inline size. */
 export function resolveChromeGeometry(inlineSize: number): ChromeGeometry {
   const width = Number.isFinite(inlineSize) && inlineSize > 0 ? inlineSize : 0;
+  // 🔴 `width > 0` is the UNMEASURED guard, not defensive noise — see the `compact`
+  // doc comment. `0` means "nobody has measured this bar yet", which must resolve to
+  // the desktop chrome so SSR and the first client paint are unchanged.
+  const compact = width > 0 && width < CHROME_BREAKPOINTS.sm;
   // TIERS is ordered widest-first, so the first match is the largest breakpoint
   // at or below `width`; the `base` row's min of 0 makes the loop total.
   for (const row of TIERS) {
     if (width >= row.min) {
-      return { tier: row.tier, nameMaxWidth: row.nameMaxWidth, navMenuWidth: row.navMenuWidth };
+      return {
+        tier: row.tier,
+        compact,
+        nameMaxWidth: row.nameMaxWidth,
+        navMenuWidth: row.navMenuWidth,
+      };
     }
   }
   /* istanbul ignore next — unreachable: the `base` row matches every width >= 0 */
-  return { tier: 'base', nameMaxWidth: 160, navMenuWidth: 200 };
+  return { tier: 'base', compact, nameMaxWidth: 160, navMenuWidth: 200 };
 }

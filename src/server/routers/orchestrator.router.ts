@@ -608,7 +608,10 @@ export const orchestratorRouter = router({
 
   // ── Generic iterative image editor endpoints ──
 
-  iterateGenerate: protectedProcedure
+  // `guardedProcedure`, like every other generation entry point on this router: this submits a
+  // workflow and spends Buzz, so it answers to the same onboarding, mute and email-verification
+  // checks. It was the one that did not.
+  iterateGenerate: guardedProcedure
     .meta({ requiredScope: TokenScope.AIServicesWrite })
     .input(
       z.object({

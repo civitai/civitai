@@ -19,7 +19,7 @@ Derived from a full sweep of every domain-vocabulary import across the 22 in-sco
 | File | Bucket · why it belongs here | `~/` import closure |
 |---|---|---|
 | `src/server/common/enums.ts` (450 lines) | **Contract.** Non-Prisma domain enums keying shared columns: `BlocklistType` (`Blocklist`), `NotificationCategory` (`Notification`), `NsfwLevel`, `BlockedReason`, `TagSort`, report/scan status. **Also absorbs `ReportEntity`** (Q1 — see member extractions). | **none** (0 imports) |
-| `src/server/common/moderation-helpers.ts` (88 lines) | **Contract.** `unpublishReasons` codes written by moderator, read/displayed by main. Mis-filed under `server/common/`. | **none** (pure) |
+| `src/server/common/moderation-helpers.ts` (235 lines) | **Contract.** `unpublishReasons`/`articleUnpublishReasons` codes written by moderator, read/displayed by main; `legacyArticleUnpublishReasons` is read-only copy for keys the picker retired. Mis-filed under `server/common/`. | **none** (pure) |
 | `src/shared/constants/mime-types.ts` (72 lines) | **Contract.** `MIME_TYPES`/`MEDIA_TYPE` map file-ext ↔ `MediaType`; both apps categorize uploaded files (csam/training) into shared columns. | `@civitai/db-schema/enums` |
 | `src/shared/constants/basemodel.constants.ts` (V2 ecosystem schema) | **Vocabulary.** Shared base-model / ecosystem identity — generation config both apps must agree on. | `./lazy`, `./type-guards`, `@civitai/db-schema/enums` |
 | `src/utils/type-guards.ts` | **Pure leaf dep** of basemodel. **174 consumers** app-wide → strong single-source argument. *(Generic, not strictly "domain" — could relocate to a future `@civitai/utils`.)* | **none** (pure) |
@@ -164,7 +164,7 @@ export * from '@civitai/domain/enums';
 export { ReportEntity } from '@civitai/domain/enums';
 ```
 ```ts
-// src/server/common/moderation-helpers.ts  (11 consumers)
+// src/server/common/moderation-helpers.ts  (12 consumers)
 export * from '@civitai/domain/moderation-helpers';
 ```
 ```ts

@@ -17,7 +17,9 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
 import {
   COSMETIC_PHASH_LANE,
   COSMETIC_SIMILARITY_CLOSE_RATIO_KEY,
+  COSMETIC_SIMILARITY_MAX_RATIO_KEY,
   getCosmeticSimilarityCloseRatio,
+  getCosmeticSimilarityMaxRatio,
   getSimilarCosmetics,
   hammingDistanceHex,
   legacyBigIntHash,
@@ -28,7 +30,10 @@ import {
 } from '../cosmetic-phash.service';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { COSMETIC_SIMILARITY_CLOSE_RATIO } from '~/shared/constants/cosmetic-shop.constants';
+import {
+  COSMETIC_SIMILARITY_CLOSE_RATIO,
+  COSMETIC_SIMILARITY_MAX_RATIO,
+} from '~/shared/constants/cosmetic-shop.constants';
 dbMock.dbRead.keyValue.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.keyValueFindUnique as (...a: unknown[]) => unknown)(...args)
 );
@@ -60,6 +65,22 @@ const IMITATION_B = {
 
 // A fresh, comparable target: hashed, in the current lane, and the hash describes
 // the artwork the cosmetic actually uses.
+// Both ratios come from the same mocked `findUnique`, so a blanket
+// `mockResolvedValue` would move them together and hide the case that matters:
+// a close band that is wider than the display cutoff, or vice versa.
+const ratios = ({ close, max }: { close?: number; max?: number } = {}) =>
+  mocks.keyValueFindUnique.mockImplementation((args: { where: { key: string } }) =>
+    Promise.resolve(
+      args.where.key === COSMETIC_SIMILARITY_CLOSE_RATIO_KEY
+        ? close === undefined
+          ? null
+          : { value: close }
+        : max === undefined
+        ? null
+        : { value: max }
+    )
+  );
+
 const freshTarget = (pHashHex: string, url = 'artwork-1') => ({
   pHashHex,
   pHashUrl: url,
@@ -335,6 +356,61 @@ describe('getSimilarCosmetics', () => {
     });
   });
 
+  // The panel was a rank limit with no distance floor, so it always listed ten
+  // cosmetics however far away they were — routinely past the 1st percentile of
+  // unrelated artwork (94 of 256, measured over the 1,902-row corpus). A ranked
+  // list of noise is read as a ranking, which is worse than an empty panel.
+  //
+  // Three mutations die here: dropping the filter, hardcoding the cutoff to the
+  // built-in default so the row is inert, and cutting on the CLOSE ratio instead
+  // of the display one (which would show only what it also badges red).
+  //
+  // Moving the filter after `.slice(0, limit)` does NOT die, and should not be
+  // "fixed": the predicate is monotonic in the sort key, so the passing rows are
+  // a prefix of the sorted array and filter-then-take returns the same rows as
+  // take-then-filter. Filtering first is the cheaper order, not the correct one.
+  it('lists nothing rather than padding the list with distant cosmetics', async () => {
+    mocks.cosmeticFindUnique.mockResolvedValue(freshTarget('0000000000000001'));
+    // 63 bits apart at a 64-bit width — the shape that used to fill the panel.
+    mocks.queryRaw.mockResolvedValue([{ id: 2, pHashHex: '7ffffffffffffffe' }]);
+    mocks.cosmeticFindMany.mockResolvedValue([]);
+    ratios();
+
+    const result = await getSimilarCosmetics({ cosmeticId: 1 });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.matches).toEqual([]);
+    // Still an honest "we compared and found nothing", NOT "nothing was compared".
+    // The card renders these two differently and only one of them is reassuring.
+    expect(result.comparedAgainst).toBe(1);
+    // Nothing was fetched for a row that will never be shown.
+    expect(mocks.cosmeticFindMany).not.toHaveBeenCalled();
+  });
+
+  it('keeps a cosmetic the operator brings inside the cutoff', async () => {
+    mocks.cosmeticFindUnique.mockResolvedValue(freshTarget('0000000000000001'));
+    mocks.queryRaw.mockResolvedValue([{ id: 2, pHashHex: '7ffffffffffffffe' }]);
+    mocks.cosmeticFindMany.mockResolvedValue([
+      {
+        id: 2,
+        name: 'Far',
+        type: 'Badge',
+        data: { url: 'f' },
+        createdById: null,
+        creator: null,
+        cosmeticShopItems: [],
+      },
+    ]);
+    // 0.99 of 64 bits => 63.4, so the 63-bit row is admitted. Proves the cutoff
+    // is read from the row rather than compiled in.
+    ratios({ max: 0.99 });
+
+    const result = await getSimilarCosmetics({ cosmeticId: 1 });
+    expect(result.status).toBe('ok');
+    if (result.status !== 'ok') return;
+    expect(result.matches.map((m) => [m.id, m.distance, m.close])).toEqual([[2, 63, false]]);
+  });
+
   // The one link the moderator's badge now hangs on, and nothing else covers it:
   // `close` moved from the component to the server so a runtime-tuned threshold
   // could not disagree with a bundled constant, and the KeyValue read is the only
@@ -347,7 +423,7 @@ describe('getSimilarCosmetics', () => {
     mocks.cosmeticFindUnique.mockResolvedValue(freshTarget('0000000000000001'));
     mocks.queryRaw.mockResolvedValue([
       { id: 2, pHashHex: '0000000000000003' }, // 1 bit away
-      { id: 3, pHashHex: 'ffffff0000000001' }, // 24 bits away
+      { id: 3, pHashHex: '0000000000000ffe' }, // 12 bits away
     ]);
     mocks.cosmeticFindMany.mockResolvedValue(
       [2, 3].map((id) => ({
@@ -361,24 +437,24 @@ describe('getSimilarCosmetics', () => {
       }))
     );
 
-    mocks.keyValueFindUnique.mockResolvedValue(null);
+    ratios();
     const atDefault = await getSimilarCosmetics({ cosmeticId: 1 });
     expect(atDefault.status).toBe('ok');
     if (atDefault.status !== 'ok') return;
     expect(atDefault.matches.map((m) => [m.distance, m.close])).toEqual([
       [1, true],
-      [24, false],
+      [12, false],
     ]);
 
-    // Operator widens the band to 0.5 => close at or under 32 bits. The 24-bit
+    // Operator widens the band to 0.5 => close at or under 32 bits. The 12-bit
     // neighbour has to cross; nothing about the ranking may change with it.
-    mocks.keyValueFindUnique.mockResolvedValue({ value: 0.5 });
+    ratios({ close: 0.5 });
     const widened = await getSimilarCosmetics({ cosmeticId: 1 });
     expect(widened.status).toBe('ok');
     if (widened.status !== 'ok') return;
     expect(widened.matches.map((m) => [m.distance, m.close])).toEqual([
       [1, true],
-      [24, true],
+      [12, true],
     ]);
   });
 
@@ -412,7 +488,7 @@ describe('getSimilarCosmetics', () => {
     mocks.queryRaw.mockResolvedValue([
       { id: 55, pHashHex: 'a6e0c4c4cce8a4b7' }, // 1 bit away
       { id: 322, pHashHex: 'a6e0c4c4cce8a4b6' }, // identical
-      { id: 99, pHashHex: '0f1f2f3f4f5f6f7f' }, // unrelated
+      { id: 99, pHashHex: 'a6e0c4c4cce8ab49' }, // 12 bits away, still inside the cutoff
     ]);
     // Returned in a deliberately unhelpful order — the service must not inherit it.
     mocks.cosmeticFindMany.mockResolvedValue([
@@ -459,7 +535,7 @@ describe('getSimilarCosmetics', () => {
     expect(result.matches.map((m) => [m.id, m.distance])).toEqual([
       [322, 0],
       [55, 1],
-      [99, 43],
+      [99, 12],
     ]);
     // An official cosmetic has no creator; the panel says so rather than showing
     // a blank byline that reads like a missing username.

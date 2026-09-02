@@ -214,6 +214,12 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
         'creator',
         'iconUrl',
         'id',
+        // 🔴 DELIBERATE ADDITION, not an incidental one. The author-declared beta LABEL is
+        // on the card because a badge is what a grid tile can carry honestly. Its
+        // free-text companion `betaMessage` is NOT — the detail allowlist below asserts
+        // that field's presence and this list asserts its absence, which is the pair that
+        // pins the split.
+        'isBeta',
         'kind',
         'kindData',
         'name',
@@ -225,6 +231,8 @@ describe('projectListingCard — public allowlist (no internal leaks)', () => {
     );
     expect(card).not.toHaveProperty('status');
     expect(card).not.toHaveProperty('description'); // detail-only
+    // The beta NOTE is detail-only — a card must not carry unreviewed author prose.
+    expect(card).not.toHaveProperty('betaMessage');
   });
 
   it('never leaks internal AppBlock manifest fields onto the card', () => {
@@ -430,6 +438,12 @@ describe('projectListingDetail — public allowlist + gallery', () => {
         // every approved listing by, and `updatedAt` is the direct analogue of the
         // model page's public `Updated: <date>` line.
         'installCount',
+        // 🔴 The author-declared beta pair. `isBeta` is also on the CARD (a badge); the
+        // free-text `betaMessage` is DETAIL-ONLY, for the same reason `sourceRepoUrl` is —
+        // a grid tile has no room for a sentence. The card allowlist above asserts the
+        // note's absence.
+        'betaMessage',
+        'isBeta',
         'kind',
         'kindData',
         'name',
@@ -1067,5 +1081,151 @@ describe('🔴 sourceRepoUrl is a DETAIL field and is NEVER on the card', () => 
     // Explicitly NULL on the wire, not dropped — a client must not have to write `?? null`.
     expect('sourceRepoUrl' in empty).toBe(true);
     expect(empty.sourceRepoUrl).toBeNull();
+  });
+});
+
+describe('the beta projections — flag, note, and the stale-note rule', () => {
+  const BETA = { available: true, isBeta: true, betaMessage: 'rough edges' };
+  const OFF = { available: true, isBeta: false, betaMessage: null };
+  const UNAVAILABLE = { available: false, isBeta: false, betaMessage: null };
+
+  it('projects the flag onto the CARD and the flag + note onto the DETAIL', () => {
+    expect(projectListingCard(hydratedRow() as never, BETA).isBeta).toBe(true);
+    const detail = projectListingDetail(hydratedRow() as never, [], null, BETA);
+    expect(detail.isBeta).toBe(true);
+    expect(detail.betaMessage).toBe('rough edges');
+  });
+
+  it('defaults to NOT beta when no beta read is passed (every pre-existing call site)', () => {
+    expect(projectListingCard(hydratedRow() as never).isBeta).toBe(false);
+    expect(projectListingDetail(hydratedRow() as never).isBeta).toBe(false);
+    expect(projectListingDetail(hydratedRow() as never).betaMessage).toBeNull();
+  });
+
+  it('an UNAVAILABLE read projects exactly like "not in beta"', () => {
+    // The manual-apply window renders identically to the ordinary case — the difference
+    // lives in `available`, which only the WRITE paths consult.
+    expect(projectListingCard(hydratedRow() as never, UNAVAILABLE).isBeta).toBe(false);
+    expect(
+      projectListingDetail(hydratedRow() as never, [], null, UNAVAILABLE).betaMessage
+    ).toBeNull();
+  });
+
+  it('🔴 does NOT project a stale note when the flag is OFF', () => {
+    // A row can hold a note from an author who later unticked the box — the server clears
+    // it only on the next write, and rows written before that rule existed can carry one.
+    // Nulling it at the PROJECTION is what makes that unreachable for every row, not just
+    // for rows written from now on.
+    const stale = { available: true, isBeta: false, betaMessage: 'left over from before' };
+    expect(projectListingDetail(hydratedRow() as never, [], null, stale).betaMessage).toBeNull();
+  });
+
+  it('positive control — the same projection DOES carry a note when the flag is on', () => {
+    // Without this, the assertion above would pass on a projection that nulls the note
+    // unconditionally.
+    expect(projectListingDetail(hydratedRow() as never, [], null, BETA).betaMessage).toBe(
+      'rough edges'
+    );
+  });
+
+  it('a beta listing with no note keeps the FLAG (the note is not the label)', () => {
+    const noNote = { available: true, isBeta: true, betaMessage: null };
+    expect(projectListingDetail(hydratedRow() as never, [], null, noNote).isBeta).toBe(true);
+    expect(projectListingCard(hydratedRow() as never, noNote).isBeta).toBe(true);
+  });
+
+  it('the OFF read and the card default agree', () => {
+    expect(projectListingCard(hydratedRow() as never, OFF).isBeta).toBe(
+      projectListingCard(hydratedRow() as never).isBeta
+    );
+  });
+});
+
+describe('🔴 getListingPreviewForReview reads beta from the PARENT for a shadow', () => {
+  /**
+   * 🔴 THIS IS THE MECHANISM THAT REPLACED THE CLONE, so it is the thing that must not
+   * regress. `beginListingRevision` used to copy the beta columns onto the shadow purely so
+   * this preview could render them. That forced the parent's beta write to land BEFORE the
+   * shadow was minted, which hoisted a WRITE above the patch validation and made a rejected
+   * patch apply its beta half anyway. Reading the parent here needs no clone and no ordering
+   * rule. Keying it on the SHADOW instead would not merely go stale — nothing writes a
+   * shadow's beta columns, so it would read the schema defaults and strip the badge from
+   * every preview.
+   *
+   * The beta reader is NOT mocked in this suite, so these assertions exercise the real
+   * `readListingBetaForRender` and read the query it actually issues.
+   */
+  /** The `findUnique` call the guarded beta reader makes, or undefined. */
+  function betaLookup() {
+    return (
+      mockDbRead.appListing.findUnique.mock.calls
+        .map((c) => c[0] as { where?: { id?: string }; select?: Record<string, unknown> })
+        .find((a) => a?.select && 'isBeta' in a.select) ?? undefined
+    );
+  }
+  /** The `findUnique` call the guarded SOURCE-REPO reader makes, or undefined. */
+  function sourceRepoLookup() {
+    return (
+      mockDbRead.appListing.findUnique.mock.calls
+        .map((c) => c[0] as { where?: { id?: string }; select?: Record<string, unknown> })
+        .find((a) => a?.select && 'sourceRepoUrl' in a.select) ?? undefined
+    );
+  }
+
+  beforeEach(() => {
+    mockDbRead.appListing.findUnique.mockReset();
+  });
+
+  it('keys the beta read on `revisionOfId`, not on the shadow id', async () => {
+    mockDbRead.appListing.findUnique.mockResolvedValue({
+      ...hydratedRow(),
+      id: 'apl_shadow',
+      revisionOfId: 'apl_parent',
+    });
+    await getListingPreviewForReview({ listingId: 'apl_shadow' });
+    expect(betaLookup()?.where).toEqual({ id: 'apl_parent' });
+  });
+
+  it('keys it on the row itself for a NON-shadow listing (positive control)', async () => {
+    // Without this, the assertion above would also pass on an implementation that read some
+    // other id unconditionally — this pins that the parent hop is conditional on being a
+    // shadow, i.e. on `revisionOfId` being non-null.
+    mockDbRead.appListing.findUnique.mockResolvedValue({
+      ...hydratedRow(),
+      id: 'apl_parent',
+      revisionOfId: null,
+    });
+    await getListingPreviewForReview({ listingId: 'apl_parent' });
+    expect(betaLookup()?.where).toEqual({ id: 'apl_parent' });
+  });
+
+  it('🔴 the SOURCE-REPO read still keys on the SHADOW — the two are opposite questions', async () => {
+    // `sourceRepoUrl` IS staged on a revision (a MATERIAL field the apply copies), so the
+    // moderator must see the SHADOW's value — the one approving will publish. Beta is never
+    // staged, so they must see the PARENT's. Same function, opposite keys; this pins that a
+    // future "consolidation" cannot collapse them into one id.
+    mockDbRead.appListing.findUnique.mockResolvedValue({
+      ...hydratedRow(),
+      id: 'apl_shadow',
+      revisionOfId: 'apl_parent',
+    });
+    await getListingPreviewForReview({ listingId: 'apl_shadow' });
+    expect(sourceRepoLookup()?.where).toEqual({ id: 'apl_shadow' });
+    expect(betaLookup()?.where).toEqual({ id: 'apl_parent' });
+  });
+
+  it('surfaces the parent beta declaration into BOTH projections', async () => {
+    mockDbRead.appListing.findUnique.mockImplementation(
+      async (args: { select?: Record<string, unknown> }) => {
+        if (args?.select && 'isBeta' in args.select)
+          return { isBeta: true, betaMessage: 'reviewer sees this' };
+        if (args?.select && 'sourceRepoUrl' in args.select) return { sourceRepoUrl: null };
+        return { ...hydratedRow(), id: 'apl_shadow', revisionOfId: 'apl_parent' };
+      }
+    );
+    const res = await getListingPreviewForReview({ listingId: 'apl_shadow' });
+    expect(res!.card.isBeta).toBe(true);
+    expect(res!.detail.isBeta).toBe(true);
+    expect(res!.detail.betaMessage).toBe('reviewer sees this');
   });
 });

@@ -1,6 +1,34 @@
-import { describe, expect, test, vi } from 'vitest';
+/**
+ * 🔴 THIS FILE LOADS MANTINE'S STYLESHEET AND PINS A VIEWPORT, AND UNTIL F3 IT DID
+ * NEITHER — WHICH IS WHY ONE OF ITS NUMBERS WAS MEASURING A HARNESS ARTIFACT.
+ *
+ * Everything below is a LAYOUT measurement, and the shared scaffold
+ * (`test/component-setup.tsx`) deliberately loads no component stylesheet. Without
+ * it a Mantine `Group` is not a flex row, so the app-block chrome bar inside
+ * `app-page-frame` stacked its children and measured **200px** tall here against
+ * **31px** in production. The `> 320` floor check below was green only because of
+ * those 200 phantom pixels: F3 made the narrow-width chrome a single compact row,
+ * the artifact shrank toward the real number, and the host landed exactly on its
+ * `FILL_MIN_HEIGHT_PX = 300` floor — a red that was entirely about this harness and
+ * not about the panel, the fit prop, or the mobile shell.
+ *
+ * Loading the stylesheet makes every number here the number production produces.
+ * Vitest browser mode runs each file in its own iframe, so this does not leak into
+ * sibling suites. (Same reasoning, stated at length, in
+ * `src/components/AppBlocks/AppBlockChromeResponsive.browser.test.tsx`.)
+ *
+ * The viewport is pinned for the second half of the same reason: the file inherited
+ * Vitest's 414×896 default and then reasoned about it in prose ("this runner's
+ * viewport is ~414px WIDE"), which is an observation of a default rather than a
+ * choice. 414 is below the `sm` breakpoint, so the preview now renders the mobile
+ * chrome there; naming a desktop viewport keeps this file's subject — a moderator
+ * reviewing an app in a desktop modal — the thing it was always about.
+ */
+import '@mantine/core/styles.css';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+// eslint-disable-next-line import/first
 import { renderWithProviders } from '../../../test/component-setup';
 // Type-only namespace imports for the `importOriginal` spreads below (the repo's
 // local-rules/no-wholesale-module-mock cure). NOT `typeof import(...)`, which
@@ -201,6 +229,12 @@ function hostFrame() {
   return page.getByTestId('app-page-frame').element() as HTMLElement;
 }
 
+/** A desktop modal, which is the only place this preview is opened. See the header. */
+const DESKTOP: [number, number] = [1440, 900];
+beforeEach(async () => {
+  await page.viewport(...DESKTOP);
+});
+
 describe('the mod review preview fits its panel instead of being clipped out of it', () => {
   test('RED ARM (invariant guard) — `fit="viewport"` really is pushed out of the 420px panel', async () => {
     // The pre-fix mount, restated. This is the reproduction and it passes on
@@ -264,24 +298,29 @@ describe('the mod review preview fits its panel instead of being clipped out of 
     // wrong reason.
     expect(frame.getBoundingClientRect().height).toBeGreaterThan(320);
 
-    // Nothing is stranded. Stated as the DISJUNCTION the surface actually
-    // promises rather than a flat "no overflow": at ordinary modal widths the
-    // banner is one row and the host fits exactly, but this runner's viewport is
-    // ~414px WIDE, the banner wraps, and the floor legitimately binds — at which
-    // point the panel must be scrollable rather than clipping. The red arm's
-    // panel satisfies NEITHER branch, which is what makes this a real test and
-    // not a tautology.
+    // 🔴 NOTHING IS STRANDED — AND THIS IS NOW A FLAT ZERO, NOT A DISJUNCTION.
+    //
+    // It used to read "overflow === 0 OR the panel scrolls", with the justification
+    // that "this runner's viewport is ~414px WIDE, the banner wraps, and the floor
+    // legitimately binds". That sentence described a viewport this file had merely
+    // INHERITED from Vitest's default and never chosen — and it is now false twice
+    // over: the viewport is pinned to 1440 (see the file header), so the banner does
+    // not wrap, and the stylesheet is loaded, so `flex: 1` resolves against the real
+    // panel and the `FILL_MIN_HEIGHT_PX` floor does not bind. Measured here: the host
+    // is 380px inside the 420px panel and the overflow is 0.
+    //
+    // Keeping the weakened form would have been the worse outcome of the two: a
+    // disjunction whose second branch can no longer occur is satisfied entirely by
+    // its first, so it reads as tolerance the surface no longer needs while quietly
+    // accepting any amount of clipping that a scrollbar happens to make reachable.
     const overflow = box.scrollHeight - box.clientHeight;
-    const reachable = ['auto', 'scroll'].includes(getComputedStyle(box).overflowY);
     expect(
-      overflow === 0 || reachable,
-      `preview overflows its panel by ${overflow}px with overflowY=${
+      overflow,
+      `preview overflows its 420px panel by ${overflow}px (overflowY=${
         getComputedStyle(box).overflowY
-      } — that content is unreachable`
-    ).toBe(true);
-    // And whatever residue the floor leaves is SMALL — a fraction of the loss the
-    // red arm measures, not merely "some overflow".
-    expect(overflow).toBeLessThan(60);
+      }). At a pinned 1440px viewport with the stylesheet loaded the host fits exactly — any ` +
+        'residue means the fit regressed, not that the banner wrapped.'
+    ).toBe(0);
   });
 
   /**

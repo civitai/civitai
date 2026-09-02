@@ -10,11 +10,18 @@ import {
   getCommentHandler,
   toggleHideCommentHandler,
   togglePinnedCommentHandler,
+  toggleThreadMuteHandler,
+  getThreadMutedHandler,
+  toggleSectionMuteHandler,
+  getSectionMutedHandler,
 } from './../controllers/commentv2.controller';
 import {
   commentConnectorSchema,
   upsertCommentv2Schema,
   getCommentsInfiniteSchema,
+  toggleThreadMuteSchema,
+  muteRateLimits,
+  sectionMuteSchema,
 } from './../schema/commentv2.schema';
 import {
   middleware,
@@ -91,4 +98,30 @@ export const commentv2Router = router({
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(toggleHideCommentSchema)
     .mutation(togglePinnedCommentHandler),
+  getThreadMuted: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(toggleThreadMuteSchema)
+    .query(getThreadMutedHandler),
+  // Both mutations share ONE rate-limit budget: they are the same capability at two granularities,
+  // and a per-endpoint budget is just twice the number it appears to be.
+  //
+  // `protectedProcedure`, NOT `guardedProcedure`, even though the per-comment path can create a
+  // `Thread` row. `guardedProcedure` refuses a site-muted account, and a site mute is about posting
+  // content — silencing your own notifications is a preference keyed on your own userId, and the
+  // people whose accounts are restricted are the ones most likely to want it. The rate limit and the
+  // thread-lock check bound the create instead.
+  toggleThreadMute: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(toggleThreadMuteSchema)
+    .use(rateLimit(muteRateLimits, undefined, { sharedKey: 'commentv2.mute' }))
+    .mutation(toggleThreadMuteHandler),
+  getSectionMuted: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(sectionMuteSchema)
+    .query(getSectionMutedHandler),
+  toggleSectionMute: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(sectionMuteSchema)
+    .use(rateLimit(muteRateLimits, undefined, { sharedKey: 'commentv2.mute' }))
+    .mutation(toggleSectionMuteHandler),
 });

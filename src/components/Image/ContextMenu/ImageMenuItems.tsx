@@ -38,6 +38,7 @@ import {
   moderatorImageLookupPath,
 } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
+import { RemixGalleryMenuItems } from '~/components/RemixGallery/RemixGalleryMenuItems';
 
 export type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
@@ -114,6 +115,11 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
           View Post
         </Menu.Item>
       )}
+      <RemixGalleryMenuItems
+        imageId={imageId}
+        isOwner={!!isOwner}
+        published={!!image.publishedAt}
+      />
       {!isOwner && (
         <>
           <LoginRedirect reason="report-content">

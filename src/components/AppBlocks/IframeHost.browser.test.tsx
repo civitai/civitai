@@ -257,9 +257,7 @@ describe('IframeHost block render/impression (Analytics Phase 2, model.sidebar_t
   beforeEach(() => {
     // vi.spyOn dedupes to the same mock when fetch is already spied, so its
     // .mock.calls would accumulate across tests — clear it each time.
-    fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(null, { status: 200 }));
+    fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
     fetchSpy.mockClear();
   });
 
@@ -390,7 +388,10 @@ describe('IframeHost GET_BUZZ_BALANCE handler (Phase 3, model.sidebar_top)', () 
  * retry loop or the readiness timeout) is pinned deterministically in
  * `__tests__/iframeInitController.test.ts`. Asserting the CALL here rather than
  * counting BLOCK_INIT posts is deliberate: a count would race the host's own
- * 400ms retry tick and could pass for the wrong reason.
+ * re-post schedule (`INIT_RETRY_BACKOFF_MS`, 50/100/200ms then every 400ms) and
+ * could pass for the wrong reason — and that race got FASTER when the front of
+ * that schedule was shortened, so the reasoning holds more strongly now, not
+ * less.
  */
 describe('IframeHost readiness announce (BLOCK_HELLO)', () => {
   test('a BLOCK_HELLO from the frame reaches IframeInitController.notifyHello', async () => {

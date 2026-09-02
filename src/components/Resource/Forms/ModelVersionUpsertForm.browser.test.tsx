@@ -291,8 +291,7 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
   });
 
   // Closing the section on a version that already charges is a removal, and it happens with the priced
-  // controls off screen — so the warning, the irreversible-early-access note and the undo all have to live
-  // outside them.
+  // controls off screen — so the warning and the undo both have to live outside them.
   test('warns before removing an existing charge, and restores it on request', async () => {
     renderChargingForm();
 
@@ -305,7 +304,9 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect(
       page.getByText(/Saving now removes this version's license fee and paid access/).elements()
     ).toHaveLength(1);
-    expect(page.getByText(/your payment for early access will be lost/).elements()).toHaveLength(1);
+    // Nothing is lost here — a permanent gate can be added back at any time — so the removal note
+    // stops at what saving does. Creators read an irreversibility warning as "my money is at risk".
+    expect(page.getByText(/Early Access window can't be started again/).elements()).toHaveLength(0);
 
     await userEvent.click(page.getByRole('button', { name: 'Restore the stored settings' }));
     await expect.element(chargeSwitch()).toBeChecked();
@@ -973,6 +974,40 @@ describe('ModelVersionUpsertForm — remembered paid access', () => {
     await expect.element(accessSwitch()).toBeChecked();
     const price = page.getByLabelText('Price for access').element() as HTMLInputElement;
     expect(price.value.replace(/\D/g, '')).toBe('5000');
+  });
+
+  // The other half of the pair above: a published timed window is the one gate removal that cannot be
+  // undone after saving, so it is the only one that gets the warning.
+  test('warns that a published timed window cannot be started again', async () => {
+    const timedVersion = {
+      ...(version as object),
+      status: 'Published',
+      paidAccess: {
+        endsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        timeframeDays: 30,
+        terms: { download: { price: 5000 } },
+      },
+      meta: {
+        rightsAffirmation: {
+          userId: 1,
+          affirmedAt: '2026-08-01T00:00:00.000Z',
+          version: 1,
+          statement: 'x',
+        },
+      },
+    } as unknown as React.ComponentProps<typeof ModelVersionUpsertForm>['version'];
+
+    renderWithProviders(
+      <ModelVersionUpsertForm model={model} version={timedVersion} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await expect.element(chargeSwitch()).toBeChecked();
+    await userEvent.click(chargeSwitch());
+    expect(
+      page.getByText(/Early Access window can't be started again once removed/).elements()
+    ).toHaveLength(1);
   });
 
   test('drops a remembered timed window this version cannot offer', async () => {

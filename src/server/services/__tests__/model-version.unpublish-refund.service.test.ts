@@ -60,7 +60,10 @@ vi.mock('~/server/services/paid-access.service', async (importOriginal) => ({
   bustPaidAccessCache: vi.fn(),
 }));
 vi.mock('~/server/services/auction.service', () => ({ deleteBidsForModelVersion: vi.fn() }));
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+}));
 vi.mock('~/server/services/buzz.service', () => ({
   createMultiAccountBuzzTransaction: vi.fn(),
   getMultiAccountTransactionsByPrefix: mockGetMultiAccountTransactionsByPrefix,

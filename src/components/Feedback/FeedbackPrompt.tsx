@@ -93,7 +93,7 @@ type FeedbackPromptProps = {
   placeholder?: string;
   /** Extra detail stored alongside the message so a one-line report is still actionable. */
   context?: CreateFeedbackInput['context'];
-  /** Caller's own condition — e.g. "BitDex actually served this page". */
+  /** Caller's own condition — e.g. "the index actually served this page". */
   active?: boolean;
 };
 

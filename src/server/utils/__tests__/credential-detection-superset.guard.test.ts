@@ -335,7 +335,14 @@ function depsOf(sf: ts.SourceFile, dir: string): { local: string[]; packages: st
     if (!abs) continue;
     for (const cand of [`${abs}.ts`, `${abs}.tsx`, `${abs}/index.ts`]) {
       if (fs.existsSync(cand)) {
-        local.add(cand.slice(SRC.length + 1));
+        // path.resolve() yields '\' on Windows; every declared path below is written with '/', so
+        // without this the guard compares two spellings of the same module and reports it unscanned.
+        local.add(
+          cand
+            .slice(SRC.length + 1)
+            .split(path.sep)
+            .join('/')
+        );
         break;
       }
     }

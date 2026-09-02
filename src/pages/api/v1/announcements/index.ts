@@ -6,6 +6,7 @@ import {
   deleteCreatorAnnouncement,
   upsertCreatorAnnouncement,
 } from '~/server/services/creator-announcement.service';
+import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import type { SessionUser } from '~/types/session';
@@ -33,15 +34,17 @@ function reviveDates(body: Record<string, unknown>) {
 
 /**
  * 🔴 AuthedEndpoint is session-presence only, a rung below the tRPC twin
- * (`guardedProcedure` = protected + onboarded + not-muted). Without these three checks a
- * creator refused onsite — muted, un-onboarded, or simply outside the flag — is accepted
- * through the spoke and their announcement fans out to every follower. The spoke must not
- * be the cheaper door.
+ * (`guardedProcedure` = protected + onboarded + not-muted + email-verified). Without these four
+ * checks a creator refused onsite — muted, un-onboarded, unverified, or simply outside the flag — is
+ * accepted through the spoke and their announcement fans out to every follower. The spoke must not be
+ * the cheaper door.
  */
 function assertMayUseSpoke(user: SessionUser, req: NextApiRequest) {
   if (!getFeatureFlags({ user, req }).creatorAnnouncements)
     throw throwAuthorizationError('Announcements are not available for this account');
   if (user.muted) throw throwAuthorizationError('Your account is muted');
+  if (requiresEmailVerification(user))
+    throw throwAuthorizationError('Verify your email address to post an announcement');
   if (!Flags.hasFlag(user.onboarding, OnboardingSteps.Buzz))
     throw throwAuthorizationError('You must complete onboarding before posting an announcement');
 }

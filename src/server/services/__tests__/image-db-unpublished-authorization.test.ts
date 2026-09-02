@@ -6,7 +6,7 @@ import type * as DbHelpers from '~/server/db/db-helpers';
 //
 // `image-unpublished-authorization.test.ts` covers the two Meilisearch builders.
 // This covers the fourth call site — `getAllImages` — which had NO test at all,
-// and which serves the feed whenever the index and BitDex flags are off. Two
+// and which serves the feed whenever the index flag is off. Two
 // independent reviewers ranked that gap first, for the same reason: the suite
 // read as proof the gate worked while half its call sites were unobserved.
 //

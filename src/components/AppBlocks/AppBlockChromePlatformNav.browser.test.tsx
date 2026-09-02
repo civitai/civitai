@@ -54,8 +54,21 @@ import { AppBlockChrome } from '~/components/AppBlocks/IframeHost';
 // eslint-disable-next-line import/first
 import { renderWithProviders } from '../../../test/component-setup';
 
-beforeEach(() => {
+/**
+ * 🔴 A DESKTOP VIEWPORT, PINNED — every render below is `slotId="app.page"`, and F3
+ * gives that surface a different chrome below the `sm` breakpoint (768): no separate
+ * platform-nav trigger at all, because the nav folds into the ⋮ bottom sheet.
+ *
+ * This file pinned no viewport before F3 and therefore inherited Vitest's default of
+ * **414×896**, which is below `sm` — so without this line every test here would be
+ * asserting the desktop dropdown against the mobile shell. The claims are about the
+ * dropdown, so the viewport that produces a dropdown is now named. The folded-nav
+ * behaviour has its own coverage in `AppBlockChromeMobileShell.browser.test.tsx`.
+ */
+const DESKTOP: [number, number] = [1440, 900];
+beforeEach(async () => {
   holder.user = null;
+  await page.viewport(...DESKTOP);
 });
 
 async function openPlatformNav() {

@@ -22,7 +22,26 @@ import { ResourceDataProvider } from '~/components/generation_v2/inputs/Resource
 
 function DataGraphV2Demo() {
   return (
-    <Container size="xs" className="h-screen max-h-screen w-full overflow-hidden px-0 py-3">
+    // 🔴 `min-h-0 flex-1`, not `h-screen max-h-screen`. A `standalone` page
+    // skips `AppLayout` but NOT the shell above it — the chain, verified rather
+    // than assumed, is:
+    //
+    //   #__next                       flex column, height:100%, and now
+    //                                 `padding-top: var(--safe-area-inset-top)`
+    //     └ BaseLayout   `flex flex-1 overflow-hidden`          (a flex ROW)
+    //         └ ContainerProvider#main  `flex h-full flex-col flex-1`
+    //             └ this <Container>
+    //
+    // So this element's slot is `#__next`'s CONTENT box — the cover viewport
+    // minus the top inset — while `h-screen` still measures the whole cover
+    // viewport. With `overflow-hidden` both here and on the BaseLayout row, the
+    // excess is CLIPPED rather than scrolled: the bottom of the generation form
+    // becomes unreachable on a notched phone. `flex-1` takes the slot instead
+    // of re-deriving it, which is exact on every device rather than
+    // approximately right on one — the same remedy `images/iterate.tsx` uses.
+    // (`min-h-0` is required with it: a flex item's default `min-height: auto`
+    // refuses to shrink below its content and would reinstate the overflow.)
+    <Container size="xs" className="min-h-0 w-full flex-1 overflow-hidden px-0 py-3">
       <IsClient>
         {/* GenerationFormV2 packages GenerationProvider + GenerationFormProvider
             + GenerationForm; ResourceDataProvider is the one context the shell

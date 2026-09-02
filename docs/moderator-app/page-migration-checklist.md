@@ -505,7 +505,7 @@ main app (or moves to a Retool/admin surface), not here.
 Client-only playgrounds/demos with no backend slice and no production value:
 
 - [ ] ~~`/moderator/aspect-ratio-explorer`~~ — client-only AR calculator (localStorage)
-- [ ] ~~`/moderator/link-demo`~~ — Civitai Link demo (`useCivitaiLink`)
+- [x] ~~`/moderator/link-demo`~~ — Civitai Link demo (`useCivitaiLink`). **Deleted**, not migrated: it walked through the retired A1111 "SD Settings → Civitai tab" pairing flow.
 - [ ] ~~`/moderator/test`~~ — UI playground (slots, upload, Headless UI)
 - [ ] ~~`/moderator/test2`~~ — slot-system reference demo
 

@@ -756,13 +756,14 @@ describe('PageBlockHost loading indicator (Task 1)', () => {
     renderWithProviders(<PageBlockHost {...baseProps} onConsentGranted={vi.fn()} />);
 
     // While status === 'loading' (iframe mounted, pre-handshake) the centered
-    // Loader overlay is present so the surface isn't blank.
+    // launch overlay is present so the surface isn't blank.
     await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
-    await expect.element(page.getByLabelText('Loading Budgeted Generator')).toBeInTheDocument();
+    await expect.element(page.getByTestId('app-page-loading-skeleton')).toBeInTheDocument();
 
     // a11y: the overlay container is marked as a busy live region (role="status"
-    // + aria-busy) so a screen reader announces the loading state on the REGION,
-    // not just the labeled graphic. Assert the attributes while still loading.
+    // + aria-busy) so a screen reader announces the loading state on the REGION.
+    // That region is the only announcing element — the skeleton group inside it
+    // is aria-hidden. Assert the attributes while still loading.
     const overlay = page.getByTestId('app-page-loading').element();
     expect(overlay.getAttribute('role')).toBe('status');
     expect(overlay.getAttribute('aria-busy')).toBe('true');
@@ -777,19 +778,25 @@ describe('PageBlockHost loading indicator (Task 1)', () => {
     });
   });
 
-  test('the aria-label runs appName through the chrome sanitizer (control/bidi chars stripped)', async () => {
+  test('the launch copy runs appName through the chrome sanitizer (control/bidi chars stripped)', async () => {
     // A publisher-controlled name carrying a control char (\t) and a bidi
-    // override (U+202E) must NOT reach the accessible name verbatim — it goes
+    // override (U+202E) must NOT reach the launch surface verbatim — it goes
     // through the SAME sanitizeAppChromeName the visible chrome uses: the \t
     // control char becomes a space and the U+202E format char is dropped →
     // 'Evil App' (verified against the sanitizer's documented behaviour +
     // appChromeName.test.ts). Built from char codes so the source carries no
     // literal invisible chars.
+    //
+    // Asserted on the VISIBLE launch copy. This used to read the overlay's
+    // aria-label, which was removed when the loading indicator became an
+    // aria-hidden skeleton — the sanitizer contract is unchanged and is what
+    // this pins, so it moves to the surface that still carries the name rather
+    // than being dropped with the attribute.
     const spoofedName = 'Evil' + String.fromCharCode(0x09) + String.fromCharCode(0x202e) + 'App';
     renderWithProviders(
       <PageBlockHost {...baseProps} appName={spoofedName} onConsentGranted={vi.fn()} />
     );
-    await expect.element(page.getByLabelText('Loading Evil App')).toBeInTheDocument();
+    await expect.element(page.getByText('Starting Evil App…')).toBeInTheDocument();
   });
 
   test('the error terminal path shows the fallback and never the loader (does not spin forever)', async () => {
@@ -1249,11 +1256,29 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
     );
     expect(typeof body.timings.totalMs).toBe('number');
     expect(body.timings.totalMs).toBeGreaterThan(0);
-    // Never a zero-valued leg on the wire — an unobserved leg is OMITTED.
+    // 🔴 NO STRINGS ON THE WIRE — this is the real invariant, and it is what
+    // keeps a public, client-controlled beacon body from touching prom label
+    // cardinality. Every label this payload feeds is CODE-OWNED: the server maps
+    // named numeric fields onto its own `phase` literals and the `hello` boolean
+    // onto `yes`/`no`, so no value here can ever BE a label value.
+    //
+    // It used to be written as "every field is a number", which was the same
+    // rule while every field happened to be one. `hello` is a BOOLEAN and does
+    // not weaken the guarantee — booleans are a closed two-value domain, mapped
+    // server-side — so the assertion is restated at the level of the property it
+    // was always protecting rather than relaxed to let a boolean through.
     for (const [k, v] of Object.entries(body.timings)) {
-      expect(typeof v, `timings.${k}`).toBe('number');
-      expect(v, `timings.${k}`).toBeGreaterThan(0);
+      expect(typeof v, `timings.${k}`).not.toBe('string');
+      expect(['number', 'boolean'], `timings.${k}`).toContain(typeof v);
+      // Never a zero-valued NUMERIC leg on the wire — an unobserved leg is
+      // OMITTED, because a 0 is indistinguishable from an instant one and drags
+      // every percentile down. Booleans are exempt: `hello: false` is a real
+      // observation, not a missing one, and is emitted deliberately (an omitted
+      // field would be indistinguishable from a client that cannot send it).
+      if (typeof v === 'number') expect(v, `timings.${k}`).toBeGreaterThan(0);
     }
+    // `hello` specifically: always present, always boolean.
+    expect(typeof body.timings.hello, 'timings.hello').toBe('boolean');
     // No isAnon/userId from the client — those are server-derived in the route.
     expect(body).not.toHaveProperty('isAnon');
     expect(body).not.toHaveProperty('userId');

@@ -78,6 +78,7 @@ import { seedanceGraph } from './seedance-graph';
 import { flux3VideoGraph } from './flux3-video-graph';
 import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
+import { minimaxMusicGraph } from './minimax-music-graph';
 import { polyGenGraph } from './polygen-graph';
 import { tripoGraph } from './tripo-graph';
 import { hunyuan3dGraph } from './hunyuan3d-graph';
@@ -434,6 +435,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Flux3Video'] as const, graph: flux3VideoGraph },
     // Audio ecosystems
     { values: ['Ace'] as const, graph: aceAudioGraph },
+    { values: ['MiniMaxMusic3'] as const, graph: minimaxMusicGraph },
     // 3D Model ecosystems — PolyGen (Meshy via Fal). Field rendering for the
     // PolyGen graph lives in `GenerationForm.tsx`, auto-hidden via Controller
     // when the active ecosystem isn't PolyGen (same pattern as ACE audio).

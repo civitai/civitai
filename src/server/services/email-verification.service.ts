@@ -129,6 +129,46 @@ export async function requestEmailChange(userId: number, newEmail: string) {
   return { success: true, message: 'Verification email sent' };
 }
 
+/**
+ * Mint a token for `email` and send it. For a caller that already knows the address — the onboarding
+ * step, which has just written it — and so must not re-read a replica that may still hold the old row.
+ *
+ * 🔴 Deliberately NOT `assertEmailAllowed`, unlike `requestEmailChange`. Every writer of `User.email`
+ * already judged this address (#4432); re-judging it against a list that has moved since would leave
+ * the account unable to verify and therefore unable to ever post, with no way out. Same reasoning as
+ * the unchanged-address case in the onboarding step — see `email-domain-guard.call-sites.test.ts`.
+ */
+export async function issueEmailVerification(
+  userId: number,
+  email: string,
+  username: string | null
+) {
+  const token = await generateEmailVerificationToken(userId, email);
+  await sendVerificationEmail(email, username || 'User', token);
+
+  return { success: true, message: 'Verification email sent' };
+}
+
+/**
+ * Send a verification link for the address the account ALREADY has.
+ *
+ * `requestEmailChange` refuses when the new address equals the current one, so it cannot serve the
+ * account that has to prove an address it never changed — which, since `emailVerificationRequired`
+ * gates on exactly that, is every account the gate catches.
+ */
+export async function sendEmailVerification(userId: number) {
+  const user = await dbRead.user.findUnique({
+    where: { id: userId },
+    select: { email: true, username: true, emailVerified: true },
+  });
+
+  if (!user) throw throwNotFoundError('User not found');
+  if (!user.email) throw throwBadRequestError('Your account has no email address to verify');
+  if (user.emailVerified) throw throwBadRequestError('Your email address is already verified');
+
+  return issueEmailVerification(userId, user.email, user.username);
+}
+
 export async function confirmEmailChange(token: string) {
   const { userId, newEmail } = await verifyEmailChangeToken(token);
 

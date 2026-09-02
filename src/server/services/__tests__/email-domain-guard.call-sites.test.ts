@@ -55,6 +55,13 @@ beforeEach(() => {
   dbMock.dbWrite.user.findFirst.mockResolvedValue(null);
   dbMock.dbRead.user.findFirst.mockResolvedValue(null);
   dbMock.dbRead.user.findUnique.mockResolvedValue({ email: OLD_EMAIL, username: 'ada' });
+  // The onboarding step compares against the PRIMARY: the comparison decides a write, so a replica
+  // read would decide it on a row that may already have moved.
+  dbMock.dbWrite.user.findUnique.mockResolvedValue({
+    email: OLD_EMAIL,
+    emailVerified: null,
+    username: 'ada',
+  });
   redisMock.redis.set.mockResolvedValue('OK');
 });
 

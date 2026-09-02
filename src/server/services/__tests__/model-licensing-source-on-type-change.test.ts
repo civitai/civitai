@@ -3,12 +3,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // model.service.ts has a very large import graph; scaffold mirrors
 // model-locked-properties.service.test.ts.
 
-const { mockEvaluateContent, mockThrowOnBlockedLinkDomain, mockGetHighestTierSubscription } =
-  vi.hoisted(() => ({
-    mockEvaluateContent: vi.fn(),
-    mockThrowOnBlockedLinkDomain: vi.fn(),
-    mockGetHighestTierSubscription: vi.fn(),
-  }));
+const {
+  mockEvaluateContent,
+  mockThrowOnBlockedLinkDomain,
+  mockThrowOnBlockedUserContent,
+  mockGetHighestTierSubscription,
+} = vi.hoisted(() => ({
+  mockEvaluateContent: vi.fn(),
+  mockThrowOnBlockedLinkDomain: vi.fn(),
+  mockThrowOnBlockedUserContent: vi.fn(),
+  mockGetHighestTierSubscription: vi.fn(),
+}));
 
 vi.mock('~/libs/profanity-simple', () => ({
   createProfanityFilter: () => ({ evaluateContent: mockEvaluateContent }),
@@ -51,6 +56,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 }));
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: mockThrowOnBlockedLinkDomain,
+  throwOnBlockedUserContent: mockThrowOnBlockedUserContent,
 }));
 vi.mock('~/server/services/collection.service', () => ({
   getAvailableCollectionItemsFilterForUser: vi.fn(),

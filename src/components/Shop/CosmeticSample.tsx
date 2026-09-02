@@ -24,11 +24,21 @@ const cosmeticSampleSizeMap: Record<
 export const CosmeticSample = ({
   cosmetic,
   size = 'sm',
+  lazy,
 }: {
   cosmetic: Pick<CosmeticGetById, 'id' | 'data' | 'type' | 'name'>;
   size?: 'sm' | 'md' | 'lg';
+  /**
+   * Defer the fetch until the sample is near the viewport. Opt-in, because most
+   * callers are pickers and modals showing a handful of samples the user asked
+   * for; the shop grids render a whole section at once and are the reason this
+   * exists. Above-the-fold cards are unaffected — a lazy image already in the
+   * viewport is fetched immediately.
+   */
+  lazy?: boolean;
 }) => {
   const values = cosmeticSampleSizeMap[size];
+  const loading = lazy ? ('lazy' as const) : undefined;
 
   switch (cosmetic.type) {
     case CosmeticType.Badge:
@@ -38,7 +48,12 @@ export const CosmeticSample = ({
 
       return (
         <div style={{ width: values.badgeSize }}>
-          <EdgeMedia src={decorationData.url} alt={cosmetic.name} width={values.badgeSize} />
+          <EdgeMedia
+            src={decorationData.url}
+            alt={cosmetic.name}
+            width={values.badgeSize}
+            loading={loading}
+          />
         </div>
       );
     case CosmeticType.ContentDecoration:
@@ -66,6 +81,7 @@ export const CosmeticSample = ({
           alt={stickerData.slug ? `:${stickerData.slug}:` : cosmetic.name}
           width={values.badgeSize}
           anim={stickerData.animated}
+          loading={loading}
           style={{ width: values.badgeSize, height: values.badgeSize, objectFit: 'contain' }}
         />
       );
@@ -95,6 +111,10 @@ export const CosmeticSample = ({
             type={backgroundData.type}
             anim={true}
             width={450}
+            // Inert when `type` is video: EdgeMedia spreads imgProps into EdgeImage only,
+            // so EdgeVideo never sees this. Its poster is eager regardless, and the video is
+            // preload="none" except on Safari, which forces 'auto'.
+            loading={loading}
             style={{
               objectFit: 'cover',
               // objectPosition: 'right bottom',

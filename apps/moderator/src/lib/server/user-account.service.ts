@@ -390,7 +390,9 @@ export type UserBuzz = {
 
 export async function getBuzzBalance(userId: number): Promise<UserBuzz> {
   try {
-    const account = await getBuzz().getAccount(userId);
+    // Typed read: untyped `/account/{id}` returns Yellow + Blue summed, overstating Yellow by the
+    // user's generation balance.
+    const account = await getBuzz().getUserBuzzByAccountType(userId, 'yellow');
     // Colour balances are a second call and a softer failure — yellow is the one a moderator acts on,
     // so it must not be lost when the multi-account read fails.
     let blue: number | null = null;

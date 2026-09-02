@@ -14,12 +14,15 @@ export function PackCoverTiles({
   size = 256,
   className,
   fallbackIcon,
+  lazy,
 }: {
   tiles: string[];
   size?: number;
   className?: string;
   /** Render a package icon rather than nothing when there are no tiles. */
   fallbackIcon?: boolean;
+  /** Defer the fetch until near the viewport — see `CosmeticSample`. */
+  lazy?: boolean;
 }) {
   const shown = tiles.slice(0, 4);
   // Members without artwork (a NamePlate has no `url`) can leave a pack with no
@@ -46,6 +49,7 @@ export function PackCoverTiles({
             src={url}
             width={single ? size : Math.floor(size / 2)}
             alt=""
+            loading={lazy ? 'lazy' : undefined}
             className="max-h-full max-w-full object-contain"
           />
         </div>

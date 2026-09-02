@@ -127,6 +127,7 @@ describe('model type picker data', () => {
     expect(saved).toStrictEqual({
       grandfatheredType: ModelType.TextualInversion,
       initialType: ModelType.TextualInversion,
+      replacedType: null,
     });
     expect(getModelTypeSelectData(saved.grandfatheredType).map(({ value }) => value)).toContain(
       ModelType.TextualInversion
@@ -140,16 +141,20 @@ describe('model type picker data', () => {
     expect(fromTemplate).toStrictEqual({
       grandfatheredType: null,
       initialType: ModelType.Other,
+      // Named so the form can say what it dropped instead of substituting silently.
+      replacedType: ModelType.TextualInversion,
     });
 
     // A template on a type that is still offered is untouched.
     expect(resolveModelTypeDefaults({ type: ModelType.LORA })).toStrictEqual({
       grandfatheredType: null,
       initialType: ModelType.LORA,
+      replacedType: null,
     });
     expect(resolveModelTypeDefaults(undefined)).toStrictEqual({
       grandfatheredType: null,
       initialType: ModelType.Checkpoint,
+      replacedType: null,
     });
   });
 
@@ -186,6 +191,9 @@ describe('model type picker data', () => {
     expect(source).toMatch(/resolveModelTypeDefaults\(initialModel\)/);
     expect(source).toMatch(/getModelTypeSelectData\(grandfatheredType\)/);
     expect(source).toMatch(/type: initialType,/);
+    // The substitution has to be visible; Justin asked for the notice explicitly (2026-09-01).
+    expect(source).toMatch(/\{replacedType && \(/);
+    expect(source).toMatch(/The type has been set to Other/);
     expect(source).not.toContain('getModelTypeSelectData(type)');
     expect(source).not.toContain('resolveModelTypeDefaults(model)');
   });

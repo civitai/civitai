@@ -2302,7 +2302,10 @@ const REDIS_KEYS_UNPREFIXED = {
   HOMEBLOCKS: {
     BASE: 'packed:home-blocks',
     FEATURED_COLLECTIONS_STATE: 'home-blocks:featured-collections:state',
-    FEATURED_COLLECTIONS_LAST_PICKED: 'home-blocks:featured-collections:last-picked',
+    // The current rotation pass: eligible collection ids that have not had their turn yet. At most
+    // one integer per eligible collection, consumed from the front, with an hour's TTL.
+    FEATURED_COLLECTIONS_CYCLE: 'home-blocks:featured-collections:cycle',
+    FEATURED_COLLECTIONS_CYCLE_LOCK: 'home-blocks:featured-collections:cycle-lock',
   },
   CACHE_LOCKS: 'cache-lock',
   BUZZ: {

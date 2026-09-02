@@ -4,7 +4,7 @@ import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { env } from '~/env/server';
-import { BlockedReason, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   getDbWithoutLag,
@@ -31,7 +31,7 @@ import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors
 import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors/post.selector';
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import {
   buildPostCursorClause,
   encodePostCursor,
@@ -40,6 +40,7 @@ import {
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
   getCollectionById,
+  getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
@@ -301,7 +302,8 @@ export const getPostsInfinite = async ({
 
   const canSeeUnpublished = canSeePostDrafts({ isOwnerRequest, isModerator, targetUser });
 
-  const joins: string[] = [];
+  let collectionJoined = false;
+  let collectionJoin = Prisma.empty;
   if (!canSeeUnpublished) {
     if (scheduled && userId) {
       // Surface own scheduled posts alongside the public published feed. Mirrors
@@ -366,6 +368,10 @@ export const getPostsInfinite = async ({
     }
   }
 
+  if (sort === PostSort.RecentlyAdded && !collectionId) {
+    throw throwBadRequestError('Recently Added sort requires a collectionId');
+  }
+
   if (ids) AND.push(Prisma.sql`p.id IN (${Prisma.join(ids)})`);
   if (collectionId) {
     cacheTime = CacheTTL.day;
@@ -383,12 +389,27 @@ export const getPostsInfinite = async ({
       ? `OR (ci."status" = 'REVIEW' AND ci."addedById" = ${user?.id})`
       : '';
 
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "CollectionItem" ci
-      WHERE ci."collectionId" = ${collectionId}
-        AND ci."postId" = p.id
-        AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
-    )`);
+    // A semi-join cannot expose ci."id" to the ORDER BY. Safe to widen: CollectionItem_post_idx is
+    // unique on ("collectionId", "postId"), so the join cannot multiply rows. schema.full.prisma
+    // does not declare it — it lives in containers/db/docker-init/02_all_dll.sql.
+    if (sort === PostSort.RecentlyAdded) {
+      const { rawAND: collectionItemAND } = getAvailableCollectionItemsFilterForUser({
+        permissions,
+        userId: user?.id,
+      });
+      collectionJoined = true;
+      collectionJoin = Prisma.sql`JOIN "CollectionItem" ci
+        ON ci."postId" = p.id
+        AND ci."collectionId" = ${collectionId}
+        AND ${Prisma.join(collectionItemAND, ' AND ')}`;
+    } else {
+      AND.push(Prisma.sql`EXISTS (
+        SELECT 1 FROM "CollectionItem" ci
+        WHERE ci."collectionId" = ${collectionId}
+          AND ci."postId" = p.id
+          AND (ci."status" = 'ACCEPTED' ${Prisma.raw(displayReviewItems)})
+      )`);
+    }
   }
 
   if (excludedUserIds && targetUser && excludedUserIds.includes(targetUser)) {
@@ -401,14 +422,23 @@ export const getPostsInfinite = async ({
     AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.raw(`${excluded.join(',')}`)})`);
   }
 
-  // sorting - always include id as tiebreaker for stable pagination
-  const { orderBy, primarySortProp, isDateSort, ascending, filter } = getPostSortClauses({
-    sort,
-    draftOnly,
-  });
+  // Every sort carries a p.id tiebreaker except Recently Added, whose ci."id" is already unique
+  // per row through the ("collectionId", "postId") join.
+  const { orderBy, primarySortProp, isDateSort, ascending, filter, singleColumnCursor } =
+    getPostSortClauses({
+      sort,
+      draftOnly,
+      collectionJoined,
+    });
   if (filter) AND.push(filter);
 
-  const cursorClause = buildPostCursorClause({ cursor, primarySortProp, isDateSort, ascending });
+  const cursorClause = buildPostCursorClause({
+    cursor,
+    primarySortProp,
+    isDateSort,
+    ascending,
+    singleColumnCursor,
+  });
   if (cursorClause) AND.push(cursorClause);
 
   const postsRawQuery = Prisma.sql`
@@ -423,7 +453,7 @@ export const getPostsInfinite = async ({
       ${include?.includes('detail') ? Prisma.sql`p."detail",` : Prisma.sql``}
       ${Prisma.raw(primarySortProp)} "cursorId"
     FROM "Post" p
-    ${Prisma.raw(joins.join('\n'))}
+    ${collectionJoin}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${limit + 1}`;
@@ -457,7 +487,7 @@ export const getPostsInfinite = async ({
   let nextCursor: string | undefined;
   if (postsRaw.length > limit) {
     const nextItem = postsRaw.pop();
-    if (nextItem) nextCursor = encodePostCursor(nextItem);
+    if (nextItem) nextCursor = encodePostCursor(nextItem, singleColumnCursor);
   }
 
   // Filter to published model versions:
@@ -784,6 +814,8 @@ export const createPost = async ({
 }: PostCreateInput & {
   userId: number;
 }): Promise<PostDetailEditable> => {
+  await throwOnBlockedUserContent([data.title, data.detail], { surface: 'post' });
+
   const tagsToAdd: number[] = [];
   if (tags && tags.length > 0) {
     const tagObj = await findOrCreateTagsByName(tags);
@@ -872,8 +904,10 @@ export const updatePost = async ({
   user,
   ...data
 }: PostUpdateInput & { user: SessionUser; availability?: Availability }) => {
-  if (data.title) await throwOnBlockedLinkDomain(data.title);
-  if (data.detail) await throwOnBlockedLinkDomain(data.detail);
+  await throwOnBlockedUserContent([data.title, data.detail], {
+    isModerator: user.isModerator,
+    surface: 'post',
+  });
 
   // Peel off a plain-Date publishedAt so it can be routed through the
   // anti-bump guard. Other update-input shapes (null, undefined,
@@ -966,35 +1000,40 @@ export const updatePost = async ({
 };
 
 export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {
-  // Phase 1: Atomic DB operations in a single transaction
-  const { post, deletedImages } = await dbWrite.$transaction(
+  const { post, deletedImages, orphanedImageIds } = await dbWrite.$transaction(
     async (tx) => {
-      // Find images belonging to this post
-      const images = await tx.$queryRaw<{ id: number; url: string }[]>`
-        SELECT i.id, i.url
+      // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
+      const images = await tx.$queryRaw<{ id: number; url: string; deletable: boolean }[]>`
+        SELECT i.id, i.url, ${Prisma.raw(
+          isModerator ? 'TRUE' : 'i."userId" = p."userId"'
+        )} AS deletable
         FROM "Image" i
         JOIN "Post" p ON p.id = i."postId"
         WHERE i."postId" = ${id}
-          AND ${Prisma.raw(isModerator ? '1 = 1' : 'i."userId" = p."userId"')}
       `;
 
+      const deletableImages = images.filter((image) => image.deletable);
+
       let deletedImages: { id: number; url: string }[] = [];
-      if (images.length) {
+      if (deletableImages.length) {
         deletedImages = await tx.$queryRaw<{ id: number; url: string }[]>`
           DELETE FROM "Image"
-          WHERE id IN (${Prisma.join(images.map((i) => i.id))})
+          WHERE id IN (${Prisma.join(deletableImages.map((i) => i.id))})
           RETURNING id, url
         `;
       }
 
-      // Delete the post
       const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
         DELETE FROM "Post"
         WHERE id = ${id}
         RETURNING id, "nsfwLevel"
       `;
 
-      return { post, deletedImages };
+      // Skipped images keep their row with `postId` nulled (ON DELETE SET NULL). The index sync only
+      // selects `postId IS NOT NULL`, so it never revisits them — their docs must be dropped here.
+      const orphanedImageIds = images.filter((image) => !image.deletable).map(({ id }) => id);
+
+      return { post, deletedImages, orphanedImageIds };
     },
     // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
     // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
@@ -1018,16 +1057,19 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
     { timeout: 10000 }
   );
 
-  // Phase 2: Side effects after successful transaction
+  const deletedImageIds = deletedImages.map((img) => img.id);
+
+  // Orphans leave the index but keep their rows — they must not reach the S3 delete below.
+  const deindexIds = [...deletedImageIds, ...orphanedImageIds];
+  if (deindexIds.length)
+    await queueImageSearchIndexUpdate({
+      ids: deindexIds,
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+
   if (deletedImages.length) {
-    const imageIds = deletedImages.map((img) => img.id);
+    await invalidateManyImageExistence(deletedImageIds);
 
-    await Promise.all([
-      queueImageSearchIndexUpdate({ ids: imageIds, action: SearchIndexUpdateQueueAction.Delete }),
-      invalidateManyImageExistence(imageIds),
-    ]);
-
-    // S3 deletion with concurrency limit
     await Limiter({ batchSize: 5 }).process(deletedImages, async (batch) =>
       Promise.all(batch.map(({ id, url }) => deleteImageFromS3({ id, url })))
     );

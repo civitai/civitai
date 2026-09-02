@@ -17,10 +17,8 @@ import {
   useUpdateImageStepMetadata,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useTourContext } from '~/components/Tours/ToursProvider';
-import { generationGraphPanel } from '~/store/generation-graph.store';
-import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
+import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGeneratedMedia';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
-import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { getStepMeta } from './GenerationForm/generation.utils';
 import classes from './GeneratedImageActions.module.scss';
@@ -115,28 +113,17 @@ export function GeneratedImageActions({
     }));
 
     try {
-      const key = 'generator';
-      orchestratorMediaTransmitter.setUrls(key, imageData);
-
-      if (router.pathname === '/posts/[postId]/edit') {
-        await router.replace(
-          { pathname: '/posts/[postId]/edit', query: { postId: router.query.postId, src: key } },
-          undefined,
-          { shallow: true }
-        );
-      } else {
-        const post = await createPostMutation.mutateAsync({});
-        if (running) helpers?.next();
-        await router.push({
-          pathname: '/posts/[postId]/edit',
-          query: removeEmpty({
-            postId: post.id,
-            src: key,
-            returnUrl: returnUrl && running ? `${returnUrl}?tour=model-page` : undefined,
-          }),
-        });
-        generationGraphPanel.close();
-      }
+      await postGeneratedMedia({
+        media: imageData,
+        router,
+        createPost: () => createPostMutation.mutateAsync({}),
+        onPostCreated: () => {
+          if (running) helpers?.next();
+        },
+        extraQuery: {
+          returnUrl: returnUrl && running ? `${returnUrl}?tour=model-page` : undefined,
+        },
+      });
       deselect();
     } catch (e) {
       const error = e as Error;

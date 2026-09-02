@@ -20,7 +20,11 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import type { QueueImage as SharedQueueImage } from '~/server/utils/queue-image';
 import { toQueueImage } from '~/server/utils/queue-image';
-import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
+import {
+  isPrismaUniqueViolation,
+  throwAuthorizationError,
+  throwBadRequestError,
+} from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import {
   nsfwBrowsingLevelsFlag,
@@ -37,6 +41,7 @@ import {
 import type { RemixGalleryPlacementData } from '~/shared/utils/remix-gallery';
 import {
   isRemixGalleryPlacementData,
+  paidSubmissionOpen,
   REMIX_GALLERY_MAX_PENDING_PER_OWNER,
   REMIX_GALLERY_MAX_PINNED,
   REMIX_GALLERY_DEFAULT_CONTENT_RULE,
@@ -100,6 +105,40 @@ const sourceImageIdsSql = (alias = 'i') => {
 };
 
 /**
+ * The old-standard provenance field, as an int, or NULL when it is not one.
+ *
+ * `sanitizeProvenance` strips `provenance` and `sourceImageIds` from `meta.extra`
+ * but carries `remixOfId` through from client-authored meta unchanged, so a bare
+ * `::int` raises `invalid input syntax for type integer` on any non-numeric value
+ * and 500s whatever read it before a single refusal runs. Junk must read as no
+ * old-standard source.
+ *
+ * Parameterised by alias rather than written twice, for the same reason
+ * `sourceImageIdsSql` is: this guard existed in one of its two readers for a
+ * while, and a hand-written duplicate is exactly the shape that drifts.
+ */
+const remixOfIdSql = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  const raw = Prisma.sql`${t}.meta -> 'extra' ->> 'remixOfId'`;
+  // Digits alone are not enough, and NEITHER IS A BIGINT BOUND ON ITS OWN.
+  // '99999999999' matches `^[0-9]+$` and overflows `::int`; a 21-digit string
+  // matches it too and overflows the `::bigint` written to catch the first case,
+  // which is the same 500 one range further up. `{1,10}` is what makes the inner
+  // cast total: ten digits is at most 9999999999, comfortably inside bigint, and
+  // it still admits every legal id including 2147483647 itself, so a real id at
+  // the ceiling is never silently dropped to NULL.
+  //
+  // 🔴 NESTED, not `AND`. Postgres does not guarantee evaluation order for AND
+  // and may evaluate either side first, so the cast could still run on text the
+  // regex was meant to exclude. CASE does guarantee its conditions run in order,
+  // and that is the only reason the inner cast is safe.
+  return Prisma.sql`CASE
+    WHEN ${raw} ~ '^[0-9]{1,10}$' THEN
+      CASE WHEN (${raw})::bigint <= 2147483647 THEN (${raw})::int END
+  END`;
+};
+
+/**
  * The submitted image, from the primary, with everything the refusals need.
  *
  * `dbWrite` rather than a replica for the same reason `assertCanPlace` uses it:
@@ -111,7 +150,7 @@ async function loadSubmissionImage(imageId: number): Promise<SubmissionImage> {
     SELECT i.id, i."userId", i."nsfwLevel", i.minor, i.poi, i."tosViolation",
            i.ingestion::text AS ingestion, i."needsReview",
            p."publishedAt",
-           (i.meta -> 'extra' ->> 'remixOfId')::int AS "remixOfId",
+           ${remixOfIdSql()} AS "remixOfId",
            ${sourceImageIdsSql()} AS "sourceImageIds"
     FROM "Image" i
     LEFT JOIN "Post" p ON p.id = i."postId"
@@ -227,21 +266,53 @@ export async function createRemixGallerySubmission({
   const submission = await loadSubmissionImage(imageId);
   if (submission.userId !== placerId)
     throw throwAuthorizationError('remix gallery: you can only submit your own images');
-  if (!submission.publishedAt)
-    throw throwBadRequestError('remix gallery: publish the image before submitting it');
-  if (submission.ingestion !== 'Scanned' || submission.needsReview)
-    throw throwBadRequestError('remix gallery: that image is still being reviewed');
+  // A draft is accepted. The submitter pays here, from the post editor, before
+  // the post is published — so "not published yet" and "still scanning" are
+  // states this has to WAIT on rather than refuse. `pendingReadiness` below is
+  // what defers the checks that need a finished image, and the row stays
+  // invisible to the owner meanwhile because the queue selects on
+  // `queueImageIsListable`.
+  //
+  // 🔴 This is deliberately NOT a general relaxation. Every refusal below is a
+  // moderation VERDICT — a decision already made about the image — and none of
+  // them can turn into a pass by waiting. Only the two states that resolve on
+  // their own are deferred. Do not extend this to the flags underneath it: see
+  // `no-unverified-provenance-write` for the adjacent rule about trusting
+  // unfinished state.
+  // 🔴 Refused HERE, above `pendingReadiness`, and not by being excluded from it.
+  // Excluding `Blocked` from the deferral only decides which of two bad outcomes
+  // a charged submission gets: a draft short-circuits on `!publishedAt` and is
+  // refunded minutes later, and a published one gets no `awaitingReadiness`
+  // marker at all — so the readiness pass never sees it, `queueImageIsListable`
+  // hides it from the owner, and it expires 48h later with no notification.
+  // `Blocked` is a terminal verdict; the only outcome that is not a charge for
+  // something undeliverable is refusing before any money moves.
+  if (submission.ingestion === 'Blocked')
+    throw throwBadRequestError('remix gallery: that image cannot be submitted');
+
+  const pendingReadiness = !submission.publishedAt || submission.ingestion !== 'Scanned';
 
   // Not creator preferences, so they are refused under either content rule.
   if (submission.tosViolation || submission.minor || submission.poi)
     throw throwBadRequestError('remix gallery: that image cannot be submitted');
+  // `needsReview` is a verdict on a SCANNED image, so it refuses. On an unscanned
+  // one it is simply not set yet, and `startReadyRemixSubmissionClocks` applies
+  // the same rule before it admits the row — without that, submitting EARLY
+  // would walk past a gate that submitting late enforces.
+  if (!pendingReadiness && submission.needsReview)
+    throw throwBadRequestError('remix gallery: that image is still being reviewed');
 
   const host = await loadHostImage(hostImageId);
   if (!host.showable)
     throw throwBadRequestError('remix gallery: this image cannot show a gallery right now');
 
   const rule = remixGalleryContentRule(space.settings);
+  // An unscanned image has `nsfwLevel` 0, which every rule reads as "no rating
+  // yet" and refuses. That is the right answer for a finished image and the
+  // wrong one for an unfinished one, so the comparison waits until there is a
+  // rating to compare — the readiness pass makes it, and refunds if it fails.
   if (
+    !pendingReadiness &&
     !remixGalleryLevelAllowed({
       rule,
       submissionLevel: submission.nsfwLevel,
@@ -273,6 +344,9 @@ export async function createRemixGallerySubmission({
   const data = {
     imageId,
     remixOfId: submission.remixOfId,
+    // Only when true, so an ordinary submission's payload is unchanged and no
+    // existing row reads as awaiting anything.
+    ...(pendingReadiness ? { awaitingReadiness: true } : {}),
     // Present only when the server itself resolved this host image as an input
     // to the generation. Left off rather than set false: "made elsewhere" and
     // "no signal" are the same state, and the owner-review UI must keep saying
@@ -302,7 +376,7 @@ export async function createRemixGallerySubmission({
       targetId: hostImageId,
       placerId,
       data,
-    });
+    }).catch(asDuplicateRefusal);
 
   // Every rule from here down is the paid path's, which is why none of them is
   // reached above. The floor in particular exists because the price is this
@@ -339,22 +413,24 @@ export async function createRemixGallerySubmission({
       'remix gallery: you already have the maximum submissions waiting with this creator'
     );
 
-  const placement = await dbWrite.placement.create({
-    data: {
-      surface: SURFACE,
-      targetType: TARGET_TYPE,
-      targetId: hostImageId,
-      ownerId: space.ownerId,
-      placerId,
-      // No seller: nobody sold the submitted image, so the surface's seller
-      // share is zero and the owner takes the remainder after the platform cut.
-      sellerId: null,
-      amount: space.price,
-      status: 'pending',
-      data,
-    },
-    select: { id: true },
-  });
+  const placement = await dbWrite.placement
+    .create({
+      data: {
+        surface: SURFACE,
+        targetType: TARGET_TYPE,
+        targetId: hostImageId,
+        ownerId: space.ownerId,
+        placerId,
+        // No seller: nobody sold the submitted image, so the surface's seller
+        // share is zero and the owner takes the remainder after the platform cut.
+        sellerId: null,
+        amount: space.price,
+        status: 'pending',
+        data,
+      },
+      select: { id: true },
+    })
+    .catch(asDuplicateRefusal);
 
   try {
     await holdPlacementEscrow({
@@ -388,6 +464,30 @@ export async function createRemixGallerySubmission({
  * rotation — and, on decline, the cheapest way to hand the owner repeated fees
  * for the same decision.
  */
+/**
+ * `assertNotAlreadySubmitted` is a READ, and both inserts below it happen later
+ * with nothing holding the gap — so two concurrent submits of the same image both
+ * pass it. The unique partial index `Placement_surface_target_image_live_key` is
+ * what actually enforces the rule. This only restores the message that guard
+ * would have given, so a lost race reads as the refusal it is rather than a 500.
+ *
+ * 🔴 Both writers need it, not just the paid one. The free path inserts through
+ * `createFreePlacement`, whose advisory locks are per placer and per target and
+ * therefore do not re-check THIS rule inside the transaction.
+ */
+function asDuplicateRefusal(error: unknown): never {
+  // Through the shared predicate rather than a hand-written `code === 'P2002'`,
+  // because its docblock carries the caveat this site needs: P2002 only means
+  // what we say it means where it is unambiguous. `Placement` now has this
+  // partial unique index AND its primary key, so a pkey violation from a
+  // desynced sequence would read as "already in this gallery". That needs a
+  // restore-shaped accident and loses nothing when it happens - no row, no
+  // escrow - so it is accepted, not defended against.
+  if (isPrismaUniqueViolation(error))
+    throw throwBadRequestError('remix gallery: that image is already in this gallery');
+  throw error;
+}
+
 async function assertNotAlreadySubmitted({
   hostImageId,
   imageId,
@@ -1712,6 +1812,201 @@ export async function getRemixGalleryVisibility({
  * answering "was this image generated from that one" for arbitrary ids would
  * turn the endpoint into an oracle for other people's generation inputs.
  */
+/**
+ * How many sources one image may offer.
+ *
+ * Mirrors `MAX_SOURCE_IMAGES` in `remix-provenance.ts` rather than importing it:
+ * that one bounds what a token may CLAIM at mint time, this one bounds what a
+ * read will ACT on, and they are allowed to diverge. Measured 2026-08-27: every
+ * remix in a 24h prod sample had exactly one source, so this is a ceiling on a
+ * pathological row, not a limit anyone reaches.
+ */
+const REMIX_SOURCE_LIMIT = 8;
+
+/**
+ * The galleries one of your own images could be submitted to, resolved from its
+ * own provenance.
+ *
+ * The inverse of every other read on this surface, which starts from a host and
+ * asks about candidate submissions. The post editor knows only the image it just
+ * uploaded, so it needs to go the other way.
+ *
+ * Sources come from `sanitizeProvenance`'s ids and never from anything the
+ * caller sends. That is the same rule the free gate relies on — a submitter who
+ * could name their own hosts could name a host they never remixed, and be
+ * offered a free submission into it.
+ *
+ * Measured 2026-08-27: every remix in a 24h prod sample had exactly one source
+ * (101 of 101), so this returns a list because `sourceImageIds` is one, not
+ * because two is a case anyone has seen.
+ */
+export async function getRemixSourcesForImage({
+  imageId,
+  placerId,
+  domainLevels,
+  viewerLevels,
+}: {
+  imageId: number;
+  placerId: number;
+  /** Levels this domain may serve. A host above it comes back without its asset. */
+  domainLevels: number;
+  /** The viewer's own band. Marked on the row, never filtered on. */
+  viewerLevels: number;
+}) {
+  const [image] = await dbRead.$queryRaw<
+    { userId: number; sourceImageIds: number[] | null; remixOfId: number | null }[]
+  >`
+    SELECT i."userId",
+           ${remixOfIdSql()} AS "remixOfId",
+           ${sourceImageIdsSql()} AS "sourceImageIds"
+    FROM "Image" i
+    WHERE i.id = ${imageId}
+  `;
+
+  // Not an error. The post editor asks this for every image in a post, and most
+  // images are not remixes — 0.2% of on-site generations carried provenance in a
+  // 24h prod sample. An empty list is the ordinary answer.
+  if (!image) return [];
+  if (image.userId !== placerId) return [];
+
+  // Both provenance fields. `remixOfId` is the old standard and `sourceImageIds`
+  // the new one (Justin, 2026-08-27), and the old one is STILL BEING WRITTEN —
+  // measured the same day, 28 old against 39 new over 8 hours, interleaved by
+  // the hour with no downward trend, and zero images carrying both. So this is
+  // not a legacy-data allowance that can be deleted once history ages out.
+  //
+  // Reading either field alone silently ignores about half of all remixes, and
+  // it is invisible in testing because the half you kept still works.
+  //
+  // They are not interchangeable for money. `sourceImageIds` is what
+  // `sanitizeProvenance` wrote after verifying the workflow, and it is the only
+  // thing the free gate may key on; `remixOfId` is a weaker signal and buys a
+  // paid submission only. That distinction is enforced below and again by the
+  // mutation, which re-derives it rather than trusting this.
+  const verifiedIds = new Set(image.sourceImageIds ?? []);
+  const hostIds = [
+    ...new Set([...verifiedIds, ...(image.remixOfId != null ? [image.remixOfId] : [])]),
+  ]
+    .filter((id) => id !== imageId && Number.isInteger(id))
+    // Bounded HERE, not trusted from the row. `sanitizeProvenance` applies
+    // MAX_SOURCE_IMAGES when it MINTS a token, never at the sink, so a stored
+    // `sourceImageIds` carries no bound of its own. Each host costs ~10 SQL
+    // statements (space resolution, most of them on the primary) and this query
+    // runs once per image card in the post editor, so an unbounded array is a
+    // fan-out multiplier on a per-card read.
+    .slice(0, REMIX_SOURCE_LIMIT);
+  if (!hostIds.length) return [];
+
+  const [spaces, hosts, existing, allowance] = await Promise.all([
+    // `allSettled`, not `all`: `resolvePlacementSpaceFor` THROWS when the image
+    // behind a source is gone, and one rejection took the whole query with it —
+    // so a single deleted source rendered the card empty, including for the
+    // other, perfectly valid sources beside it. A rejected space resolves to
+    // null and that source reports itself unavailable, which is what the mapper
+    // below was already written to handle and could never previously reach.
+    Promise.allSettled(
+      hostIds.map((targetId) =>
+        resolvePlacementSpaceFor({ surface: SURFACE, targetType: TARGET_TYPE, targetId })
+      )
+    ).then((results) =>
+      results.map((result) => (result.status === 'fulfilled' ? result.value : null))
+    ),
+    // `hostIsShowable` rather than a bare select: a host under review or taken
+    // down cannot show a gallery, and offering it here would both fail on
+    // submit and disclose that state to someone who only remixed the image.
+    dbRead.$queryRaw<{ id: number; url: string; nsfwLevel: number; showable: boolean }[]>`
+      SELECT i.id, i.url, i."nsfwLevel", ${hostIsShowable()} AS showable
+      FROM "Image" i
+      WHERE i.id IN (${Prisma.join(hostIds)})
+    `,
+    dbRead.placement.findMany({
+      where: {
+        surface: SURFACE,
+        targetType: TARGET_TYPE,
+        targetId: { in: hostIds },
+        status: { in: ['pending', 'approved'] },
+        data: { path: ['imageId'], equals: imageId },
+      },
+      select: { targetId: true, status: true },
+    }),
+    getFreePlacementAllowance({ placerId }),
+  ]);
+
+  const hostById = new Map(hosts.map((host) => [host.id, host]));
+  const submittedByHost = new Map(existing.map((row) => [row.targetId, row.status]));
+
+  const usedHere = await Promise.all(
+    hostIds.map((targetId) =>
+      hasUsedFreePlacementOn({ placerId, surface: SURFACE, targetType: TARGET_TYPE, targetId })
+    )
+  );
+
+  return hostIds.map((hostImageId, index) => {
+    const space = spaces[index];
+    const host = hostById.get(hostImageId);
+    const submitted = submittedByHost.get(hostImageId) ?? null;
+
+    // Free needs the VERIFIED half. A `remixOfId`-only source is a real remix
+    // we cannot prove, so it is offered at the price like any other submission —
+    // the mutation refuses `free` on it regardless of what this says, and the
+    // card must agree with that refusal rather than offer something that fails.
+    const verified = verifiedIds.has(hostImageId);
+    // `freeSlotsRemaining`, not `freeSlots`: the latter is the capacity the owner
+    // configured, and offering against it renders "Submit free" on a gallery
+    // whose slots are already taken — the mutation then refuses under its lock.
+    // Stale by construction and that is fine; the mutation re-counts. What
+    // matters is not OFFERING something already visibly gone.
+    const freeAvailable =
+      verified &&
+      !!space &&
+      (space.freeSlotsRemaining ?? 0) > 0 &&
+      allowance.remaining > 0 &&
+      !usedHere[index];
+
+    return {
+      hostImageId,
+      /**
+       * Through `toQueueImage`, like every other read on this surface. Refusing
+       * in the PAYLOAD is the control: `ImageGuard2`'s blur is built from the
+       * viewer's own settings and never reads the domain ceiling, so a component
+       * is not a gate. Without this a SFW-domain viewer was sent the URL of a
+       * source rated above that domain's ceiling, and the card rendered it
+       * unguarded.
+       */
+      image: host?.showable ? toQueueImage(host, domainLevels, viewerLevels) : null,
+      ownerId: space?.ownerId ?? null,
+      /**
+       * Why this source cannot be submitted to, or `null` when it can. One
+       * reason rather than a set of booleans: the card shows one sentence, and
+       * deciding which of several to show is exactly the logic that drifts
+       * between the card and the mutation.
+       */
+      // `!space` first: a source whose image is gone cannot resolve a space, and
+      // that is the branch `allSettled` above now makes reachable.
+      unavailable:
+        !space || !host?.showable
+          ? ('unavailable' as const)
+          : space.ownerId === placerId
+          ? ('own' as const)
+          : space.mode !== 'review'
+          ? ('closed' as const)
+          : submitted
+          ? ('submitted' as const)
+          : // Last, because it is the only rung free can walk past. A gallery
+          // that is unpriced or priced below the floor refuses every PAID
+          // submission (`createRemixGallerySubmission`), so offering one here
+          // draws a Submit button for 0 Buzz that the mutation then refuses.
+          !freeAvailable && !paidSubmissionOpen(space.price)
+          ? ('closed' as const)
+          : null,
+      price: space?.price ?? null,
+      freeAvailable,
+      /** Drives the copy: only a verified remix can be offered free. */
+      verified,
+    };
+  });
+}
+
 export async function getRemixGalleryFreeEligibility({
   hostImageId,
   placerId,
@@ -1752,6 +2047,304 @@ export async function getRemixGalleryFreeEligibility({
     usedHere,
     verifiedImageIds: verified.map((row) => row.id),
   };
+}
+
+/**
+ * Whether a throw from the host lookup means the host is GONE, as opposed to the
+ * database being briefly unhappy.
+ *
+ * Matched on the message `loadHostImage` raises rather than on the error class,
+ * because it is a `TRPCError` like several transient wrappers are. A miss here
+ * fails SAFE: an unrecognised error leaves the row pending on its existing
+ * deadline instead of refunding it.
+ */
+const isMissingHostError = (error: unknown) =>
+  error instanceof Error && /no longer exists/i.test(error.message);
+
+/**
+ * Refunds one unready submission, and never lets its failure reach the batch.
+ *
+ * `settlePlacement` is a Buzz call and can reject on transport alone. Uncaught,
+ * one rejecting row aborts the run — and because selection is deterministic and
+ * `ORDER BY pl.id ASC`, that same row is re-read first on every tick, so nothing
+ * behind it is ever processed again. Both pre-existing settle loops
+ * (`expirePlacements`, `sweepDeletedRemixGallerySubmissions`) catch per row and
+ * log for exactly this reason; this was the third such loop and the only one
+ * that did not.
+ *
+ * Swallowing is safe here because the row keeps its `expiresAt`: a refund missed
+ * now is made by the expiry sweep later, so the failure costs a delay rather
+ * than the money.
+ */
+async function refundUnreadySubmission(placementId: number, data: RemixGalleryPlacementData) {
+  try {
+    await markUndeliverable(placementId, data);
+    // `settled: false` means this lost the claim race to the expiry sweep or the
+    // deleted-image sweep, which all claim on `WHERE status = 'pending'`. Both
+    // pre-existing loops count `result.settled` rather than the call returning;
+    // counting the call would report refunds nobody made, which is the number an
+    // operator reads to decide whether this job is working.
+    const result = await settlePlacement({ placementId, action: 'expire' });
+    return result.settled;
+  } catch (error) {
+    await logToAxiom({
+      name: 'remix-gallery',
+      type: 'error',
+      message: 'readiness refund failed',
+      placementId,
+      error: (error as Error).message,
+    }).catch(() => null);
+    return false;
+  }
+}
+
+/**
+ * Records that a submission was refused for something about the IMAGE, not by a
+ * deadline passing.
+ *
+ * Both end as `expired` with the same full refund, and only this tells them
+ * apart. The difference is what the placer is told: we took their money and
+ * could not deliver, versus they never published and it timed out. Justin's
+ * call, 2026-08-27 — the notification is for the first case only, so the second
+ * stays as silent as every other expiry.
+ *
+ * Written BEFORE the settle so the notification query, which reads the row after
+ * it is resolved, cannot see a settled row that has not been marked yet.
+ */
+async function markUndeliverable(placementId: number, data: RemixGalleryPlacementData) {
+  await dbWrite.placement.update({
+    where: { id: placementId },
+    data: { data: { ...data, undeliverable: true } as Prisma.InputJsonValue },
+  });
+}
+
+/**
+ * Starts the clock on submissions whose image has since gone live, and refunds
+ * the ones whose image never will.
+ *
+ * A submission paid for from the post editor is charged before its image is
+ * finished — the post may still be a draft, the scan may still be running. Those
+ * rows carry `awaitingReadiness` and are invisible to the owner, because the
+ * queue selects on `queueImageIsListable`. This is the pass that resolves them.
+ *
+ * 🔴 Why the clock is restamped rather than set once at creation: `expiresAt` on
+ * one of these rows is the window to get the image LIVE, not the owner's window
+ * to answer. Leaving the original deadline would spend the owner's 48 hours on
+ * the submitter's drafting time, and a post drafted overnight would reach the
+ * queue with hours left on a clock the owner never saw start. Justin's call,
+ * 2026-08-27: the clock starts when the post is published AND the image is fully
+ * accessible.
+ *
+ * The refusals here are the ones that could not be made at submission because
+ * they need a finished image — the rating comparison above all, since an
+ * unscanned image has no rating and every content rule reads that as "no". A
+ * failure refunds in full: `expired` returns the whole escrow to the placer with
+ * no decline fee, which is right because nobody declined them.
+ */
+export async function startReadyRemixSubmissionClocks({ limit = 200 }: { limit?: number } = {}) {
+  // Selected in SQL, already joined to the image, so a batch contains only rows
+  // this pass can ACT on. Fetching every awaiting row and skipping the unready
+  // ones in memory starves the queue: `drain` re-runs while `considered` fills
+  // the batch, so 200 drafts waiting to be published would be re-read every tick
+  // forever and any row behind them would never be reached at all.
+  const actionable = await dbWrite.$queryRaw<
+    {
+      id: number;
+      targetId: number;
+      imageId: number | null;
+      nsfwLevel: number | null;
+      doomed: boolean | null;
+      listable: boolean | null;
+      needsReview: string | null;
+      data: RemixGalleryPlacementData;
+    }[]
+  >`
+    SELECT pl.id,
+           pl."targetId",
+           pl.data,
+           -- From the JOINED row, not from pl.data: the placement always carries
+           -- an imageId, so deriving it from the payload can never be NULL and
+           -- the deleted-image branch below would be dead code. This is NULL
+           -- exactly when the image is gone, which is what that branch tests.
+           img.id AS "imageId",
+           img."nsfwLevel",
+           img."needsReview",
+           (img."tosViolation" OR img.minor OR img.poi OR img.ingestion = 'Blocked') AS doomed,
+           -- 🔴 The alias MUST NOT be "i". queueImageIsListable declares its own
+           -- FROM "Image" i internally, so passing i.id from an outer alias named
+           -- i is captured by the inner one: the correlation degenerates to
+           -- i.id = i.id, the EXISTS becomes "does any listable image exist on
+           -- the site", and the whole filter is a constant TRUE. That shipped
+           -- once and refunded every still-scanning submission within five
+           -- minutes. Every other call site passes a pl.* expression and cannot
+           -- collide; this is the only one that names an Image alias.
+           ${queueImageIsListable(Prisma.sql`img.id`)} AS listable
+    FROM "Placement" pl
+    -- LEFT, so a submission whose image was DELETED still comes back and is
+    -- refunded. An inner join would drop it, and the row would sit pending until
+    -- its deadline with the placer's Buzz held for an image that no longer exists.
+    LEFT JOIN "Image" img ON img.id = (pl.data ->> 'imageId')::int
+    WHERE pl.surface = ${SURFACE}
+      AND pl."targetType" = ${TARGET_TYPE}
+      AND pl.status = 'pending'
+      AND pl.data ->> 'awaitingReadiness' = 'true'
+      AND (
+        img.id IS NULL
+        OR (img."tosViolation" OR img.minor OR img.poi OR img.ingestion = 'Blocked')
+        OR ${queueImageIsListable(Prisma.sql`img.id`)}
+      )
+      -- A row waiting on a moderator is selected ONCE, to be marked, and then
+      -- stops matching. Without this it matches every tick forever: the loop
+      -- cannot act on it, so it fills the batch, drain re-runs over the same
+      -- ids, and nothing behind them is ever reached. That is the same
+      -- starvation the SQL selection exists to prevent, reintroduced by the
+      -- skip. If the review clears, needsReview goes NULL and the row is
+      -- selected again to have its clock started and its marker removed.
+      AND (img."needsReview" IS NULL OR pl.data ->> 'undeliverable' IS NULL)
+      -- Scheduled posts are published in the FUTURE. queueImageIsListable only
+      -- tests publishedAt IS NOT NULL, but the gallery renders on
+      -- publishedAt < now(), so without this the owner's clock starts and the
+      -- escrow settles for an entry nobody can see yet.
+      AND (img.id IS NULL OR NOT EXISTS (
+        SELECT 1 FROM "Post" sp WHERE sp.id = img."postId" AND sp."publishedAt" > now()
+      ))
+    ORDER BY pl.id ASC
+    LIMIT ${limit}
+  `;
+  if (!actionable.length) return { considered: 0, started: 0, refunded: 0, marked: 0 };
+
+  const config = await getPlacementConfig();
+  const expiryHours = config.expiryHours(SURFACE);
+  let started = 0;
+  let refunded = 0;
+  // Counted because a marked row LEAVES the selection set: the WHERE excludes
+  // `needsReview` rows that already carry the marker. `drain` decides whether to
+  // keep going from rows that left, so leaving this out stops the pass after one
+  // batch whenever any row took this branch, which is the common outcome for them.
+  let marked = 0;
+
+  for (const row of actionable) {
+    // Deleted outright, or a moderation verdict landed. Neither resolves by
+    // waiting, so the money goes back now rather than at the deadline.
+    if (!row.imageId || row.doomed) {
+      if (await refundUnreadySubmission(row.id, row.data)) refunded++;
+      continue;
+    }
+
+    // Belt and braces, and deliberately not redundant: the WHERE clause above is
+    // what keeps the batch small, but a unit test cannot execute SQL, so a
+    // regression in that clause is invisible to every test in this file. This
+    // check is the one a test can see — and the last time it was removed as
+    // "already handled in SQL", an alias bug made the SQL clause inert and
+    // nothing caught it.
+    if (!row.listable && !row.doomed && row.imageId) continue;
+
+    // Scanned, but a moderator has to look at it. The same rule the mutation
+    // applies to an already-scanned image — without this, submitting BEFORE the
+    // scan finishes walks past a gate that submitting after it enforces.
+    //
+    // Left pending rather than refunded, because a review can clear and then the
+    // submission is fine. But it is MARKED, so when the deadline does pass the
+    // ordinary expiry sweep produces an EXPLAINED refund rather than a silent
+    // one: the placer paid, we never delivered, and their Buzz reappearing with
+    // no message is the exact case the undelivered notification exists for.
+    // Measured 2026-08-27: needsReview p90 age is 146h against a 48h window, so
+    // this is the common outcome for these rows rather than a corner.
+    if (row.needsReview) {
+      // Caught for the reason `refundUnreadySubmission`'s docblock gives: an
+      // uncaught write here aborts the batch, and the row is re-read first on
+      // every tick because selection is `ORDER BY pl.id ASC`, so one transient
+      // failure wedges everything behind it permanently.
+      if (!row.data.undeliverable)
+        await markUndeliverable(row.id, row.data)
+          .then(() => {
+            marked++;
+          })
+          .catch((error) =>
+            logToAxiom({
+              name: 'remix-gallery',
+              type: 'error',
+              message: 'marking a review-blocked submission undeliverable failed',
+              placementId: row.id,
+              error: (error as Error).message,
+            }).catch(() => null)
+          );
+      continue;
+    }
+
+    // Per row, and caught: `loadHostImage` THROWS when the host is gone, so an
+    // uncaught call here aborts the whole batch — and because the row stays
+    // pending and awaiting, the next tick reads it again and throws again, every
+    // five minutes, with no clock ever started and no refund ever issued.
+    let host: Awaited<ReturnType<typeof loadHostImage>> | null = null;
+    let space: Awaited<ReturnType<typeof resolvePlacementSpaceFor>> | null = null;
+    try {
+      [space, host] = await Promise.all([
+        resolvePlacementSpaceFor({
+          surface: SURFACE,
+          targetType: TARGET_TYPE,
+          targetId: row.targetId,
+        }),
+        loadHostImage(row.targetId),
+      ]);
+    } catch (error) {
+      // ONLY a missing host is terminal. The catch used to swallow everything,
+      // so a Postgres blip inside either call refunded a healthy submission and
+      // told the placer we could not deliver it — converting a transient fault
+      // into an irreversible one. Anything else is left pending: the row keeps
+      // its deadline, and the next tick retries.
+      if (!isMissingHostError(error)) continue;
+      if (await refundUnreadySubmission(row.id, row.data)) refunded++;
+      continue;
+    }
+
+    // Now that there IS a rating, the comparison that was deferred at submission.
+    //
+    // `nsfwLevel` is typed nullable because the LEFT JOIN makes it so, and that
+    // is not pedantry: it was previously declared non-null while arriving null
+    // for a deleted image, and the refund for that case worked only because a
+    // null happened to fail this rule. That is the right outcome reached by the
+    // wrong route, and it breaks silently the next time this branch is edited.
+    // The deleted case is handled explicitly above; a null here now refuses
+    // deliberately rather than incidentally.
+    const allowed =
+      row.nsfwLevel != null &&
+      host.showable &&
+      remixGalleryLevelAllowed({
+        rule: remixGalleryContentRule(space.settings),
+        submissionLevel: row.nsfwLevel,
+        hostLevel: host.nsfwLevel,
+        hostMinor: host.minor,
+      });
+
+    if (!allowed) {
+      if (await refundUnreadySubmission(row.id, row.data)) refunded++;
+      continue;
+    }
+
+    // Both markers go. `undeliverable` may have been set on an earlier tick while
+    // the image was under review; the review cleared, so the row is deliverable
+    // after all and must not keep a flag that would later have the expiry sweep
+    // announce a failure that did not happen.
+    const {
+      awaitingReadiness: _cleared,
+      undeliverable: _wasFlagged,
+      ...strippedOfMarker
+    } = row.data;
+    // The marker is cleared in the same statement that starts the clock, so a
+    // second pass cannot extend a deadline that is already running. `updateMany`
+    // with the marker still in the WHERE makes that a no-op rather than a race.
+    const claimed = await dbWrite.placement.updateMany({
+      where: { id: row.id, status: 'pending', data: { path: ['awaitingReadiness'], equals: true } },
+      data: {
+        data: strippedOfMarker as Prisma.InputJsonValue,
+        expiresAt: new Date(Date.now() + expiryHours * 3_600_000),
+      },
+    });
+    if (claimed.count) started++;
+  }
+
+  return { considered: actionable.length, started, refunded, marked };
 }
 
 /**

@@ -227,9 +227,21 @@ export const APPS_FULL_MEASURE_PAGES = [
 ] as const;
 
 /**
- * Routes that deliberately have NO container: they host a full-viewport iframe
- * (the block runtime / the moderator's live preview) or a full-bleed dev shell.
- * Capping these would letterbox the app being run/reviewed.
+ * Routes that deliberately have NO `AppsPageLayout` container: they host a
+ * full-viewport iframe (the block runtime / the moderator's live preview) or a
+ * full-bleed dev shell. Wrapping these in the apps container would letterbox the
+ * app being run/reviewed AND put a second chrome band over a third-party app.
+ *
+ * 🔴 "NO CONTAINER" IS NOT "NO WIDTH BOUND" — it stopped being that, and this
+ * comment used to assert the stronger claim. All three of these routes mount
+ * `PageBlockHost`, which caps ITSELF at `--app-page-max-width` (1600px, see
+ * `APP_PAGE_MAX_WIDTH_PX` in `~/components/AppBlocks/PageBlockHost`) and centres
+ * the app past that. Two different mechanisms at two very different thresholds:
+ * this module's container is 1920 and applies to the apps CHROME, the host's cap
+ * is 1600 and applies to the app itself, and an app can be excused from the
+ * host's via the CSS ledger in `src/styles/globals.css`. Nothing here changes —
+ * these routes still pass no `measure` and still render no `AppsPageLayout` — but
+ * do not read this list as evidence that a run page is unbounded.
  */
 export const APPS_FULL_BLEED_PAGES = [
   '/apps/run/[slug]/[[...path]]',

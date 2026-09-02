@@ -22,6 +22,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
     tagline: 'tag',
     category: null,
     contentRating: null,
+    isBeta: false,
     iconUrl: null,
     coverUrl: null,
     creator: null,

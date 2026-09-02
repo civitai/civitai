@@ -218,7 +218,14 @@ export function ReviewActionBar({
         paddingLeft: 'var(--mantine-spacing-md)',
         paddingRight: 'var(--mantine-spacing-md)',
         paddingTop: 'var(--mantine-spacing-md)',
-        paddingBottom: 'max(var(--mantine-spacing-md), env(safe-area-inset-bottom))',
+        // Was a bare `env(safe-area-inset-bottom)`, which had two problems: it
+        // resolved to 0 on every device (nothing shipped `viewport-fit=cover`
+        // until this change), and it carried no `env()` fallback — so in a UA
+        // that does not know the variable the WHOLE declaration is invalid at
+        // computed-value time and the bar loses its padding entirely rather than
+        // falling back to the spacing. `--safe-area-inset-bottom` (globals.css)
+        // carries the `, 0px` fallback once, for every call site.
+        paddingBottom: 'max(var(--mantine-spacing-md), var(--safe-area-inset-bottom))',
       }}
     >
       {inner}
