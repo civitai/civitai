@@ -22,6 +22,7 @@ export async function rewardReportReporters(input: {
     const globalBonus = await getGlobalRewardsBonus();
     const ineligible = await getIneligibleReporters(input.reporterIds);
     const clamped: number[] = [];
+    const floored: number[] = [];
     const rows = await Promise.all(
       input.reporterIds.map(async (reporterId) => {
         const base = ineligible.has(reporterId) ? 0 : await getBaseRewardsMultiplier(reporterId);
@@ -31,8 +32,14 @@ export async function rewardReportReporters(input: {
         // times the bonus overflows to Infinity, which the clamp turns into the base multiplier.
         // That is a fallback, not an overflow of the column, and reporting it as a clamp writes
         // `{"multiplierRaw":null}` as the audit trail and fires an alert naming a ceiling nothing hit.
-        const wasClamped = Number.isFinite(raw) && multiplier !== raw;
-        if (wasClamped) clamped.push(raw);
+        const adjusted = Number.isFinite(raw) && multiplier !== raw;
+        // Split by direction rather than re-testing the ceiling, so this cannot drift from the helper.
+        const clampedHigh = adjusted && raw > 0;
+        // Not gated on `adjusted`: every negative floors, including -Infinity, which is not finite
+        // and would otherwise floor to 0 with no signal at all.
+        const flooredLow = raw < 0;
+        if (clampedHigh) clamped.push(raw);
+        if (flooredLow) floored.push(raw);
         // toUserId === byUserId (an accepted report rewards its reporter); ip omitted for localhost/empty
         // so the ClickHouse column falls back to its '' default.
         return {
@@ -43,13 +50,29 @@ export async function rewardReportReporters(input: {
           awardAmount: REPORT_ACCEPTED_AWARD,
           multiplier,
           status: 'pending',
-          // The raw product is kept so a clamped row is still traceable back to the tier and bonus
-          // that produced it.
-          transactionDetails: wasClamped ? JSON.stringify({ multiplierRaw: raw }) : '{}',
+          // The raw product is kept so an adjusted row stays traceable to the tier and bonus that
+          // produced it. Only a finite one: JSON.stringify turns +/-Infinity into `null`.
+          transactionDetails:
+            (clampedHigh || flooredLow) && Number.isFinite(raw)
+              ? JSON.stringify({ multiplierRaw: raw })
+              : '{}',
           ...(input.ip && input.ip !== '::1' ? { ip: input.ip } : {}),
         };
       })
     );
+    if (floored.length) {
+      const finiteFloored = floored.filter(Number.isFinite);
+      logToAxiom({
+        name: 'buzz-rewards',
+        type: 'error',
+        message: 'Buzz event multiplier was negative and was floored to 0',
+        flooredEvents: floored.length,
+        batchSize: rows.length,
+        // Omitted rather than reported when every floored raw overflowed: `Math.min()` of no
+        // arguments is +Infinity, which is the opposite sign of the alert and serializes to `null`.
+        ...(finiteFloored.length ? { minRaw: Math.min(...finiteFloored) } : {}),
+      }).catch(() => null);
+    }
     if (clamped.length) {
       logToAxiom({
         name: 'buzz-rewards',

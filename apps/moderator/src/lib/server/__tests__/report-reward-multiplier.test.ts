@@ -361,4 +361,86 @@ describe('rewardReportReporters multiplier', () => {
       maxRaw: 20,
     });
   });
+
+  it('floors a negative tier to 0 rather than writing it', async () => {
+    // A negative fits Decimal(3, 2) only down to -9.99, so a larger one is the same silently
+    // dropped row the ceiling guards. 0 is the value process-rewards understands: unqualified,
+    // zero award, cap untouched. Justin's call, 2026-09-01.
+    const row = await rowFor({ tier: cached(-5), storedBonus: 20 });
+    expect(row.multiplier).toBe(0);
+  });
+
+  it('does not let a negative past the column even when it would fit', async () => {
+    // -2 x 1 = -2 is storable, so a fix that only guarded the unstorable range would leave it.
+    // Kept out anyway: recorded `awarded`, it consumes the reporter's cap and is then dropped by
+    // sendAward's amount filter — a row claiming a payout that never happened.
+    const row = await rowFor({ tier: cached(-2), storedBonus: 10 });
+    expect(row.multiplier).toBe(0);
+  });
+
+  it('reports a floor as a floor, not as exceeding the column', async () => {
+    // Two floored at DIFFERENT raws, or min and max of a one-element array agree and `minRaw` is
+    // unpinned.
+    await rowsFor({
+      tiers: [
+        [42, cached(-5)],
+        [7, cached(-3)],
+        [9, cached(1)],
+      ],
+      storedBonus: 20,
+    });
+    expect(axiom).toHaveBeenCalledTimes(1);
+    const payload = axiom.mock.calls[0][0];
+    expect(payload.message).toMatch(/negative and was floored/);
+    expect(payload).toMatchObject({ flooredEvents: 2, batchSize: 3, minRaw: -10 });
+  });
+
+  it('keeps the unclamped negative in the audit trail', async () => {
+    const row = await rowFor({ tier: cached(-5), storedBonus: 20 });
+    expect(JSON.parse(row.transactionDetails)).toEqual({ multiplierRaw: -10 });
+  });
+
+  it('floors a negative that overflows, rather than paying it the base multiplier', async () => {
+    // -1e308 x 5 is -Infinity. Falling back to the base multiplier by finiteness alone made the
+    // floor non-monotone: a tier of -5 paid nothing while a tier of -1e308 paid the FULL award at
+    // 1x. The fallback is by sign for that reason.
+    const row = await rowFor({ tier: cached(-1e308), storedBonus: 50 });
+    expect(row.multiplier).toBe(0);
+    // Signalled even though the raw is not finite — a floor with no trace is what this guards.
+    expect(axiom).toHaveBeenCalledTimes(1);
+    const payload = axiom.mock.calls[0][0];
+    expect(payload.message).toMatch(/negative and was floored/);
+    expect(payload.flooredEvents).toBe(1);
+    // No `minRaw` at all rather than one computed from an empty list: `Math.min()` of no arguments
+    // is +Infinity, so the floor alert would report a POSITIVE minimum, serialized as `null`.
+    expect(payload).not.toHaveProperty('minRaw');
+    expect(row.transactionDetails).toBe('{}');
+  });
+
+  it('reports a clamp and a floor in the same batch as two separate signals', async () => {
+    // Nothing else drives a clamp and a floor at once, so collapsing the two alerts into one
+    // passes every other test.
+    await rowsFor({
+      tiers: [
+        [42, cached(4)],
+        [7, cached(-3)],
+        [9, cached(1)],
+      ],
+      storedBonus: 50,
+    });
+    expect(axiom).toHaveBeenCalledTimes(2);
+    const messages = axiom.mock.calls.map(([payload]) => String(payload.message));
+    expect(messages.some((m) => /negative and was floored/.test(m))).toBe(true);
+    expect(messages.some((m) => /exceeded the ClickHouse column/.test(m))).toBe(true);
+  });
+
+  it('does not treat a legitimately zero multiplier as an adjustment', async () => {
+    // The ineligible reporter is the COMMON production case and its multiplier is 0 by intent, not
+    // by clamping. Alerting on it would page someone for every barred reporter, and writing a
+    // multiplierRaw would claim an adjustment that never happened.
+    const row = await rowFor({ tier: cached(4), storedBonus: 20, ineligible: true });
+    expect(row.multiplier).toBe(0);
+    expect(row.transactionDetails).toBe('{}');
+    expect(axiom).not.toHaveBeenCalled();
+  });
 });

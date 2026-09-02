@@ -19,10 +19,18 @@ export const BUZZ_EVENTS_MAX_MULTIPLIER = 9.99;
  * at all, which is why this floors rather than rejects. Callers that care should record the raw
  * value alongside the row.
  *
- * A non-finite input falls back to the base multiplier of 1 rather than passing NaN through: NaN is
- * a value the column cannot hold, which is the same silently-dropped row this exists to prevent.
+ * The floor is 0, not -9.99. The column is signed and would hold a small negative, but 0 is the
+ * value `process-rewards` already understands: it marks the event `unqualified` with a zero award
+ * and does NOT consume the user's cap. A negative kept as a negative is worse than the overflow
+ * this guards — it passes that check, is recorded `awarded`, eats the cap, and is then dropped by
+ * `sendAward`'s amount filter, leaving a row claiming a payout that never happened.
+ *
+ * A non-finite input falls back rather than passing NaN through, since NaN is a value the column
+ * cannot hold — the same silently-dropped row this exists to prevent. It falls back BY SIGN, or the
+ * floor would be non-monotone: -Infinity is still a negative and must not be worth more than -5.
+ * NaN carries no sign to act on, so it takes the base multiplier like a missing value.
  */
 export function clampBuzzEventMultiplier(multiplier: number): number {
-  if (!Number.isFinite(multiplier)) return 1;
-  return Math.min(multiplier, BUZZ_EVENTS_MAX_MULTIPLIER);
+  if (!Number.isFinite(multiplier)) return multiplier < 0 ? 0 : 1;
+  return Math.min(Math.max(multiplier, 0), BUZZ_EVENTS_MAX_MULTIPLIER);
 }
