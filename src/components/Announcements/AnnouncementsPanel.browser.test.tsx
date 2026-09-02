@@ -89,7 +89,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ...actual,
     trpc: new Proxy(stubbed, {
       get(target, prop: string) {
-        if (prop in target) return target[prop];
+        if (Object.hasOwn(target, prop)) return target[prop];
         throw new Error(`Unmocked tRPC router in a component test: trpc.${String(prop)}`);
       },
     }),

@@ -60,7 +60,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ...actual,
     trpc: new Proxy(stubbed, {
       get(target, prop: string) {
-        if (prop in target) return target[prop];
+        if (Object.hasOwn(target, prop)) return target[prop];
         throw new Error(`Unmocked tRPC router in a component test: trpc.${String(prop)}`);
       },
     }),
@@ -90,7 +90,7 @@ const announcement = {
   },
 } as any;
 
-async function renderCard(withAuthor: boolean, overrides: Record<string, unknown> = {}) {
+async function renderCard(withAuthor: boolean, overrides: Partial<typeof announcement> = {}) {
   const { CreatorAnnouncement } = await import('~/components/Announcements/CreatorAnnouncement');
   renderWithProviders(
     <CreatorAnnouncement announcement={{ ...announcement, ...overrides }} withAuthor={withAuthor} />
@@ -121,6 +121,10 @@ describe('CreatorAnnouncement attribution', () => {
     const links = page.getByRole('link').elements();
     const hrefs = links.map((el) => el.getAttribute('href'));
     expect(hrefs).toContain('/user/someone');
+
+    // The author-less fallback label is the OTHER branch of the same ternary; without this,
+    // rendering both the avatar and the label would pass every test in the file.
+    expect(page.getByText('Creator announcement').elements()).toHaveLength(0);
   });
 
   // The sitewide Civitai card renders through the same `AnnouncementCard` with no top bar.
