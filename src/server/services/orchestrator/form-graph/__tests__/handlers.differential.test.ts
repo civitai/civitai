@@ -468,6 +468,13 @@ const CASES: Record<string, unknown>[] = [
   // Seedance
   { workflow: 'txt2vid', ecosystem: 'Seedance', prompt: 'a cat', seed: 42 },
   { workflow: 'img2vid', ecosystem: 'Seedance', prompt: 'a cat', seed: 42, images: [IMAGE] },
+  {
+    workflow: 'img2vid:ref2vid',
+    ecosystem: 'Seedance',
+    prompt: 'a cat',
+    seed: 42,
+    images: [IMAGE, { url: 'https://example.com/b.png', width: 1216, height: 832 }],
+  },
   // Veo3: fast vs standard, ref2vid placeholder prompt
   { workflow: 'txt2vid', ecosystem: 'Veo3', prompt: 'a cat', seed: 42, generateAudio: true },
   { workflow: 'txt2vid', ecosystem: 'Veo3', prompt: 'a cat', seed: 42, model: 2827945 },

@@ -60,9 +60,13 @@ const seedanceResolutionsV2 = [...seedanceResolutions, { label: '1080p', value: 
 export const seedance = defineGraph<FamilyExt>({ scope: familyScope })
   .field(
     'images',
-    workflowScoped(({ _ext }) =>
-      isWorkflowOrVariant(_ext.workflow, 'img2vid') ? imagesDef({ max: 1 }) : null
-    )
+    workflowScoped(({ _ext }) => {
+      // ref2vid before the img2vid check below, which treats it as a variant
+      // and would cap it at one
+      if (_ext.workflow === 'img2vid:ref2vid')
+        return imagesDef({ max: 9, warnOnMissingAiMetadata: true });
+      return isWorkflowOrVariant(_ext.workflow, 'img2vid') ? imagesDef({ max: 1 }) : null;
+    })
   )
   .field('model', ({ _ext }) =>
     checkpointDef({
