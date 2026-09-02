@@ -229,8 +229,9 @@ socket.on('error', ({ msg }) => {
 
 socket.on('roomPresence', ({ client, sd }) => {
   console.log('roomPresence', { client, sd });
-  if (!instance.sdConnected && sd > 0) emitMessage('Stable Diffusion service connected');
-  else if (instance.sdConnected && sd === 0) emitMessage('Stable Diffusion service disconnected');
+  const appLabel = instance.name?.trim() || 'App';
+  if (!instance.sdConnected && sd > 0) emitMessage(`${appLabel} connected`);
+  else if (instance.sdConnected && sd === 0) emitMessage(`${appLabel} disconnected`);
 
   const connected = sd > 0 && client > 0;
   if (connected && !instance.connected) handleInitialization();
