@@ -111,8 +111,9 @@
      the app renders as a centred column with a neutral gutter either side once
      the viewport is wider than this. Below it the declaration is INERT — the box
      is `width: 100%`, which is already narrower than the cap, and
-     `margin-inline: auto` resolves to 0 on a box that fills its parent. That inertness is the point: the great majority of
-     traffic is below this width and must render byte-identically to before.
+     `margin-inline: auto` resolves to 0 on a box that fills its parent. That
+     inertness is the point: the great majority of traffic is below this width
+     and must render byte-identically to before.
 
      🔴 THE ELEMENT THAT READS IT IS NOT THE ELEMENT THE LEDGER SELECTS, AND THAT
      IS DELIBERATE — checking the wrong one in DevTools is the likeliest way to
