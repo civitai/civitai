@@ -103,10 +103,19 @@ function region(src: string, anchor: RegExp, label: string): string {
  * failures were silent and both left the guard GREEN for the exact mutation it
  * existed to catch. Offsets cannot express "inside"; a tree can. `typescript` is
  * already used this way by several guards in this repo.
+ *
+ * 🔴 EXACTLY ONE ELEMENT PER TESTID, ASSERTED. An earlier version keyed a `Map` and
+ * let a second occurrence overwrite the first, so with two frame/content pairs (a
+ * second render branch, a dev-only variant) it graded whichever appeared LAST and
+ * said nothing. That is the property `region()` — the text helper this replaced —
+ * had and this one dropped: it fails on ambiguity rather than picking one.
  */
-function hostElements(): { frame: ts.Node; content: ts.Node } {
+function hostElements(): {
+  frame: ts.JsxOpeningLikeElement;
+  content: ts.JsxOpeningLikeElement;
+} {
   const sf = ts.createSourceFile(HOST, read(HOST), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const found = new Map<string, ts.Node>();
+  const found = new Map<string, ts.JsxOpeningLikeElement[]>();
   const visit = (n: ts.Node) => {
     if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
       for (const a of n.attributes.properties) {
@@ -116,7 +125,9 @@ function hostElements(): { frame: ts.Node; content: ts.Node } {
           a.initializer &&
           ts.isStringLiteral(a.initializer)
         ) {
-          found.set(a.initializer.text, n);
+          const list = found.get(a.initializer.text) ?? [];
+          list.push(n);
+          found.set(a.initializer.text, list);
         }
       }
     }
@@ -124,29 +135,52 @@ function hostElements(): { frame: ts.Node; content: ts.Node } {
   };
   visit(sf);
 
-  const frame = found.get('app-page-frame');
-  const content = found.get('app-page-content');
   // Fail on the LOOKUP rather than letting a missing element make every assertion
   // below vacuous — the reassuring-zero shape this file guards against elsewhere.
-  expect(
-    frame,
-    'no element in PageBlockHost.tsx carries `data-testid="app-page-frame"`. The opt-out ' +
-      'ledger selects on it, so every ledger rule is inert. Re-point this guard only if the ' +
-      'element was deliberately renamed.'
-  ).toBeDefined();
-  expect(
-    content,
-    'no element in PageBlockHost.tsx carries `data-testid="app-page-content"`. If the cap ' +
-      'moved back onto the host root, the app chrome is being capped along with the app ' +
-      'again — the regression this change removed.'
-  ).toBeDefined();
-  return { frame: frame!, content: content! };
+  const one = (testid: string, absent: string): ts.JsxOpeningLikeElement => {
+    const hits = found.get(testid) ?? [];
+    expect(
+      hits.length,
+      hits.length === 0
+        ? absent
+        : `PageBlockHost.tsx renders ${hits.length} elements carrying \`data-testid="${testid}"\`. This guard cannot know which one ships, so it would be grading an arbitrary occurrence. Give the other one a different testid, or re-point this guard deliberately.`
+    ).toBe(1);
+    return hits[0];
+  };
+
+  return {
+    frame: one(
+      'app-page-frame',
+      'no element in PageBlockHost.tsx carries `data-testid="app-page-frame"`. The opt-out ' +
+        'ledger selects on it, so every ledger rule is inert. Re-point this guard only if the ' +
+        'element was deliberately renamed.'
+    ),
+    content: one(
+      'app-page-content',
+      'no element in PageBlockHost.tsx carries `data-testid="app-page-content"`. If the cap ' +
+        'moved back onto the host root, the app chrome is being capped along with the app ' +
+        'again — the regression this change removed.'
+    ),
+  };
 }
 
-/** Is `maybeDescendant` inside `ancestor`'s element? Walks real parent links. */
-function isDescendant(ancestor: ts.Node, maybeDescendant: ts.Node): boolean {
-  // The opening element's PARENT is the whole `JsxElement`, which is the subtree the
-  // children live in — so ascend from the candidate looking for it.
+/**
+ * Is `maybeDescendant` inside `ancestor`'s element? Walks real parent links.
+ *
+ * 🔴 A SELF-CLOSING ANCESTOR HAS NO DESCENDANTS, AND SAYING SO IS NOT DEFENSIVE NOISE.
+ * For a `JsxOpeningElement`, `.parent` is its own `JsxElement` — the subtree its
+ * children live in, which is what makes the walk below mean "inside". For a
+ * `JsxSelfClosingElement` there is no such element, so `.parent` is the ENCLOSING one
+ * and the walk would answer TRUE for the ancestor's own SIBLINGS. Measured with a
+ * `typescript` probe: frame self-closing + content a sibling under a shared parent
+ * returned `true`, i.e. the guard would certify the ledger's inheritance while it was
+ * dead. `hostElements` deliberately returns either kind, so this branch is reachable.
+ */
+function isDescendant(
+  ancestor: ts.JsxOpeningLikeElement,
+  maybeDescendant: ts.JsxOpeningLikeElement
+): boolean {
+  if (ts.isJsxSelfClosingElement(ancestor)) return false;
   const ancestorElement = ancestor.parent;
   for (let n: ts.Node | undefined = maybeDescendant.parent; n; n = n.parent) {
     if (n === ancestorElement) return true;
@@ -154,16 +188,51 @@ function isDescendant(ancestor: ts.Node, maybeDescendant: ts.Node): boolean {
   return false;
 }
 
-/** The literal text of an element's `style={{…}}` attribute. */
-function styleTextOf(el: ts.Node): string {
-  const attrs = (el as ts.JsxOpeningElement | ts.JsxSelfClosingElement).attributes.properties;
-  for (const a of attrs) {
+/**
+ * The literal text of an element's `style={{…}}` object, or `null` when this guard
+ * cannot see the element's style at all.
+ *
+ * 🔴 `null` IS NOT THE SAME AS `''`, AND CONFLATING THEM SHIPPED THE HEADLINE
+ * REGRESSION GREEN. An earlier version returned `''` for "no inline object literal",
+ * and the frame-side caller asserts `.not.toContain('--app-page-max-width')` — which
+ * an empty string satisfies trivially. Measured: lifting the frame's inline style into
+ * a `const` in a sibling module and putting the cap back in it, with the exact pinned
+ * spelling, left this file 9/9 GREEN while the app chrome was capped again — the one
+ * regression this file exists to block, through an entirely ordinary refactor. A
+ * spread `{...{ style: … }}` did the same.
+ *
+ * So the two cases are now distinguishable and the callers must assert on it: a style
+ * this helper cannot read is a REASON TO FAIL, never a reason to pass.
+ */
+function styleObjectOf(el: ts.JsxOpeningLikeElement): string | null {
+  // A spread can carry `style` from anywhere, so its presence means the attribute list
+  // is not the whole story and no conclusion may be drawn from it.
+  if (el.attributes.properties.some((a) => ts.isJsxSpreadAttribute(a))) return null;
+  for (const a of el.attributes.properties) {
     if (ts.isJsxAttribute(a) && a.name.getText() === 'style' && a.initializer) {
       const init = a.initializer;
-      if (ts.isJsxExpression(init) && init.expression) return init.expression.getText();
+      if (!ts.isJsxExpression(init) || !init.expression) return null;
+      // Only an inline OBJECT LITERAL is readable here. An identifier or a call means
+      // the value lives somewhere this guard is not looking.
+      return ts.isObjectLiteralExpression(init.expression) ? init.expression.getText() : null;
     }
   }
-  return '';
+  return null;
+}
+
+/** `styleObjectOf`, failing loudly when the style is not readable. `who` names the element. */
+function readableStyleOf(el: ts.JsxOpeningLikeElement, who: string): string {
+  const text = styleObjectOf(el);
+  expect(
+    text,
+    `the \`${who}\` element's \`style\` is no longer an inline object literal (it was moved to a ` +
+      'variable or another module, computed, or spread in). This guard reads that literal to ' +
+      'decide WHERE the ultrawide cap is declared, so it can no longer answer the question it ' +
+      'exists to answer — and it must fail rather than pass silently, which is exactly how a ' +
+      're-capped chrome once shipped 9/9 green. Either keep the style inline, or re-point this ' +
+      'guard at wherever it now lives.'
+  ).not.toBeNull();
+  return text!;
 }
 
 describe('the full-page App Block host caps its width, and the cap is overridable', () => {
@@ -398,7 +467,7 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    * one level down.
    *
    * Measured by mutation, in a copy: reverting the whole change (cap back on the
-   * frame, chrome capped again) left the FULL node suite — 1569 files, 24877 tests
+   * frame, chrome capped again) left the FULL node suite — 1569 files, 24,879 tests
    * — byte-identically green. Only the report-only browser tier caught it, and
    * that tier cannot block a merge. This test is the gating-tier half.
    */
@@ -435,13 +504,13 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
     // cap-back-on-the-frame mutant passed this test again. The attribute's own text has no
     // such ambiguity.
     expect(
-      styleTextOf(frame),
+      readableStyleOf(frame, 'app-page-frame'),
       'the `max-width` cap is declared on the host FRAME again. That re-caps the app chrome ' +
         'along with the app — a full-page app then renders as a boxed widget dropped into ' +
         'the page rather than as a page of the site.'
     ).not.toContain('--app-page-max-width');
     expect(
-      styleTextOf(content),
+      readableStyleOf(content, 'app-page-content'),
       'the `max-width` cap is no longer declared on `app-page-content`. If it moved, this ' +
         "guard and the ledger's inheritance both need re-deriving."
     ).toContain('--app-page-max-width');
@@ -479,7 +548,7 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
   it("pins the content wrapper's box model — a dropped `flex: 1` collapses the app with every suite green", () => {
     const { content } = hostElements();
     expect(
-      norm(styleTextOf(content)),
+      norm(readableStyleOf(content, 'app-page-content')),
       "This is a DELIBERATE verbatim pin of `app-page-content`'s box model. `flex: 1` is " +
         'what makes this box consume the height the chrome left; without it the app column ' +
         'collapses to its content-based minimum and NO rendered test in either tier ' +
