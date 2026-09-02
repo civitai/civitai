@@ -103,6 +103,32 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     expect(result.source).toBe('meili');
   });
 
+  // 🔴 The `userHubs` refusal at image.controller.ts:283-284, which nothing else
+  // witnesses: deleting BOTH those lines leaves 115 tests green across all six
+  // hub-adjacent suites. `hubId` is a plain URL param, so without the refusal
+  // `/images?hubId=N` keeps serving a hub after the flag is turned back off.
+  // The neither-mock assertion is load-bearing: a change that refused AFTER
+  // dispatching would satisfy a throw-only assertion.
+  it('refuses a hub outright when userHubs is off, without dispatching', async () => {
+    const hubsOffCtx = {
+      ...ctx,
+      features: {
+        ...(ctx as unknown as { features: object }).features,
+        userHubs: false,
+      },
+    } as typeof ctx;
+
+    await expect(
+      getInfiniteImagesHandler({
+        input: { ...(indexBoundInput as object), hubId: 3 } as never,
+        ctx: hubsOffCtx,
+      })
+    ).rejects.toThrow();
+
+    expect(getAllImagesIndexMock).not.toHaveBeenCalled();
+    expect(getAllImagesMock).not.toHaveBeenCalled();
+  });
+
   it('passes the index path’s own source through untouched', async () => {
     const result = await getInfiniteImagesHandler({ input: indexBoundInput, ctx });
 
