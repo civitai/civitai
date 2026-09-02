@@ -380,7 +380,7 @@ describe('rewardReportReporters multiplier', () => {
 
   it('reports a floor as a floor, not as exceeding the column', async () => {
     // Two floored at DIFFERENT raws, or min and max of a one-element array agree and `minRaw` is
-    // unpinned — the degeneracy that already let a mutation through this file once.
+    // unpinned.
     await rowsFor({
       tiers: [
         [42, cached(-5)],
@@ -408,14 +408,18 @@ describe('rewardReportReporters multiplier', () => {
     expect(row.multiplier).toBe(0);
     // Signalled even though the raw is not finite — a floor with no trace is what this guards.
     expect(axiom).toHaveBeenCalledTimes(1);
-    expect(axiom.mock.calls[0][0].message).toMatch(/negative and was floored/);
-    // The raw is unrepresentable in JSON, and `{"multiplierRaw":null}` is a worse trail than none.
+    const payload = axiom.mock.calls[0][0];
+    expect(payload.message).toMatch(/negative and was floored/);
+    expect(payload.flooredEvents).toBe(1);
+    // No `minRaw` at all rather than one computed from an empty list: `Math.min()` of no arguments
+    // is +Infinity, so the floor alert would report a POSITIVE minimum, serialized as `null`.
+    expect(payload).not.toHaveProperty('minRaw');
     expect(row.transactionDetails).toBe('{}');
   });
 
   it('reports a clamp and a floor in the same batch as two separate signals', async () => {
-    // 4x5=20 clamps, -3x5=-15 floors, 1x5=5 does neither. Nothing else drives both at once, so a
-    // change collapsing the two alerts into one passes every other test.
+    // Nothing else drives a clamp and a floor at once, so collapsing the two alerts into one
+    // passes every other test.
     await rowsFor({
       tiers: [
         [42, cached(4)],

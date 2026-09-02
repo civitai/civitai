@@ -33,9 +33,7 @@ export async function rewardReportReporters(input: {
         // That is a fallback, not an overflow of the column, and reporting it as a clamp writes
         // `{"multiplierRaw":null}` as the audit trail and fires an alert naming a ceiling nothing hit.
         const adjusted = Number.isFinite(raw) && multiplier !== raw;
-        // Split by direction rather than re-testing the ceiling, so this cannot drift from the
-        // helper. A floored negative did not exceed anything, and saying it did sends whoever reads
-        // the alert looking for a bonus event that is not there.
+        // Split by direction rather than re-testing the ceiling, so this cannot drift from the helper.
         const clampedHigh = adjusted && raw > 0;
         // Not gated on `adjusted`: every negative floors, including -Infinity, which is not finite
         // and would otherwise floor to 0 with no signal at all.
@@ -52,10 +50,8 @@ export async function rewardReportReporters(input: {
           awardAmount: REPORT_ACCEPTED_AWARD,
           multiplier,
           status: 'pending',
-          // The raw product is kept so a clamped row is still traceable back to the tier and bonus
-          // that produced it.
-          // Only a finite raw is recorded: JSON.stringify turns +/-Infinity into `null`, which is
-          // a worse audit trail than none. The alert's count still says it happened.
+          // The raw product is kept so an adjusted row stays traceable to the tier and bonus that
+          // produced it. Only a finite one: JSON.stringify turns +/-Infinity into `null`.
           transactionDetails:
             (clampedHigh || flooredLow) && Number.isFinite(raw)
               ? JSON.stringify({ multiplierRaw: raw })
@@ -65,13 +61,16 @@ export async function rewardReportReporters(input: {
       })
     );
     if (floored.length) {
+      const finiteFloored = floored.filter(Number.isFinite);
       logToAxiom({
         name: 'buzz-rewards',
         type: 'error',
         message: 'Buzz event multiplier was negative and was floored to 0',
         flooredEvents: floored.length,
         batchSize: rows.length,
-        minRaw: Math.min(...floored.filter(Number.isFinite)),
+        // Omitted rather than reported when every floored raw overflowed: `Math.min()` of no
+        // arguments is +Infinity, which is the opposite sign of the alert and serializes to `null`.
+        ...(finiteFloored.length ? { minRaw: Math.min(...finiteFloored) } : {}),
       }).catch(() => null);
     }
     if (clamped.length) {

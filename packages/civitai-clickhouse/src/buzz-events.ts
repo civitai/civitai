@@ -24,7 +24,6 @@ export const BUZZ_EVENTS_MAX_MULTIPLIER = 9.99;
  * and does NOT consume the user's cap. A negative kept as a negative is worse than the overflow
  * this guards — it passes that check, is recorded `awarded`, eats the cap, and is then dropped by
  * `sendAward`'s amount filter, leaving a row claiming a payout that never happened.
- * Justin's call, 2026-09-01.
  *
  * A non-finite input falls back rather than passing NaN through, since NaN is a value the column
  * cannot hold — the same silently-dropped row this exists to prevent. It falls back BY SIGN, or the
