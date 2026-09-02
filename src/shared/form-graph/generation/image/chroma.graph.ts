@@ -17,8 +17,7 @@ const chromaVersionId = 2164239;
 /** Flow-compatible samplers. */
 const chromaSamplers = ['Euler', 'Euler a', 'DPM++ SDE', 'DPM++ 2M Karras', 'DPM++ SDE Karras'];
 
-export const chroma = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const chroma = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,

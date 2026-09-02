@@ -32,8 +32,7 @@ const revePriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
 // ---- end of reve-graph.ts copies --------------------------------------------
 
-export const reve = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const reve = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,

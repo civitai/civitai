@@ -166,26 +166,22 @@ const variantOf = (ext: Krea2VariantExt): Krea2Variant => {
 };
 
 const fal = defineGraph<Krea2VariantExt>()
-  .scope(familyScope)
   .field('creativity', enumDef({ options: krea2CreativityOptions, default: 'medium' }))
   .field('styleReferences', styleReferencesDef);
 
 /** Raw: undistilled full-guidance build — ~52 steps at CFG 3.5 per model card. */
 const raw = defineGraph<Krea2VariantExt>()
-  .scope(familyScope)
   .field('resources', familyResources)
   .field('cfgScale', perModelSlider({ min: 1, max: 10, step: 0.5, default: 3.5 }))
   .field('steps', perModelSlider({ min: 1, max: 60, default: 30 }));
 
 /** Turbo: 8-step distilled build; guidance baked in, hence the cfg floor of 0. */
 const turbo = defineGraph<Krea2VariantExt>()
-  .scope(familyScope)
   .field('resources', familyResources)
   .field('cfgScale', perModelSlider({ min: 0, max: 2, step: 0.1, default: 1 }))
   .field('steps', perModelSlider({ min: 1, max: 15, default: 8 }));
 
 const editTurbo = defineGraph<Krea2VariantExt>()
-  .scope(familyScope)
   .field(
     'images',
     workflowScoped(() => imagesDef({ min: 1, max: KREA2_EDIT_IMAGES_LIMIT }))
@@ -195,7 +191,6 @@ const editTurbo = defineGraph<Krea2VariantExt>()
   .field('steps', perModelSlider({ min: 1, max: 15, default: 8 }));
 
 const editRaw = defineGraph<Krea2VariantExt>()
-  .scope(familyScope)
   .field(
     'images',
     workflowScoped(() => imagesDef({ min: 1, max: KREA2_EDIT_IMAGES_LIMIT }))
@@ -207,8 +202,7 @@ const editRaw = defineGraph<Krea2VariantExt>()
 /** Tagged: v1's `krea2Variant` computed becomes the branch key. */
 const variants = branch('krea2Variant', variantOf, { fal, raw, turbo, editRaw, editTurbo });
 
-export const krea2 = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const krea2 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) => {
     const isEdit = _ext.workflow === 'img2img:edit';
     return checkpointDef({

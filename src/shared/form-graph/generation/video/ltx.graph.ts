@@ -278,7 +278,6 @@ const versionOf = (ecosystem: string) => {
 
 // ---- the parent's shared nodes, mounted first by every version --------------
 const shared = defineGraph<FamilyExt>()
-  .scope(familyScope)
   .field(
     'images',
     workflowScoped(({ _ext }) => {
@@ -328,15 +327,13 @@ const shared = defineGraph<FamilyExt>()
   );
 
 // ---- one graph per LTX version ---------------------------------------------
-const v2 = defineGraph<FamilyExt>()
-  .scope(familyScope)
+const v2 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .field('aspectRatio', ({ _ext }) => (_ext.workflow !== 'img2vid' ? AR_V2 : null))
   .field('duration', DURATION_V2)
   .use(textBlock);
 
-const v23 = defineGraph<FamilyExt>()
-  .scope(familyScope)
+const v23 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .field(
     'video',
@@ -356,8 +353,7 @@ const v23 = defineGraph<FamilyExt>()
   .field('generateAudio', GENERATE_AUDIO)
   .use(textBlock);
 
-const v25 = defineGraph<FamilyExt>()
-  .scope(familyScope)
+const v25 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .field('resolution', RESOLUTION)
   .field('aspectRatio', ({ resolution, _ext }) =>

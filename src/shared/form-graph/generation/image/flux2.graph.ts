@@ -57,14 +57,12 @@ const CFG = sliderDef({
 const STEPS = sliderDef({ min: 20, max: 50, default: 25 });
 
 const noResources = defineGraph<Flux2ModeExt>()
-  .scope(familyScope)
   .field('aspectRatio', SDXL_SQUARE_AR)
   .field('cfgScale', CFG)
   .field('steps', STEPS)
   .field('seed', SEED);
 
 const dev = defineGraph<Flux2ModeExt>()
-  .scope(familyScope)
   .field('aspectRatio', SDXL_SQUARE_AR)
   .field('cfgScale', CFG)
   .field('steps', STEPS)
@@ -79,8 +77,7 @@ const modes = branch('flux2Mode', (ext: Flux2ModeExt) => flux2ModeOf(ext.model),
   max: noResources,
 });
 
-export const flux2 = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const flux2 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ max: 7 }))
   .field('model', ({ _ext }) =>
     checkpointDef({

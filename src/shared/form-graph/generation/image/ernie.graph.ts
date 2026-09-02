@@ -39,7 +39,6 @@ const variantOf = (ext: ErnieModeExt): ErnieVariant =>
   modelIdOf(ext.model) === ernieVersionIds.turbo ? 'turbo' : 'base';
 
 const base = defineGraph<ErnieModeExt>()
-  .scope(familyScope)
   .field('resources', ({ _ext }) =>
     // v1's ernie uses raw resourcesNode: NO cross-ecosystem filter
     resourcesDef({
@@ -52,15 +51,13 @@ const base = defineGraph<ErnieModeExt>()
   .field('steps', perModelSlider({ min: 1, max: 50, default: 20 }));
 
 const turbo = defineGraph<ErnieModeExt>()
-  .scope(familyScope)
   .field('cfgScale', perModelSlider({ min: 1, max: 20, default: 1, step: 0.5 }))
   .field('steps', perModelSlider({ min: 1, max: 50, default: 8 }));
 
 /** Tagged: v1's `ernieVariant` computed becomes the branch key. */
 const variants = branch('ernieVariant', variantOf, { base, turbo });
 
-export const ernie = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const ernie = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,

@@ -72,12 +72,10 @@ const variantOf = (ext: HiDreamO1ModeExt): HiDreamO1Variant => {
 };
 
 const dev = defineGraph<HiDreamO1ModeExt>()
-  .scope(familyScope)
   .field('cfgScale', sliderDef({ min: 1, max: 20, default: 1, step: 0.5 }))
   .field('steps', sliderDef({ min: 1, max: 100, default: 28 }));
 
 const full = defineGraph<HiDreamO1ModeExt>()
-  .scope(familyScope)
   .field('cfgScale', sliderDef({ min: 1, max: 20, default: 4.5, step: 0.5 }))
   .field('steps', sliderDef({ min: 1, max: 100, default: 50 }));
 
@@ -93,8 +91,7 @@ const AR = defFamily((resolution: string) =>
   })
 );
 
-export const hiDreamO1 = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const hiDreamO1 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ min: 1, max: 4 }))
   .field('model', ({ _ext }) =>
     checkpointDef({

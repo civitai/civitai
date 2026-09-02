@@ -22,8 +22,7 @@ const imagen4AspectRatios = [
 
 // ---- end of imagen4-graph.ts copies -----------------------------------------
 
-export const imagen4 = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const imagen4 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,

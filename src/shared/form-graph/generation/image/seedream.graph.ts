@@ -59,8 +59,7 @@ const AR = defFamily((resolution: string) =>
   })
 );
 
-export const seedream = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const seedream = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ max: 7 }))
   .field('model', ({ _ext }) =>
     checkpointDef({

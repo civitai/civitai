@@ -38,8 +38,7 @@ const fluxKontextAspectRatios = [
 
 // ---- end of flux-kontext-graph.ts copies ------------------------------------
 
-export const fluxKontext = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const fluxKontext = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({}))
   .field('model', ({ _ext }) =>
     checkpointDef({

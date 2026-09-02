@@ -272,7 +272,6 @@ const RESOLUTION_BY_VERSION = {
 
 // ---- the parent's shared nodes ---------------------------------------------
 const shared = defineGraph<FamilyExt>()
-  .scope(familyScope)
   .field(
     'images',
     workflowScoped(({ _ext }) => {
@@ -317,8 +316,7 @@ const shared = defineGraph<FamilyExt>()
   .field('cfgScale', ({ _ext }) => (versionOf(_ext.ecosystem) === 'v3.0' ? null : CFG));
 
 // ---- one graph per Wan version ---------------------------------------------
-const v21 = defineGraph<FamilyExt>()
-  .scope(familyScope)
+const v21 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .field('aspectRatio', ({ images, resolution }) => (noImages(images) ? AR_21(resolution) : null))
   .field('duration', DURATION_WAN)
@@ -328,8 +326,7 @@ const v21 = defineGraph<FamilyExt>()
   // wan2.1 has no negative prompt
   .use(makeTextBlock({ negativePrompt: false }));
 
-const v22 = defineGraph<FamilyExt>()
-  .scope(familyScope)
+const v22 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .use(makeTextBlock())
   .field('aspectRatio', ({ images, resolution, _ext }) =>
@@ -345,8 +342,7 @@ const v22 = defineGraph<FamilyExt>()
     resourcesDef({ ecosystem: backendEcosystem, limit: 2 })
   );
 
-const v5b = defineGraph<FamilyExt>()
-  .scope(familyScope)
+const v5b = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .field('aspectRatio', ({ images }) => (noImages(images) ? AR_5B : null))
   .use(makeTextBlock())
@@ -357,15 +353,13 @@ const v5b = defineGraph<FamilyExt>()
     resourcesDef({ ecosystem: backendEcosystem, limit: 2 })
   );
 
-const v25 = defineGraph<FamilyExt>()
-  .scope(familyScope)
+const v25 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .use(makeTextBlock())
   .field('aspectRatio', ({ images, resolution }) => (noImages(images) ? AR_25(resolution) : null))
   .field('duration', DURATION_25);
 
-const v27 = defineGraph<FamilyExt>()
-  .scope(familyScope)
+const v27 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .field(
     'video',
@@ -397,8 +391,7 @@ const v27 = defineGraph<FamilyExt>()
     _ext.workflow === 'txt2vid' || _ext.workflow === 'img2vid' ? boolDef(false) : null
   );
 
-const v30 = defineGraph<FamilyExt>()
-  .scope(familyScope)
+const v30 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .use(makeTextBlock())
   .field('aspectRatio', ({ images, resolution }) => (noImages(images) ? AR_30(resolution) : null))

@@ -1,4 +1,4 @@
-import { defineGraph, type Scope } from 'form-graph';
+import { defineGraph, rootScope, type Scope } from 'form-graph';
 import { getEcosystemGroupByKey } from '~/shared/constants/basemodel.constants';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import {
@@ -102,7 +102,9 @@ export function makeTextBlock(
       : (['prompt'] as const);
 
   return (
-    defineGraph<TextBlockNeeds>()
+    // v1 stores the text block globally — detach from whatever family
+    // bucket this mounts under
+    defineGraph<TextBlockNeeds>({ scope: () => rootScope() })
       .computed('triggerWords', ({ _ext }) => {
         const resources = _ext.resources ?? [];
         const all = _ext.model ? [_ext.model, ...resources] : resources;
@@ -161,7 +163,7 @@ export function makeTextBlock(
  * The per-family persistence bucket (v1's ecosystem/group storage group):
  * grouped ecosystems (wan versions, klein variants) share their group id so
  * settings survive version switches; standalone ecosystems get their own key.
- * Family graphs attach it with `.scope(familyScope)`.
+ * Family graphs attach it with `defineGraph({ scope: familyScope })`.
  */
 export function familyScope(ext: { ecosystem: string }): Scope {
   return getEcosystemGroupByKey(ext.ecosystem)?.id ?? ext.ecosystem;
@@ -172,9 +174,11 @@ export function familyScope(ext: { ecosystem: string }): Scope {
  * builds with different slider ranges store cfgScale/steps per MODEL VERSION,
  * so switching variants doesn't clamp values one-way.
  */
-export function perModelScope(ext: { ecosystem: string; model?: unknown }): Scope {
+export function perModelScope(ext: { model?: unknown }): Scope | undefined {
   const id = modelIdOf(ext.model);
-  return id != null ? [ext.ecosystem, id] : familyScope(ext);
+  // a RELATIVE segment: appended to the family bucket the graph inherits,
+  // yielding v1's ['ecosystem', 'model.id'] address; no model -> inherit as-is
+  return id != null ? [id] : undefined;
 }
 
 /**

@@ -81,13 +81,9 @@ const CONTROL_NETS = controlNetsDef({ preprocessors: fluxControlNetPreprocessors
 
 type FluxModeExt = FamilyExt & { model?: ResourceData | number };
 
-const draft = defineGraph<FluxModeExt>()
-  .scope(familyScope)
-  .field('aspectRatio', AR)
-  .field('seed', SEED);
+const draft = defineGraph<FluxModeExt>().field('aspectRatio', AR).field('seed', SEED);
 
 const pro = defineGraph<FluxModeExt>()
-  .scope(familyScope)
   .field('aspectRatio', AR)
   .field('cfgScale', CFG)
   .field('steps', STEPS)
@@ -95,7 +91,6 @@ const pro = defineGraph<FluxModeExt>()
 
 /** standard and krea share this shape (v1 mounts one graph for both). */
 const standard = defineGraph<FluxModeExt>()
-  .scope(familyScope)
   .field('aspectRatio', AR)
   .field('cfgScale', CFG)
   .field('steps', STEPS)
@@ -104,7 +99,6 @@ const standard = defineGraph<FluxModeExt>()
   .field('resources', familyResources);
 
 const ultra = defineGraph<FluxModeExt>()
-  .scope(familyScope)
   .field('aspectRatio', AR_ULTRA)
   .field('fluxUltraRaw', boolDef(false))
   .field('seed', SEED);
@@ -118,8 +112,7 @@ const modes = branch('fluxMode', (ext: FluxModeExt) => fluxModeOf(ext.model), {
   ultra,
 });
 
-export const flux = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const flux = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) => {
     const isDraftWorkflow = _ext.workflow === 'txt2img:draft';
     const base = checkpointDef({

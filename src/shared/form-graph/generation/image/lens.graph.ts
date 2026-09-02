@@ -76,13 +76,11 @@ const RESOURCES = ({ _ext }: { _ext: FamilyExt }) =>
   });
 
 const base = defineGraph<LensModeExt>()
-  .scope(familyScope)
   .field('resources', RESOURCES)
   .field('cfgScale', perModelSlider({ min: 1, max: 20, default: 5, step: 0.5 }))
   .field('steps', perModelSlider({ min: 1, max: 50, default: 20 }));
 
 const turbo = defineGraph<LensModeExt>()
-  .scope(familyScope)
   .field('resources', RESOURCES)
   .field('cfgScale', perModelSlider({ min: 1, max: 2, step: 0.1, default: 1 }))
   .field('steps', perModelSlider({ min: 1, max: 12, default: 4 }));
@@ -106,8 +104,7 @@ const AR = defFamily((resolution: string) =>
   })
 );
 
-export const lens = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const lens = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,

@@ -66,17 +66,15 @@ const variantOf = (ext: OpenAIModeExt): OpenAIVariant => {
 };
 
 const gpt1 = defineGraph<OpenAIModeExt>()
-  .scope(familyScope)
   .field('transparent', boolDef(false))
   .field('quality', QUALITY);
 
-const gpt2 = defineGraph<OpenAIModeExt>().scope(familyScope).field('quality', QUALITY);
+const gpt2 = defineGraph<OpenAIModeExt>().field('quality', QUALITY);
 
 /** Tagged: v1's `openaiVariant` computed becomes the branch key. */
 const variants = branch('openaiVariant', variantOf, { gpt1, gpt2 });
 
-export const openai = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const openai = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ max: 7 }))
   .field('model', ({ _ext }) =>
     checkpointDef({

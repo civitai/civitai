@@ -96,14 +96,12 @@ const AR = aspectRatioDef({
 });
 
 const standard = defineGraph<MageFlowModeExt>()
-  .scope(familyScope)
   .field('aspectRatio', AR)
   .field('seed', SEED)
   .field('cfgScale', perModelSlider({ min: 1, max: 10, default: 5, step: 0.5 }))
   .field('steps', perModelSlider({ min: 10, max: 50, default: 30 }));
 
 const turbo = defineGraph<MageFlowModeExt>()
-  .scope(familyScope)
   .field('aspectRatio', AR)
   .field('seed', SEED)
   .field('cfgScale', perModelSlider({ min: 1, max: 2, default: 1, step: 0.1 }))
@@ -114,8 +112,7 @@ const variants = branch('mageFlowVariant', variantOf, { standard, turbo });
 
 const isEditWorkflow = (workflow: string) => workflow.startsWith('img2img:edit');
 
-export const mageFlow = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const mageFlow = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ max: 3 }))
   .field('model', ({ _ext }) => {
     const isEdit = isEditWorkflow(_ext.workflow);

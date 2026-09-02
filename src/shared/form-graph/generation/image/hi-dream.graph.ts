@@ -61,12 +61,10 @@ const variantOf = (ext: HiDreamModeExt): HiDreamVariant => {
 };
 
 const fastDev = defineGraph<HiDreamModeExt>()
-  .scope(familyScope)
   .field('aspectRatio', SDXL_SQUARE_AR)
   .field('seed', SEED);
 
 const full = defineGraph<HiDreamModeExt>()
-  .scope(familyScope)
   .field('resources', familyResources)
   .field('aspectRatio', SDXL_SQUARE_AR)
   .field('sampler', selectDef({ options: ['UniPC'], default: 'UniPC' }))
@@ -77,8 +75,7 @@ const full = defineGraph<HiDreamModeExt>()
 /** Tagged: v1's `hiDreamVariant` computed becomes the branch key. */
 const variants = branch('hiDreamVariant', variantOf, { fast: fastDev, dev: fastDev, full });
 
-export const hiDream = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const hiDream = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,

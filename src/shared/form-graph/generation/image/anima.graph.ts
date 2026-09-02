@@ -53,20 +53,17 @@ const variantOf = (ext: AnimaModeExt): AnimaVariant => {
 };
 
 const base = defineGraph<AnimaModeExt>()
-  .scope(familyScope)
   .field('cfgScale', perModelSlider({ min: 1, max: 20, default: 7, step: 0.5 }))
   .field('steps', perModelSlider({ min: 8, max: 50, default: 25 }));
 
 const turbo = defineGraph<AnimaModeExt>()
-  .scope(familyScope)
   .field('cfgScale', perModelSlider({ min: 1, max: 2, step: 0.1, default: 1 }))
   .field('steps', perModelSlider({ min: 1, max: 15, default: 8 }));
 
 /** Tagged: v1's `animaVariant` computed becomes the branch key. */
 const variants = branch('animaVariant', variantOf, { base, turbo });
 
-export const anima = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const anima = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,

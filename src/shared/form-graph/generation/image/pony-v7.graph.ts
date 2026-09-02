@@ -11,8 +11,7 @@ import { familyResources, familyScope, promptOnlyTextBlock, type FamilyExt } fro
 
 const ponyV7VersionId = 2152373;
 
-export const ponyV7 = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const ponyV7 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,

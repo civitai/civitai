@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { rootScope } from 'form-graph';
 import type { FieldDef } from 'form-graph';
 import type { VersionGroup } from './checkpoint';
 import { MAX_SEED, sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
@@ -55,7 +56,7 @@ export const SEED: FieldDef<number | undefined> = {
   output: z.number().int().min(1).max(MAX_SEED).optional(),
   default: undefined,
   // v1 stores seed globally (bare key), not per family
-  scope: [],
+  scope: rootScope(),
 };
 
 /**
@@ -78,7 +79,7 @@ export function workflowScoped<B extends { _ext: { workflow: string } }, D exten
 ): (bag: B) => D {
   return (bag) => {
     const def = fn(bag);
-    return def && !('scope' in def) ? ({ ...def, scope: bag._ext.workflow } as D) : def;
+    return def && !('scope' in def) ? ({ ...def, scope: rootScope(bag._ext.workflow) } as D) : def;
   };
 }
 
@@ -597,7 +598,7 @@ export function controlNetsDef(opts: {
     default: [],
     // v1 stores controlNets globally (bare key) so staged nets survive
     // ecosystem switches
-    scope: [],
+    scope: rootScope(),
     meta: {
       options,
       groups,

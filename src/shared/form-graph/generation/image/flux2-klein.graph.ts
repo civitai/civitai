@@ -52,14 +52,12 @@ const ecosystemToMode: Record<string, Flux2KleinMode> = {
 };
 
 const distilled = defineGraph<FamilyExt>()
-  .scope(familyScope)
   .field('resources', familyResources)
   .field('aspectRatio', SDXL_SQUARE_AR)
   .field('steps', sliderDef({ min: 4, max: 12, default: 8 }))
   .field('seed', SEED);
 
 const base = defineGraph<FamilyExt>()
-  .scope(familyScope)
   .field('resources', familyResources)
   .field('aspectRatio', SDXL_SQUARE_AR)
   .field('sampler', selectDef({ options: flux2KleinSamplers, default: 'euler' }))
@@ -76,8 +74,7 @@ const modes = branch('flux2KleinMode', (ext: FamilyExt) => ecosystemToMode[ext.e
   '4b-base': base,
 });
 
-export const flux2Klein = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const flux2Klein = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ max: 7 }))
   .field('model', ({ _ext }) =>
     checkpointDef({

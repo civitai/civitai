@@ -57,8 +57,7 @@ const seedanceResolutionsV2 = [...seedanceResolutions, { label: '1080p', value: 
 
 // ---- end of seedance-graph.ts copies ----------------------------------------
 
-export const seedance = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const seedance = defineGraph<FamilyExt>({ scope: familyScope })
   .field(
     'images',
     workflowScoped(({ _ext }) =>

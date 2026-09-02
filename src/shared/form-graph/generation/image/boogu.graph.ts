@@ -55,28 +55,24 @@ const TURBO_CFG = { min: 1, max: 2, step: 0.1, default: 1 };
 const TURBO_STEPS = { min: 1, max: 12, default: 4 };
 
 const base = defineGraph<BooguModeExt>()
-  .scope(familyScope)
   .field('resources', familyResources)
   .field('aspectRatio', SDXL_SQUARE_AR)
   .field('cfgScale', perModelSlider({ ...FULL_CFG, default: 4 }))
   .field('steps', perModelSlider({ min: 1, max: 50, default: 35 }));
 
 const turbo = defineGraph<BooguModeExt>()
-  .scope(familyScope)
   .field('resources', familyResources)
   .field('aspectRatio', SDXL_SQUARE_AR)
   .field('cfgScale', perModelSlider(TURBO_CFG))
   .field('steps', perModelSlider(TURBO_STEPS));
 
 const edit = defineGraph<BooguModeExt>()
-  .scope(familyScope)
   .field('resources', familyResources)
   .field('aspectRatio', SDXL_SQUARE_AR)
   .field('cfgScale', perModelSlider({ ...FULL_CFG, default: 5 }))
   .field('steps', perModelSlider({ min: 1, max: 50, default: 35 }));
 
 const editTurbo = defineGraph<BooguModeExt>()
-  .scope(familyScope)
   .field('resources', familyResources)
   .field('aspectRatio', SDXL_SQUARE_AR)
   .field('cfgScale', perModelSlider(TURBO_CFG))
@@ -92,8 +88,7 @@ const modes = branch('booguMode', (ext: BooguModeExt) => booguModeOf(ext.model, 
 
 const isEditWorkflow = (workflow: string) => workflow.startsWith('img2img:edit');
 
-export const boogu = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const boogu = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ max: 1 }))
   .field('model', ({ _ext }) => {
     const isEdit = isEditWorkflow(_ext.workflow);

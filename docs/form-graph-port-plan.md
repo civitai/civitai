@@ -113,7 +113,7 @@ import { slider, enumOf, textOf, boolOf } from 'form-graph/defs';
   `debouncedStorage(...)` from `form-graph` for localStorage persistence. The
   `graph` prop on `Controller` types `name`/`value`/`meta` from the graph itself
   (the port's standard form); `MultiController` is one subscription over several
-  fields. `graph.scope(fn)` sets a default persistence scope for every field a
+  fields. `defineGraph({ scope })` sets a default persistence scope for every field a
   graph declares (field `scope` wins; `[]` opts out; children keep their own fn).
 - **Word list:** definitions ("defs"), not codecs. `graph.defs` is the registry. There is
   no public `codec()`, `Fields`, or `FieldOptions` — if you find yourself wanting them,
@@ -273,10 +273,10 @@ modal flows, prompt-enhance button, presets, tours, remix handling, and the what
 cost footer; submit ends at `validate()`.
 
 **Persistence (2026-09-01):** v1's ~540-line grouped storage adapter maps onto
-per-graph scopes. The lib grew `graph.scope(fn)` (graph-level default scope;
+per-graph scopes. The lib grew `defineGraph({ scope })` (graph-level default scope;
 field `scope` — including `[]`, the bare-key opt-out — wins; mounted children
 keep their own fn). The layout, mirroring v1's groups: every family graph and
-branch member carries `.scope(familyScope)` (ecosystem group id, else key —
+branch member carries `defineGraph({ scope: familyScope })` (ecosystem group id, else key —
 wan versions and klein variants share buckets); `SEED` and `controlNetsDef`
 opt out to bare keys (v1 stores them globally); images/video wrap their def fns
 in `workflowScoped` (per-workflow buckets); the hubs scope `ecosystem` per

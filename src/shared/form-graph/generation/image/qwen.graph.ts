@@ -60,7 +60,6 @@ const qwen3AspectRatios = [
 const isEditWorkflow = (workflow: string) => workflow.startsWith('img2img:edit');
 
 const qwen1 = defineGraph<FamilyExt>()
-  .scope(familyScope)
   .field('model', ({ _ext }) => {
     const isEdit = isEditWorkflow(_ext.workflow);
     return checkpointDef({
@@ -80,14 +79,12 @@ const qwen1 = defineGraph<FamilyExt>()
   .field('steps', sliderDef({ min: 20, max: 50, default: 25 }));
 
 const qwen2 = defineGraph<FamilyExt>()
-  .scope(familyScope)
   .field('model', ({ _ext }) =>
     checkpointDef({ ecosystem: _ext.ecosystem, workflow: _ext.workflow, ext: _ext })
   )
   .field('aspectRatio', aspectRatioDef({ options: qwen2AspectRatios, default: '1:1' }));
 
 const qwen3 = defineGraph<FamilyExt>()
-  .scope(familyScope)
   .field('model', ({ _ext }) =>
     checkpointDef({ ecosystem: _ext.ecosystem, workflow: _ext.workflow, ext: _ext })
   )
@@ -117,8 +114,7 @@ const subFamilies = branch((ext: FamilyExt) => {
   }
 });
 
-export const qwen = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const qwen = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ max: 3 }))
   .field('seed', SEED)
   .use(subFamilies)

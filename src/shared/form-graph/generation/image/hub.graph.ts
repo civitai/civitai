@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { branch, defineGraph } from 'form-graph';
+import { branch, defineGraph, rootScope } from 'form-graph';
 import {
   getEcosystemStates,
   resolveCompatibleEcosystem,
@@ -223,7 +223,7 @@ export const imageHub = defineGraph<RootCtx>()
     // everywhere else quantity is global
     return {
       ...quantityDef({ max: _ext.limits.maxQuantity, step }),
-      scope: isDraft ? _ext.workflow : [],
+      scope: isDraft ? rootScope(_ext.workflow) : rootScope(),
     };
   })
   // interactive model picks reconcile selectors the same way the parse boundary does

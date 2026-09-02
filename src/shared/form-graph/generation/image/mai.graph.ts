@@ -34,8 +34,7 @@ export const maiCropAspectRatios = maiAspectRatios.map((r) => r.value as `${numb
 
 // ---- end of mai-graph.ts copies ---------------------------------------------
 
-export const mai = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const mai = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,

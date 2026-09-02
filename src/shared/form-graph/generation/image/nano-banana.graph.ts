@@ -80,23 +80,20 @@ const AR = defFamily((resolution: string) =>
   })
 );
 
-const standard = defineGraph<NanoBananaModeExt>().scope(familyScope).field('seed', SEED);
+const standard = defineGraph<NanoBananaModeExt>().field('seed', SEED);
 
 const pro = defineGraph<NanoBananaModeExt>()
-  .scope(familyScope)
   .field('resolution', RESOLUTION)
   .field('aspectRatio', ({ resolution }) => AR(resolution))
   .field('seed', SEED);
 
 const v2 = defineGraph<NanoBananaModeExt>()
-  .scope(familyScope)
   .field('resolution', RESOLUTION)
   .field('aspectRatio', ({ resolution }) => AR(resolution))
   .field('enableWebSearch', boolDef(false))
   .field('seed', SEED);
 
 const v2lite = defineGraph<NanoBananaModeExt>()
-  .scope(familyScope)
   .field(
     'aspectRatio',
     aspectRatioDef({
@@ -115,8 +112,7 @@ const modes = branch('nanoBananaMode', (ext: NanoBananaModeExt) => nanoBananaMod
   v2lite,
 });
 
-export const nanoBanana = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const nanoBanana = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({ max: 7 }))
   .field('model', ({ _ext }) =>
     checkpointDef({

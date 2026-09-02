@@ -81,8 +81,7 @@ const upscaleDims = (
   return { width: Math.round(w * scale), height: Math.round(h * scale) };
 };
 
-export const sd = defineGraph<FamilyExt>()
-  .scope(familyScope)
+export const sd = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>
     checkpointDef({
       ecosystem: _ext.ecosystem,
