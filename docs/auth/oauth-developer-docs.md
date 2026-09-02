@@ -220,9 +220,14 @@ Content-Type: application/x-www-form-urlencoded
 
 token=civitai_abc123...
 &token_type_hint=access_token
+&client_id=YOUR_CLIENT_ID
 ```
 
-Always returns 200, even if the token was already revoked.
+A token is revoked only for the client it was issued to (a confidential client must also send
+`client_secret`), or for the signed-in user when the call carries a session cookie. Revoking a
+refresh token also drops that user's access tokens for the same client — this is the sign-out call.
+
+Always returns 200, even if the token was already revoked, so a 200 is not confirmation on its own.
 
 ## Token Introspection
 

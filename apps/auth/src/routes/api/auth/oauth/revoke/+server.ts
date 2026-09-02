@@ -8,9 +8,9 @@ import { parseBody, setWildcardCors, setPublicClientCors } from '$lib/server/oau
 import { getClientIp } from '$lib/server/auth/request';
 
 // POST /api/auth/oauth/revoke — RFC 7009 token revocation. Ported from src/pages/api/auth/oauth/revoke.ts.
-// Session-cookie OR client-secret auth; ALWAYS returns 200 (even for unknown/expired tokens — never
-// reveal token existence). The session is the hub's locals.user (hooks.server.ts) instead of
-// getServerAuthSession.
+// Session-cookie, client-secret, or public-client auth; ALWAYS returns 200 (even for unknown/expired
+// tokens — never reveal token existence). The session is the hub's locals.user (hooks.server.ts)
+// instead of getServerAuthSession.
 //
 // This is where the (user, client) ACCESS-token cascade lives: explicit revocation is the intended place
 // to wipe all of an app's access for the user. Routine refresh rotation no longer cascades — see
@@ -88,6 +88,8 @@ export const POST: RequestHandler = async ({ request, locals }) => {
       authenticatedUserId = client.userId;
     }
   }
+  // RFC 7009 §2.1: a public client may revoke a token issued to it — the token is its own credential.
+  const publicClientId = client && !client.isConfidential ? client.id : null;
 
   try {
     const hash = generateSecretHash(token);
@@ -105,9 +107,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
         .executeTakeFirst();
 
       if (apiKey) {
-        // Must be authenticated, and can only revoke your own tokens. Silently ignore otherwise (RFC 7009
-        // — don't reveal token existence).
-        if (!authenticatedUserId || apiKey.userId !== authenticatedUserId) break;
+        // Only your own token: the authenticated user's, or one issued to the public client presenting
+        // it. Silently ignore otherwise (RFC 7009 — don't reveal token existence).
+        const mayRevoke =
+          (!!authenticatedUserId && apiKey.userId === authenticatedUserId) ||
+          (!!publicClientId && apiKey.clientId === publicClientId);
+        if (!mayRevoke) break;
 
         logOAuthEvent({
           type: 'token.revoked',
