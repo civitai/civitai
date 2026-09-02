@@ -80,9 +80,11 @@ describe('licensingSourceVersionId — the settings audit', () => {
    */
 
   /**
-   * 🔴 `diffEntityChanges` compares `before[field]` to `after[field]`, so a watched field the
-   * service never selects is `undefined` on the before side and silently produces no row — the audit
-   * reads as wired up and records nothing.
+   * 🔴 `diffEntityChanges` compares `before[field]` to `after[field]`, and its skip at
+   * `entity-change-helpers.ts:107` guards the AFTER side only. So a watched field the service never
+   * selects is `undefined` on the before side, `stableStringify` encodes that as `''`, and the row is
+   * written with a BLANK `oldValue` — a corrupt record of the change, not a missing one, and nothing
+   * throws either way.
    *
    * Asserted over the whole watched list, because the next field added will have the same trap and
    * nobody will remember this test exists.
@@ -130,4 +132,89 @@ describe('licensingSourceVersionId — the settings audit', () => {
     const block = service.slice(at, at + 300);
     expect(block).toContain('licensingSourceVersionId:');
   });
+});
+
+/**
+ * `Model.type` is the other end of the same money path: changing it clears `licensingSourceVersionId`
+ * on every stamped version beneath the model (`upsertModel`'s repair, attributed `model-type-changed`).
+ * Unwatched, the sweep that goes looking for why a fee moved finds the clears and nothing that caused
+ * them — 31 of 36 rows in the last one were unexplainable for exactly that reason. CU 868kzk4rr.
+ */
+describe('Model.type — the audit trail for what clears a lineage fee', () => {
+  const MODEL_ID = 2790719;
+
+  const diffModel = (before: Record<string, unknown>, after: Record<string, unknown>) =>
+    diffEntityChanges({
+      entityType: 'Model',
+      entityId: MODEL_ID,
+      ownerId: OWNER_ID,
+      before,
+      after,
+      actorRole: 'owner',
+    });
+
+  it('is watched at all', () => {
+    expect(watchedEntityFields.Model).toContain('type');
+  });
+
+  it('records the change that clears every stamped version under it', () => {
+    const rows = diffModel({ type: 'Checkpoint' }, { type: 'LORA' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      entityType: 'Model',
+      field: 'type',
+      oldValue: '"Checkpoint"',
+      newValue: '"LORA"',
+    });
+  });
+
+  // The control: an ordinary save resubmits the stored type, and a row on every model edit would bury
+  // the ones that mean something.
+  it('emits nothing when the type is resubmitted unchanged', () => {
+    const rows = diffModel({ type: 'Checkpoint', name: 'v1' }, { type: 'Checkpoint', name: 'v2' });
+    // The changed sibling is the point: a differ that emitted nothing at all would pass a bare
+    // length-0 assertion here while recording no type change either.
+    expect(rows.map((r) => r.field)).toEqual(['name']);
+  });
+
+  /**
+   * 🔴 Same silent trap as the ModelVersion select above: a watched field the service never reads on
+   * the before side lands in the row as a blank `oldValue`, so the audit reads as wired up and
+   * records a change from nothing. `upsertModel`'s `beforeUpdate` is that read.
+   */
+  it('selects every watched Model column for the audit before-side', () => {
+    const service = readFileSync(
+      path.join(REPO_ROOT, 'src/server/services/model.service.ts'),
+      'utf8'
+    );
+    const at = service.indexOf('const beforeUpdate =');
+    expect(
+      at,
+      "upsertModel's before-read moved; re-anchor this test, do not delete it"
+    ).toBeGreaterThan(-1);
+    const end = service.indexOf(': null;', at);
+    // The end marker is the ternary's own `: null;`. If that ever becomes `: undefined`, `indexOf`
+    // silently finds the next one hundreds of lines down, the span swallows unrelated selects, and
+    // some other `type: true` satisfies every field — the guard passes while checking nothing.
+    expect(end - at, 'the beforeUpdate span no longer ends at its own ternary').toBeLessThan(1200);
+    const select = service.slice(at, end);
+
+    const missing = watchedEntityFields.Model.filter(
+      (field) => !new RegExp(`\\b${field.split('.')[0]}: (true|\\{)`).test(select)
+    );
+    expect(missing, `watched but not selected, so they audit nothing: ${missing}`).toEqual([]);
+  });
+
+  /**
+   * The source-text test that used to sit here — asserting `upsertModel`'s audit call contains the
+   * literal `type: typeBeforeUpdate` — is deliberately gone, per this file's own rule two blocks up:
+   * when the behavioural test exists, delete the source-text one rather than keeping both. It lives at
+   * `src/server/services/__tests__/model-licensing-source-on-type-change.test.ts`, named
+   * `audits the type change against the writer read, not the replica`.
+   *
+   * Measured before deleting, so this is not a guess about coverage: the behavioural test fails on the
+   * plain revert (`before: beforeUpdate`) that the source-text one caught, AND on a spread-order swap
+   * (`before: { type: …, ...beforeUpdate }`) that the source-text one passes, because the literal is
+   * still present while the spread overwrites it. Strictly stronger, on the mutation that matters.
+   */
 });

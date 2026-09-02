@@ -423,6 +423,7 @@ export const upsertModelVersionHandler = async ({
             usageControl: true,
             licensingFee: true,
             licensingFeeSettlementCurrency: true,
+            licensingSourceVersionId: true,
             baseModel: true,
           },
         })
@@ -578,6 +579,27 @@ export const upsertModelVersionHandler = async ({
     // deliberate selection cannot reach the coercion. It is also not a way to dodge a fee — sending
     // `null` outright has always been allowed, and 99.77% of Anima and Krea 2 LoRAs do exactly that
     // (107 of 46,994 and 45 of 19,999 carry a source at all).
+    // `licensingSourceVersionId` is nullish in the schema while `baseModel` and `modelId` are required,
+    // so a save can move everything the stamp depends on without ever naming it — and an absent field
+    // leaves the column untouched, which is a stored stamp surviving a change that invalidates it.
+    // TrainingSubmit does exactly this shape: it updates the first version with a newly chosen
+    // `baseModel` and no stamp field. Seeding the stored value makes the guard judge what the row will
+    // actually hold. Only `undefined` is seeded — an explicit `null` is the owner clearing the stamp.
+    //
+    // This opens the WHOLE ladder below to partial saves, not only its base-model rung: a stored source
+    // that is no longer a registered root, or whose model type no longer matches, now coerces on a save
+    // that never mentioned it.
+    const seededLicensingSource =
+      input.licensingSourceVersionId === undefined &&
+      storedVersion?.licensingSourceVersionId != null;
+    // The `?? null` is unreachable — the condition already established the column is non-null — and is
+    // here only because a `const` boolean does not narrow `storedVersion` for TypeScript. It makes the
+    // line look safe to lift out from under the condition; relaxing that to "seed whenever the client
+    // said nothing" would then write an explicit null and CLEAR the stamp, where without the `??` it
+    // would not compile.
+    if (seededLicensingSource)
+      input.licensingSourceVersionId = storedVersion?.licensingSourceVersionId ?? null;
+
     if (input.licensingSourceVersionId != null) {
       const [source, destinationModel] = await Promise.all([
         // `dbWrite`, matching the destination read below rather than sitting one line above it under the
@@ -628,11 +650,14 @@ export const upsertModelVersionHandler = async ({
         : null;
       if (rejectedReason) {
         // A coercion leaves no trace in the row it corrected, so emit the deciding branch. This is
-        // also the only signal that the client is still sending bad values.
+        // also the only signal that the client is still sending bad values — which is what `seeded`
+        // separates: a seeded row is the server repairing a stored value on a save that never named
+        // it, so counting it as a client submission reads the signal backwards.
         logToAxiom({
           name: 'model-version-licensing-source-rejected',
           type: 'info',
           reason: rejectedReason,
+          seeded: seededLicensingSource,
           userId,
           // `modelId` is where this save puts the version, and `modelType` is that model's type — the
           // two have to name the same row or the log stops being evidence.
