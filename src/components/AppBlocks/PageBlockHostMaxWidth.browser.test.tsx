@@ -240,7 +240,20 @@ async function mountAt(width: number, height: number, props: Partial<typeof base
   await page.viewport(width, height);
   renderInPageChain(props);
   await expect.element(page.getByTestId('app-page-frame')).toBeInTheDocument();
-  const host = page.getByTestId('app-page-frame').element() as HTMLElement;
+  // 🔴 TWO BOXES, AND WHICH ONE ANSWERS WHICH QUESTION IS THE POINT OF THIS SUITE.
+  // The cap used to live on the FRAME (the host root), so frame and app column were
+  // the same measurement and one element answered everything. They are now different
+  // elements with OPPOSITE contracts:
+  //   · `app-page-frame`   — the host root. Carries `AppBlockChrome`, and is FULL-BLEED
+  //                          so the chrome spans the page like every other site bar.
+  //   · `app-page-content` — the app's own column (iframe or failure card). This is
+  //                          what the ultrawide cap binds.
+  // `hostWidth` therefore reads the CONTENT box: every capped/centred claim below is
+  // about the app column, and pointing it at the frame would make all of them assert
+  // the opposite of the design. `frameWidth` is measured alongside so the full-bleed
+  // half can be asserted rather than assumed.
+  const frame = page.getByTestId('app-page-frame').element() as HTMLElement;
+  const host = page.getByTestId('app-page-content').element() as HTMLElement;
   const parent = page.getByTestId('page-wrapper').element() as HTMLElement;
   // `measure` re-reads the live boxes, so a test can change the cascade and ask
   // again WITHOUT a second `renderInPageChain()` — two mounted trees would leave
@@ -251,12 +264,13 @@ async function mountAt(width: number, height: number, props: Partial<typeof base
     const parentRect = parent.getBoundingClientRect();
     return {
       hostWidth: hostRect.width,
+      frameWidth: frame.getBoundingClientRect().width,
       parentWidth: parentRect.width,
       gutterLeft: hostRect.left - parentRect.left,
       gutterRight: parentRect.right - hostRect.right,
     };
   };
-  return { host, measure, ...measure() };
+  return { host, frame, measure, ...measure() };
 }
 
 describe('PageBlockHost — the app stops growing on a wide display', () => {
@@ -278,6 +292,36 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
       'the fixture parent is not wide at a 2560px viewport — `page.viewport` did not ' +
         'take effect, and every width assertion in this file would pass vacuously'
     ).toBeGreaterThan(2400);
+  });
+
+  /**
+   * 🔴 THE CHROME SPANS, THE APP DOES NOT — the pair that defines this layout, and
+   * the half that is NEW. The cap used to sit on the host root, so the chrome was
+   * capped along with the app and a full-page app read as a boxed widget dropped
+   * into the page instead of a page of the site. The chrome is site furniture and
+   * now behaves like it; the app keeps its measure.
+   *
+   * BOTH ARMS ARE IN ONE TEST DELIBERATELY. "The frame is full width" alone is green
+   * on any revision where the cap simply does not work — including the pre-cap base —
+   * so on its own it is an invariant guard, not coverage. Pairing it with "and the app
+   * column inside it is NOT full width" is what makes this assert the actual delta:
+   * two different widths, in the right order, on the right elements.
+   */
+  test('at 2560x1080 the chrome spans the page while the app column stays capped', async () => {
+    const { frameWidth, hostWidth, parentWidth } = await mountAt(2560, 1080);
+
+    expect(
+      frameWidth,
+      `at 2560x1080 the host frame is ${frameWidth}px inside a ${parentWidth}px parent — the ` +
+        'chrome is being capped again. It is meant to span the page like every other site-level ' +
+        'bar; the cap belongs on `app-page-content`, not on the frame.'
+    ).toBe(parentWidth);
+
+    expect(
+      hostWidth,
+      `at 2560x1080 the app column spans the whole ${parentWidth}px frame — the ultrawide cap ` +
+        'moved off the content wrapper as well as off the frame, so nothing caps the app at all'
+    ).toBeLessThan(frameWidth);
   });
 
   test('at 2560x1080 the host is a centred column, NOT the full monitor width', async () => {
