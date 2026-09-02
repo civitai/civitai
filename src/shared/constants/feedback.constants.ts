@@ -1,5 +1,11 @@
 // Plain strings, not a Prisma enum: adding an area costs a constant here and no
 // migration, and its Flipt flag is derived from the slug.
+//
+// 🔴 `bitdex-image-feed` has no producer — BitDex was decommissioned 2026-09-01 and
+// its prompt went with it. KEEP IT ANYWAY. This enum is what `getFeedbackAreaSchema`
+// validates a moderator's query against, so deleting the slug makes every historical
+// feedback row filed under it unreadable through that route. It cannot grow: nothing
+// writes it any more.
 export const FEEDBACK_AREAS = ['bitdex-image-feed', 'apps-marketplace'] as const;
 
 export type FeedbackArea = (typeof FEEDBACK_AREAS)[number];
