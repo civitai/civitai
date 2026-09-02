@@ -88,6 +88,7 @@ import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
 import { refreshFeaturedCollectionsEligibility } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { autoFeatureImages } from '~/server/jobs/auto-feature-images';
+import { autoFeatureHealthCheckJob } from '~/server/jobs/auto-feature-health-check';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
@@ -155,6 +156,7 @@ export const jobs: Job[] = [
   updateCollectionItemRandomId,
   refreshFeaturedCollectionsEligibility,
   autoFeatureImages,
+  autoFeatureHealthCheckJob,
   ...metricJobs,
   ...searchIndexJobs,
   searchIndexUserCleanupJob,

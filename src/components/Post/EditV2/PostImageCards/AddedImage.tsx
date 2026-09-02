@@ -84,6 +84,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { RemixSourcesCard } from '~/components/RemixGallery/RemixSourcesCard';
 import { CustomCard } from './CustomCard';
 
 // #region [types]
@@ -615,6 +616,9 @@ function EditDetail() {
     isMinor,
   } = useAddedImageContext();
   const postId = usePostEditStore((state) => state.post?.id);
+  // A published post has no publish left to hang a promise on, so the remix card
+  // submits on the spot instead of collecting ticks.
+  const postPublished = usePostEditStore((state) => !!state.post?.publishedAt);
   const updateImage = usePostEditStore((state) => state.updateImage);
 
   const { meta, hideMeta, resourceHelper: resources, blockedFor } = image;
@@ -700,6 +704,10 @@ function EditDetail() {
           {(!showPreview || hasSimpleMeta) && (
             <div className={`flex w-full flex-col gap-3 ${!showPreview ? '@sm:w-4/12' : ''}`}>
               {!showPreview && <PostImage />}
+              {/* Directly under the image. The wrapper is `flex-row-reverse`, so
+                  this narrow column is the one on the RIGHT. Renders nothing
+                  without remix provenance, which is the ordinary case. */}
+              <RemixSourcesCard imageId={image.id} published={postPublished} />
               {hasSimpleMeta && (
                 <>
                   <div className="flex flex-col *:border-gray-4 not-last:*:border-b dark:*:border-dark-4">

@@ -25,6 +25,7 @@ import {
   IconDownload,
   IconEyeOff,
   IconFlag,
+  IconFlask,
   IconInfoCircle,
   IconMail,
   IconPencil,
@@ -858,6 +859,19 @@ export interface AppListingDetailBodyProps {
    * scalars a moderator is reviewing, and they are the ones the posture can state
    * honestly.
    *
+   * 🔴 THE BETA BADGE + NOTICE ARE ALSO **KEPT**, and that is a decision on this ledger
+   * rather than an omission that was missed. Everything above is withheld because it is
+   * LIVE, INTERACTIVE or an AGGREGATE a shadow listing structurally does not have; the beta
+   * declaration is none of those. It is a presentational scalar the author set on the
+   * listing, `getListingPreviewForReview` resolves it for a shadow by reading the PARENT
+   * (beta is never staged, so the live row is the only place it exists), and it is exactly
+   * the context a moderator needs while reviewing — "this
+   * developer says the app is unfinished" changes how you read the screenshots and the
+   * copy. Withholding it would show the reviewer a different page from the one approving
+   * publishes. Its badge is deliberately placed in the identity block rather than in the
+   * `!preview` meta line so this decision is not silently undone by that gate; both halves
+   * have their own test with a positive control from the non-preview arm.
+   *
    * Used by the moderator listing-media review to render an unapproved SHADOW listing
    * as a store preview. Every omission above has its own test, each paired with a
    * positive control from the non-preview arm.
@@ -1011,9 +1025,31 @@ export function AppListingDetailBody({
               {appInitial(detail.name, detail.slug)}
             </Avatar>
             <Stack gap={6} style={{ minWidth: 0 }}>
-              <Title order={2} className="line-clamp-2">
-                {detail.name}
-              </Title>
+              {/* 🔴 THE BADGE SITS WITH THE TITLE, NOT IN THE META LINE beside the category
+                  badge — which is where it would naturally go, and which would be wrong
+                  here. That whole Group is `!preview`-gated (its `Updated:` date is the
+                  publish request's submission time in preview, not a listing's
+                  `updated_at`), so a beta badge placed there would inherit an omission
+                  decided for a completely unrelated reason and vanish from the moderator
+                  preview. See the `preview` prop's omission ledger: the beta notice is
+                  explicitly KEPT. Here it is part of the identity block, which preview
+                  renders. */}
+              <Group gap="xs" wrap="nowrap" align="center" style={{ minWidth: 0 }}>
+                <Title order={2} className="line-clamp-2">
+                  {detail.name}
+                </Title>
+                {detail.isBeta && (
+                  <Badge
+                    color="violet"
+                    variant="light"
+                    size="sm"
+                    style={{ flexShrink: 0 }}
+                    data-testid="apps-listing-beta-badge"
+                  >
+                    Beta
+                  </Badge>
+                )}
+              </Group>
               {detail.tagline && (
                 <Text c="dimmed" size="sm" className="line-clamp-2">
                   {detail.tagline}
@@ -1245,6 +1281,44 @@ export function AppListingDetailBody({
           data-testid="apps-listing-main-col"
         >
           <Stack gap="lg">
+            {/* AUTHOR-DECLARED BETA NOTICE.
+                🔴 PLACED HERE, AT THE TOP OF THE MAIN COLUMN, AND **NOT** BESIDE THE TWO
+                ALERTS AT THE BOTTOM OF THIS COLUMN. That pair
+                (`shouldShowOffsiteDisclosure` / `shouldShowConnectCapability`) is documented
+                as MUTUALLY EXCLUSIVE BY CONSTRUCTION — exact complements over one shared
+                domain, with a test pinning "never both, never neither" — and adding a third
+                condition into that block is explicitly warned against there. This is an
+                independent signal on an independent predicate, so it gets its own place
+                rather than breaking that invariant. Above the description is also where it
+                belongs on its own merits: "this app is unfinished" is context for reading
+                everything below it.
+                🔴 RENDERED IN PREVIEW TOO (no `!preview` gate) — a deliberate ledger entry,
+                see the `preview` prop's docstring. It is purely presentational, and a
+                moderator reviewing a shadow listing should see the beta framing they are
+                approving.
+                🔴 PLAIN TEXT. `detail.betaMessage` is rendered as a text node inside
+                `<Text>` — NOT through `AppListingDescription`/`CustomMarkdown` like the
+                description below, and never through `dangerouslySetInnerHTML`. This is
+                unreviewed author copy (beta is a trivial patch field), so it must not be
+                able to mint a link, an image, or any element at all. */}
+            {detail.isBeta && (
+              <Alert
+                variant="light"
+                color="violet"
+                icon={<IconFlask size={16} />}
+                title="This app is in beta"
+                data-testid="apps-listing-beta-notice"
+              >
+                <Text size="sm">
+                  {/* The message is OPTIONAL, so the alert has to stand on its own without
+                      one — an author who ticks the box and writes nothing still gets a
+                      complete sentence rather than an empty box. */}
+                  {detail.betaMessage ??
+                    'The developer has marked this app as still in development — expect changes and rough edges.'}
+                </Text>
+              </Alert>
+            )}
+
             {/* Description — ABOVE the screenshots. The description is what tells a
                 reader what the app IS; the gallery is supporting evidence for that
                 claim, so leading with pictures made the reader scroll past the

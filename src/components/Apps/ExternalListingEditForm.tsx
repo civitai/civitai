@@ -1,6 +1,7 @@
 import {
   Alert,
   Button,
+  Checkbox,
   Group,
   Loader,
   Select,
@@ -545,6 +546,47 @@ export function ExternalListingEditForm({ edit }: { edit: ListingEditContext }) 
               data-material-field="sourceRepoUrl"
               disabled={materialBlocked}
             />
+
+            {/* BETA DECLARATION — author-owned, TRIVIAL, and offered on BOTH kinds.
+                🔴 NO `data-material-field` ATTRIBUTE, AND NO `disabled={materialBlocked}`.
+                Both omissions are decisions, not oversights. That attribute is walked by a
+                ledger test over `MATERIAL_LISTING_PATCH_FIELDS`, and beta is deliberately
+                NOT in that set: an edit applies in place with no moderator re-review, the
+                same posture `tagline`/`description`/`category` beside it already have. So
+                tagging these inputs would make the ledger assert a disabled state the server
+                does not impose, and disabling them would withhold — in the repair state — a
+                field the server will happily accept. An author whose app is unpublished can
+                still say it is in beta.
+                🔴 NOT KIND-GATED EITHER, unlike the URL step and the scope disclosure above.
+                Beta is listing-native on both kinds (no manifest key sets or clears it), so
+                an on-site author edits it right here, in the same form, with no separate
+                surface to build or keep in step. */}
+            <Checkbox
+              label="This app is in beta"
+              description="Shows a Beta badge on your app's store card, its store page and its app page."
+              checked={values.isBeta}
+              onChange={(e) => setField('isBeta', e.currentTarget.checked)}
+              data-testid="apps-offsite-edit-is-beta"
+            />
+
+            {/* Only offered once the box is ticked — a note with no beta flag is dead text
+                the store will never render (both projections null it out when the flag is
+                off), so an input for it would be a promise the read path does not keep. */}
+            {values.isBeta && (
+              <Textarea
+                label="Beta message"
+                description={`An optional short note shown with the Beta badge on your app's store page — for example what still needs work (optional, up to ${OFFSITE_SUBMIT_LIMITS.betaMessageMax} characters).`}
+                placeholder="Expect rough edges while we finish the export pipeline."
+                autosize
+                minRows={2}
+                maxRows={4}
+                value={values.betaMessage}
+                onChange={(e) => setField('betaMessage', e.currentTarget.value)}
+                error={errors.betaMessage}
+                maxLength={OFFSITE_SUBMIT_LIMITS.betaMessageMax}
+                data-testid="apps-offsite-edit-beta-message"
+              />
+            )}
 
             <Group grow align="flex-start">
               <Select

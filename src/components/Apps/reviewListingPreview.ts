@@ -108,6 +108,13 @@ export function buildListingCardPreview(
   return {
     ...commonFields(row, images),
     tagline: null,
+    // 🔴 ALWAYS `false` HERE, for exactly the reason `sourceRepoUrl` is always null in the
+    // sibling detail builder below: `OffsitePendingRow` carries no beta columns, so there
+    // is nothing honest to report. `false` is also the SAFE direction — this builder can
+    // only ever fail to show a beta badge, never invent one on a listing that is not in
+    // beta. The REAL preview comes from `getListingPreviewForReview`, which projects the
+    // actual listing row and does carry it.
+    isBeta: false,
     kindData: cardKindData(row),
   };
 }
@@ -133,6 +140,9 @@ export function buildListingDetailPreview(
     // mod who only ever saw THIS builder's output would not see the source link, so:
     // if the fallback ever becomes the primary path, this must be revisited.
     sourceRepoUrl: null,
+    // Same limitation, same reason, same safe direction as the card builder's `isBeta`.
+    isBeta: false,
+    betaMessage: null,
     description: null,
     // The mod REVIEW preview intentionally shows no collaborator byline: this row is
     // built from an in-review publish request, not from a live listing, so there is no

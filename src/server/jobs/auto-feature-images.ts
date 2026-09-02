@@ -1,3 +1,4 @@
+import { AUTO_FEATURE_JOB_DATE_KEY } from '~/server/common/auto-feature';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { runAutoFeatureImages } from '~/server/services/auto-feature-images.service';
@@ -10,7 +11,7 @@ import { createJob, getJobDate } from './job';
 export const autoFeatureImages = createJob('auto-feature-images', '20 * * * *', async () => {
   if (!(await isFlipt(FLIPT_FEATURE_FLAGS.AUTO_FEATURE_IMAGES))) return { reason: 'flag-off' };
 
-  const [lastRun, setLastRun] = await getJobDate('job:auto-feature-images');
+  const [lastRun, setLastRun] = await getJobDate(AUTO_FEATURE_JOB_DATE_KEY);
   const result = await runAutoFeatureImages({ lastRun });
   // The flag being on is a statement of intent, so every bail below it is a fault rather than an
   // off switch — and each one is otherwise indistinguishable from the job working. A missing config
@@ -27,9 +28,8 @@ export const autoFeatureImages = createJob('auto-feature-images', '20 * * * *', 
   // run and a dead job must not produce the same evidence.
   //
   // ⚠️ It cannot detect the job not running at all — the 79-hour silence in August emitted nothing
-  // from anywhere, and nothing logged from inside a run ever will. That needs a separate health
-  // check against the collection's own state; filed as 868kz3ef5, with challenge-health-check.ts
-  // as the precedent.
+  // from anywhere, and nothing logged from inside a run ever will. `auto-feature-health-check.ts`
+  // covers that from outside, by reading this job's output rather than instrumenting it.
   if ('picked' in result)
     logToAxiom({
       type: 'job-summary',

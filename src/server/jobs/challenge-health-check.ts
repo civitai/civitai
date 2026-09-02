@@ -10,7 +10,7 @@
  * date that quietly failed inside a batch, or a job that was never invoked — and none of those raise.
  */
 
-import { env } from '~/env/server';
+import { notifyModAlert } from '~/server/common/mod-alert';
 import { dbRead } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createJob } from '~/server/jobs/job';
@@ -67,18 +67,6 @@ async function readChallengeHealth() {
   return row;
 }
 
-async function alertDiscord(title: string, description: string) {
-  if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return;
-
-  await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      embeds: [{ title, description, color: 0xf44336, timestamp: new Date().toISOString() }],
-    }),
-  }).catch(() => null);
-}
-
 async function checkChallengeHealth() {
   // A disabled platform makes both producing jobs no-op by design, so paging on it is noise. It is
   // still the likeliest explanation for an empty schedule, so it goes to Axiom to be findable.
@@ -130,7 +118,7 @@ async function checkChallengeHealth() {
     message: failures.join(' | '),
   }).catch(() => null);
 
-  await alertDiscord(
+  await notifyModAlert(
     `🚨 Daily challenge pipeline — ${failures.length} check(s) failing`,
     failures.join('\n\n')
   );

@@ -356,7 +356,8 @@ function productionSources(): string[] {
       }
       if (!/\.(ts|tsx)$/.test(entry.name)) continue;
       if (/\.(test|browser\.test|spec)\.tsx?$/.test(entry.name)) continue;
-      out.push(path.relative(SRC, full));
+      // The ledger below is written with '/', so keep the walk's output in that spelling.
+      out.push(path.relative(SRC, full).split(path.sep).join('/'));
     }
   };
   walk(path.join(SRC, 'components'));
