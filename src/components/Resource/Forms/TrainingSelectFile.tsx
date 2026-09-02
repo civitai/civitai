@@ -430,7 +430,7 @@ export default function TrainingSelectFile({
   // only the window before it has answered, and the flag-off path.
   const { data: runState } = trpc.training.getRunState.useQuery(
     { modelVersionId: modelVersion.id },
-    { enabled: features.trainingOrchestratorState && !!modelVersion.id }
+    { enabled: !!features.trainingOrchestratorState && !!modelVersion.id }
   );
 
   const trainingResults = runState?.trainingResults ?? modelFile?.metadata?.trainingResults;

@@ -29,7 +29,7 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
     FEATURE_NOTICES.yellowBuzzMigration,
     // `useFeatureNotice` ANDs in "is signed in" itself, so pass only the extra
     // conditions.
-    { enabled: features.isGreen && features.buzz }
+    { enabled: !!features.isGreen && !!features.buzz }
   );
 
   const yellowBalance = buzzAccounts?.yellow ?? 0;

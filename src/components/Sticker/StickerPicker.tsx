@@ -59,7 +59,7 @@ export function StickerPicker({
   // DMs are free, so a "3 left" badge there would be actively misleading.
   const showBalances = STICKER_SURFACES[surface].consumes;
   const { data: balanceRows } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
-    enabled: features.stickers && showBalances,
+    enabled: !!features.stickers && showBalances,
   });
   // Distinguishes "unlimited" (row present, remaining null) from "not loaded
   // yet" (no row) — they render differently and used to look identical.

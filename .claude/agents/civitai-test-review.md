@@ -178,7 +178,7 @@ Worked examples of both fixes: the two retry tests in
 
 ### Convention guards
 
-23 live in `src/server/services/__tests__/no-*.test.ts`:
+24 live in `src/server/services/__tests__/no-*.test.ts`:
 `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`, `no-direct-shared-module-mock`,
 `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
 ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
@@ -188,7 +188,8 @@ ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times)
 `no-unbounded-paging-fake`, `no-unguarded-billable-submit` (a user-token orchestrator submit must have its
 owner checked — see `assertWorkflowOwner`), `no-unguarded-user-text`, `no-unloadable-image-fixture`,
 `no-unmuteable-comment-processor`, `no-unscoped-email-verification-exemption`,
-`no-unverified-provenance-write`,
+`no-untruthy-query-gate` (a query gated on a feature flag must coerce it — a sparse
+flag reads `undefined`, and React Query treats that as enabled), `no-unverified-provenance-write`,
 `no-unpriced-default-model`, `no-unwrapped-knob-rotation`, `no-wholesale-module-mock`.
 
 ⚠️ **`pnpm run test:lint-rules` is a hand-maintained file list**, so a guard can be missing from it and
@@ -196,7 +197,7 @@ fail only in a full-suite run. Five were missing when this was last audited, on 
 wired in then. If the diff adds a guard, check it was wired into the script, and don't treat a green
 `test:lint-rules` as "all guards passed".
 
-`test:lint-rules` names 28 files today.
+`test:lint-rules` names 29 files today.
 
 Both numbers and the list are checked by `no-lint-rules-script-drift`, which reads the two phrasings
 above literally — edit the numbers, not the shapes.
