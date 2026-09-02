@@ -346,6 +346,7 @@ let pairingDeadline = 0;
 let pairingGeneration = 0;
 let pairingSeeded = false;
 let pairingArmed = false;
+let pairingInFlight = false;
 
 // One poll is shared by every tab, so a cancel from one strands the rest on
 // 'waiting' unless they are told. Callers that re-arm, or that emit their own
@@ -358,6 +359,7 @@ const stopPairingPoll = (status: PairingStatus | null = 'timeout') => {
   pairingTimer = null;
   pairingSnapshot = null;
   pairingSeeded = false;
+  pairingInFlight = false;
   if (wasArmed && status) emitPairing(status);
 };
 
@@ -379,11 +381,19 @@ const pollPairing = async () => {
     return;
   }
 
+  // setInterval fires on a fixed period, so a list request slower than the
+  // period would otherwise start a second poll against the same snapshot and
+  // both would detect — and re-join — the same pairing.
+  if (pairingInFlight) return;
+
   let result: CivitaiLinkInstance[];
+  pairingInFlight = true;
   try {
     result = await getLinkInstances();
   } catch {
     return;
+  } finally {
+    pairingInFlight = false;
   }
   // Cancelled or resolved while the request was in flight.
   if (pairingSnapshot !== snapshot) return;
