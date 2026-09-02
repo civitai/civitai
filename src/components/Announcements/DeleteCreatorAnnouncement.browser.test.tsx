@@ -36,7 +36,18 @@ async function renderDelete() {
   const { DeleteCreatorAnnouncementButton } = await import(
     '~/components/Announcements/CreatorAnnouncementsCarousel'
   );
-  renderWithProviders(<DeleteCreatorAnnouncementButton announcement={announcement} />);
+  // The marker is load-bearing. A negative read straight after render sees an empty body —
+  // the commit is asynchronous — so `elements()` would return 0 for every case, including
+  // the ones where the control SHOULD be there. Awaiting a sibling that always renders
+  // proves the tree is committed before the absence is read. Measured: without it, widening
+  // the gate to `!!currentUser` left all four tests green.
+  renderWithProviders(
+    <>
+      <span>delete gate rendered</span>
+      <DeleteCreatorAnnouncementButton announcement={announcement} />
+    </>
+  );
+  await expect.element(page.getByText('delete gate rendered')).toBeInTheDocument();
 }
 
 function deleteControls() {
