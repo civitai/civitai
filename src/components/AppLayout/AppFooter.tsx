@@ -117,7 +117,7 @@ export function AppFooter() {
     getInitialValueInEffect: false,
   });
   const { data: latestBugUpdate } = trpc.bug.getLatest.useQuery(undefined, {
-    enabled: features.bugsPage,
+    enabled: !!features.bugsPage,
     staleTime: 1000 * 60,
   });
   const showBugDot = !!latestBugUpdate && latestBugUpdate > lastSeenBug;

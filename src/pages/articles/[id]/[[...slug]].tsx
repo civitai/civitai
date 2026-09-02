@@ -215,7 +215,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const { data: myReview } = trpc.article.getMyArticleRatingReview.useQuery(
     { articleId: id },
-    { enabled: isActualOwner && features.articleRatingDispute, staleTime: 60_000 }
+    { enabled: isActualOwner && !!features.articleRatingDispute, staleTime: 60_000 }
   );
   const handlePublishArticle = () => {
     if (!article || article.status === ArticleStatus.Published) return;

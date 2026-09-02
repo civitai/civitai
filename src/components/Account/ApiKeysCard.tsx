@@ -113,7 +113,7 @@ export function ApiKeysCard() {
 
   const { data: apiKeys = [], isLoading } = trpc.apiKey.getAllUserKeys.useQuery({});
   const { data: spendEntries = [] } = trpc.apiKey.getSpend.useQuery(undefined, {
-    enabled: features.apiKeyBuzzLimit && apiKeys.some((k) => !!k.buzzLimit),
+    enabled: !!features.apiKeyBuzzLimit && apiKeys.some((k) => !!k.buzzLimit),
     staleTime: 30_000,
   });
 
