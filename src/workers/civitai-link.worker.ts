@@ -345,13 +345,20 @@ let pairingSnapshot: PairingSnapshot | null = null;
 let pairingDeadline = 0;
 let pairingGeneration = 0;
 let pairingSeeded = false;
+let pairingArmed = false;
 
-const stopPairingPoll = () => {
+// There is one poll for every tab, so a cancel from one of them strands the
+// rest on 'waiting' unless they are told. Callers that re-arm or emit their own
+// terminal status next pass `null`.
+const stopPairingPoll = (status: PairingStatus | null = 'timeout') => {
+  const wasArmed = pairingArmed;
+  pairingArmed = false;
   pairingGeneration += 1;
   if (pairingTimer !== null) clearInterval(pairingTimer);
   pairingTimer = null;
   pairingSnapshot = null;
   pairingSeeded = false;
+  if (wasArmed && status) emitPairing(status);
 };
 
 const mergeSnapshot = (base: PairingSnapshot, list: CivitaiLinkInstance[]): PairingSnapshot => {
@@ -369,7 +376,6 @@ const pollPairing = async () => {
   if (!snapshot) return;
   if (Date.now() >= pairingDeadline) {
     stopPairingPoll();
-    emitPairing('timeout');
     return;
   }
 
@@ -394,16 +400,17 @@ const pollPairing = async () => {
   const paired = detectPairing(snapshot, result);
   if (!paired) return;
 
-  stopPairingPoll();
+  stopPairingPoll(null);
   updateSharedValue({ type: 'instances', value: result });
   handleJoin(paired.id, true);
   emitPairing('paired');
 };
 
 const handleAwaitPairing = async (knownIds: number[], knownKeys: Record<number, string>) => {
-  stopPairingPoll();
+  stopPairingPoll(null);
   const generation = pairingGeneration;
   pairingDeadline = Date.now() + PAIRING_TIMEOUT_MS;
+  pairingArmed = true;
   emitPairing('waiting');
 
   let current: CivitaiLinkInstance[] | null = null;
