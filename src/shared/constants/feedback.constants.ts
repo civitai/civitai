@@ -1,5 +1,13 @@
 // Plain strings, not a Prisma enum: adding an area costs a constant here and no
 // migration, and its Flipt flag is derived from the slug.
+//
+// 🔴 `bitdex-image-feed` has no producer — BitDex was decommissioned 2026-09-01 and
+// its prompt went with it. KEEP IT ANYWAY. `Feedback.area` is a stored string column
+// and this list is the only place its valid labels are written down, so dropping the
+// slug orphans every historical row filed under it. Nothing in the app mounts a
+// prompt that writes it and its area flag is off, so it cannot grow.
+// Enforced: `feedback.schema.test.ts` compares a hand-typed list against this one,
+// so removing the slug fails there with an array diff rather than silently.
 export const FEEDBACK_AREAS = ['bitdex-image-feed', 'apps-marketplace'] as const;
 
 export type FeedbackArea = (typeof FEEDBACK_AREAS)[number];

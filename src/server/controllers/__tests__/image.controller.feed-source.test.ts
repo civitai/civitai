@@ -1,21 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Context } from '~/server/createContext';
-import type * as FliptClient from '~/server/flipt/client';
 import type * as ImageService from '~/server/services/image.service';
 
 /**
- * The BitDex feed notice is gated on the `source` this handler emits, so the
- * handler is where the guard actually lives. Both branches must name themselves:
- * an unnamed DB page is indistinguishable from an index page that returned
- * nothing, and the client then cannot tell "the flag went off mid-session" from
- * "you reached the end of the feed" — the first must take the notice down, the
- * second must not.
+ * Which backend served the page is decided in this handler, so this is where the
+ * routing guard lives. Both branches must name themselves in `source`: an unnamed
+ * DB page is indistinguishable on the wire from an index page that returned nothing.
+ * No client consumes `source` today — these tests are what keep the two branches
+ * distinguishable.
  */
 
-const { getAllImagesMock, getAllImagesIndexMock, getFliptVariantMock } = vi.hoisted(() => ({
+const { getAllImagesMock, getAllImagesIndexMock } = vi.hoisted(() => ({
   getAllImagesMock: vi.fn(),
   getAllImagesIndexMock: vi.fn(),
-  getFliptVariantMock: vi.fn(),
 }));
 
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
@@ -24,16 +21,11 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   getAllImagesIndex: getAllImagesIndexMock,
 }));
 
-vi.mock('~/server/flipt/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof FliptClient>()),
-  getFliptVariant: getFliptVariantMock,
-}));
-
 import { getInfiniteImagesHandler } from '../image.controller';
 
 const ctx = {
   user: { id: 7, isModerator: false },
-  features: { imageIndexFeed: false, canViewNsfw: true, datapacketRead: false },
+  features: { imageIndexFeed: true, canViewNsfw: true, datapacketRead: false },
   req: { headers: {} },
   ip: '127.0.0.1',
 } as unknown as Context;
@@ -59,8 +51,7 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
   beforeEach(() => {
     vi.clearAllMocks();
     getAllImagesMock.mockResolvedValue({ nextCursor: '10', items: [] });
-    getAllImagesIndexMock.mockResolvedValue({ nextCursor: '10', items: [], source: 'bitdex' });
-    getFliptVariantMock.mockResolvedValue('primary');
+    getAllImagesIndexMock.mockResolvedValue({ nextCursor: '10', items: [], source: 'meili' });
   });
 
   it('reports db when the query can only be served by the database', async () => {
@@ -70,41 +61,91 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     expect(result.source).toBe('db');
   });
 
-  // The flag going off mid-session routes later pages here while earlier pages
-  // came from BitDex. Unstamped, those pages read as "no backend" and the notice
-  // survives over database results.
-  it('reports db when BitDex is off and the database serves a broad query', async () => {
-    getFliptVariantMock.mockResolvedValue('off');
+  // 🔴 The ONLY test that varies `features.imageIndexFeed`. Every other test in this
+  // file shares one ctx with it hardcoded true, so without this the flag conjunct in
+  // `useIndex` can be deleted outright and nothing in the suite goes red. It replaces
+  // the flag-off test that died with the BitDex routing it was written against.
+  it('reports db when the index feed flag is off and the database serves a broad query', async () => {
+    const flagOffCtx = {
+      ...ctx,
+      features: { ...(ctx as unknown as { features: object }).features, imageIndexFeed: false },
+    } as typeof ctx;
 
-    const result = await getInfiniteImagesHandler({ input: indexBoundInput, ctx });
+    const result = await getInfiniteImagesHandler({ input: indexBoundInput, ctx: flagOffCtx });
 
     expect(getAllImagesMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesIndexMock).not.toHaveBeenCalled();
     expect(result.source).toBe('db');
+  });
+
+  // 🔴 The `!!input.hubId ||` arm of `useIndex`. Without this, deleting that arm
+  // passes every test in the repo — measured: 247 passed. A hub would then route to
+  // getAllImages with the index flag off, which throws rather than leaking, but the
+  // routing decision itself would be unpinned. `userHubs` is needed or the handler's
+  // own hub guard refuses before routing.
+  it('pins a hub to the index even with the index feed flag off', async () => {
+    const flagOffCtx = {
+      ...ctx,
+      features: {
+        ...(ctx as unknown as { features: object }).features,
+        imageIndexFeed: false,
+        userHubs: true,
+      },
+    } as typeof ctx;
+
+    const result = await getInfiniteImagesHandler({
+      input: { ...(indexBoundInput as object), hubId: 3 } as never,
+      ctx: flagOffCtx,
+    });
+
+    expect(getAllImagesIndexMock).toHaveBeenCalledTimes(1);
+    expect(getAllImagesMock).not.toHaveBeenCalled();
+    expect(result.source).toBe('meili');
+  });
+
+  // 🔴 The `userHubs` refusal at image.controller.ts:283-284, which nothing else
+  // witnesses: deleting BOTH those lines leaves 115 tests green across all six
+  // hub-adjacent suites. `hubId` is a plain URL param, so without the refusal
+  // `/images?hubId=N` keeps serving a hub after the flag is turned back off.
+  // The neither-mock assertion is load-bearing: a change that refused AFTER
+  // dispatching would satisfy a throw-only assertion.
+  it('refuses a hub outright when userHubs is off, without dispatching', async () => {
+    const hubsOffCtx = {
+      ...ctx,
+      features: {
+        ...(ctx as unknown as { features: object }).features,
+        userHubs: false,
+      },
+    } as typeof ctx;
+
+    await expect(
+      getInfiniteImagesHandler({
+        input: { ...(indexBoundInput as object), hubId: 3 } as never,
+        ctx: hubsOffCtx,
+      })
+    ).rejects.toThrow();
+
+    expect(getAllImagesIndexMock).not.toHaveBeenCalled();
+    expect(getAllImagesMock).not.toHaveBeenCalled();
   });
 
   it('passes the index path’s own source through untouched', async () => {
     const result = await getInfiniteImagesHandler({ input: indexBoundInput, ctx });
 
     expect(getAllImagesIndexMock).toHaveBeenCalledTimes(1);
-    expect(result.source).toBe('bitdex');
+    expect(result.source).toBe('meili');
   });
 
-  // 🔴 The picker beats BitDex on purpose, and that is the point of the test.
-  // `requiresImageDbPath` is evaluated BEFORE the Flipt call, so a DB-bound
-  // query never even asks what BitDex mode is in. If someone moves the Flipt
-  // evaluation above that check, or reorders the `useIndex` expression so
-  // `useBitdex` wins, this goes red — and nothing else in the suite would.
-  it('serves the own-content submit picker from the database even with BitDex primary', async () => {
-    getFliptVariantMock.mockResolvedValue('primary');
-
+  // 🔴 The picker beats the index feature flag on purpose, and that is the point
+  // of the test. `requiresImageDbPath` is evaluated first, so a DB-bound query
+  // stays on the database however `imageIndexFeed` is set. Reorder the `useIndex`
+  // expression so the flag wins and this goes red — nothing else in the suite would.
+  it('serves the own-content submit picker from the database even with the index feed on', async () => {
     const result = await getInfiniteImagesHandler({ input: pickerInput, ctx });
 
     expect(getAllImagesMock).toHaveBeenCalledTimes(1);
     expect(getAllImagesIndexMock).not.toHaveBeenCalled();
     expect(result.source).toBe('db');
-    // Not merely unused — never consulted. The short-circuit is what keeps a
-    // BitDex rollout from silently taking the picker back to the index.
-    expect(getFliptVariantMock).not.toHaveBeenCalled();
   });
 
   // 🔴 Both halves of the routing pair are plain URL params, so without the
@@ -122,7 +163,7 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     // Withdrawn, not forwarded — the flag only suppresses the caller's own
     // unpublished carve-out, which cannot match rows scoped to someone else.
     expect(getAllImagesIndexMock.mock.calls[0][0].publishedOnly).toBeUndefined();
-    expect(result.source).toBe('bitdex');
+    expect(result.source).toBe('meili');
   });
 
   it('leaves a broad feed on the index when only publishedOnly is set', async () => {
@@ -138,11 +179,11 @@ describe('getInfiniteImagesHandler names the backend that served the page', () =
     expect(getAllImagesMock).not.toHaveBeenCalled();
   });
 
-  it('reports meili when BitDex fell back and the index said so', async () => {
-    getAllImagesIndexMock.mockResolvedValue({ nextCursor: '10', items: [], source: 'meili' });
+  it('reports db when the index path fell back and said so', async () => {
+    getAllImagesIndexMock.mockResolvedValue({ nextCursor: '10', items: [], source: 'db' });
 
     const result = await getInfiniteImagesHandler({ input: indexBoundInput, ctx });
 
-    expect(result.source).toBe('meili');
+    expect(result.source).toBe('db');
   });
 });

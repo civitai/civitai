@@ -44,7 +44,7 @@ export const flipt = createFliptClient({
 
 ```ts
 if (await flipt.isEnabled('feed-post-filter', String(userId))) { … }
-const mode = await flipt.getVariant('bitdex-image-search', String(userId));
+const mode = await flipt.getVariant('some-variant-flag', String(userId));
 ```
 
 | Method | Overrides honored | Notes |

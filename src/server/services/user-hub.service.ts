@@ -666,9 +666,8 @@ export async function resolveHubSources({
  * allowed. Returns 0 for "this viewer can see nothing in this hub", which callers
  * must serve as an empty page rather than as an uncapped one.
  *
- * Extracted because three filter builders apply it — the two Meilisearch paths and
- * BitDex — and a cap missing from one of them is a hub quietly serving past its
- * own setting on whichever backend that request happened to take.
+ * Extracted because both Meilisearch filter builders apply it, and a cap missing
+ * from one of them is a hub quietly serving past its own setting.
  */
 export function hubBrowsingLevel(browsingLevel: number | undefined, sources: ResolvedHubSources) {
   if (!sources.forcedBrowsingLevel) return browsingLevel;

@@ -578,10 +578,8 @@ export function ImageDetail2() {
                       // the prop and never fires the ambient
                       // `model3d.getByPostId` query. A Meili-sourced feed item
                       // with no link resolves to `null` (chip hidden, no
-                      // fallback). The only residual fallback is BitDex-sourced
-                      // items (model3dId not indexed → `undefined`), which
-                      // self-heal as the index gains the field — the #2682
-                      // model3dFeed flag-gate is otherwise redundant now.
+                      // fallback), so the #2682 model3dFeed flag-gate is
+                      // redundant now.
                       <PostingToModel3DCard
                         model3dId={(image as { model3dId?: number | null }).model3dId}
                         postId={image.postId}

@@ -799,9 +799,6 @@ export const serverSchema = z
     // Optional here so unset behaves exactly as today.
     IMAGE_CACHER_ADMIN_SECRET: z.string().optional(),
 
-    // BitDex
-    BITDEX_URL: z.string().optional().default(''),
-
     // Color environment domains (server-only; delivered to client via AppProvider).
     // SERVER_DOMAIN_<COLOR> is the canonical host used for all outbound URLs.
     // SERVER_DOMAIN_<COLOR>_ALIASES is a comma-separated list of additional hosts

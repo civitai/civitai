@@ -340,7 +340,7 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 // flag, so a client can't force the expensive un-indexed path on a broad query.
 // Correctness-critical filters (wrong results if the index ignored them):
 // - postId/postIds: specific post lookups (~2ms covered-index in PG; also create
-//   unique cache keys in BitDex that hurt cache hit rate)
+//   unique cache keys in the index that hurt cache hit rate)
 // - collectionId: requires relational joins through CollectionItem
 // - reactions: per-user reaction data isn't indexed (needs ImageReaction subquery)
 // - imageId: not a search-index filter

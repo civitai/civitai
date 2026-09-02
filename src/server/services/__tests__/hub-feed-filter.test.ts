@@ -9,21 +9,19 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // is a one-token edit that serves the GLOBAL FEED as somebody's hub, with no
 // error at any layer. These tests exist to turn that red.
 //
-// Same minimal-seam mocking as bitdex-feed-source.test.ts, except `fetchDocuments`
+// Minimal-seam mocking: `fetchDocuments`
 // is stubbed and `metricsSearchClient` is left truthy — a null client short-
 // circuits the builder before any filter is assembled, which would make an
 // assertion about the emitted filter vacuous.
 
-import type * as BitdexClient from '~/server/bitdex/client';
 import type * as MeiliClient from '~/server/meilisearch/client';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as UserHubService from '~/server/services/user-hub.service';
 import type { ResolvedHubSources } from '~/server/services/user-hub.service';
 
-const { fetchDocumentsMock, resolveHubSourcesMock, queryBitdexMock } = vi.hoisted(() => ({
+const { fetchDocumentsMock, resolveHubSourcesMock } = vi.hoisted(() => ({
   fetchDocumentsMock: vi.fn(),
   resolveHubSourcesMock: vi.fn(),
-  queryBitdexMock: vi.fn(),
 }));
 
 // Every stub goes through this, so a field added to `ResolvedHubSources` has one
@@ -83,11 +81,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   getFliptBoolean: vi.fn().mockResolvedValue(false),
 }));
 
-vi.mock('~/server/bitdex/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof BitdexClient>()),
-  queryBitdex: queryBitdexMock,
-}));
-
 // `hubBrowsingLevel` is a pure function over the resolved sources and is spread
 // through unmocked: replacing it would be replacing the very cap these tests check.
 vi.mock('~/server/services/user-hub.service', async (importOriginal) => ({
@@ -97,7 +90,6 @@ vi.mock('~/server/services/user-hub.service', async (importOriginal) => ({
 
 import {
   getAllImages,
-  getImagesFromBitdexPreFilter,
   getImagesFromFeedSearch,
   getImagesFromSearchPostFilter,
   getImagesFromSearchPreFilter,
@@ -130,13 +122,7 @@ const emittedFilter = () => {
 beforeEach(() => {
   vi.clearAllMocks();
   fetchDocumentsMock.mockResolvedValue({ results: [], total: 0 });
-  queryBitdexMock.mockResolvedValue({ documents: [], cursor: undefined });
 });
-
-// BitDex is a THIRD path a hub request can take, selected per user by a flag. It
-// builds its own clause syntax, so nothing in the Meili tests above says anything
-// about it.
-const bitdexFilters = () => JSON.stringify(queryBitdexMock.mock.calls[0]?.[1] ?? null);
 
 describe('hub filter reaches the search backend', () => {
   it('emits every source arm, ORed together', async () => {
@@ -251,67 +237,9 @@ describe('builders that cannot serve a hub refuse it', () => {
   });
 });
 
-describe('the BitDex builder carries the same hub arm', () => {
-  it('ORs every source arm into the emitted clause set', async () => {
-    resolveHubSourcesMock.mockResolvedValue(hubSources({ userIds: [10], modelVersionIds: [20] }));
-
-    await getImagesFromBitdexPreFilter(input(1));
-
-    // The whole group as one string, for the same reason as the Meili assertion:
-    // arm-by-arm checks stay green when `_or` becomes `_and`.
-    expect(bitdexFilters()).toContain(
-      '{"Or":[{"In":["userId",[{"Integer":10}]]},{"In":["postedToId",[{"Integer":20}]]},{"In":["modelVersionIds",[{"Integer":20}]]},{"In":["modelVersionIdsManual",[{"Integer":20}]]}]}'
-    );
-  });
-
-  it('honours hideAutoResources and hideManualResources', async () => {
-    resolveHubSourcesMock.mockResolvedValue(hubSources({ modelVersionIds: [20] }));
-
-    await getImagesFromBitdexPreFilter({
-      ...input(1),
-      hideAutoResources: true,
-      hideManualResources: true,
-    });
-
-    const filters = bitdexFilters();
-    expect(filters).toContain('"postedToId"');
-    expect(filters).not.toContain('"modelVersionIds"');
-    expect(filters).not.toContain('"modelVersionIdsManual"');
-  });
-
-  it('declines rather than querying when the hub resolves to nothing', async () => {
-    // Returning null falls through to Meili. Pushing no filter instead would serve
-    // the global BitDex feed as somebody's hub.
-    resolveHubSourcesMock.mockResolvedValue(null);
-
-    const result = await getImagesFromBitdexPreFilter(input(1));
-
-    expect(result).toBeNull();
-    expect(queryBitdexMock).not.toHaveBeenCalled();
-  });
-
-  it('declines when the hub has no enabled sources', async () => {
-    resolveHubSourcesMock.mockResolvedValue(hubSources());
-
-    const result = await getImagesFromBitdexPreFilter(input(1));
-
-    expect(result).toBeNull();
-    expect(queryBitdexMock).not.toHaveBeenCalled();
-  });
-
-  it('leaves a non-hub query untouched', async () => {
-    // Negative control: the declines above are about the hub arm, not the builder
-    // refusing everything.
-    await getImagesFromBitdexPreFilter(input(undefined));
-
-    expect(queryBitdexMock).toHaveBeenCalled();
-    expect(resolveHubSourcesMock).not.toHaveBeenCalled();
-  });
-});
-
 /**
- * The hub's own content cap (subtask 868kwp5f2). Three builders apply it and each
- * emits its own clause syntax, so a cap missing from one is a hub serving past its
+ * The hub's own content cap (subtask 868kwp5f2). Both builders apply it separately,
+ * so a cap missing from one is a hub serving past its
  * own setting on whichever backend that request happened to take — with nothing
  * red anywhere. Asserted on the EMITTED level list rather than on the call, because
  * the call is identical with and without the cap.
@@ -341,16 +269,6 @@ describe('a hub caps its own feed to the level the owner set', () => {
     expect(emittedFilter()).not.toContain('nsfwLevel IN [1,2,4]');
   });
 
-  it('the BitDex builder emits only the levels the hub allows', async () => {
-    resolveHubSourcesMock.mockResolvedValue(cappedSources);
-
-    await getImagesFromBitdexPreFilter(viewerWantsR(1));
-
-    const filters = bitdexFilters();
-    expect(filters).toContain('{"In":["nsfwLevel",[{"Integer":1},{"Integer":2}]]}');
-    expect(filters).not.toContain('{"Integer":4}');
-  });
-
   it('leaves the viewer alone when the hub sets no cap', async () => {
     // The negative control. Without it every assertion above passes for a builder
     // that hard-codes PG|PG-13 and never reads the viewer's level at all.
@@ -374,7 +292,7 @@ describe('a hub caps its own feed to the level the owner set', () => {
   });
 
   it('the post-filter builder serves nothing on an empty intersection too', async () => {
-    // Covered per builder, not once: the empty-intersection branch is three separate
+    // Covered per builder, not once: the empty-intersection branch is two separate
     // `if (!capped)` lines, and the one that gets deleted is the one nobody tested.
     resolveHubSourcesMock.mockResolvedValue({ ...cappedSources, forcedBrowsingLevel: 4 });
 
@@ -382,17 +300,6 @@ describe('a hub caps its own feed to the level the owner set', () => {
 
     expect(fetchDocumentsMock).not.toHaveBeenCalled();
     expect(result.data).toEqual([]);
-  });
-
-  it('the BitDex builder declines on an empty intersection, so Meili answers instead', async () => {
-    // `null` means "cannot serve", which falls through to Meili — where the same
-    // clamp produces the empty page. Pushing no filter would serve the global feed.
-    resolveHubSourcesMock.mockResolvedValue({ ...cappedSources, forcedBrowsingLevel: 4 });
-
-    const result = await getImagesFromBitdexPreFilter({ ...input(1), browsingLevel: 1 });
-
-    expect(result).toBeNull();
-    expect(queryBitdexMock).not.toHaveBeenCalled();
   });
 });
 

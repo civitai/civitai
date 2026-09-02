@@ -45,15 +45,6 @@ export enum FLIPT_FEATURE_FLAGS {
   WAN22_MULTI_STEP = 'wan22-multi-step',
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
   IMAGE_INDEX_FEED = 'image-index-feed',
-  BITDEX_IMAGE_SEARCH = 'bitdex-image-search',
-  // Gates the reemit-bitdex-ops job (BitDex publish re-emitter). Default-off: the
-  // job is registered but no-ops until this flag is flipped on.
-  BITDEX_PUBLISH_REEMITTER = 'bitdex-publish-reemitter',
-  // Gates the audit-bitdex-consistency job (standing PG<->BitDex comparison).
-  // Separate from the re-emitter flag on purpose: the audit is read-only and the
-  // healer is write-side, so switching one off must not blind or unblind the other.
-  // Default-off, like every flag here — isFlipt returns false for an unknown flag.
-  BITDEX_CONSISTENCY_AUDIT = 'bitdex-consistency-audit',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.

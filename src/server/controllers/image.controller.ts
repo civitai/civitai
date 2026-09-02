@@ -56,8 +56,6 @@ import {
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
-import { buildFliptContext } from '~/server/services/feature-flags.service';
 import type {
   GetEntitiesCoverImage,
   GetImageInput,
@@ -306,24 +304,13 @@ export const getInfiniteImagesHandler = async ({
 
   const requiresDbPath = requiresImageDbPath(scopedInput);
 
-  // BitDex (Flipt-gated index experiment) routes through getAllImagesIndex, so it
-  // can only run when the index can serve the query.
-  const bitdexMode = requiresDbPath
-    ? null
-    : await getFliptVariant(
-        FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-        user?.id?.toString() || 'anonymous',
-        buildFliptContext(user)
-      );
-  const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
-
-  // Use getAllImagesIndex when BitDex is active or the index can serve the query;
-  // otherwise use getAllImages (DB).
+  // Use getAllImagesIndex when the index can serve the query; otherwise
+  // getAllImages (DB).
   // A hub is only expressible on the index — its collection sources are served by
   // the indexed `collectionIds` field, which the raw-SQL path has no equivalent
   // for. Routing one to the DB would drop the filter rather than fail, so hubs
   // pin the index path regardless of the feature flag.
-  const useIndex = !!input.hubId || useBitdex || (features.imageIndexFeed && !requiresDbPath);
+  const useIndex = !!input.hubId || (features.imageIndexFeed && !requiresDbPath);
 
   if (!useIndex) {
     imagesFeedWithoutIndexCounter.inc();
@@ -340,9 +327,6 @@ export const getInfiniteImagesHandler = async ({
         include: [...scopedInput.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
         signal,
-        // Forward pre-evaluated variant so getImagesFromSearch can skip a
-        // duplicate Flipt evaluation. `null` means "skipBitdex" path.
-        bitdexMode,
         actor: buildSearchActor({
           userId: user?.id,
           ip: ctx.ip,
@@ -361,9 +345,8 @@ export const getInfiniteImagesHandler = async ({
       });
       // Name this branch too, like the index path's `source`. Stamped here rather
       // than inside getAllImages because the index result type is derived from its
-      // return. Without it, a DB page and an index page that returned nothing are
-      // indistinguishable on the wire, and a client asking "is BitDex serving this
-      // feed" cannot tell the flag going off mid-session from the end of the feed.
+      // return. No client reads it today — it is the wire contract, and the routing
+      // tests assert on it to tell a DB page from an index page that returned nothing.
       return { ...result, source: 'db' as const };
     }
   } catch (error) {
@@ -398,23 +381,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
   try {
     const { user, features } = ctx;
 
-    // Check BitDex mode â€” if active, always route through getAllImagesIndex.
-    // Skip BitDex for unsupported query types (collections, prioritized
-    // users). BitDex doesn't index `model3dId` yet, so model3d galleries
-    // still skip it — but Meilisearch DOES index `model3dId` (added with the
-    // `images-model3d:` gallery enablement), so we always allow the Meili
-    // index path below.
-    const skipBitdex =
-      !!input.collectionId || !!input.prioritizedUserIds?.length || !!input.model3dId;
-    const bitdexMode = skipBitdex
-      ? null
-      : await getFliptVariant(
-          FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-          user?.id?.toString() || 'anonymous',
-          buildFliptContext(user)
-        );
-    const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
-    const useIndex = useBitdex || features.imageIndexFeed;
+    const useIndex = features.imageIndexFeed;
 
     const fetchFn = useIndex ? getAllImagesIndex : getAllImages;
     type ResultType = typeof features.imageIndexFeed extends true
@@ -436,10 +403,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const versionPinnedPosts = input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
     if (versionPinnedPosts.length && !cursor) {
-      // Pinned posts: always use DB path (getAllImages) instead of BitDex.
-      // postId queries are ~2ms in Postgres (covered index) and create unique
-      // cache keys in BitDex that hurt cache hit rate. Model gallery queries
-      // (modelVersionId filter) stay on BitDex where they're needed.
+      // Pinned posts: always use the DB path (getAllImages). postId queries are
+      // ~2ms in Postgres on a covered index.
       const { items: pinnedPostsImages } = await getAllImages({
         ...input,
         domain: getRequestBoardDomainColor(ctx.req),
@@ -492,9 +457,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
-        // Forward pre-evaluated variant â€” getImagesFromSearch ignores it on the
-        // DB path (getAllImages doesn't read it).
-        bitdexMode,
         actor,
       });
 
