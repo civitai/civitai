@@ -12,7 +12,11 @@ vi.mock('~/server/services/cover-image.service', () => ({
   resolveCoverImageId: vi.fn(async () => 555),
 }));
 vi.mock('~/server/services/util.service', () => ({ isImageOwner: vi.fn(async () => true) }));
-vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async () => false) }));
+vi.mock('~/server/services/user.service', () => ({
+  amIBlockedByUser: vi.fn(async () => false),
+  getProfilePicturesForUsers: vi.fn(async () => ({})),
+  getCosmeticsForUsers: vi.fn(async () => ({})),
+}));
 // The real host list comes from SERVER_DOMAIN_* env, which the test env does not set — an
 // empty list would make every link "not ours" and the assertions below vacuous.
 vi.mock('~/server/utils/server-domain', () => ({
@@ -41,7 +45,11 @@ import {
   MIN_ANNOUNCEMENT_DURATION_MS,
 } from '../creator-announcement.service';
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  getCosmeticsForUsers,
+  getProfilePicturesForUsers,
+} from '~/server/services/user.service';
 
 const AUTHOR = 101;
 
@@ -334,6 +342,44 @@ describe('the followed feed', () => {
     const last = await getFollowedAnnouncements({ userId: AUTHOR, limit: 2 });
     expect(last.items).toHaveLength(2);
     expect(last.nextCursor).toBeUndefined();
+  });
+
+  // The author's picture and cosmetics are not columns on `User`, so no `select` can reach
+  // them; they come from the caches instead. A byline that is only a username is what a
+  // reader has to tell apart from an official Civitai announcement, which is the point.
+  it('attaches the author identity the select cannot reach', async () => {
+    vi.mocked(getProfilePicturesForUsers).mockResolvedValue({ [AUTHOR]: { id: 7 } } as never);
+    vi.mocked(getCosmeticsForUsers).mockResolvedValue({ [AUTHOR]: [{ cosmeticId: 3 }] } as never);
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      { id: 1, metadata: {}, cover: null, user: { id: AUTHOR, username: 'author' } },
+    ] as never);
+
+    const page = await getFollowedAnnouncements({ userId: 999 });
+
+    expect(page.items[0].user).toMatchObject({
+      username: 'author',
+      profilePicture: { id: 7 },
+      cosmetics: [{ cosmeticId: 3 }],
+    });
+    expect(vi.mocked(getProfilePicturesForUsers).mock.calls[0][0]).toEqual([AUTHOR]);
+  });
+
+  // An author the caches know nothing about still renders — as a plain name, never a
+  // half-built bar or a crash.
+  it('degrades to a plain author when the caches hold nothing for them', async () => {
+    vi.mocked(getProfilePicturesForUsers).mockResolvedValue({} as never);
+    vi.mocked(getCosmeticsForUsers).mockResolvedValue({} as never);
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      { id: 1, metadata: {}, cover: null, user: { id: AUTHOR, username: 'author' } },
+    ] as never);
+
+    const page = await getFollowedAnnouncements({ userId: 999 });
+
+    expect(page.items[0].user).toMatchObject({
+      username: 'author',
+      profilePicture: null,
+      cosmetics: [],
+    });
   });
 
   it('skips the cursor row itself so a page never repeats its predecessor', async () => {
