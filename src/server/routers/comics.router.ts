@@ -3310,11 +3310,8 @@ export const comicsRouter = router({
               hasOutput: !!step.output,
               outputImages: step.output?.images?.length ?? 0,
               outputBlobs: step.output?.blobs?.length ?? 0,
-              jobs: (step.jobs ?? []).map((job: any) => ({
-                id: job.id,
-                status: job.status,
-                queuePosition: job.queuePosition,
-              })),
+              queuePosition: step.queuePosition,
+              estimatedProgressRate: step.estimatedProgressRate,
             })),
           };
         } catch (error: any) {

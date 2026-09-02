@@ -569,7 +569,7 @@ export const createTrainingWhatIfWorkflow = async ({
 
   const _step = workflow.steps?.[0] as ImageResourceTrainingStep | undefined;
   // console.dir(_step);
-  const precedingJobs = _step?.jobs?.[0]?.queuePosition?.precedingJobs;
+  const precedingJobs = _step?.queuePosition?.precedingJobs;
   const eta = _step?.output?.eta;
 
   return { cost, licenseFee, precedingJobs, eta };

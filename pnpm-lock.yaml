@@ -47,8 +47,8 @@ importers:
         specifier: workspace:*
         version: link:packages/civitai-buzz
       '@civitai/client':
-        specifier: 0.2.0-beta.95
-        version: 0.2.0-beta.95
+        specifier: 0.2.0-beta.97
+        version: 0.2.0-beta.97
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -2092,8 +2092,8 @@ packages:
     resolution: {integrity: sha512-dSXkI8hVoozzlPS9DymzoyncWz8eapH3wkSDzDVGWjjqamXn8Dbcq1hWu5xUZkZmqCaR76F7BS9BQNqvOJ++Sw==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
-  '@civitai/client@0.2.0-beta.95':
-    resolution: {integrity: sha512-wuKafMnIizfd08Wg6gjTjWHrOyLkXvr9gUPLdNFP1J7SUc56K5bG44gZKYzy1vTaVrmu8PFjrJabFh9Tz4IEgA==}
+  '@civitai/client@0.2.0-beta.97':
+    resolution: {integrity: sha512-UC8zK0+CkuWyyMHk/6RvRF9tfgIV6kYt9VZB2Wco3GqVq0ze61OrRSMcbcthCATHh77s6a8wb2O4vp1oG5hH3A==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/cybertipline-tools@0.1.0':
@@ -13277,7 +13277,7 @@ snapshots:
       rfc6902: 5.2.0
       tslib: 2.8.1
 
-  '@civitai/client@0.2.0-beta.95':
+  '@civitai/client@0.2.0-beta.97':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0
@@ -17491,9 +17491,9 @@ snapshots:
       obug: 2.1.1
       std-env: 4.2.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))
     optionalDependencies:
-      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.1.11)
+      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.48.0)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.1.11)
 
   '@vitest/expect@4.1.11':
     dependencies:
