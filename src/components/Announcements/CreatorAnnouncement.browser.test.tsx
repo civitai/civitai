@@ -90,9 +90,11 @@ const announcement = {
   },
 } as any;
 
-async function renderCard(withAuthor: boolean) {
+async function renderCard(withAuthor: boolean, overrides: Record<string, unknown> = {}) {
   const { CreatorAnnouncement } = await import('~/components/Announcements/CreatorAnnouncement');
-  renderWithProviders(<CreatorAnnouncement announcement={announcement} withAuthor={withAuthor} />);
+  renderWithProviders(
+    <CreatorAnnouncement announcement={{ ...announcement, ...overrides }} withAuthor={withAuthor} />
+  );
 }
 
 /**
@@ -141,5 +143,17 @@ describe('CreatorAnnouncement attribution', () => {
 
     await expect.element(page.getByText('Creator says hello')).toBeInTheDocument();
     expect(page.getByText('someone').elements()).toHaveLength(0);
+  });
+
+  // FAILS CLOSED. An author-less row cannot reach the panel today — both queries pin
+  // `userId: { not: null }` — but nothing pins that coupling, and the direction of failure
+  // matters more than its likelihood here: dropping the bar would render a creator
+  // announcement in the exact shape of an official Civitai one, which is the confusion this
+  // whole feature exists to prevent. Gate the bar on `withAuthor`, never on the author.
+  test('an author-less row still gets a top bar rather than the sitewide card shape', async () => {
+    await renderCard(true, { user: null });
+
+    expect((await cardRoot()).classList.contains('flex-col')).toBe(true);
+    await expect.element(page.getByText('Creator announcement')).toBeInTheDocument();
   });
 });
