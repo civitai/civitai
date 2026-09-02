@@ -28,6 +28,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
 import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
+import { ArticleUnpublishedAlert } from '~/components/Article/ArticleUnpublishedAlert';
 import { Sidebar } from '~/components/Article/Detail/Sidebar';
 import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
 import {
@@ -62,7 +63,6 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { unpublishReasons, type UnpublishReason } from '~/server/common/moderation-helpers';
 import { isArticlePublished } from '~/server/services/article.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
@@ -208,7 +208,6 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isActualOwner = currentUser?.id === article?.user?.id;
   const isOwner = isActualOwner || isModerator;
 
-  // boolean value that allows us to disable articles via feature flags and still allow us to show articles created by moderators
   const disableArticles = !features.articles && !article?.user.isModerator;
 
   const queryUtils = trpc.useUtils();
@@ -442,33 +441,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             </AlertWithIcon>
           )}
           {article.status === ArticleStatus.UnpublishedViolation && (
-            <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="red" iconColor="red">
-              <div>
-                <Text weight={600} size="lg" mb="xs">
-                  This article has been unpublished due to a Terms of Service violation
-                </Text>
-                {article.metadata?.unpublishedReason &&
-                  article.metadata.unpublishedReason !== 'other' && (
-                    <Text>
-                      <strong>Reason:</strong>{' '}
-                      {
-                        unpublishReasons[article.metadata.unpublishedReason as UnpublishReason]
-                          ?.notificationMessage
-                      }
-                    </Text>
-                  )}
-                {article.metadata?.customMessage && (
-                  <Text>
-                    <strong>Additional details:</strong> {article.metadata.customMessage}
-                  </Text>
-                )}
-                {!isModerator && (
-                  <Text mt="sm" size="sm">
-                    If you believe this was done in error, please contact support.
-                  </Text>
-                )}
-              </div>
-            </AlertWithIcon>
+            <ArticleUnpublishedAlert
+              reason={article.metadata?.unpublishedReason}
+              customMessage={article.metadata?.customMessage}
+              showSupportHint={!isModerator}
+            />
           )}
           {isOwner && article.ingestion && article.ingestion !== ArticleIngestionStatus.Scanned && (
             <ArticleScanStatus

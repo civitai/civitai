@@ -78,6 +78,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { CollectionShowcase } from '~/components/Model/CollectionShowcase/CollectionShowcase';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
+import { ModelUnpublishedAlert } from '~/components/Model/ModelUnpublishedAlert';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { ModelAvailabilityUpdate } from '~/components/Model/ModelAvailabilityUpdate/ModelAvailabilityUpdate';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
@@ -133,7 +134,6 @@ import {
   getRestrictedNsfwLevelsForBaseModel,
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { getBaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getEcosystemSeoPageForKey } from '~/shared/constants/ecosystem-seo.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
@@ -512,11 +512,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       version.status === ModelStatus.UnpublishedViolation);
   const deleted = !!model.deletedAt && model.status === ModelStatus.Deleted;
   const showEditButton = isOwnerOrMod && !deleted && !showRequestReview;
-  const unpublishedReason = version.meta?.unpublishedReason ?? 'other';
-  const unpublishedMessage =
-    unpublishedReason !== 'other'
-      ? unpublishReasons[unpublishedReason]?.notificationMessage
-      : `Removal reason: ${version.meta?.customMessage || 'No reason provided.'}`;
   const license = baseModelLicenses[version.baseModel];
   // Link the base model to its ecosystem SEO landing page when one is live (SEO internal linking).
   const ecosystemSeoPage = getEcosystemSeoPageForKey(getBaseModelGroup(version.baseModel));
@@ -1031,26 +1026,12 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             </AlertWithIcon>
           )}
 
-          {/* Status alerts */}
           {version.status === ModelStatus.UnpublishedViolation && !version.meta?.needsReview && (
-            <AlertWithIcon color="red" iconColor="red" icon={<IconExclamationMark />}>
-              <Text>
-                This model has been unpublished due to a violation of our{' '}
-                <Text component="a" href="/content/tos" target="_blank">
-                  guidelines
-                </Text>{' '}
-                and is not visible to the community.{' '}
-                {unpublishedReason && unpublishedMessage ? unpublishedMessage : null}
-              </Text>
-              <Text>
-                If you adjust your model to comply with our guidelines, you can request a review
-                from one of our moderators. If you believe this was done in error, you can{' '}
-                <Text component="a" href="/content/content-appeal" target="_blank">
-                  submit an appeal
-                </Text>
-                .
-              </Text>
-            </AlertWithIcon>
+            <ModelUnpublishedAlert
+              reason={version.meta?.unpublishedReason}
+              customMessage={version.meta?.customMessage}
+              showAppeal
+            />
           )}
           {isPrivateModel && isOwnerOrMod && (
             <AlertWithIcon

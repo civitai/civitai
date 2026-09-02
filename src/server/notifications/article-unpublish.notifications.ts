@@ -1,5 +1,5 @@
 import { NotificationCategory } from '~/server/common/enums';
-import { type UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
+import { getArticleUnpublishReason } from '~/server/common/moderation-helpers';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
 export const articleUnpublishNotifications = createNotificationProcessor({
@@ -13,7 +13,7 @@ export const articleUnpublishNotifications = createNotificationProcessor({
             message:
               details.reason !== 'other'
                 ? `Your article "${details.articleTitle}" has been unpublished: ${
-                    unpublishReasons[details.reason as UnpublishReason].notificationMessage ?? ''
+                    getArticleUnpublishReason(details.reason)?.notificationMessage ?? ''
                   }`
                 : `Your article "${details.articleTitle}" has been unpublished: ${
                     details.customMessage ?? ''
