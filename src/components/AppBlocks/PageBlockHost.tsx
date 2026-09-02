@@ -3848,33 +3848,29 @@ export function PageBlockHost({
       style={{
         display: 'flex',
         flexDirection: 'column',
+        // 🔴 THE ROOT IS FULL-BLEED ON PURPOSE, AND THIS IS A REVERSAL — READ THE
+        // NOTE BEFORE "RESTORING" A CAP HERE. The ultrawide cap used to live on
+        // THIS element, so the trust chrome and the app took one measure. It now
+        // lives on the CONTENT wrapper below, which holds the app and the failure
+        // card but NOT `AppBlockChrome`.
+        //
+        // The argument the old placement made — that a breadcrumb vouching for the
+        // app should not span a width the app does not occupy — is real, but it was
+        // outweighed in practice: the chrome is site furniture, and stopping it at
+        // 1600px made a full-page app look like a boxed widget dropped into the
+        // page rather than a page of the site. Every other site-level bar spans the
+        // viewport, so the capped one read as the odd element. Operator decision;
+        // the cost is that on a very wide display the chrome is wider than the app
+        // it labels, which is the same relationship the site header already has to
+        // every page's content column.
+        //
+        // What did NOT change: the cap's VALUE, the `var()` read, the fallback, and
+        // the `data-block-id` opt-out ledger — the custom property is still declared
+        // once in globals.css and still overridden per-app on THIS element, from
+        // which it INHERITS to the content wrapper. So a ledger entry keyed on
+        // `[data-testid='app-page-frame'][data-block-id='…']` keeps working exactly
+        // as documented, with no change to its selector.
         width: '100%',
-        // ULTRAWIDE CAP — the app is a CENTRED column past `APP_PAGE_MAX_WIDTH_PX`,
-        // full width below it. See that constant for the value's justification and
-        // `--app-page-max-width` in globals.css for the per-app opt-out.
-        //
-        // 🔴 BOTH DECLARATIONS ARE INERT BELOW THE CAP, WHICH IS THE REQUIREMENT.
-        // `width: 100%` above already resolves narrower than the cap, so `max-width`
-        // clamps nothing; and `margin-inline: auto` distributes the LEFTOVER inline
-        // space, of which there is none on a box that fills its parent, so both
-        // margins resolve to 0. Nothing about the rendered geometry moves until the
-        // parent is wider than the cap — measured at 1024 and 1280 in
-        // `PageBlockHostMaxWidth.browser.test.tsx`.
-        //
-        // 🔴 IT IS APPLIED TO THE HOST ROOT, NOT TO THE `<iframe>`, so the trust
-        // chrome, the app and the failure card all take ONE measure. Capping the
-        // iframe alone would leave `AppBlockChrome` — the breadcrumb that vouches
-        // for the app — spanning a width the app it labels does not occupy, and
-        // would leave the `BlockFallback` card stretched to the monitor while the
-        // app beside it was not.
-        //
-        // 🔴 READ THROUGH `var()` DELIBERATELY. An inline custom property here
-        // (`'--app-page-max-width': …`) would win over any stylesheet rule on this
-        // same element, which is precisely the rule shape the opt-out ledger uses —
-        // so writing the value inline would silently make the opt-out inert while
-        // looking tidier.
-        maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`,
-        marginInline: 'auto',
         // See the `fit` prop for why these are the two modes and why the
         // viewport arithmetic can never agree with its own scroll viewport.
         ...(fit === 'fill'
@@ -3946,57 +3942,116 @@ export function PageBlockHost({
           }}
         />
       ))}
-      {showIframe ? (
-        // The iframe fills the remaining viewport. While the block is still
-        // handshaking (status === 'loading', before BLOCK_READY), the surface
-        // would otherwise be blank — the iframe is mounted but visually empty and
-        // non-interactive (pointerEvents:none). Overlay a centered branded
-        // launch state (app initial + a content-shaped skeleton) on top
-        // so the user sees a loading state instead of a blank page. The overlay
-        // is gated on `(!bootSkeleton || reloadNonce > 0) && overlayMounted`
-        // inside `status === 'loading'`: it unmounts the instant the
-        // status machine leaves loading — on BLOCK_READY (→ ready) AND on every
-        // terminal path (timeout / fatal / no_token / error, which also flip
-        // `showIframe` to false and render the BlockFallback below) — so it can
-        // never spin forever.
-        <Box
-          style={{
-            position: 'relative',
-            flex: 1,
-            display: 'flex',
-            // 🔴 CONFINE THE LAUNCH-REVEAL TRANSFORM. While the block is still
-            // handshaking the iframe carries `translateY(8px)`, and a transform
-            // does not change layout but DOES extend the SCROLLABLE OVERFLOW
-            // region — so those 8px pushed past this wrapper and asked the
-            // nearest scrolling ancestor for a scrollbar. Measured, not
-            // inferred: wrapper `bottom=716`, iframe `bottom=724`, container
-            // `scrollHeight 724` vs `clientHeight 716`. Purely decorative
-            // motion should never be able to do that. Clipping here is also
-            // free — the iframe fills this box exactly, so nothing else can be
-            // cut off. Covered by the GREEN ARM in
-            // `PageBlockHostScrollFit.browser.test.tsx`, which asserts exact
-            // equality precisely so an 8px leak cannot hide in a tolerance.
-            overflow: 'hidden',
-          }}
-        >
-          <iframe
-            // #4 Retry: re-key on `reloadNonce` so a retry UNMOUNTS + REMOUNTS
-            // the iframe (fresh contentWindow), not just reloads its src — the
-            // re-armed init handshake then talks to a clean frame.
-            key={reloadNonce}
-            ref={iframeRef}
-            src={renderedIframeSrc}
-            sandbox={effectiveSandbox}
-            referrerPolicy="no-referrer"
-            // Sanitize the publisher-controlled appName for the iframe title too
-            // (same sanitizer as the visible chrome + the loader aria-label), so
-            // every appName-derived plain-text attribute is consistent. Falls
-            // back to blockId when nothing legible remains.
-            title={sanitizeAppChromeName(appName) || blockId}
-            data-testid="app-page-iframe"
-            data-block-instance-id={blockInstanceId}
-            data-block-ready={isReady ? 'true' : 'false'}
-            /* 🔴 A11Y. The veil is the host's ONLY loading announcement
+      {/* THE APP'S OWN COLUMN — everything the cap applies to, and nothing else.
+          `AppBlockChrome` above is deliberately OUTSIDE it (see the root's note): the
+          chrome spans the page like every other site-level bar, the app does not.
+
+          🔴 ULTRAWIDE CAP — the app is a CENTRED column past `APP_PAGE_MAX_WIDTH_PX`,
+          full width below it. See that constant for the value's justification and
+          `--app-page-max-width` in globals.css for the per-app opt-out ledger.
+
+          🔴 BOTH CAP DECLARATIONS ARE INERT BELOW THE CAP, WHICH IS THE REQUIREMENT.
+          `width: 100%` already resolves narrower than the cap on any ordinary display,
+          so `max-width` clamps nothing; and `margin-inline: auto` distributes the
+          LEFTOVER inline space, of which there is none on a box that fills its parent,
+          so both margins resolve to 0. Nothing about the rendered geometry moves until
+          the parent is wider than the cap — measured in
+          `PageBlockHostMaxWidth.browser.test.tsx`.
+
+          🔴 READ THROUGH `var()` DELIBERATELY. An inline custom property here
+          (`'--app-page-max-width': …`) would win over any stylesheet rule targeting the
+          same element, which is precisely the rule shape the opt-out ledger uses — so
+          writing the value inline would silently make the opt-out inert while looking
+          tidier. The property is set on the ROOT and inherits down to here, so the
+          ledger's existing `[data-testid='app-page-frame'][data-block-id='…']` selector
+          is unchanged by the move.
+
+          🔴 IT REPRODUCES THE VERTICAL CHAIN IT WAS INSERTED INTO, which is the only
+          way this can be a width-only change. It was previously the iframe wrapper's
+          `flex: 1` that consumed the space left by the chrome, as a direct child of the
+          root's column; this box now takes that role and re-offers it, so it must be a
+          column flex container AND a `flex: 1` item itself.
+
+          🔴 `flex: 1` IS THE LOAD-BEARING ONE AND NOTHING RENDERED CATCHES ITS LOSS.
+          Measured by mutation: dropping it leaves the FULL node suite and the FULL
+          `AppBlocks` browser suite green while the app column collapses to ~150px at a
+          900px content height — a running App Block reduced to a sliver, with every tier
+          green. `__tests__/pageBlockHostMaxWidth.test.ts` therefore pins this style block
+          verbatim in the GATING tier; that source pin is the only thing standing between
+          that mutation and production.
+
+          ⚠️ `minHeight: 0` IS DEFENCE, NOT A LOAD-BEARING PROPERTY — SAY SO RATHER THAN
+          NAMING A TEST THAT DOES NOT COVER IT. Measured: removing it leaves the scroll-fit
+          and max-width browser suites 20/20 green, because the child iframe wrapper already
+          carries `overflow: hidden`, which per CSS Flexbox §4.5 gives it an automatic
+          minimum size of 0 — so this box's content-based minimum is 0 with or without the
+          declaration. It is kept because that reasoning depends on a property of a DIFFERENT
+          element that nothing pins, and it costs nothing; an earlier version of this comment
+          credited `PageBlockHostScrollFit.browser.test.tsx` with covering it, which would
+          have misled anyone auditing whether it could go. */}
+      <Box
+        data-testid="app-page-content"
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0,
+          width: '100%',
+          maxWidth: `var(--app-page-max-width, ${APP_PAGE_MAX_WIDTH_PX}px)`,
+          marginInline: 'auto',
+        }}
+      >
+        {showIframe ? (
+          // The iframe fills the remaining viewport. While the block is still
+          // handshaking (status === 'loading', before BLOCK_READY), the surface
+          // would otherwise be blank — the iframe is mounted but visually empty and
+          // non-interactive (pointerEvents:none). Overlay a centered branded
+          // launch state (app initial + a content-shaped skeleton) on top
+          // so the user sees a loading state instead of a blank page. The overlay
+          // is gated on `(!bootSkeleton || reloadNonce > 0) && overlayMounted`
+          // inside `status === 'loading'`: it unmounts the instant the
+          // status machine leaves loading — on BLOCK_READY (→ ready) AND on every
+          // terminal path (timeout / fatal / no_token / error, which also flip
+          // `showIframe` to false and render the BlockFallback below) — so it can
+          // never spin forever.
+          <Box
+            style={{
+              position: 'relative',
+              flex: 1,
+              display: 'flex',
+              // 🔴 CONFINE THE LAUNCH-REVEAL TRANSFORM. While the block is still
+              // handshaking the iframe carries `translateY(8px)`, and a transform
+              // does not change layout but DOES extend the SCROLLABLE OVERFLOW
+              // region — so those 8px pushed past this wrapper and asked the
+              // nearest scrolling ancestor for a scrollbar. Measured, not
+              // inferred: wrapper `bottom=716`, iframe `bottom=724`, container
+              // `scrollHeight 724` vs `clientHeight 716`. Purely decorative
+              // motion should never be able to do that. Clipping here is also
+              // free — the iframe fills this box exactly, so nothing else can be
+              // cut off. Covered by the GREEN ARM in
+              // `PageBlockHostScrollFit.browser.test.tsx`, which asserts exact
+              // equality precisely so an 8px leak cannot hide in a tolerance.
+              overflow: 'hidden',
+            }}
+          >
+            <iframe
+              // #4 Retry: re-key on `reloadNonce` so a retry UNMOUNTS + REMOUNTS
+              // the iframe (fresh contentWindow), not just reloads its src — the
+              // re-armed init handshake then talks to a clean frame.
+              key={reloadNonce}
+              ref={iframeRef}
+              src={renderedIframeSrc}
+              sandbox={effectiveSandbox}
+              referrerPolicy="no-referrer"
+              // Sanitize the publisher-controlled appName for the iframe title too
+              // (same sanitizer as the visible chrome + the loader aria-label), so
+              // every appName-derived plain-text attribute is consistent. Falls
+              // back to blockId when nothing legible remains.
+              title={sanitizeAppChromeName(appName) || blockId}
+              data-testid="app-page-iframe"
+              data-block-instance-id={blockInstanceId}
+              data-block-ready={isReady ? 'true' : 'false'}
+              /* 🔴 A11Y. The veil is the host's ONLY loading announcement
                 (role="status" + aria-busy). Standing it down for a bootSkeleton
                 app removed it with nothing in its place — measured, ZERO
                 elements matching [role="status"],[aria-busy],[role="alert"] —
@@ -4007,45 +4062,45 @@ export function PageBlockHost({
                 "only while the veil is absent" TRUE rather than merely stated:
                 the retry path brings the veil (role="status") back, and without
                 that term both were busy at once — measured, 2 regions. */
-            aria-busy={bootSkeleton && reloadNonce === 0 && !isReady ? true : undefined}
-            style={{
-              flex: 1,
-              display: 'block',
-              width: '100%',
-              border: 0,
-              pointerEvents: isReady ? 'auto' : 'none',
-              // LAUNCH REVEAL: the block fades + settles up as it becomes ready,
-              // cross-fading with the branded overlay below. Under reduced motion
-              // `revealMs` is 0 → no transition is emitted and the opacity flip is
-              // instantaneous (the pre-animation behaviour).
-              //
-              // 🔴 `bootSkeleton` apps opt OUT of the whole reveal. They paint
-              // their own boot state in the HTML they ship (themed only if they also
-              // read the BLOCK_INIT fragment; otherwise a prefers-color-scheme
-              // guess), so hiding the
-              // iframe until BLOCK_READY would hide exactly that, and the
-              // translateY settle would move it on arrival — a layout shift, at
-              // the one moment the app is trying not to move. Visible from mount,
-              // no transform, no transition: the app's skeleton is on screen at
-              // first paint and its own React render replaces it in place.
-              // `pointerEvents` is deliberately NOT opted out — a skeleton is not
-              // interactive, and the block must stay inert until it has a token.
-              opacity: bootSkeleton || isReady ? 1 : 0,
-              transform: bootSkeleton || isReady || revealMs === 0 ? 'none' : 'translateY(8px)',
-              transition:
-                bootSkeleton || revealMs === 0
-                  ? undefined
-                  : `opacity ${revealMs}ms ease-out, transform ${revealMs}ms ease-out`,
-            }}
-          />
-          {/* 🔴 Suppressed for a `bootSkeleton` app. This veil is opaque and
+              aria-busy={bootSkeleton && reloadNonce === 0 && !isReady ? true : undefined}
+              style={{
+                flex: 1,
+                display: 'block',
+                width: '100%',
+                border: 0,
+                pointerEvents: isReady ? 'auto' : 'none',
+                // LAUNCH REVEAL: the block fades + settles up as it becomes ready,
+                // cross-fading with the branded overlay below. Under reduced motion
+                // `revealMs` is 0 → no transition is emitted and the opacity flip is
+                // instantaneous (the pre-animation behaviour).
+                //
+                // 🔴 `bootSkeleton` apps opt OUT of the whole reveal. They paint
+                // their own boot state in the HTML they ship (themed only if they also
+                // read the BLOCK_INIT fragment; otherwise a prefers-color-scheme
+                // guess), so hiding the
+                // iframe until BLOCK_READY would hide exactly that, and the
+                // translateY settle would move it on arrival — a layout shift, at
+                // the one moment the app is trying not to move. Visible from mount,
+                // no transform, no transition: the app's skeleton is on screen at
+                // first paint and its own React render replaces it in place.
+                // `pointerEvents` is deliberately NOT opted out — a skeleton is not
+                // interactive, and the block must stay inert until it has a token.
+                opacity: bootSkeleton || isReady ? 1 : 0,
+                transform: bootSkeleton || isReady || revealMs === 0 ? 'none' : 'translateY(8px)',
+                transition:
+                  bootSkeleton || revealMs === 0
+                    ? undefined
+                    : `opacity ${revealMs}ms ease-out, transform ${revealMs}ms ease-out`,
+              }}
+            />
+            {/* 🔴 Suppressed for a `bootSkeleton` app. This veil is opaque and
               `inset: 0` until BLOCK_READY, so leaving it up would cover the very
               boot state the app ships — the declaration would be inert and the
               app author would have no way to tell. For every other app it stays
               exactly as it was, and it is the reason NOT declaring the field is
               the safe default: no veil plus an empty `#root` is a blank white
               iframe. */}
-          {/* 🔴 `reloadNonce > 0` deliberately RE-ENABLES the veil for a
+            {/* 🔴 `reloadNonce > 0` deliberately RE-ENABLES the veil for a
               bootSkeleton app. The opt-out is about FIRST boot, where the app's
               own skeleton is about to paint. A RETRY is the opposite situation:
               `key={reloadNonce}` remounts the iframe, so the app's document is
@@ -4055,40 +4110,40 @@ export function PageBlockHost({
               happened, for the manual attempt and every automatic one.
               Measured: veil absent, iframe blank, the string "Retrying" nowhere
               in the document. */}
-          {(!bootSkeleton || reloadNonce > 0) && overlayMounted && (
-            <Center
-              data-testid="app-page-loading"
-              // Announce the loading state on the REGION: role="status" +
-              // aria-busy mark the overlay container as a live busy region so a
-              // screen reader announces it when it appears. The region is the
-              // ONLY thing that announces — the skeleton group below is
-              // aria-hidden and exposes nothing, deliberately (see its own
-              // comment). Do not give that group a role to "restore" a labelled
-              // graphic: its label would then be read as part of this region and
-              // the app name would announce twice.
-              // Once the block IS ready the overlay is a purely decorative
-              // fading-out veil, so it drops the live-region roles and hides from
-              // the a11y tree instead of announcing a stale "loading".
-              {...(isReady
-                ? { 'aria-hidden': true }
-                : { role: 'status', 'aria-busy': true, 'aria-live': 'polite' as const })}
-              // Observable reveal state (DevTools / manual QA): 'false' while the
-              // block is still handshaking, 'true' for the one cross-fade after
-              // BLOCK_READY, then the node unmounts.
-              data-revealing={isReady ? 'true' : 'false'}
-              style={{
-                position: 'absolute',
-                inset: 0,
-                background: 'var(--mantine-color-body)',
-                // Never intercept clicks: during loading the iframe is already
-                // pointer-inert, and during the fade-out the block is live
-                // underneath — the veil must not swallow that first click.
-                pointerEvents: 'none',
-                opacity: isReady ? 0 : 1,
-                transition: revealMs === 0 ? undefined : `opacity ${revealMs}ms ease-out`,
-              }}
-            >
-              {/* Branded launch state. The app's initial in the same Avatar
+            {(!bootSkeleton || reloadNonce > 0) && overlayMounted && (
+              <Center
+                data-testid="app-page-loading"
+                // Announce the loading state on the REGION: role="status" +
+                // aria-busy mark the overlay container as a live busy region so a
+                // screen reader announces it when it appears. The region is the
+                // ONLY thing that announces — the skeleton group below is
+                // aria-hidden and exposes nothing, deliberately (see its own
+                // comment). Do not give that group a role to "restore" a labelled
+                // graphic: its label would then be read as part of this region and
+                // the app name would announce twice.
+                // Once the block IS ready the overlay is a purely decorative
+                // fading-out veil, so it drops the live-region roles and hides from
+                // the a11y tree instead of announcing a stale "loading".
+                {...(isReady
+                  ? { 'aria-hidden': true }
+                  : { role: 'status', 'aria-busy': true, 'aria-live': 'polite' as const })}
+                // Observable reveal state (DevTools / manual QA): 'false' while the
+                // block is still handshaking, 'true' for the one cross-fade after
+                // BLOCK_READY, then the node unmounts.
+                data-revealing={isReady ? 'true' : 'false'}
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  background: 'var(--mantine-color-body)',
+                  // Never intercept clicks: during loading the iframe is already
+                  // pointer-inert, and during the fade-out the block is live
+                  // underneath — the veil must not swallow that first click.
+                  pointerEvents: 'none',
+                  opacity: isReady ? 0 : 1,
+                  transition: revealMs === 0 ? undefined : `opacity ${revealMs}ms ease-out`,
+                }}
+              >
+                {/* Branded launch state. The app's initial in the same Avatar
                   treatment the store card uses gives a visual through-line from
                   card → run page, so opening an app feels continuous rather than
                   landing on a bare spinner. Purely presentational: every string is
@@ -4097,7 +4152,7 @@ export function PageBlockHost({
                   carry control/bidi/zalgo spoofing here either — consistency with
                   AppBlockChrome, not a new gate. Falls back to 'app' when nothing
                   legible remains. */}
-              {/* 🔴 `w="100%"` is load-bearing, not decoration. Without it this
+                {/* 🔴 `w="100%"` is load-bearing, not decoration. Without it this
                   Stack is a shrink-to-fit flex item of the <Center>, so its
                   width is set by its widest CONTENT-sized child — the
                   "Starting {appName}…" text. A percentage width on the
@@ -4108,16 +4163,16 @@ export function PageBlockHost({
                   loading state would look different for every app in the
                   store. Constraining the Stack instead makes the group's
                   100%/maw pair mean what it says. */}
-              <Stack align="center" gap="sm" w="100%">
-                <Avatar radius="md" size={56} alt="" aria-hidden>
-                  {/* `Array.from(...)[0]` not `charAt(0)`: charAt splits a
+                <Stack align="center" gap="sm" w="100%">
+                  <Avatar radius="md" size={56} alt="" aria-hidden>
+                    {/* `Array.from(...)[0]` not `charAt(0)`: charAt splits a
                       surrogate pair, so an emoji-leading app name would render a
                       broken half-glyph. Falls back to the SAME string as the
                       visible copy below so the two can't disagree. */}
-                  {(Array.from(launchName)[0] ?? '').toUpperCase()}
-                </Avatar>
-                <Text size="sm" c="dimmed">
-                  {/* IN-PROGRESS FEEDBACK. `reloadNonce` counts re-attempts
+                    {(Array.from(launchName)[0] ?? '').toUpperCase()}
+                  </Avatar>
+                  <Text size="sm" c="dimmed">
+                    {/* IN-PROGRESS FEEDBACK. `reloadNonce` counts re-attempts
                       (manual AND automatic — both go through performRetry), so
                       a re-attempt reads as a retry-in-progress rather than an
                       identical "Starting …" that looks like nothing happened.
@@ -4135,9 +4190,9 @@ export function PageBlockHost({
                       against a stated maximum of 2. The bounded count belongs to
                       the terminal card, where the budget is meaningful; this line
                       only has to say that something is happening again. */}
-                  {reloadNonce > 0 ? `Retrying ${launchName}…` : `Starting ${launchName}…`}
-                </Text>
-                {/* CONTENT-SHAPED LOADING STATE, not a spinner.
+                    {reloadNonce > 0 ? `Retrying ${launchName}…` : `Starting ${launchName}…`}
+                  </Text>
+                  {/* CONTENT-SHAPED LOADING STATE, not a spinner.
                     A spinner says "busy"; a skeleton says "content is coming and
                     this is roughly its shape", which is what the sidebar slot
                     already gets for free — `IframeHost` renders BlockFallback's
@@ -4173,56 +4228,63 @@ export function PageBlockHost({
                     Carries no aria-label: on an aria-hidden node it would be
                     permanently inert, and `data-testid` below is what the
                     suite queries. */}
-                <Box aria-hidden w="100%" maw={420} px="md" data-testid="app-page-loading-skeleton">
-                  <Stack gap="xs">
-                    {/* `animate={!reduceMotion}` — same call the fallback makes.
+                  <Box
+                    aria-hidden
+                    w="100%"
+                    maw={420}
+                    px="md"
+                    data-testid="app-page-loading-skeleton"
+                  >
+                    <Stack gap="xs">
+                      {/* `animate={!reduceMotion}` — same call the fallback makes.
                         Under prefers-reduced-motion the bars stay as static
                         placeholder boxes instead of shimmering. */}
-                    <Skeleton h={12} w="55%" radius="sm" animate={!reduceMotion} />
-                    <Skeleton h={12} w="35%" radius="sm" animate={!reduceMotion} />
-                    <Skeleton h={32} radius="sm" animate={!reduceMotion} mt={6} />
-                    <Skeleton h={40} radius="sm" animate={!reduceMotion} mt={4} />
-                  </Stack>
-                </Box>
-              </Stack>
-            </Center>
-          )}
-        </Box>
-      ) : fallbackReason ? (
-        <Box
-          style={{ flex: 1, padding: 'var(--mantine-spacing-md)' }}
-          data-testid="app-page-fallback"
-        >
-          <BlockFallback
-            reason={fallbackReason}
-            blockName={sanitizeAppChromeName(appName) || blockId}
-            onRetry={handleRetry}
-            // 🔴 The REAL terminal message renders the instant the status goes
-            // terminal — a pending automatic attempt is surfaced INSIDE it, never
-            // instead of it. The user is never held in a loading state waiting on
-            // a quiet retry (the silent-blank failure class), and the manual
-            // affordance stays available the whole time.
-            autoRetry={
-              autoRetry.kind === 'retry'
-                ? {
-                    attempt: autoRetry.attempt,
-                    // The ceiling REACHABLE from here, not the raw attempt cap —
-                    // an auth terminal is bounded by the lower re-mint budget, so
-                    // showing MAX_AUTO_RETRIES would promise a retry that will
-                    // never happen. Derived in decideAutoRetry.
-                    maxAttempts: autoRetry.maxAttempts,
-                    // prefers-reduced-motion: reduce → no spinner.
-                    animate: !reduceMotion,
-                  }
-                : undefined
-            }
-            autoRetriesSpent={autoRetryBudget.attempts}
-            // Automatic recovery has settled (exhausted, or never applicable):
-            // the button is now the only path forward, so make it unmissable.
-            prominentRetry={autoRetrySettled}
-          />
-        </Box>
-      ) : null}
+                      <Skeleton h={12} w="55%" radius="sm" animate={!reduceMotion} />
+                      <Skeleton h={12} w="35%" radius="sm" animate={!reduceMotion} />
+                      <Skeleton h={32} radius="sm" animate={!reduceMotion} mt={6} />
+                      <Skeleton h={40} radius="sm" animate={!reduceMotion} mt={4} />
+                    </Stack>
+                  </Box>
+                </Stack>
+              </Center>
+            )}
+          </Box>
+        ) : fallbackReason ? (
+          <Box
+            style={{ flex: 1, padding: 'var(--mantine-spacing-md)' }}
+            data-testid="app-page-fallback"
+          >
+            <BlockFallback
+              reason={fallbackReason}
+              blockName={sanitizeAppChromeName(appName) || blockId}
+              onRetry={handleRetry}
+              // 🔴 The REAL terminal message renders the instant the status goes
+              // terminal — a pending automatic attempt is surfaced INSIDE it, never
+              // instead of it. The user is never held in a loading state waiting on
+              // a quiet retry (the silent-blank failure class), and the manual
+              // affordance stays available the whole time.
+              autoRetry={
+                autoRetry.kind === 'retry'
+                  ? {
+                      attempt: autoRetry.attempt,
+                      // The ceiling REACHABLE from here, not the raw attempt cap —
+                      // an auth terminal is bounded by the lower re-mint budget, so
+                      // showing MAX_AUTO_RETRIES would promise a retry that will
+                      // never happen. Derived in decideAutoRetry.
+                      maxAttempts: autoRetry.maxAttempts,
+                      // prefers-reduced-motion: reduce → no spinner.
+                      animate: !reduceMotion,
+                    }
+                  : undefined
+              }
+              autoRetriesSpent={autoRetryBudget.attempts}
+              // Automatic recovery has settled (exhausted, or never applicable):
+              // the button is now the only path forward, so make it unmissable.
+              prominentRetry={autoRetrySettled}
+            />
+          </Box>
+        ) : null}
+      </Box>
     </Box>
   );
 }

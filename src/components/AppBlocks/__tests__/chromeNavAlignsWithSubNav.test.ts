@@ -414,8 +414,17 @@ describe('the app-block chrome platform nav agrees with the store subnav', () =>
     const at = src.indexOf(anchor);
     expect(at, `${anchor} was not found in IframeHost.tsx`).toBeGreaterThan(-1);
 
-    // The crumb element: from the testid forward to the closing </Text>.
-    const region = src.slice(at, src.indexOf('</Text>', at));
+    // The crumb element: from the testid forward to the closing </Anchor>.
+    //
+    // 🔴 THE CLOSING TAG IS PART OF THIS ASSERTION'S CORRECTNESS, NOT AN INCIDENTAL
+    // DETAIL. This crumb is rendered with the site's `Anchor`; it used to be a
+    // hand-styled `Text component={Link}`. A stale `</Text>` here does NOT fail
+    // loudly — `indexOf` simply runs on to the NEXT `</Text>` in the file, which is
+    // the dimmed `/` separator a few lines below, and `label` then picks up the
+    // whole span between them. The failure message would talk about the crumb's
+    // COPY while the real cause was the tag. If this crumb is ever re-homed onto a
+    // different element, this string moves with it.
+    const region = src.slice(at, src.indexOf('</Anchor>', at));
     const label = region.slice(region.indexOf('>') + 1).trim();
     expect(
       label,
