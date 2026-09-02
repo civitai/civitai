@@ -21,6 +21,8 @@ import client from 'prom-client';
  */
 
 import {
+  APP_BLOCK_LAUNCH_HELLO,
+  launchHelloLabel,
   launchInitPostsSample,
   launchSampleSeconds,
   MAX_APP_BLOCK_LAUNCH_INIT_POSTS,
@@ -138,14 +140,21 @@ describe('observeAppBlockLaunch', () => {
   it('observes the total on the per-app histogram and each phase on the phase histogram', async () => {
     const app = 'apb_launch_ok';
     const beforeTotal = await readHist(TOTAL_METRIC, '_count', { app_block_id: app });
-    const beforeToken = await readHist(PHASE_METRIC, '_count', { phase: 'token_mint' });
-    const beforeInit = await readHist(PHASE_METRIC, '_count', { phase: 'init_wait' });
+    const beforeToken = await readHist(PHASE_METRIC, '_count', {
+      hello: 'no',
+      phase: 'token_mint',
+    });
+    const beforeInit = await readHist(PHASE_METRIC, '_count', { hello: 'no', phase: 'init_wait' });
 
-    observeAppBlockLaunch(app, { totalMs: 1_100, tokenMintMs: 180, initWaitMs: 700 });
+    observeAppBlockLaunch(app, { totalMs: 1_100, tokenMintMs: 180, initWaitMs: 700, hello: false });
 
     expect(await readHist(TOTAL_METRIC, '_count', { app_block_id: app })).toBe(beforeTotal + 1);
-    expect(await readHist(PHASE_METRIC, '_count', { phase: 'token_mint' })).toBe(beforeToken + 1);
-    expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait' })).toBe(beforeInit + 1);
+    expect(await readHist(PHASE_METRIC, '_count', { hello: 'no', phase: 'token_mint' })).toBe(
+      beforeToken + 1
+    );
+    expect(await readHist(PHASE_METRIC, '_count', { hello: 'no', phase: 'init_wait' })).toBe(
+      beforeInit + 1
+    );
   });
 
   /**
@@ -176,7 +185,7 @@ describe('observeAppBlockLaunch', () => {
   it('records the total in SECONDS on _sum (not milliseconds)', async () => {
     const app = 'apb_launch_sum';
     const before = await readHist(TOTAL_METRIC, '_sum', { app_block_id: app });
-    observeAppBlockLaunch(app, { totalMs: 2_500 });
+    observeAppBlockLaunch(app, { totalMs: 2_500, hello: false });
     expect(await readHist(TOTAL_METRIC, '_sum', { app_block_id: app })).toBeCloseTo(
       before + 2.5,
       6
@@ -186,42 +195,59 @@ describe('observeAppBlockLaunch', () => {
   it('🔴 `total` is the ANCHOR — an invalid total suppresses the PHASES too', async () => {
     const app = 'apb_launch_anchor';
     const beforeTotal = await readHist(TOTAL_METRIC, '_count', { app_block_id: app });
-    const beforePhase = await readHist(PHASE_METRIC, '_count', { phase: 'init_wait' });
+    const beforePhase = await readHist(PHASE_METRIC, '_count', { hello: 'no', phase: 'init_wait' });
 
     // A perfectly valid phase, but no usable total.
-    observeAppBlockLaunch(app, { totalMs: 0, initWaitMs: 700 });
+    observeAppBlockLaunch(app, { totalMs: 0, initWaitMs: 700, hello: false });
     expect(await readHist(TOTAL_METRIC, '_count', { app_block_id: app })).toBe(beforeTotal);
-    expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait' })).toBe(beforePhase);
+    expect(await readHist(PHASE_METRIC, '_count', { hello: 'no', phase: 'init_wait' })).toBe(
+      beforePhase
+    );
 
     // 🔴 POSITIVE CONTROL. Without this, the two zeros above are indistinguishable
     // from a histogram that is wired to nothing at all. Same phase, same value,
     // only the total made valid → the counter MUST move by exactly 1.
-    observeAppBlockLaunch(app, { totalMs: 1_100, initWaitMs: 700 });
+    observeAppBlockLaunch(app, { totalMs: 1_100, initWaitMs: 700, hello: false });
     expect(await readHist(TOTAL_METRIC, '_count', { app_block_id: app })).toBe(beforeTotal + 1);
-    expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait' })).toBe(beforePhase + 1);
+    expect(await readHist(PHASE_METRIC, '_count', { hello: 'no', phase: 'init_wait' })).toBe(
+      beforePhase + 1
+    );
   });
 
   it('🔴 omits a ZERO phase while still recording the total', async () => {
     const app = 'apb_launch_zero_phase';
     const beforeTotal = await readHist(TOTAL_METRIC, '_count', { app_block_id: app });
-    const beforeToken = await readHist(PHASE_METRIC, '_count', { phase: 'token_mint' });
+    const beforeToken = await readHist(PHASE_METRIC, '_count', {
+      hello: 'no',
+      phase: 'token_mint',
+    });
 
-    observeAppBlockLaunch(app, { totalMs: 1_100, tokenMintMs: 0 });
+    observeAppBlockLaunch(app, { totalMs: 1_100, tokenMintMs: 0, hello: false });
 
     expect(await readHist(TOTAL_METRIC, '_count', { app_block_id: app })).toBe(beforeTotal + 1);
-    expect(await readHist(PHASE_METRIC, '_count', { phase: 'token_mint' })).toBe(beforeToken);
+    expect(await readHist(PHASE_METRIC, '_count', { hello: 'no', phase: 'token_mint' })).toBe(
+      beforeToken
+    );
   });
 
   it('🔴 DROPS an out-of-range phase rather than clamping it onto the top bucket', async () => {
     const app = 'apb_launch_drop_phase';
-    const beforeToken = await readHist(PHASE_METRIC, '_count', { phase: 'token_mint' });
-    const beforeSum = await readHist(PHASE_METRIC, '_sum', { phase: 'token_mint' });
+    const beforeToken = await readHist(PHASE_METRIC, '_count', {
+      hello: 'no',
+      phase: 'token_mint',
+    });
+    const beforeSum = await readHist(PHASE_METRIC, '_sum', { hello: 'no', phase: 'token_mint' });
 
-    observeAppBlockLaunch(app, { totalMs: 1_100, tokenMintMs: 61_000 });
+    observeAppBlockLaunch(app, { totalMs: 1_100, tokenMintMs: 61_000, hello: false });
 
-    expect(await readHist(PHASE_METRIC, '_count', { phase: 'token_mint' })).toBe(beforeToken);
+    expect(await readHist(PHASE_METRIC, '_count', { hello: 'no', phase: 'token_mint' })).toBe(
+      beforeToken
+    );
     // The thing a clamp would break: _sum must be untouched, not +60.
-    expect(await readHist(PHASE_METRIC, '_sum', { phase: 'token_mint' })).toBeCloseTo(beforeSum, 6);
+    expect(await readHist(PHASE_METRIC, '_sum', { hello: 'no', phase: 'token_mint' })).toBeCloseTo(
+      beforeSum,
+      6
+    );
   });
 
   it('does nothing when `timings` is absent', async () => {
@@ -242,7 +268,7 @@ describe('observeAppBlockLaunch', () => {
 describe('launch histogram bucket boundaries', () => {
   it('uses the launch-specific edges, NOT prom-client defaults', async () => {
     // Force registration + at least one bucket row.
-    observeAppBlockLaunch('apb_launch_buckets', { totalMs: 300, tokenMintMs: 300 });
+    observeAppBlockLaunch('apb_launch_buckets', { totalMs: 300, tokenMintMs: 300, hello: false });
 
     const expected = [0.1, 0.25, 0.4, 0.6, 0.8, 1.2, 1.8, 2.5, 4, 6, 8, 10, 15];
     expect(await bucketEdges(TOTAL_METRIC)).toEqual(expected);
@@ -261,15 +287,15 @@ describe('launch histogram bucket boundaries', () => {
     // fresh app label, so a `readBucket` that matched nothing would make the
     // 0.25 assertion pass for the wrong reason. Prove the reader can observe a
     // non-zero first.
-    observeAppBlockLaunch(app, { totalMs: 50 });
+    observeAppBlockLaunch(app, { totalMs: 50, hello: false });
     expect(await readBucket(TOTAL_METRIC, '0.1', { app_block_id: app })).toBe(1);
 
     const before025 = await readBucket(TOTAL_METRIC, '0.25', { app_block_id: app });
     const before04 = await readBucket(TOTAL_METRIC, '0.4', { app_block_id: app });
     const before06 = await readBucket(TOTAL_METRIC, '0.6', { app_block_id: app });
 
-    observeAppBlockLaunch(app, { totalMs: 300 });
-    observeAppBlockLaunch(app, { totalMs: 500 });
+    observeAppBlockLaunch(app, { totalMs: 300, hello: false });
+    observeAppBlockLaunch(app, { totalMs: 500, hello: false });
 
     // Buckets are cumulative: 300ms is <= 0.4 but > 0.25; 500ms is <= 0.6 only.
     expect(await readBucket(TOTAL_METRIC, '0.25', { app_block_id: app })).toBe(before025);
@@ -294,7 +320,7 @@ describe('launch histogram bucket boundaries', () => {
     const beforeSum = await readHist(TOTAL_METRIC, '_sum', { app_block_id: app });
 
     // A success on attempt 3 of the bounded sequence.
-    observeAppBlockLaunch(app, { totalMs: 28_000 });
+    observeAppBlockLaunch(app, { totalMs: 28_000, hello: false });
 
     // Above every finite edge…
     expect(await readBucket(TOTAL_METRIC, '15', { app_block_id: app })).toBe(before15);
@@ -364,39 +390,44 @@ describe('launchInitPostsSample — the count gate', () => {
 
 describe('observeAppBlockLaunch — initPosts', () => {
   it('observes exactly ONE sample per successful launch that carries a count', async () => {
-    const before = await readHist(INIT_POSTS_METRIC, '_count', {});
-    const beforeSum = await readHist(INIT_POSTS_METRIC, '_sum', {});
+    const before = await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' });
+    const beforeSum = await readHist(INIT_POSTS_METRIC, '_sum', { hello: 'no' });
     observeAppBlockLaunch('apb_initposts_one', {
       totalMs: 1_100,
       initWaitMs: 700,
       initPosts: 3,
+      hello: false,
     });
-    expect(await readHist(INIT_POSTS_METRIC, '_count', {})).toBe(before + 1);
+    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' })).toBe(before + 1);
     // The REAL value reaches _sum — a distinct, non-1 count so this cannot pass
     // against a mutant that observes a constant.
-    expect(await readHist(INIT_POSTS_METRIC, '_sum', {})).toBe(beforeSum + 3);
+    expect(await readHist(INIT_POSTS_METRIC, '_sum', { hello: 'no' })).toBe(beforeSum + 3);
   });
 
   it('🔴 the le=1 vs le=2 gap is resolvable — the whole point of the edges', async () => {
     // If the first bucket were `le=2`, a single-post launch and a two-post
     // launch would be indistinguishable, which is precisely the distinction the
     // metric exists to make.
-    const beforeOne = await readBucket(INIT_POSTS_METRIC, '1', {});
-    const beforeTwo = await readBucket(INIT_POSTS_METRIC, '2', {});
-    observeAppBlockLaunch('apb_initposts_edges', { totalMs: 500, initPosts: 2 });
+    const beforeOne = await readBucket(INIT_POSTS_METRIC, '1', { hello: 'no' });
+    const beforeTwo = await readBucket(INIT_POSTS_METRIC, '2', { hello: 'no' });
+    observeAppBlockLaunch('apb_initposts_edges', { totalMs: 500, initPosts: 2, hello: false });
     // A 2-post launch does NOT count at le=1…
-    expect(await readBucket(INIT_POSTS_METRIC, '1', {})).toBe(beforeOne);
+    expect(await readBucket(INIT_POSTS_METRIC, '1', { hello: 'no' })).toBe(beforeOne);
     // …but does at le=2 (buckets are cumulative).
-    expect(await readBucket(INIT_POSTS_METRIC, '2', {})).toBe(beforeTwo + 1);
+    expect(await readBucket(INIT_POSTS_METRIC, '2', { hello: 'no' })).toBe(beforeTwo + 1);
 
-    observeAppBlockLaunch('apb_initposts_edges', { totalMs: 500, initPosts: 1 });
-    expect(await readBucket(INIT_POSTS_METRIC, '1', {})).toBe(beforeOne + 1);
+    observeAppBlockLaunch('apb_initposts_edges', { totalMs: 500, initPosts: 1, hello: false });
+    expect(await readBucket(INIT_POSTS_METRIC, '1', { hello: 'no' })).toBe(beforeOne + 1);
   });
 
   it('🔴 observes NOTHING when the count is absent — with a positive control', async () => {
-    const before = await readHist(INIT_POSTS_METRIC, '_count', {});
-    observeAppBlockLaunch('apb_initposts_absent', { totalMs: 1_100, initWaitMs: 700 });
-    expect(await readHist(INIT_POSTS_METRIC, '_count', {})).toBe(before);
+    const before = await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' });
+    observeAppBlockLaunch('apb_initposts_absent', {
+      totalMs: 1_100,
+      initWaitMs: 700,
+      hello: false,
+    });
+    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' })).toBe(before);
     // 🔴 POSITIVE CONTROL. Without this, "0 observations" is indistinguishable
     // from a histogram wired to nothing, and every absence assertion in this
     // file would be vacuously green.
@@ -404,49 +435,70 @@ describe('observeAppBlockLaunch — initPosts', () => {
       totalMs: 1_100,
       initWaitMs: 700,
       initPosts: 5,
+      hello: false,
     });
-    expect(await readHist(INIT_POSTS_METRIC, '_count', {})).toBe(before + 1);
+    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' })).toBe(before + 1);
   });
 
   it('🔴 DROPS an out-of-range count without touching _sum or the tail', async () => {
-    const beforeCount = await readHist(INIT_POSTS_METRIC, '_count', {});
-    const beforeSum = await readHist(INIT_POSTS_METRIC, '_sum', {});
+    const beforeCount = await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' });
+    const beforeSum = await readHist(INIT_POSTS_METRIC, '_sum', { hello: 'no' });
     observeAppBlockLaunch('apb_initposts_huge', {
       totalMs: 1_100,
       initPosts: MAX_APP_BLOCK_LAUNCH_INIT_POSTS + 1,
+      hello: false,
     });
     // A clamp would have incremented BOTH — and the increment would sit in the
     // top bucket, reading as the strongest possible quantization evidence.
-    expect(await readHist(INIT_POSTS_METRIC, '_count', {})).toBe(beforeCount);
-    expect(await readHist(INIT_POSTS_METRIC, '_sum', {})).toBe(beforeSum);
+    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' })).toBe(beforeCount);
+    expect(await readHist(INIT_POSTS_METRIC, '_sum', { hello: 'no' })).toBe(beforeSum);
   });
 
   it('🔴 is suppressed with the phases when `total` is invalid (total is the anchor)', async () => {
-    const before = await readHist(INIT_POSTS_METRIC, '_count', {});
+    const before = await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' });
     // A post count with no end-to-end duration to interpret it against is an
     // orphan that still moves the distribution.
-    observeAppBlockLaunch('apb_initposts_anchor', { totalMs: 0, initPosts: 4 });
-    observeAppBlockLaunch('apb_initposts_anchor', { totalMs: undefined, initPosts: 4 });
-    expect(await readHist(INIT_POSTS_METRIC, '_count', {})).toBe(before);
+    observeAppBlockLaunch('apb_initposts_anchor', { totalMs: 0, initPosts: 4, hello: false });
+    observeAppBlockLaunch('apb_initposts_anchor', {
+      totalMs: undefined,
+      initPosts: 4,
+      hello: false,
+    });
+    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' })).toBe(before);
     // POSITIVE CONTROL: the identical count with a VALID total is observed.
-    observeAppBlockLaunch('apb_initposts_anchor', { totalMs: 900, initPosts: 4 });
-    expect(await readHist(INIT_POSTS_METRIC, '_count', {})).toBe(before + 1);
+    observeAppBlockLaunch('apb_initposts_anchor', { totalMs: 900, initPosts: 4, hello: false });
+    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' })).toBe(before + 1);
   });
 
   it('carries the bucket edges the design justified, not prom-client defaults', async () => {
-    observeAppBlockLaunch('apb_initposts_buckets', { totalMs: 900, initPosts: 1 });
+    observeAppBlockLaunch('apb_initposts_buckets', { totalMs: 900, initPosts: 1, hello: false });
     expect(await bucketEdges(INIT_POSTS_METRIC)).toEqual([
       1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 28, 40, 64,
     ]);
   });
 
-  it('🔴 carries NO labels (the cardinality decision, asserted)', async () => {
-    observeAppBlockLaunch('apb_initposts_labels', { totalMs: 900, initPosts: 2 });
+  /**
+   * 🔴 THE CARDINALITY DECISION, ASSERTED — and it is now `hello` AND NOTHING
+   * ELSE. This histogram deliberately carries no `app_block_id` (that would be
+   * ~52x) and no `phase` (there is one phase it can be about). `hello` is the
+   * single dimension it is allowed, because without it the `le=1` share pools
+   * accelerator apps with cadence-bound ones and answers the wrong question.
+   *
+   * An EXACT key-set equality, not a `toContain`: the failure mode this guards
+   * is a label being ADDED, so a subset test would not see it.
+   */
+  it('🔴 carries EXACTLY the `hello` label — no app_block_id, no phase', async () => {
+    observeAppBlockLaunch('apb_initposts_labels', { totalMs: 900, initPosts: 2, hello: false });
     const metric = client.register.getSingleMetric(INIT_POSTS_METRIC);
     const data = await (metric as unknown as { get(): Promise<{ values: HistPoint[] }> }).get();
+    expect(data.values.length).toBeGreaterThan(0); // guard the guard: not a vacuous loop
     for (const v of data.values) {
       // `le` is the histogram's own bucket key, not a dimension we chose.
-      expect(Object.keys(v.labels).filter((k) => k !== 'le')).toEqual([]);
+      expect(
+        Object.keys(v.labels)
+          .filter((k) => k !== 'le')
+          .sort()
+      ).toEqual(['hello']);
     }
   });
 
@@ -483,21 +535,22 @@ describe('launch_init_posts: the denominator is its OWN _count', () => {
   it('🔴 the two histograms’ _count series genuinely diverge', async () => {
     const app = 'apb_denominator_guard';
     const t0 = await readHist(TOTAL_METRIC, '_count', { app_block_id: app });
-    const i0 = await readHist(INIT_POSTS_METRIC, '_count', {});
+    const i0 = await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' });
 
     // (a) acked before any BLOCK_INIT was posted — count 0, dropped.
-    observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 400 });
+    observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 400, hello: false });
     // (b) manual-retry storm past the cap — dropped, never clamped.
     observeAppBlockLaunch(app, {
       totalMs: 51_000,
       initWaitMs: 50_000,
       initPosts: MAX_APP_BLOCK_LAUNCH_INIT_POSTS + 17,
+      hello: false,
     });
     // (c) an ordinary launch — observed by both.
-    observeAppBlockLaunch(app, { totalMs: 500, initWaitMs: 200, initPosts: 1 });
+    observeAppBlockLaunch(app, { totalMs: 500, initWaitMs: 200, initPosts: 1, hello: false });
 
     const dTotal = (await readHist(TOTAL_METRIC, '_count', { app_block_id: app })) - t0;
-    const dPosts = (await readHist(INIT_POSTS_METRIC, '_count', {})) - i0;
+    const dPosts = (await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' })) - i0;
 
     // 3 launches reached the total histogram; only 1 reached this one.
     expect(dTotal).toBe(3);
@@ -515,5 +568,182 @@ describe('launch_init_posts: the denominator is its OWN _count', () => {
     expect(help).toContain('civitai_app_block_launch_init_posts_count');
     expect(help).toContain('NEVER `launch_total_seconds_count`');
     expect(help).toContain('UNDERSTATES');
+  });
+});
+
+/**
+ * 🔴 THE `hello` STRATIFIER — the label that makes the cadence change gradeable.
+ *
+ * WHY IT EXISTS. `civitai_app_block_launch_phase_seconds` carries no
+ * `app_block_id` (deliberate, for cardinality), and the deployed apps that ship
+ * the BLOCK_HELLO accelerator are the majority of launch traffic. BLOCK_HELLO
+ * short-circuits exactly the wait the host re-post cadence governs, so a
+ * fleet-wide `init_wait` before/after is mostly composed of launches the change
+ * barely touches — and that mass cannot be separated without this label. A
+ * diluted null would be indistinguishable from "the change did nothing".
+ *
+ * 🔴 WHAT IT MEANS, pinned as behaviour and not only as prose: `yes` means the
+ * GUEST ANNOUNCED during the launch. It does NOT mean "the accelerator fired an
+ * extra post" — those are different facts that disagree on real launches, and
+ * the ambiguous-label failure is exactly how a relabelled series produced a
+ * confident wrong number before.
+ */
+describe('launchHelloLabel — the code-owned stratifier', () => {
+  it('maps the booleans onto the two literals, and nothing else', () => {
+    expect(launchHelloLabel(true)).toBe('yes');
+    expect(launchHelloLabel(false)).toBe('no');
+    expect(APP_BLOCK_LAUNCH_HELLO).toEqual(['yes', 'no', 'unknown']);
+  });
+
+  /**
+   * 🔴 ABSENT IS ITS OWN VALUE — neither `no` (which would bias the very
+   * population being isolated) nor a DROP (which would silently cut coverage of
+   * an existing metric, and cut it in a latency-correlated way — see
+   * `launchHelloLabel`). It gets `unknown`, so the sample stays visible and
+   * `sum without (hello)` still recovers every launch.
+   */
+  it('🔴 returns `unknown` for an absent or non-boolean value — never "no", never a drop', () => {
+    expect(launchHelloLabel(undefined)).toBe('unknown');
+    expect(launchHelloLabel(null)).toBe('unknown');
+    // Truthy/falsy look-alikes must not be coerced — a client sending a string
+    // must not become a label value, and must not be read as a boolean either.
+    expect(launchHelloLabel('yes')).toBe('unknown');
+    expect(launchHelloLabel('true')).toBe('unknown');
+    expect(launchHelloLabel(1)).toBe('unknown');
+    expect(launchHelloLabel(0)).toBe('unknown');
+    expect(launchHelloLabel({})).toBe('unknown');
+  });
+
+  it('🔴 no client-supplied string can become a label value', () => {
+    // The beacon field is a BOOLEAN and this is the only mapping, so the label
+    // set is closed by construction — the same rule `phase` follows, and what
+    // keeps a public beacon body from touching cardinality. A junk value lands
+    // in `unknown`, never in a bucket of its own.
+    for (const junk of ['maybe', '../../etc', 'yes ', 'YES', '', 'unknown']) {
+      expect(launchHelloLabel(junk)).toBe('unknown');
+    }
+    // TOTAL: whatever it returns is always inside the closed set.
+    for (const junk of [undefined, null, 1, {}, [], 'x', true, false]) {
+      expect(APP_BLOCK_LAUNCH_HELLO).toContain(launchHelloLabel(junk));
+    }
+  });
+});
+
+/** Total `_count` across every `hello` value for one phase. */
+async function phaseCountAllHello(phase: string): Promise<number> {
+  const metric = client.register.getSingleMetric(PHASE_METRIC);
+  if (!metric) return 0;
+  const data = await (metric as unknown as { get(): Promise<{ values: HistPoint[] }> }).get();
+  return data.values
+    .filter((v) => v.metricName === `${PHASE_METRIC}_count` && v.labels.phase === phase)
+    .reduce((a, v) => a + v.value, 0);
+}
+
+describe('observeAppBlockLaunch — hello stratification', () => {
+  it('labels a hello launch `yes` and a hello-less launch `no`, on BOTH histograms', async () => {
+    const app = 'apb_hello_split';
+    const pY = await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'yes' });
+    const pN = await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'no' });
+    const iY = await readHist(INIT_POSTS_METRIC, '_count', { hello: 'yes' });
+    const iN = await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' });
+
+    observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 300, initPosts: 1, hello: true });
+    observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 500, initPosts: 3, hello: false });
+
+    expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'yes' })).toBe(
+      pY + 1
+    );
+    expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'no' })).toBe(
+      pN + 1
+    );
+    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'yes' })).toBe(iY + 1);
+    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' })).toBe(iN + 1);
+  });
+
+  /**
+   * 🔴 A STALE-CLIENT BEACON IS BUCKETED, NOT DROPPED — and this test is the
+   * reason the earlier design was caught. Dropping it cut `launch_phase_seconds`
+   * coverage for any browser bundle older than the label (the beacon route runs
+   * no client-version gate, so those persist as long as their tab does), and cut
+   * it in a latency-correlated way: a pre-label bundle is also a pre-cadence
+   * bundle, so the dropped launches were systematically the slow ones.
+   *
+   * 🔴 THE ASSERTION IS ON `unknown` MOVING, NOT ONLY ON yes/no STAYING PUT. An
+   * earlier version of this test checked only that `yes` and `no` did not move —
+   * which stayed green after the drop was removed, because a bucketed sample
+   * does not move them either. Green for the wrong reason is the failure mode a
+   * negative-only assertion invites.
+   */
+  it('🔴 buckets a hello-less beacon as `unknown` — coverage is preserved, yes/no stay clean', async () => {
+    const app = 'apb_hello_absent';
+    const t0 = await readHist(TOTAL_METRIC, '_count', { app_block_id: app });
+    const pY = await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'yes' });
+    const pN = await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'no' });
+    const pU = await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'unknown' });
+    const iU = await readHist(INIT_POSTS_METRIC, '_count', { hello: 'unknown' });
+
+    // Exactly what a browser bundle older than this label sends.
+    observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 300, initPosts: 2 });
+
+    // 🔴 The sample IS observed — this is the coverage regression that the
+    // drop-based design introduced and this bucket removes.
+    expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'unknown' })).toBe(
+      pU + 1
+    );
+    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'unknown' })).toBe(iU + 1);
+    // …and neither analysis bucket is contaminated.
+    expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'yes' })).toBe(pY);
+    expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'no' })).toBe(pN);
+    // …and the end-to-end count still matches, as it always did.
+    expect(await readHist(TOTAL_METRIC, '_count', { app_block_id: app })).toBe(t0 + 1);
+  });
+
+  /**
+   * 🔴 THE COVERAGE INVARIANT, stated directly: summing the phase histogram over
+   * every `hello` value must recover the pre-label series exactly. This is what
+   * makes `sum without (hello)` a safe rewrite of any existing query, and it is
+   * the property the drop-based design silently broke.
+   */
+  it('🔴 sum over all hello values equals one sample per launch — no launch is lost', async () => {
+    const app = 'apb_hello_coverage';
+    const before = await phaseCountAllHello('init_wait');
+    observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 300, hello: true });
+    observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 300, hello: false });
+    observeAppBlockLaunch(app, { totalMs: 900, initWaitMs: 300 }); // stale client
+    expect(await phaseCountAllHello('init_wait')).toBe(before + 3);
+  });
+
+  it('🔴 the existing discipline still gates the label — total anchor, drop-not-clamp', async () => {
+    const app = 'apb_hello_discipline';
+    const pN = await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'no' });
+    const iN = await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' });
+    // An invalid total suppresses everything, label or no label.
+    observeAppBlockLaunch(app, { totalMs: 0, initWaitMs: 300, initPosts: 2, hello: false });
+    // An out-of-range count is dropped rather than clamped into the `no` bucket.
+    observeAppBlockLaunch(app, {
+      totalMs: 900,
+      initPosts: MAX_APP_BLOCK_LAUNCH_INIT_POSTS + 1,
+      hello: false,
+    });
+    expect(await readHist(PHASE_METRIC, '_count', { phase: 'init_wait', hello: 'no' })).toBe(pN);
+    expect(await readHist(INIT_POSTS_METRIC, '_count', { hello: 'no' })).toBe(iN);
+  });
+
+  it('carries exactly {phase, hello} on the phase histogram — no app_block_id leaked in', async () => {
+    observeAppBlockLaunch('apb_hello_phaselabels', {
+      totalMs: 900,
+      initWaitMs: 300,
+      hello: true,
+    });
+    const metric = client.register.getSingleMetric(PHASE_METRIC);
+    const data = await (metric as unknown as { get(): Promise<{ values: HistPoint[] }> }).get();
+    expect(data.values.length).toBeGreaterThan(0);
+    for (const v of data.values) {
+      expect(
+        Object.keys(v.labels)
+          .filter((k) => k !== 'le')
+          .sort()
+      ).toEqual(['hello', 'phase']);
+    }
   });
 });

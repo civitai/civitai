@@ -1337,6 +1337,16 @@ export function PageBlockHost({
   // immediately.
   useEffect(() => {
     const off = onMessage<unknown>('BLOCK_HELLO', () => {
+      // 🔴 RECORDED BEFORE — AND INDEPENDENTLY OF — THE CONTROLLER, deliberately.
+      // The label means "the guest announced during this launch", NOT "the
+      // accelerator fired an extra post". `notifyHello()` is a no-op when the
+      // controller has not started, has stopped, or has already handled a hello;
+      // recording inside it would file those launches as `no` even though the
+      // guest's listener was demonstrably attached and the host's next post was
+      // heard. That is the wrong bucket, and it biases the comparison toward the
+      // null. See `LaunchMarks.helloSeen` for the full argument.
+      const marks = launchMarksRef.current;
+      if (marks) marks.helloSeen = true;
       controllerRef.current?.notifyHello();
     });
     return off;

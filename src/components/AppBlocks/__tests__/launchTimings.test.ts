@@ -34,6 +34,8 @@ const BASE_MARKS: LaunchMarks = {
   // coincided with another field (or with the `1` a broken counter would emit)
   // could not tell a correct read from a mutant that returns a constant.
   initPosts: 3,
+  // Distinct from the payload default so a mutant hardcoding `false` fails.
+  helloSeen: true,
 };
 
 const marks = (over: Partial<LaunchMarks> = {}): LaunchMarks => ({ ...BASE_MARKS, ...over });
@@ -99,6 +101,7 @@ describe('createLaunchMarks / resetLaunchMarks', () => {
       readyAt: null,
       wasHidden: false,
       initPosts: 0,
+      helloSeen: false,
     });
   });
 
@@ -116,6 +119,10 @@ describe('createLaunchMarks / resetLaunchMarks', () => {
     // that forgot it would leave app A's posts attributed to app B's launch and
     // compound with every soft navigation. Seeding 0 here could not see that.
     m.initPosts = 7;
+    // 🔴 Seeded TRUE so the reset is observable. Left sticky, app A's
+    // announcement would label app B's launch `yes` — mis-stratifying the very
+    // comparison the label exists for.
+    m.helloSeen = true;
     const same = m;
     resetLaunchMarks(m, 500, false);
     // Same object identity — callers hold this in a ref.
@@ -127,6 +134,7 @@ describe('createLaunchMarks / resetLaunchMarks', () => {
       readyAt: null,
       wasHidden: false,
       initPosts: 0,
+      helloSeen: false,
     });
   });
 });
@@ -172,6 +180,7 @@ describe('computeLaunchTimings', () => {
       tokenMintMs: 180, // 1180 - 1000
       initWaitMs: 700, // 2100 - 1400
       initPosts: 3, // BASE_MARKS.initPosts, carried through verbatim
+      hello: true, // BASE_MARKS.helloSeen, carried through verbatim
     });
   });
 
@@ -181,7 +190,13 @@ describe('computeLaunchTimings', () => {
     // mounts on the first client render before any token exists. A guard that
     // assumed a serial sum would silently drop real samples.
     const out = computeLaunchTimings(marks({ tokenAt: 1_900, initSentAt: 1_050 }))!;
-    expect(out).toEqual({ totalMs: 1_100, tokenMintMs: 900, initWaitMs: 1_050, initPosts: 3 });
+    expect(out).toEqual({
+      totalMs: 1_100,
+      tokenMintMs: 900,
+      initWaitMs: 1_050,
+      initPosts: 3,
+      hello: true,
+    });
     expect(out.tokenMintMs! + out.initWaitMs!).toBeGreaterThan(out.totalMs);
   });
 
@@ -243,6 +258,7 @@ describe('computeLaunchTimings', () => {
       // The COUNT survives even though the DURATION leg does not: they answer
       // different questions and are gated independently.
       initPosts: 3,
+      hello: true,
     });
   });
 
@@ -270,7 +286,13 @@ describe('computeLaunchTimings', () => {
   it('never emits a frameFetchMs field (the cross-origin phase is deliberately deferred)', () => {
     const out = computeLaunchTimings(marks())!;
     expect(out).not.toHaveProperty('frameFetchMs');
-    expect(Object.keys(out).sort()).toEqual(['initPosts', 'initWaitMs', 'tokenMintMs', 'totalMs']);
+    expect(Object.keys(out).sort()).toEqual([
+      'hello',
+      'initPosts',
+      'initWaitMs',
+      'tokenMintMs',
+      'totalMs',
+    ]);
   });
 });
 
@@ -365,5 +387,139 @@ describe('computeLaunchTimings — initPosts', () => {
     // against is an orphan that still moves the distribution.
     expect(computeLaunchTimings(marks({ readyAt: null, initPosts: 9 }))).toBeNull();
     expect(computeLaunchTimings(marks({ mountedAt: null, initPosts: 9 }))).toBeNull();
+  });
+});
+
+/**
+ * 🔴 `helloSeen` / `hello` — THE STRATIFIER'S SEMANTICS, pinned as behaviour.
+ *
+ * The label separates launches whose `init_wait` the host re-post cadence
+ * actually governed from launches the guest short-circuited by announcing
+ * itself. Getting its MEANING wrong does not break anything visibly — it
+ * produces a confident wrong number, which is why the meaning is asserted here
+ * and not only described in a comment.
+ */
+describe('computeLaunchTimings — the hello stratifier', () => {
+  it('carries the announcement through, both ways', () => {
+    expect(computeLaunchTimings(marks({ helloSeen: true }))?.hello).toBe(true);
+    expect(computeLaunchTimings(marks({ helloSeen: false }))?.hello).toBe(false);
+  });
+
+  /**
+   * 🔴 ALWAYS EMITTED, NEVER OMITTED FOR `false`. An omitted field and a `false`
+   * field are indistinguishable on the wire, and the server must tell "this
+   * client does not send it" (drop) from "this launch had no hello" (label
+   * `no`). Omitting the false case would collapse that distinction and file
+   * every hello-less launch into the drop path — silently emptying the very
+   * population the label exists to isolate.
+   *
+   * Written as a KEY-PRESENCE assertion, because `?.hello === false` would also
+   * be satisfied by the field being absent.
+   */
+  it('🔴 emits the key even when false — absence must stay distinguishable', () => {
+    const out = computeLaunchTimings(marks({ helloSeen: false }))!;
+    expect(Object.prototype.hasOwnProperty.call(out, 'hello')).toBe(true);
+    expect(out.hello).toBe(false);
+  });
+
+  it('🔴 is dropped with the whole sample on a hidden tab or an unusable total', () => {
+    // A launch we refuse to observe must not contribute a label either — the
+    // label rides the sample, it does not survive it.
+    expect(computeLaunchTimings(marks({ wasHidden: true, helloSeen: true }))).toBeNull();
+    expect(computeLaunchTimings(marks({ readyAt: null, helloSeen: true }))).toBeNull();
+  });
+
+  /**
+   * 🔴 THE MEANING, STATED AS A TEST. `helloSeen` is set by the host's message
+   * handler on ANY BLOCK_HELLO during the launch — it is NOT a record that
+   * `notifyHello()` posted an extra BLOCK_INIT.
+   *
+   * The two readings disagree on a real, reachable launch: a hello arriving
+   * BEFORE the controller starts is recorded and posts nothing, because
+   * `start()` posts immediately on its own. Under the "accelerator fired"
+   * reading that launch is `no`, even though the guest's listener was attached
+   * and the cadence never governed its wait — which would push fast,
+   * accelerator-capable launches into the cadence-bound population and bias the
+   * comparison toward the null.
+   *
+   * Expressed here as: an announcement with ZERO extra posts is still `yes`.
+   * `initPosts: 1` is the immediate `start()` post and nothing more.
+   */
+  it('🔴 means ANNOUNCED, not "the accelerator fired an extra post"', () => {
+    const out = computeLaunchTimings(marks({ helloSeen: true, initPosts: 1 }))!;
+    expect(out.hello).toBe(true);
+    expect(out.initPosts).toBe(1);
+  });
+});
+
+/**
+ * 🔴 `helloSeen` LIFETIME — enumerated against the states a launch can actually
+ * reach, because "the guest announced during the launch window" only means one
+ * thing once "the launch window" is pinned.
+ *
+ * The mark's lifetime is deliberately IDENTICAL to `initPosts`': both live on
+ * the marks, both are cleared only by `resetLaunchMarks` (one call site, gated
+ * on `blockInstanceId`), and both therefore survive a retry and are cleared by a
+ * soft navigation. That symmetry is the point — `init_wait` spans every attempt
+ * of one launch, so its two companions must span exactly the same window or the
+ * three describe different things while looking like one record.
+ */
+describe('helloSeen lifetime — the states it must file correctly', () => {
+  it('🔴 survives a retry, exactly like initPosts (one launch, many attempts)', () => {
+    // `performRetry` remounts the iframe and builds a fresh controller but does
+    // NOT reset the marks, so an announcement on attempt 1 still describes the
+    // launch that attempt 3 completes. That is correct: the SAME app bundle is
+    // reloaded each time, so its announce behaviour cannot change mid-launch.
+    const m = marks({ helloSeen: true, initPosts: 1 });
+    m.initPosts += 29; // a second attempt's posts accumulate
+    const out = computeLaunchTimings(m)!;
+    expect(out.hello).toBe(true);
+    expect(out.initPosts).toBe(30);
+  });
+
+  it('🔴 is cleared by a soft navigation, exactly like initPosts', () => {
+    // Both marks are cleared by the SAME call, so they cannot drift apart: app
+    // A's announcement can never label app B's launch.
+    const m = createLaunchMarks(0, false);
+    m.helloSeen = true;
+    m.initPosts = 5;
+    resetLaunchMarks(m, 500, false);
+    expect(m.helloSeen).toBe(false);
+    expect(m.initPosts).toBe(0);
+  });
+
+  /**
+   * A DUPLICATE announcement is idempotent here. `IframeInitController` honours
+   * only the first (a chatty frame cannot amplify host work), but the MARK has
+   * no such latch and needs none — it is a boolean, and "announced twice" is
+   * still "announced".
+   */
+  it('a duplicate hello does not change the mark', () => {
+    const m = marks({ helloSeen: false });
+    m.helloSeen = true;
+    m.helloSeen = true;
+    expect(computeLaunchTimings(m)?.hello).toBe(true);
+  });
+
+  /**
+   * 🔴 THE ONE WINDOW THAT CAN MIS-FILE, stated rather than hidden.
+   *
+   * The mark is read when the success beacon effect runs, one React commit after
+   * BLOCK_READY flips the status. An announcement landing inside that commit is
+   * counted as `yes` even though it arrived after ready and short-circuited
+   * nothing; an announcement landing after the beacon is not counted at all.
+   *
+   * Neither is worth code to prevent. A guest sends hello when its message
+   * listener attaches, which necessarily precedes any BLOCK_READY it sends over
+   * that same listener — so a hello-after-ready is a duplicate or an
+   * out-of-order delivery, and in both cases the guest genuinely did announce,
+   * which is exactly what the label claims. This test pins that reading so the
+   * window is a documented consequence rather than a surprise.
+   */
+  it('reads the mark as of the beacon — a later mutation cannot change a sent sample', () => {
+    const m = marks({ helloSeen: false });
+    const sent = computeLaunchTimings(m)!;
+    m.helloSeen = true; // arrives after the beacon was built
+    expect(sent.hello).toBe(false);
   });
 });

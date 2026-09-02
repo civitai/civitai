@@ -171,6 +171,24 @@ export const blockRenderSchema = z.object({
       // Still a NUMBER, so like every field here it can never become a prom
       // label — the histogram it feeds carries no labels at all.
       initPosts: z.number().finite().nonnegative().max(100_000).optional(),
+      // 🔴 THE STRATIFIER, and it is a BOOLEAN — never a client-supplied string.
+      // The server maps it onto its own two literals (`yes`/`no`), so nothing a
+      // client sends can become a prom label value. That is the same rule the
+      // `phase` label follows and the reason this beacon body can stay public.
+      //
+      // MEANING: the guest sent BLOCK_HELLO at some point during the launch —
+      // NOT "the accelerator fired an extra post". See `LaunchMarks.helloSeen`.
+      //
+      // 🔴 OPTIONAL HERE, BUT ABSENCE IS NOT `false`. A client that predates this
+      // field omits it; a launch that genuinely saw no hello sends `false`. The
+      // server must tell those apart — it labels the second `no` and the first
+      // `unknown` (a real bucket, never a drop: dropping would cut coverage of
+      // an existing metric, and cut it in a latency-correlated way) — so this
+      // stays `.optional()` rather than `.default(false)`, which
+      // would erase the distinction at the parse boundary and silently file every
+      // stale-client launch into the `no` population this metric exists to
+      // isolate.
+      hello: z.boolean().optional(),
     })
     .optional()
     .catch(undefined),

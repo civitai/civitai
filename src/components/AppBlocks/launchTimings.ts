@@ -107,6 +107,36 @@ export type LaunchMarks = {
    * the last attempt's posts against an `init_wait` spanning all of them.
    */
   initPosts: number;
+  /**
+   * 🔴 THE STRATIFIER — and its meaning is EXACTLY ONE THING, stated here
+   * because two plausible readings exist and they disagree on real launches.
+   *
+   * MEANING: the guest sent `BLOCK_HELLO` at some point during this launch
+   * window (host mount -> BLOCK_READY). Nothing more.
+   *
+   * 🔴 IT DOES **NOT** MEAN "the accelerator fired an extra BLOCK_INIT".
+   * `IframeInitController.notifyHello()` posts only when it is already started,
+   * not stopped, and not already handled — so a hello arriving BEFORE `start()`
+   * is recorded and posts nothing, because `start()` posts immediately on its
+   * own. Under the "accelerator fired" reading that launch would be filed as
+   * `no`, and that is the wrong bucket: the guest's listener WAS attached, so
+   * the host's very next post was heard and the re-post cadence never governed
+   * the wait. Filing it as `no` would push fast, accelerator-capable launches
+   * into the population that exists to isolate cadence-bound ones — biasing the
+   * comparison toward "the cadence change did nothing".
+   *
+   * The question this label answers is "was this launch's `init_wait` governed
+   * by the host's re-post schedule, or short-circuited by the guest announcing
+   * itself?" Once the guest has announced, its listener is attached and the next
+   * post lands, whichever post that is. So ANNOUNCED-AT-ALL is the correct cut,
+   * and it is why this is recorded in the message handler rather than inside
+   * `notifyHello()`.
+   *
+   * Recorded independently of the controller: the handler sets this even when
+   * `controllerRef.current` is null, so a hello landing before the controller
+   * exists still counts. Sticky for the whole launch, like `wasHidden`.
+   */
+  helloSeen: boolean;
 };
 
 /** The optional `timings` object carried on the existing block-render beacon. */
@@ -115,6 +145,21 @@ export type LaunchTimingsPayload = {
   tokenMintMs?: number;
   initWaitMs?: number;
   initPosts?: number;
+  /**
+   * Whether the guest announced `BLOCK_HELLO` during this launch — see
+   * `LaunchMarks.helloSeen` for the exact meaning and why it is not
+   * "the accelerator fired".
+   *
+   * 🔴 ALWAYS PRESENT when a sample is emitted, never omitted for `false`. An
+   * omitted field and a `false` field would be indistinguishable on the wire,
+   * and the server must be able to tell "this client does not send the field"
+   * (labelled `unknown`) from "this launch had no hello" (labelled `no`).
+   * Emitting it unconditionally is what makes that distinction exist — without
+   * it, every launch from a current client that simply saw no hello would be
+   * lumped in with stale browser bundles and the `no` population would be
+   * unusable.
+   */
+  hello: boolean;
 };
 
 export function createLaunchMarks(now: number | null, hidden: boolean): LaunchMarks {
@@ -125,6 +170,7 @@ export function createLaunchMarks(now: number | null, hidden: boolean): LaunchMa
     readyAt: null,
     wasHidden: hidden,
     initPosts: 0,
+    helloSeen: false,
   };
 }
 
@@ -145,6 +191,10 @@ export function resetLaunchMarks(marks: LaunchMarks, now: number | null, hidden:
   // — and unlike a timestamp this one ACCUMULATES, so the error compounds with
   // every navigation rather than being a single wrong delta.
   marks.initPosts = 0;
+  // Resets with the rest: a soft navigation A -> B reuses the component, and a
+  // sticky `true` would label app B's launch with app A's announcement — which
+  // is precisely the mis-stratification this label exists to prevent.
+  marks.helloSeen = false;
 }
 
 /**
@@ -294,6 +344,10 @@ export function computeLaunchTimings(marks: LaunchMarks): LaunchTimingsPayload |
     ...(tokenMintMs !== undefined ? { tokenMintMs } : {}),
     ...(initWaitMs !== undefined ? { initWaitMs } : {}),
     ...(initPosts !== undefined ? { initPosts } : {}),
+    // Unconditional — see `LaunchTimingsPayload.hello`. Gated by the same
+    // hidden-tab / anchor drops as every field above, because a launch we do not
+    // observe must not contribute a label either.
+    hello: marks.helloSeen,
   };
 }
 

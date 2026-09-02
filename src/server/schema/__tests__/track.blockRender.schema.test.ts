@@ -107,3 +107,44 @@ describe('blockRenderSchema — initPosts', () => {
     expect(parsed.timings?.initWaitMs).toBe(700);
   });
 });
+
+/**
+ * 🔴 `hello` — THE STRATIFIER'S WIRE CONTRACT.
+ *
+ * A BOOLEAN, never a string: the server maps it onto its own two label literals,
+ * so nothing a client sends can reach a prom label value. And `.optional()`
+ * rather than `.default(false)`, because absence and `false` mean different
+ * things downstream — absent is a client older than the field (DROP), `false` is
+ * a launch that saw no hello (label `no`). A default here would erase that
+ * distinction at the parse boundary, before the server ever gets to decide.
+ */
+describe('blockRenderSchema — hello', () => {
+  const base = { appBlockId: 'apb_1', blockInstanceId: 'page_apb_1', slotId: 'app.page' };
+
+  it('accepts both booleans alongside the timings', () => {
+    expect(
+      blockRenderSchema.parse({ ...base, timings: { totalMs: 900, hello: true } }).timings?.hello
+    ).toBe(true);
+    expect(
+      blockRenderSchema.parse({ ...base, timings: { totalMs: 900, hello: false } }).timings?.hello
+    ).toBe(false);
+  });
+
+  it('🔴 does NOT default an absent hello to false — absence must survive the parse', () => {
+    const parsed = blockRenderSchema.parse({ ...base, timings: { totalMs: 900 } });
+    expect(parsed.timings).not.toHaveProperty('hello');
+    expect(parsed.timings?.hello).toBeUndefined();
+  });
+
+  it('🔴 a non-boolean hello degrades the timings — it never 400s the beacon', () => {
+    // `.catch(undefined)` swallows the whole object rather than rejecting, so a
+    // client bug costs the timings and NOT the impression the beacon exists for.
+    const parsed = blockRenderSchema.parse({
+      ...base,
+      timings: { totalMs: 900, hello: 'yes' },
+    });
+    expect(parsed.timings).toBeUndefined();
+    expect(parsed.appBlockId).toBe('apb_1');
+    expect(parsed.status).toBe('ok');
+  });
+});

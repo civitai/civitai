@@ -338,6 +338,65 @@ describe('PageBlockHost: launch-mark seed wiring', () => {
     expect(body).not.toContain('BLOCK_READY');
   });
 
+  /**
+   * 🔴 THE STRATIFIER'S WIRING — the one part of `hello` no pure test can reach,
+   * and the part that decides whether the label means what it says.
+   *
+   * `helloSeen` must be set in the BLOCK_HELLO message handler, INDEPENDENTLY of
+   * `controllerRef.current?.notifyHello()`. Recording it inside `notifyHello()`
+   * instead would silently change the label's MEANING from "the guest announced"
+   * to "the accelerator fired an extra post" — `notifyHello()` is a no-op when
+   * the controller has not started, has stopped, or has already handled a hello.
+   * A hello arriving before `start()` would then be filed `hello="no"` despite
+   * the guest's listener being attached, pushing fast accelerator-capable
+   * launches into the cadence-bound population and biasing the whole comparison
+   * toward "the change did nothing".
+   *
+   * Nothing else can catch that: every pure test would stay green, the beacon
+   * would still carry a boolean, and the metric would still have two
+   * populations — just the wrong ones. A source gate is the weaker instrument
+   * and is named as such, for the same reason as the seed gate above: the
+   * behavioural version can only live in the `component` project, which CI does
+   * not run.
+   */
+  function helloHandlerBody(src: string): string {
+    const start = src.indexOf("onMessage<unknown>('BLOCK_HELLO'");
+    if (start === -1) return '';
+    const end = src.indexOf('});', start);
+    if (end === -1) return '';
+    return src.slice(start, end);
+  }
+
+  it('the extractor finds the BLOCK_HELLO handler and not the whole file', () => {
+    // Positive control: an indexOf that silently missed would return '' and make
+    // the real assertion below red for an unrelated reason.
+    const body = helloHandlerBody(fs.readFileSync(HOST, 'utf8'));
+    expect(body.length).toBeGreaterThan(0);
+    expect(body).toContain('notifyHello');
+    expect(body).not.toContain('BLOCK_READY');
+  });
+
+  it('🔴 the host records helloSeen in the handler, not inside notifyHello()', () => {
+    const src = fs.readFileSync(HOST, 'utf8');
+    const body = helloHandlerBody(src);
+    expect(body).toContain('marks.helloSeen = true');
+    // 🔴 …and BEFORE the controller call, so a null controller cannot skip it.
+    // 🔴 Anchored on the CALL EXPRESSION, not the bare word `notifyHello`: the
+    // handler's own comment names it several lines earlier, so a substring
+    // search matches the prose and compares the wrong offsets. (It did — this
+    // assertion was written that way first and failed at 731 vs 245.)
+    const call = 'controllerRef.current?.notifyHello()';
+    expect(body).toContain(call);
+    expect(body.indexOf('marks.helloSeen = true')).toBeLessThan(body.indexOf(call));
+    // 🔴 The mark must NOT be set inside the controller — that would silently
+    // redefine the label as "the accelerator fired".
+    const controllerSrc = fs.readFileSync(
+      path.resolve(__dirname, '../iframeInitController.ts'),
+      'utf8'
+    );
+    expect(controllerSrc).not.toContain('helloSeen');
+  });
+
   it('🔴 the host counts EVERY BLOCK_INIT post, unconditionally', () => {
     const body = sendInitBody(fs.readFileSync(HOST, 'utf8'));
     expect(body).toContain('marks.initPosts += 1');

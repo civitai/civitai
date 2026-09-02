@@ -1256,11 +1256,29 @@ describe('PageBlockHost block render/impression (Analytics Phase 2)', () => {
     );
     expect(typeof body.timings.totalMs).toBe('number');
     expect(body.timings.totalMs).toBeGreaterThan(0);
-    // Never a zero-valued leg on the wire — an unobserved leg is OMITTED.
+    // 🔴 NO STRINGS ON THE WIRE — this is the real invariant, and it is what
+    // keeps a public, client-controlled beacon body from touching prom label
+    // cardinality. Every label this payload feeds is CODE-OWNED: the server maps
+    // named numeric fields onto its own `phase` literals and the `hello` boolean
+    // onto `yes`/`no`, so no value here can ever BE a label value.
+    //
+    // It used to be written as "every field is a number", which was the same
+    // rule while every field happened to be one. `hello` is a BOOLEAN and does
+    // not weaken the guarantee — booleans are a closed two-value domain, mapped
+    // server-side — so the assertion is restated at the level of the property it
+    // was always protecting rather than relaxed to let a boolean through.
     for (const [k, v] of Object.entries(body.timings)) {
-      expect(typeof v, `timings.${k}`).toBe('number');
-      expect(v, `timings.${k}`).toBeGreaterThan(0);
+      expect(typeof v, `timings.${k}`).not.toBe('string');
+      expect(['number', 'boolean'], `timings.${k}`).toContain(typeof v);
+      // Never a zero-valued NUMERIC leg on the wire — an unobserved leg is
+      // OMITTED, because a 0 is indistinguishable from an instant one and drags
+      // every percentile down. Booleans are exempt: `hello: false` is a real
+      // observation, not a missing one, and is emitted deliberately (an omitted
+      // field would be indistinguishable from a client that cannot send it).
+      if (typeof v === 'number') expect(v, `timings.${k}`).toBeGreaterThan(0);
     }
+    // `hello` specifically: always present, always boolean.
+    expect(typeof body.timings.hello, 'timings.hello').toBe('boolean');
     // No isAnon/userId from the client — those are server-derived in the route.
     expect(body).not.toHaveProperty('isAnon');
     expect(body).not.toHaveProperty('userId');
