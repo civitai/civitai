@@ -592,6 +592,11 @@ export const upsertModelVersionHandler = async ({
     const seededLicensingSource =
       input.licensingSourceVersionId === undefined &&
       storedVersion?.licensingSourceVersionId != null;
+    // The `?? null` is unreachable — the condition already established the column is non-null — and is
+    // here only because a `const` boolean does not narrow `storedVersion` for TypeScript. It makes the
+    // line look safe to lift out from under the condition; relaxing that to "seed whenever the client
+    // said nothing" would then write an explicit null and CLEAR the stamp, where without the `??` it
+    // would not compile.
     if (seededLicensingSource)
       input.licensingSourceVersionId = storedVersion?.licensingSourceVersionId ?? null;
 
