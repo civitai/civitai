@@ -32,6 +32,7 @@ const env = vi.hoisted(() => ({
 }));
 vi.mock('~/env/server', () => ({ env }));
 
+import { serverSchema } from '~/env/server-schema';
 import { extModeration } from '~/server/integrations/moderation';
 
 const HIST = 'civitai_app_external_moderation_duration_seconds';
@@ -109,6 +110,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
   env.EXTERNAL_MODERATION_ENDPOINT = 'https://moderation.example/v1/moderations';
   env.EXTERNAL_MODERATION_TOKEN = 'tok';
+  // The MOCK's baseline, not a pin on the schema default: no case that leaves this value alone ever
+  // reaches the deadline, so nothing here depends on the number. The one case that does depend on
+  // it sets it from the derived `CAP_SECONDS` instead.
   env.EXTERNAL_MODERATION_TIMEOUT_MS = 5000;
   env.EXTERNAL_MODERATION_CATEGORIES = undefined;
 });
@@ -269,8 +273,15 @@ describe('moderatePrompt instrumentation — failure paths', () => {
 });
 
 describe('a call cut by the REAL abort deadline, at the production default', () => {
-  /** The production default deadline, in seconds (`EXTERNAL_MODERATION_TIMEOUT_MS` = 5000). */
-  const CAP_SECONDS = 5;
+  /**
+   * The production default deadline, in SECONDS, DERIVED from the schema that defines it
+   * (`EXTERNAL_MODERATION_TIMEOUT_MS`, `.catch(5000)`) rather than written here as a literal —
+   * `.parse(undefined)` yields the same fallback production gets when the env var is absent. This
+   * case sets the env mock FROM this value, so deriving it keeps the deadline actually exercised in
+   * step with the configured default instead of pinning whatever number was true when it was
+   * written. Same derivation, same reasoning, in `external-moderation.metrics.test.ts`.
+   */
+  const CAP_SECONDS = serverSchema.shape.EXTERNAL_MODERATION_TIMEOUT_MS.parse(undefined) / 1000;
 
   /**
    * 🔴 WHAT THIS CASE PINS, AND THE CLAIM IT USED TO PIN AND NO LONGER DOES.
@@ -303,6 +314,15 @@ describe('a call cut by the REAL abort deadline, at the production default', () 
    * FINITE bucket. `external-moderation.metrics.test.ts` pins the bucket SET by hand-feeding numbers
    * and so cannot see any of this; the two files together are the claim.
    *
+   * 🔴 "THE REAL PARKED WALL TIME" IS TWO CLAIMS, AND ONE OF THEM WAS MISSING FOR A ROUND. A floor
+   * at `CAP - 0.05` pins the MAGNITUDE but carries 50 ms of slack, so it cannot see a systematic
+   * bias below that — measured: subtracting 5 ms from every observation left this file 13/13 green
+   * while the assertion's own message claimed it caught exactly that ("a timer started after the
+   * request was issued reads far below this" — it does not; `AbortSignal.timeout` is constructed at
+   * fetch time, so a `start` taken after it still measures ~5000 ms). The floor is kept, its message
+   * is now scoped to what it checks, and a second assertion compares the recorded duration against
+   * this test's OWN `performance.now()` window. See the comments on both.
+   *
    * 🔴 THE WALL TIME IS THE POINT AND IS PAID DELIBERATELY. `AbortSignal.timeout` is a Node-native
    * timer that vitest's fake timers do not drive, so the park is real. Running it at a shortened
    * deadline would exercise a value no deployment uses; at 5000 it drives the configured production
@@ -319,7 +339,14 @@ describe('a call cut by the REAL abort deadline, at the production default', () 
       });
     });
 
+    const t0 = performance.now();
     await expect(extModeration.moderatePrompt('a hanging prompt', 'generate')).rejects.toBeTruthy();
+    // Read the test's OWN clock the instant the call settles — ahead of the registry reads below,
+    // so those stay out of the window. What the window DOES contain beyond the timed region is
+    // enumerated with the assertion that uses it. Both this and the production timer are
+    // `performance.now()` deltas on the same clock, which is what makes that comparison a
+    // subtraction rather than a race between two clocks.
+    const testObservedSeconds = (performance.now() - t0) / 1000;
 
     // 🔴 THE CLASSIFICATION IS THE WHOLE SEPARATOR NOW, so it is pinned from both sides: the
     // timeout series moved, and the error series did not. Asserting only the first would still pass
@@ -341,23 +368,61 @@ describe('a call cut by the REAL abort deadline, at the production default', () 
         'the catch path only, never additionally through a finally'
     ).toBe(1);
 
-    // The recorded duration must be the REAL parked wall time. Expressed as a band around the
-    // deadline rather than a strict `> CAP`: the clock offset documented above means a genuine
-    // fired deadline legitimately measures a fraction of a millisecond short, so `> 5` is the
-    // flaky assertion this case used to carry, in another spelling. The floor is 50 ms of slack —
-    // ~80x the worst offset measured (0.63 ms), and load can only push this number UP (a jammed
-    // event loop makes the abort land late, never early), so the floor is not load-exposed.
+    // The recorded duration must be the REAL parked wall time. That is pinned by TWO assertions
+    // below, which cover different failures and are both needed:
+    //   · MAGNITUDE (`>= CAP - 0.05`) — the call parked for the configured deadline rather than
+    //     returning a placeholder or a constant. Expressed as a band rather than a strict `> CAP`
+    //     because the clock offset documented above means a genuine fired deadline legitimately
+    //     measures a fraction of a millisecond short; `> 5` is the flaky assertion this case used to
+    //     carry, in another spelling.
+    //   · CLOCK CONSISTENCY (`>= testObserved - 0.001`) — the recorder measured the whole window,
+    //     not merely a number of roughly the right size. The magnitude floor's own 50 ms of slack
+    //     makes it blind to any systematic bias below that, which is a real class: a 5 ms bias
+    //     applied to every observation passed this file 13/13 while it carried only the floor.
     const seconds = await histSum('generate', 'timeout');
     expect(
       seconds,
-      `the recorded duration must be the real elapsed wall time of the full ${CAP_SECONDS}s park; ` +
-        'a placeholder, a zero, or a timer started after the request was issued reads far below this'
+      `the recorded duration must have the MAGNITUDE of the full ${CAP_SECONDS}s park — a ` +
+        'placeholder, a zero, or a constant reads far below this. Its 50 ms of slack is what makes ' +
+        'it immune to the clock offset documented above (~80x the worst measured 0.63 ms) and load ' +
+        'can only push the number UP, so it is not load-exposed. That slack is also its LIMIT: a ' +
+        'systematic under-measurement smaller than 50 ms passes here, which is what the ' +
+        'clock-consistency assertion below exists to catch'
     ).toBeGreaterThanOrEqual(CAP_SECONDS - 0.05);
     expect(
       seconds,
       'the duration must be recorded in SECONDS, not milliseconds — a ms-valued observation reads ' +
         `~${CAP_SECONDS * 1000} here and would silently place every call in +Inf`
     ).toBeLessThan(CAP_SECONDS * 2);
+
+    // 🔴 THE GUARD AGAINST A SMALL SYSTEMATIC BIAS, which the magnitude floor above cannot see.
+    // The recorder and this test both read `performance.now()`, so the recorded duration must
+    // account for essentially the WHOLE window this test measured around the call — the only
+    // difference is the handful of statements outside the timed region (the source clamp and the
+    // prompt preparation before `start`; the histogram observe, the span attribute and the promise
+    // unwinding after the last read).
+    //
+    // Measured on this host over 12 runs, that residue was 0.10-0.18 ms. The 1 ms bound is ~5.7x
+    // the worst of those, and it fails on any bias at the milliseconds scale: a timer started a few
+    // ms late, or a constant subtracted from the delta, moves this by exactly that amount.
+    //
+    // ⚠️ UNLIKE THE MAGNITUDE FLOOR ABOVE, THIS ONE IS LOAD-EXPOSED, and in the honest direction: a
+    // jammed event loop delays the post-settle path more than it delays the recorder's own read, so
+    // heavy load grows the residue. If this ever fails while the recorder is demonstrably correct,
+    // widen the bound and say by how much — do not delete it, and do not restate the residue figure
+    // above without re-measuring it.
+    const CLOCK_CONSISTENCY_SLACK_SECONDS = 0.001;
+    expect(
+      seconds,
+      `the recorded duration must cover the whole ${(testObservedSeconds * 1000).toFixed(1)}ms ` +
+        'window this test measured around the call, to within ' +
+        `${CLOCK_CONSISTENCY_SLACK_SECONDS * 1000}ms — it read ` +
+        `${((testObservedSeconds - seconds) * 1000).toFixed(3)}ms short. Both numbers are ` +
+        '`performance.now()` deltas on one clock, so a gap this size is not a race: it is the ' +
+        'recorder systematically under-measuring (a timer started after the request was issued, or ' +
+        'a constant subtracted from the delta). The 50 ms magnitude floor above cannot see a bias ' +
+        'this small'
+    ).toBeGreaterThanOrEqual(testObservedSeconds - CLOCK_CONSISTENCY_SLACK_SECONDS);
 
     // 🔴 THE BUCKET PROPERTY THAT IS SOUND, driven end to end at the real cap: a capped call must
     // land in a FINITE bucket. This one does not depend on any clock — it is why the top finite

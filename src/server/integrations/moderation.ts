@@ -42,8 +42,9 @@ async function moderatePrompt(
   // `moderatePrompt` is EXPORTED, so this argument is reachable from callers `tsc` does not
   // constrain: a value already widened to `string` (a cast, a `JSON.parse`), and the test tree,
   // which `tsconfig.json` excludes. An unbounded label value on a hot-path histogram is a
-  // cardinality incident — prom-client retains every distinct label set in the Node heap forever,
-  // across ~130 scraped pods — and it arrives with a green suite and no error anywhere.
+  // cardinality incident — prom-client retains every distinct label set in the Node heap until the
+  // metric is reset, independently in every scraped pod — and it arrives with a green suite and no
+  // error anywhere.
   const metricSource = clampExternalModerationSource(source);
 
   // Read once, into locals, so the guard below narrows them for the fetch. The fetch now runs inside

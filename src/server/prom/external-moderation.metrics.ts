@@ -36,13 +36,19 @@ import { registerCounterWithLabels, registerHistogram } from '@civitai/telemetry
  * The label is load-bearing rather than decorative. `moderatePrompt` is reached from two very
  * different kinds of caller, and mixing them makes the headline figure meaningless:
  *
- * - `generate`    — the request-path prompt gate reached from `orchestrator.generateFromGraph`.
+ * - `generate`    — the request-path audits inside `orchestrator.generateFromGraph`.
  *                   🔴 That is EVERY `GenerationSurface` EXCEPT `preset` — `onsite`, `api` AND
  *                   `block` (the App Blocks bridge) — because `submitSourceForSurface` maps
  *                   everything but `preset` to `generate`. Do not read a rise here as on-site
  *                   generator latency: App Blocks submissions are in it too. An ABSENT surface
  *                   falls to `other`, never to here. This is the population the metric exists to
- *                   size: the number to divide against that procedure's own wall time.
+ *                   size: the series to divide against that procedure's own wall time.
+ *                   🔴 IT COUNTS CALLS, NOT SUBMISSIONS — the same caveat `preset` carries below,
+ *                   and it applies here too. `generateFromGraph` audits TWICE and BOTH sites derive
+ *                   this label: the prompt gate on `data.prompt`, and the ACE Audio creative-field
+ *                   audit on `musicDescription`/`lyrics`. So a submission carrying both contributes
+ *                   2, an ordinary image submission 1, and one whose prompt is blank 0 — the gates
+ *                   are enumerated in the `preset` note below. Divide with that in mind.
  * - `preset`      — surface `preset`: the SAME `generateFromGraph` code reached through
  *                   `submitPresetImageGen`. Split out for exactly the reason its sibling on the
  *                   submit metric is: a background job blended into `generate` would corrupt the one
@@ -51,27 +57,37 @@ import { registerCounterWithLabels, registerHistogram } from '@civitai/telemetry
  *                   THE OTHER. `submitPresetImageGen` has THREE callers which contribute at
  *                   DIFFERENT rates, and nothing on the series distinguishes them:
  *                     · `orchestrator.router.ts`, the `iterateGenerate` procedure — interactive
- *                       tRPC, 1 call per submission;
+ *                       tRPC, AT MOST 1 call per submission;
  *                     · `comics.router.ts`, via the `submitComicGeneration` helper that several of
- *                       that router's procedures share — interactive tRPC, 1 call per submission;
- *                     · `process-enqueued-comic-panels.ts` — the CRON JOB, up to 2 calls per panel:
- *                       its explicit pre-submit `auditPromptServer` gate, which declares
+ *                       that router's procedures share — interactive tRPC, AT MOST 1 call per
+ *                       submission;
+ *                     · `process-enqueued-comic-panels.ts` — the CRON JOB, AT MOST 2 calls per
+ *                       panel: its explicit pre-submit `auditPromptServer` gate, which declares
  *                       `moderationSource: 'preset'` by hand, plus the one inside
  *                       `generateFromGraph`, which derives the same value from the surface.
- *                   So the series is `interactive + up-to-2×cron`, and it CANNOT be divided by 2.
- *                   The cron's own share is not a fixed 2 either: `auditPromptServer` returns early
- *                   on an empty prompt (`promptAuditing.ts:244`) and a HARD regex block throws at
- *                   `:288`, both BEFORE `moderatePrompt` at `:295` — so a blocked panel contributes
- *                   0 or 1, never 2.
+ *                   🔴 EVERY NUMBER ABOVE IS A CEILING, NOT A RATE — which is the whole reason the
+ *                   series cannot be divided back into submissions. Three things stand between a
+ *                   submission and a classifier call, all of them ahead of `moderatePrompt`
+ *                   (`promptAuditing.ts:295`): `auditPromptServer` returns early on an empty prompt
+ *                   (`:244`), a HARD regex block throws (`:288`), and `generateFromGraph` audits
+ *                   only when `data.prompt` is a non-blank string — which a preset submission need
+ *                   not carry, since `buildPresetGraphInput` omits an empty prompt
+ *                   (`preset-image-gen.service.ts:218`) and `iterateGenerate` hands it
+ *                   `fullPrompt || undefined`. So an empty-prompt interactive submission contributes
+ *                   0, and a cron panel contributes 0, 1 or 2.
+ *                   ⚠️ NOT "a blocked panel contributes 0 or 1, never 2", which is what this comment
+ *                   claimed a round ago. That holds only for a REGEX block. An external flag is
+ *                   raised AFTER the classifier answers (`promptAuditing.ts:301`), so a panel the
+ *                   second gate blocks has already paid both calls and contributes 2.
  *                   (The ACE Audio creative-field audit in `generateFromGraph` derives `preset`
  *                   too, but `buildPresetGraphInput` emits only txt2img/img2img input, so as of
  *                   today it contributes nothing here. A preset graph that ever carried
  *                   `musicDescription`/`lyrics` would add a fourth, again-different rate.)
  *                   🔴 THE TRADE THIS PR MADE, so nobody re-derives it as a bug: before it, the
  *                   cron's explicit gate declared nothing and fell to `other` — which inflated
- *                   `other` and undercounted the cron here, but left `preset` at exactly one
+ *                   `other` and undercounted the cron here, but held `preset` to no more than one
  *                   observation per preset submission. Labelling the gate `preset` fixed the `other`
- *                   inflation and cost `preset` that 1:1 relationship. Read it as a call rate on
+ *                   inflation and cost `preset` that ceiling. Read it as a call rate on
  *                   preset work; to recover a per-panel figure you need a label that separates the
  *                   cron from the two interactive routes, which does not exist today.
  * - `remixAudit`  — the `audit-remix-sources` background job, which calls `moderatePrompt` directly
@@ -110,8 +126,9 @@ export type ExternalModerationSource = 'generate' | 'preset' | 'remixAudit' | 'o
  * widened to `string` (a cast, a `JSON.parse`, an `as never` in a test), and the test tree, which
  * `tsconfig.json` EXCLUDES (`src/**\/__tests__/**`) and where a helper CAN spread. What the clamp
  * buys is that none of those can mint an unbounded label value on a hot-path histogram — prom-client
- * retains every distinct label set in the Node heap forever, across ~130 scraped pods, so one stray
- * string is a cardinality incident with a green suite and no error anywhere.
+ * retains every distinct label set in the Node heap until the metric is reset, independently in
+ * every scraped pod, so one stray string is a cardinality incident with a green suite and no error
+ * anywhere.
  */
 const EXTERNAL_MODERATION_SOURCES: ReadonlySet<string> = new Set<ExternalModerationSource>([
   'generate',
@@ -198,13 +215,19 @@ export function isAbortDeadlineError(e: unknown): boolean {
  * 🔴 WHY `4.5` AND NOT `5` — this set used to carry `5`, exactly the default deadline in seconds.
  * Given the above, a boundary sitting on the deadline buys nothing, and it costs something: it splits
  * the single `outcome="timeout"` mode across `le=5` and `le=7.5` on that same sub-millisecond coin
- * flip, so a dashboard renders one population as two. `4.5` is deliberately OFF-ROUND — configured
- * deadlines are round millisecond values (5000, 3000, 10000), so a non-round second boundary cannot
- * coincide with one — and it sits 500 ms clear of the default cap, ~800x the measured clock offset,
- * so nothing races it. This is a MITIGATION, NOT A GUARANTEE: a deployment that sets 4500 ms puts the
- * boundary back on its own cap, and there only `outcome` remains correct. That is precisely why
- * correctness rests on `outcome` and not on this number. Only this one boundary moved; the rest of
- * the set is unchanged, because nothing else about it was wrong.
+ * flip, so a dashboard renders one population as two. What `4.5` buys is 500 ms of clearance from
+ * the DEFAULT cap — ~800x the measured 0.63 ms clock offset — so at the default nothing races it.
+ *
+ * ⚠️ That clearance is the whole argument, and an earlier version of this comment claimed more than
+ * it: that `4.5` is "OFF-ROUND" and so "cannot coincide" with a configured deadline, because those
+ * are round millisecond values. That is false twice over — 4.5 s IS 4500 ms, a perfectly round
+ * millisecond value, and the next sentence already conceded a deployment can set it. There is no
+ * roundness property here to lean on. This is a MITIGATION FOR THE DEFAULT DEPLOYMENT, NOT A
+ * GUARANTEE FOR ANY: the deadline is an env knob over [100 ms, 60 s], and every boundary in the set
+ * below from `0.1` to `20` inclusive falls inside that range — so a deployment can land its deadline
+ * exactly on any of them, 4500 ms included. Wherever that happens, only `outcome` remains correct —
+ * which is precisely why correctness rests on that label and not on this number. Only this one
+ * boundary moved; the rest of the set is unchanged, because nothing else about it was wrong.
  */
 const EXTERNAL_MODERATION_BUCKETS = [
   0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 4.5, 7.5, 10, 20,
@@ -223,8 +246,10 @@ const durationHistogram = registerHistogram({
     'never by which bucket they land in — a capped call and one that answered a hair under the cap are ' +
     'arbitrarily close in duration, so no bucket edge separates them. Filter on source ' +
     'before attributing a figure to a procedure: source=generate is the orchestrator.generateFromGraph ' +
-    'prompt gate for EVERY surface except preset — onsite, api AND block (App Blocks), so it is not ' +
-    'on-site-only — while remixAudit is batch work with nobody waiting.',
+    'audits (the prompt gate AND the ACE Audio creative fields) for EVERY surface except preset — ' +
+    'onsite, api AND block (App Blocks), so it is not on-site-only — while remixAudit is batch work ' +
+    'with nobody waiting. Every series counts CALLS, not submissions: one submission can audit ' +
+    'twice, and a blocked or blank-prompt one may never reach the classifier at all.',
   labelNames: ['source', 'outcome'] as const,
   buckets: [...EXTERNAL_MODERATION_BUCKETS],
 });

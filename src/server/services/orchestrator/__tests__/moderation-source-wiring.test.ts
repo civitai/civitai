@@ -144,10 +144,12 @@ const EXPECTED_SOURCE_BY_CALL_SITE: Record<CallSiteKey, ExpectedCallSite> = {
     arg: { kind: 'derived' },
   },
   // The comics cron's explicit pre-submit gate. It runs OUTSIDE the tRPC request path and is the
-  // second of the two external-moderation calls this job makes per panel — the other one is the
-  // derived site above, reached through `submitPresetImageGen`. A literal is correct here precisely
-  // because there is no request and therefore no surface to derive from; leaving it absent (which is
-  // what shipped before round 1) made `preset` undercount this cron by half.
+  // FIRST of the two places this job can reach the external classifier per panel — the other is the
+  // derived site above, reached through `submitPresetImageGen`. (Two PLACES, not two calls: a panel
+  // contributes 0, 1 or 2 observations depending on which gate short-circuits, as the metric's own
+  // doc comment sets out.) A literal is correct here precisely because there is no request and
+  // therefore no surface to derive from; leaving it absent (which is what shipped before round 1)
+  // sent this gate's observations to `other` instead of `preset`.
   'src/server/jobs/process-enqueued-comic-panels.ts::processEnqueuedComicPanelsJob': {
     sites: 1,
     siteNote: 'the explicit pre-submit gate, before `submitPresetImageGen`',

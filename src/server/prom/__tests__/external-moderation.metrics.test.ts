@@ -2,9 +2,14 @@
  * Contract tests for the external prompt-moderation metric family.
  *
  * These pin the three properties that make the family usable rather than merely present:
- *   1. the `source` label is CLOSED at runtime, not just in the type system — an options object
- *      built by spread can carry any string, and an unbounded label on a hot-path histogram is a
- *      cardinality incident, not a cosmetic bug;
+ *   1. the `source` label is CLOSED at runtime, not just in the type system. ⚠️ NOT because "an
+ *      options object built by spread can carry any string" — that rationale was fiction and is
+ *      retracted in full at `~/server/prom/external-moderation.metrics`: every production
+ *      `auditPromptServer` call site builds an inline object literal, so excess-property checking
+ *      applies to all of them. The real reason is that `moderatePrompt` is EXPORTED, so its second
+ *      argument is reachable from callers `tsc` does not constrain — a value already widened to
+ *      `string` (a cast, a `JSON.parse`), and the test tree, which `tsconfig.json` excludes. An
+ *      unbounded label on a hot-path histogram is a cardinality incident, not a cosmetic bug;
  *   2. the BUCKET BOUNDARIES keep the deadline region readable — a finite boundary sits ABOVE the
  *      `EXTERNAL_MODERATION_TIMEOUT_MS` cap so a capped call is not swallowed by `+Inf`, and NO
  *      finite boundary sits ON the default cap, which would split the one `outcome=timeout`
@@ -22,12 +27,32 @@
 import promClient from 'prom-client';
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { serverSchema } from '~/env/server-schema';
 import {
   clampExternalModerationSource,
   isAbortDeadlineError,
   observeExternalModeration,
   recordExternalModerationSkipped,
 } from '~/server/prom/external-moderation.metrics';
+
+/**
+ * The default `EXTERNAL_MODERATION_TIMEOUT_MS` deadline, in SECONDS, DERIVED from the schema that
+ * defines it rather than written here as a literal.
+ *
+ * 🔴 WHY THIS IS NOT A `const CAP_SECONDS = 5`. The bucket guards below forbid a finite boundary on
+ * the default deadline. Against a literal, that guard only ever forbids the number 5 — so if the
+ * schema default became 3000, `src/env/__tests__/server-schema-moderation-timeout.test.ts` would go
+ * red and be updated while this guard stayed green, and `3` IS a live boundary in
+ * `EXTERNAL_MODERATION_BUCKETS`. The guard would then be passing while the exact split-timeout
+ * defect it exists to prevent was reinstated. MEASURED: with the schema default temporarily set to
+ * 3000, this derivation fails naming `[3]`. (The old literal `5` would stay green there by
+ * inspection rather than by measurement — `EXTERNAL_MODERATION_BUCKETS` contains no `5`.)
+ *
+ * `.parse(undefined)` yields the `.catch(5000)` fallback — the same value production gets when the
+ * env var is absent, which is what "the default deadline" means, and the same accessor that
+ * schema test already uses.
+ */
+const CAP_SECONDS = serverSchema.shape.EXTERNAL_MODERATION_TIMEOUT_MS.parse(undefined) / 1000;
 
 const HIST = 'civitai_app_external_moderation_duration_seconds';
 const SKIPPED = 'civitai_app_external_moderation_skipped_total';
@@ -87,7 +112,7 @@ describe('clampExternalModerationSource', () => {
     ['an unknown string', 'generateFromGraph'],
     ['a near-miss of a member', 'Generate'],
     ['an empty string', ''],
-    // The shape a spread-built options object produces: a value from somewhere else entirely.
+    // The shape a value widened to `string` produces: something from somewhere else entirely.
     ['a user-supplied-looking value', 'prompt: a cat'],
   ])('clamps %s to other', (_label, value) => {
     expect(clampExternalModerationSource(value)).toBe('other');
@@ -198,9 +223,6 @@ describe('observeExternalModeration', () => {
  * claim; keep them together if either moves.
  */
 describe('the bucket SET keeps the EXTERNAL_MODERATION_TIMEOUT_MS deadline region readable', () => {
-  // The default deadline, in seconds (env: EXTERNAL_MODERATION_TIMEOUT_MS, default 5000).
-  const CAP_SECONDS = 5;
-
   /** The finite boundaries actually registered, read back off the REGISTRY that gets scraped. */
   async function finiteBoundaries() {
     // prom-client only emits bucket samples for label sets that have an observation, so materialise
@@ -226,10 +248,11 @@ describe('the bucket SET keeps the EXTERNAL_MODERATION_TIMEOUT_MS deadline regio
       boundaries.filter((b) => b === CAP_SECONDS),
       `a boundary sitting exactly on the ${CAP_SECONDS}s default deadline splits the single ` +
         'outcome=timeout population across two buckets by a sub-millisecond clock race, so a ' +
-        'dashboard renders one mode as two. Boundaries near the cap are deliberately OFF-ROUND ' +
-        '(4.5, 7.5) because configured deadlines are round millisecond values. This is a ' +
-        'dashboard-readability guard ONLY: it cannot hold for an arbitrary env-tuned deadline, and ' +
-        'nothing about CLASSIFYING a capped call depends on it — that is the outcome label.'
+        'dashboard renders one mode as two. The boundaries around the cap (4.5, 7.5) are placed to ' +
+        'CLEAR the default deadline, not because any value is intrinsically safe — 4.5s is 4500ms, ' +
+        'which a deployment can configure. This is a dashboard-readability guard ONLY: it cannot ' +
+        'hold for an arbitrary env-tuned deadline, and nothing about CLASSIFYING a capped call ' +
+        'depends on it — that is the outcome label.'
     ).toEqual([]);
   });
 
