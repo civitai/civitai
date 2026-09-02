@@ -77,7 +77,7 @@ describe('getMultipliersForUser floors the value it pays with', () => {
 
   it('still multiplies a floored base by an active bonus event', async () => {
     // This is the only cover for the line the fix rewrote: drop `* globalRewardsBonus` and it
-    // prints `expected 4 to be 8`. It does NOT separate a floor-at-0 from a floor-at-1 — clamp(4)
+    // prints `expected 4 to be 20`. It does NOT separate a floor-at-0 from a floor-at-1 — clamp(4)
     // is 4 under either — so do not read it as doing that.
     cached(4);
     // 200/10 = 20, ABOVE MAX_GLOBAL_BONUS. At the 20 this used to carry, the raw value was already
@@ -100,6 +100,11 @@ describe('getMultipliersForUser floors the value it pays with', () => {
   // as an idempotency marker, so a retry can never repair it. A 0 means "earns nothing" on the
   // rewards side and nothing at all on the purchases side. That path needs its own floor, decided
   // on its own terms. Without this test the reverted regression comes back green.
+  //
+  // Closing condition, so this does not become a wall: when the purchases path gets its own floor —
+  // likely at 1, which delivers what was paid for — this test is UPDATED, not deleted. A floor at 0
+  // is the one that pays nothing. Note also that every value able to witness "not floored" is a
+  // value that must never reach the payment path, so the assertions below pin a hazard on purpose.
   it('does NOT floor purchasesMultiplier — that is a different money path', async () => {
     h.fetch.mockResolvedValue({
       [USER]: {
@@ -122,6 +127,39 @@ describe('getMultipliersForUser floors the value it pays with', () => {
     });
 
     expect((await getMultipliersForUser(USER)).purchasesMultiplier).toBeNaN();
+  });
+
+  it('does not let a bonus event make rewards WORSE, or stop them entirely', async () => {
+    // The guard this file's header cites is three checks, and the fixture above only reaches the
+    // ceiling. These are the other two, and both are silent site-wide money events:
+    //   raw < 1  — every reward on the site halved by a "bonus" event
+    //   NaN      — every amount NaN, which sendAward's own `> 0` filter drops: paying just stops
+    cached(4);
+    h.getActiveRewardsBonusEvent.mockResolvedValue({ multiplier: 5 } as any);
+    expect((await getMultipliersForUser(USER)).globalRewardsBonus).toBe(1);
+
+    h.getActiveRewardsBonusEvent.mockResolvedValue({ multiplier: NaN } as any);
+    expect((await getMultipliersForUser(USER)).globalRewardsBonus).toBe(1);
+  });
+
+  it('can return a NON-FINITE multiplier built from two finite floored factors', async () => {
+    // 🔴 THE REASON THE SPENDING SITES CLAMP AT ALL. This function floors the BASE and then
+    // multiplies; the product is never re-clamped. So "getMultipliersForUser already floors" is
+    // true of its input and false of its output, and no read-side clamp can close it — the overflow
+    // happens after. `String(Infinity)` reaching the Lua cap script is `tonumber` nil, which throws
+    // out of `redis.eval` and into the user's mutation.
+    //
+    // Two earlier attempts to write down why the spending sites clamp were both wrong (a
+    // `multiplierRaw` audit trail; a pending row read back by `process` — which cannot happen,
+    // `isProcessable = !isOnDemand`). This is the one that holds, so it is asserted, not narrated.
+    cached(1e308);
+    h.getActiveRewardsBonusEvent.mockResolvedValue({ multiplier: 50 } as any);
+
+    const result = await getMultipliersForUser(USER);
+
+    expect(result.baseRewardsMultiplier).toBe(1e308);
+    expect(result.globalRewardsBonus).toBe(5);
+    expect(Number.isFinite(result.rewardsMultiplier)).toBe(false);
   });
 
   it('leaves a sub-1 multiplier alone', async () => {

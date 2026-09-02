@@ -121,7 +121,7 @@ describe('foldUserMultipliers', () => {
       userId: 10,
       rewardsIneligible: false,
       rewardsMultiplier: -1,
-      purchasesMultiplier: 1,
+      purchasesMultiplier: -3,
     };
 
     const result = foldUserMultipliers([typo]);
@@ -129,6 +129,11 @@ describe('foldUserMultipliers', () => {
     // 0, not 1: a zero already means "earns nothing" everywhere downstream, and flooring to 1 would
     // invent a payout out of a typo.
     expect(result[10].rewardsMultiplier).toBe(0);
+    // 🔴 And purchases is NOT floored, asserted at the producer where the symmetry edit is tempting
+    // — the comment forbidding it is two lines from the code, and the only other test covering this
+    // decision lives in a file that mocks this function away entirely. A 0 here credits a completed
+    // Buzz purchase with nothing; see buzz.service.multiplier-floor.test.ts for the mechanism.
+    expect(result[10].purchasesMultiplier).toBe(-3);
   });
 
   // The floor is applied at TWO places, both on the rewards side: the first-row assignment and the

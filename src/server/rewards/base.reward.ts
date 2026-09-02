@@ -241,11 +241,13 @@ export function createBuzzEvent<T>({
 
     const hashField = `${key.toUserId}:${type}`;
     const cacheKey = String(hashifyObject(key));
-    // Floored where the value is SPENT, not where `apply` reads it. `getMultipliersForUser` already
-    // floors, so this covers what does not come through it: a `pending` row written before that
-    // shipped and read back by `process`, and any future writer of one. Flooring at the read
-    // instead normalises the value before `toClickhouseBuzzEvent` sees it, which is how the first
-    // revision of this deleted seven `multiplierRaw` assertions in base.reward.forid.test.ts.
+    // Floored where the value is SPENT. `getMultipliersForUser` floors its BASE and then multiplies
+    // by the bonus without re-clamping the product, so it can return a non-finite value built from
+    // two finite floored factors — no read-side clamp closes that, because the overflow happens
+    // after it. See `can return a NON-FINITE multiplier` in buzz.service.multiplier-floor.test.ts.
+    //
+    // Flooring at the read instead normalises the value before `toClickhouseBuzzEvent` sees it and
+    // destroys the `multiplierRaw` audit fidelity — see base.reward.forid.test.ts.
     const effective = clampRewardMultiplier(multiplier);
     const effectiveAward = Math.ceil(config.awardAmount * effective);
     // An uncapped reward needs a finite ceiling: `tonumber('Infinity')` is nil in

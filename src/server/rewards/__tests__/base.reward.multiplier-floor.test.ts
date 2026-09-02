@@ -8,9 +8,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // `sendAward` (which pays `awardAmount * multiplier`). `toClickhouseBuzzEvent`'s clamp reaches
 // neither — it clamps a copy on its way to ClickHouse and leaves the event alone.
 //
-// These mock `getMultipliersForUser`, so they see values that a caller going through the real one
-// would already have had floored. That is the point: the clamps here are what covers a value that
-// did NOT come from it — a `pending` row written before this shipped, read back by `process`.
+// These mock `getMultipliersForUser`. The real one floors its BASE and then multiplies by the
+// bonus without re-clamping the product, so it can hand these sites a non-finite value built from
+// two finite floored factors — pinned by `can return a NON-FINITE multiplier` in
+// buzz.service.multiplier-floor.test.ts. That is what the clamps here cover.
 //
 // The assertions below read the ARGV strings the Lua actually receives and the amount
 // `createBuzzTransactionMany` is actually asked for, because those are the two values that decide
@@ -226,7 +227,9 @@ describe('clampRewardMultiplier', () => {
     // Numbers only, deliberately: on a quoted decimal the two DISAGREE and are meant to —
     // `clampRewardMultiplier('4.00')` is 4 and `clampBuzzEventMultiplier('4.00')` is 1, because the
     // shared helper's callers coerce for it. Pinned in the test above, not folded in here.
-    for (const value of [-5, -Infinity, NaN, Infinity, 0, 0.5, 4]) {
+    const values = [-5, -Infinity, NaN, Infinity, 0, 0.5, 4];
+    expect(values).toHaveLength(7);
+    for (const value of values) {
       expect(clampRewardMultiplier(value), `disagreed on ${String(value)}`).toBe(
         clampBuzzEventMultiplier(value)
       );
