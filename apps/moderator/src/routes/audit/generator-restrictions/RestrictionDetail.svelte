@@ -17,12 +17,14 @@
     restriction,
     civitaiUrl,
     canBan,
+    canViewGenerations,
     onStart,
     onDone,
   }: {
     restriction: RestrictionRow;
     civitaiUrl: string;
     canBan: boolean;
+    canViewGenerations: boolean;
     /** Runs at SUBMIT time, before the reload replaces the list the successor is chosen from. */
     onStart: () => void;
     /** Selects that successor once the ruling has landed. */
@@ -132,7 +134,7 @@
 
   <!-- The triggers say what one prompt tripped; this says whether the account has a history of it. -->
   <div class="mb-3">
-    <UserWorkflowsPanel userId={restriction.userId} />
+    <UserWorkflowsPanel userId={restriction.userId} canView={canViewGenerations} />
   </div>
 
   <div class="mb-2 flex items-center gap-2">

@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
   import { browser } from '$app/environment';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import { dateTime, num } from '$lib/format';
+  import { denied } from '$lib/permissions';
   import type { GeneratedWorkflowPage, WorkflowSource } from '$lib/server/user-workflows.service';
 
   const SOURCES: { value: WorkflowSource; label: string }[] = [
@@ -18,7 +19,21 @@
     // Collapsed by default: the orchestrator round trip costs a page load, and most rulings do not need
     // it. A page whose whole purpose is this panel passes `open`.
     open = false,
-  }: { userId: number; title?: string; open?: boolean } = $props();
+    canView,
+    headerAction,
+  }: {
+    userId: number;
+    title?: string;
+    open?: boolean;
+    /** `user.generations.view`, resolved by the page's load. Decided server-side so an unentitled
+     *  moderator gets the refusal rather than an empty grid reading as an account that generated
+     *  nothing — the endpoint refuses either way. */
+    canView: boolean;
+    /** What a moderator may DO about the account, beside Hide/Show. A snippet, not a form built here:
+     *  the two mounting pages post to different actions with different subject keys (`userId` vs
+     *  `userRestrictionId`). */
+    headerAction?: Snippet;
+  } = $props();
 
   // `null` while the toggle has not been touched, so a change to `open` still reaches the panel rather
   // than being frozen at whatever the prop was on the first render.
@@ -54,7 +69,7 @@
   });
 
   const page = $derived(
-    browser && shown
+    browser && shown && canView
       ? fetch(
           `/api/user-workflows/${userId}?take=20&source=${source}${
             cursors[index] ? `&cursor=${encodeURIComponent(cursors[index])}` : ''
@@ -76,16 +91,29 @@
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-4">
   <div class="flex flex-wrap items-center justify-between gap-2">
     <h3 class="text-sm font-semibold text-white">{title}</h3>
-    <Button size="xs" variant="outline" onclick={() => (toggled = !shown)}>
-      {shown ? 'Hide' : 'Show'}
-    </Button>
+    {#if canView}
+      {@render headerAction?.()}
+      <!-- The toggle exists to DEFER the orchestrator round trip, so it is offered only where the
+           caller left the panel closed. A page that passes `open` has already paid for the query, and
+           the button there only hides what it asked to see. -->
+      {#if !open}
+        <Button size="xs" variant="outline" onclick={() => (toggled = !shown)}>
+          {shown ? 'Hide' : 'Show'}
+        </Button>
+      {/if}
+    {/if}
   </div>
-  <p class="mt-1 text-xs text-dark-2">
-    What this account has successfully generated, newest first — read from the orchestrator, so it is
-    not limited to what was published to the site.
-  </p>
 
-  {#if shown}
+  {#if !canView}
+    <p class="mt-3 text-sm text-dark-2">{denied('user.generations.view')}</p>
+  {:else}
+    <p class="mt-1 text-xs text-dark-2">
+      What this account has successfully generated, newest first — read from the orchestrator, so it is
+      not limited to what was published to the site.
+    </p>
+  {/if}
+
+  {#if canView && shown}
     <Tabs
       value={source}
       onValueChange={(v) => v && (source = v as WorkflowSource)}
@@ -120,7 +148,7 @@
             {#each result.items as workflow (workflow.id)}
               <li class="rounded-md border border-dark-4 p-3">
                 <div class="flex flex-wrap items-center gap-2 text-xs text-dark-2">
-                  <span>{dateTime(workflow.createdAt ? new Date(workflow.createdAt) : null)}</span>
+                  <span>{dateTime(workflow.createdAt)}</span>
                   {#if workflow.workflow}
                     <Badge variant="secondary">{workflow.workflow}</Badge>
                   {/if}

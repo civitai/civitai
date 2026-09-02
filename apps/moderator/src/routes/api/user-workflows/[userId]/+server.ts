@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { requireIdParam } from '$lib/server/api-guard';
+import { requireIdParam, requirePermission } from '$lib/server/api-guard';
 import { getUserGeneratedWorkflows, isWorkflowSource } from '$lib/server/user-workflows.service';
 
 // The pages that mount the panel. This read is wider than any page's own content — an account's full
@@ -11,6 +11,7 @@ const PAGES = ['/audit/generator-restrictions', '/retool/user-lookup'];
 
 export const GET: RequestHandler = async ({ params, url, locals }) => {
   const userId = requireIdParam(locals, params.userId, PAGES, 'userId');
+  requirePermission(locals, 'user.generations.view');
   const cursor = url.searchParams.get('cursor');
   // An absent `take` must stay absent, not become `Number(null)` === 0 — the service clamps to a
   // minimum of 1, so an omitted param would read as an account that generated almost nothing.

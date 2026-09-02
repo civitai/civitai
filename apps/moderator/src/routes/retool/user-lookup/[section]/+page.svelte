@@ -32,6 +32,7 @@
   import TimedMutesPanel from '../TimedMutesPanel.svelte';
   import TrainingsPanel from '../TrainingsPanel.svelte';
   import UserWorkflowsPanel from '$lib/components/UserWorkflowsPanel.svelte';
+  import GenerationBanAction from '../GenerationBanAction.svelte';
 
   let { data }: { data: PageData } = $props();
 
@@ -132,7 +133,22 @@
            the media — which is why the media card does not scroll itself. -->
       <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
         <div class="min-w-0 flex-1">
-          <UserWorkflowsPanel userId={result.identity.id} title="Generated media" open />
+          {#snippet banAccount()}
+            <GenerationBanAction
+              userId={result.identity.id}
+              username={result.identity.username}
+              onSuccess={() => (version += 1)}
+            />
+          {/snippet}
+          <UserWorkflowsPanel
+            userId={result.identity.id}
+            title="Generated media"
+            open
+            canView={!!data.grants['user.generations.view']}
+            headerAction={data.grants['user.ban'] && !result.identity.bannedAt
+              ? banAccount
+              : undefined}
+          />
         </div>
         <div class="xl:sticky xl:top-4 xl:w-96 xl:shrink-0">
           <GenerationPanel {signals} userId={result.identity.id} civitaiUrl={data.civitaiUrl} />

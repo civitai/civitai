@@ -41,6 +41,9 @@ export const PERMISSIONS = [
   { id: 'user.ban', label: 'Ban or unban an account' },
   { id: 'user.purge', label: 'Purge an account’s content (irreversible)' },
   { id: 'user.comments.bulk', label: 'Bulk delete or ToS an account’s comments' },
+  // The widest read in the app: everything an account generated on-site and in Comfy Cloud, published
+  // or not, prompts included. Reaching User Lookup or the restriction queue is not consent to that.
+  { id: 'user.generations.view', label: 'View a user’s generated media' },
   { id: 'bulk-ban.execute', label: 'Run a mass ban' },
   // Reaching a review queue is an investigation right; banning the account it belongs to is not. Held
   // apart so a role can be given the Audit queues without the account-ending half of them.

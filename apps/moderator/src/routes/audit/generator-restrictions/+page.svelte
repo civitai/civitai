@@ -79,6 +79,7 @@
           restriction={data.current}
           civitaiUrl={data.civitaiUrl}
           canBan={!!data.grants['audit.ban.execute']}
+          canViewGenerations={!!data.grants['user.generations.view']}
           onStart={rememberSuccessor}
           onDone={advance}
         />
