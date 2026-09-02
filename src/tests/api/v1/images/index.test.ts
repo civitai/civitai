@@ -4,25 +4,20 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 // 1. Hoisted mocks for API and Service dependencies
 const {
   mockGetAllImages,
-  mockGetAllImagesIndex,
   mockGetImagesFromFeedSearch,
   mockImageMetaCacheFetch,
   mockGetServerAuthSession,
   mockGetFeatureFlags,
-  mockGetFliptVariant,
 } = vi.hoisted(() => ({
   mockGetAllImages: vi.fn(),
-  mockGetAllImagesIndex: vi.fn(),
   mockGetImagesFromFeedSearch: vi.fn(),
   mockImageMetaCacheFetch: vi.fn(),
   mockGetServerAuthSession: vi.fn(),
   mockGetFeatureFlags: vi.fn(),
-  mockGetFliptVariant: vi.fn(),
 }));
 
 vi.mock('~/server/services/image.service', () => ({
   getAllImages: mockGetAllImages,
-  getAllImagesIndex: mockGetAllImagesIndex,
   getImagesFromFeedSearch: mockGetImagesFromFeedSearch,
 }));
 
@@ -39,11 +34,6 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
 vi.mock('~/server/services/feature-flags.service', () => ({
   getFeatureFlags: mockGetFeatureFlags,
   buildFliptContext: vi.fn(),
-}));
-
-vi.mock('~/server/flipt/client', () => ({
-  FLIPT_FEATURE_FLAGS: {},
-  getFliptVariant: mockGetFliptVariant,
 }));
 
 vi.mock('~/client-utils/edge-url', () => ({
@@ -187,9 +177,7 @@ describe('/api/v1/images API Handler', () => {
     vi.clearAllMocks();
     mockGetServerAuthSession.mockResolvedValue(null);
     mockGetFeatureFlags.mockReturnValue({ datapacketRead: false, canViewNsfw: false });
-    mockGetFliptVariant.mockResolvedValue('off'); // Default to Meili feed search
     mockGetImagesFromFeedSearch.mockResolvedValue(mockImagesResult);
-    mockGetAllImagesIndex.mockResolvedValue(mockImagesResult);
     mockGetAllImages.mockResolvedValue(mockImagesResult);
     mockImageMetaCacheFetch.mockResolvedValue(mockMetaResult);
   });
@@ -435,7 +423,6 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
     vi.clearAllMocks();
     mockGetServerAuthSession.mockResolvedValue(null);
     mockGetFeatureFlags.mockReturnValue({ datapacketRead: false, canViewNsfw: false });
-    mockGetFliptVariant.mockResolvedValue('off'); // route to getImagesFromFeedSearch
     mockImageMetaCacheFetch.mockResolvedValue({});
   });
 
