@@ -93,13 +93,21 @@ const FIELD_MODULE = 'components/Apps/ReasonGatedActionModal.tsx';
 const TABLE_MODULE = 'components/Apps/AppListingsModerationTable.tsx';
 
 /**
- * The unified store listing DETAIL body — the second mount. It reaches the composer from
- * the `⋮` overflow menu's moderator section on `/apps/store-preview/<slug>`, where the
- * listing is `approved` by construction (the read is approved-only). It has no
- * `openAction` dispatch of its own: the menu item calls the modal's disclosure directly,
- * so the routing assertions below do not apply to it and are not asserted of it.
+ * The SHARED `⋮` overflow menu — the second mount, and now the ONLY one outside the mod
+ * table. It reaches the composer from the menu's moderator section, which both the store
+ * CARD and the listing DETAIL body render; on both the listing is `approved` by
+ * construction (each read is approved-only). It has no `openAction` dispatch of its own:
+ * the menu item calls the modal's disclosure directly, so the routing assertions below do
+ * not apply to it and are not asserted of it.
+ *
+ * 🔴 THIS USED TO BE `AppListingDetailBody.tsx`, AND THE MOVE IS THE POINT OF THE LEDGER
+ * WORKING. When the menu was extracted so the card could render it too, the composer's
+ * mount moved with it — a ledger keyed on the old file would have failed LOUDLY (mount
+ * set shrank AND grew), which is exactly the signal it exists to give. It is re-pointed
+ * here rather than widened to "either file": there is one menu now, and a second copy of
+ * it is the thing the extraction removed.
  */
-const DETAIL_MODULE = 'components/Apps/AppListingDetailBody.tsx';
+const MENU_MODULE = 'components/Apps/AppListingActionsMenu.tsx';
 
 /**
  * Every PRODUCTION site that mounts `MessageAppOwnerModal`. Adding a third surface means
@@ -107,7 +115,7 @@ const DETAIL_MODULE = 'components/Apps/AppListingDetailBody.tsx';
  * SHRINKS (the surface goes dark again, which is what happened once already) and when it
  * GROWS (a surface appears that nobody wired to the same rules).
  */
-const MOUNT_SITES = [TABLE_MODULE, DETAIL_MODULE] as const;
+const MOUNT_SITES = [TABLE_MODULE, MENU_MODULE] as const;
 
 const SCHEMA_IMPORT = '~/server/schema/blocks/app-moderator-message.schema';
 
@@ -551,20 +559,25 @@ describe('the composer takes no owner from its caller', () => {
     }
     // Positive control: the mount sites DO still build the props they are supposed to.
     expect(codeOf(TABLE_MODULE)).toMatch(/appListingId:\s*messageRow\.id/);
-    expect(codeOf(DETAIL_MODULE)).toMatch(/appListingId:\s*detail\.id/);
+    expect(codeOf(MENU_MODULE)).toMatch(/appListingId:\s*listing\.id/);
   });
 
   /**
-   * 🔴 THE DETAIL BODY FEEDS THE LISTING ID, NEVER THE SLUG — the same transposition the
-   * table's assertion guards, in a file where it is MORE reachable: `detail.id` and
-   * `detail.slug` are adjacent in the one object literal the menu hands the composer, and
-   * the neighbouring `slug` there is a legitimate prop. A slug would come back NOT_FOUND
-   * from `messageAppOwner`, which keys on `apl_<ULID>`.
+   * 🔴 THE MENU FEEDS THE LISTING ID, NEVER THE SLUG — the same transposition the
+   * table's assertion guards, in a file where it is MORE reachable: `listing.id` and
+   * `listing.slug` are adjacent in the one object literal the menu hands the composer,
+   * and the neighbouring `slug` there is a legitimate prop. A slug would come back
+   * NOT_FOUND from `messageAppOwner`, which keys on `apl_<ULID>`.
+   *
+   * 🔴 IT NOW GUARDS BOTH SURFACES AT ONCE, which is a strengthening rather than a
+   * relocation: the card and the detail body render this one menu, so a transposition
+   * here would have been two separate defects under the old duplicated arrangement and
+   * needed two separate assertions to catch.
    */
-  it('the detail body feeds the composer the listing ID, never the slug', () => {
-    const body = codeOf(DETAIL_MODULE);
-    expect(body).toMatch(/appListingId:\s*detail\.id/);
-    expect(body).not.toMatch(/appListingId:\s*detail\.slug/);
+  it('the shared menu feeds the composer the listing ID, never the slug', () => {
+    const menu = codeOf(MENU_MODULE);
+    expect(menu).toMatch(/appListingId:\s*listing\.id/);
+    expect(menu).not.toMatch(/appListingId:\s*listing\.slug/);
   });
 
   /**

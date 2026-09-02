@@ -40,12 +40,18 @@ import { describe, expect, it } from 'vitest';
  */
 
 const SRC = path.resolve(__dirname, '../../..');
-const BODY_MODULE = 'components/Apps/AppListingDetailBody.tsx';
+/**
+ * 🔴 RE-POINTED FROM `AppListingDetailBody.tsx` TO THE SHARED MENU. The `⋮` menu was
+ * extracted so the store CARD renders the same one; the rule, the dropdown and all four
+ * modals moved with it. Re-pointing rather than widening to "either file" is deliberate:
+ * there is exactly ONE dropdown in the codebase now, which is what the extractor below
+ * asserts, and a second one appearing anywhere is the regression this whole file guards.
+ */
+const BODY_MODULE = 'components/Apps/AppListingActionsMenu.tsx';
 
 /**
- * Every modal the detail body's overflow menu opens. All four, not just the two this
- * change adds: the rule is the same for all of them, and the two pre-existing ones were
- * the mutants measured above as uncaught.
+ * Every modal the overflow menu opens. All four: the rule is the same for all of them,
+ * and two of them were the mutants measured above as uncaught.
  */
 const MENU_MODALS = [
   'ReviewListingModal',
