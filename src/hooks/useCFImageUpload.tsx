@@ -86,6 +86,13 @@ export const useCFImageUpload: UseCFImageUpload = () => {
 
     const { id, uploadURL: url } = data;
 
+    // The relay fallback (below) mints its OWN key server-side, so the id this call
+    // resolves with is not necessarily the one the presign handed us. Everything that
+    // reports an id — the tracked file's `url`, the return value — reads this, not the
+    // `id` const, so a fallback upload is reported under the key that actually holds
+    // the bytes.
+    let resolvedId = id;
+
     const xhr = new XMLHttpRequest();
     setFiles((x) => [
       ...x,
@@ -93,7 +100,7 @@ export const useCFImageUpload: UseCFImageUpload = () => {
         ...pendingTrackedFile,
         ...imageData,
         abort: xhr.abort.bind(xhr),
-        url: id,
+        url: resolvedId,
       },
     ]);
 
@@ -104,10 +111,32 @@ export const useCFImageUpload: UseCFImageUpload = () => {
           return {
             ...y,
             ...trackedFile,
-            url: id,
+            url: resolvedId,
           } as TrackedFile;
         })
       );
+    }
+
+    /**
+     * Relay the file through our own origin when the direct PUT cannot reach the
+     * storage host at all.
+     *
+     * Scoped deliberately to the `error` event, which is the network-layer failure —
+     * DNS, TLS, connection refused. A non-2xx `loadend` is NOT retried here: that
+     * means we reached the storage backend and it rejected us, and replaying the same
+     * bytes through a second route would mask a real fault rather than route around
+     * an unreachable host.
+     */
+    async function relayUpload() {
+      const relayRes = await fetch('/api/v1/image-upload/relay', {
+        method: 'POST',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      if (!relayRes.ok) throw new Error(`Upload fallback failed (status ${relayRes.status})`);
+      const relayData: { id?: string; error?: unknown } = await relayRes.json();
+      if (!relayData.id) throw new Error('Upload fallback returned no id');
+      return relayData.id;
     }
 
     await new Promise((resolve, reject) => {
@@ -144,8 +173,20 @@ export const useCFImageUpload: UseCFImageUpload = () => {
         resolve(success);
       });
       xhr.addEventListener('error', () => {
-        updateFile({ status: 'error' });
-        reject(new Error(`Upload failed (status ${xhr.status})`));
+        // Direct-to-storage PUT could not reach the host. Try our own origin, which
+        // the browser has demonstrably resolved — it just fetched the presign from it.
+        relayUpload()
+          .then((relayedId) => {
+            resolvedId = relayedId;
+            updateFile({ status: 'success' });
+            resolve(true);
+          })
+          .catch(() => {
+            // Report the ORIGINAL failure. The fallback is a recovery attempt, and
+            // surfacing its error instead would rename the user's problem.
+            updateFile({ status: 'error' });
+            reject(new Error(`Upload failed (status ${xhr.status})`));
+          });
       });
       xhr.addEventListener('abort', () => {
         updateFile({ status: 'aborted' });
@@ -155,7 +196,12 @@ export const useCFImageUpload: UseCFImageUpload = () => {
       xhr.send(file);
     });
 
-    return { url: url.split('?')[0], id, objectUrl: imageData.objectUrl, type: imageData.type };
+    return {
+      url: url.split('?')[0],
+      id: resolvedId,
+      objectUrl: imageData.objectUrl,
+      type: imageData.type,
+    };
   };
 
   const removeImage = (imageUrl: string) => {
