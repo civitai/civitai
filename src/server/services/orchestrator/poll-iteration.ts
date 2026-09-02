@@ -166,7 +166,6 @@ export async function pollIterationWorkflow({
     };
   }
 
-  // Prefer a blockedReason message; otherwise surface the sanitized provider error.
   const engine =
     (firstStep?.metadata?.params as { engine?: string })?.engine ?? firstStep?.input?.engine;
   const providerErrors = extractStepErrors(firstStep).map((msg) =>

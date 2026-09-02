@@ -2526,8 +2526,6 @@ export function formatStepOutputs(
     } satisfies NormalizedImageOutput;
   });
 
-  // Collect step errors (including external-provider job.reason failures) and
-  // sanitize each before surfacing to the client.
   const engine =
     (params.engine as string | undefined) ??
     (step as { input?: { engine?: string } }).input?.engine;
@@ -3091,6 +3089,7 @@ export async function getWorkflowStatusUpdate({
           name: step.name,
           status: step.status,
           completedAt: step.completedAt,
+          queuePosition: step.queuePosition,
           output,
           // TEMPORARY: dual-emit under the legacy `images` key for pre-rename clients.
           images: output,

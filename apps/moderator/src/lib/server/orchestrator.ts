@@ -20,6 +20,8 @@ export function getOrchestratorClient(): OrchestratorClient {
 }
 
 /**
+ * Release (or refuse) the orchestrator's moderation gate on a paused workflow.
+ *
  * Here rather than in the caller because the base URL and the credentials are this module's job: a
  * second reader of `ORCHESTRATOR_ACCESS_TOKEN` is how the app ended up with two different answers about
  * which env var counts (see `xguard-api.ts`, which also falls back to `ORCHESTRATOR_TOKEN`).

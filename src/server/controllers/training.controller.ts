@@ -102,8 +102,7 @@ function pickGatedTrainingFile<T extends { metadata: unknown }>(files: T[]): T |
       | undefined;
     return !!tr?.workflowId && !tr?.completedAt;
   });
-  // Oldest-first among the pending ones, and the plain first row when nothing looks pending — which is
-  // what this did before.
+  // Oldest-first among the pending ones, and the plain first row when nothing looks pending.
   return pending[0] ?? files[0];
 }
 
@@ -146,6 +145,20 @@ const getWorkflowFromVersion = async (modelVersionId: number) => {
 
   if (!workflow) throw new Error(`Could not find workflow with id: ${workflowId}`);
 
+  // `workflowId` comes out of ModelFile.metadata, which the model's OWNER can write
+  // (modelFile.update -> modelFileMetadataSchema.trainingResults). Left unchecked it is the whole of
+  // the addressing for a privileged gate release, so an owner could point the file a moderator is
+  // reviewing at a different run and have the ruling land there. The tag is written by us at submit
+  // time (training.orch.ts) and the reviewed user cannot set it, so it — not the metadata — is what
+  // says which version this workflow belongs to.
+  if (!workflow.tags?.includes(`modelVersion:${modelVersionId}`)) {
+    logWebhook({
+      message: 'Workflow does not belong to this model version; refusing to touch its gate',
+      data: { modelVersionId, workflowId, important: true },
+    });
+    throw throwBadRequestError('Workflow does not belong to this model version');
+  }
+
   return { workflowId, status: workflow.status };
 };
 
@@ -164,13 +177,12 @@ const moderateTrainingData = async ({
 
   try {
     const response = await fetch(
-      `${env.ORCHESTRATOR_ENDPOINT}/v1/manager/workflows/${workflowId}/moderation-gate`,
+      `${env.ORCHESTRATOR_ENDPOINT}/v1/manager/workflows/${encodeURIComponent(
+        workflowId
+      )}/moderation-gate`,
       {
         method: 'POST',
-        body: JSON.stringify({
-          approved: approve,
-          // message: ''
-        }),
+        body: JSON.stringify({ approved: approve }),
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
@@ -179,9 +191,21 @@ const moderateTrainingData = async ({
     );
 
     if (response.ok) {
-      if (workflowId && status) {
-        // handle calling the webhook endpoint. Resolves an issue with the orchestrator that has been plaguing us
-        await fetch(
+      // Past this point the gate is released, so nothing below may throw: throwing would report a
+      // resolved gate as a failed deny and invite the caller to repeat it. The callback out of our
+      // own database is the half that can still fail, and `webhookFailed` is how the caller hears.
+      let webhookFailed = false;
+
+      if (!status) {
+        webhookFailed = true;
+        logWebhook({
+          message: 'Gate released but the workflow reported no status; version is still Paused',
+          data: { modelVersionId, workflowId, important: true },
+        });
+      } else {
+        // The orchestrator does not reliably fire this itself, and without it an approved or denied
+        // run stays Paused in our database.
+        const hook = await fetch(
           `https://api.civitai.com/webhooks/resource-training-v2/${modelVersionId}?token=${env.WEBHOOK_TOKEN}`,
           {
             method: 'POST',
@@ -191,12 +215,21 @@ const moderateTrainingData = async ({
             },
           }
         );
+        if (!hook.ok) {
+          webhookFailed = true;
+          logWebhook({
+            message: 'Gate released but the training webhook was refused; version is still Paused',
+            data: { modelVersionId, workflowId, important: true, status: hook.status },
+          });
+        }
       }
+
       logWebhook({
         message: `${approve ? 'Approved' : 'Denied'} training dataset`,
         type: 'info',
         data: { modelVersionId },
       });
+      return { ok: true as const, webhookFailed };
     } else {
       logWebhook({
         message: 'Could not connect to orchestrator',
@@ -214,8 +247,6 @@ const moderateTrainingData = async ({
         throw throwBadRequestError('Could not connect to orchestrator');
       }
     }
-
-    return 'ok';
   } catch (e) {
     logWebhook({
       message: 'Failed to moderate training data',

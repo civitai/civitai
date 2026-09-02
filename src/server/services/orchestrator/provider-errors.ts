@@ -1,10 +1,5 @@
-// External-provider generation error handling.
-//
-// External providers (xAI/Grok, and Fal-routed engines like Flux/SeeDream) report
-// failures as a job-level `reason` rather than on `step.output.errors`, so the old
-// collection (which only read `step.output.errors`) dropped them and users saw a
-// generic "generation error". `extractStepErrors` looks in every place a failed step
-// can carry a message; `sanitizeProviderError` decides what is safe to show.
+// Provider generation errors. `sanitizeProviderError` decides what is safe to show a user;
+// `providerNameMap` brands the message with the provider behind an engine id.
 
 export const providerNameMap: Record<string, string> = {
   grok: 'xAI (Grok)',
@@ -29,10 +24,7 @@ export function providerName(engine?: string): string | undefined {
   return engine ? providerNameMap[engine.toLowerCase()] : undefined;
 }
 
-/**
- * Collect raw error strings from every place a failed step can carry them —
- * `step.output.errors` / TOS message and `step.metadata.error`. Deduped.
- */
+/** Deduped error strings from a failed step's output and metadata. */
 export function extractStepErrors(step: unknown): string[] {
   const s = step as {
     output?: { errors?: unknown; message?: unknown; externalTOSViolation?: unknown };

@@ -249,7 +249,8 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Spoke: `training-moderation.service.ts` (`getPausedTrainingVersions`, `getTrainingVersionDetail`,
     `moderateTrainingData`). The detail read goes through the WRITE connection — `ModelFile.metadata` is
     TOASTed jsonb the logical subscriber drops on UPDATE, so on the replica `trainingResults` is empty.
-  - Approve/deny releases the orchestrator's ambient gate job (the SECOND job of the first step) and then
+  - Approve/deny releases the orchestrator's moderation gate for the workflow
+    (`POST /v1/manager/workflows/{id}/moderation-gate`) and then
     POSTs the `resource-training-v2` webhook, because the orchestrator does not reliably fire it —
     without that an approved run stays Paused in our database.
   - **CSAM report ported**, but through a NEW main-app endpoint `/api/mod/csam/training-data-report`

@@ -72,6 +72,6 @@ export const actions: Actions = {
     });
     if (!result.ok) return fail(400, { error: result.error });
 
-    return { success: true };
+    return { success: true, ...('warning' in result ? { warning: result.warning } : {}) };
   }),
 };

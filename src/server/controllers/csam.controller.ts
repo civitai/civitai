@@ -29,6 +29,7 @@ export async function createCsamReportHandler({
 export async function fileCsamReport(input: CreateCsamReportSchema & { reportedById: number }) {
   const { userId, imageIds = [], details, type, reportedById } = input;
   let denyFailed = false;
+  let denyBookkeepingFailed = false;
   await createCsamReport(input);
 
   // Resolve reports concerning csam images
@@ -62,7 +63,10 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
       // The deny is the least certain step (the gate can be already resolved, expired, or the
       // orchestrator briefly down) and the one that is safe to retry, so it must not gate the rest.
       try {
-        await handleDenyTrainingData({ input: { id: modelVersionId } });
+        const denied = await handleDenyTrainingData({ input: { id: modelVersionId } });
+        // The gate IS released here, so this is not a failed deny — the run is stopped and repeating
+        // the action would refuse. Only our own record is behind, which still needs a human.
+        denyBookkeepingFailed = denied.webhookFailed;
       } catch (e) {
         denyFailed = true;
         logToAxiom({
@@ -86,7 +90,7 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   }
 
   // Reported and removed either way; the caller decides how loudly to say the run is still open.
-  return { denyFailed };
+  return { denyFailed, denyBookkeepingFailed };
 }
 
 export async function createExternalCsamReportHandler({

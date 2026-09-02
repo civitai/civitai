@@ -89,12 +89,12 @@ describe('extractStepErrors', () => {
     expect(extractStepErrors(step).sort()).toEqual(['blocked by policy', 'boom']);
   });
 
-  it('reads step.metadata.error and dedupes across sources', () => {
+  it('reads step.metadata.error and .errors, and dedupes across sources', () => {
     const step = {
       output: { errors: ['same'] },
-      metadata: { error: 'meta boom', errors: ['same'] },
+      metadata: { error: 'meta boom', errors: ['same', 'meta list'] },
     };
-    expect(extractStepErrors(step).sort()).toEqual(['meta boom', 'same']);
+    expect(extractStepErrors(step).sort()).toEqual(['meta boom', 'meta list', 'same']);
   });
 
   it('returns [] for empty/nullish steps', () => {

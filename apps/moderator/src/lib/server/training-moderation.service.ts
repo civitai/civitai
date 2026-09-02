@@ -327,7 +327,7 @@ export type PausedTrainingRow = {
  * The paused queue, filtered to versions whose workflow the orchestrator still has.
  *
  * The orchestrator round-trip is NOT incidental. A paused version whose workflow has expired can never
- * be approved — the gate job is gone — so listing it gives the moderator a row whose every button
+ * be approved — the gate is gone — so listing it gives the moderator a row whose every button
  * errors. Reading the workflow also nudges the orchestrator into reaping failed/expired jobs, which is
  * the only thing in either app that moves those runs out of `Paused`.
  *
@@ -502,12 +502,10 @@ async function getTrainingResults(versionId: number): Promise<TrainingResults | 
 }
 
 /**
- * Releases the orchestrator's ambient "gate" job for a paused training run.
+ * Releases the orchestrator's moderation gate for a paused training run.
  *
- * The gate is the SECOND job of the workflow's first step — the orchestrator's own ordering, not a
- * detail of ours, and indexing anywhere else approves a different job. The webhook POST afterwards is
- * not belt-and-braces: the orchestrator does not reliably fire it itself, so without it an approved run
- * stays Paused in our database.
+ * The webhook POST afterwards is not belt-and-braces: the orchestrator does not reliably fire it
+ * itself, so without it an approved run stays Paused in our database.
  */
 export async function moderateTrainingData(input: {
   modelVersionId: number;
@@ -541,6 +539,14 @@ export async function moderateTrainingData(input: {
     return {
       ok: false,
       error: `Workflow ${workflowId} reports no status, so the approval could not be recorded. Nothing was changed.`,
+    };
+  // The workflow id lives in ModelFile.metadata, which the model's OWNER can write, so on its own it
+  // does not establish that this workflow is the one this version submitted. The tag is written by
+  // the main app at submit time and the reviewed user cannot set it.
+  if (!workflow.tags?.includes(`modelVersion:${input.modelVersionId}`))
+    return {
+      ok: false,
+      error: `Workflow ${workflowId} does not belong to model version ${input.modelVersionId}, so the gate was not touched. Escalate this — it should not happen.`,
     };
 
   const released = await releaseModerationGate(workflowId, input.approve);
@@ -601,9 +607,13 @@ export async function reportTrainingDataCsam(input: {
   modelVersionId: number;
   minorDepiction: 'real' | 'non-real';
   contents: CsamContent[];
-}): Promise<ActionResult> {
+}): Promise<ActionResult | { ok: true; warning: string }> {
   const result = await callModEndpoint('csam/training-data-report', input, 'CSAM report');
-  return result.ok ? { ok: true } : result;
+  if (!result.ok) return result;
+  // 200 with a `warning` body means a leg of the fan-out failed (the report and soft-delete landed
+  // anyway). Dropping it reports a live training run as fully handled.
+  const warning = typeof result.body?.warning === 'string' ? result.body.warning : undefined;
+  return warning ? { ok: true, warning } : { ok: true };
 }
 
 /**
