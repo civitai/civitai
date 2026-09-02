@@ -9,10 +9,12 @@ const h = vi.hoisted(() => {
   // read), so this must be set before any module in the graph calls it.
   process.env.NEXTAUTH_SECRET = 'introspect-test-secret';
   return {
+    clientIp: '203.0.113.7',
     clients: [] as Record<string, unknown>[],
     apiKeys: [] as Record<string, unknown>[],
-    rateLimitOk: true,
-    rateLimitCalls: [] as (string | null | undefined)[],
+    // Per-bucket, so a test can exhaust one bucket and watch the other go uncharged.
+    rateLimitAllow: {} as Record<string, boolean>,
+    rateLimitCalls: [] as [string, string | null | undefined][],
   };
 });
 
@@ -60,11 +62,13 @@ vi.mock('$lib/server/db/db', () => ({
 }));
 
 vi.mock('$lib/server/oauth/rate-limit', () => ({
-  checkOAuthRateLimit: vi.fn(async (_bucket: string, id: string | null | undefined) => {
-    h.rateLimitCalls.push(id);
-    return h.rateLimitOk;
+  checkOAuthRateLimit: vi.fn(async (bucket: string, id: string | null | undefined) => {
+    h.rateLimitCalls.push([bucket, id]);
+    return h.rateLimitAllow[bucket] ?? true;
   }),
 }));
+
+vi.mock('$lib/server/auth/request', () => ({ getClientIp: () => h.clientIp }));
 
 import { generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
@@ -75,6 +79,7 @@ const LINK_SCOPE =
 const CALLER = 'link-service';
 const CALLER_SECRET = 'link-service-secret';
 const EXPIRES_AT = new Date('2030-01-01T00:00:00.000Z');
+const CLIENT_IP = h.clientIp;
 
 function post(body: Record<string, string>, headers: Record<string, string> = {}) {
   return POST({
@@ -98,7 +103,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // A space after the comma on purpose — the parser must trim.
   process.env.OAUTH_INTROSPECTION_CLIENT_IDS = `${CALLER}, civitai-link-desktop`;
-  h.rateLimitOk = true;
+  h.rateLimitAllow = {};
   h.rateLimitCalls = [];
   h.clients = [
     { id: CALLER, secret: generateSecretHash(CALLER_SECRET), isConfidential: true },
@@ -263,8 +268,16 @@ describe('introspect — client authentication', () => {
 });
 
 describe('introspect — rate limiting', () => {
-  it('429 rate_limited, keyed on client_id', async () => {
-    h.rateLimitOk = false;
+  it('charges the per-IP bucket before auth and the per-client bucket after it', async () => {
+    await post({ token: 'civitai_live', client_id: CALLER, client_secret: CALLER_SECRET });
+    expect(h.rateLimitCalls).toEqual([
+      ['introspect-anon', CLIENT_IP],
+      ['introspect', CALLER],
+    ]);
+  });
+
+  it('429 rate_limited once the client bucket is exhausted', async () => {
+    h.rateLimitAllow.introspect = false;
     const res = await post({
       token: 'civitai_live',
       client_id: CALLER,
@@ -272,13 +285,43 @@ describe('introspect — rate limiting', () => {
     });
     expect(res.status).toBe(429);
     expect(await res.json()).toEqual({ error: 'rate_limited' });
-    expect(h.rateLimitCalls).toEqual([CALLER]);
+    expect(h.rateLimitCalls).toEqual([
+      ['introspect-anon', CLIENT_IP],
+      ['introspect', CALLER],
+    ]);
+  });
+
+  it('429 on the per-IP bucket short-circuits before any client auth', async () => {
+    h.rateLimitAllow['introspect-anon'] = false;
+    const res = await post({
+      token: 'civitai_live',
+      client_id: CALLER,
+      client_secret: CALLER_SECRET,
+    });
+    expect(res.status).toBe(429);
+    expect(h.rateLimitCalls).toEqual([['introspect-anon', CLIENT_IP]]);
   });
 
   it('reads the limiter with the client id from HTTP Basic too', async () => {
-    h.rateLimitOk = false;
+    h.rateLimitAllow.introspect = false;
     const res = await post({ token: 'civitai_live' }, basic(CALLER, CALLER_SECRET));
     expect(res.status).toBe(429);
-    expect(h.rateLimitCalls).toEqual([CALLER]);
+    expect(h.rateLimitCalls).toEqual([
+      ['introspect-anon', CLIENT_IP],
+      ['introspect', CALLER],
+    ]);
+  });
+
+  // The DoS this closes: a flood of bad credentials against a GUESSED client id must not spend that
+  // client's 60/min budget, or anyone could stop Civitai Link pairing without any credential at all.
+  it.each([
+    ['a wrong secret', { client_id: CALLER, client_secret: 'not-the-secret' }],
+    ['a public client', { client_id: 'civitai-link-desktop', client_secret: 'anything' }],
+    ['an unallowlisted client', { client_id: 'rogue-service', client_secret: 'rogue-secret' }],
+  ])('failed auth with %s charges the IP, never the client bucket', async (_label, creds) => {
+    const res = await post({ token: 'civitai_live', ...creds });
+    expect(res.status).toBe(401);
+    expect(h.rateLimitCalls).toEqual([['introspect-anon', CLIENT_IP]]);
+    expect(h.rateLimitCalls.map(([bucket]) => bucket)).not.toContain('introspect');
   });
 });

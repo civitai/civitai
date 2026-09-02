@@ -5,8 +5,12 @@ import { checkRateLimit } from '$lib/server/auth/rate-limit';
 // second implementation, we just carry the per-endpoint limits + identifier policy here:
 //   - authorize: per-user   (10/min)
 //   - token:     per-client (20/min)
-//   - revoke:    per-client (20/min)
-//   - introspect: per-client (60/min) — server-to-server; one call per Civitai Link pairing.
+//   - revoke:    per-IP     (20/min)
+//   - introspect: per-client (60/min) — server-to-server; one call per Civitai Link pairing. Charged only
+//                AFTER client auth succeeds: the id is attacker-supplied until then, so charging it earlier
+//                lets anyone who guesses it exhaust the real client's budget and block Link pairing.
+//   - introspect-anon: per-IP (120/min) — what the pre-auth work on that endpoint is charged to instead.
+//                Sits above the per-client limit so it never binds first for a legitimate caller.
 //   - session:   per-IP     (300/min) — first-party BFF exchange. Called SERVER-TO-SERVER by the spoke, and
 //                keyed via the cf-first getClientIp: on the PUBLIC path that resolves to the spoke's node egress
 //                IP (the original intent — "the spoke's egress IP, not an end user", well above any single spoke
@@ -21,6 +25,7 @@ const OAUTH_RATE_LIMITS = {
   revoke: { limit: 20, windowSeconds: 60 },
   session: { limit: 300, windowSeconds: 60 },
   introspect: { limit: 60, windowSeconds: 60 },
+  'introspect-anon': { limit: 120, windowSeconds: 60 },
 } as const;
 
 export type OAuthRateLimitBucket = keyof typeof OAUTH_RATE_LIMITS;
