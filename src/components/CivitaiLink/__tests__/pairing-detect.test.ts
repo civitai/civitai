@@ -35,6 +35,12 @@ describe('detectPairing', () => {
     expect(detectPairing(prev, [inst(1, 'rekeyed'), inst(9, 'ccc')])?.id).toBe(9);
   });
 
+  // Everything is new against an empty snapshot, which is why the worker seeds it
+  // from a fresh GET /api/link before arming the poll instead of trusting the tab.
+  it('returns the first instance when the snapshot is empty', () => {
+    expect(detectPairing({ ids: [], keys: {} }, [inst(1, 'aaa')])?.id).toBe(1);
+  });
+
   // An id we knew but never held a key for (list loaded, never joined) is not a
   // re-key signal — treating `undefined !== key` as a change fires on the first poll.
   it('does not resolve for a known id whose key was never snapshotted', () => {

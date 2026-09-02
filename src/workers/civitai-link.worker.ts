@@ -257,8 +257,8 @@ socket.on('roomPresence', ({ client, sd }) => {
 // --------------------------------
 // Handle Incoming Messages
 // --------------------------------
-const handleJoin = (id: number) => {
-  if (instance.id === id && instance.connected) return;
+const handleJoin = (id: number, force = false) => {
+  if (!force && instance.id === id && instance.connected) return;
 
   const targetInstance = instances?.find((i) => i.id === id);
   if (!targetInstance) {
@@ -343,11 +343,25 @@ const PAIRING_TIMEOUT_MS = 15 * 60 * 1000;
 let pairingTimer: ReturnType<typeof setInterval> | null = null;
 let pairingSnapshot: PairingSnapshot | null = null;
 let pairingDeadline = 0;
+let pairingGeneration = 0;
+let pairingSeeded = false;
 
 const stopPairingPoll = () => {
+  pairingGeneration += 1;
   if (pairingTimer !== null) clearInterval(pairingTimer);
   pairingTimer = null;
   pairingSnapshot = null;
+  pairingSeeded = false;
+};
+
+const mergeSnapshot = (base: PairingSnapshot, list: CivitaiLinkInstance[]): PairingSnapshot => {
+  const ids = new Set(base.ids);
+  const keys = { ...base.keys };
+  for (const item of list) {
+    ids.add(item.id);
+    keys[item.id] = item.key;
+  }
+  return { ids: [...ids], keys };
 };
 
 const pollPairing = async () => {
@@ -368,20 +382,47 @@ const pollPairing = async () => {
   // Cancelled or resolved while the request was in flight.
   if (pairingSnapshot !== snapshot) return;
 
+  // The arming fetch failed, so this is the first list we have seen. It is the
+  // baseline, not a pairing — detectPairing matches every row of it otherwise.
+  if (!pairingSeeded) {
+    pairingSnapshot = mergeSnapshot(snapshot, result);
+    pairingSeeded = true;
+    updateSharedValue({ type: 'instances', value: result });
+    return;
+  }
+
   const paired = detectPairing(snapshot, result);
   if (!paired) return;
 
   stopPairingPoll();
   updateSharedValue({ type: 'instances', value: result });
-  handleJoin(paired.id);
+  handleJoin(paired.id, true);
   emitPairing('paired');
 };
 
-const handleAwaitPairing = (knownIds: number[], knownKeys: Record<number, string>) => {
+const handleAwaitPairing = async (knownIds: number[], knownKeys: Record<number, string>) => {
   stopPairingPoll();
-  pairingSnapshot = { ids: knownIds, keys: knownKeys };
-  pairingDeadline = Date.now() + PAIRING_TIMEOUT_MS;
+  const generation = pairingGeneration;
   emitPairing('waiting');
+
+  let current: CivitaiLinkInstance[] | null = null;
+  try {
+    current = await getLinkInstances();
+  } catch {
+    // Fall back to the tab's list; the first poll establishes the baseline.
+  }
+  // Cancelled while the arming request was in flight.
+  if (pairingGeneration !== generation) return;
+
+  let snapshot: PairingSnapshot = { ids: knownIds, keys: knownKeys };
+  if (current) {
+    snapshot = mergeSnapshot(snapshot, current);
+    pairingSeeded = true;
+    updateSharedValue({ type: 'instances', value: current });
+  }
+
+  pairingSnapshot = snapshot;
+  pairingDeadline = Date.now() + PAIRING_TIMEOUT_MS;
   pairingTimer = setInterval(pollPairing, PAIRING_POLL_MS);
 };
 
