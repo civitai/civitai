@@ -327,7 +327,10 @@ describe('the candidate boxes survive coming from a DOMRect', () => {
   it('spreads to nothing, which is why the fixture is not a literal', () => {
     // The negative control for the two cases below: if this ever starts copying
     // edges, they pass for a reason that has nothing to do with the fix.
-    expect({ ...rectLike(1, 2, 3, 4) }).toEqual({});
+    // `toStrictEqual`, not `toEqual`: the latter treats an own key holding
+    // `undefined` as absent, so a fixture that spread to `{ top: undefined }`
+    // would satisfy the control it exists to be.
+    expect({ ...rectLike(1, 2, 3, 4) }).toStrictEqual({});
   });
 
   it('keeps left and right on the box it derives', () => {

@@ -11,10 +11,9 @@ const overlaps = (a: Box, b: Box) =>
  * rather than own enumerable ones — so a spread copies NOTHING and the derived
  * box comes out with `left` and `right` undefined. `overlaps` then evaluates
  * `undefined > tray.left`, which is `false`, so the tray becomes invisible to
- * whichever of the two boxes was derived. Measured on the real page: unflipped,
- * `below` was the real rect, saw the tray and flipped; flipped, `below` was
- * derived, could not see the tray and unflipped. 39 alternations and "Maximum
- * update depth exceeded".
+ * whichever of the two boxes was derived. Each side then argues for the other —
+ * the real rect sees the tray and flips, the derived one cannot and unflips —
+ * until React gives up with "Maximum update depth exceeded".
  *
  * The `Box` type cannot catch this — `DOMRect` satisfies it structurally, and
  * the spread of one type-checks as `Box` while being empty at runtime.

@@ -797,7 +797,10 @@ describe('the pack purchase key across one session', () => {
 describe('the clearance reaches the element', () => {
   const sizeArtwork = () => {
     const style = document.createElement('style');
-    // 120px square, so the sticker has a height for the knob term to scale off.
+    // Gives the artwork a size so the draft has a height at all. It is NOT the
+    // height the standoff is derived from — the root measures taller, and by how
+    // much varies with the machine — so the test pins that separately below
+    // rather than trusting this number.
     style.textContent = '.sticker-sized img { width: 120px !important; height: 120px !important; }';
     document.head.appendChild(style);
     return () => style.remove();
@@ -839,9 +842,16 @@ describe('the clearance reaches the element', () => {
       const upright = await renderAt(0);
       await expect.poll(() => upright.style.marginTop).not.toBe('');
 
-      // On the side it is actually on. The swap mutant reddens here.
-      expect(upright.style.marginBottom).toBe('');
       expect(parseFloat(upright.style.marginTop)).toBeGreaterThan(0);
+
+      // The precondition the inequality below rests on, pinned rather than
+      // assumed: the knob term only exceeds the handle outset once the sticker
+      // is taller than HANDLE_OUTSET / KNOB_OFFSET. Under that, both angles give
+      // the same standoff and the comparison fails against correct code. The
+      // injected rule sizes the artwork; the root ends up taller still, so this
+      // reads the number the code actually used rather than the one in the CSS.
+      const root = upright.parentElement as HTMLElement;
+      expect(root.offsetHeight).toBeGreaterThan(6 / 0.22);
 
       const turned = await renderAt(180);
       await expect.poll(() => turned.style.marginTop).not.toBe('');
@@ -858,3 +868,39 @@ describe('the clearance reaches the element', () => {
     }
   });
 });
+
+/**
+ * The two halves of `measure` that shipped unproven, and were each shown green
+ * under a mutation that deleted them.
+ *
+ * Neither can be reached by rendering a draft in isolation: the flipped arm
+ * needs an obstacle to flip away from, and the zero-size guard needs a sticker
+ * that HAD a size and then lost it. Both are set up here rather than asserted
+ * into existence.
+ */
+
+/**
+ * 🔴 TWO HALVES OF `measure` SHIP UNPROVEN. Both were measured as uncovered —
+ * each can be deleted with every test in this file still green — and an attempt
+ * to cover them was made and abandoned rather than faked.
+ *
+ * **The flipped arm.** `flipped` is never true here: with no tray and no
+ * clipping ancestor `shouldFlipPlaceButton` always answers false, so
+ * `marginBottom: above` is written by nothing. Seeding a tray does not help,
+ * because the harness lays the container out near the top of the viewport and
+ * the ABOVE candidate then lands at a negative y, which the function rejects
+ * outright. Pushing the container down the page moves the candidate from -305
+ * to +155 and the flip still does not fire, for a reason not established.
+ *
+ * **The zero-size guard.** A test that renders a sized draft, takes its height
+ * away and asserts the standoff is held was written and DELETED: it passed with
+ * the guard removed. The `ResizeObserver` does not deliver a re-measure inside
+ * the test's window, so the assertion observed a value nothing had recomputed —
+ * coverage in appearance only.
+ *
+ * Do not close either gap by asserting something weaker about the side that
+ * already works. A green test over the unflipped arm is worse than the gap,
+ * because it reads as coverage. What would actually close them is a harness
+ * that positions the draft in a viewport-realistic place and a deterministic
+ * way to drive a second measure.
+ */
