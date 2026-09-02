@@ -11,18 +11,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * `foldUserMultipliers` floors on the way into the cache, so these cases only arise from an entry
  * cached before that shipped — `userMultipliersCache` has a 1-day TTL — or from any future path
  * that populates the cache without going through the fold. That is the whole reason to floor twice.
+ *
+ * Rewards only. `purchasesMultiplier` is deliberately NOT floored here: it feeds
+ * `getBuzzBulkMultiplier`, where a 0 credits a paid Buzz purchase with nothing.
  */
 
 import type * as Caches from '~/server/redis/caches';
 
 const h = vi.hoisted(() => ({
   fetch: vi.fn(),
+  // `deleteMultipliersForUserCache` calls `.refresh` on the `refresh = true` branch. Absent, that
+  // branch dies as "refresh is not a function" instead of a named assertion.
+  refresh: vi.fn(),
   getActiveRewardsBonusEvent: vi.fn(async () => null as null | { multiplier: number }),
 }));
 
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...(await importOriginal<typeof Caches>()),
-  userMultipliersCache: { fetch: h.fetch },
+  userMultipliersCache: { fetch: h.fetch, refresh: h.refresh },
 }));
 
 vi.mock('~/server/services/rewards-bonus-event.service', () => ({
@@ -70,9 +76,9 @@ describe('getMultipliersForUser floors the value it pays with', () => {
   });
 
   it('still multiplies a floored base by an active bonus event', async () => {
-    // A 0 must stay 0 through the bonus event, and a real value must still be multiplied — an
-    // implementation that floored to 1 would pass the first assertion of the previous test and
-    // fail here.
+    // This is the only cover for the line the fix rewrote: drop `* globalRewardsBonus` and it
+    // prints `expected 4 to be 8`. It does NOT separate a floor-at-0 from a floor-at-1 — clamp(4)
+    // is 4 under either — so do not read it as doing that.
     cached(4);
     h.getActiveRewardsBonusEvent.mockResolvedValue({ multiplier: 20 } as any);
 
@@ -81,19 +87,6 @@ describe('getMultipliersForUser floors the value it pays with', () => {
     expect(result.baseRewardsMultiplier).toBe(4);
     expect(result.globalRewardsBonus).toBe(2);
     expect(result.rewardsMultiplier).toBe(8);
-  });
-
-  it('floors purchasesMultiplier too — the same row, the same operator field', async () => {
-    h.fetch.mockResolvedValue({
-      [USER]: {
-        userId: USER,
-        rewardsMultiplier: 1,
-        purchasesMultiplier: -3,
-        rewardsIneligible: false,
-      },
-    });
-
-    expect((await getMultipliersForUser(USER)).purchasesMultiplier).toBe(0);
   });
 
   it('leaves a sub-1 multiplier alone', async () => {

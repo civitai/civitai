@@ -121,7 +121,7 @@ describe('foldUserMultipliers', () => {
       userId: 10,
       rewardsIneligible: false,
       rewardsMultiplier: -1,
-      purchasesMultiplier: -1,
+      purchasesMultiplier: 1,
     };
 
     const result = foldUserMultipliers([typo]);
@@ -129,7 +129,28 @@ describe('foldUserMultipliers', () => {
     // 0, not 1: a zero already means "earns nothing" everywhere downstream, and flooring to 1 would
     // invent a payout out of a typo.
     expect(result[10].rewardsMultiplier).toBe(0);
-    expect(result[10].purchasesMultiplier).toBe(0);
+  });
+
+  // The floor is applied at FOUR places: the two first-row assignments and the two `Math.max` merge
+  // arms. Every other test here gives a user ONE row, so only the first-row branch runs — reverting
+  // the merge arms alone left the whole file green. A multi-row user is the reason this fold exists.
+  it('floors a bad SECOND row, not only the first one it sees', () => {
+    const bad = (rewardsMultiplier: number): UserMultiplierRow => ({
+      userId: 14,
+      rewardsIneligible: false,
+      rewardsMultiplier,
+      purchasesMultiplier: 1,
+    });
+
+    // Negative control: the second row must actually reach the merge arm. A row that never merges
+    // would make the assertions below pass against an untouched first-row value.
+    expect(foldUserMultipliers([paidBronze(14), bad(9)])[14].rewardsMultiplier).toBe(9);
+
+    // `Math.max(1.5, NaN)` is NaN and `Math.max(1.5, Infinity)` is Infinity, so an unfloored merge
+    // arm lets one bad row poison a membership the user is paying for.
+    expect(foldUserMultipliers([paidBronze(14), bad(NaN)])[14].rewardsMultiplier).toBe(1.5);
+    expect(foldUserMultipliers([paidBronze(14), bad(Infinity)])[14].rewardsMultiplier).toBe(1.5);
+    expect(foldUserMultipliers([paidBronze(14), bad(-1)])[14].rewardsMultiplier).toBe(1.5);
   });
 
   it('replaces a non-finite multiplier by sign', () => {
@@ -138,13 +159,13 @@ describe('foldUserMultipliers', () => {
         userId: 12,
         rewardsIneligible: false,
         rewardsMultiplier: Infinity,
-        purchasesMultiplier: NaN,
+        purchasesMultiplier: 1,
       },
       {
         userId: 13,
         rewardsIneligible: false,
         rewardsMultiplier: -Infinity,
-        purchasesMultiplier: -Infinity,
+        purchasesMultiplier: 1,
       },
     ];
 
@@ -153,9 +174,7 @@ describe('foldUserMultipliers', () => {
     // Infinity and NaN take the base multiplier; a negative infinity is still a negative and must
     // not come out worth more than -5 does.
     expect(result[12].rewardsMultiplier).toBe(1);
-    expect(result[12].purchasesMultiplier).toBe(1);
     expect(result[13].rewardsMultiplier).toBe(0);
-    expect(result[13].purchasesMultiplier).toBe(0);
   });
 });
 

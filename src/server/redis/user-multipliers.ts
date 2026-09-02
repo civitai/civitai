@@ -19,6 +19,10 @@ const BASE_MULTIPLIER = 1;
 /**
  * `Math.max` below is a max ACROSS ROWS, not a floor: one row of -1 yields -1, and a
  * `Product.metadata` value is operator-authored, so NaN and Infinity arrive the same way.
+ *
+ * Rewards only. `purchasesMultiplier` reaches `getBuzzBulkMultiplier`, which is called
+ * unconditionally, and a 0 there credits a paid Buzz purchase with nothing — see ClickUp 868m06pn5.
+ * That path needs its own floor, decided on its own terms.
  */
 const usable = (value: number | null | undefined) =>
   value == null ? BASE_MULTIPLIER : clampRewardMultiplier(value);
@@ -48,7 +52,7 @@ export function foldUserMultipliers(rows: UserMultiplierRow[]): Record<number, U
         userId: row.userId,
         rewardsIneligible: row.rewardsIneligible,
         rewardsMultiplier: usable(row.rewardsMultiplier),
-        purchasesMultiplier: usable(row.purchasesMultiplier),
+        purchasesMultiplier: row.purchasesMultiplier ?? BASE_MULTIPLIER,
       };
       continue;
     }
@@ -59,7 +63,7 @@ export function foldUserMultipliers(rows: UserMultiplierRow[]): Record<number, U
     );
     existing.purchasesMultiplier = Math.max(
       existing.purchasesMultiplier,
-      usable(row.purchasesMultiplier)
+      row.purchasesMultiplier ?? BASE_MULTIPLIER
     );
   }
 

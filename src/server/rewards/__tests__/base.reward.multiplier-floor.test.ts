@@ -139,13 +139,41 @@ describe('the multiplier sendAward pays from', () => {
     // NaN is what makes the difference legible: `Math.ceil(100 * NaN)` is NaN, `NaN > 0` is false,
     // and `sendAward`'s own amount filter then drops the transaction entirely — the user is
     // recorded `awarded` and paid nothing.
+    //
+    // 🔴 `evalImpl` returning exactly AWARD_AMOUNT is load-bearing. `effectiveAward` is also 100, so
+    // `toAward < effectiveAward` is false and `apply` does NOT take the cap-trim branch that
+    // neutralises `event.multiplier` to 1. Lower this mock and the test passes vacuously with the
+    // clamp gone. The assertion below pins the equality rather than trusting the default.
     await applyWith(NaN);
 
+    expect(luaArgs().award, 'the cap-trim branch would neutralise the multiplier').toBe(
+      String(AWARD_AMOUNT)
+    );
+    expect(h.createBuzzTransactionMany).toHaveBeenCalledTimes(1);
     const [transactions] = h.createBuzzTransactionMany.mock.calls[0] as unknown as [
       { amount: number }[]
     ];
     expect(transactions).toHaveLength(1);
     expect(transactions[0].amount).toBe(100);
+  });
+
+  it('pays a quoted multiplier at its value, not at the non-finite fallback', async () => {
+    // 🔴 The batch path reads `multiplier` back out of a ClickHouse `Decimal(3, 2)`, where it is
+    // `number`-typed and string-valued. `Number.isFinite('4.00')` is FALSE, so a clamp that tests
+    // the argument directly pays 1x for a legitimate 4x — the underpay `toClickhouseBuzzEvent` was
+    // already fixed for once (f450100aba), reached through a different reader. Do not "simplify"
+    // the `Number()` out of `clampRewardMultiplier`.
+    // The Lua returns the FULL effective award, so the grant is untrimmed and `apply` leaves
+    // `event.multiplier` alone — the branch where `sendAward` reads the quoted value. At the
+    // default mock return of 100 the cap-trim branch neutralises it to 1 and the test cannot see
+    // the bug at all.
+    h.evalImpl.mockResolvedValue(400 as any);
+    await applyWith('4.00' as unknown as number);
+
+    const [transactions] = h.createBuzzTransactionMany.mock.calls[0] as unknown as [
+      { amount: number }[]
+    ];
+    expect(transactions[0].amount).toBe(400);
   });
 });
 
@@ -174,6 +202,16 @@ describe('clampRewardMultiplier', () => {
   it('keeps no ceiling, unlike clampBuzzEventMultiplier', () => {
     expect(clampBuzzEventMultiplier(20)).toBe(BUZZ_EVENTS_MAX_MULTIPLIER);
     expect(clampRewardMultiplier(20)).toBe(20);
+  });
+
+  it('agrees with clampBuzzEventMultiplier on the half they do share', () => {
+    // `multiplier.ts` claims its non-finite rule matches the shared helper's. Only the ceiling was
+    // pinned, so the claim could rot in either direction without a test noticing.
+    for (const value of [-5, -Infinity, NaN, Infinity, 0, 0.5, 4]) {
+      expect(clampRewardMultiplier(value), `disagreed on ${String(value)}`).toBe(
+        clampBuzzEventMultiplier(value)
+      );
+    }
   });
 
   it('does not bound a large finite multiplier — only a ceiling would, and that is a product call', () => {

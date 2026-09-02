@@ -245,7 +245,6 @@ export async function getMultipliersForUser(userId: number, refresh = false) {
 
   return {
     ...base,
-    purchasesMultiplier: clampRewardMultiplier(base.purchasesMultiplier),
     rewardsMultiplier: baseRewardsMultiplier * globalRewardsBonus,
     baseRewardsMultiplier,
     globalRewardsBonus,
