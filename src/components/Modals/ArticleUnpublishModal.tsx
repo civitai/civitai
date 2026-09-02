@@ -64,7 +64,7 @@ export default function ArticleUnpublishModal({ articleId }: { articleId: number
           <>
             <Textarea
               name="customMessage"
-              label="Reason"
+              label={reason === 'other' ? 'Reason (shown to the author)' : 'Reason (internal)'}
               placeholder="Why is this being unpublished?"
               rows={2}
               value={customMessage}
