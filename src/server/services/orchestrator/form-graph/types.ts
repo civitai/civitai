@@ -11,11 +11,18 @@ import type { generationHub } from '~/shared/form-graph/generation/hub.graph';
 export type GenerationData = InferData<typeof generationHub>;
 
 /**
- * One (or several) family arms, selected by the ecosystem discriminant — the
- * hub's branchOn keys type every arm's ecosystem as a literal, so this is
- * the typed view a handler declares instead of narrowing a loose bag by hand.
+ * The arms the ECOSYSTEM dispatcher serves — the root union minus the
+ * standalone workflow arms (upscale/interpolate/remove-background/…), whose
+ * step creation lives in the submit service, keyed on the workflow.
  */
-export type EcosystemData<E extends GenerationData['ecosystem']> = InferArm<
+export type EcosystemGenerationData = Extract<GenerationData, { ecosystem: string }>;
+
+/**
+ * One (or several) family arms, selected by the ecosystem discriminant — the
+ * hub tables type every arm's ecosystem as a literal, so this is the typed
+ * view a handler declares instead of narrowing a loose bag by hand.
+ */
+export type EcosystemData<E extends EcosystemGenerationData['ecosystem']> = InferArm<
   typeof generationHub,
   'ecosystem',
   E

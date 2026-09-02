@@ -39,16 +39,11 @@ import { zimage } from './zimage.graph';
 
 /**
  * The IMAGE hub: ecosystem selection scoped to image output, the image-only
- * the family dispatch (a keyed branch whose table types each arm), the
- * image-only head fields (`priority`, `outputFormat`), and the two
+ * the family dispatch (a keyed branch whose table types each arm) and the two
  * fields the oracle declares AFTER its family discriminator because they read
  * family state (`enhancedCompatibility` reads the model; `quantity` reads
  * both). Workflow and the output/input computeds live on the root (`../hub.ts`).
  */
-
-// Copied from generation-graph.ts, which dies with the data-graph engine.
-const priorityOptions = ['low', 'normal', 'high'] as const;
-const outputFormatOptions = ['jpeg', 'png'] as const;
 
 export const imageHub = defineGraph<RootCtx>()
   .field('ecosystem', ({ _ext }) => {
@@ -127,50 +122,6 @@ export const imageHub = defineGraph<RootCtx>()
       [['WanImage27'], wanImage],
       [['Grok'], grokImage],
     ] as const)
-  )
-  .field('priority', ({ _ext }) => {
-    const isMember = _ext.user?.isMember ?? false;
-    const options: {
-      label: string;
-      value: (typeof priorityOptions)[number];
-      offset: number;
-      lineThrough?: boolean;
-      memberOnly?: boolean;
-    }[] = isMember
-      ? [
-          { label: 'High', value: 'low', offset: 10, lineThrough: true },
-          { label: 'Highest', value: 'high', offset: 20 },
-        ]
-      : [
-          { label: 'Standard', value: 'low', offset: 0 },
-          { label: 'High', value: 'normal', offset: 10 },
-          { label: 'Highest', value: 'high', offset: 20, memberOnly: true },
-        ];
-    return {
-      input: z
-        .enum(priorityOptions)
-        .optional()
-        .transform((val) => (!isMember && val === 'high' ? ('low' as const) : val)),
-      output: z.enum(priorityOptions),
-      default: 'low' as const,
-      meta: { options, isMember },
-    };
-  })
-  .field('outputFormat', ({ _ext }) =>
-    _ext.workflow === 'img2img:remove-background'
-      ? null
-      : {
-          input: z.enum(outputFormatOptions).optional(),
-          output: z.enum(outputFormatOptions),
-          default: 'jpeg' as const,
-          meta: {
-            options: [
-              { label: 'JPEG', value: 'jpeg' as const, offset: 0 },
-              { label: 'PNG', value: 'png' as const, offset: 2 },
-            ],
-            isMember: _ext.user?.isMember ?? false,
-          },
-        }
   )
   // Both read the family's DERIVED ecosystem where one exists (v1 reads its
   // conflated key after the checkpoint effect has moved it); families without

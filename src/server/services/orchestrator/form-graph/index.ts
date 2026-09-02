@@ -60,9 +60,9 @@ import { createStableDiffusionInput } from './stable-diffusion.handler';
 import { createWanSteps } from './wan.handler';
 import type { WanGenerationData } from './wan.handler';
 import { createZImageInput } from './z-image.handler';
-import type { GenerationData, LooseGenerationData } from './types';
+import type { EcosystemGenerationData, GenerationData, LooseGenerationData } from './types';
 
-export type { GenerationData, LooseGenerationData } from './types';
+export type { EcosystemGenerationData, GenerationData, LooseGenerationData } from './types';
 export { createChromaInput } from './chroma.handler';
 export { createFluxInput } from './flux.handler';
 export { createFluxKontextInput } from './flux-kontext.handler';
@@ -111,7 +111,7 @@ export { createWanSteps } from './wan.handler';
 export { createZImageInput } from './z-image.handler';
 
 export async function createFormGraphStepInput(
-  data: GenerationData,
+  data: EcosystemGenerationData,
   handlerCtx: GenerationHandlerCtx
 ): Promise<StepInput[]> {
   const normalizedData = withSeed(data);
@@ -149,7 +149,7 @@ function withSeed<T extends object>(data: T): T {
 }
 
 function createStep(
-  data: GenerationData,
+  data: EcosystemGenerationData,
   handlerCtx: GenerationHandlerCtx
 ): Promise<StepInput[]> | StepInput[] {
   if (isWanEcosystem(data.ecosystem)) return createWanSteps(data as WanGenerationData, handlerCtx);

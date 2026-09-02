@@ -1,4 +1,5 @@
 import { Checkbox, Input, Stack } from '@mantine/core';
+import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller, MultiController } from 'form-graph/react';
 
 import { ActiveWildcards } from '~/components/Generate/Input/ActiveWildcards';
@@ -11,10 +12,13 @@ import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceS
 import { ResourceSelectMultipleInput } from '~/components/generation_v2/inputs/ResourceSelectMultipleInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
 import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
+import { InterpolationFactorInput } from '~/components/generation_v2/inputs/InterpolationFactorInput';
+import { ScaleFactorInput } from '~/components/generation_v2/inputs/ScaleFactorInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { VideoInput } from '~/components/generation_v2/inputs/VideoInput';
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
+import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { videoHub } from '~/shared/form-graph/generation/video/hub.graph';
 import { wanVersionDefs, wanVersionOptions } from '~/shared/form-graph/generation/video/wan.graph';
 
@@ -106,6 +110,45 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
       </div>
       <Controller
         graph={videoHub}
+        name="resources"
+        render={({ value, meta, onChange }) => (
+          <ResourceSelectMultipleInput
+            value={value}
+            onChange={onChange}
+            label="Additional Resources"
+            buttonLabel="Add LoRA"
+            modalTitle="Select Resources"
+            options={meta?.options}
+            limit={meta?.limit}
+          />
+        )}
+      />
+      <MultiController
+        graph={videoHub}
+        names={['model', 'resources'] as const}
+        render={({ values }) => (
+          <ResourceAlerts model={values.model} resources={values.resources} />
+        )}
+      />
+      <Controller
+        graph={videoHub}
+        name="mode"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <ControllerLabel
+              label="Mode"
+              info="Standard mode is faster to generate and more cost-effective. Professional takes longer to generate and has higher quality output."
+            />
+            <SegmentedControlWrapper
+              value={value}
+              onChange={(v) => onChange(v as typeof value)}
+              data={(meta?.options ?? []).map((o) => ({ label: o.label, value: o.value }))}
+            />
+          </div>
+        )}
+      />
+      <Controller
+        graph={videoHub}
         name="images"
         render={({ value, meta, onChange, error }) => (
           <ImageUploadMultipleInput
@@ -126,25 +169,29 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, onChange }) => <VideoInput value={value} onChange={onChange} />}
       />
       <Controller
-        graph={videoHub}
-        name="resources"
+        graph={generationHub}
+        name="interpolationFactor"
         render={({ value, meta, onChange }) => (
-          <ResourceSelectMultipleInput
+          <InterpolationFactorInput
             value={value}
             onChange={onChange}
-            label="Additional Resources"
-            buttonLabel="Add LoRA"
-            modalTitle="Select Resources"
-            options={meta?.options}
-            limit={meta?.limit}
+            meta={meta}
+            targetFps={meta?.sourceFps && value ? value * meta.sourceFps : undefined}
           />
         )}
       />
-      <MultiController
-        graph={videoHub}
-        names={['model', 'resources'] as const}
-        render={({ values }) => (
-          <ResourceAlerts model={values.model} resources={values.resources} />
+      <Controller
+        graph={generationHub}
+        name="scaleFactor"
+        render={({ value, meta, onChange }) => (
+          <ScaleFactorInput
+            value={value}
+            onChange={onChange}
+            width={meta?.sourceWidth}
+            height={meta?.sourceHeight}
+            maxResolution={meta?.maxOutputResolution}
+            options={meta?.options}
+          />
         )}
       />
       <Controller
@@ -198,20 +245,6 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={videoHub}
-        name="resolution"
-        render={({ value, meta, onChange }) => (
-          <div className="flex flex-col gap-1">
-            <Input.Label>Resolution</Input.Label>
-            <SegmentedControlWrapper
-              value={value}
-              onChange={(v) => onChange(v as typeof value)}
-              data={(meta?.options ?? []).map((o) => ({ label: o.label, value: String(o.value) }))}
-            />
-          </div>
-        )}
-      />
-      <Controller
-        graph={videoHub}
         name="aspectRatio"
         render={({ value, meta, onChange }) => (
           <AspectRatioInput
@@ -259,132 +292,57 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={videoHub}
-        name="frameGuideStrength"
-        render={({ value, meta, onChange }) =>
-          meta ? (
-            <SliderInput
+        name="audioSetting"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <Input.Label>Audio</Input.Label>
+            <SegmentedControlWrapper
               value={value}
-              onChange={onChange}
-              label={
-                <ControllerLabel
-                  label="Frame Guide Strength"
-                  info="Controls how strongly the first/last frame images guide the video generation."
-                />
-              }
-              min={meta.min}
-              max={meta.max}
-              step={meta.step}
-              presets={meta.presets}
+              onChange={(v) => onChange(v as typeof value)}
+              data={(meta?.options ?? []).map((o) => ({ label: o.label, value: o.value }))}
             />
-          ) : null
-        }
+          </div>
+        )}
       />
       <Controller
         graph={videoHub}
-        name="cfgScale"
-        render={({ value, meta, onChange }) =>
-          meta ? (
-            <SliderInput
+        name="style"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <Input.Label>Style</Input.Label>
+            <SegmentedControlWrapper
               value={value}
-              onChange={onChange}
-              label={
-                <ControllerLabel
-                  label="CFG Scale"
-                  info="Controls how closely the generation follows the text prompt."
-                />
-              }
-              min={meta.min}
-              max={meta.max}
-              step={meta.step}
-              presets={meta.presets}
+              onChange={(v) => onChange(v as typeof value)}
+              data={(meta?.options ?? []).map((o) => ({ label: o.label, value: o.value }))}
             />
-          ) : null
-        }
+          </div>
+        )}
       />
       <Controller
         graph={videoHub}
-        name="steps"
-        render={({ value, meta, onChange }) =>
-          meta ? (
-            <SliderInput
+        name="resolution"
+        render={({ value, meta, onChange }) => (
+          <div className="flex flex-col gap-1">
+            <Input.Label>Resolution</Input.Label>
+            <SegmentedControlWrapper
               value={value}
-              onChange={onChange}
-              label={
-                <ControllerLabel label="Steps" info="The number of iterations spent generating." />
-              }
-              min={meta.min}
-              max={meta.max}
-              step={meta.step}
-              presets={meta.presets}
+              onChange={(v) => onChange(v as typeof value)}
+              data={(meta?.options ?? []).map((o) => ({ label: o.label, value: String(o.value) }))}
             />
-          ) : null
-        }
+          </div>
+        )}
       />
       <Controller
         graph={videoHub}
-        name="cannyLowThreshold"
-        render={({ value, meta, onChange }) =>
-          meta ? (
-            <SliderInput
-              value={value}
-              onChange={onChange}
-              label={
-                <ControllerLabel
-                  label="Canny Low Threshold"
-                  info="Lower threshold for Canny edge detection. Lower values detect more edges."
-                />
-              }
-              min={meta.min}
-              max={meta.max}
-              step={meta.step}
-              presets={meta.presets}
-            />
-          ) : null
-        }
-      />
-      <Controller
-        graph={videoHub}
-        name="cannyHighThreshold"
-        render={({ value, meta, onChange }) =>
-          meta ? (
-            <SliderInput
-              value={value}
-              onChange={onChange}
-              label={
-                <ControllerLabel
-                  label="Canny High Threshold"
-                  info="Upper threshold for Canny edge detection. Higher values only keep strong edges."
-                />
-              }
-              min={meta.min}
-              max={meta.max}
-              step={meta.step}
-              presets={meta.presets}
-            />
-          ) : null
-        }
-      />
-      <Controller
-        graph={videoHub}
-        name="guideStrength"
-        render={({ value, meta, onChange }) =>
-          meta ? (
-            <SliderInput
-              value={value}
-              onChange={onChange}
-              label={
-                <ControllerLabel
-                  label="Guide Strength"
-                  info="Controls how closely the output follows the source video structure."
-                />
-              }
-              min={meta.min}
-              max={meta.max}
-              step={meta.step}
-              presets={meta.presets}
-            />
-          ) : null
-        }
+        name="usePrime"
+        render={({ value, onChange }) => (
+          <Checkbox
+            label="Prime"
+            description="Faster generation for a higher cost. Output quality is unchanged."
+            checked={value}
+            onChange={(e) => onChange(e.currentTarget.checked)}
+          />
+        )}
       />
       <Controller
         graph={videoHub}
@@ -402,89 +360,264 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
           ) : null
         }
       />
-      <Controller
-        graph={videoHub}
-        name="shift"
-        render={({ value, meta, onChange }) =>
-          meta ? (
-            <SliderInput
-              value={value}
-              onChange={onChange}
-              label="Shift"
-              min={meta.min}
-              max={meta.max}
-              step={meta.step}
+      <AccordionLayout label="Advanced" storeKey="form-graph-video-advanced">
+        <Controller
+          graph={videoHub}
+          name="frameGuideStrength"
+          render={({ value, meta, onChange }) =>
+            meta ? (
+              <SliderInput
+                value={value}
+                onChange={onChange}
+                label={
+                  <ControllerLabel
+                    label="Frame Guide Strength"
+                    info="Controls how strongly the first/last frame images guide the video generation."
+                  />
+                }
+                min={meta.min}
+                max={meta.max}
+                step={meta.step}
+                presets={meta.presets}
+              />
+            ) : null
+          }
+        />
+        <Controller
+          graph={videoHub}
+          name="cfgScale"
+          render={({ value, meta, onChange }) =>
+            meta ? (
+              <SliderInput
+                value={value}
+                onChange={onChange}
+                label={
+                  <ControllerLabel
+                    label="CFG Scale"
+                    info="Controls how closely the generation follows the text prompt."
+                  />
+                }
+                min={meta.min}
+                max={meta.max}
+                step={meta.step}
+                presets={meta.presets}
+              />
+            ) : null
+          }
+        />
+        <Controller
+          graph={videoHub}
+          name="steps"
+          render={({ value, meta, onChange }) =>
+            meta ? (
+              <SliderInput
+                value={value}
+                onChange={onChange}
+                label={
+                  <ControllerLabel
+                    label="Steps"
+                    info="The number of iterations spent generating."
+                  />
+                }
+                min={meta.min}
+                max={meta.max}
+                step={meta.step}
+                presets={meta.presets}
+              />
+            ) : null
+          }
+        />
+        <Controller
+          graph={videoHub}
+          name="cannyLowThreshold"
+          render={({ value, meta, onChange }) =>
+            meta ? (
+              <SliderInput
+                value={value}
+                onChange={onChange}
+                label={
+                  <ControllerLabel
+                    label="Canny Low Threshold"
+                    info="Lower threshold for Canny edge detection. Lower values detect more edges."
+                  />
+                }
+                min={meta.min}
+                max={meta.max}
+                step={meta.step}
+                presets={meta.presets}
+              />
+            ) : null
+          }
+        />
+        <Controller
+          graph={videoHub}
+          name="cannyHighThreshold"
+          render={({ value, meta, onChange }) =>
+            meta ? (
+              <SliderInput
+                value={value}
+                onChange={onChange}
+                label={
+                  <ControllerLabel
+                    label="Canny High Threshold"
+                    info="Upper threshold for Canny edge detection. Higher values only keep strong edges."
+                  />
+                }
+                min={meta.min}
+                max={meta.max}
+                step={meta.step}
+                presets={meta.presets}
+              />
+            ) : null
+          }
+        />
+        <Controller
+          graph={videoHub}
+          name="guideStrength"
+          render={({ value, meta, onChange }) =>
+            meta ? (
+              <SliderInput
+                value={value}
+                onChange={onChange}
+                label={
+                  <ControllerLabel
+                    label="Guide Strength"
+                    info="Controls how closely the output follows the source video structure."
+                  />
+                }
+                min={meta.min}
+                max={meta.max}
+                step={meta.step}
+                presets={meta.presets}
+              />
+            ) : null
+          }
+        />
+        <Controller
+          graph={videoHub}
+          name="movementAmplitude"
+          render={({ value, meta, onChange }) => (
+            <div className="flex flex-col gap-1">
+              <ControllerLabel
+                label="Movement Amplitude"
+                info="Control the scale of camera movements and subject actions. Default: Auto (fits most use cases)."
+              />
+              <SegmentedControlWrapper
+                value={value}
+                onChange={(v) => onChange(v as typeof value)}
+                data={(meta?.options ?? []).map((o) => ({ label: o.label, value: o.value }))}
+              />
+            </div>
+          )}
+        />
+        <Controller
+          graph={videoHub}
+          name="seed"
+          render={({ value, onChange }) => (
+            <SeedInput value={value} onChange={onChange} label="Seed" />
+          )}
+        />
+        <Controller
+          graph={videoHub}
+          name="usePro"
+          render={({ value, onChange }) => (
+            <Checkbox
+              label="Pro Mode"
+              description="Generate with higher quality (uses more credits)"
+              checked={value}
+              onChange={(e) => onChange(e.currentTarget.checked)}
             />
-          ) : null
-        }
-      />
-      <Controller
-        graph={videoHub}
-        name="interpolatorModel"
-        render={({ value, meta, onChange }) => (
-          <SelectInput
-            value={value}
-            onChange={(v) => onChange(v as typeof value)}
-            label="Interpolator"
-            options={meta?.options}
-          />
-        )}
-      />
-      <Controller
-        graph={videoHub}
-        name="usePrime"
-        render={({ value, onChange }) => (
-          <Checkbox
-            label="Prime"
-            description="Faster generation for a higher cost. Output quality is unchanged."
-            checked={value}
-            onChange={(e) => onChange(e.currentTarget.checked)}
-          />
-        )}
-      />
-      <Controller
-        graph={videoHub}
-        name="draft"
-        render={({ value, onChange }) => (
-          <Checkbox
-            checked={value}
-            onChange={(e) => onChange(e.target.checked)}
-            label="Draft Mode"
-            description="Generate faster at with optimized settings (may reduce quality)"
-          />
-        )}
-      />
-      <Controller
-        graph={videoHub}
-        name="enablePromptEnhancer"
-        render={({ value, onChange }) => (
-          <Checkbox
-            label="Enhance prompt"
-            description="Automatically improve your prompt for better results"
-            checked={value}
-            onChange={(e) => onChange(e.currentTarget.checked)}
-          />
-        )}
-      />
-      <Controller
-        graph={videoHub}
-        name="generateAudio"
-        render={({ value, onChange }) => (
-          <Checkbox
-            label="Generate audio"
-            description="Generate audio along with the video"
-            checked={value}
-            onChange={(e) => onChange(e.currentTarget.checked)}
-          />
-        )}
-      />
-      <Controller
-        graph={videoHub}
-        name="seed"
-        render={({ value, onChange }) => (
-          <SeedInput value={value} onChange={onChange} label="Seed" />
-        )}
-      />
+          )}
+        />
+        <Controller
+          graph={videoHub}
+          name="enablePromptEnhancer"
+          render={({ value, onChange }) => (
+            <Checkbox
+              label="Enhance prompt"
+              description="Automatically improve your prompt for better results"
+              checked={value}
+              onChange={(e) => onChange(e.currentTarget.checked)}
+            />
+          )}
+        />
+        <Controller
+          graph={videoHub}
+          name="generateAudio"
+          render={({ value, onChange }) => (
+            <Checkbox
+              label="Generate audio"
+              description="Generate audio along with the video"
+              checked={value}
+              onChange={(e) => onChange(e.currentTarget.checked)}
+            />
+          )}
+        />
+        <Controller
+          graph={videoHub}
+          name="turbo"
+          render={({ value, onChange }) => (
+            <Checkbox
+              label="Turbo"
+              description="Use the turbo LoRA — converges in fewer steps"
+              checked={value}
+              onChange={(e) => onChange(e.currentTarget.checked)}
+            />
+          )}
+        />
+        <Controller
+          graph={videoHub}
+          name="enableAudio"
+          render={({ value, onChange }) => (
+            <Checkbox
+              label="Generate audio"
+              description="Generate audio along with the video"
+              checked={value}
+              onChange={(e) => onChange(e.currentTarget.checked)}
+            />
+          )}
+        />
+        <Controller
+          graph={videoHub}
+          name="draft"
+          render={({ value, onChange }) => (
+            <Checkbox
+              checked={value}
+              onChange={(e) => onChange(e.target.checked)}
+              label="Draft Mode"
+              description="Generate faster at with optimized settings (may reduce quality)"
+            />
+          )}
+        />
+        <Controller
+          graph={videoHub}
+          name="shift"
+          render={({ value, meta, onChange }) =>
+            meta ? (
+              <SliderInput
+                value={value}
+                onChange={onChange}
+                label="Shift"
+                min={meta.min}
+                max={meta.max}
+                step={meta.step}
+              />
+            ) : null
+          }
+        />
+        <Controller
+          graph={videoHub}
+          name="interpolatorModel"
+          render={({ value, meta, onChange }) => (
+            <SelectInput
+              value={value}
+              onChange={(v) => onChange(v as typeof value)}
+              label="Interpolator"
+              options={meta?.options}
+            />
+          )}
+        />
+      </AccordionLayout>
     </Stack>
   );
 }

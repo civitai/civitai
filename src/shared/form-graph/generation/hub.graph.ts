@@ -12,7 +12,14 @@ import { imageHub } from './image/hub.graph';
 import { videoHub } from './video/hub.graph';
 import { audioHub } from './audio/hub.graph';
 import { model3dHub } from './model3d/hub.graph';
-import type { RootCtx } from './shared';
+import { imageUpscale } from './workflows/image-upscale.graph';
+import {
+  imagePreprocess,
+  imageRemoveBackground,
+  metadataExtraction,
+  promptEnhancement,
+} from './workflows/image-simple.graph';
+import { videoInterpolation, videoUpscale } from './workflows/video-enhance.graph';
 
 /**
  * The composed root, mirroring `generation-graph.ts`'s head: workflow (key
@@ -23,6 +30,10 @@ import type { RootCtx } from './shared';
  */
 
 // ---- copied from generation-graph.ts, which dies with the data-graph engine
+
+// Copied from generation-graph.ts, which dies with the data-graph engine.
+const priorityOptions = ['low', 'normal', 'high'] as const;
+const outputFormatOptions = ['jpeg', 'png'] as const;
 
 /** Maps new-format workflow keys back to old format for migration */
 const NEW_TO_OLD: Record<string, string> = {
@@ -65,6 +76,31 @@ const outputHubs = branch('output', [
   [['model3d'], model3dHub],
 ] as const);
 
+/**
+ * The standalone (no-ecosystem) workflows, each its own branch in v1's root
+ * discriminator. Everything else routes to the per-output ecosystem hubs.
+ */
+const STANDALONE_WORKFLOWS = new Set([
+  'vid2vid:interpolate',
+  'vid2vid:upscale',
+  'img2img:upscale',
+  'img2img:remove-background',
+  'img2img:preprocess',
+  'img2meta',
+  'prompt:enhance',
+]);
+
+const workflowKinds = branch('workflowKind', [
+  [['vid2vid:interpolate'], videoInterpolation],
+  [['vid2vid:upscale'], videoUpscale],
+  [['img2img:upscale'], imageUpscale],
+  [['img2img:remove-background'], imageRemoveBackground],
+  [['img2img:preprocess'], imagePreprocess],
+  [['img2meta'], metadataExtraction],
+  [['prompt:enhance'], promptEnhancement],
+  [['ecosystem'], outputHubs],
+] as const);
+
 export const generationHub = defineGraph<GenerationCtx>()
   .field('workflow', ({ _ext }) => {
     const { hidden, states } = mergeGateStates(
@@ -86,6 +122,60 @@ export const generationHub = defineGraph<GenerationCtx>()
   })
   .computed('output', ({ workflow }) => getOutputTypeForWorkflow(workflow))
   .computed('input', ({ workflow }) => getInputTypeForWorkflow(workflow))
-  .use(outputHubs);
+  // v1 declares priority/outputFormat at the ROOT gated on image output, so
+  // they apply to the standalone image workflows too, not just the image hub
+  .field('priority', ({ output, _ext }) => {
+    if (output !== 'image') return null;
+    const isMember = _ext.user?.isMember ?? false;
+    const options: {
+      label: string;
+      value: (typeof priorityOptions)[number];
+      offset: number;
+      lineThrough?: boolean;
+      memberOnly?: boolean;
+    }[] = isMember
+      ? [
+          { label: 'High', value: 'low', offset: 10, lineThrough: true },
+          { label: 'Highest', value: 'high', offset: 20 },
+        ]
+      : [
+          { label: 'Standard', value: 'low', offset: 0 },
+          { label: 'High', value: 'normal', offset: 10 },
+          { label: 'Highest', value: 'high', offset: 20, memberOnly: true },
+        ];
+    return {
+      input: z
+        .enum(priorityOptions)
+        .optional()
+        .transform((val) => (!isMember && val === 'high' ? ('low' as const) : val)),
+      output: z.enum(priorityOptions),
+      default: 'low' as const,
+      meta: { options, isMember },
+    };
+  })
+  .field('outputFormat', ({ output, workflow, _ext }) =>
+    output !== 'image' || workflow === 'img2img:remove-background'
+      ? null
+      : {
+          input: z.enum(outputFormatOptions).optional(),
+          output: z.enum(outputFormatOptions),
+          default: 'jpeg' as const,
+          meta: {
+            options: [
+              { label: 'JPEG', value: 'jpeg' as const, offset: 0 },
+              { label: 'PNG', value: 'png' as const, offset: 2 },
+            ],
+            isMember: _ext.user?.isMember ?? false,
+          },
+        }
+  )
+  // state-only (the oracle's wire has no such key): standalone workflows get
+  // their own arm; everything else rides the per-output ecosystem hubs
+  .computed(
+    'workflowKind',
+    ({ workflow }) => (STANDALONE_WORKFLOWS.has(workflow) ? workflow : 'ecosystem'),
+    { emit: false }
+  )
+  .use(workflowKinds);
 
 export type GenerationState = ReturnType<typeof generationHub.resolve>;

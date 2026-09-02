@@ -1,4 +1,5 @@
 import { Checkbox, NumberInput, Stack, Textarea } from '@mantine/core';
+import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller } from 'form-graph/react';
 
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
@@ -60,9 +61,6 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
           />
         )}
       />
-      {/* v7 has no text-to-3D: picking it on txt2model3d moves the user to
-          img2model3d in the same set(); a single flag-less option hides the
-          control entirely (nothing to choose) */}
       <Controller
         graph={model3dHub}
         name="polygenVersion"
@@ -144,7 +142,102 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
           />
         )}
       />
-      {/* --- Tripo --- */}
+      <Controller
+        graph={model3dHub}
+        name="shouldTexture"
+        render={({ value, onChange }) => (
+          <Checkbox
+            label="Generate texture"
+            description="Apply automatic texture to the generated mesh"
+            checked={value}
+            onChange={(e) => onChange(e.currentTarget.checked)}
+          />
+        )}
+      />
+      <Controller
+        graph={model3dHub}
+        name="targetPolycount"
+        render={({ value, meta, onChange }) => (
+          <SliderInput
+            label={
+              <ControllerLabel
+                label="Target polycount"
+                info="Final triangle count target. Higher means more detail in the generated mesh."
+              />
+            }
+            value={value}
+            onChange={onChange}
+            min={meta?.min ?? 100}
+            max={meta?.max ?? 300_000}
+            step={meta?.step ?? 100}
+            presets={meta?.presets}
+          />
+        )}
+      />
+      <Controller
+        graph={model3dHub}
+        name="topology"
+        render={({ value, meta, onChange }) => (
+          <OptionButtons
+            label="Topology"
+            info="Choose triangles for hard-surface and game-ready meshes; choose quads for organic shapes and downstream sculpting."
+            value={value}
+            options={meta?.options}
+            onChange={(v) => onChange(v as typeof value)}
+          />
+        )}
+      />
+      <Controller
+        graph={model3dHub}
+        name="symmetryMode"
+        render={({ value, meta, onChange }) => (
+          <OptionButtons
+            label="Symmetry"
+            info="Auto detects bilateral symmetry from the prompt or source image. Use On to force a symmetric mesh, or Off to disable for asymmetric subjects."
+            value={value}
+            options={meta?.options}
+            onChange={(v) => onChange(v as typeof value)}
+          />
+        )}
+      />
+      <Controller
+        graph={model3dHub}
+        name="poseMode"
+        render={({ value, meta, onChange }) => (
+          <OptionButtons
+            label="Pose"
+            info="Force the character into an A-pose or T-pose, which rigs and animates more reliably. Auto lets Meshy keep the pose from your image."
+            value={value}
+            options={meta?.options}
+            onChange={(v) => onChange(v as typeof value)}
+          />
+        )}
+      />
+      <Controller
+        graph={model3dHub}
+        name="modelType"
+        render={({ value, meta, onChange }) => (
+          <OptionButtons
+            label="Model type"
+            info="Low poly produces a stylized, game-ready mesh and ignores the polycount, topology and remesh controls."
+            value={value}
+            options={meta?.options}
+            onChange={(v) => onChange(v as typeof value)}
+          />
+        )}
+      />
+      <Controller
+        graph={model3dHub}
+        name="ultraMode"
+        render={({ value, onChange }) => (
+          <Checkbox
+            label="Ultra fidelity"
+            description="Higher-fidelity geometry with finer surface detail (slower and more expensive)"
+            checked={value}
+            onChange={(e) => onChange(e.currentTarget.checked)}
+          />
+        )}
+      />
       <Controller
         graph={model3dHub}
         name="texture"
@@ -248,7 +341,6 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
           <SeedInput value={value} onChange={onChange} label="Texture seed" />
         )}
       />
-      {/* --- Hunyuan3D --- */}
       <Controller
         graph={model3dHub}
         name="hunyuanPrompt"
@@ -334,210 +426,111 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
           />
         )}
       />
-      {/* --- shared Meshy / comfy controls --- */}
-      <Controller
-        graph={model3dHub}
-        name="shouldTexture"
-        render={({ value, onChange }) => (
-          <Checkbox
-            label="Generate texture"
-            description="Apply automatic texture to the generated mesh"
-            checked={value}
-            onChange={(e) => onChange(e.currentTarget.checked)}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="targetPolycount"
-        render={({ value, meta, onChange }) => (
-          <SliderInput
-            label={
-              <ControllerLabel
-                label="Target polycount"
-                info="Final triangle count target. Higher means more detail in the generated mesh."
-              />
-            }
-            value={value}
-            onChange={onChange}
-            min={meta?.min ?? 100}
-            max={meta?.max ?? 300_000}
-            step={meta?.step ?? 100}
-            presets={meta?.presets}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="topology"
-        render={({ value, meta, onChange }) => (
-          <OptionButtons
-            label="Topology"
-            info="Choose triangles for hard-surface and game-ready meshes; choose quads for organic shapes and downstream sculpting."
-            value={value}
-            options={meta?.options}
-            onChange={(v) => onChange(v as typeof value)}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="symmetryMode"
-        render={({ value, meta, onChange }) => (
-          <OptionButtons
-            label="Symmetry"
-            info="Auto detects bilateral symmetry from the prompt or source image. Use On to force a symmetric mesh, or Off to disable for asymmetric subjects."
-            value={value}
-            options={meta?.options}
-            onChange={(v) => onChange(v as typeof value)}
-          />
-        )}
-      />
-      {/* --- Meshy v7-only --- */}
-      <Controller
-        graph={model3dHub}
-        name="poseMode"
-        render={({ value, meta, onChange }) => (
-          <OptionButtons
-            label="Pose"
-            info="Force the character into an A-pose or T-pose, which rigs and animates more reliably. Auto lets Meshy keep the pose from your image."
-            value={value}
-            options={meta?.options}
-            onChange={(v) => onChange(v as typeof value)}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="modelType"
-        render={({ value, meta, onChange }) => (
-          <OptionButtons
-            label="Model type"
-            info="Low poly produces a stylized, game-ready mesh and ignores the polycount, topology and remesh controls."
-            value={value}
-            options={meta?.options}
-            onChange={(v) => onChange(v as typeof value)}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="ultraMode"
-        render={({ value, onChange }) => (
-          <Checkbox
-            label="Ultra fidelity"
-            description="Higher-fidelity geometry with finer surface detail (slower and more expensive)"
-            checked={value}
-            onChange={(e) => onChange(e.currentTarget.checked)}
-          />
-        )}
-      />
-      {/* --- advanced --- */}
-      <Controller
-        graph={model3dHub}
-        name="texturePrompt"
-        render={({ value, meta, onChange }) => (
-          <Textarea
-            label={
-              <ControllerLabel
-                label="Texture prompt"
-                info="Optional. Describe the material, finish, or style for the generated texture. Leave blank to let Meshy infer from the main prompt."
-              />
-            }
-            placeholder={meta?.placeholder ?? 'Weathered oak with bronze fittings…'}
-            value={value ?? ''}
-            onChange={(e) => onChange(e.currentTarget.value)}
-            autosize
-            minRows={2}
-            maxLength={meta?.maxLength}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="shouldRemesh"
-        render={({ value, onChange }) => (
-          <Checkbox
-            label="Remesh"
-            description="Re-tessellate the mesh for cleaner topology"
-            checked={value}
-            onChange={(e) => onChange(e.currentTarget.checked)}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="enablePbr"
-        render={({ value, onChange }) => (
-          <Checkbox
-            label="Enable PBR textures"
-            description="Generate physically-based rendering textures (albedo, normal, roughness)"
-            checked={value}
-            onChange={(e) => onChange(e.currentTarget.checked)}
-          />
-        )}
-      />
-      {/* one user-facing "Animate" toggle — the submit builder pins
-          enableRigging = enableAnimation to satisfy the Meshy contract */}
-      <Controller
-        graph={model3dHub}
-        name="enableAnimation"
-        render={({ value, onChange }) => (
-          <Checkbox
-            label="Animate"
-            description="Generate a rigged, animated mesh (skeleton + idle animation)"
-            checked={value}
-            onChange={(e) => onChange(e.currentTarget.checked)}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="riggingHeightMeters"
-        render={({ value, meta, onChange }) => (
-          <SliderInput
-            label={
-              <ControllerLabel
-                label="Character height (m)"
-                info="Approximate real-world height of the character, used to scale the skeleton."
-              />
-            }
-            value={value}
-            onChange={onChange}
-            min={meta?.min ?? 0.1}
-            max={meta?.max ?? 10}
-            step={meta?.step ?? 0.1}
-            precision={1}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="animationActionId"
-        render={({ value, meta, onChange }) => (
-          <NumberInput
-            label={
-              <ControllerLabel
-                label="Animation preset"
-                info="Id from Meshy's animation library. 0 is Idle; see https://docs.meshy.ai/en/api/animation-library for the full list."
-              />
-            }
-            value={value ?? ''}
-            onChange={(v) => onChange(typeof v === 'number' ? v : undefined)}
-            min={meta?.min}
-            max={meta?.max}
-            placeholder={meta?.placeholder ?? '0 (Idle)'}
-            allowDecimal={false}
-          />
-        )}
-      />
-      <Controller
-        graph={model3dHub}
-        name="seed"
-        render={({ value, onChange }) => (
-          <SeedInput value={value} onChange={onChange} label="Seed" />
-        )}
-      />
+      <AccordionLayout label="Advanced" storeKey="form-graph-model3d-advanced">
+        <Controller
+          graph={model3dHub}
+          name="texturePrompt"
+          render={({ value, meta, onChange }) => (
+            <Textarea
+              label={
+                <ControllerLabel
+                  label="Texture prompt"
+                  info="Optional. Describe the material, finish, or style for the generated texture. Leave blank to let Meshy infer from the main prompt."
+                />
+              }
+              placeholder={meta?.placeholder ?? 'Weathered oak with bronze fittings…'}
+              value={value ?? ''}
+              onChange={(e) => onChange(e.currentTarget.value)}
+              autosize
+              minRows={2}
+              maxLength={meta?.maxLength}
+            />
+          )}
+        />
+        <Controller
+          graph={model3dHub}
+          name="shouldRemesh"
+          render={({ value, onChange }) => (
+            <Checkbox
+              label="Remesh"
+              description="Re-tessellate the mesh for cleaner topology"
+              checked={value}
+              onChange={(e) => onChange(e.currentTarget.checked)}
+            />
+          )}
+        />
+        <Controller
+          graph={model3dHub}
+          name="enablePbr"
+          render={({ value, onChange }) => (
+            <Checkbox
+              label="Enable PBR textures"
+              description="Generate physically-based rendering textures (albedo, normal, roughness)"
+              checked={value}
+              onChange={(e) => onChange(e.currentTarget.checked)}
+            />
+          )}
+        />
+        <Controller
+          graph={model3dHub}
+          name="enableAnimation"
+          render={({ value, onChange }) => (
+            <Checkbox
+              label="Animate"
+              description="Generate a rigged, animated mesh (skeleton + idle animation)"
+              checked={value}
+              onChange={(e) => onChange(e.currentTarget.checked)}
+            />
+          )}
+        />
+        <Controller
+          graph={model3dHub}
+          name="riggingHeightMeters"
+          render={({ value, meta, onChange }) => (
+            <SliderInput
+              label={
+                <ControllerLabel
+                  label="Character height (m)"
+                  info="Approximate real-world height of the character, used to scale the skeleton."
+                />
+              }
+              value={value}
+              onChange={onChange}
+              min={meta?.min ?? 0.1}
+              max={meta?.max ?? 10}
+              step={meta?.step ?? 0.1}
+              precision={1}
+            />
+          )}
+        />
+        <Controller
+          graph={model3dHub}
+          name="animationActionId"
+          render={({ value, meta, onChange }) => (
+            <NumberInput
+              label={
+                <ControllerLabel
+                  label="Animation preset"
+                  info="Id from Meshy's animation library. 0 is Idle; see https://docs.meshy.ai/en/api/animation-library for the full list."
+                />
+              }
+              value={value ?? ''}
+              onChange={(v) => onChange(typeof v === 'number' ? v : undefined)}
+              min={meta?.min}
+              max={meta?.max}
+              placeholder={meta?.placeholder ?? '0 (Idle)'}
+              allowDecimal={false}
+            />
+          )}
+        />
+        <Controller
+          graph={model3dHub}
+          name="seed"
+          render={({ value, onChange }) => (
+            <SeedInput value={value} onChange={onChange} label="Seed" />
+          )}
+        />
+      </AccordionLayout>
     </Stack>
   );
 }

@@ -197,7 +197,7 @@ export const resourceSchema = z.object({
 });
 export type ResourceData = z.infer<typeof resourceSchema>;
 
-const resourceInputSchema = z.union([
+export const resourceInputSchema = z.union([
   z.number().transform((id) => ({ id })),
   z.looseObject({ id: z.number() }),
 ]);

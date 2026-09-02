@@ -454,7 +454,7 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 | model3d: polygen (Meshy v6/v7) | DONE | DONE | `polygenVersion` flag-gated (meshyV7Generator) AND workflow-clamped (v7-on-text → v6) in both input and output transforms; v7-only knobs null out per version/image-count; v7 has no seed |
 | model3d: tripo / hunyuan3d / pixal3d / trellis2 | DONE | DONE | image-to-3D only; pixal3d and trellis2 are field-identical (one factory, two instances for their own family scopes); hunyuan keeps its `hunyuan*` field prefixes, mapped back in the handler |
 | model3d hub | DONE | DONE | ecosystem scoped 'model3d', default PolyGen; the four newer 3D ecosystems are flag-hidden fail-closed via the shared getEcosystemStates |
-| standalone workflow graphs (upscale/interpolate/remove-background) | OPEN | OPEN | the last tail — enhancement workflows, not ecosystem families |
+| standalone workflows (img2img:upscale / remove-background / preprocess, vid2vid:upscale / interpolate, img2meta, prompt:enhance) | DONE | DONE | seven arms on a state-only `workflowKind` dispatch at the root (the oracle wire has no such key); priority/outputFormat moved to the ROOT gated on image output, matching v1 — they apply to standalone image workflows too. The upscale batch reset (v1 transform) is a `correct`; preprocess kind specs import from the v1 module (they mirror @civitai/client, not the engine). The two empty panels (img2meta, prompt:enhance) are bare graphs. Step creation stays in the submit service keyed on workflow — data parity covers it, no lane handlers needed |
 | _…add a row per `*-graph.ts` file during Phase 2 inventory…_ | | | |
 
 ---

@@ -1,4 +1,5 @@
 import { Checkbox, Input, Stack, Textarea } from '@mantine/core';
+import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller } from 'form-graph/react';
 
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
@@ -62,6 +63,32 @@ export function AudioGenerationForm() {
       />
       <Controller
         graph={audioHub}
+        name="generateCover"
+        render={({ value, onChange }) => (
+          <Checkbox
+            label="Generate cover image"
+            description="Auto-generate an album cover using AI"
+            checked={value}
+            onChange={(e) => onChange(e.currentTarget.checked)}
+          />
+        )}
+      />
+      <Controller
+        graph={audioHub}
+        name="images"
+        render={({ value, meta, onChange, error }) => (
+          <ImageUploadMultipleInput
+            label="Cover image"
+            value={value}
+            onChange={onChange}
+            max={meta?.max}
+            aspectRatios={meta?.aspectRatios as `${number}:${number}`[] | undefined}
+            error={error?.message}
+          />
+        )}
+      />
+      <Controller
+        graph={audioHub}
         name="aceAudioMode"
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
@@ -74,7 +101,6 @@ export function AudioGenerationForm() {
           </div>
         )}
       />
-      {/* a separate field from aceAudioMode so each ecosystem keeps its own stored value */}
       <Controller
         graph={audioHub}
         name="minimaxMusicMode"
@@ -158,34 +184,6 @@ export function AudioGenerationForm() {
       />
       <Controller
         graph={audioHub}
-        name="cfgScale"
-        render={({ value, meta, onChange }) => (
-          <SliderInput
-            label="CFG Scale"
-            value={value}
-            onChange={onChange}
-            min={meta?.min ?? 0.5}
-            max={meta?.max ?? 10}
-            step={meta?.step ?? 0.5}
-          />
-        )}
-      />
-      <Controller
-        graph={audioHub}
-        name="steps"
-        render={({ value, meta, onChange }) => (
-          <SliderInput
-            label="Steps"
-            value={value}
-            onChange={onChange}
-            min={meta?.min ?? 1}
-            max={meta?.max ?? 100}
-            step={meta?.step ?? 1}
-          />
-        )}
-      />
-      <Controller
-        graph={audioHub}
         name="instrumentalWeight"
         render={({ value, meta, onChange }) => (
           <SliderInput
@@ -216,32 +214,6 @@ export function AudioGenerationForm() {
       />
       <Controller
         graph={audioHub}
-        name="generateCover"
-        render={({ value, onChange }) => (
-          <Checkbox
-            label="Generate cover image"
-            description="Auto-generate an album cover using AI"
-            checked={value}
-            onChange={(e) => onChange(e.currentTarget.checked)}
-          />
-        )}
-      />
-      <Controller
-        graph={audioHub}
-        name="images"
-        render={({ value, meta, onChange, error }) => (
-          <ImageUploadMultipleInput
-            label="Cover image"
-            value={value}
-            onChange={onChange}
-            max={meta?.max}
-            aspectRatios={meta?.aspectRatios as `${number}:${number}`[] | undefined}
-            error={error?.message}
-          />
-        )}
-      />
-      <Controller
-        graph={audioHub}
         name="duration"
         render={({ value, meta, onChange }) => (
           <SliderInput
@@ -254,13 +226,43 @@ export function AudioGenerationForm() {
           />
         )}
       />
-      <Controller
-        graph={audioHub}
-        name="seed"
-        render={({ value, onChange }) => (
-          <SeedInput value={value} onChange={onChange} label="Seed" />
-        )}
-      />
+      <AccordionLayout label="Advanced" storeKey="form-graph-audio-advanced">
+        <Controller
+          graph={audioHub}
+          name="cfgScale"
+          render={({ value, meta, onChange }) => (
+            <SliderInput
+              label="CFG Scale"
+              value={value}
+              onChange={onChange}
+              min={meta?.min ?? 0.5}
+              max={meta?.max ?? 10}
+              step={meta?.step ?? 0.5}
+            />
+          )}
+        />
+        <Controller
+          graph={audioHub}
+          name="steps"
+          render={({ value, meta, onChange }) => (
+            <SliderInput
+              label="Steps"
+              value={value}
+              onChange={onChange}
+              min={meta?.min ?? 1}
+              max={meta?.max ?? 100}
+              step={meta?.step ?? 1}
+            />
+          )}
+        />
+        <Controller
+          graph={audioHub}
+          name="seed"
+          render={({ value, onChange }) => (
+            <SeedInput value={value} onChange={onChange} label="Seed" />
+          )}
+        />
+      </AccordionLayout>
     </Stack>
   );
 }
