@@ -253,6 +253,11 @@ describe('upsertModel — licensing lineage on a model type change', () => {
    * and fails here.
    */
   it('audits the type change against the writer read, not the replica', async () => {
+    // The DIVERGENCE is the test, and only half of it used to be visible here: the replica side came
+    // from the shared `storedModel`. Normalising that fixture to LORA would have left this assertion
+    // passing AND the mutation passing, with no other case in the file noticing, since nothing else
+    // reads `storedModel.type`. Pinned locally so a distant edit cannot reach it.
+    mockDbRead.model.findUnique.mockResolvedValue({ ...storedModel, type: ModelType.Checkpoint });
     storedTypeOnWriter(ModelType.LORA);
 
     await upsert({ id: MODEL_ID, userId: OWNER_ID, type: ModelType.Checkpoint });
