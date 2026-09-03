@@ -83,6 +83,28 @@ function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
+/**
+ * ONLY the comment text of `src` — the exact complement of `stripComments`.
+ *
+ * 🔴 THIS EXISTS SO THE TEMPLATE ASSERTION INSPECTS THE TEMPLATE. It used to run
+ * over the WHOLE un-stripped file, which is the shipped rules AND the HOW-TO
+ * template, under a message naming only the template. Measured under the
+ * relocation mutant (`data-app-page-frame=""` moved off the host root): the
+ * assertion printed two selectors and blamed "the 'HOW TO ADD ONE' template" for
+ * both, when one of them is the shipped `playable-collections` rule — pointing a
+ * developer at a correct template to fix a defect that is not in it. The shipped
+ * rules keep their own coverage: the strip mechanism in "no shipped ledger rule
+ * depends on an attribute production strips", the stamped-together mechanism in
+ * "each ledger selector's attributes are stamped TOGETHER on ONE PageBlockHost
+ * element". Both of those read `stripComments()`d CSS, so the two scopes now
+ * partition the file instead of overlapping.
+ */
+function commentsOnly(src: string): string {
+  return [...src.matchAll(/\/\*[\s\S]*?\*\//g), ...src.matchAll(/^\s*\/\/.*$/gm)]
+    .map((m) => m[0])
+    .join('\n');
+}
+
 /** Collapse whitespace so an assertion pins the EXPRESSION, not its formatting. */
 function norm(src: string): string {
   return src.replace(/\s+/g, ' ').trim();
@@ -299,9 +321,10 @@ function strippedAttrsIn(selector: LedgerSelector, patterns: string[]): string[]
  * two halves are now on different boxes — and the whole node tier stayed
  * BYTE-IDENTICALLY green. Only the report-only browser tier caught it. (Neither
  * tier blocks a merge — `main` requires no status check in this repo — so what a
- * node-tier guard buys is an honest verdict on a push to `main` and an annotation
- * a reviewer has to read, not a door that stays shut.) Relocation is the mutation
- * this shape exists to catch, and it survived the guard written against it.
+ * node-tier guard buys is an honest verdict on a push to `main` or a
+ * `workflow_dispatch`, and an annotation a reviewer has to read, not a door that
+ * stays shut.) Relocation is the mutation this shape exists to catch, and it
+ * survived the guard written against it.
  *
  * 🔴 A SPREAD'S CONTENTS ARE NOT COUNTED, DELIBERATELY. `{...props}` could carry
  * anything, so crediting a spread-bearing element with an attribute it might be
@@ -496,16 +519,43 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
    * survive the strip AND name attributes something actually stamps together.
    * The shipped-rule guards below run over `stripComments()`d CSS and therefore
    * cannot see this template at all.
+   *
+   * 🔴 SCOPED TO `commentsOnly()`, WHICH IS THE COMPLEMENT OF WHAT THOSE GUARDS
+   * READ. Everything asserted here is therefore genuinely about the template, so
+   * the failure messages can name it — see `commentsOnly` for the measured case
+   * where they named it wrongly.
    */
   it('🔴 the ledger’s HOW-TO-ADD-ONE template teaches a selector that survives production AND matches something', () => {
     const patterns = stripPatterns();
     const raw = read(GLOBALS_CSS);
-    const documented = ledgerSelectors(raw);
+    const documented = ledgerSelectors(commentsOnly(raw));
     expect(
       documented.length,
-      'no ledger-shaped selector was found in src/styles/globals.css at all, comments included ' +
-        '— the template and the rules both went missing, or this parse is broken.'
+      'no ledger-shaped selector was found in the COMMENTS of src/styles/globals.css — the ' +
+        '"HOW TO ADD ONE" template went missing, or this parse is broken. (A shipped rule ' +
+        'cannot satisfy this: the scope here is comments only.)'
     ).toBeGreaterThanOrEqual(1);
+
+    // 🔴 CONTROL ON THE SCOPING ITSELF, DERIVED RATHER THAN LITERAL. If
+    // `commentsOnly()` ever degrades toward the identity function, every message
+    // below silently goes back to blaming the template for shipped-rule
+    // violations — the exact defect this scoping fixed. Comparing against the
+    // rules the shipped-rule guards actually read keeps this true whatever the
+    // ledger's membership becomes.
+    const shippedTexts = ledgerSelectors(stripComments(raw)).map((s) => s.text);
+    expect(
+      shippedTexts.length,
+      'no shipped ledger rule was parsed out of src/styles/globals.css, so the disjointness ' +
+        'control below could not fail even if `commentsOnly()` were the identity function.'
+    ).toBeGreaterThan(0);
+    expect(
+      documented.map((s) => s.text).filter((t) => shippedTexts.includes(t)),
+      'a SHIPPED ledger rule appeared in the comment-only scope, so `commentsOnly()` is no ' +
+        'longer isolating the "HOW TO ADD ONE" template and the messages below would ' +
+        'misattribute a shipped-rule violation to it. (If a template was deliberately written ' +
+        "with a live app's slug, give the example a placeholder slug instead — a template that " +
+        'is byte-identical to a shipped rule is a copyable example of a real entry.)'
+    ).toEqual([]);
 
     const bad = documented
       .map((s) => ({ selector: s.text, stripped: strippedAttrsIn(s, patterns) }))

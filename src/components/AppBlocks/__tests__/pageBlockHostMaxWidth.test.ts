@@ -4,7 +4,8 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 /**
- * THE ULTRAWIDE CAP — the GATING half.
+ * THE ULTRAWIDE CAP — the SOURCE half. (`PageBlockHostMaxWidth.browser.test.tsx`
+ * is the MEASURED half. Neither half is a merge gate — see below.)
  *
  * A full-page App Block had no width bound anywhere in its chain (page wrapper,
  * host root and iframe are each `width: 100%`), so on a 2560px display an app
@@ -24,13 +25,13 @@ import { describe, expect, it } from 'vitest';
  * width at all — but the browser `component` project runs in CI as the
  * REPORT-ONLY `preview / component-tests` status. This file is in the node
  * `unit` project, which is report-only on a pull request too (`continue-on-error`)
- * and renders a real verdict only on a push to `main`. 🔴 NEITHER TIER BLOCKS A
- * MERGE — `main` requires no status check at all in this repo — so what a source
- * guard buys is a verdict that is honest on `main` and an annotation a reviewer
- * can read, NOT a door that stays shut. The same split, and the same reasoning,
- * as `pageRunScrollContract.test.ts` (whose own header records the measured case
- * where a fully-reverted floor left this node tier 9/9 green and only the browser
- * tier red).
+ * and renders a real verdict on a push to `main` or a `workflow_dispatch`.
+ * 🔴 NEITHER TIER BLOCKS A MERGE — `main` requires no status check at all in this
+ * repo — so what a source guard buys is a verdict that is honest on `main` and an
+ * annotation a reviewer can read, NOT a door that stays shut. The same split, and
+ * the same reasoning, as `pageRunScrollContract.test.ts` (whose own header records
+ * the measured case where a fully-reverted floor left this node tier 9/9 green and
+ * only the browser tier red).
  *
  * WHAT IS PINNED HERE — each is a thing whose absence is SILENT. Deliberately an
  * unnumbered list: it has grown twice, and a count stated beside the thing it counts
@@ -214,7 +215,7 @@ function isDescendant(
  * an empty string satisfies trivially. Measured: lifting the frame's inline style into
  * a `const` in a sibling module and putting the cap back in it, with the exact pinned
  * spelling, left this file 9/9 GREEN while the app chrome was capped again — the one
- * regression this file exists to block, through an entirely ordinary refactor. A
+ * regression this file exists to catch, through an entirely ordinary refactor. A
  * spread `{...{ style: … }}` did the same.
  *
  * So the two cases are now distinguishable and the callers must assert on it: a style
@@ -275,8 +276,11 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
     expect(
       declared,
       'APP_PAGE_MAX_WIDTH_PX declaration not found in PageBlockHost.tsx — if it was renamed or ' +
-        'derived, re-point this guard rather than deleting it: it is the only BLOCKING check on ' +
-        'the ultrawide cap.'
+        'derived, re-point this guard rather than deleting it: it is the ONLY assertion anywhere ' +
+        'that reads this declaration. The browser tier deliberately imports nothing from the ' +
+        'host (it measures a rendered width instead), so deleting this leaves the constant and ' +
+        'its band unchecked. It is not a merge gate — no status check is required on `main` — ' +
+        'but it is the only thing that would say so.'
     ).toBeDefined();
 
     const cap = Number(declared);
@@ -471,7 +475,7 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
 
   /**
    * 🔴 THE CAP AND THE CHROME ARE ON DIFFERENT ELEMENTS NOW, AND UNTIL THIS GUARD
-   * EXISTED THE GATING TIER COULD NOT SEE THAT AT ALL.
+   * EXISTED THE NODE TIER COULD NOT SEE THAT AT ALL.
    *
    * The cap used to sit on the host root, so the two guards above — "the cap pair
    * appears verbatim somewhere" and "`data-block-id` is on the frame" — described
@@ -486,8 +490,8 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    * frame, chrome capped again) left the FULL node suite — 1569 files, 24,879 tests
    * — byte-identically green. Only the browser tier caught it, and that tier is
    * report-only everywhere. This test is the node-tier half — the one that renders
-   * an honest verdict on a push to `main` (neither tier blocks a merge; see the
-   * header).
+   * an honest verdict on a push to `main` or a `workflow_dispatch` (neither tier
+   * blocks a merge; see the header).
    */
   it('the cap sits on `app-page-content`, and that box is a real DESCENDANT of the frame', () => {
     const { frame, content } = hostElements();
@@ -498,7 +502,7 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
     // sibling, cousin and unrelated later element also satisfies. Measured on that
     // version: closing the frame before the content box, so the two are genuine SIBLINGS
     // and the ledger's inheritance is dead, left this file 9/9 green AND the whole
-    // gating suite (1569 files / 24,879 tests) byte-identically green, while the
+    // node suite (1569 files / 24,879 tests) byte-identically green, while the
     // report-only browser tier correctly failed BOTH ledger tests. A guard whose message
     // says "no longer renders inside" must actually mean inside.
     expect(
@@ -507,7 +511,9 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
         'opt-out ledger sets `--app-page-max-width` ON THE FRAME and relies on CSS ' +
         'INHERITANCE to reach the capped box, so lifting that box out from under the ' +
         'frame — even into a sibling that still renders — makes every ledger entry ' +
-        'silently inert. Nothing rendered in the gating tier can see this.'
+        'silently inert. This node tier renders nothing, so this source-level ' +
+        'containment check is its only view of the relationship; the only tier that ' +
+        'can observe it at runtime is the report-only browser tier.'
     ).toBe(true);
 
     // The cap must live in the CONTENT element's style prop, not the FRAME's.
