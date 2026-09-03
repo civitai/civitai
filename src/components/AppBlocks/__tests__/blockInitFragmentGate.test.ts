@@ -181,13 +181,68 @@ describe('blockInitFragmentEnabledWith — opt-in only', () => {
   });
 });
 
-describe('blockInitFragmentEnabled — the PRODUCTION binding is OFF', () => {
-  it('🔴 ships with an EMPTY allowlist, so the fast path is inert everywhere', () => {
-    // A live-block enumeration on 2026-08-05 found that NO deployed block can
-    // decode the fragment (`civitai-block=v1` x0 across 20 bundles) because the
-    // SDK half is merged but unpublished. Shipping it enabled would be pure
-    // risk for zero benefit.
-    expect(BLOCK_INIT_FRAGMENT_ALLOWLIST.size).toBe(0);
+describe('blockInitFragmentEnabled — the PRODUCTION allowlist', () => {
+  it('🔴 contains EXACTLY the blocks opted in — pinned as a whole set', () => {
+    // Bind against the REAL exported constant, not the injectable `TEST_ALLOW`.
+    // Every assertion above drives `blockInitFragmentEnabledWith` with a
+    // synthetic allowlist, which BY CONSTRUCTION cannot observe a change to the
+    // production one — so without this test the shipped allowlist is unpinned
+    // and could be widened silently.
+    //
+    // Pinned as a sorted array rather than `.has(...)` + `.size`: an exact
+    // whole-set comparison fails on an ADDITION as well as a removal, and names
+    // the offending entry in its own diff.
+    expect([...BLOCK_INIT_FRAGMENT_ALLOWLIST].sort()).toEqual(['app-requests']);
+  });
+
+  it('🔴 enables the fast path for app-requests on page-run', () => {
+    // `app-requests` declares `"blockId": "app-requests"` and a `page` with no
+    // slots, and on page-run `slug === blockId` — so the single allowlist string
+    // matches whichever key the host passes. Assert BOTH keys and each alone,
+    // because a regression that dropped one lookup branch would still pass if
+    // only the combined shape were tested.
+    expect(
+      blockInitFragmentEnabled({
+        surface: 'page-run',
+        slug: 'app-requests',
+        blockId: 'app-requests',
+      })
+    ).toBe(true);
+    expect(blockInitFragmentEnabled({ surface: 'page-run', slug: 'app-requests' })).toBe(true);
+    expect(blockInitFragmentEnabled({ surface: 'page-run', blockId: 'app-requests' })).toBe(true);
+  });
+
+  it('🔴 does NOT leak onto dev-tunnel or review-preview for that same block', () => {
+    // THE POINT OF THIS TEST. Allowlisting a PUBLISHED app must not enable the
+    // fragment on a moderator's preview of that same app's next UNREVIEWED
+    // submission, nor on the author's dev tunnel — both mount unreviewed code
+    // under an identity the allowlist cannot distinguish from the reviewed one.
+    //
+    // 🔴 This assertion was VACUOUS before `app-requests` was allowlisted: with
+    // an empty allowlist every surface returned false anyway, so it could not
+    // distinguish "the surface was refused first" from "nothing was listed".
+    // The sibling page-run assertion is what gives it teeth — the SAME id on an
+    // eligible surface returns TRUE, so the only thing producing `false` here
+    // is the surface check.
+    for (const surface of ['dev-tunnel', 'review-preview'] as const) {
+      expect(
+        blockInitFragmentEnabled({
+          surface,
+          slug: 'app-requests',
+          blockId: 'app-requests',
+        })
+      ).toBe(false);
+    }
+    expect(
+      blockInitFragmentEnabled({
+        surface: 'page-run',
+        slug: 'app-requests',
+        blockId: 'app-requests',
+      })
+    ).toBe(true);
+  });
+
+  it('refuses a block that is on neither list, on every surface', () => {
     for (const surface of ALL_SURFACES) {
       expect(blockInitFragmentEnabled({ surface, blockId: 'anything', slug: 'anything' })).toBe(
         false
@@ -205,17 +260,32 @@ describe('blockInitFragmentEnabled — the PRODUCTION binding is OFF', () => {
     // started returning TRUE. The one block named as must-never-receive would
     // have received it.
     //
-    // Neither `ALLOWLIST.size === 0` nor `DENYLIST.has(...)` nor a lookup of an
-    // unknown id can see that swap: with the lists exchanged, the (empty)
-    // allowlist becomes the denylist and the denylist becomes the allowlist, so
-    // a denylisted slug is "allowed". Only asserting a DENYLISTED id through the
-    // production binding distinguishes the two wirings.
+    // Neither a set-contents pin nor `DENYLIST.has(...)` nor a lookup of an
+    // unknown id can see that swap: with the lists exchanged, the real
+    // allowlist is consulted as the denylist and vice versa, so a DENYLISTED
+    // slug is "allowed". Only asserting a denylisted id through the production
+    // binding distinguishes the two wirings.
     expect(blockInitFragmentEnabled({ surface: 'page-run', slug: 'playable-collections' })).toBe(
       false
     );
     expect(
       blockInitFragmentEnabled({ surface: 'model-slot', blockId: 'playable-collections' })
     ).toBe(false);
+  });
+
+  it('🔴 keeps playable-collections false on EVERY surface — denylist beats the allowlist', () => {
+    // Now that the real allowlist is non-empty, the denylist is doing load-
+    // bearing work through the production binding rather than being masked by
+    // an allowlist that refused everything anyway.
+    for (const surface of ALL_SURFACES) {
+      expect(
+        blockInitFragmentEnabled({
+          surface,
+          slug: 'playable-collections',
+          blockId: 'playable-collections',
+        })
+      ).toBe(false);
+    }
   });
 
   it('pins playable-collections in the real denylist', () => {
