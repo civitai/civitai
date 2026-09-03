@@ -23,11 +23,6 @@
     "noUncheckedIndexedAccess": false, // TODO swap to true
     "paths": {
       "~/*": ["./src/*"],
-      // form-graph is a pnpm link: — pin react types to the app's copy so the
-      // lib's own node_modules (@types/react 18.3.x) can't split the program.
-      // Remove with the link:/turbopack.root widening before any PR.
-      "react": ["./node_modules/@types/react"],
-      "react-dom": ["./node_modules/@types/react-dom"],
       "@civitai/db-schema": ["./packages/civitai-db-schema/src/index"],
       "@civitai/db-schema/*": ["./packages/civitai-db-schema/src/*"],
       "@civitai/db": ["./packages/civitai-db/src/index"],

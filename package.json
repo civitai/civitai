@@ -245,7 +245,7 @@
     "exifreader": "^4.39.0",
     "fastest-levenshtein": "^1.0.16",
     "file-saver": "^2.0.5",
-    "form-graph": "^0.2.0",
+    "form-graph": "^0.3.0",
     "google-auth-library": "^9.15.0",
     "googleapis": "^144.0.0",
     "gray-matter": "^4.0.3",
@@ -423,8 +423,7 @@
       "undici@6": "^6.27.0",
       "tar-fs@2": "^2.1.5",
       "tar-fs@3": "^3.1.3",
-      "ws@7": "^7.5.11",
-      "form-graph": "link:../../form-graph"
+      "ws@7": "^7.5.11"
     },
     "onlyBuiltDependencies": [
       "@parcel/watcher",
