@@ -24,8 +24,8 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 const allFlags = (value: boolean) =>
   new Proxy({} as FeatureAccess, { get: () => value }) as FeatureAccess;
 
-const resolve = (features: FeatureAccess, seed?: { postsNavItem?: boolean }) =>
-  resolveNavItems(navRegistry, { features, isAuthed: true }, undefined, seed);
+const resolve = (features: FeatureAccess) =>
+  resolveNavItems(navRegistry, { features, isAuthed: true });
 
 describe('sub-nav default layout', () => {
   it('places every gate-passing item at its default with all flags on', () => {
@@ -52,8 +52,8 @@ describe('sub-nav default layout', () => {
   /**
    * `posts` and `events` are absent because they default to `hidden`, not because a gate hides
    * them — they carry no gate at all now, so the modal can offer them to everyone. This matches
-   * what a user who never touched account settings has always seen; the seed below carries the
-   * users who DID turn them on.
+   * what a user who never touched account settings has always seen. The flags that used to
+   * surface them are deleted in this change; anyone who had them on re-adds them from the modal.
    *
    * The four promoted user-menu destinations (leaderboard, auctions, vault, collections)
    * exist in the registry but default to hidden — the sub nav is an additional surface for them,
@@ -74,23 +74,5 @@ describe('sub-nav default layout', () => {
     const { bar, more } = resolve(allFlags(false));
     expect(bar.map((e) => e.key)).toEqual(['home', 'models', 'images', 'videos', 'updates']);
     expect(more).toEqual([]);
-  });
-
-  it('seeds posts back into the bar at its registry position for a user who had the flag on', () => {
-    const { bar } = resolve(allFlags(true), { postsNavItem: true });
-    expect(bar.map((e) => e.key)).toEqual([
-      'home',
-      'models',
-      'images',
-      'videos',
-      '3d-models',
-      'hubs',
-      'posts',
-      'articles',
-      'comics',
-      'challenges',
-      'updates',
-      'shop',
-    ]);
   });
 });

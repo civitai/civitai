@@ -186,10 +186,10 @@ describe('NavCustomizeNotice (sub-nav popover)', () => {
   const OPEN_DEFER_MS = 1500;
   const navTriggerCount = () => document.querySelectorAll(NAV_TRIGGER_SELECTOR).length;
 
-  // The notice no longer gates on any feature flag — the gear it announces is offered to every
-  // signed-in user — so these set flags only to prove the notice ignores them.
+  // The notice gates on no feature flag at all — the gear it announces is offered to every
+  // signed-in user.
   const withHiddenNavItem = () => {
-    mocks.state.features = { postsNavItem: false, eventsNavItem: true };
+    mocks.state.features = {};
   };
 
   const renderWithSentinel = () =>
@@ -237,10 +237,10 @@ describe('NavCustomizeNotice (sub-nav popover)', () => {
     expect(navTriggerCount()).toBe(0);
   });
 
-  test('still renders when both nav flags are on — it no longer gates on them', async () => {
+  test('renders regardless of feature flags — it gates on none of them', async () => {
     // The notice it replaced showed only to users missing Posts or Events. This one announces a
-    // feature everyone got, so a flag state that used to suppress it must not.
-    mocks.state.features = { postsNavItem: true, eventsNavItem: true };
+    // feature everyone got, so no flag state may suppress it.
+    mocks.state.features = { articles: true };
     renderWithSentinel();
 
     await settle();

@@ -27,20 +27,8 @@ export function useResolvedNav() {
   const settings = useCurrentUserSettings();
 
   return useMemo(
-    () =>
-      resolveNavItems(
-        navRegistry,
-        { features, isAuthed: !!currentUser },
-        settings.navigation,
-        // Raw stored flags, not the resolved `features` above: once these stop being toggleable
-        // the overlay filters a user's stored value out, and seeding from the resolved flag would
-        // hide Posts from exactly the people who turned it on.
-        {
-          postsNavItem: settings.features?.postsNavItem,
-          eventsNavItem: settings.features?.eventsNavItem,
-        }
-      ),
-    [features, currentUser, settings.navigation, settings.features]
+    () => resolveNavItems(navRegistry, { features, isAuthed: !!currentUser }, settings.navigation),
+    [features, currentUser, settings.navigation]
   );
 }
 
@@ -58,8 +46,10 @@ export function HomeTabs() {
   const { data: latestChangelog } = trpc.changelog.getLatest.useQuery();
 
   const hasUnreadChangelog = (latestChangelog ?? 0) > lastSeenChangelog;
-  const isActive = (key: string) =>
-    activePath === key || (activePath === 'changelog' && key === 'updates');
+  const isActive = (entry: NavRegistryEntry) =>
+    entry.activeMatch
+      ? router.pathname.startsWith(entry.activeMatch)
+      : activePath === entry.key || (activePath === 'changelog' && entry.key === 'updates');
 
   const dot = (entry: NavRegistryEntry, className?: string) => {
     if (entry.key === 'updates' && hasUnreadChangelog)
@@ -88,7 +78,7 @@ export function HomeTabs() {
             className={clsx('h-8 overflow-visible rounded-full border-none py-2', {
               ['pl-3 pr-4']: showLabels,
               ['px-3']: !showLabels,
-              ['bg-gray-4 dark:bg-dark-4']: isActive(entry.key),
+              ['bg-gray-4 dark:bg-dark-4']: isActive(entry),
               [classes.tabHighlight]: entry.key === 'shop',
             })}
             classNames={{ label: 'flex gap-2 items-center capitalize overflow-visible' }}

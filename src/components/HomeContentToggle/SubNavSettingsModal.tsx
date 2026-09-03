@@ -2,23 +2,29 @@ import { Button, Group, Modal, Paper, Stack, Switch, Text } from '@mantine/core'
 import type { DragEndEvent, DragOverEvent, Modifier, UniqueIdentifier } from '@dnd-kit/core';
 import {
   DndContext,
+  KeyboardSensor,
   PointerSensor,
   rectIntersection,
   useDroppable,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import { IconArrowsMoveVertical, IconLock } from '@tabler/icons-react';
 import type { ComponentPropsWithoutRef } from 'react';
-import { forwardRef } from 'react';
+import { forwardRef, useRef } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { navIcons } from '~/components/HomeContentToggle/nav-icons';
 import { navRegistry } from '~/components/HomeContentToggle/nav-registry';
 import type { NavGroup } from '~/components/HomeContentToggle/nav-registry';
 import type { NavRow as Row } from '~/components/HomeContentToggle/nav-rows';
-import { rowsToConfig, seedRows } from '~/components/HomeContentToggle/nav-rows';
+import { matchesDefaults, rowsToConfig, seedRows } from '~/components/HomeContentToggle/nav-rows';
 import { useSeededState } from '~/components/CreatorShop/useSeededState';
 import {
   useCurrentUserSettingsState,
@@ -138,6 +144,7 @@ export default function SubNavSettingsModal() {
 
   // `undefined` until the query resolves, so `useSeededState` re-seeds when it lands rather than
   // treating a still-loading `{}` as the user's saved config and writing defaults over it.
+  const rowsBeforeDrag = useRef<Row[] | null>(null);
   const source = isResolved ? settings ?? null : undefined;
   const [rows, setRows] = useSeededState(source, seedRows);
   const [showLabels, setShowLabels] = useSeededState(
@@ -157,7 +164,12 @@ export default function SubNavSettingsModal() {
       }) ?? true;
   const shown = rows.filter(isReachable);
 
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  // `SortableItem` spreads dnd-kit's `attributes`, which announce the rows as keyboard-reorderable
+  // to a screen reader. Without this sensor that announcement is a lie.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   const groupOfDropTarget = (id: UniqueIdentifier, current: Row[]): NavGroup | undefined => {
     if (id === 'bar' || id === 'more') return id;
@@ -176,7 +188,16 @@ export default function SubNavSettingsModal() {
     });
   };
 
+  // `handleDragOver` commits the cross-group move as the pointer crosses, so Escape or a release
+  // outside both columns would otherwise leave the row in the group it was last dragged over —
+  // the user aborts and the move sticks anyway.
+  const handleDragCancel = () => setRows(rowsBeforeDrag.current ?? rows);
+  const handleDragStart = () => {
+    rowsBeforeDrag.current = rows;
+  };
+
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    rowsBeforeDrag.current = null;
     if (!over || active.id === over.id) return;
     setRows((prev) => {
       const ids = prev.map((row): UniqueIdentifier => row.key);
@@ -190,7 +211,12 @@ export default function SubNavSettingsModal() {
   const toggle = (key: NavKey) =>
     setRows((prev) => prev.map((row) => (row.key === key ? { ...row, hidden: !row.hidden } : row)));
 
-  const handleSave = () => mutate.mutate({ navigation: rowsToConfig(rows, showLabels) });
+  const handleSave = () =>
+    mutate.mutate({
+      // Writing nothing when the layout equals the defaults keeps the row small AND leaves the
+      // user tracking nav items that ship later.
+      navigation: matchesDefaults(rows, showLabels) ? undefined : rowsToConfig(rows, showLabels),
+    });
 
   // Deletes the key rather than writing empty groups, so the user resumes tracking the defaults —
   // including nav items that ship later.
@@ -234,8 +260,10 @@ export default function SubNavSettingsModal() {
             sensors={sensors}
             collisionDetection={rectIntersection}
             modifiers={[restrictToVerticalAxis]}
+            onDragStart={handleDragStart}
             onDragOver={handleDragOver}
             onDragEnd={handleDragEnd}
+            onDragCancel={handleDragCancel}
           >
             <Stack gap="lg">
               {(['bar', 'more'] as const).map((group) => (

@@ -10,16 +10,12 @@ export type NavRow = { key: NavKey; group: NavGroup; hidden: boolean; locked: bo
  * The settings modal's rows, from the SAME merge the nav renders. React-free so the node project
  * can pin the two against each other.
  *
- * 🔴 Do not reimplement the merge here. An earlier cut did, skipped the retired-flag seed the nav
- * applies, and so showed Posts as Hidden to a user who had it in their bar — deleting it on their
- * next save, with the account switch already gone.
+ * 🔴 Do not reimplement the merge here. An earlier cut did and diverged from it, showing a user's
+ * own bar back to them wrong and persisting that on their next save.
  */
 export function seedRows(settings: UserContentSettings | null | undefined): NavRow[] {
   const locked = new Set(navRegistry.filter((entry) => entry.locked).map((entry) => entry.key));
-  const { groups, hidden } = resolveNavLayout(navRegistry, settings?.navigation, {
-    postsNavItem: settings?.features?.postsNavItem,
-    eventsNavItem: settings?.features?.eventsNavItem,
-  });
+  const { groups, hidden } = resolveNavLayout(navRegistry, settings?.navigation);
 
   return (['bar', 'more'] as const).flatMap((group) =>
     groups[group].map((key) => ({
@@ -28,6 +24,25 @@ export function seedRows(settings: UserContentSettings | null | undefined): NavR
       hidden: hidden.has(key),
       locked: locked.has(key),
     }))
+  );
+}
+
+/**
+ * True when these rows are exactly what the user would get with no saved config at all.
+ *
+ * Opening the modal and pressing Save without changing anything otherwise persists all four
+ * fields — ~300 bytes, on a column that is Redis-cached per user and serialised into the HTML of
+ * every logged-in SSR render. Writing nothing instead also leaves them tracking future defaults.
+ */
+export function matchesDefaults(rows: NavRow[], showLabels: boolean): boolean {
+  if (!showLabels) return false;
+  const defaults = seedRows(undefined);
+  return (
+    rows.length === defaults.length &&
+    rows.every((row, i) => {
+      const other = defaults[i];
+      return row.key === other.key && row.group === other.group && row.hidden === other.hidden;
+    })
   );
 }
 

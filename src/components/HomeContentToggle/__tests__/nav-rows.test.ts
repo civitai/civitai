@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { navRegistry } from '~/components/HomeContentToggle/nav-registry';
-import { rowsToConfig, seedRows } from '~/components/HomeContentToggle/nav-rows';
+import { matchesDefaults, rowsToConfig, seedRows } from '~/components/HomeContentToggle/nav-rows';
 import { resolveNavItems } from '~/components/HomeContentToggle/resolve-nav-items';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -21,8 +21,6 @@ const settingsOf = (s?: object) => s as UserContentSettings | undefined;
 
 const CASES: [string, object | undefined][] = [
   ['no settings at all', undefined],
-  ['a user who had Posts switched on', { features: { postsNavItem: true } }],
-  ['a user who had Events switched on', { features: { eventsNavItem: true } }],
   [
     'a saved config',
     { navigation: { bar: ['home', 'models'], more: ['shop'], hidden: ['videos'] } },
@@ -37,10 +35,7 @@ describe('settings modal rows agree with the rendered nav', () => {
   it.each(CASES)('%s', (_label, raw) => {
     const settings = settingsOf(raw);
     const rows = seedRows(settings);
-    const nav = resolveNavItems(navRegistry, ctx, settings?.navigation, {
-      postsNavItem: settings?.features?.postsNavItem,
-      eventsNavItem: settings?.features?.eventsNavItem,
-    });
+    const nav = resolveNavItems(navRegistry, ctx, settings?.navigation);
 
     for (const group of ['bar', 'more'] as const)
       expect(rows.filter((r) => r.group === group && !r.hidden).map((r) => r.key)).toEqual(
@@ -49,22 +44,8 @@ describe('settings modal rows agree with the rendered nav', () => {
   });
 
   /**
-   * The specific loss. Reverting the modal to its own merge shows `posts` switched off here while
-   * the nav still renders it — a legible disagreement, not a hang.
-   */
-  it('shows Posts switched ON for a user who had the flag on, matching their nav', () => {
-    const rows = seedRows(settingsOf({ features: { postsNavItem: true } }));
-    const posts = rows.find((r) => r.key === 'posts');
-    expect(posts?.hidden).toBe(false);
-    expect(posts?.group).toBe('bar');
-    expect(
-      resolveNavItems(navRegistry, ctx, undefined, { postsNavItem: true }).bar.map((e) => e.key)
-    ).toContain('posts');
-  });
-
-  /**
-   * With the account switches gone, the modal is the ONLY way to reach Posts and Events. Gating
-   * those rows on the flags they replaced made them unreachable for the default-off majority.
+   * The modal is the ONLY way to reach Posts and Events now that their feature flags are deleted.
+   * Gating those rows on anything would make them unreachable.
    */
   it('keeps Posts and Events ungated, because the modal is now their only route back', () => {
     for (const key of ['posts', 'events'] as const)
@@ -91,6 +72,24 @@ describe('settings modal rows agree with the rendered nav', () => {
    */
   it('produces the pure defaults from an empty settings object, indistinguishable from loading', () => {
     expect(seedRows(settingsOf({}))).toEqual(seedRows(undefined));
+  });
+
+  it('persists the icon-only setting rather than hardcoding it', () => {
+    // Nothing else in the suite asserts `showLabels`, so hardcoding it in `rowsToConfig` was
+    // green everywhere while "turn labels off" silently never saved.
+    const rows = seedRows(undefined);
+    expect(rowsToConfig(rows, false).showLabels).toBe(false);
+    expect(rowsToConfig(rows, true).showLabels).toBe(true);
+  });
+
+  it('writes nothing when the layout is untouched, so a no-op Save costs no bytes', () => {
+    expect(matchesDefaults(seedRows(undefined), true)).toBe(true);
+    // Icon-only is itself a change, even with every row at its default.
+    expect(matchesDefaults(seedRows(undefined), false)).toBe(false);
+    const moved = seedRows(undefined).map((r) =>
+      r.key === 'shop' ? { ...r, group: 'more' as const } : r
+    );
+    expect(matchesDefaults(moved, true)).toBe(false);
   });
 
   /**

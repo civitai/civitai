@@ -17,17 +17,6 @@ export type NavConfig = {
   showLabels?: boolean;
 };
 
-/**
- * The two retired flags, read from the RAW `User.settings.features` blob — never from resolved
- * `FeatureAccess`. Once `postsNavItem` stops being `toggleable`, `computeUserFeatureFlagsOverlay`
- * filters the user's stored value out of the resolved flags, so seeding from those would hide
- * Posts from exactly the users who turned it on.
- */
-export type NavSeedFlags = {
-  postsNavItem?: boolean;
-  eventsNavItem?: boolean;
-};
-
 export type NavLayout = {
   groups: Record<NavGroup, NavKey[]>;
   hidden: Set<NavKey>;
@@ -40,12 +29,6 @@ export type ResolvedNav = {
 };
 
 const GROUPS = ['bar', 'more'] as const;
-
-function seedHidden(entry: NavRegistryEntry, seedFlags: NavSeedFlags | undefined): boolean {
-  if (entry.key === 'posts') return !seedFlags?.postsNavItem;
-  if (entry.key === 'events') return !seedFlags?.eventsNavItem;
-  return !!entry.defaultHidden;
-}
 
 /**
  * The merge: a user's saved groups, with every registry item they have never placed folded in
@@ -64,15 +47,23 @@ function seedHidden(entry: NavRegistryEntry, seedFlags: NavSeedFlags | undefined
  * when that sibling lives in the other group, which is the common case the day a `bar`-default
  * item ships under an anchor the user moved to `more`.
  */
-export function resolveNavLayout(
-  registry: NavRegistryEntry[],
-  config?: NavConfig,
-  seedFlags?: NavSeedFlags
-): NavLayout {
+export function resolveNavLayout(registry: NavRegistryEntry[], config?: NavConfig): NavLayout {
   const byKey = new Map(registry.map((entry) => [entry.key, entry]));
   const groups: Record<NavGroup, NavKey[]> = { bar: [], more: [] };
   const groupOf = new Map<NavKey, NavGroup>();
   const hidden = new Set<NavKey>();
+
+  // Locked items are placed FIRST, at the head of their default group in registry order, before
+  // anything the config says. They cannot go through the anchoring pass below: anchoring computes
+  // a slot from where the nearest registry sibling sits in the USER's order, so `home` — registry
+  // index 0, with no preceding sibling — landed wherever the user had dragged the item that
+  // follows it. Dragging Models to the end of the bar put Home second from last, and since Home
+  // has no drag handle the only way back was Reset.
+  for (const entry of registry) {
+    if (!entry.locked) continue;
+    groups[entry.defaultGroup].push(entry.key);
+    groupOf.set(entry.key, entry.defaultGroup);
+  }
 
   if (config) {
     for (const group of GROUPS) {
@@ -114,10 +105,8 @@ export function resolveNavLayout(
 
     target.splice(index, 0, entry.key);
     groupOf.set(entry.key, group);
-    // Only unplaced items reach here, so their visibility is seeded rather than read from the
-    // config — which is what carries a newly-shipped `defaultHidden` item, and what carries
-    // posts/events for a user whose retired account switch had them on.
-    if (!entry.locked && seedHidden(entry, seedFlags)) hidden.add(entry.key);
+    // Only unplaced items reach here — a newly-shipped item takes its registry default.
+    if (!entry.locked && entry.defaultHidden) hidden.add(entry.key);
   }
 
   return { groups, hidden };
@@ -134,11 +123,10 @@ export function resolveNavLayout(
 export function resolveNavItems(
   registry: NavRegistryEntry[],
   ctx: NavGateContext,
-  config?: NavConfig,
-  seedFlags?: NavSeedFlags
+  config?: NavConfig
 ): ResolvedNav {
   const byKey = new Map(registry.map((entry) => [entry.key, entry]));
-  const { groups, hidden } = resolveNavLayout(registry, config, seedFlags);
+  const { groups, hidden } = resolveNavLayout(registry, config);
 
   const resolve = (keys: NavKey[]) =>
     keys

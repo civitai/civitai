@@ -32,6 +32,12 @@ export type NavRegistryEntry = {
    */
   locked?: true;
   visible?: (ctx: NavGateContext) => boolean;
+  /**
+   * Pathname prefix that marks this tab active. Only needed when the url's first segment is not
+   * the key — `/user/vault` would otherwise never highlight, since the active check compares the
+   * first segment against the key.
+   */
+  activeMatch?: string;
   new?: Date;
   classes?: string[];
 };
@@ -128,6 +134,7 @@ export const navRegistry: NavRegistryEntry[] = [
   {
     key: 'vault',
     url: '/user/vault',
+    activeMatch: '/user/vault',
     defaultGroup: 'more',
     defaultHidden: true,
     visible: (ctx) => ctx.isAuthed && ctx.features.vault,

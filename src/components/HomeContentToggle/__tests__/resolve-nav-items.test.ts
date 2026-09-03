@@ -112,8 +112,13 @@ describe('resolveNavItems', () => {
   });
 
   it('drops a saved key the registry no longer has', () => {
-    const resolved = resolveNavItems(ABC, ctx(), config({ bar: ['a', 'retired', 'b', 'c'] }));
-    expect(keys(resolved.bar)).toEqual(['a', 'b', 'c']);
+    const cfg = config({ bar: ['a', 'retired', 'b', 'c'] });
+    expect(keys(resolveNavItems(ABC, ctx(), cfg).bar)).toEqual(['a', 'b', 'c']);
+    // On the LAYOUT, not just the resolved nav: `resolveNavItems` filters unresolvable keys again
+    // on the way out, so the resolver assertion above passes even with the guard deleted. The
+    // modal reads `resolveNavLayout` directly — a dead key there becomes a row with no registry
+    // entry, whose icon lookup is `undefined`, and `rowsToConfig` writes it straight back.
+    expect(resolveNavLayout(ABC, cfg).groups.bar).toEqual(['a', 'b', 'c']);
   });
 
   it('emits a key at most once when the config lists it in both groups', () => {
@@ -162,6 +167,16 @@ describe('resolveNavItems — locked items', () => {
     expect(keys(resolved.more)).toEqual([]);
   });
 
+  /**
+   * The saved order is REVERSED from the registry's, which the case above cannot see: with the
+   * registry order the anchoring pass happens to land a locked item on index 0 anyway, so it
+   * passed while `home` was in fact being placed next to whichever item the user had moved.
+   */
+  it('holds its position when the user reorders everything around it', () => {
+    const resolved = resolveNavItems(registry, ctx(), config({ bar: ['b', 'a'] }));
+    expect(keys(resolved.bar)).toEqual(['home', 'b', 'a']);
+  });
+
   it('cannot be hidden', () => {
     const { hidden } = resolveNavLayout(registry, config({ hidden: ['home', 'a'] }));
     expect(hidden.has('home')).toBe(false);
@@ -169,48 +184,24 @@ describe('resolveNavItems — locked items', () => {
   });
 });
 
-describe('resolveNavItems — retired nav-flag seed', () => {
+describe('resolveNavItems — defaultHidden', () => {
   const registry = [
     entry('home'),
     entry('posts', { defaultHidden: true }),
     entry('events', { defaultHidden: true }),
   ];
 
-  /**
-   * 🔴 The discriminating fixture: the RESOLVED flag is false while the STORED settings value is
-   * true. After `postsNavItem` stops being `toggleable`, `computeUserFeatureFlagsOverlay` filters
-   * the stored value out of the resolved flags — so a resolver seeding from `FeatureAccess` hides
-   * Posts from exactly the users who turned it on. If both sources carried the same value this
-   * test would pass under either implementation and prove nothing.
-   */
-  it('seeds from the STORED flag, not the resolved one', () => {
-    const resolved = resolveNavItems(registry, ctx(), undefined, { postsNavItem: true });
-    expect(keys(resolved.bar)).toEqual(['home', 'posts']);
-  });
-
-  it('leaves posts hidden when the stored flag was never set', () => {
+  it('switches a defaultHidden item off without removing it from its group', () => {
     expect(keys(resolveNavItems(registry, ctx()).bar)).toEqual(['home']);
+    expect(resolveNavLayout(registry).groups.bar).toEqual(['home', 'posts', 'events']);
   });
 
-  /**
-   * The seed is keyed per ITEM, not on the config object. Keying it on "no config at all" loses
-   * Posts permanently for a user who had the flag on and then saved any config, because the
-   * account switch is gone by then.
-   */
-  it('still seeds when a saved config exists but has no entry for the item', () => {
-    const resolved = resolveNavItems(registry, ctx(), config({ bar: ['home'] }), {
-      postsNavItem: true,
-    });
-    expect(keys(resolved.bar)).toEqual(['home', 'posts']);
-  });
-
-  it('does not re-seed over a visibility the user chose', () => {
+  it('honours a user who switched one back on', () => {
     const resolved = resolveNavItems(
       registry,
       ctx(),
-      config({ bar: ['home', 'posts'], hidden: ['posts'] }),
-      { postsNavItem: true }
+      config({ bar: ['home', 'posts', 'events'], hidden: ['events'] })
     );
-    expect(keys(resolved.bar)).toEqual(['home']);
+    expect(keys(resolved.bar)).toEqual(['home', 'posts']);
   });
 });
