@@ -149,17 +149,39 @@ function viewportHeightPx(): number | null {
  * and it stays correct if the frame ever gains another sibling.
  *
  * Returns 0 (i.e. no overhead, plain viewport clamp) whenever the difference is
- * not a usable positive number — a pre-layout read, where both boxes are still
- * 0, is the reachable case. Same degradation rule as `viewportHeightPx`: a
+ * not a usable positive number. Same degradation rule as `viewportHeightPx`: a
  * failed measurement must never make the budget SMALLER than the honest
- * fallback.
+ * fallback. (Whether a pre-layout read — both boxes still 0 — is reachable is
+ * NOT established either way here: every caller runs after the block has stated
+ * a height, which implies a laid-out iframe. Instrumentation never reached it.
+ * Stated as unknown rather than asserted in either direction.)
  *
- * The `!frame || !iframe` line is a TYPE NARROWING, not a covered branch — same
- * label as the `reported === null` early-out in the re-clamp effect below, and
- * for the same reason. Both refs are assigned during commit, before any passive
- * effect runs and before any postMessage can be dispatched, so neither is null
- * on any path that reaches this function. It exists because the parameters are
- * nullable `RefObject.current` reads.
+ * 🔴 THE `!frame || !iframe` LINE IS REACHABLE, AND IT IS LOAD-BEARING. It is a
+ * TYPE NARROWING in the sense that the branch is behaviourally inert — but do
+ * NOT read that as "dead code" and replace it with `frame!.offsetHeight`. The
+ * path, measured by instrumenting the branch and driving it (hit count 1):
+ *
+ *   1. the re-clamp effect's deps are the manifest min/max heights — `status` is
+ *      deliberately NOT among them (see `readGateStatus`), so its window
+ *      `resize` listener SURVIVES a status change;
+ *   2. a `BLOCK_ERROR {fatal:true}` sets status 'fatal', `hostRenderDecision`
+ *      returns 'collapse', and the component `return null`s — unmounting the
+ *      frame Box and the iframe, so React nulls BOTH refs while the component
+ *      itself stays mounted and the listener stays registered;
+ *   3. `reportedHeightRef.current` still holds the last stated height, so the
+ *      `reported === null` early-out below does NOT fire;
+ *   4. the next viewport change calls this function with (null, null).
+ *
+ * It produces no wrong output today only because 'fatal' is terminal and the
+ * host renders null, so the recomputed height is unobservable. Delete the check
+ * and that same path throws a TypeError out of a `resize` listener for every
+ * viewer who rotates after any block reported a fatal error.
+ *
+ * (An earlier revision of this comment asserted the opposite — "neither is null
+ * on any path that reaches this function", reasoning from commit ordering. The
+ * reasoning was wrong in exactly the way the deps array above makes possible,
+ * and it is recorded here because a false safety comment is what licenses
+ * deleting the guard it describes.)
  *
  * KNOWN LIMIT, stated rather than implied: this is re-measured when the clamp
  * RUNS — on a RESIZE_IFRAME and on a window `resize`. A chrome bar that changes
