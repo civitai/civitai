@@ -114,13 +114,16 @@ type ProbeWindowLabel = (typeof PROBE_WINDOWS)[number]['label'];
  * 🔴 A FROZEN ARRAY, NOT A `ReadonlySet`. `ReadonlySet<string>` is a COMPILE-TIME type and is erased
  * at runtime, so `(PROBE_NAMESPACES as Set<string>).add('preview')` from any importer would arm an
  * arbitrary namespace against the same object `probeNamespace` reads. `Object.freeze` on an array is
- * enforced by the runtime. The Set below is private and built from it, so lookup stays O(1) without
- * exposing a mutable handle.
+ * enforced by the runtime.
+ *
+ * 🔴 AND IT IS ONE OBJECT, DELIBERATELY — the ASSERTED object and the CONSULTED object must be the
+ * same one. A previous revision kept a private `Set` beside this array for O(1) lookup, and audit
+ * round 7 measured what that cost: growing the SET alone, leaving the array untouched, armed a new
+ * namespace while the ledger test kept happily asserting `['prod']` — green 22/22. The ledger's
+ * whole claim is that growth fails, and a second copy is exactly how that claim goes false. With a
+ * membership this small `.includes` is not measurably slower than `.has`, and it cannot drift.
  */
 export const PROBE_NAMESPACES: readonly string[] = Object.freeze(['prod']);
-
-/** Lookup form. Private, so nothing outside can add to it — see the note on the export above. */
-const PROBE_NAMESPACE_SET = new Set(PROBE_NAMESPACES);
 
 let warnedNamespace: string | null = null;
 
@@ -131,7 +134,7 @@ function probeNamespace(): string | null {
   // still off (an empty string is not in the allowlist either), but every unarmed pod logs a
   // misconfiguration error it has done nothing to deserve.
   if (raw === '') return null;
-  if (PROBE_NAMESPACE_SET.has(raw)) return raw;
+  if (PROBE_NAMESPACES.includes(raw)) return raw;
 
   // Warn ONCE per distinct bad value: this runs on the generation hot path, and a per-call log on a
   // misconfigured deployment would be its own incident. `console.error` rather than a throw for the
@@ -270,6 +273,15 @@ export function probeModerationCacheRepeat(
  *
  * A pure function takes the namespace as an ARGUMENT, so a test can pass two different values
  * without config being able to produce them. That restores the kill.
+ *
+ * ⚠️ AT THE FUNCTION ONLY — THE CALL SITE REMAINS UNCOVERED, AND THIS IS THE HONEST LIMIT. Audit
+ * round 7 measured it: hardcoding the third argument at the call site in `runProbe` (rather than
+ * inside this function) still leaves the suite green. With one allowlist member, `namespace` is
+ * always `'prod'` on every path config can reach, so no test driven through the public surface can
+ * distinguish a hardcoded argument from the derived one. Closing it would need a test-only
+ * injectable namespace resolver — more machinery than a temporary probe warrants — so it is
+ * recorded here instead of being left to read as closed. If a second member is ever added, that
+ * ALSO re-opens this: add a two-namespace behavioural case at the same time.
  */
 export function buildProbeKey<P extends string>(
   prefix: P,

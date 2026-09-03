@@ -417,6 +417,11 @@ describe('cache probe — the namespace IS the arming switch', () => {
     // config, where the allowlist admits exactly one value, so `namespace` is always `'prod'` and a
     // literal `prod` in the key template looks identical to the real derivation. Passing two
     // different namespaces to the pure builder is what makes the difference observable.
+    //
+    // ⚠️ AND IT COVERS THE FUNCTION, NOT THE CALL SITE. Audit round 7 measured that hardcoding the
+    // third ARGUMENT in `runProbe` still leaves this suite green — the same defect one level up,
+    // unreachable by any test driven through config while the allowlist has one member. Recorded
+    // rather than papered over; see the note on `buildProbeKey`.
     expect(buildProbeKey('p', 'alpha', '5m', 'deadbeef')).toBe('p:alpha:5m:deadbeef');
     expect(buildProbeKey('p', 'beta', '5m', 'deadbeef')).toBe('p:beta:5m:deadbeef');
     // The property that actually matters, stated as a property rather than as two literals: two
@@ -441,7 +446,7 @@ describe('cache probe — the namespace IS the arming switch', () => {
     expect(Object.isFrozen(PROBE_NAMESPACES)).toBe(true);
   });
 
-  it('every allowlist member arms, and the three removed ones do not', async () => {
+  it('exactly the declared members arm — every realistic non-member is rejected', async () => {
     // 🔴 THE BEHAVIOURAL HALF. The structural assertion above type-checks past a set whose members
     // do not actually arm anything, so this drives each candidate through the real path.
     //
@@ -454,8 +459,25 @@ describe('cache probe — the namespace IS the arming switch', () => {
     stubFetchOk();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
+    // 🔴 CANDIDATES = THE DECLARED MEMBERS PLUS REALISTIC NON-MEMBERS, and the expectation is
+    // DERIVED from the export rather than written out. That is what makes this catch a predicate
+    // that consults something OTHER than the declared list: audit round 7 found that when the
+    // allowlist was stored twice, growing only the consulted copy armed a new namespace while the
+    // ledger kept asserting the old one. The two objects are one again, but a predicate can still
+    // diverge from its declaration by other means, and a hardcoded expectation here could not see
+    // it. `staging`/`dev`/`test`/`stage` are the values someone would most plausibly add.
     const armed: string[] = [];
-    for (const candidate of ['prod', 'next', 'next-stage', 'preview']) {
+    const candidates = [
+      ...PROBE_NAMESPACES,
+      'next',
+      'next-stage',
+      'preview',
+      'staging',
+      'dev',
+      'test',
+      'stage',
+    ];
+    for (const candidate of candidates) {
       promClient.register.getSingleMetric(PROBE)?.reset();
       env.EXTERNAL_MODERATION_CACHE_PROBE = candidate;
       await extModeration.moderatePrompt(`a prompt for ${candidate}`, 'generate');
@@ -463,7 +485,7 @@ describe('cache probe — the namespace IS the arming switch', () => {
       if ((await probeTotal()) > 0) armed.push(candidate);
     }
 
-    expect(armed).toEqual(['prod']);
+    expect(armed).toEqual([...PROBE_NAMESPACES]);
     // The removed ones must be rejected LOUDLY, i.e. through the same path as any other unknown
     // value — not silently, which is reserved for the deliberately-empty case.
     for (const removed of ['next', 'next-stage', 'preview']) {
@@ -543,6 +565,13 @@ describe('cache probe — the namespace IS the arming switch', () => {
     const forThisValue = spy.mock.calls.filter((c) => String(c[0]).includes('NOT-VALID'));
     expect(forThisValue).toHaveLength(1);
     expect(String(forThisValue[0][0])).toContain('is DISABLED');
+    // The message names the accepted values by rendering the allowlist. Nothing asserted that, so a
+    // mutant emptying or mis-joining it would leave the operator a message that says "set it to one
+    // of those" and then lists nothing.
+    for (const member of PROBE_NAMESPACES) {
+      expect(String(forThisValue[0][0])).toContain(member);
+    }
+    expect(String(forThisValue[0][0])).toContain(PROBE_NAMESPACES.join(', '));
   });
 
   it('an unknown namespace is treated as OFF, not sanitised', async () => {
