@@ -4,10 +4,12 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * The app-block host chrome's platform-nav dropdown must draw the store's
- * destinations the way the STORE draws them. Node `unit` project — the GATING
- * tier (the Vitest browser-mode `component` project is report-only in CI, so the
- * behavioural companion in `AppBlockChromePlatformNav.browser.test.tsx` cannot
- * block a merge).
+ * destinations the way the STORE draws them. Node `unit` project — the tier that
+ * EXECUTES this assertion (report-only on a pull request, an honest verdict on a
+ * push to `main`). The behavioural companion in
+ * `AppBlockChromePlatformNav.browser.test.tsx` is in the REPORT-ONLY browser tier.
+ * NEITHER TIER BLOCKS A MERGE: `main` requires no status check at all in this
+ * repo, so this is a signal a reviewer must read, not a door that stays shut.
  *
  * WHAT BROKE. `AppBlockChrome`'s dropdown and `AppsSubNav`'s tab bar are two
  * renderings of ONE platform navigation — a user who opens an app from the store

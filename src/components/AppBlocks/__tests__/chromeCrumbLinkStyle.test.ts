@@ -21,10 +21,13 @@ import { describe, expect, it } from 'vitest';
  *
  * Together those are the claim. Neither half alone is.
  *
- * 🔴 AND IT IS IN THE GATING TIER, WHICH THE RENDERED ONE WOULD NOT HAVE BEEN. The
- * browser project runs in CI as the REPORT-ONLY `preview / component-tests` status, so
- * nothing there can block a merge; the node `unit` project can. Same split, and the same
- * reasoning, as `pageBlockHostMaxWidth.test.ts`.
+ * 🔴 AND IT IS IN THE TIER THAT EXECUTES, WHICH THE RENDERED ONE WOULD NOT HAVE BEEN.
+ * The browser project runs in CI as the REPORT-ONLY `preview / component-tests` status;
+ * the node `unit` project actually runs the assertion, report-only on a pull request
+ * (`continue-on-error`) and an honest verdict on a push to `main` or a
+ * `workflow_dispatch`. NEITHER TIER BLOCKS A MERGE: `main` requires no status check at
+ * all in this repo, so this is a signal a reviewer must read, not a door that stays
+ * shut. Same split, and the same reasoning, as `pageBlockHostMaxWidth.test.ts`.
  *
  * HISTORY THIS PROTECTS. The crumb used to carry `c="blue.6" td="underline"` — a
  * hand-rolled colour and decoration. The `blue.6` was not arbitrary: an audit found

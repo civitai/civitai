@@ -688,7 +688,7 @@ describe('AppBlockChrome mobile shell', () => {
   /**
    * 🔴 CONSTRAINT 1, AND NOT REGRESSION COVERAGE — both cases pass at `origin/main`
    * and are supposed to. `CHROME_BAR_PX` in `slotReservation.ts` pins the bar's
-   * resting height as the model slot's CLS reservation and is asserted in a GATING
+   * resting height as the model slot's CLS reservation and is asserted in a
    * node-tier test, so the mobile shell must not move it. This checks that at a
    * rendered-pixel level, at both viewports, rather than by reading a constant back.
    *
