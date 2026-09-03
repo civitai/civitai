@@ -108,6 +108,48 @@ const TOKEN_WAIT_TIMEOUT_MS = 15_000;
 // otherwise OOM the tab. 8000px is well above any legitimate block.
 const HARD_HEIGHT_CEILING = 8_000;
 
+/**
+ * The viewer's viewport height in CSS pixels, or `null` when there is nothing
+ * usable to measure — no `window` (SSR / a prerender pass), or an `innerHeight`
+ * that is not a positive finite number.
+ *
+ * 🔴 `null` means "DO NOT CLAMP", never "clamp to zero". A failed measurement
+ * must degrade to the pre-existing three-layer behaviour: collapsing a block to
+ * a 0px iframe because we could not read the viewport is a worse outcome than
+ * the over-tall iframe the clamp exists to prevent.
+ *
+ * `window.innerHeight` deliberately, not `visualViewport.height` — nothing else
+ * in `src/` reads `visualViewport`, and the pinch-zoom/keyboard-inset precision
+ * it would add buys nothing for a bound whose whole job is "roughly one screen".
+ */
+function viewportHeightPx(): number | null {
+  if (typeof window === 'undefined') return null;
+  const h = window.innerHeight;
+  return typeof h === 'number' && Number.isFinite(h) && h > 0 ? h : null;
+}
+
+/**
+ * The height layers 2–4, as one pure function of a height the block has already
+ * stated and the manifest's declared bounds. Layer 1 (the `isFinite`/positive
+ * value guard) stays at the call site, because it decides whether there is a
+ * stated height at all.
+ *
+ * Kept out of the component so the RESIZE_IFRAME path and the viewport-change
+ * re-clamp cannot drift apart — they are the same four rules applied to the same
+ * stashed number, differing only in what triggered them.
+ */
+function clampBlockHeight(h: number, min: number, max: number | null | undefined): number {
+  let next = Math.max(h, min);
+  if (typeof max === 'number') next = Math.min(next, max);
+  next = Math.min(next, HARD_HEIGHT_CEILING);
+  const viewport = viewportHeightPx();
+  // Layer 4. `Math.max(min, viewport)` — not a bare `viewport` — so the
+  // manifest's floor still wins on a viewport shorter than it, rather than the
+  // clamp silently undoing the `Math.max(h, min)` above.
+  if (viewport !== null) next = Math.min(next, Math.max(min, viewport));
+  return next;
+}
+
 // Max "Recently run" entries shown in the app-chrome platform-nav dropdown.
 // Kept short so the compact menu doesn't grow unbounded (the store itself caps
 // at MAX_RECENTS PER KIND; this is the additional display cap after excluding
@@ -146,7 +188,8 @@ function storageErrorMessage(err: unknown): string {
  *      (`if (!this.initResolved)`). See iframeInitController.ts.
  *   2. Wait for BLOCK_READY (≤10s). Timeout shows BlockFallback("timeout").
  *   3. BLOCK_ERROR with `fatal: true` shows BlockFallback("fatal_block_error").
- *   4. RESIZE_IFRAME updates the iframe height, clamped to manifest bounds.
+ *   4. RESIZE_IFRAME updates the iframe height, clamped to manifest bounds and
+ *      to the viewer's viewport (see `clampBlockHeight`).
  *   5. Page-visibility change drives SUSPEND / RESUME.
  *   6. Token rotation triggers TOKEN_REFRESH (host-pushed) with the new
  *      wrapped token. A block-initiated REQUEST_TOKEN is answered CONDITIONALLY:
@@ -1126,27 +1169,65 @@ export function IframeHost({
 
   const { send, onMessage } = usePostMessage({ iframeRef, expectedOrigin, opaqueOrigin });
 
+  // The last height the BLOCK ITSELF stated, before any clamping — stashed so a
+  // viewport change can re-run the clamp against the new bound. The block is
+  // never asked to re-measure (RESIZE_IFRAME is one-way, block → host), so
+  // without this the host would have nothing but its OWN already-clamped value
+  // and could only ever ratchet downward: a block that stated 3000 at a 640px
+  // viewport would stay pinned at 640 after the viewer rotated to a 900px one.
+  const reportedHeightRef = useRef<number | null>(null);
+
   // applyHeight is wrapped so the postMessage subscribers keep a stable
   // reference even though install.manifest is stable across renders.
   //
-  // Three layers of height defense:
+  // Four layers of height defense:
   //   1. isFinite + positive guard — rejects NaN, Infinity, negatives.
   //   2. manifest.maxHeight (publisher's stated ceiling), if set.
   //   3. HARD_HEIGHT_CEILING — independent backstop in case maxHeight is
   //      null (allowed by the manifest validator) and the block sends a
   //      huge number. This is the OOM guard.
+  //   4. The viewer's viewport height — the layer that binds the COMMON case.
+  //      `iframe.maxHeight` is `["integer","null"]` in the manifest schema and
+  //      `iframe` requires no fields at all, so a manifest that simply omits it
+  //      is bounded only by layer 3: a block self-reporting 3000px got a 3000px
+  //      iframe inside a ~640px phone viewport. The block scrolls internally
+  //      instead, which is the intended outcome. Read at CALL time, never
+  //      captured at mount — a value stashed at mount is stale after a rotate or
+  //      a browser-chrome resize. See `clampBlockHeight`.
   const applyHeight = useCallback(
     (h: unknown) => {
       if (typeof h !== 'number' || !Number.isFinite(h) || h <= 0) return;
       const min = install.manifest.iframe?.minHeight ?? 200;
       const max = install.manifest.iframe?.maxHeight;
-      let next = Math.max(h, min);
-      if (typeof max === 'number') next = Math.min(next, max);
-      next = Math.min(next, HARD_HEIGHT_CEILING);
-      setIframeHeight(next);
+      reportedHeightRef.current = h;
+      setIframeHeight(clampBlockHeight(h, min, max));
     },
     [install.manifest.iframe?.minHeight, install.manifest.iframe?.maxHeight]
   );
+
+  // Layer 4 is only a bound if it MOVES with the viewport. A block that reported
+  // 3000px while the viewport was 900px tall must shrink to 640 when the viewer
+  // rotates to a 640px one — otherwise the clamp is a one-shot decided by
+  // whatever the viewport happened to be at handshake time.
+  //
+  // Host-side only: nothing is posted back to the block. The re-clamp reads the
+  // block's own last stated height out of the ref and re-applies the same four
+  // rules, so a viewport change can shrink AND re-grow within the bounds the
+  // block already asked for.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const min = install.manifest.iframe?.minHeight ?? 200;
+    const max = install.manifest.iframe?.maxHeight;
+    const onViewportChange = () => {
+      const reported = reportedHeightRef.current;
+      // Nothing stated yet: the iframe is still at its minHeight reserve, which
+      // layer 4 would not move anyway.
+      if (reported === null) return;
+      setIframeHeight(clampBlockHeight(reported, min, max));
+    };
+    window.addEventListener('resize', onViewportChange);
+    return () => window.removeEventListener('resize', onViewportChange);
+  }, [install.manifest.iframe?.minHeight, install.manifest.iframe?.maxHeight]);
 
   // A6 lazy consent: the scopes ACTUALLY carried by the minted token — the
   // manifest scopes minus the consent-gated ones the viewer hasn't granted yet
@@ -1474,7 +1555,7 @@ export function IframeHost({
       // Validate the shape — payload comes from cross-origin iframe code and
       // is functionally untyped. Reject anything that isn't {height?:number}.
       // (`applyHeight` is the value guard: it drops anything non-finite/≤0 and
-      // clamps to manifest min/max + HARD_HEIGHT_CEILING.)
+      // clamps to manifest min/max + HARD_HEIGHT_CEILING + the viewport.)
       const payload =
         raw && typeof raw === 'object' && 'height' in raw ? (raw as { height?: unknown }) : {};
       // Record the offered height for the ready-transition effect below to apply
