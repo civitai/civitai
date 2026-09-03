@@ -106,7 +106,7 @@ import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 import { createEcosystemStepInput } from './ecosystems';
 import { createComfyInput, resourcesToImageMetadataResources } from './ecosystems/comfy-input';
 import { extractStepErrors, sanitizeProviderError } from './provider-errors';
-import { resolveSourceImageIds, signProvenance } from './remix-provenance';
+import { resolveSourceImageIds, signProvenance, unionSourceImageIds } from './remix-provenance';
 import { removeEmpty } from '~/utils/object-helpers';
 
 // =============================================================================
@@ -147,6 +147,13 @@ export type GenerationContext = {
       }>;
     }
   >;
+  /**
+   * Provenance tokens minted by `orchestrator.mintRemixProvenance` for the source
+   * images this submission started from. Verified here, never trusted: a token is
+   * sealed with a server key and bound to the submitting user, so it is a
+   * credential rather than a claim. See `remix-provenance.ts`.
+   */
+  sourceProvenance?: string[];
   remixOfId?: number;
   // Forwarded to orchestrator workflow-create as `externalId`; makes the submit
   // idempotent on retry and lets the funnel dashboard join Generator_Submit to
@@ -1516,6 +1523,7 @@ export async function generateFromGraph({
   tags: customTags = [],
   sourceMetadata,
   sourceMetadataMap,
+  sourceProvenance,
   remixOfId,
   track,
   externalId,
@@ -1524,7 +1532,16 @@ export async function generateFromGraph({
   const { data, computedKeys } = validateInput(input, externalCtx);
 
   const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
-  const sourceImageIds = await resolveSourceImageIds(inputImages);
+  // Both routes, because neither covers the other — see `unionSourceImageIds`.
+  // The short version: the form re-uploads a remix's on-site source as an
+  // orchestrator blob before submit, so the URL route alone reports nothing for
+  // the flow the Remix menu drives (measured: 98 on-site URLs survived out of
+  // 2,526 on the engine that button picks).
+  const sourceImageIds = unionSourceImageIds({
+    urlSourceImageIds: await resolveSourceImageIds(inputImages),
+    tokens: sourceProvenance,
+    userId,
+  });
 
   // Audit prompt before generation
   if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.trim()) {

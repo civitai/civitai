@@ -32,6 +32,7 @@ const {
   sanitizeProvenance,
   signProvenance,
   storedSourceImageIds,
+  unionSourceImageIds,
   verifyProvenance,
 } = await import('~/server/services/orchestrator/remix-provenance');
 
@@ -250,5 +251,75 @@ describe('sanitizeProvenance', () => {
 
     expect(sanitizeProvenance(meta)).toBe(meta);
     expect(sanitizeProvenance(null)).toBeNull();
+  });
+});
+
+describe('unionSourceImageIds', () => {
+  const USER = 42;
+
+  /**
+   * The bug this exists for. A remix seeds an on-site URL, the generation form
+   * re-uploads it as an orchestrator blob, and by submit time the URL route can
+   * resolve nothing — so before the token route, a remix through the Animate
+   * button recorded no derivation at all.
+   */
+  it('recovers the link when the url route found nothing', () => {
+    const token = signProvenance({ userId: USER, sourceImageIds: [7] });
+
+    expect(unionSourceImageIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })).toEqual([
+      7,
+    ]);
+  });
+
+  it('keeps url-derived ids when there is no token', () => {
+    expect(unionSourceImageIds({ urlSourceImageIds: [7, 8], userId: USER })).toEqual([7, 8]);
+  });
+
+  it('does not double-count an image both routes name', () => {
+    const token = signProvenance({ userId: USER, sourceImageIds: [7] });
+
+    expect(
+      unionSourceImageIds({ urlSourceImageIds: [7, 9], tokens: [token!], userId: USER })
+    ).toEqual([7, 9]);
+  });
+
+  /**
+   * Each route caps itself at MAX_SOURCE_IMAGES, so a union of two full sets is
+   * twice the bound unless the union re-applies it.
+   */
+  it('bounds the union, not just each route', () => {
+    // Six plus four is ten. Deliberately NOT eight-plus-anything: with a full url
+    // set the cap is satisfied by the url ids alone, so the assertion would hold
+    // even if tokens were ignored entirely and the test could not fail.
+    const urlSourceImageIds = [1, 2, 3, 4, 5, 6];
+    const token = signProvenance({ userId: USER, sourceImageIds: [101, 102, 103, 104] });
+
+    const ids = unionSourceImageIds({ urlSourceImageIds, tokens: [token!], userId: USER });
+
+    expect(ids).toHaveLength(8);
+    expect(ids).toEqual([1, 2, 3, 4, 5, 6, 101, 102]);
+  });
+
+  /**
+   * The whole reason this is a sealed token and not an id in the request body:
+   * `sourceImageIds` gates the FREE remix-gallery submission, so a token minted
+   * for someone else must buy nothing.
+   */
+  it('ignores a token issued to a different user', () => {
+    const token = signProvenance({ userId: USER + 1, sourceImageIds: [7] });
+
+    expect(unionSourceImageIds({ urlSourceImageIds: [], tokens: [token!], userId: USER })).toEqual(
+      []
+    );
+  });
+
+  it('treats an unreadable token as no signal rather than an error', () => {
+    expect(
+      unionSourceImageIds({
+        urlSourceImageIds: [9],
+        tokens: ['not-a-token', '', 'p1.a.b.c'],
+        userId: USER,
+      })
+    ).toEqual([9]);
   });
 });

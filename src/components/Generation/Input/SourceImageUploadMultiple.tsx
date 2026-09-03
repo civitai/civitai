@@ -41,6 +41,7 @@ import { create } from 'zustand';
 import { isAndroidDevice } from '~/utils/device-helpers';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 import { sourceMetadataStore, useSourceMetadataStore } from '~/store/source-metadata.store';
+import { remixProvenanceStore } from '~/store/remix-provenance.store';
 import { recentSourceImagesStore, sourceImageKey } from '~/store/recent-source-images.store';
 import { isConsumerBlobUrl } from '~/shared/orchestrator/blob-url';
 import {
@@ -1778,6 +1779,27 @@ export async function uploadOrchestratorImage(
     setImageUploading(id, false);
 
     const uploadedUrl = blob.url;
+
+    // Carry a remix provenance token across the re-upload.
+    //
+    // This function replaces an `image.civitai.com` URL with a fresh orchestrator
+    // blob (resize + JPEG re-encode above), and the server's URL-derived
+    // provenance can only resolve the on-site form — so without this move, every
+    // remix that came in through a remix entry point arrives at submit with its
+    // link already destroyed. The token itself is server-sealed, so moving it is
+    // not the client asserting anything.
+    //
+    // `metadataSource` is the fallback for the same reason it exists: the crop
+    // flow uploads a re-encoded Blob and only the pre-crop url identifies what
+    // the user started from. Cropping a remix is still that remix.
+    const provenanceFrom =
+      typeof src === 'string'
+        ? src
+        : typeof metadataSource === 'string'
+        ? metadataSource
+        : undefined;
+    if (provenanceFrom && uploadedUrl) remixProvenanceStore.transfer(provenanceFrom, uploadedUrl);
+
     if (sourceMetadata && uploadedUrl) {
       sourceMetadata.then((metadata) => {
         if (metadata)

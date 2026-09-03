@@ -35,8 +35,14 @@ import { getWorkflow } from '~/server/services/orchestrator/workflows';
 
 const VERSION = 1;
 
-/** A job with more inputs than this is a collage, not a derivation worth tracking. */
-const MAX_SOURCE_IMAGES = 8;
+/**
+ * A job with more inputs than this is a collage, not a derivation worth tracking.
+ *
+ * Exported because the submit path now unions two independently-capped sources —
+ * URL-derived ids and verified tokens — and a union of two 8s is a 16 unless the
+ * caller applies the same bound.
+ */
+export const MAX_SOURCE_IMAGES = 8;
 
 /**
  * How long a token stays usable. Long enough for the ordinary path — generate,
@@ -305,6 +311,37 @@ export function storedSourceImageIds(meta: unknown): number[] | null {
   if (!Array.isArray(value)) return null;
   const ids = value.filter((id): id is number => Number.isInteger(id) && (id as number) > 0);
   return ids.length ? ids.slice(0, MAX_SOURCE_IMAGES) : null;
+}
+
+/**
+ * The source ids a submission is entitled to, from BOTH routes, bounded once.
+ *
+ * Two routes because neither covers the other:
+ *  - `urlSourceImageIds` resolves `image.civitai.com` inputs, which is every
+ *    source a user pasted or an API caller submitted directly — those carry no
+ *    token and are still real derivations.
+ *  - `tokens` cover the remix entry points, whose on-site URL the generation form
+ *    destroys by re-uploading the image as an orchestrator blob before submit.
+ *    That re-encode is why the URL route alone reports nothing for a remix.
+ *
+ * Bounded HERE rather than by the callers: each route applies MAX_SOURCE_IMAGES
+ * to its own output, so a union of two full sets is twice the cap unless the
+ * union re-applies it.
+ *
+ * A token that does not verify contributes nothing and is not an error — an
+ * expired or replayed one is the same "no signal" as an off-site remix.
+ */
+export function unionSourceImageIds({
+  urlSourceImageIds,
+  tokens,
+  userId,
+}: {
+  urlSourceImageIds: number[];
+  tokens?: string[];
+  userId: number;
+}): number[] {
+  const fromTokens = (tokens ?? []).flatMap((token) => verifyProvenance(token, userId) ?? []);
+  return [...new Set([...urlSourceImageIds, ...fromTokens])].slice(0, MAX_SOURCE_IMAGES);
 }
 
 /**
