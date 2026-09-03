@@ -83,8 +83,18 @@ type ProbeWindowLabel = (typeof PROBE_WINDOWS)[number]['label'];
  * deployment needs a one-line code change — acceptable, and arguably correct, for a temporary
  * measurement instrument whose deployment set is known, small, and expected to shrink to zero when
  * the probe is removed.
+ *
+ * 🔴 THERE IS NO `preview` MEMBER, AND ITS ABSENCE IS THE POINT. It was in the first version of
+ * this list and audit round 4 removed it: `preview` is not a deployment, it is a CLASS. Measured
+ * live, ~10 concurrent `civitai-pr-*` namespaces each run this code, each take their config from
+ * one shared template (so they would all arm together, with the same value) and they share one
+ * `civitai-pr-sysredis`. Arming them would put every PR preview in the keyspace
+ * `…:preview:<window>:<digest>` at once — mutual hits across unrelated PRs, the exact collision
+ * the paragraph above says an allowlist prevents. A member that defeats the invariant the guard
+ * enforces is worse than no guard, because the guard is what stops anyone looking. If preview
+ * traffic is ever worth measuring it needs a PER-PR segment, not a shared word.
  */
-const PROBE_NAMESPACES: ReadonlySet<string> = new Set(['prod', 'next', 'next-stage', 'preview']);
+const PROBE_NAMESPACES: ReadonlySet<string> = new Set(['prod', 'next', 'next-stage']);
 
 let warnedNamespace: string | null = null;
 

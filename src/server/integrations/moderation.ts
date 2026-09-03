@@ -75,8 +75,13 @@ async function moderatePrompt(
   // fails. A real cache would store only successful verdicts, so this overstates the hit rate by
   // exactly the non-`ok` share — measured at ~0.01% in production, i.e. immaterial, but stated
   // rather than assumed. That is the SAME DIRECTION as the coalescing effect documented on the
-  // `SET NX` in the probe module: both make the reported hit rate optimistic, which is why the
-  // help text calls the result an upper bound and not a floor.
+  // `SET NX` in the probe module: both make the reported hit rate optimistic.
+  //
+  // ⚠️ That does NOT make the result "an upper bound", which is what this comment said for two
+  // commits. The probe also differs from a real cache on a SECOND axis — its TTL never extends on
+  // a hit — which points the other way, so the direction depends on which design you are comparing
+  // against. The three cases are enumerated on the `SET NX` note in the probe module; read them
+  // there rather than carrying a direction away from here.
   probeModerationCacheRepeat(metricSource, preparedPrompt);
 
   // Wall-clock timing of the whole classifier call — the interval the generation submission actually

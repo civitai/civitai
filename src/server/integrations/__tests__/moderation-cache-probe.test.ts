@@ -454,9 +454,12 @@ describe('cache probe — the namespace IS the arming switch', () => {
   });
 
   it('logs once per distinct bad value, so a misconfiguration is findable but not a per-call flood', async () => {
-    // The previous boolean spelling failed boot loudly on garbage; a rejected namespace is
-    // otherwise completely silent, which would leave an operator staring at an absent metric with
-    // no way to tell "armed, no repeats" from "my value was rejected".
+    // A rejected namespace is otherwise completely silent, which would leave an operator staring
+    // at an absent metric with no way to tell "armed, no repeats" from "my value was rejected".
+    //
+    // ⚠️ NOT because the previous boolean spelling "failed boot loudly on garbage" — that sentence
+    // was here for two commits and it is false. `zc.booleanString` preprocesses every input to a
+    // boolean, so it never threw on anything; the old contract swallowed garbage silently too.
     installRedisFake();
     stubFetchOk();
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -469,6 +472,39 @@ describe('cache probe — the namespace IS the arming switch', () => {
     const forThisValue = spy.mock.calls.filter((c) => String(c[0]).includes('NOT-VALID'));
     expect(forThisValue).toHaveLength(1);
     expect(String(forThisValue[0][0])).toContain('is DISABLED');
+  });
+
+  it('pins the allowlist MEMBERSHIP — every member arms, and `preview` deliberately does not', async () => {
+    // 🔴 AN ASSERTED LEDGER, FAILING WHETHER THE SET GROWS OR SHRINKS. The allowlist is now the
+    // entire arming contract, and before this case only 2 of its members were exercised anywhere —
+    // audit round 4 measured that deleting `next-stage` left all 20 cases GREEN. A rebase, a
+    // "one rule one place" tidy, or a non-ASCII hyphen in `next‑stage` would then silently stop
+    // that deployment from ever arming, and the failure surfaces only as an absent series, which
+    // the help text tells the reader means "not armed".
+    //
+    // 🔴 `preview` is asserted ABSENT, not merely omitted. It was a member until round 4, and it
+    // defeats the invariant the allowlist exists to enforce: ~10 concurrent PR-preview namespaces
+    // take their config from one shared template and share one sysRedis, so arming that word arms
+    // all of them into a single keyspace and they score mutual hits across unrelated PRs. Someone
+    // will eventually try to add it back as an obvious convenience; this is what stops it being
+    // quiet.
+    installRedisFake();
+    stubFetchOk();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const armed: string[] = [];
+    for (const candidate of ['prod', 'next', 'next-stage', 'preview']) {
+      promClient.register.getSingleMetric(PROBE)?.reset();
+      env.EXTERNAL_MODERATION_CACHE_PROBE = candidate;
+      await extModeration.moderatePrompt(`a prompt for ${candidate}`, 'generate');
+      await new Promise((r) => setTimeout(r, 150));
+      if ((await probeTotal()) > 0) armed.push(candidate);
+    }
+
+    expect(armed).toEqual(['prod', 'next', 'next-stage']);
+    // `preview` must be rejected LOUDLY, i.e. through the same path as any other unknown value —
+    // not silently, which is reserved for the deliberately-empty case.
+    expect(errorSpy.mock.calls.filter((c) => String(c[0]).includes('"preview"'))).toHaveLength(1);
   });
 
   it('an unknown namespace is treated as OFF, not sanitised', async () => {
