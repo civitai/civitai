@@ -1907,6 +1907,18 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
   //   publishedAt IS NULL    -> Draft
   //   publishedAt >  NOW()   -> Scheduled (future publish was queued)
   //   publishedAt <= NOW()   -> Unpublished
+  //
+  // 🔴 `"updatedAt" = now()` is load-bearing, not cosmetic. This is `$queryRaw`,
+  // so Prisma's `@updatedAt` does NOT fire and the row keeps the timestamp it
+  // carried before it was deleted — by construction older than its own deletion.
+  // `remove-old-drafts` reaps
+  // `status IN ('Draft','Deleted') AND m."updatedAt" < now() - INTERVAL '30 days'`
+  // and cascade-deletes the model with its versions, files and training data,
+  // irreversibly. Without the bump a model restored today can be destroyed
+  // tonight, its entire 30-day grace period already spent. Restoring a model is
+  // a write to the row, so the bump is also what the column is supposed to mean.
+  // Pinned by `no-unbumped-draft-status-write.test.ts` and exercised through
+  // this function by `restore-model-updated-at.service.test.ts`.
   const result = await dbWrite.$transaction(async (tx) => {
     const rows = await tx.$queryRaw<{ userId: number }[]>`
       UPDATE "Model"
@@ -1916,7 +1928,8 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
             WHEN "publishedAt" IS NULL      THEN 'Draft'::"ModelStatus"
             WHEN "publishedAt" >  NOW()     THEN 'Scheduled'::"ModelStatus"
             ELSE 'Unpublished'::"ModelStatus"
-          END
+          END,
+          "updatedAt" = now()
       WHERE id = ${id}
         AND "status" = 'Deleted'::"ModelStatus"
       RETURNING "userId"
