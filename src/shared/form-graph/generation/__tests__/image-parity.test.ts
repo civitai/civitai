@@ -204,6 +204,11 @@ const KREA2_ONLY_SHAPES: AnyRecord[] = [
   },
   { prompt: 'a cat', model: 3072332 }, // comfy turbo
   { prompt: 'a cat', model: 2983023, images: [IMG] }, // fal model where edit rows substitute
+  // community checkpoints (unknown ids): comfy-only, so they fall to the RAW
+  // full-step build — and to editRaw on edit (kaydaxter's custom-checkpoint fix)
+  { prompt: 'a cat', model: 3999999 },
+  { prompt: 'a cat', model: 3999999, cfgScale: 5, steps: 30 },
+  { prompt: 'a cat', model: 3999999, images: [IMG] },
 ];
 
 const FLUX2_ONLY_SHAPES: AnyRecord[] = [

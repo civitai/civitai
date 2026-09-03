@@ -159,10 +159,15 @@ const styleReferencesDef = {
 
 type Krea2VariantExt = FamilyExt & { model?: unknown };
 
+// Unknown ids are community checkpoints. Only the comfy builds can load one
+// via `diffusionModel`, so they fall back off the FAL tiers — and to the
+// full-step build, since turbo's 15-step / cfg-2 ceilings can't drive an
+// undistilled model. (v1 parity: kaydaxter's krea2-custom-checkpoints fix.)
 const variantOf = (ext: Krea2VariantExt): Krea2Variant => {
   const id = modelIdOf(ext.model);
-  if (ext.workflow === 'img2img:edit') return id === krea2VersionIds.raw ? 'editRaw' : 'editTurbo';
-  return (id != null ? krea2VersionIdToVariant.get(id) : undefined) ?? 'fal';
+  if (ext.workflow === 'img2img:edit')
+    return id === krea2VersionIds.turbo ? 'editTurbo' : 'editRaw';
+  return (id != null ? krea2VersionIdToVariant.get(id) : undefined) ?? 'raw';
 };
 
 const fal = defineGraph<Krea2VariantExt>()
