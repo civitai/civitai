@@ -443,7 +443,8 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
 
   /**
    * THE DOCUMENTED FULL-BLEED OPT-OUT, end to end: the ledger in `globals.css`
-   * keys on `data-block-id`, which the host stamps.
+   * keys on `data-app-page-frame` + `data-block-id`, both of which the host
+   * stamps on its root.
    *
    * Both halves are in ONE test on purpose. The second assertion alone is GREEN
    * on the base revision (an uncapped host is full width for reasons that have
@@ -451,6 +452,18 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
    * than coverage. Pairing it with the capped measurement makes the test assert
    * a DELTA — the rule changed something — which is only true once both the cap
    * and the `data-block-id` anchor exist.
+   *
+   * ⚠️ THIS TIER IS STRUCTURALLY BLIND TO THE ONE DEFECT THAT ACTUALLY SHIPPED,
+   * AND SAYING SO IS THE POINT. The selector below used to read
+   * `[data-testid='app-page-frame'][data-block-id='…']`, which is what
+   * `globals.css` shipped — and `next.config.mjs` strips every `data-testid` from
+   * the DOM under `NODE_ENV === 'production'`, so on the live site it matched
+   * nothing and `playable-collections` was letterboxed at the cap. This test
+   * passed throughout, because vitest never runs with `NODE_ENV=production`; no
+   * assertion added here can change that. The check that CAN see it compares the
+   * two configurations instead of rendering:
+   * `__tests__/ledgerSelectorSurvivesProdStrip.test.ts`. Do not "strengthen" this
+   * test to cover it — widen that one.
    */
   test('an app can opt out of the cap with a CSS rule keyed on `data-block-id`', async () => {
     const { measure, hostWidth, parentWidth } = await mountAt(2560, 1080);
@@ -458,15 +471,14 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
       parentWidth
     );
 
-    injectCss(
-      `[data-testid='app-page-frame'][data-block-id='${BLOCK_ID}'] { --app-page-max-width: none; }`
-    );
+    injectCss(`[data-app-page-frame][data-block-id='${BLOCK_ID}'] { --app-page-max-width: none; }`);
     const optedOut = measure();
     expect(
       optedOut.hostWidth,
       'the ledger rule shape documented on `--app-page-max-width` in globals.css did not ' +
-        'restore full-bleed at 2560x1080 — either `data-block-id` is no longer stamped or the ' +
-        'cap is no longer overridable, and every opt-out in that ledger is inert'
+        'restore full-bleed at 2560x1080 — either `data-app-page-frame`/`data-block-id` are no ' +
+        'longer stamped on the host root or the cap is no longer overridable, and every opt-out ' +
+        'in that ledger is inert'
     ).toBe(optedOut.parentWidth);
   });
 

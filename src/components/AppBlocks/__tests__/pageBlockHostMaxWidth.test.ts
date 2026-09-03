@@ -38,10 +38,19 @@ import { describe, expect, it } from 'vitest';
  *     relationship the ledger's inheritance depends on, which no older pin covers
  *   · the content wrapper's whole box model, because a dropped `flex: 1` collapses
  *     the app to a sliver with every test in BOTH tiers green (measured)
- *   · `data-block-id` is stamped on the SAME element as the host testid — the
- *     opt-out ledger's selector chains the two, so a rename makes every ledger
- *     rule match nothing without changing anything visible
+ *   · `data-block-id` is stamped on the host root — the opt-out ledger's selector
+ *     chains it with `data-app-page-frame`, so a rename makes every ledger rule
+ *     match nothing without changing anything visible
+ *
  *   · the value is read through `var()` and never written inline
+ *
+ * 🔴 WHAT IS **NOT** PINNED HERE, AND WHY. That the ledger's selector survives the
+ * PRODUCTION compiler is a different claim, and this file cannot make it: it reads
+ * source, not the build config. `next.config.mjs` strips `data-testid` from the DOM
+ * under `NODE_ENV === 'production'`, so a ledger keyed on the testid ships in the
+ * stylesheet and matches nothing live — which is exactly what happened, with this
+ * file and the browser suite both green. That seam is owned by
+ * `ledgerSelectorSurvivesProdStrip.test.ts`.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
@@ -151,9 +160,11 @@ function hostElements(): {
   return {
     frame: one(
       'app-page-frame',
-      'no element in PageBlockHost.tsx carries `data-testid="app-page-frame"`. The opt-out ' +
-        'ledger selects on it, so every ledger rule is inert. Re-point this guard only if the ' +
-        'element was deliberately renamed.'
+      'no element in PageBlockHost.tsx carries `data-testid="app-page-frame"`. This guard uses ' +
+        'it to locate the host ROOT and prove the capped content wrapper is inside it — the ' +
+        "relationship the ledger's inheritance depends on. (The ledger itself selects on " +
+        '`data-app-page-frame`, not on the testid, which production strips.) Re-point this ' +
+        'guard only if the element was deliberately renamed.'
     ),
     content: one(
       'app-page-content',
@@ -567,13 +578,18 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    * in the file.
    *
    * The ledger in globals.css is written as
-   * `[data-testid='app-page-frame'][data-block-id='…']`. If `data-block-id` moves
-   * to a different element, or is renamed, or is fed the per-install
+   * `[data-app-page-frame][data-block-id='…']`. If `data-block-id` moves to a
+   * different element, or is renamed, or is fed the per-install
    * `blockInstanceId` instead of the app's slug, every ledger rule matches
    * nothing — and nothing about the page looks wrong, so no one finds out until
    * an app that opted out is reported as still capped.
+   *
+   * The testid is only this guard's ANCHOR for finding the root region; the
+   * ledger no longer selects on it (production strips it). That both ledger
+   * attributes are really stamped is asserted in
+   * `ledgerSelectorSurvivesProdStrip.test.ts`, from the ledger's side.
    */
-  it('stamps `data-block-id` on the same element as the host testid — the opt-out ledger keys on both', () => {
+  it('stamps `data-block-id` on the host root — the opt-out ledger keys on it', () => {
     const src = code(read(HOST));
     const root = region(
       src,
@@ -584,8 +600,8 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
       root,
       'the host root no longer stamps `data-block-id={blockId}` between its testid and ' +
         '`data-needs-consent`. The full-bleed ledger in src/styles/globals.css selects on ' +
-        "`[data-testid='app-page-frame'][data-block-id='…']`, so every entry in it is now " +
-        'inert. `blockId` (the app slug) is the required value — `blockInstanceId` is per-install ' +
+        "`[data-app-page-frame][data-block-id='…']`, so every entry in it is now inert. " +
+        '`blockId` (the app slug) is the required value — `blockInstanceId` is per-install ' +
         'and is NOT what an app author knows their app by.'
     ).toContain('data-block-id={blockId}');
   });
