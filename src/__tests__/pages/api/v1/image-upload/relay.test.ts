@@ -208,35 +208,48 @@ describe('image-upload relay', () => {
     expect(mockUploadImageBufferToStore).not.toHaveBeenCalled();
   });
 
-  // AUDIT-F5 + AUDIT-F6. Two properties, both about the oversize path.
+  // AUDIT-F5 + AUDIT-F6. Two properties of the oversize path.
   //
-  //  * F5: the client must actually RECEIVE the 413. An earlier draft wrote the
-  //    status and then called `req.destroy()`, which tears down the shared socket
-  //    and discards queued writes — the client got a transport error instead. The
-  //    route no longer destroys the request at all; it sets `Connection: close` and
-  //    lets the response flush. So: a status is written, and the request is NOT
-  //    destroyed.
+  //  * F5: the 413 must reach the client. Two earlier attempts did not — `req.destroy()`
+  //    RSTs the socket, and `Connection: close` makes `res.end()` call
+  //    `socket.destroySoon()` which RSTs it too when inbound data is unread. Measured
+  //    against a real HTTP client, only DRAINING delivers the status. So: no
+  //    `Connection` header, and the request IS resumed.
   //  * F6: the running-total property. Asserting the 413 alone does NOT pin it — a
-  //    measure-at-the-end implementation returns the same 413, which is why the
-  //    first draft's cap test left that mutant alive. What discriminates is that a
-  //    running total STOPS READING: it throws on the chunk that crosses the limit,
-  //    so the stream never reaches EOF. `readableEnded` is that fact directly.
+  //    measure-at-the-end implementation returns the same 413, which is why the first
+  //    draft's cap test left that mutant alive. What discriminates is that a running
+  //    total STOPS READING: it throws on the chunk that crosses the limit, so the
+  //    stream never reaches EOF. `readableEnded` is that fact directly.
   //
-  // ⚠ What does NOT work, so nobody re-derives it: counting how many chunks the
-  // async source yielded. Node's Readable reads AHEAD of the consumer, so the real
+  // 🔴 THIS TEST CANNOT SEE F5's ACTUAL PROPERTY. `makeReq` is a `Readable.from` and
+  // `makeRes` is an object literal — there is no socket, so "the client received the
+  // status" is unobservable here. It pins the CALLS that the real-socket measurement
+  // showed are necessary (drain yes, Connection header no); delivery itself was
+  // established by that measurement, not by this. Do not read a green here as proof
+  // the client got the 413.
+  //
+  // ⚠ What does NOT work, so nobody re-derives it: counting how many chunks the async
+  // source yielded. Node's Readable reads AHEAD of the consumer, so the real
   // running-total implementation still pulls the chunk after the one that trips the
   // cap. Generator-pull count measures the stream's buffering, not the handler's.
-  it('writes the 413 without destroying the request, and stops reading before EOF', async () => {
+  it('writes the 413, drains rather than closing, and stops reading before EOF', async () => {
     const trace: Trace = [];
     const half = Math.floor(MAX_RELAY_BYTES / 2) + 1;
     const req = makeReq([Buffer.alloc(half), Buffer.alloc(half)], { trace });
     const res = makeRes(trace);
+    let resumed = false;
+    (req as unknown as { resume: () => void }).resume = () => {
+      resumed = true;
+    };
 
     await handler(req, res);
 
     expect(res.statusCode).toBe(413);
-    expect(res.headers['Connection']).toBe('close');
-    // F5: a destroy must not race the write we just made.
+    // F5: `Connection: close` is what destroyed the socket before the status landed.
+    expect(res.headers['Connection']).toBeUndefined();
+    // F5: the drain is the only arm measured to deliver the status.
+    expect(resumed).toBe(true);
+    // F5: and nothing may destroy the request.
     expect(trace).toEqual(['status:413']);
     // F6: a measure-at-the-end implementation consumes to EOF and fails here while
     // still returning the same 413.
@@ -374,7 +387,8 @@ describe('image-upload relay', () => {
   });
 
   it('releases its slot on EVERY exit path, not just success', async () => {
-    // A leaked slot is permanent: the route wedges at 503 until the pod restarts,
+    // A leaked slot is permanent: the route wedges, shedding every request with 429
+    // until the pod restarts,
     // which is worse than the OOM the cap prevents. Drive each early return.
     const before = __getInFlightForTest();
 

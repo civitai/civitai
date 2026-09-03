@@ -89,19 +89,6 @@ export function attachUploadSettlement(
   });
 }
 
-/**
- * POST to the relay, retrying ONCE if it sheds with 429.
- *
- * The relay's memory cap sits deliberately below the batch sizes callers use, so a
- * 429 is an expected outcome for the very users this fallback exists for — a dropzone
- * batch of 10 against a cap of 8 sheds two. Without a retry the shed is terminal,
- * because the settlement rule reports the ORIGINAL upload error rather than the
- * relay's, so those files would fail permanently while the server was saying "try
- * again shortly".
- *
- * Retries ONCE and only on 429. Any other non-ok status is a real failure and is
- * surfaced; retrying it would just double the load that produced it.
- */
 /** The bits of a response this helper reads. Generic so callers keep `Response`. */
 type RetryableResponse = {
   ok: boolean;
@@ -109,6 +96,33 @@ type RetryableResponse = {
   headers: { get(name: string): string | null };
 };
 
+/** Upper bound on an honoured `Retry-After`. A fallback upload is interactive. */
+export const MAX_RETRY_AFTER_SECONDS = 10;
+
+/**
+ * POST to the relay, retrying ONCE if it sheds with 429.
+ *
+ * Without a retry a shed is TERMINAL: the settlement rule deliberately reports the
+ * ORIGINAL upload error rather than the relay's, so a shed file would fail
+ * permanently while the server was saying "try again shortly".
+ *
+ * ⚠ An earlier version of this comment justified the retry by claiming a dropzone
+ * batch of 10 against a per-pod cap of 8 routinely sheds two. That was wrong — the
+ * cap is per POD, the pool's replica floor is in the dozens, and there is no session
+ * affinity, so one browser's concurrent POSTs spread across pods. A shed is an
+ * ANOMALY, not routine. The retry is still worth having (it is cheap, and a lost
+ * upload is not), but do not read a 429 here as business as usual.
+ *
+ * Retries ONCE and only on 429. Any other non-ok status is a real failure and is
+ * surfaced; retrying it would just double the load that produced it.
+ *
+ * 🔴 The delay is CLAMPED, and the wait is CANCELLABLE. `Retry-After` is remote input
+ * and this retry fires on ANY 429, not only our own relay's shed — a CDN or an edge
+ * rate-limiter in front of us can answer 429 with a `Retry-After` of an hour. Without
+ * the clamp the hook would sit on the user's `File` for that hour with the tracked
+ * file stuck at `uploading`; without the abort race the cancel button would be inert
+ * for the whole wait, because the abort check only runs AFTER the sleep resolves.
+ */
 export async function relayWithRetry<T extends RetryableResponse>(
   post: () => Promise<T>,
   opts: {
@@ -120,12 +134,27 @@ export async function relayWithRetry<T extends RetryableResponse>(
   let response = await post();
   if (response.status === 429) {
     const advertised = Number(response.headers.get('Retry-After'));
-    const seconds =
+    const requested =
       Number.isFinite(advertised) && advertised > 0 ? advertised : opts.defaultRetryAfterSeconds;
-    await opts.sleep(seconds * 1000);
-    // A cancel during the backoff must not be spent on a second upload.
-    if (opts.signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+    const seconds = Math.min(requested, MAX_RETRY_AFTER_SECONDS);
+
+    // Race the wait against cancellation, so an abort mid-backoff is observed when it
+    // happens rather than whenever the timer would have expired.
+    await Promise.race([
+      opts.sleep(seconds * 1000),
+      new Promise<void>((_, rejectWait) => {
+        if (opts.signal.aborted) return rejectWait(abortError());
+        opts.signal.addEventListener('abort', () => rejectWait(abortError()), { once: true });
+      }),
+    ]);
+
+    // Also covers a sleep that resolved normally on an already-aborted signal.
+    if (opts.signal.aborted) throw abortError();
     response = await post();
   }
   return response;
+}
+
+function abortError() {
+  return new DOMException('The operation was aborted.', 'AbortError');
 }

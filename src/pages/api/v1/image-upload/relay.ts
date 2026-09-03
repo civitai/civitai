@@ -51,8 +51,11 @@ export const config = {
 
 // Bounds what this route will buffer in memory. NOT a general upload limit and NOT
 // "the largest media the app accepts" — `constants.mediaUpload.maxVideoFileSize` is
-// 750MB. It matches the ceiling the DROPZONE callers of `useCFImageUpload` enforce
-// client-side (`richTextEditor.maxFileSize`); the programmatic callers that upload
+// 750MB. It matches `constants.mediaUpload.maxImageFileSize`, which is what the
+// DROPZONE callers of `useCFImageUpload` enforce client-side (`ImageUpload.tsx`,
+// `SimpleImageUpload.tsx`) — THAT is the constant this must stay in sync with, not
+// `richTextEditor.maxFileSize`, which happens to hold the same value today but is
+// used by the rich-text editor rather than by any dropzone. The programmatic callers that upload
 // generated blobs enforce nothing, so this is their only bound. Exists because this
 // route buffers whole. A file above it cannot use the fallback; the direct path is
 // unaffected.
@@ -67,12 +70,19 @@ export const MAX_RELAY_BYTES = 1024 * 1024 * 50;
  * is not. Buffers are external, so `--max-old-space-size` does not bound them and
  * this constant is the only thing that does.
  *
- * 🔴 This is a MEMORY bound, not a throughput target, and it is deliberately BELOW
- * the batch sizes callers use — the image dropzone defaults to 10 files and uploads
- * them concurrently. Shedding a legitimate request is therefore EXPECTED, not
- * exceptional, which is why the shed must not be terminal: the client retries once,
- * honouring `Retry-After`. If you raise this, raise it for a measured memory reason;
- * do not raise it to stop clients seeing 429s.
+ * 🔴 This is a MEMORY bound, not a throughput target. ⚠ An earlier version of this
+ * comment claimed a dropzone batch of 10 against a cap of 8 routinely sheds two, and
+ * that shedding is therefore EXPECTED. That was wrong, and it inverted the action it
+ * prescribed: the cap is PER POD (see below), `/api/v1/*` is served by a pool whose
+ * replica floor is in the dozens, and there is no session affinity — so one browser's
+ * concurrent POSTs are spread across pods and would all have to land on the SAME pod
+ * to collide. A shed means ~8 concurrent relays hit one pod, which — for a fallback
+ * that only fires for clients who cannot resolve the storage host — is an ANOMALY
+ * worth investigating, not routine backpressure.
+ *
+ * The client still retries once on a shed, because a retry is cheap and a lost upload
+ * is not. But do not read a 429 as normal, and if you raise this constant, raise it
+ * for a measured memory reason rather than to make 429s go away.
  *
  * NOT env-configurable, which means it is not a runtime kill switch — changing it
  * needs a deploy. Left that way on purpose rather than adding an env var to the
@@ -126,6 +136,10 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
   // under the public `/api/v1/` namespace. `blocks/submit-version.ts` uses the same
   // expression but IS cookie-only (`ModEndpoint`), which is why its comment says no
   // bearer exemption is needed — that justification does NOT transfer here.
+  // 🔴 FULL PATH, because there are two: `src/pages/api/blocks/submit-version.ts` is
+  // the one meant. Its `/api/v1/` sibling is BEARER-only and deliberately OMITS the
+  // origin guard entirely (it would break the headless CLI, which sends no Origin) —
+  // i.e. the nearer-looking precedent argues the OPPOSITE of this paragraph.
   // `createContext.ts` does exempt bearer callers, deriving `isBearerAuth` from an
   // apiKeyId that only exists AFTER the session lookup.
   //
@@ -206,8 +220,9 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
     }
   } finally {
     // `finally`, not a tail decrement: every early `return` above is inside the try,
-    // and a leaked slot is permanent — the route would wedge at 503 until the pod
-    // restarts, which is a worse failure than the one the cap prevents.
+    // and a leaked slot is permanent — the route would wedge, shedding every request
+    // with 429 until the pod restarts, which is a worse failure than the one the cap
+    // prevents.
     inFlight -= 1;
   }
 }
@@ -227,21 +242,39 @@ export class PayloadTooLargeError extends Error {
  * arbitrarily large body that we only measure at the end. `Content-Length` is not
  * trusted for this — it is caller-supplied and may be absent under chunked encoding.
  *
- * 🔴 The 413 is written HERE, and the request is NOT destroyed.
+ * 🔴 The 413 is written HERE, and then the remainder is DRAINED. Both halves are
+ * required, and this is the third attempt at it — the first two were measured wrong.
  *
- * An earlier draft wrote the status and then called `req.destroy()`. Ordering was
- * necessary — a status written AFTER a destroy goes into a dead socket, does not
- * throw, reports `headersSent`, and the client sees a transport error instead of the
- * 413 — but it is not sufficient: `IncomingMessage.destroy()` tears down the SHARED
- * socket, and `socket.destroy()` DISCARDS queued writes rather than flushing them
- * (unlike `socket.end()`). On an idle socket a ~60-byte body usually lands inline, so
- * it looks fine; under backpressure the client still loses the status.
+ * Attempt 1 wrote the status and then called `req.destroy()`. `IncomingMessage`'s
+ * destroy tears down the SHARED socket, and `socket.destroy()` DISCARDS queued writes
+ * rather than flushing them, so the client got ECONNRESET instead of the status.
  *
- * Instead: set `Connection: close` and let the response flush, then simply stop
- * reading. Node closes the socket once the response is written, which is what tells
- * the client to stop sending — without racing the write we just made. We deliberately
- * do NOT drain the remainder with `req.resume()`: draining a body we rejected for
- * being too large is exactly the cost the cap exists to avoid.
+ * Attempt 2 removed the destroy and set `Connection: close` instead, reasoning that
+ * the response would flush and the close would tell the client to stop. It does not:
+ * `res.end()` on a `Connection: close` response sets `_last`, `resOnFinish` calls
+ * `socket.destroySoon()`, and closing a socket that still has unread inbound data
+ * RSTs — losing the status the same way, with a different errno.
+ *
+ * Measured against a real HTTP client, 5 runs per arm, chunked and Content-Length:
+ *
+ *     req.destroy()                    -> ECONNRESET, no 413        5/5
+ *     Connection: close, stop reading  -> EPIPE,      no 413        5/5
+ *     Connection: close + resume       -> EPIPE,      no 413        3/3
+ *     req.resume()                     -> 413 + JSON body           5/5
+ *
+ * So the drain is the ONLY arm that delivers the status, and `Connection: close` is
+ * the ingredient that breaks it. An earlier version of this comment refused the drain
+ * on cost grounds; that reasoning conflated two costs. Draining does NOT buffer —
+ * `resume()` reads and discards, so memory stays flat, which is the cost the cap
+ * exists to bound. What it does spend is time on the wire for bytes we are throwing
+ * away, and the in-flight slot is held while we do it. That is the trade being made
+ * knowingly: a bounded bandwidth cost on an already-rejected request, in exchange for
+ * the caller learning WHY it was rejected.
+ *
+ * ⚠ Measured at the pod hop only. In production Traefik sits in front, and
+ * `Connection` is hop-by-hop, so what a browser finally sees is NOT established here.
+ * The unit test cannot see any of this either — it drives a `Readable.from` and an
+ * object literal, which have no socket — so it pins the CALL, never the delivery.
  */
 async function readCappedBody(
   req: NextApiRequest,
@@ -253,11 +286,10 @@ async function readCappedBody(
 
   // 🔴 Iterated MANUALLY rather than with `for await`. Breaking out of a `for await`
   // invokes the iterator's `return()`, which DESTROYS the underlying stream — the
-  // exact socket teardown this function is trying to avoid, applied by the language
-  // rather than by us. Measured: with `for await`, a destroy still lands right after
-  // the 413 write. Driving `next()` by hand and simply not calling `return()` leaves
-  // the socket intact so the response can flush; `Connection: close` then closes it
-  // once the write is out.
+  // exact socket teardown that loses the status, applied by the language rather than
+  // by us. Measured: with `for await`, a destroy lands right after the 413 write.
+  // Driving `next()` by hand and never calling `return()` leaves the socket intact so
+  // the response can flush and the drain below can run.
   const iterator = req[Symbol.asyncIterator]();
   for (;;) {
     const { value, done } = await iterator.next();
@@ -266,9 +298,16 @@ async function readCappedBody(
     total += buf.length;
     if (total > limit) {
       if (!res.headersSent) {
-        res.setHeader('Connection', 'close');
+        // NO `Connection: close` — measured, it is what destroys the socket before
+        // the status reaches the client. See the note above.
         res.status(413).json({ error: 'File too large for the upload fallback' });
       }
+      // Release the buffered chunks BEFORE draining: the drain can take a while on a
+      // large body and there is no reason to hold what we already rejected.
+      chunks.length = 0;
+      // Drain and discard, so the response can be delivered rather than RST away.
+      // `resume()` does not buffer.
+      req.resume();
       throw new PayloadTooLargeError();
     }
     chunks.push(buf);
