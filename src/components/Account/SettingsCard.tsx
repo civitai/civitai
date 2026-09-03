@@ -25,8 +25,13 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 const validModelFormats = constants.modelFileFormats.filter((format) => format !== 'Other');
+// `postsNavItem` / `eventsNavItem` keep `toggleable: true` — it is what suppresses them at the
+// base layer (`isFeatureFlagKeyPresent`) and what keeps a user's stored value in the overlay.
+// Only the SWITCHES retire: placement moved to the sub-nav customization modal, and a switch that
+// the resolver no longer reads would report success and change nothing.
+const RETIRED_NAV_FEATURE_SWITCHES = ['postsNavItem', 'eventsNavItem'];
 const normalizedToggleableFeatures = toggleableFeatures.filter(
-  (feature) => feature.key !== 'assistant'
+  (feature) => feature.key !== 'assistant' && !RETIRED_NAV_FEATURE_SWITCHES.includes(feature.key)
 );
 const assistantToggleableFeatures = toggleableFeatures.filter(
   (feature) => feature.key === 'assistant'

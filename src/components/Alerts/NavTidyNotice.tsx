@@ -1,16 +1,24 @@
 import { Button, CloseButton, Popover, Text } from '@mantine/core';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
-import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { createDialogTrigger } from '~/components/Dialog/dialogStore';
 import { useFeatureFlags, useFeatureFlagsReady } from '~/providers/FeatureFlagsProvider';
 
+const SubNavSettingsModal = dynamic(
+  () => import('~/components/HomeContentToggle/SubNavSettingsModal'),
+  { ssr: false }
+);
+const openSubNavSettings = createDialogTrigger(SubNavSettingsModal);
+
 /**
- * Floating popover that appears right under the sub nav, where the Posts /
- * Events tabs used to live, letting users know they were tidied away and can
- * be turned back on from their account settings.
+ * Floating popover under the sub nav, where the Posts / Events tabs used to live. The audience is
+ * unchanged — users who have one of those items tidied away — but the destination is now the
+ * sub-nav customization modal, because that is where placement lives. The account switches it used
+ * to point at are gone; leaving the link would have sent people to a page with nothing on it.
  */
 export function NavTidyNotice() {
   const currentUser = useCurrentUser();
@@ -90,12 +98,11 @@ export function NavTidyNotice() {
 
           <Text size="xs" c="dimmed" lh={1.4}>
             We trimmed a few items from the navigation to keep things simple. Miss Posts or Events?
-            You can turn them back on anytime in your settings.
+            You can put them back — and reorder the rest — from here.
           </Text>
 
           <Button
-            component={Link}
-            href="/user/account#settings"
+            onClick={() => openSubNavSettings()}
             variant="light"
             color="yellow"
             size="compact-xs"
@@ -103,7 +110,7 @@ export function NavTidyNotice() {
             rightSection={<IconArrowRight size={12} />}
             className="self-start"
           >
-            Manage in settings
+            Customize navigation
           </Button>
         </div>
       </Popover.Dropdown>
