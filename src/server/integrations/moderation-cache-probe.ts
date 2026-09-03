@@ -85,7 +85,7 @@ type ProbeWindowLabel = (typeof PROBE_WINDOWS)[number]['label'];
  * the probe is removed.
  *
  * 🔴 THE ONLY MEMBER IS `prod`, AND BOTH OMISSIONS ARE LOAD-BEARING. The list held four members
- * two rounds ago; audit rounds 4 and 5 removed three of them, each for a measured reason:
+ * at audit round 4; rounds 4 and 5 removed three of them, each for a measured reason:
  *
  *   · `preview` is not a deployment, it is a CLASS — ~10 concurrent `civitai-pr-*` namespaces run
  *     this code and share one `civitai-pr-sysredis`, so arming that one word arms all of them into
@@ -110,8 +110,17 @@ type ProbeWindowLabel = (typeof PROBE_WINDOWS)[number]['label'];
  *
  * Exported so a test can assert the membership as a LEDGER — failing when the set grows OR shrinks,
  * not merely when a known member disappears.
+ *
+ * 🔴 A FROZEN ARRAY, NOT A `ReadonlySet`. `ReadonlySet<string>` is a COMPILE-TIME type and is erased
+ * at runtime, so `(PROBE_NAMESPACES as Set<string>).add('preview')` from any importer would arm an
+ * arbitrary namespace against the same object `probeNamespace` reads. `Object.freeze` on an array is
+ * enforced by the runtime. The Set below is private and built from it, so lookup stays O(1) without
+ * exposing a mutable handle.
  */
-export const PROBE_NAMESPACES: ReadonlySet<string> = new Set(['prod']);
+export const PROBE_NAMESPACES: readonly string[] = Object.freeze(['prod']);
+
+/** Lookup form. Private, so nothing outside can add to it — see the note on the export above. */
+const PROBE_NAMESPACE_SET = new Set(PROBE_NAMESPACES);
 
 let warnedNamespace: string | null = null;
 
@@ -122,7 +131,7 @@ function probeNamespace(): string | null {
   // still off (an empty string is not in the allowlist either), but every unarmed pod logs a
   // misconfiguration error it has done nothing to deserve.
   if (raw === '') return null;
-  if (PROBE_NAMESPACES.has(raw)) return raw;
+  if (PROBE_NAMESPACE_SET.has(raw)) return raw;
 
   // Warn ONCE per distinct bad value: this runs on the generation hot path, and a per-call log on a
   // misconfigured deployment would be its own incident. `console.error` rather than a throw for the
@@ -141,9 +150,7 @@ function probeNamespace(): string | null {
     warnedNamespace = raw;
     console.error(
       `[moderation-cache-probe] EXTERNAL_MODERATION_CACHE_PROBE=${JSON.stringify(raw)} is not a ` +
-        `known deployment namespace (${[...PROBE_NAMESPACES].join(
-          ', '
-        )}). The probe is DISABLED. ` +
+        `known deployment namespace (${PROBE_NAMESPACES.join(', ')}). The probe is DISABLED. ` +
         `Set it to one of those to arm it, or leave it empty to disable it deliberately.`
     );
   }
@@ -247,6 +254,38 @@ export function probeModerationCacheRepeat(
   });
 }
 
+/**
+ * The probe's Redis key: `<prefix>:<namespace>:<window>:<digest>`.
+ *
+ * 🔴 THIS EXISTS AS A SEPARATE, EXPORTED FUNCTION FOR ONE REASON: to make the namespace derivation
+ * TESTABLE. It is not an abstraction anyone asked for, and inlining it would read better.
+ *
+ * Audit round 6 measured the problem it solves. Once the allowlist narrowed to a single member,
+ * `namespace` is always `'prod'` at runtime, so a mutant replacing `${namespace}` with the literal
+ * `prod` became INDISTINGUISHABLE from the real thing and SURVIVED a green 21-case suite — the
+ * same mutant that was killed by two cases one commit earlier. The key-shape test cannot see it,
+ * because with one member the shape is identical either way. So the coverage for the segment that
+ * exists to keep two deployments apart quietly went to zero at exactly the moment two rounds of
+ * work had gone into strengthening it.
+ *
+ * A pure function takes the namespace as an ARGUMENT, so a test can pass two different values
+ * without config being able to produce them. That restores the kill.
+ */
+export function buildProbeKey<P extends string>(
+  prefix: P,
+  namespace: string,
+  window: string,
+  digest: string
+): `${P}:${string}` {
+  // 🔴 GENERIC IN THE PREFIX, and not for elegance. `sysRedis.set` takes a key from a closed
+  // template-literal union derived from REDIS_SYS_KEYS, so a return type of `${string}:${string}`
+  // widens the key out of that union and the call stops compiling. Threading `P` through keeps the
+  // prefix literal, so the result is still `generation:moderation-cache-probe:${string}` and the
+  // typed-key guarantee survives the extraction. (Caught by `pnpm typecheck` the moment this
+  // function was introduced — the first version returned the widened type.)
+  return `${prefix}:${namespace}:${window}:${digest}`;
+}
+
 async function runProbe(
   source: ExternalModerationSource,
   preparedPrompt: string,
@@ -290,9 +329,14 @@ async function runProbe(
         // exactly the indeterminate case. Name BOTH axes before quoting a direction.
         //
         // The namespace segment keeps two armed deployments off each other's keyspace; see
-        // `probeNamespace`.
-        const key =
-          `${REDIS_SYS_KEYS.GENERATION.MODERATION_CACHE_PROBE}:${namespace}:${label}:${digest}` as const;
+        // `probeNamespace`. Built through `buildProbeKey` rather than inline SOLELY so a test can
+        // drive it with two different namespaces — see that function's note.
+        const key = buildProbeKey(
+          REDIS_SYS_KEYS.GENERATION.MODERATION_CACHE_PROBE,
+          namespace,
+          label,
+          digest
+        );
         const claimed = await sysRedis.set(key, '1', { NX: true, EX: seconds });
         record(source, label, claimed ? 'miss' : 'hit');
       } catch {

@@ -37,6 +37,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { serverSchema } from '~/env/server-schema';
 import { extModeration } from '~/server/integrations/moderation';
 import {
+  buildProbeKey,
   PROBE_NAMESPACES,
   probeModerationCacheRepeat,
 } from '~/server/integrations/moderation-cache-probe';
@@ -376,11 +377,17 @@ describe('cache probe — the namespace IS the arming switch', () => {
     // armed deployments on one keyspace would each score HITS on the other's prompts, biasing the
     // answer toward "caching pays" — the direction that gets a cache built that does not pay.
     //
-    // ⚠️ THIS USED TO BE A TWO-NAMESPACE BEHAVIOURAL TEST and cannot be any more: audit round 5
-    // reduced the allowlist to a single member, so "the same prompt under a different namespace"
-    // is a scenario config can no longer reach. That is a STRONGER guarantee than the test it
-    // replaces, not a weaker one — but the segment stays in the key as defence-in-depth for a
-    // future second member, so what is still assertable is its SHAPE.
+    // ⚠️ THIS USED TO BE A TWO-NAMESPACE BEHAVIOURAL TEST and cannot be driven through config any
+    // more: audit round 5 reduced the allowlist to a single member, so "the same prompt under a
+    // different namespace" is a scenario config cannot reach.
+    //
+    // 🔴 AN EARLIER REVISION CALLED THAT "A STRONGER GUARANTEE … NOT A WEAKER ONE". That was FALSE,
+    // and audit round 6 measured it: with one member, `namespace` is always `'prod'`, so a mutant
+    // replacing `${namespace}` with the literal `prod` is indistinguishable from the real thing and
+    // SURVIVED this shape assertion — the same mutant two cases killed one commit earlier. Coverage
+    // for the segment that keeps two deployments apart had silently gone to zero.
+    // The kill is restored by the separate `buildProbeKey` case below, which takes the namespace as
+    // an argument. This case still pins the shape, which is worth having on its own.
     //
     // Asserting the segment COUNT and POSITION rather than just `startsWith` is what keeps this
     // from passing when the namespace is appended somewhere that does not separate keyspaces —
@@ -405,6 +412,23 @@ describe('cache probe — the namespace IS the arming switch', () => {
     expect(new Set(keys).size).toBe(2);
   });
 
+  it('DERIVES the namespace segment from its argument — the kill the shape assertion cannot make', async () => {
+    // 🔴 THE ONLY CASE IN THIS FILE THAT CAN SEE A HARDCODED NAMESPACE. Everything else runs through
+    // config, where the allowlist admits exactly one value, so `namespace` is always `'prod'` and a
+    // literal `prod` in the key template looks identical to the real derivation. Passing two
+    // different namespaces to the pure builder is what makes the difference observable.
+    expect(buildProbeKey('p', 'alpha', '5m', 'deadbeef')).toBe('p:alpha:5m:deadbeef');
+    expect(buildProbeKey('p', 'beta', '5m', 'deadbeef')).toBe('p:beta:5m:deadbeef');
+    // The property that actually matters, stated as a property rather than as two literals: two
+    // namespaces must never produce the same key for the same prompt and window.
+    expect(buildProbeKey('p', 'alpha', '5m', 'd')).not.toBe(buildProbeKey('p', 'beta', '5m', 'd'));
+    // …and the other three segments must each be derived too, or a mutant could hardcode one of
+    // them and still pass the pair above.
+    expect(buildProbeKey('q', 'a', '5m', 'd')).not.toBe(buildProbeKey('p', 'a', '5m', 'd'));
+    expect(buildProbeKey('p', 'a', '1h', 'd')).not.toBe(buildProbeKey('p', 'a', '5m', 'd'));
+    expect(buildProbeKey('p', 'a', '5m', 'e')).not.toBe(buildProbeKey('p', 'a', '5m', 'd'));
+  });
+
   it('pins the allowlist MEMBERSHIP as a ledger — asserted whole, so growth fails too', async () => {
     // 🔴 ASSERT THE SET ITSELF, NOT A LOOP OVER CANDIDATES I THOUGHT OF. The first version of this
     // case probed four hardcoded candidates and claimed to fail "whether the set GROWS or SHRINKS".
@@ -412,6 +436,9 @@ describe('cache probe — the namespace IS the arming switch', () => {
     // because a loop can only see growth by a member already in its own list. Comparing the whole
     // normalised set to a literal is what closes the growth direction for any member at all.
     expect([...PROBE_NAMESPACES].sort()).toEqual(['prod']);
+    // Frozen at runtime, not merely `ReadonlySet`-typed — that type is erased and an importer
+    // could otherwise `.add()` an arbitrary namespace into the object `probeNamespace` reads.
+    expect(Object.isFrozen(PROBE_NAMESPACES)).toBe(true);
   });
 
   it('every allowlist member arms, and the three removed ones do not', async () => {
@@ -447,15 +474,15 @@ describe('cache probe — the namespace IS the arming switch', () => {
   });
 
   it('no off-ish spelling arms the probe, including the ones a denylist would miss', async () => {
-    // 🔴 THE HIGHEST-RISK VALUES. This variable was a boolean two commits ago, so `=false` is the
+    // 🔴 THE HIGHEST-RISK VALUES. This variable was a boolean until audit round 1, so `=false` is the
     // PREVIOUS contract's spelling for "off" and the likeliest thing an operator writes. Under a
     // charset-plus-denylist guard it would ARM the probe under a namespace literally called
     // `false`, and two deployments "disabled" that way would share `…:false:…` and score hits on
     // each other's prompts — the exact collision the namespace exists to prevent.
     //
     // 🔴 THE SECOND HALF OF THIS LIST IS THE POINT. `y`, `n`, `none`, `null`, `undefined`, `nil`,
-    // `disable`, `enable` and `2` all passed the charset AND the ten-word denylist that shipped one
-    // commit ago — audit round 3 enumerated them. `y`/`n` are not exotic: zod's own `stringbool`
+    // `disable`, `enable` and `2` all passed the charset AND the ten-word denylist that audit
+    // round 2 introduced — audit round 3 enumerated them. `y`/`n` are not exotic: zod's own `stringbool`
     // treats them as boolean spellings. That is why the guard is now a closed ALLOWLIST rather than
     // a denylist: a list of forbidden members can only ever forbid the members someone thought of.
     installRedisFake();
