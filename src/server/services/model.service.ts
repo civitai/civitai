@@ -1908,20 +1908,57 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
   //   publishedAt >  NOW()   -> Scheduled (future publish was queued)
   //   publishedAt <= NOW()   -> Unpublished
   //
-  // 🔴 `"updatedAt" = now()` is load-bearing, not cosmetic. This is `$queryRaw`,
-  // so Prisma's `@updatedAt` does NOT fire and the row keeps the timestamp it
-  // carried while it was deleted. `deleteModelById` writes through the Prisma
-  // client, so that timestamp is the DELETION instant — measured, not assumed:
-  // the restore statement below is the only raw SQL in `src/` that touches a
-  // Model's `'Deleted'` status, every other path is a client write.
-  // `remove-old-drafts` reaps
-  // `status IN ('Draft','Deleted') AND m."updatedAt" < now() - INTERVAL '30 days'`
-  // and cascade-deletes the model with its versions, files and training data,
-  // irreversibly. So without the bump, a model that sat deleted for longer than
-  // 30 days is PAST the reaper's threshold the instant it is restored, and the
-  // job's activity fences do not save it: they read ModelVersion timestamps,
-  // which the same delete froze at the same instant. Restoring a model is a
-  // write to the row, so the bump is also what the column is supposed to mean.
+  // 🔴 `"updatedAt" = now()` is load-bearing. This is `$queryRaw`, so Prisma's
+  // `@updatedAt` does NOT fire and the row keeps the timestamp it carried while
+  // deleted — the deletion instant, since `deleteModelById` writes through the
+  // client.
+  //
+  // 🔴 READ THE REAPER'S PREDICATE BEFORE EDITING THIS COMMENT. Three successive
+  // versions of it justified the bump with a story about what restoring does,
+  // and all three were false. `remove-old-drafts` selects on:
+  //
+  //     status IN ('Draft','Deleted')
+  //     AND m."updatedAt" < now() - INTERVAL '30 days'   -- REAP_AGE_DAYS
+  //     AND mm."downloadCount" < 10
+  //     AND m."availability" != 'Private'
+  //     AND NOT EXISTS (recent ModelVersion) AND NOT EXISTS (recent ModelFile)
+  //
+  // `'Deleted'` is IN that set, so the clock is already running while the model
+  // sits deleted: a low-download model is destroyed the night after
+  // deletion + 30 days, still `Deleted`, having never been restored. Restoring
+  // changes exactly one term — status goes `Deleted` -> `Draft` (still in the
+  // set) or `Unpublished`/`Scheduled` (out of it). Nothing else the predicate
+  // reads moves: the `ModelVersion` statement below is raw SQL and does not bump
+  // `mv."updatedAt"` either, and downloadCount / availability / the ModelMetric
+  // join are untouched. **The post-restore candidate set is therefore a strict
+  // subset of the pre-restore one — without this bump, restoring can never make
+  // a model reapable that was not already.** Do not re-justify this line with a
+  // "restore it and it dies that night" scenario; no such model exists.
+  //
+  // What the bump actually buys, both real:
+  //
+  //  1. A PARTLY-SPENT CLOCK. Deleted day 0, restored day 29: without the bump
+  //     the model is reaped the night of day 30/31 — one day after restore, with
+  //     the version fence (where the delete set one at all) expiring at the same
+  //     instant. The bump turns whatever remains of the window into a full
+  //     REAP_AGE_DAYS, which is what a restored model is entitled to.
+  //  2. THE `old-draft` WARNING, and this is the stronger one. That notification
+  //     warns on `Draft` ONLY — a `Deleted` model is deliberately never warned —
+  //     and its band is evaluated ONCE, at `U + OLD_DRAFT_NOTICE_DAYS`, never
+  //     re-evaluated for that `U` (`model.notifications.ts`). A model restored
+  //     with its pre-restore `U` is now `Draft`, so it is warnable for the first
+  //     time, but its band is already in the past — so it is cascade-deleted
+  //     UNWARNED. The bump re-arms the band, which is the only way the user ever
+  //     hears about it.
+  //
+  // And independently of the reaper: restoring a model is a write to the row, so
+  // the bump is what the column is supposed to mean.
+  //
+  // (Nuance, so the fences are not over-credited: `deleteModelById`'s nested
+  // `modelVersions.updateMany` is scoped to `status IN (Published, Scheduled)`,
+  // so a Draft-only model has NO ModelVersion row bumped at delete time. Those
+  // timestamps are older still, making the fences less protective, not more.)
+  //
   // Pinned by `no-unbumped-draft-status-write.test.ts` and exercised through
   // this function by `restore-model-updated-at.service.test.ts`.
   const result = await dbWrite.$transaction(async (tx) => {

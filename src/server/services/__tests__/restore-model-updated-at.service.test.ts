@@ -6,14 +6,20 @@ import type * as ModelVersionService from '~/server/services/model-version.servi
  * `restoreModelById` un-deletes a model with raw SQL, so Prisma's `@updatedAt`
  * does not fire and the restored row keeps the timestamp it carried while it was
  * deleted — the DELETION instant, since `deleteModelById` writes through the
- * Prisma client. `src/server/jobs/remove-old-drafts.ts` reaps
- * `status IN ('Draft','Deleted') AND m."updatedAt" < now() - INTERVAL '30 days'`
- * and cascade-deletes the model together with its versions, files and training
- * data, irreversibly. So without a bump, a model that sat deleted for longer
- * than 30 days is past that threshold the instant it is restored and is eligible
- * for the cascade the same night, with only `downloadCount < 10` between it and
- * destruction — the job's activity fences read ModelVersion timestamps, which
- * the same delete froze at the same instant.
+ * Prisma client.
+ *
+ * 🔴 What that does and does NOT cause — the full reasoning, against the actual
+ * predicate, is on `restoreModelById` itself; the short version, because three
+ * earlier framings of it were wrong: `'Deleted'` is already in
+ * `remove-old-drafts`' `status IN ('Draft','Deleted')` set, so the clock runs
+ * while the model sits deleted, and restoring changes only `status`. The
+ * post-restore candidate set is a strict SUBSET of the pre-restore one, so the
+ * missing bump does not make a model reapable that was not already. It costs two
+ * other things: a restored model keeps only the REMAINDER of its 30 days rather
+ * than a fresh window (deleted day 0, restored day 29 -> reaped the night of day
+ * 30/31), and — the stronger one — it is cascade-deleted UNWARNED, because the
+ * `old-draft` notification warns on `Draft` only and evaluates its band once at
+ * `U + OLD_DRAFT_NOTICE_DAYS`, which a carried-over `U` has already passed.
  *
  * Same defect class as the two sweep sites fixed in #4595, and the same fix.
  * `no-unbumped-draft-status-write.test.ts` holds all three sites to the rule as
@@ -217,15 +223,14 @@ describe('restoreModelById', () => {
 
   describe('the UPDATE "Model" statement', () => {
     // 🔴 THE FIX. See the file header: this statement is raw SQL, so
-    // `@updatedAt` does not fire and a restored model lands in Draft carrying
-    // the clock it had when it was deleted — already outside remove-old-drafts'
-    // 30-day window for anything that sat deleted longer than that.
+    // `@updatedAt` does not fire and a restored model lands in Draft still
+    // carrying the clock it had when it was deleted.
     it('bumps "updatedAt" so a restored model gets a real grace period before the reaper', async () => {
       await restoreModelById({ id: MODEL_ID });
 
       expect(
         modelUpdateSql(),
-        'a model restored with a stale "updatedAt" is immediately reapable by remove-old-drafts, which cascade-deletes it'
+        'without the bump a restored model keeps only the remainder of its 30 days before remove-old-drafts cascade-deletes it, and is deleted unwarned because the old-draft notification band for that carried-over timestamp has already passed'
       ).toContain('"updatedAt" = now()');
     });
 
