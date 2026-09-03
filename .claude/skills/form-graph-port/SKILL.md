@@ -83,6 +83,12 @@ flags have fully flipped.
 
 ## Gotchas that cost real time on the generation port
 
+- Cross-field coherence (a selection retargeting another selection) belongs in a
+  RULE on the graph (`.effect({...})` — gesture-aware, fires before resolution,
+  covers every writer), NOT in transcribed v1 UI handlers. v1 kept it in handlers
+  because data-graph had no rules; transcribing that architecture reintroduced a
+  crash the graph could have prevented (see `selector-coherence.ts`).
+
 - The port parse composes as `hub.parse(reconcileSelectors(raw).raw, ext)` — selector
   reconciliation is part of the parse contract, not optional plumbing.
 - A generic helper over union arms hits TS's weak-type rule when one arm shares no

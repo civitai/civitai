@@ -78,12 +78,17 @@ export function buildV1MigrationIntent(
 }
 
 /**
- * Runs the migration against localStorage, once: a no-op whenever the
- * form-graph record already exists (including from a previous migration).
+ * Runs the migration against localStorage, ONCE EVER — a separate marker key
+ * records that it ran, so deleting the form record later means a fresh form,
+ * not a replay of years-old v1 state (which is exactly how it first surfaced:
+ * clearing the record resurrected a stale v1 workflow with no ecosystem).
  */
 export function migrateV1GenerationStorage(targetKey: string) {
   if (typeof localStorage === 'undefined') return;
+  const markerKey = `${targetKey}:migrated`;
   try {
+    if (localStorage.getItem(markerKey) !== null) return;
+    localStorage.setItem(markerKey, '1');
     if (localStorage.getItem(targetKey) !== null) return;
     const intent = buildV1MigrationIntent((key) => localStorage.getItem(key));
     if (intent) localStorage.setItem(targetKey, JSON.stringify(intent));

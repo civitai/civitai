@@ -6,6 +6,7 @@ import {
   workflowConfigByKey,
 } from '~/shared/data-graph/generation/config/workflows';
 import { mergeGateStates, rulesToStates } from '~/shared/data-graph/generation/gates';
+import { selectorCoherence } from './selector-coherence';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 
 import { imageHub } from './image/hub.graph';
@@ -188,6 +189,7 @@ export const generationHub = defineGraph<GenerationCtx>()
     ({ workflow }) => (STANDALONE_WORKFLOWS.has(workflow) ? workflow : 'ecosystem'),
     { emit: false }
   )
-  .use(workflowKinds);
+  .use(workflowKinds)
+  .effect(selectorCoherence);
 
 export type GenerationState = ReturnType<typeof generationHub.resolve>;

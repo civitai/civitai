@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import { buildV1MigrationIntent } from '../migrate-v1-storage';
+import { buildV1MigrationIntent, migrateV1GenerationStorage } from '../migrate-v1-storage';
 
 const EXT: GenerationCtx = {
   limits: { maxQuantity: 10, maxResources: 9, vidQuantity: 4 },
@@ -65,6 +65,29 @@ describe('buildV1MigrationIntent', () => {
       })
     );
     expect(intent).toEqual({ 'model@WanVideo': { id: 999, model: { type: 'Checkpoint' } } });
+  });
+
+  it('runs once EVER: clearing the record later yields a fresh form, not a replay', () => {
+    const backing = new Map<string, string>(Object.entries(V1_FIXTURE));
+    const fakeLocalStorage = {
+      getItem: (k: string) => backing.get(k) ?? null,
+      setItem: (k: string, v: string) => void backing.set(k, v),
+    };
+    const original = globalThis.localStorage;
+    Object.defineProperty(globalThis, 'localStorage', {
+      value: fakeLocalStorage,
+      configurable: true,
+    });
+    try {
+      migrateV1GenerationStorage('form-graph:generation');
+      expect(backing.get('form-graph:generation')).toBeTruthy();
+      expect(backing.get('form-graph:generation:migrated')).toBe('1');
+      backing.delete('form-graph:generation'); // the user clears the form record
+      migrateV1GenerationStorage('form-graph:generation');
+      expect(backing.get('form-graph:generation')).toBeUndefined(); // fresh, no replay
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', { value: original, configurable: true });
+    }
   });
 
   it('the hub store hydrates the migrated record', () => {

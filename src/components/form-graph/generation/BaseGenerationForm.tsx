@@ -34,6 +34,11 @@ import { MetadataExtractionFooter } from '~/components/generation_v2/FormFooter'
 import { PromptEnhancePanel } from '~/components/Generation/PromptEnhance/PromptEnhancePanel';
 import { usePromptEnhanceStore } from '~/components/Generation/PromptEnhance/promptEnhanceStore';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
+import {
+  needsHydration,
+  type PartialResourceValue,
+} from '~/components/generation_v2/inputs/resource-select.utils';
 
 import { ImageGenerationForm } from './ImageGenerationForm';
 import { VideoGenerationForm } from './VideoGenerationForm';
@@ -60,6 +65,12 @@ import { useOutputType, type GenerationStore } from './store';
  */
 
 const STORAGE_KEY = 'form-graph:generation';
+
+// Session memory for adopted defaults — module scope so the session's view of
+// "what the form showed" survives the Generate tab unmounting on tab
+// switches. A plain Map on purpose: it dies with the page, so a reload
+// re-derives today's defaults (see the lib's rules docs, "adopted defaults").
+const sessionMemory = new Map<string, unknown>();
 
 export function BaseGenerationForm() {
   const status = useGenerationStatus();
@@ -103,7 +114,7 @@ export function BaseGenerationForm() {
   }, []);
   useEffect(() => () => storage?.dispose(), [storage]);
 
-  const store = useForm(generationHub, { ext, storage }) as GenerationStore;
+  const store = useForm(generationHub, { ext, storage, sessionMemory }) as GenerationStore;
 
   return (
     <FormProvider store={store}>
@@ -114,7 +125,53 @@ export function BaseGenerationForm() {
   );
 }
 
+/**
+ * v1 InnerProvider's resource-hydration sync: register the ids of PARTIAL
+ * resource values (a default model is just `{id, model:{type}}`) with
+ * ResourceDataProvider so the pickers can render them — without this an
+ * ecosystem switch auto-sets the model but the selector looks empty.
+ */
+function useResourceHydrationSync(store: GenerationStore) {
+  const { registerResourceId, unregisterResourceId } = useResourceDataContext();
+  const registeredIdsRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    function syncResourceIds() {
+      const state = store.getSnapshot().state as Record<string, unknown>;
+      const resourceValues: PartialResourceValue[] = [];
+      if (state.model) resourceValues.push(state.model as PartialResourceValue);
+      if (state.vae) resourceValues.push(state.vae as PartialResourceValue);
+      if (Array.isArray(state.resources)) {
+        resourceValues.push(...(state.resources as PartialResourceValue[]));
+      }
+      const idsToRegister = new Set(
+        resourceValues.filter((v) => v?.id && needsHydration(v)).map((v) => v.id)
+      );
+      for (const id of registeredIdsRef.current) {
+        if (!idsToRegister.has(id)) {
+          unregisterResourceId(id);
+          registeredIdsRef.current.delete(id);
+        }
+      }
+      for (const id of idsToRegister) {
+        if (!registeredIdsRef.current.has(id)) {
+          registerResourceId(id);
+          registeredIdsRef.current.add(id);
+        }
+      }
+    }
+    syncResourceIds();
+    return store.subscribe(syncResourceIds);
+  }, [store, registerResourceId, unregisterResourceId]);
+  useEffect(() => {
+    const registered = registeredIdsRef.current;
+    return () => {
+      for (const id of registered) unregisterResourceId(id);
+    };
+  }, [unregisterResourceId]);
+}
+
 function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMember: boolean }) {
+  useResourceHydrationSync(store);
   const output = useOutputType(store);
   const workflow = useField<string>(store, 'workflow')?.value;
   const ecosystem = useField<string>(store, 'ecosystem')?.value;
