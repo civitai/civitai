@@ -23,17 +23,18 @@ import type * as TrpcMod from '~/utils/trpc';
  *
  * 🔴 WHAT LAYER 4 DOES NOT BOUND, SO NO ONE READS THESE CASES AS WIDER THAN THEY
  * ARE: the publisher's own `iframe.minHeight`. `Math.max(min, …)` means the
- * manifest floor always wins. That floor is now capped at 800 by the manifest
- * contract (`MIN_HEIGHT_MAX_CEILING` in
- * `src/server/services/block-manifest-validator.service.ts`; guarded against the
- * canonical schema by
- * `src/server/services/blocks/__tests__/manifest-iframe-height.schema-drift.test.ts`)
- * — it was 4000, at which one schema-legal field reproduced this defect in full.
- * The cap does not close the residue: measured over the complete approved
- * population (11 of 11), floors are 400 x1 / 600 x5 / 640 x3 / 700 x2, so at a
- * 640px viewport 10 of 11 are bound by their own floor and overflow by 58-158px.
- * Every case below fixes a modest `minHeight` and varies what the BLOCK states,
- * which is the surface layer 4 actually governs.
+ * manifest floor always wins, and nothing in this change bounds it: the
+ * validator (`HEIGHT_MAX_CEILING`,
+ * `src/server/services/block-manifest-validator.service.ts`) permits `minHeight`
+ * up to 4000, at which one schema-legal field reproduces this defect in full —
+ * measured, a 4000px slot on a 640px screen with the clamp present. Even at
+ * modest values it bites: over the complete approved population (11 of 11) the
+ * floors are 400 x1 / 600 x5 / 640 x3 / 700 x2, so at a 640px viewport 10 of 11
+ * are bound by their own floor and overflow by 58-158px. Capping the floor is a
+ * manifest-CONTRACT change with byte-mirrors outside this repo and is tracked
+ * separately; it would not close that residue anyway. Every case below fixes a
+ * modest `minHeight` and varies what the BLOCK states, which is the surface
+ * layer 4 actually governs.
  *
  * 🔴 ASSERT THE FRAME, NOT THE IFRAME. `framed()` renders AppBlockChrome above
  * the iframe inside one bordered box, so a viewport-sized IFRAME is a

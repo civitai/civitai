@@ -180,18 +180,23 @@ function frameOverheadPx(frame: HTMLElement | null, iframe: HTMLElement | null):
  * not a bare `budget`, so the manifest's own reserve is not silently undone and
  * a short/failed block keeps the space it asked for.
  *
- * That floor is now capped at 800 in the manifest contract
- * (`MIN_HEIGHT_MAX_CEILING` in
- * `src/server/services/block-manifest-validator.service.ts`, mirrored in
- * `public/schemas/app-block/v1.json`); it was 4000, at which a single
- * schema-legal field reproduced this defect in full. 🔴 The cap does NOT close
- * the residue, and must not be read as doing so: measured against the complete
- * approved population (11 of 11 blocks), declared floors are 400 x1, 600 x5,
- * 640 x3, 700 x2 — so at a 640px viewport, where the budget after ~98px of
- * chrome is 542, 10 of 11 blocks are bound by their OWN floor and overflow by
- * 58-158px. At an 844px viewport (budget 746) all 11 fit. Shrinking that
- * residue is a per-publisher change or a change to which of floor/viewport
- * wins, not a constant — deliberately out of scope here.
+ * 🔴 THAT FLOOR IS UNBOUNDED BY ANYTHING HERE, AND IS A REAL RESIDUE, NOT A
+ * THEORETICAL ONE. `HEIGHT_MAX_CEILING` in
+ * `src/server/services/block-manifest-validator.service.ts` lets a manifest
+ * declare `minHeight` up to 4000, and at that value a single schema-legal field
+ * reproduces this defect in full — a 4000px slot on a 640px screen, measured,
+ * with this clamp present. Even without an extreme value: measured against the
+ * complete approved population (11 of 11 blocks) the declared floors are
+ * 400 x1, 600 x5, 640 x3, 700 x2, so at a 640px viewport — where the budget
+ * after ~98px of chrome is 542 — 10 of 11 are bound by their OWN floor and
+ * overflow by 58-158px. At an 844px viewport (budget 746) all 11 fit.
+ *
+ * Capping `minHeight` at the validator is a manifest-CONTRACT change with
+ * byte-mirrors outside this repo, so it is deliberately NOT bundled with this
+ * host-side fix; it is tracked on its own branch. And note that a cap would not
+ * close the residue either — 600/640/700 are all modest values that still
+ * exceed the 542px budget. Shrinking it is a per-publisher change or a change
+ * to which of floor/viewport wins, not a constant.
  */
 function clampBlockHeight(
   h: number,
