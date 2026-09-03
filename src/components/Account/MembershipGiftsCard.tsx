@@ -104,7 +104,7 @@ export function MembershipGiftsCard({
   const pageSize = compact ? COMPACT_PAGE_SIZE : DEFAULT_PAGE_SIZE;
 
   const { data, isLoading } = trpc.membershipGift.getMyGifts.useQuery(undefined, {
-    enabled: features.giftMemberships,
+    enabled: !!features.giftMemberships,
   });
 
   const rows = useMemo<GiftRow[]>(() => {

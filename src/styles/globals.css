@@ -107,19 +107,31 @@
      other `PageBlockHost` surfaces (the dev tunnel, the moderator preview).
 
      WHAT IT IS. `PageBlockHost` reads this as
-     `max-width: var(--app-page-max-width, …)` on its root, with
-     `margin-inline: auto`, so the app renders as a centred column with a
-     neutral gutter either side once the viewport is wider than this. Below it
-     the declaration is INERT — the host is `width: 100%`, which is already
-     narrower than the cap, and `margin-inline: auto` resolves to 0 on a box
-     that fills its parent. That inertness is the point: the great majority of
-     traffic is below this width and must render byte-identically to before.
+     `max-width: var(--app-page-max-width, …)` with `margin-inline: auto`, so
+     the app renders as a centred column with a neutral gutter either side once
+     the viewport is wider than this. Below it the declaration is INERT — the box
+     is `width: 100%`, which is already narrower than the cap, and
+     `margin-inline: auto` resolves to 0 on a box that fills its parent. That
+     inertness is the point: the great majority of traffic is below this width
+     and must render byte-identically to before.
+
+     🔴 THE ELEMENT THAT READS IT IS NOT THE ELEMENT THE LEDGER SELECTS, AND THAT
+     IS DELIBERATE — checking the wrong one in DevTools is the likeliest way to
+     conclude this mechanism is broken when it is not. The host root
+     (`[data-app-page-frame]`, and `data-testid='app-page-frame'` in a dev build
+     only — see the ledger's strip note below) is FULL-BLEED: it carries the app
+     chrome, which spans the page like every other site-level bar. The cap is read
+     one level down, on the content wrapper, which holds the app and its failure
+     card. The ledger below still keys on the FRAME because a custom property
+     INHERITS — set it there and the content wrapper picks it up — so ledger rules
+     are written against the frame and take effect on the content. Inspect
+     `app-page-content` for the resolved `max-width`.
 
      🔴 IT IS DECLARED HERE, AND ONLY HERE, SO THAT AN APP CAN OPT OUT — see the
      ledger below. The host reads it through `var()` rather than writing it as
      an inline value precisely so a stylesheet rule can override it; an inline
-     custom property on the host itself would beat every such rule and make the
-     opt-out inert. `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` carries the
+     custom property on either of those elements would beat every such rule and
+     make the opt-out inert. `APP_PAGE_MAX_WIDTH_PX` in `PageBlockHost.tsx` carries the
      same number as the `var()` fallback (CSS cannot import a TS constant), and
      `__tests__/pageBlockHostMaxWidth.test.ts` is what keeps the two in step —
      the same arrangement `--header-height`/`HEADER_HEIGHT_PX` uses. The
@@ -142,10 +154,30 @@
    is one line, needs no schema motion, and cannot be forged: the guest is
    cross-origin and can never reach this cascade.
 
-   HOW TO ADD ONE. `PageBlockHost` stamps `data-block-id` (the app's slug — the
-   same value that builds `<slug>.civit.ai`) on its root, so:
+   🔴 NEVER KEY A RULE HERE ON `data-testid` — IT DOES NOT EXIST IN PRODUCTION,
+   AND THAT IS EXACTLY HOW THIS LEDGER SHIPPED BROKEN. `next.config.mjs` sets
+   `compiler.reactRemoveProperties: { properties: ['^data-testid$'] }` whenever
+   `NODE_ENV === 'production'`, so every `data-testid` is compiled out of the
+   live DOM. The `playable-collections` rule below used to chain the app-page-frame
+   TESTID with its block id, and therefore matched ZERO elements on civitai.com
+   while matching fine in every test tier, all of which run with
+   `NODE_ENV !== 'production'` — a rule that was present in the deployed
+   stylesheet, verified verbatim, and still did nothing. The frame's
+   production-surviving marker is `data-app-page-frame`, stamped beside
+   `data-block-id` on the same element in `PageBlockHost.tsx`. This is checked
+   mechanically: `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`
+   parses the strip list out of `next.config.mjs` and the selectors out of this
+   file — INCLUDING the ones in these comments, since the template below is what
+   the next entry gets copied from — and fails if any of them depends on an
+   attribute production removes. That is also why the broken selector is described
+   above in words rather than spelled out: a literal example of the wrong shape,
+   even a historical one, is a copyable example.
 
-     [data-testid='app-page-frame'][data-block-id='my-canvas-app'] {
+   HOW TO ADD ONE. `PageBlockHost` stamps `data-block-id` (the app's slug — the
+   same value that builds `<slug>.civit.ai`) alongside `data-app-page-frame` on
+   its root, so:
+
+     [data-app-page-frame][data-block-id='my-canvas-app'] {
        --app-page-max-width: none;
      }
 
@@ -188,7 +220,7 @@
    pair in `PageBlockHostMaxWidth.browser.test.tsx` — that suite parses THIS file
    and injects the rule below verbatim, so deleting or mistyping it fails a test
    rather than silently letterboxing the app again. */
-[data-testid='app-page-frame'][data-block-id='playable-collections'] {
+[data-app-page-frame][data-block-id='playable-collections'] {
   --app-page-max-width: none;
 }
 

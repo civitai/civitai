@@ -15,7 +15,7 @@ export function StickerInventoryCard() {
   const [toppingUp, setToppingUp] = useState<number | null>(null);
   const { sticker, isLoading } = useOwnedSticker();
   const { data: balanceRows } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
-    enabled: features.stickers,
+    enabled: !!features.stickers,
   });
 
   if (!features.stickers) return null;

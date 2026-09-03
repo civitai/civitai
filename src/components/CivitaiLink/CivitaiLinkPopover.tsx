@@ -24,7 +24,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { showNotification } from '@mantine/notifications';
 import {
   IconChevronLeft,
-  IconBoxMultiple,
+  IconPackages,
   IconCheck,
   IconCopy,
   IconDeviceDesktop,
@@ -201,7 +201,7 @@ function LinkPitch({ children }: { children?: React.ReactNode }) {
       </Text>
       <Group gap={8} justify="center" mt={4}>
         <Chip
-          icon={<IconBoxMultiple size={13} className={classes.dimIcon} />}
+          icon={<IconPackages size={13} className={classes.dimIcon} />}
           label="ComfyUI node pack"
         />
         <Chip

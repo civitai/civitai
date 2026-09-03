@@ -16,10 +16,11 @@ import { OutboxPoller } from '@/services/outbox-poller'
 import { spineService } from '@/services/spine'
 import { HandlerContext, EventHandler, HandlerActions, FeedUpdateType } from '@/types/handlers'
 import { createEventHandlerMapper } from '@/utils/handler-mapper'
-import { eventProcessorMetrics, queryCacheMetrics } from '@/metrics'
+import { eventProcessorMetrics, excludedUsersMetrics, queryCacheMetrics } from '@/metrics'
 import { MetricService } from '@/common/services/metrics'
 import { CacheService } from '@/common/services/cache'
 import { CacheDriftMonitor } from '@/services/cache-drift-monitor'
+import { MetricExcludedUsers } from '@/services/metric-excluded-users'
 
 interface HandlerEntry {
   name: string
@@ -42,6 +43,7 @@ export class EventProcessor {
   private metricService!: MetricService
   private cacheService!: CacheService
   private cacheDriftMonitor: CacheDriftMonitor | null = null
+  private excludedUsers: MetricExcludedUsers
   private outboxService: OutboxService
   private outboxPoller: OutboxPoller | null = null
   private isRunning: boolean = false
@@ -64,7 +66,8 @@ export class EventProcessor {
       host: config.clickhouse.url
     })
 
-    this.redisCache = new RedisCache(config.redis.url)
+    this.excludedUsers = new MetricExcludedUsers(this.chClient, config.redis.metricExclusionRefreshMs)
+    this.redisCache = new RedisCache(config.redis.url, this.excludedUsers)
     this.metricBatcher = new MetricEventBatcher(this.chClient)
     this.outboxService = new OutboxService(this.pgPool)
 
@@ -87,6 +90,9 @@ export class EventProcessor {
     if (this.isRunning) return
 
     this.isRunning = true
+
+    // Before the first event, so a reaction in the opening seconds is not counted.
+    await this.excludedUsers.start()
 
     await this.redisCache.connect()
 
@@ -164,6 +170,7 @@ export class EventProcessor {
 
     this.outboxPoller?.stop()
     this.cacheDriftMonitor?.stop()
+    this.excludedUsers.stop()
 
     if (this.queryCacheManager) {
       await this.queryCacheManager.stop()
@@ -370,9 +377,18 @@ export class EventProcessor {
 
   private createActions(kafkaMeta: KafkaOffsetMeta, eventTimestamp: Date): HandlerActions {
     const actions: HandlerActions = {
+      // A live delta is broadcast to every viewer of the entity, so it is a third
+      // writer of the same displayed number and has to agree with the other two.
+      // Filtering the cache but not the signal would push a +1 that no store
+      // holds, and the count would tick up and then revert on the next fetch.
       incMetricCache: async (update: CacheUpdate | CacheUpdate[]) => {
         await this.redisCache.increment(update)
-        if (!Array.isArray(update)) await metricSignals.sendDelta(update)
+        if (Array.isArray(update)) return
+        if (this.excludedUsers.has(update.userId)) {
+          excludedUsersMetrics.skipped.inc({ operation: 'signal' })
+          return
+        }
+        await metricSignals.sendDelta(update)
       },
       addMetricEvent: (event: MetricEvent) => {
         if (event.entityId == null || !event.userId) {
@@ -386,6 +402,8 @@ export class EventProcessor {
           _kafka: kafkaMeta,
         }
 
+        // Excluded users' events still go to ClickHouse: the raw table is what the
+        // aggregate filters FROM and what the repair path reconciles against.
         this.metricBatcher.add(enriched)
         // Apply the cache increment inline. incrementOnce is idempotent per
         // (entity, metric, source message), so a rebalance/restart replay
@@ -395,7 +413,11 @@ export class EventProcessor {
         // untracked entities are simply skipped until a reader populates them).
         void this.redisCache.incrementOnce(enriched)
         // Signals are ephemeral live hints, emitted immediately for snappy UI.
-        void metricSignals.sendDelta(enriched as CacheUpdate)
+        if (this.excludedUsers.has(enriched.userId)) {
+          excludedUsersMetrics.skipped.inc({ operation: 'signal' })
+        } else {
+          void metricSignals.sendDelta(enriched as CacheUpdate)
+        }
       },
       feedUpdate: (entityType: FeedUpdate['entityType'], entityId: FeedUpdate['entityId'], type: FeedUpdateType = 'update') => {
         if (entityId == null) return

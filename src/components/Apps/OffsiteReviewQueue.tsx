@@ -1011,8 +1011,13 @@ function ListingPreviewSection({ request }: { request: OffsitePendingRow }) {
       <Text size="xs" c="dimmed">
         Listing preview — how it will appear in the store once approved.
       </Text>
+      {/* 🔴 `preview` — the SAME posture the detail body below it takes. Without it
+          this card offers a moderator (which every viewer of this queue is) the `⋮`
+          menu's live takedown actions against a listing that is NOT approved and
+          whose `id` may be the publish REQUEST's rather than an `AppListing`'s. See
+          `appListingDetailModActions.detailListingStatus`. */}
       <div style={{ maxWidth: 340 }} data-testid="apps-listing-preview-card">
-        <AppListingCard card={card} />
+        <AppListingCard card={card} preview />
       </div>
       <Card withBorder p="md" data-testid="apps-listing-preview-detail">
         <AppListingDetailBody detail={detail} preview />
@@ -1225,7 +1230,8 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
 
       {parentPreviewQuery.data && (
         <div style={{ maxWidth: 340 }} data-testid="apps-listing-revision-drift-live-card">
-          <AppListingCard card={parentPreviewQuery.data.card} />
+          {/* `preview` — read-only drift comparison; no live action belongs on it. */}
+          <AppListingCard card={parentPreviewQuery.data.card} preview />
         </div>
       )}
     </Stack>

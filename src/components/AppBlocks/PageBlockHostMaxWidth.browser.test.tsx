@@ -124,6 +124,9 @@ const baseProps = {
   appName: 'Max Width App',
   iframeSrc: SAME_ORIGIN_SRC,
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: BLOCK_ID,
@@ -237,7 +240,20 @@ async function mountAt(width: number, height: number, props: Partial<typeof base
   await page.viewport(width, height);
   renderInPageChain(props);
   await expect.element(page.getByTestId('app-page-frame')).toBeInTheDocument();
-  const host = page.getByTestId('app-page-frame').element() as HTMLElement;
+  // 🔴 TWO BOXES, AND WHICH ONE ANSWERS WHICH QUESTION IS THE POINT OF THIS SUITE.
+  // The cap used to live on the FRAME (the host root), so frame and app column were
+  // the same measurement and one element answered everything. They are now different
+  // elements with OPPOSITE contracts:
+  //   · `app-page-frame`   — the host root. Carries `AppBlockChrome`, and is FULL-BLEED
+  //                          so the chrome spans the page like every other site bar.
+  //   · `app-page-content` — the app's own column (iframe or failure card). This is
+  //                          what the ultrawide cap binds.
+  // `hostWidth` therefore reads the CONTENT box: every capped/centred claim below is
+  // about the app column, and pointing it at the frame would make all of them assert
+  // the opposite of the design. `frameWidth` is measured alongside so the full-bleed
+  // half can be asserted rather than assumed.
+  const frame = page.getByTestId('app-page-frame').element() as HTMLElement;
+  const host = page.getByTestId('app-page-content').element() as HTMLElement;
   const parent = page.getByTestId('page-wrapper').element() as HTMLElement;
   // `measure` re-reads the live boxes, so a test can change the cascade and ask
   // again WITHOUT a second `renderInPageChain()` — two mounted trees would leave
@@ -248,12 +264,13 @@ async function mountAt(width: number, height: number, props: Partial<typeof base
     const parentRect = parent.getBoundingClientRect();
     return {
       hostWidth: hostRect.width,
+      frameWidth: frame.getBoundingClientRect().width,
       parentWidth: parentRect.width,
       gutterLeft: hostRect.left - parentRect.left,
       gutterRight: parentRect.right - hostRect.right,
     };
   };
-  return { host, measure, ...measure() };
+  return { host, frame, measure, ...measure() };
 }
 
 describe('PageBlockHost — the app stops growing on a wide display', () => {
@@ -275,6 +292,36 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
       'the fixture parent is not wide at a 2560px viewport — `page.viewport` did not ' +
         'take effect, and every width assertion in this file would pass vacuously'
     ).toBeGreaterThan(2400);
+  });
+
+  /**
+   * 🔴 THE CHROME SPANS, THE APP DOES NOT — the pair that defines this layout, and
+   * the half that is NEW. The cap used to sit on the host root, so the chrome was
+   * capped along with the app and a full-page app read as a boxed widget dropped
+   * into the page instead of a page of the site. The chrome is site furniture and
+   * now behaves like it; the app keeps its measure.
+   *
+   * BOTH ARMS ARE IN ONE TEST DELIBERATELY. "The frame is full width" alone is green
+   * on any revision where the cap simply does not work — including the pre-cap base —
+   * so on its own it is an invariant guard, not coverage. Pairing it with "and the app
+   * column inside it is NOT full width" is what makes this assert the actual delta:
+   * two different widths, in the right order, on the right elements.
+   */
+  test('at 2560x1080 the chrome spans the page while the app column stays capped', async () => {
+    const { frameWidth, hostWidth, parentWidth } = await mountAt(2560, 1080);
+
+    expect(
+      frameWidth,
+      `at 2560x1080 the host frame is ${frameWidth}px inside a ${parentWidth}px parent — the ` +
+        'chrome is being capped again. It is meant to span the page like every other site-level ' +
+        'bar; the cap belongs on `app-page-content`, not on the frame.'
+    ).toBe(parentWidth);
+
+    expect(
+      hostWidth,
+      `at 2560x1080 the app column spans the whole ${parentWidth}px frame — the ultrawide cap ` +
+        'moved off the content wrapper as well as off the frame, so nothing caps the app at all'
+    ).toBeLessThan(frameWidth);
   });
 
   test('at 2560x1080 the host is a centred column, NOT the full monitor width', async () => {
@@ -396,7 +443,8 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
 
   /**
    * THE DOCUMENTED FULL-BLEED OPT-OUT, end to end: the ledger in `globals.css`
-   * keys on `data-block-id`, which the host stamps.
+   * keys on `data-app-page-frame` + `data-block-id`, both of which the host
+   * stamps on its root.
    *
    * Both halves are in ONE test on purpose. The second assertion alone is GREEN
    * on the base revision (an uncapped host is full width for reasons that have
@@ -404,6 +452,18 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
    * than coverage. Pairing it with the capped measurement makes the test assert
    * a DELTA — the rule changed something — which is only true once both the cap
    * and the `data-block-id` anchor exist.
+   *
+   * ⚠️ THIS TIER IS STRUCTURALLY BLIND TO THE ONE DEFECT THAT ACTUALLY SHIPPED,
+   * AND SAYING SO IS THE POINT. The selector below used to read
+   * `[data-testid='app-page-frame'][data-block-id='…']`, which is what
+   * `globals.css` shipped — and `next.config.mjs` strips every `data-testid` from
+   * the DOM under `NODE_ENV === 'production'`, so on the live site it matched
+   * nothing and `playable-collections` was letterboxed at the cap. This test
+   * passed throughout, because vitest never runs with `NODE_ENV=production`; no
+   * assertion added here can change that. The check that CAN see it compares the
+   * two configurations instead of rendering:
+   * `__tests__/ledgerSelectorSurvivesProdStrip.test.ts`. Do not "strengthen" this
+   * test to cover it — widen that one.
    */
   test('an app can opt out of the cap with a CSS rule keyed on `data-block-id`', async () => {
     const { measure, hostWidth, parentWidth } = await mountAt(2560, 1080);
@@ -411,15 +471,14 @@ describe('PageBlockHost — the app stops growing on a wide display', () => {
       parentWidth
     );
 
-    injectCss(
-      `[data-testid='app-page-frame'][data-block-id='${BLOCK_ID}'] { --app-page-max-width: none; }`
-    );
+    injectCss(`[data-app-page-frame][data-block-id='${BLOCK_ID}'] { --app-page-max-width: none; }`);
     const optedOut = measure();
     expect(
       optedOut.hostWidth,
       'the ledger rule shape documented on `--app-page-max-width` in globals.css did not ' +
-        'restore full-bleed at 2560x1080 — either `data-block-id` is no longer stamped or the ' +
-        'cap is no longer overridable, and every opt-out in that ledger is inert'
+        'restore full-bleed at 2560x1080 — either `data-app-page-frame`/`data-block-id` are no ' +
+        'longer stamped on the host root or the cap is no longer overridable, and every opt-out ' +
+        'in that ledger is inert'
     ).toBe(optedOut.parentWidth);
   });
 

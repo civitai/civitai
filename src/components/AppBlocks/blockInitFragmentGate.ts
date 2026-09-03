@@ -27,8 +27,9 @@
 //      🔴 THIS DOES NOT REOPEN THE FRAGMENT FAST PATH. The two counts are
 //      independent: `BLOCK_HELLO` is a runtime postMessage the SDK sends, while
 //      `civitai-block=v1` is a URL-fragment payload a block must DECODE, and
-//      nothing here re-measured the fragment half. The gate stays an empty
-//      opt-in allowlist until someone measures THAT.
+//      nothing there re-measured the fragment half. The gate stays a per-block
+//      opt-in, and an entry is earned only by measuring THAT half for THAT
+//      block — which is what was done for the one entry now in the ALLOWLIST.
 //
 //      🔴 AND IT IS A DATED MEASUREMENT, NOT A FACT. Blocks are rebuilt and
 //      re-approved continuously, so both numbers move on their own. The reason
@@ -50,10 +51,12 @@
 //
 // 🔴 THIS IS AN OPT-IN ALLOWLIST, NOT A RUNTIME KILL SWITCH. Enabling or
 // disabling a block is a deploy. That is an honest limitation and it is stated
-// here rather than in a commit message: with `ALLOWLIST` empty the feature is
-// inert, so there is nothing to revoke in a hurry, but if a runtime switch is
-// wanted the right home is a feature flag in the flags service — outside this
-// module and deliberately not added here.
+// here rather than in a commit message. 🔴 IT NOW HAS TEETH: the allowlist is
+// no longer empty, so "there is nothing to revoke in a hurry" — true while the
+// set was empty — NO LONGER HOLDS. Backing a block out is a code change and a
+// deploy, at deploy latency. If a faster revocation path is wanted the right
+// home is a feature flag in the flags service — outside this module and
+// deliberately not added here.
 
 /**
  * The surfaces that can mount an iframe block host. Passed explicitly by each
@@ -85,14 +88,31 @@ export type BlockHostSurface =
  * NOTHING on the model slot. When enabling a block, add its `blockId` — or add
  * both — and verify on the surface you actually care about.
  *
- * 🔴 EMPTY MEANS THE FEATURE IS OFF EVERYWHERE. That is the intended state
- * until blocks rebuild against an SDK that decodes the fragment. Adding an
- * entry is a deliberate, per-block decision that should be made only once THAT
- * block is known to ship a decoding SDK — the fragment is inert to a block that
- * does not read it, but a block that reads `location.hash` for its OWN purposes
- * can be perturbed by it (see DENYLIST).
+ * 🔴 NO LONGER EMPTY — but the bar for an entry is unchanged. Adding one is a
+ * deliberate, per-block decision that should be made only once THAT block is
+ * known to ship a decoding SDK: the fragment is inert to a block that does not
+ * read it, but a block that reads `location.hash` for its OWN purposes can be
+ * perturbed by it (see DENYLIST).
  */
-export const BLOCK_INIT_FRAGMENT_ALLOWLIST: ReadonlySet<string> = new Set<string>([]);
+export const BLOCK_INIT_FRAGMENT_ALLOWLIST: ReadonlySet<string> = new Set<string>([
+  // 🔴 ONE STRING COVERS BOTH LOOKUPS **ONLY BECAUSE THIS BLOCK IS PAGE-MOUNTED**
+  // — do not copy this shape to a slot-mounted block without re-reading the
+  // KEYING ASYMMETRY note above. `app-requests` declares `"blockId":
+  // "app-requests"` and a `page` with NO slots, and on the page-run surface
+  // `slug === blockId`, so the single entry below matches whichever key the
+  // host happens to pass. A block that mounts in a MODEL SLOT is the dangerous
+  // case: that surface knows only a `blockId`, so an entry written as a slug
+  // there is silently inert.
+  //
+  // Both halves of the bar are met: it ships the decoding reader (an inline
+  // pre-paint fragment reader in its `index.html`, which records the resolved
+  // theme on `data-civitai-boot-theme` for React to read back), and it reads
+  // `location.hash` nowhere at runtime — the only textual mentions in its
+  // source are doc comments warning against exactly that, since the SDK's
+  // transport strips the fragment during init. That hash-reading hazard is
+  // what put `playable-collections` on the DENYLIST; this block is clear of it.
+  'app-requests',
+]);
 
 /**
  * Blocks that must NEVER receive the fragment, whatever the allowlist says.

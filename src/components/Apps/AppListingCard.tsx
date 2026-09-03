@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Anchor,
   Avatar,
   Badge,
@@ -12,19 +11,22 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
-import { IconApps, IconPencil, IconThumbUp } from '@tabler/icons-react';
+import { IconApps, IconThumbUp } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { type MouseEvent, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import {
-  canOwnerEditListing,
+  LISTING_ROLLUP_MIN_WIDTH_PX,
   getListingCta,
   getListingDetailHref,
-  getOwnerEditHref,
   getRecommendLabel,
 } from '~/components/Apps/appListingCardView';
+import {
+  AppListingActionsMenu,
+  useAppListingActionsMenuVisible,
+} from '~/components/Apps/AppListingActionsMenu';
 import { ACTION_GLYPH_ICONS, cardActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { TruncatedText } from '~/components/Apps/AppListingTruncate';
 import { toRecentAppFromListing } from '~/components/Apps/recentAppsRail';
@@ -236,9 +238,22 @@ export interface AppListingCardProps {
    * dead "Open" link (the `/apps/run/<slug>` route 404s without the flag).
    */
   canOpenPage?: boolean;
+  /**
+   * Moderator listing-media review renders this card READ-ONLY, over an
+   * UNAPPROVED shadow listing (`OffsiteReviewQueue`). Suppresses the `⋮` menu, for
+   * exactly the reason `AppListingDetailBody` takes the same prop: the reviewer IS
+   * a moderator, so without it a preview card would offer live takedown actions
+   * against a listing whose status — and whose `id` — are not guaranteed. See
+   * `appListingDetailModActions.detailListingStatus`.
+   */
+  preview?: boolean;
 }
 
-export function AppListingCard({ card, canOpenPage = false }: AppListingCardProps) {
+export function AppListingCard({
+  card,
+  canOpenPage = false,
+  preview = false,
+}: AppListingCardProps) {
   const currentUser = useCurrentUser();
   const cta = getListingCta(card, { canOpenPage });
   // 🔴 S6b — ONE glyph vocabulary, read from the shared module rather than a
@@ -251,13 +266,22 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
   const detailHref = getListingDetailHref(card.slug);
   const recommendLabel = getRecommendLabel(card.recommend, card.reviewCount);
 
-  // Owner "Edit" deep-link (Item 2). The public store DTO is approved-only + has
-  // no status field, so gating is owner + editable-status (status omitted →
-  // editable); the href builder returns null when there's no editable target
-  // (an on-site listing with no backing appBlockId) → the button is hidden.
   const isOwner = !!currentUser?.id && currentUser.id === card.creator?.id;
-  const editHref = getOwnerEditHref(card.kindData, card.id);
-  const showEdit = canOwnerEditListing({ isOwner }) && !!editHref;
+
+  // The `⋮` overflow menu's target. Owner Edit — which used to be two hand-rolled
+  // buttons right here — now lives inside the SHARED `AppListingActionsMenu`,
+  // alongside review / report / the moderator section, so the card and the listing
+  // detail cannot drift apart about what the menu holds.
+  const menuTarget = {
+    id: card.id,
+    slug: card.slug,
+    kind: card.kind,
+    kindData: card.kindData,
+    creatorUserId: card.creator?.id ?? null,
+  };
+  // Whether the trigger occupies the action row. Read from the shared predicate
+  // rather than re-derived — see its comment.
+  const hasMenu = useAppListingActionsMenuVisible(menuTarget, 'card', preview);
 
   // OWNER-ONLY incompleteness hint. The public store DTO carries only nullable
   // iconUrl/coverUrl (no screenshot count), so this is scoped to a below-floor
@@ -270,8 +294,8 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
   ].filter((v): v is string => v != null);
   const showOwnerIncomplete = isOwner && missingFloorAssets.length > 0;
 
-  // `@container` makes THIS card the query basis for the owner-Edit breakpoint in
-  // the action row below (see the long note there). It is
+  // `@container` makes THIS card the query basis for the recommend-rollup floor
+  // breakpoint in the action row below (see the long note there). It is
   // `container-type: inline-size`, i.e. inline-axis containment only, so the
   // card's height still follows its content and `h-full` is unaffected.
   // 🔴 S4 — CHROME MATCHES THE SITE'S CARD, and every property below is
@@ -418,82 +442,120 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
           </Text>
         )}
 
-        {/* Feedback #2: the action row's buttons stepped up a notch on the Mantine
-            size scale (xs → sm), so the primary CTA reads as the card's call to
-            action rather than a footnote.
+        {/* ── THE ACTION ROW ────────────────────────────────────────────────
+            Feedback #2: the buttons sit one notch up the Mantine size scale (xs
+            → sm), so the primary CTA reads as the card's call to action rather
+            than a footnote. S7 then made the CTA FILL the row instead of
+            stepping up the size scale again — see the CTA's own note below.
+
             🔴 The row deliberately stays `nowrap`. Letting it wrap looks like the
             obvious way to stop the taller buttons overflowing a narrow column, but
             it breaks two things: (1) under `justify="space-between"` a wrapped line
             holding a single item sits at flex-START, so the actions would jump from
-            right-aligned to LEFT-aligned; and (2) an OWNER card (Edit + CTA) wraps
-            at a wider column than a non-owner card, so inside a `h-full` grid row
-            one owner card would grow the height of the whole row. Instead the
-            actions never shrink and the recommend rollup absorbs the pressure by
-            truncating — so every card in a row keeps the same geometry regardless
-            of who is looking at it. */}
+            right-aligned to LEFT-aligned; and (2) a card WITH a `⋮` menu wraps at a
+            wider column than one without, so inside a `h-full` grid row one such
+            card would grow the height of the whole row. Instead the actions never
+            shrink and the recommend rollup absorbs the pressure — down to a floor.
+
+            🔴 ROW HEIGHT IS A CONSTANT 46px AND MUST STAY ONE. `pt="xs"` (10px) +
+            a 36px control. Every control in the row is 36px: the `sm` CTA button
+            and the `size={36}` menu trigger. The row lives in an `h-full` grid
+            row, so a taller control here propagates to every card in that row
+            across the whole store — which is why the CTA grows HORIZONTALLY
+            rather than up the size scale. Re-measured after this change at
+            container 248 / 282 / 462: 46px in every cell. */}
         <Group justify="space-between" mt="auto" pt="xs" gap="xs" wrap="nowrap">
           {/* Recommend rollup — "N% recommend (M)" or "No reviews yet". This is the
               flexible side: it may truncate so the actions never do.
 
-              🔴 …but ONLY DOWN TO A FLOOR. Truncation is the designed behaviour and
-              stays; what this container query removes is the state BELOW it, where
-              the rollup is squeezed so hard that the surviving glyphs say nothing.
-              Measured on this tree (main + #3547), OWNER card, the widest CTA
-              ("View details"), the store's real 4-column geometry:
+              🔴 …but ONLY DOWN TO A FLOOR, AND THE FLOOR IS NOW ENFORCED. It used
+              to be `minWidth: 0` — "shrink to nothing" — with the floor existing
+              only as the arithmetic behind the container query below. That was
+              survivable while nothing competed for the free space. It is not
+              survivable now that the CTA GROWS into it: a `flex-grow` on the CTA
+              with a zero-floor rollup starves the rollup at EVERY width, not just
+              the narrow ones the query was built for — i.e. the obvious
+              implementation of "make the CTA fill the row" destroys the exact
+              thing the query exists to protect. So the floor is stated as a
+              constraint the layout engine enforces (`minWidth:
+              LISTING_ROLLUP_MIN_WIDTH_PX`), and the CTA takes only the remainder.
 
-                | card | container | actions | rollup | text px / natural | truncated |
-                |------|-----------|---------|--------|-------------------|-----------|
-                |  280 |       248 |     184 |     54 |          37 / 79  | YES       |
-                |  300 |       268 |     184 |     74 |          57 / 79  | yes       |
-                |  314 |       282 |     184 |     88 |          71 / 79  | yes       |
-                |  330 |       298 |     184 |     96 |          79 / 79  | no        |
+              🔴 THE TABLE BELOW WAS RE-MEASURED ON THIS BRANCH — it is not the
+              pre-change one carried forward. A card WITH a menu, the widest CTA
+              ("View details"), no reviews (the SHORTEST label the rollup can
+              carry, so a deficit here is structural rather than an artefact of a
+              long string). Widths are `getBoundingClientRect`:
 
-              (Widths are `getBoundingClientRect`; "truncated" is `scrollWidth >
-              clientWidth` on the `<Text truncate>`. Character counts below are
-              DERIVED from the text px at 12px, not read off a screenshot — the
-              live report is what confirmed the top row renders as "No ...".)
+                | card | container | actions nat/rendered | rollup | row h | rollup    |
+                |------|-----------|----------------------|--------|-------|-----------|
+                |  280 |       248 | 184 /  248 (grown)   |    0   |    46 | HIDDEN    |
+                |  296 |       264 | 184 /  184           |   70.1 |    46 | at FLOOR  |
+                |  314 |       282 | 184 /  184           |   88.1 |    46 | clamped   |
+                |  494 |       462 | 184 /  356.3 (grown) |   95.7 |    46 | natural   |
 
-              A 37px stub of "No reviews yet" is strictly worse than no rollup: it
-              occupies the slot, reads as a rendering bug, and carries no
-              information. 54px is the state the live 1200px-viewport store is in
-              today: card 280 is `(1200 − 32 container padding − 3×16 gutter) / 4`,
-              i.e. the 4-column `lg` span at a 1200px viewport.
+              Two columns for the actions because they are now two different
+              numbers: 184 is the cluster's NATURAL width (36px `⋮` + 10px gap +
+              137.9px CTA), which is what the threshold arithmetic below is built
+              from; the RENDERED width is larger wherever the row has free space
+              for the CTA to grow into. In the two middle rows the row is in
+              DEFICIT, so there is no growth and the two coincide.
 
-              🔴 THRESHOLD 264px, DERIVED NOT GUESSED. The floor we want is a rollup
-              box of ~70px = the 13px thumb glyph + its 4px gap + ~53px of 12px text,
-              which is ~9 characters — enough for "No reviews…" / "91% recom…" to
-              read as a phrase rather than as debris. The owner action set at its
-              WIDEST (icon-only Edit + "View details") measures 184px, and the row
-              gap is 8px, so the container width at which the rollup hits that floor
-              is 184 + 8 + 70 = 262 → 264. The model predicts the measured table
-              above to within ~2px at every row, which is why it is stated as
-              arithmetic instead of as a round number that happened to look right.
+              The 264 row is the one that matters: 70.1px is
+              `LISTING_ROLLUP_MIN_WIDTH_PX` doing work, not a coincidence of the
+              content. The same card at 462 leaves the rollup at its natural 95.7
+              and gives the CTA the other 260 — which is the whole point of the
+              change: the CTA grows into the slack, it does not eat the floor.
 
-              🔴 A CONTAINER query, for the same reason the owner-Edit swap below is
-              one: card width is NOT monotonic in viewport width (at `base` the grid
-              is ONE column, so a 390px phone gives a ~356px card — wider than the
-              280px a 1200px laptop gets at four columns). A `max-width` media query
-              would hide the rollup on exactly the viewports with the most room.
+              ⚠️ A CORNER THIS CREATES, on the record: an enforced floor means a
+              row can OVERFLOW instead of crushing the rollup. A card with no menu
+              needs 137.9 + 10 + 70 = 218px of container to hold both; measured at
+              a synthetic 168px container the row's `scrollWidth` is 218 against a
+              `clientWidth` of 168. No store surface produces that — the 4-column
+              `lg` grid bottoms out at 248, the `base` grid is one wide column, and
+              the moderator preview card is capped at 340 (308 content) — and a
+              card WITH a menu already overflowed at that width before this change
+              (its 184px cluster alone exceeds 168). Pinned at 248, the narrowest
+              width the store can actually produce, rather than left to prose.
 
-              🔴 OWNER CARDS ONLY (`showEdit`). A non-owner card has no Edit control,
-              so its actions are 138px and the rollup never drops below 96px at any
-              width the store produces — it is byte-unchanged by this and must stay
-              that way.
+              🔴 THRESHOLD 264px, DERIVED NOT GUESSED, AND NOW MACHINE-CHECKED.
+              `LISTING_ROLLUP_HIDE_BELOW_PX` in `appListingCardView.ts` computes
+              it as actions(184) + row gap(10) + floor(70) = 264, and
+              `__tests__/appListingCardView.test.ts` asserts this file's
+              `@[264px]` class spells the same number — a Tailwind arbitrary
+              variant cannot read a JS constant, so the duplication is
+              unavoidable and the drift is what gets gated instead.
 
-              ⚠️ ACCEPTED COLLATERAL, on the record rather than discovered later: the
-              query cannot see WHICH CTA rendered, and the narrow "Open" CTA (actions
-              140px) leaves the rollup its full 96px even at container 248 — measured,
-              untruncated at every width in the sweep. So an owner card
-              whose CTA is "Open"/"Visit" loses a rollup that would have fit, across
-              container 248–264 (viewport ~1200–1264 at four columns). Encoding a
-              second per-CTA threshold to reclaim that 64px band buys a second magic
-              number and a CTA-width classification in the render path; one rule that
-              is occasionally conservative is the better trade. */}
+              The 184 is MEASURED, not modelled: a 36px `⋮` trigger + the row's
+              10px `gap="xs"` + the widest CTA at its natural 138px. It happens to
+              equal the pre-change value, because the control the menu replaced was
+              an icon-only Edit `ActionIcon` at the same `size={36}` — worth naming,
+              because "the number did not move" is also what a measurement nobody
+              took looks like.
+
+              🔴 A CONTAINER query, not a media query: card width is NOT monotonic
+              in viewport width (at `base` the grid is ONE column, so a 390px phone
+              gives a ~356px card — wider than the 280px a 1200px laptop gets at
+              four columns). A `max-width` media query would hide the rollup on
+              exactly the viewports with the most room.
+
+              🔴 GATED ON `hasMenu`, NOT ON OWNERSHIP. It used to be `showEdit`,
+              because the Edit button was the only thing that widened the row.
+              The `⋮` trigger is now that thing, and it appears for anyone the menu
+              has an item for. A card with NO menu keeps its 138px action cluster
+              and its rollup never approaches the floor at any width the store
+              produces — byte-unchanged, and pinned as such.
+
+              ⚠️ ACCEPTED COLLATERAL, on the record rather than discovered later:
+              the query cannot see WHICH CTA rendered, so a card whose CTA is the
+              narrow "Open" loses a rollup that would have fit, across container
+              248–264. Encoding a second per-CTA threshold buys a second magic
+              number and a CTA-width classification in the render path; one rule
+              that is occasionally conservative is the better trade. */}
           <Group
             gap={4}
             wrap="nowrap"
-            style={{ minWidth: 0 }}
-            className={showEdit ? 'hidden @[264px]:flex' : undefined}
+            style={{ minWidth: LISTING_ROLLUP_MIN_WIDTH_PX }}
+            className={hasMenu ? 'hidden @[264px]:flex' : undefined}
           >
             <IconThumbUp
               size={13}
@@ -505,95 +567,42 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
             </Text>
           </Group>
 
-          {/* 🔴 `marginLeft: 'auto'` is what keeps the actions RIGHT-ALIGNED when the
-              rollup above is `display: none`. `justify="space-between"` distributes
-              a SINGLE remaining flex item to flex-START, so without this the whole
-              action group jumps to the left edge of the card the moment the rollup
-              is hidden — the exact left-alignment failure the block comment above
-              warns wrapping would cause, reintroduced by a different mechanism.
-              With BOTH children present it is a no-op: auto margins absorb free
-              space before `justify-content` is applied, and one auto margin on the
-              second of two items lands them in precisely the space-between
-              positions. Verified by measurement at both container widths, not
-              assumed. */}
-          <Group gap="xs" wrap="nowrap" style={{ flexShrink: 0, marginLeft: 'auto' }}>
-            {/* Owner-only "Edit" deep-link — subtle secondary action, gated by
-                owner + editable status (mod-removed listings hide it). Routes by
-                kind (manifest editor for on-site, submit editor for off-site).
+          {/* 🔴 `flexGrow: 1` IS WHAT MAKES THE CTA FILL THE ROW, and it is on the
+              CLUSTER rather than on the button alone because the button is not a
+              direct child of the row — the `⋮` trigger shares the cluster with it.
+              The cluster grows, the fixed-width trigger does not, so the whole
+              remainder lands on the CTA (which carries its own `flexGrow: 1`).
 
-                🔴 TWO FORMS, ONE CHOSEN BY A CONTAINER QUERY. Measured at a 280px
-                card content box — what a 1200px viewport produces at the store's
-                4-column `xl` grid:
+              🔴 `flexShrink: 0` STAYS. Growth and shrink are independent here and
+              only growth is wanted: the actions are the rigid side, and the rollup
+              — clamped at its floor — is the side that gives. Below the container
+              query's threshold the rollup leaves layout entirely rather than the
+              actions being squeezed.
 
-                  | case @280                  | actions | rollup | rollup text |
-                  |----------------------------|---------|--------|-------------|
-                  | non-owner + "Open"         |      94 |    139 |         122 |
-                  | non-owner + "View details" |     138 |    132 |         115 |
-                  | owner + "Open"             |     188 |     82 |          65 |
-                  | owner + "View details"     |     232 |     38 |          21 |
-
-                The rollup's natural width is 139. In the last row the CTA icons'
-                ~44px pushed it to 38 and "91% recommend (100)" — glyph included —
-                simply vanished. Collapsing the OWNER-ONLY Edit to an icon returns
-                ~50px, which is the difference between truncated and absent.
-
-                🔴 A CONTAINER query, not a media query: the card's width is NOT
-                monotonic in viewport width. At `base` the grid is ONE column, so a
-                390px phone gives a WIDER card (~356) than a 1200px laptop at four
-                columns (280). A `max-width` media query would collapse the button
-                on exactly the viewports where there is the most room. `@container`
-                asks the only question that matters — how wide is THIS card.
-
-                Breakpoint 360px, read off the table: the owner "View details" cell
-                is the binding one, and its rollup clears ~120px (legible, merely
-                truncated) at container widths from ~360 up. Below that the text
-                button is what breaks it, so below that it becomes an icon.
-
-                🔴 The row stays `nowrap` with `flexShrink: 0`. Row height is a
-                constant 46px in every cell above and nothing overflows — letting
-                the row wrap would left-align the actions and grow the height of a
-                whole `h-full` grid row (see the block comment above). The fix is
-                to make the optional control smaller, not to change the layout. */}
-            {showEdit && editHref && (
-              <>
-                <Button
-                  component={Link}
-                  href={editHref}
-                  size="sm"
-                  variant="default"
-                  leftSection={<IconPencil size={16} />}
-                  data-testid="apps-listing-owner-edit"
-                  className="hidden @[360px]:flex"
-                  onClick={(e: MouseEvent) => e.stopPropagation()}
-                >
-                  Edit
-                </Button>
-                {/* The narrow form. Icon-only, so it needs a REAL accessible name
-                    — `aria-label` + `Tooltip`, the `CategoryFilterButtons`
-                    precedent ("the icon alone is not an accessible name"). Only
-                    ONE of the two is ever displayed, and `display: none` removes
-                    the other from the accessibility tree, so a screen reader is
-                    offered exactly one "Edit" control, not two. */}
-                <Tooltip label="Edit" withArrow>
-                  <ActionIcon
-                    component={Link}
-                    href={editHref}
-                    size={36}
-                    variant="default"
-                    aria-label="Edit"
-                    data-testid="apps-listing-owner-edit-icon"
-                    className="@[360px]:hidden"
-                    onClick={(e: MouseEvent) => e.stopPropagation()}
-                  >
-                    <IconPencil size={16} />
-                  </ActionIcon>
-                </Tooltip>
-              </>
-            )}
-
+              🔴 `marginLeft: 'auto'` is RETAINED THOUGH NOW REDUNDANT, deliberately.
+              With `flexGrow: 1` the cluster already reaches the row's right edge, so
+              the auto margin currently absorbs zero free space (flexible lengths are
+              resolved BEFORE auto margins). It stays because it is the thing that
+              keeps the actions right-aligned if the grow is ever removed: under
+              `justify="space-between"` a SINGLE remaining flex item sits at
+              flex-START, so with the rollup hidden and no grow and no auto margin,
+              the whole CTA cluster jumps to the card's left edge. Two independent
+              mechanisms for one invariant, both cheap. */}
+          <Group
+            gap="xs"
+            wrap="nowrap"
+            style={{ flexShrink: 0, flexGrow: 1, minWidth: 0, marginLeft: 'auto' }}
+          >
             {/* Kind-aware CTA — always has a working target (a direct Open / Visit,
                 or the unified detail). External Visit → new-tab anchor; everything
                 else → an internal Link.
+
+                🔴 IT FILLS THE ROW RATHER THAN STEPPING UP THE SIZE SCALE. The ask
+                was a bigger primary action; the next Mantine size (`md`) is 42px
+                tall, and this row's height is load-bearing (see the row note
+                above), so the only free axis is horizontal. `flexGrow: 1` inside a
+                cluster that itself grows gives the CTA every pixel the rollup's
+                floor and the `⋮` trigger do not need.
 
                 ICONS (product-feedback pass). Each action carries its own glyph so
                 the three CTAs are distinguishable at a glance in a dense grid
@@ -611,15 +620,7 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                 name. Tabler icons render `<svg>` with no `<title>`, so they
                 contribute nothing to the name; the button's name is still
                 exactly "Open" / "Visit" / "View details". Asserted in
-                `AppListingCard.browser.test.tsx`.
-
-                🔴 WIDTH: `leftSection` makes each button ~22px wider, and the row
-                is `wrap="nowrap"` with `flexShrink: 0` on the actions (see the
-                block comment above — wrapping breaks alignment AND row height).
-                The pressure is absorbed where it was designed to be: the
-                recommend rollup on the left is the flexible side and truncates.
-                The tight case is `md`/`lg` (3–4 columns), not `base` (one wide
-                column); verified at 390/768/1440/2560 in the PR's viewport sweep. */}
+                `AppListingCard.browser.test.tsx`. */}
             {cta.external ? (
               <Button
                 component="a"
@@ -628,6 +629,7 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                 rel="noopener noreferrer"
                 size="sm"
                 variant="light"
+                style={{ flexGrow: 1 }}
                 rightSection={<CtaGlyph size={16} />}
                 // "Opened" = actually opened. An OFF-SITE app is opened the
                 // moment this Visit CTA is followed — there is no on-platform
@@ -648,11 +650,63 @@ export function AppListingCard({ card, canOpenPage = false }: AppListingCardProp
                 href={cta.href}
                 size="sm"
                 variant={cta.action === 'open' ? 'filled' : 'light'}
+                style={{ flexGrow: 1 }}
                 leftSection={<CtaGlyph size={16} />}
               >
                 {cta.label}
               </Button>
             )}
+
+            {/* The `⋮` overflow menu — owner Edit, review, report, moderator
+                actions. SHARED with the listing detail body; see
+                `AppListingActionsMenu`.
+
+                🔴 IT REPLACED A DUAL EDIT APPARATUS AND A WHOLE BREAKPOINT. The
+                card used to carry BOTH a text `Button` ("Edit") and an icon-only
+                `ActionIcon`, with an `@[360px]` container query choosing between
+                them — a query that existed for no other reason. A `⋮` trigger is a
+                fixed 36px at every width, so that query had nothing left to decide
+                and is DELETED rather than kept as a constant nothing needs.
+
+                🔴 `size={36}` IS THE ROW-HEIGHT CONTRACT, not a style choice — it
+                matches the `sm` CTA button exactly, which is what keeps the row at
+                46px (see the row note above). `variant="default"` matches the
+                control it replaced.
+
+                🔴 `stopPropagation` covers the trigger AND the dropdown. Every
+                other action on this card stops propagation because the card is a
+                click target; a portalled dropdown still propagates along the REACT
+                tree, so opening the menu would otherwise navigate the card.
+
+                🔴 THE CARD DOES NOT OFFER THE VIEWER ACTIONS — `surface="card"`,
+                and `appListingMenuSurface.ts` owns that decision. Review and
+                Report stay on the listing DETAIL page, where the viewer has
+                chosen to look at one app; on a grid of ~24 tiles they are an
+                invitation to review something nobody opened. The narrowing is
+                declared by NAMING the surface, not by re-deriving a predicate
+                here — re-deriving one is precisely the drift the shared module
+                exists to prevent.
+
+                🔴 GEOMETRY CONSEQUENCE, ACCEPTED AND STATED: the menu's predicate
+                is still "would it hold at least one item", not "is the viewer the
+                owner". With the viewer actions gone from this surface, the items
+                that remain are the owner's Edit and the moderator section — so
+                the population that gets a `⋮`, and therefore the wider action
+                row, is exactly {owner, moderator}. Every other viewer, signed in
+                or signed out, gets the identical menu-less row. That equality is
+                pinned in `AppListingCard.browser.test.tsx` by running one
+                assertion body over both viewers. */}
+            <AppListingActionsMenu
+              listing={menuTarget}
+              surface="card"
+              preview={preview}
+              triggerSize={36}
+              triggerVariant="default"
+              triggerIconSize={16}
+              triggerTestId="apps-listing-card-actions-menu"
+              triggerTooltip
+              stopPropagation
+            />
           </Group>
         </Group>
       </Stack>

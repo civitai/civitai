@@ -178,6 +178,12 @@
         }
       }
     },
+    "bootSkeleton": {
+      "type": "boolean",
+      "default": false,
+      "description": "The app's shipped index.html paints its own loading state inside #root. The full-page run host then stands down its own branded overlay and shows the iframe from mount, so the app's boot state is visible at first paint and its own render replaces it in place with no cross-fade and no reveal transform. Omit (or false) unless the app really ships one: with the overlay stood down, an empty #root is a blank iframe for the whole load. To paint in the HOST's theme rather than guessing from prefers-color-scheme, the app must also be enabled for the BLOCK_INIT URL fragment and read it before first paint; without that the theme is a guess that can disagree with the host and be corrected on BLOCK_INIT.",
+      "$comment": "Honoured by the full-page run host. Other block surfaces ignore it."
+    },
     "page": {
       "type": "object",
       "description": "Full-page surface descriptor (W10). Page apps mount at /apps/run/<slug>.",

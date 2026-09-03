@@ -9,8 +9,13 @@ import { CREATOR_ANNOUNCEMENT_CONTENT_MAX } from '~/server/schema/announcement.s
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { isImageOwner } from '~/server/services/util.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  getCosmeticsForUsers,
+  getProfilePicturesForUsers,
+} from '~/server/services/user.service';
 import { getAllServerHosts } from '~/server/utils/server-domain';
+import { isDefined } from '~/utils/type-guards';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { DomainColor, UserEngagementType } from '~/shared/utils/prisma/enums';
 
@@ -48,7 +53,7 @@ const creatorAnnouncementSelect = {
       hash: true,
     },
   },
-  user: { select: { id: true, username: true, image: true } },
+  user: { select: { id: true, username: true, image: true, deletedAt: true } },
   // `satisfies`, not `as const`: a standalone object literal gets no excess-property
   // check when it is passed to Prisma later, so a column that does not exist typechecks
   // clean and 500s at runtime on every read and write. This is the check that catches it.
@@ -72,6 +77,36 @@ function toCreatorAnnouncementDTO<T extends RawCreatorAnnouncement>(announcement
     metadata: (announcement.metadata ?? {}) as AnnouncementMetaSchema,
     nsfwLevel: announcement.cover?.nsfwLevel ?? 0,
   };
+}
+
+/**
+ * Cosmetics and the profile-picture row are not columns on `User`, so the select cannot
+ * reach them; both already live in caches every other card-shaped surface reads, and the
+ * author set on one page of announcements is a handful of ids. Attached to the author here
+ * so a creator announcement renders with the same identity the rest of the site gives them
+ * — a byline that is only a name is what the reader has to tell apart from Civitai's own.
+ */
+async function withAuthorIdentity<T extends { user: { id: number } | null }>(
+  announcements: T[],
+  { hydrate }: { hydrate: boolean }
+) {
+  const userIds = hydrate
+    ? [...new Set(announcements.map((x) => x.user?.id).filter(isDefined))]
+    : [];
+  const [profilePictures, cosmetics] = userIds.length
+    ? await Promise.all([getProfilePicturesForUsers(userIds), getCosmeticsForUsers(userIds)])
+    : [{}, {}];
+
+  return announcements.map((announcement) => ({
+    ...announcement,
+    user: announcement.user
+      ? {
+          ...announcement.user,
+          profilePicture: profilePictures[announcement.user.id] ?? null,
+          cosmetics: cosmetics[announcement.user.id] ?? [],
+        }
+      : null,
+  }));
 }
 
 /**
@@ -124,7 +159,12 @@ export async function getCreatorAnnouncements({
     take: limit,
   });
 
-  return announcements.map(toCreatorAnnouncementDTO);
+  // `hydrate: false` — the profile carousel renders no byline (see `CreatorAnnouncement`'s
+  // `withAuthor`), so fetching the author's picture and cosmetics here would be two cache
+  // fan-outs and several KB per row, duplicated across rows that all share one author, for
+  // fields nothing reads. The FIELDS are still present so both queries have one DTO shape.
+  // If a byline is ever added to the profile, flip this — do not remove the argument.
+  return withAuthorIdentity(announcements.map(toCreatorAnnouncementDTO), { hydrate: false });
 }
 
 /**
@@ -189,7 +229,10 @@ export async function getFollowedAnnouncements({
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
 
-  const items = announcements.slice(0, limit).map(toCreatorAnnouncementDTO);
+  const items = await withAuthorIdentity(
+    announcements.slice(0, limit).map(toCreatorAnnouncementDTO),
+    { hydrate: true }
+  );
 
   return {
     items,

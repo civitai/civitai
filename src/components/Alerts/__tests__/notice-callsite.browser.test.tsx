@@ -37,7 +37,7 @@ import type { ReferralDashboardData } from '~/components/Referrals/dashboard.typ
 //   here  referralKickback        Referrals / ReferralDashboardFull
 //   here  referralTokenShop       Referrals / ReferralDashboardFull
 //   ↳ `feature-notice.characterization.browser.test.tsx` already asserts the
-//     same wire payload for the remaining three — navTidy,
+//     same wire payload for the remaining three — navCustomize,
 //     yellowBuzzMigration and cryptoOnrampGuidance (dismiss + restore). They
 //     are deliberately NOT duplicated here; that file is the older
 //     characterization record and re-asserting it would create two places to

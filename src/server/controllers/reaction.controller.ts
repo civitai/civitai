@@ -8,6 +8,7 @@ import { imageReactionMilestones } from '~/server/notifications/reaction.notific
 import { encouragementReward, goodContentReward } from '~/server/rewards';
 import type { ToggleReactionInput } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
+import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
 import { createNotification } from '~/server/services/notification.service';
 import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
@@ -289,10 +290,23 @@ export const toggleReactionHandler = async ({
   }
 };
 
-const createReactionNotification = async ({ entityType, entityId }: ToggleReactionInput) => {
+// Exported for tests: the property that matters is that an unavailable exclusion
+// list still produces a notification, and that is only observable here.
+export const createReactionNotification = async ({
+  entityType,
+  entityId,
+}: ToggleReactionInput) => {
   if (entityType === 'image') {
+    // Every displayed count filters reaction-farm accounts; a raw Postgres count did
+    // not, so the milestone fired on numbers no display agreed with. An empty list
+    // here means the lookup was unavailable and the count is unfiltered — the
+    // pre-change behaviour, and never a skipped notification.
+    const excludedUserIds = await getMetricExcludedUserIds();
     const cnt = await dbRead.imageReaction.count({
-      where: { imageId: entityId },
+      where: {
+        imageId: entityId,
+        ...(excludedUserIds.length ? { userId: { notIn: excludedUserIds } } : {}),
+      },
     });
 
     // const { reactionCount: cnt = 0 } =
@@ -310,6 +324,14 @@ const createReactionNotification = async ({ entityType, entityId }: ToggleReacti
     const key = `${type}:${entityId}:${match}`;
 
     if (await notifications.notificationExists({ key })) return;
+
+    // KNOWN, and deliberately not guarded here: filtering can lower `cnt`, so `match`
+    // can move DOWN, and where a burst crossed several thresholds at once only the top
+    // key was written — so a lower milestone can arrive after a higher one. Guarding it
+    // means asking `notificationExists` for each higher threshold, and that is an HTTP
+    // call per key to the notifications service, re-run on every reaction to exactly the
+    // images this suppression targets. A cosmetic ordering quirk is not worth a standing
+    // cross-service N+1; it needs a batched existence check first.
 
     const resource = await dbRead.image.findFirst({
       where: { id: entityId },

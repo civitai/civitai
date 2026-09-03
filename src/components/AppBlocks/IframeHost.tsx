@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActionIcon, Avatar, Box, Group, Text } from '@mantine/core';
+import { ActionIcon, Anchor, Avatar, Box, Group, Text } from '@mantine/core';
 import {
   IconApps,
   IconBuildingStore,
@@ -848,17 +848,50 @@ function ChromeDesktopLeadingGroup({
             <Text size="xs" c="dimmed" aria-hidden>
               /
             </Text>
-            {/* Link affordance: distinct link COLOR + underline so this crumb
-                reads as obviously clickable, visually separated from the static
-                dimmed crumb text + separators around it. Keeps the real anchor
-                semantics (it's a Next <Link>) for keyboard / middle-click. */}
-            <Text
+            {/* Link affordance: the SITE'S OWN `Anchor`, not a hand-styled `Text`. This
+                crumb used to carry `c="blue.6" td="underline"` — a hand-rolled colour and
+                decoration, which is what made the chrome read as foreign inside its own page.
+
+                🔴 THE COLOUR IS NOW THEMED, AND THAT IS THE HALF THAT MATTERS. Mantine 7.17.8
+                resolves `--mantine-color-anchor` per COLOR SCHEME (`@mantine/core/styles.css`):
+                  light → `--mantine-primary-color-filled` → `--mantine-color-blue-filled`
+                          → `--mantine-color-blue-6`   ← identical to the old hard-coded value
+                  dark  → `--mantine-color-blue-4`
+                So light is unchanged to the pixel, and DARK improves: measured against this
+                bar's own background (`--mantine-color-default-hover` → dark-5 `#2c2e33`) the
+                link goes 3.82:1 → 5.49:1, i.e. from FAILING WCAG AA to passing it. The old
+                fixed shade was only ever reasoned about against the light background.
+
+                🔴 DO NOT RESTATE THE OLD "blue.6 CLEARS AA ON THE LIGHT CHROME" CLAIM — IT IS
+                FALSE, AND IT WAS FALSE BEFORE THIS CHANGE TOO. Measured: blue-6 `#228be6` on
+                this bar's light background (gray-0 `#f8f9fa`) is **3.37:1**, against the 4.5:1
+                AA needs for the crumb's 12px (`size="xs"`) text. An audit did bump the shade
+                from `blue.4`, which improved it, but it did not reach AA and no comment should
+                say it did. That shortfall is PRE-EXISTING and untouched here — this change
+                neither causes nor fixes it — and it is recorded so the next reader measures
+                instead of inheriting the claim.
+
+                🔴 `underline="always"` IS NOT A RE-FORK — IT IS THE SITE'S OWN PROP, USED THE
+                WAY THE SITE ALREADY USES IT. `Anchor`'s default is `underline="hover"`, and
+                that default is wrong HERE specifically: this crumb's neighbours are the two
+                dimmed `/` separators and the dimmed app-name crumb, so at rest the ONLY thing
+                distinguishing the link from them would be hue — measured at **1.07:1** on
+                light (blue-6 vs gray-6) and 1.29:1 on dark. That is WCAG 1.4.1 failure F73:
+                colour as the sole differentiator is permitted only above 3:1, and Mantine
+                emits its underline for `:hover`/`:active` only — there is no `:focus-visible`
+                rule to fall back on. Five other call sites in this repo reach for the same
+                prop for the same reason (`ShopItem`, the Sticker hover cards, `StickerBook`).
+                What this change removes is the hand-rolled `c=`/`td=` pair, not the resting
+                cue the crumb has always had.
+
+                Real anchor semantics (a Next `<Link>`) are unchanged: keyboard, middle-click
+                and long-press all still behave. */}
+            <Anchor
               component={Link}
               href="/apps"
               size="xs"
-              c="blue.6"
-              td="underline"
-              style={{ flexShrink: 0, cursor: 'pointer' }}
+              underline="always"
+              style={{ flexShrink: 0 }}
               data-testid="app-block-breadcrumb-apps"
               data-clickable="true"
             >
@@ -870,7 +903,7 @@ function ChromeDesktopLeadingGroup({
                   moved, so a future copy change does not churn every test that reaches
                   for it. */}
               Marketplace
-            </Text>
+            </Anchor>
             <Text size="xs" c="dimmed" aria-hidden>
               /
             </Text>
@@ -1667,34 +1700,31 @@ export function IframeHost({
   useEffect(() => {
     const off = onMessage<
       { requestId?: unknown; body?: unknown; idempotencyKey?: unknown } | undefined
-    >(
-      'SUBMIT_WORKFLOW',
-      async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string') return;
-        const requestId = raw.requestId;
-        // Idempotency (item 2, gen half): forward the OPTIONAL client key so a
-        // lost-response retry collapses to one Buzz charge. Host-first: accept it
-        // defensively (only a non-empty string) — older SDKs never send it.
-        const idempotencyKey =
-          typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
-            ? raw.idempotencyKey
-            : undefined;
-        try {
-          const { snapshot } = await submitWorkflowMutation.mutateAsync({
-            blockToken: token,
-            // Schema-validated server-side; the host never trusts this shape.
-            body: raw.body as never,
-            ...(idempotencyKey ? { idempotencyKey } : {}),
-          });
-          send('WORKFLOW_SUBMITTED', { requestId, snapshot });
-        } catch (err) {
-          send('WORKFLOW_SUBMITTED', {
-            requestId,
-            snapshot: failureSnapshot(err),
-          });
-        }
+    >('SUBMIT_WORKFLOW', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string') return;
+      const requestId = raw.requestId;
+      // Idempotency (item 2, gen half): forward the OPTIONAL client key so a
+      // lost-response retry collapses to one Buzz charge. Host-first: accept it
+      // defensively (only a non-empty string) — older SDKs never send it.
+      const idempotencyKey =
+        typeof raw.idempotencyKey === 'string' && raw.idempotencyKey.length > 0
+          ? raw.idempotencyKey
+          : undefined;
+      try {
+        const { snapshot } = await submitWorkflowMutation.mutateAsync({
+          blockToken: token,
+          // Schema-validated server-side; the host never trusts this shape.
+          body: raw.body as never,
+          ...(idempotencyKey ? { idempotencyKey } : {}),
+        });
+        send('WORKFLOW_SUBMITTED', { requestId, snapshot });
+      } catch (err) {
+        send('WORKFLOW_SUBMITTED', {
+          requestId,
+          snapshot: failureSnapshot(err),
+        });
       }
-    );
+    });
     return off;
   }, [onMessage, send, token, submitWorkflowMutation]);
 
@@ -2041,23 +2071,20 @@ export function IframeHost({
   // block hangs; errors come back as `error: <string>` (mirrors the storage
   // handlers) rather than thrown upward.
   useEffect(() => {
-    const off = onMessage<{ requestId?: unknown } | undefined>(
-      'GET_BUZZ_BALANCE',
-      async (raw) => {
-        if (!raw || typeof raw.requestId !== 'string') return;
-        const requestId = raw.requestId;
-        // NB: unlike PageBlockHost's `token: string | null`, IframeHost's `token` is non-null, so there is deliberately no explicit null-token guard here — an empty token just falls through to the router's `z.string().min(1)` reject → the `catch` → error reply (still no hang).
-        try {
-          const balance = await getMyBuzzBalanceMutation.mutateAsync({ blockToken: token });
-          send('BUZZ_BALANCE_RESULT', { requestId, balance });
-        } catch (err) {
-          send('BUZZ_BALANCE_RESULT', {
-            requestId,
-            error: err instanceof Error ? err.message : 'unknown',
-          });
-        }
+    const off = onMessage<{ requestId?: unknown } | undefined>('GET_BUZZ_BALANCE', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string') return;
+      const requestId = raw.requestId;
+      // NB: unlike PageBlockHost's `token: string | null`, IframeHost's `token` is non-null, so there is deliberately no explicit null-token guard here — an empty token just falls through to the router's `z.string().min(1)` reject → the `catch` → error reply (still no hang).
+      try {
+        const balance = await getMyBuzzBalanceMutation.mutateAsync({ blockToken: token });
+        send('BUZZ_BALANCE_RESULT', { requestId, balance });
+      } catch (err) {
+        send('BUZZ_BALANCE_RESULT', {
+          requestId,
+          error: err instanceof Error ? err.message : 'unknown',
+        });
       }
-    );
+    });
     return off;
   }, [onMessage, send, token, getMyBuzzBalanceMutation]);
 
@@ -2078,10 +2105,13 @@ export function IframeHost({
         if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.storage.get.fetch({
-            blockToken: token,
-            key: raw.key,
-          }, BLOCK_STORAGE_READ_OPTS);
+          const result = await trpcUtils.apps.storage.get.fetch(
+            {
+              blockToken: token,
+              key: raw.key,
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
           send('APP_STORAGE_GET_RESULT', { requestId, value: result.value });
         } catch (err) {
           send('APP_STORAGE_GET_RESULT', {
@@ -2178,12 +2208,15 @@ export function IframeHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 200)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
-        const result = await trpcUtils.apps.storage.list.fetch({
-          blockToken: token,
-          prefix,
-          limit,
-          cursor,
-        }, BLOCK_STORAGE_READ_OPTS);
+        const result = await trpcUtils.apps.storage.list.fetch(
+          {
+            blockToken: token,
+            prefix,
+            limit,
+            cursor,
+          },
+          BLOCK_STORAGE_READ_OPTS
+        );
         send('APP_STORAGE_LIST_RESULT', {
           requestId,
           keys: result.keys.map((k) => ({
@@ -2209,7 +2242,10 @@ export function IframeHost({
       if (!raw || typeof raw.requestId !== 'string') return;
       const requestId = raw.requestId;
       try {
-        const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token }, BLOCK_STORAGE_READ_OPTS);
+        const result = await trpcUtils.apps.storage.getQuota.fetch(
+          { blockToken: token },
+          BLOCK_STORAGE_READ_OPTS
+        );
         send('APP_STORAGE_QUOTA_RESULT', {
           requestId,
           usedBytes: result.usedBytes,
@@ -2266,12 +2302,15 @@ export function IframeHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 100)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
-        const result = await trpcUtils.apps.shared.list.fetch({
-          blockToken: token,
-          prefix,
-          limit,
-          cursor,
-        }, BLOCK_STORAGE_READ_OPTS);
+        const result = await trpcUtils.apps.shared.list.fetch(
+          {
+            blockToken: token,
+            prefix,
+            limit,
+            cursor,
+          },
+          BLOCK_STORAGE_READ_OPTS
+        );
         send('SHARED_LIST_RESULT', {
           requestId,
           items: result.items.map((it) => ({
@@ -2302,10 +2341,13 @@ export function IframeHost({
         if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.shared.getCount.fetch({
-            blockToken: token,
-            key: raw.key,
-          }, BLOCK_STORAGE_READ_OPTS);
+          const result = await trpcUtils.apps.shared.getCount.fetch(
+            {
+              blockToken: token,
+              key: raw.key,
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
           send('SHARED_GET_COUNT_RESULT', { requestId, count: result.count });
         } catch (err) {
           send('SHARED_GET_COUNT_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2322,10 +2364,13 @@ export function IframeHost({
         if (!raw || typeof raw.requestId !== 'string' || !Array.isArray(raw.keys)) return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.shared.getCounts.fetch({
-            blockToken: token,
-            keys: raw.keys as string[],
-          }, BLOCK_STORAGE_READ_OPTS);
+          const result = await trpcUtils.apps.shared.getCounts.fetch(
+            {
+              blockToken: token,
+              keys: raw.keys as string[],
+            },
+            BLOCK_STORAGE_READ_OPTS
+          );
           send('SHARED_GET_COUNTS_RESULT', { requestId, counts: result.counts });
         } catch (err) {
           send('SHARED_GET_COUNTS_RESULT', { requestId, error: storageErrorMessage(err) });
@@ -2429,7 +2474,10 @@ export function IframeHost({
         if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
         const requestId = raw.requestId;
         try {
-          const result = await sharedUnvoteMutation.mutateAsync({ blockToken: token, key: raw.key });
+          const result = await sharedUnvoteMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+          });
           // Invalidate BEFORE replying: the block may re-read the moment this
           // reply resolves. See blockStorageCache.ts (ordering is load-bearing).
           await invalidateSharedStorageReads(trpcUtils);
@@ -2475,7 +2523,10 @@ export function IframeHost({
         if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
         const requestId = raw.requestId;
         try {
-          const result = await trpcUtils.apps.shared.get.fetch({ blockToken: token, key: raw.key }, BLOCK_STORAGE_READ_OPTS);
+          const result = await trpcUtils.apps.shared.get.fetch(
+            { blockToken: token, key: raw.key },
+            BLOCK_STORAGE_READ_OPTS
+          );
           const it = result.item;
           send('SHARED_GET_RESULT', {
             requestId,
@@ -2486,9 +2537,13 @@ export function IframeHost({
                   value: it.value,
                   count: it.count,
                   createdAt:
-                    it.createdAt instanceof Date ? it.createdAt.toISOString() : String(it.createdAt),
+                    it.createdAt instanceof Date
+                      ? it.createdAt.toISOString()
+                      : String(it.createdAt),
                   updatedAt:
-                    it.updatedAt instanceof Date ? it.updatedAt.toISOString() : String(it.updatedAt),
+                    it.updatedAt instanceof Date
+                      ? it.updatedAt.toISOString()
+                      : String(it.updatedAt),
                   viewerVoted: it.viewerVoted,
                 }
               : null,

@@ -504,6 +504,18 @@ describe('AppListingDetailBody', () => {
     ).toBe('/apps/submit?edit=l1');
   });
 
+  /**
+   * 🔴 THIS IS ALSO THE SURFACE GUARD, AND IT IS THE HALF THAT MUST NOT REGRESS.
+   *
+   * The store CARD stopped offering these two items — `surface="card"`, decided in
+   * `appListingMenuSurface.ts` — because on a grid of ~24 tiles they invite a viewer
+   * to review an app they have not opened. The DETAIL page is the surface those
+   * items are FOR, and the narrowing is only correct if it left this one alone. So
+   * this test is the other side of `AppListingCard.browser.test.tsx`'s "a signed-in
+   * NON-owner, NON-moderator gets NO menu on the CARD": the same viewer, the same
+   * two items, opposite expected answers. A change that tightened the gate globally
+   * — the obvious wrong implementation — passes the card test and fails this one.
+   */
   test('🔴 a signed-in NON-owner gets Review + Report, and NO Edit', async () => {
     mocks.currentUser = { id: 999, username: 'bob' };
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);

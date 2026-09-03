@@ -48,6 +48,7 @@ import { createLensInput } from './lens.handler';
 import { createKrea2Input } from './krea2.handler';
 import { createMAIInput } from './mai.handler';
 import { createReveInput } from './reve.handler';
+import { createMuseImageInput } from './muse-image.handler';
 import { createMageFlowInput } from './mage-flow.handler';
 import { createZImageInput } from './z-image.handler';
 import { createBooguInput } from './boogu.handler';
@@ -173,6 +174,9 @@ export type MAICtx = EcosystemGraphOutput & { ecosystem: 'MAI' };
 /** Reve context */
 export type ReveCtx = EcosystemGraphOutput & { ecosystem: 'Reve' };
 
+/** Muse Image context */
+export type MuseImageCtx = EcosystemGraphOutput & { ecosystem: 'MuseImage' };
+
 /** Mage Flow context */
 export type MageFlowCtx = EcosystemGraphOutput & { ecosystem: 'MageFlow' };
 
@@ -260,6 +264,7 @@ export { createLensInput } from './lens.handler';
 export { createKrea2Input } from './krea2.handler';
 export { createMAIInput } from './mai.handler';
 export { createReveInput } from './reve.handler';
+export { createMuseImageInput } from './muse-image.handler';
 export { createMageFlowInput } from './mage-flow.handler';
 
 // Audio ecosystems
@@ -454,6 +459,10 @@ async function createEcosystemStep(
     // Reve (Reve AI, FAL engine)
     case 'Reve':
       return createReveInput(normalizedData, handlerCtx);
+
+    // Muse Image (Meta, FAL engine)
+    case 'MuseImage':
+      return createMuseImageInput(normalizedData, handlerCtx);
 
     // Mage Flow (Microsoft, comfy engine)
     case 'MageFlow':

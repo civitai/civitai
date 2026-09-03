@@ -41,7 +41,7 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
 //
 // 🔴 So the rule is EVERY RUNTIME EXPORT the module has, not "the ones we know about".
 // `useFeatureFlagsReady` is the third hook (`src/providers/FeatureFlagsProvider.tsx:36`), with
-// four live consumers — useChatEnabled, useFeatureNotice, NavTidyNotice,
+// four live consumers — useChatEnabled, useFeatureNotice, NavCustomizeNotice,
 // YellowBuzzMigrationNotice — and `FeatureFlagsProvider` itself is the fourth export
 // (`:37`, imported today only by `src/pages/_app.tsx`). Neither is in this page's graph TODAY,
 // which is the only reason naming fewer would still load — and "not in this graph today" is

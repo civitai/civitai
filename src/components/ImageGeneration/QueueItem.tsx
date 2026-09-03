@@ -637,9 +637,10 @@ function StepOutputs({
                       Your position in queue: {queuePosition.precedingJobs}
                     </Text>
                   )}
-                  {queuePosition.startAt && (
+                  {queuePosition.estimatedStartAt && (
                     <Text size="xs" c="dimmed">
-                      Estimated start time: {formatDateMin(new Date(queuePosition.startAt))}
+                      Estimated start time:{' '}
+                      {formatDateMin(new Date(queuePosition.estimatedStartAt))}
                     </Text>
                   )}
                 </>

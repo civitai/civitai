@@ -4,10 +4,12 @@
  *
  * Hidden route. Guarded by WEBHOOK_TOKEN via `?token=` (see WebhookEndpoint).
  * No public UI. Designed so an out-of-loop agent can PULL suspect reactor data,
- * apply judgment, and COMMIT excluded users — the same `metricExcludedUsers`
- * ClickHouse table the `entityMetricDaily_mv` materialized view filters on, so
- * excluded users stop counting toward reaction metrics/ranking (forward-only,
- * within ~5 min on the current day).
+ * apply judgment, and COMMIT excluded users to the `metricExcludedUsers` ClickHouse
+ * table. Two things filter it: the ClickHouse metric aggregates, and apps/event-engine,
+ * which mirrors the list into memory so the Redis metric cache and the live metric
+ * signals stop counting excluded users too. Forward-only, within ~5 min on the current
+ * day — and that number is load-bearing in a second place: event-engine's
+ * METRIC_EXCLUSION_REFRESH_MS default was chosen to match it.
  *
  * NOTE: lives under /api/admin (NOT /api/testing) on purpose — it is called by a
  * scheduled agent in PRODUCTION, and `route-guards.middleware.ts` hard-blocks

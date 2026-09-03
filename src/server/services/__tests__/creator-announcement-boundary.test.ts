@@ -12,7 +12,11 @@ vi.mock('~/server/services/cover-image.service', () => ({
   resolveCoverImageId: vi.fn(async () => 555),
 }));
 vi.mock('~/server/services/util.service', () => ({ isImageOwner: vi.fn(async () => true) }));
-vi.mock('~/server/services/user.service', () => ({ amIBlockedByUser: vi.fn(async () => false) }));
+vi.mock('~/server/services/user.service', () => ({
+  amIBlockedByUser: vi.fn(async () => false),
+  getProfilePicturesForUsers: vi.fn(async () => ({})),
+  getCosmeticsForUsers: vi.fn(async () => ({})),
+}));
 // The real host list comes from SERVER_DOMAIN_* env, which the test env does not set — an
 // empty list would make every link "not ours" and the assertions below vacuous.
 vi.mock('~/server/utils/server-domain', () => ({
@@ -41,7 +45,11 @@ import {
   MIN_ANNOUNCEMENT_DURATION_MS,
 } from '../creator-announcement.service';
 import { getAnnouncementAllowance } from '~/server/services/announcement-allowance.service';
-import { amIBlockedByUser } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  getCosmeticsForUsers,
+  getProfilePicturesForUsers,
+} from '~/server/services/user.service';
 
 const AUTHOR = 101;
 
@@ -336,6 +344,55 @@ describe('the followed feed', () => {
     expect(last.nextCursor).toBeUndefined();
   });
 
+  // The author's picture and cosmetics are not columns on `User`, so no `select` can reach
+  // them; they come from the caches instead. A byline that is only a username is what a
+  // reader has to tell apart from an official Civitai announcement, which is the point.
+  //
+  // TWO authors, and the caches hold an entry for only ONE of them. One author would let
+  // three separate bugs through: dropping the id dedupe, keying every row off the first
+  // author's identity, and dropping the null-author filter. The undecorated author is also
+  // this test's own negative control — an author the caches know nothing about must render
+  // as a plain name, never a half-built bar or a crash.
+  it('attaches each author their own identity, and degrades for one the caches do not know', async () => {
+    const OTHER = AUTHOR + 1;
+    vi.mocked(getProfilePicturesForUsers).mockResolvedValue({ [AUTHOR]: { id: 7 } } as never);
+    vi.mocked(getCosmeticsForUsers).mockResolvedValue({ [AUTHOR]: [{ cosmeticId: 3 }] } as never);
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      { id: 1, metadata: {}, cover: null, user: { id: AUTHOR, username: 'author' } },
+      { id: 2, metadata: {}, cover: null, user: { id: OTHER, username: 'other' } },
+      { id: 3, metadata: {}, cover: null, user: { id: AUTHOR, username: 'author' } },
+    ] as never);
+
+    const page = await getFollowedAnnouncements({ userId: 999 });
+
+    expect(page.items[0].user).toMatchObject({
+      username: 'author',
+      profilePicture: { id: 7 },
+      cosmetics: [{ cosmeticId: 3 }],
+    });
+    expect(page.items[1].user).toMatchObject({
+      username: 'other',
+      profilePicture: null,
+      cosmetics: [],
+    });
+    expect(page.items[2].user).toMatchObject({ username: 'author', profilePicture: { id: 7 } });
+
+    // Deduped: the repeated author is asked for once, and the order is the first-seen order.
+    expect(vi.mocked(getProfilePicturesForUsers).mock.calls[0][0]).toEqual([AUTHOR, OTHER]);
+  });
+
+  it('asks the caches nothing when no row has an author', async () => {
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      { id: 1, metadata: {}, cover: null, user: null },
+    ] as never);
+
+    const page = await getFollowedAnnouncements({ userId: 999 });
+
+    expect(page.items[0].user).toBeNull();
+    expect(getProfilePicturesForUsers).not.toHaveBeenCalled();
+    expect(getCosmeticsForUsers).not.toHaveBeenCalled();
+  });
+
   it('skips the cursor row itself so a page never repeats its predecessor', async () => {
     await getFollowedAnnouncements({ userId: AUTHOR, limit: 5, cursor: 77 });
 
@@ -494,6 +551,26 @@ describe('an omitted field means leave it alone', () => {
     const data = (tx.announcement.create.mock.calls[0][0] as { data: Record<string, unknown> })
       .data;
     expect(data.disabled).toBe(false);
+  });
+});
+
+describe('the profile query deliberately does NOT fetch author identity', () => {
+  // The profile carousel renders no byline (`CreatorAnnouncement`'s `withAuthor` defaults
+  // off), so hydrating there is two cache fan-outs and several KB per row for fields nothing
+  // reads — and every row on that surface shares one author, so it is duplicated too.
+  //
+  // 🔴 If you are here because you added a byline to the profile, the fix is to flip
+  // `hydrate` to true in `getCreatorAnnouncements`, NOT to delete this test.
+  it('returns the identity fields empty without asking the caches', async () => {
+    dbMock.dbRead.announcement.findMany.mockResolvedValue([
+      { id: 1, metadata: {}, cover: null, user: { id: AUTHOR, username: 'author' } },
+    ] as never);
+
+    const rows = await getCreatorAnnouncements({ userId: AUTHOR });
+
+    expect(rows[0].user).toMatchObject({ profilePicture: null, cosmetics: [] });
+    expect(getProfilePicturesForUsers).not.toHaveBeenCalled();
+    expect(getCosmeticsForUsers).not.toHaveBeenCalled();
   });
 });
 

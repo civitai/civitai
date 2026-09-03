@@ -1,4 +1,5 @@
 import {
+  alpha,
   Anchor,
   Badge,
   Button,
@@ -19,14 +20,14 @@ import {
   IconAlertTriangle,
   IconChevronRight,
   IconCopy,
-  IconBoxMultiple,
+  IconPackages,
   IconDeviceDesktopDown,
   IconDownload,
   IconInfoCircle,
   IconLink,
 } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import dynamic from 'next/dynamic';
+import { AppRow } from '~/components/CivitaiLink/CivitaiLinkAppRow';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import type { CivitaiLinkConnectPath } from '~/components/CivitaiLink/civitai-link-paths';
 import {
@@ -38,15 +39,8 @@ import {
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { fetchLinkReleases } from '~/utils/fetch-link-releases';
-import { createDialogTrigger } from '~/components/Dialog/dialogStore';
 import clsx from 'clsx';
 import classes from './civitai-link.module.scss';
-
-const CivitaiLinkSuccessModal = dynamic(
-  () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal'),
-  { ssr: false }
-);
-const openCivitaiLinkSuccessModal = createDialogTrigger(CivitaiLinkSuccessModal);
 
 const osLabels: Record<string, string> = {
   Windows: 'Windows',
@@ -58,14 +52,14 @@ const downloadableOses = ['Windows', 'Mac', 'Linux'];
 
 const paths: Array<{
   value: CivitaiLinkConnectPath;
-  icon: typeof IconBoxMultiple;
+  icon: typeof IconPackages;
   label: string;
   description: string;
   badge?: string;
 }> = [
   {
     value: 'nodepack',
-    icon: IconBoxMultiple,
+    icon: IconPackages,
     label: 'ComfyUI node pack',
     description: `Already running ComfyUI? Install the Civitai node pack from the Manager and pair it from the sidebar.`,
     badge: 'New',
@@ -224,16 +218,14 @@ export default function CivitaiLinkWizardModal() {
   };
 
   // The instance exists from the moment the code is generated, so an abandoned
-  // wizard would otherwise leave an app named "My SD Instance N" in the list.
+  // wizard leaves an app under whatever default name the Link server assigned.
   const commitName = () => {
     const trimmed = name.trim();
     if (instance?.id && trimmed && trimmed !== instance.name) renameInstance(instance.id, trimmed);
   };
 
   useEffect(() => {
-    if (connected) {
-      openCivitaiLinkSuccessModal();
-    }
+    if (connected) setActive(2);
   }, [connected]);
 
   useEffect(() => {
@@ -443,62 +435,91 @@ export default function CivitaiLinkWizardModal() {
       )}
       {active === 2 && (
         <Stack gap="lg">
-          <Stack gap={4}>
-            <Text fz={24} fw={700} c="var(--mantine-color-bright)" lh={1.25}>
-              Sign in from the app
-            </Text>
-            <Text fz="sm" c="dimmed" lh={1.55}>
-              Enter this code in the app once. The connection sticks — you won&apos;t need it again.
-            </Text>
-          </Stack>
-          <Stack align="center" gap="xs" my="md">
-            <div className="relative flex size-24 items-center justify-center">
-              <span
-                className={clsx('absolute inset-0 rounded-full', classes.pairingHalo)}
-                style={{ background: 'var(--mantine-color-blue-light)' }}
-              />
-              <Center
-                w={66}
-                h={66}
-                className={clsx('relative', classes.surfaceRaised)}
-                style={{ borderRadius: 999, border: '2px solid var(--mantine-color-blue-6)' }}
-              >
-                <IconLink size={26} className="text-blue-6" />
+          {connected ? (
+            <>
+              <Stack gap={4}>
+                <Text
+                  fz={24}
+                  fw={700}
+                  c="var(--mantine-color-bright)"
+                  lh={1.25}
+                >{`You're connected`}</Text>
+                <Text fz="sm" c="dimmed" lh={1.55}>
+                  This machine can now receive models straight from Civitai.
+                </Text>
+              </Stack>
+              <Center my="md">
+                <Center
+                  w={72}
+                  h={72}
+                  bg={alpha('var(--mantine-color-success-5)', 0.2)}
+                  style={{ borderRadius: 999 }}
+                >
+                  <IconCheck size={32} stroke={2.5} color="var(--mantine-color-success-5)" />
+                </Center>
               </Center>
-            </div>
-            <Text fz="lg" fw={600} c="var(--mantine-color-bright)" mt="xs">
-              Pair with this code
-            </Text>
-            {instance?.key ? (
-              <CopyButton value={instance.key}>
-                {({ copied, copy }) => (
-                  <Tooltip label="Copy">
-                    <Button
-                      variant="default"
-                      onClick={copy}
-                      size="lg"
-                      px="sm"
-                      rightSection={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
-                    >
-                      {!copied ? instance.key : 'Copied'}
-                    </Button>
-                  </Tooltip>
+            </>
+          ) : (
+            <>
+              <Stack gap={4}>
+                <Text fz={24} fw={700} c="var(--mantine-color-bright)" lh={1.25}>
+                  Sign in from the app
+                </Text>
+                <Text fz="sm" c="dimmed" lh={1.55}>
+                  Enter this code in the app once. The connection sticks — you won&apos;t need it
+                  again.
+                </Text>
+              </Stack>
+              <Stack align="center" gap="xs" my="md">
+                <div className="relative flex size-24 items-center justify-center">
+                  <span
+                    className={clsx('absolute inset-0 rounded-full', classes.pairingHalo)}
+                    style={{ background: 'var(--mantine-color-blue-light)' }}
+                  />
+                  <Center
+                    w={66}
+                    h={66}
+                    className={clsx('relative', classes.surfaceRaised)}
+                    style={{ borderRadius: 999, border: '2px solid var(--mantine-color-blue-6)' }}
+                  >
+                    <IconLink size={26} className="text-blue-6" />
+                  </Center>
+                </div>
+                <Text fz="lg" fw={600} c="var(--mantine-color-bright)" mt="xs">
+                  Pair with this code
+                </Text>
+                {instance?.key ? (
+                  <CopyButton value={instance.key}>
+                    {({ copied, copy }) => (
+                      <Tooltip label="Copy">
+                        <Button
+                          variant="default"
+                          onClick={copy}
+                          size="lg"
+                          px="sm"
+                          rightSection={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                        >
+                          {!copied ? instance.key : 'Copied'}
+                        </Button>
+                      </Tooltip>
+                    )}
+                  </CopyButton>
+                ) : (
+                  <Button variant="default" size="lg" px="sm">
+                    <Group gap="xs" align="center">
+                      <Loader size="sm" />
+                      <span>Generating code</span>
+                    </Group>
+                  </Button>
                 )}
-              </CopyButton>
-            ) : (
-              <Button variant="default" size="lg" px="sm">
-                <Group gap="xs" align="center">
-                  <Loader size="sm" />
-                  <span>Generating code</span>
-                </Group>
-              </Button>
-            )}
-            <Text size="sm" c="dimmed" ta="center" maw={420}>
-              {isNodePack
-                ? `In ComfyUI, open the Civitai panel and paste the code. We'll pick it up here automatically.`
-                : `In the Link app, open the Civitai Link panel and paste the code. We'll pick it up here automatically.`}
-            </Text>
-          </Stack>
+                <Text size="sm" c="dimmed" ta="center" maw={420}>
+                  {isNodePack
+                    ? `In ComfyUI, open the Civitai panel and paste the code. We'll pick it up here automatically.`
+                    : `In the Link app, open the Civitai Link panel and paste the code. We'll pick it up here automatically.`}
+                </Text>
+              </Stack>
+            </>
+          )}
           <TextInput
             label="Name this app"
             description="Shown wherever you pick where to send a model. You can change it later."
@@ -510,13 +531,17 @@ export default function CivitaiLinkWizardModal() {
               if (e.key === 'Enter') commitName();
             }}
           />
-          <NoteStrip
-            icon={
-              <IconAlertTriangle size={15} className={clsx('mt-0.5 shrink-0', classes.dimIcon)} />
-            }
-          >
-            Nothing after a minute? Make sure the app is running, then reload this page.
-          </NoteStrip>
+          {connected ? (
+            <AppRow name={name.trim() || instance?.name || 'Workstation'} connected />
+          ) : (
+            <NoteStrip
+              icon={
+                <IconAlertTriangle size={15} className={clsx('mt-0.5 shrink-0', classes.dimIcon)} />
+              }
+            >
+              Nothing after a minute? Make sure the app is running, then reload this page.
+            </NoteStrip>
+          )}
           <WizardFooter
             left={
               <Button variant="subtle" color="gray" onClick={prevStep}>
@@ -530,7 +555,7 @@ export default function CivitaiLinkWizardModal() {
                   dialog.onClose();
                 }}
               >
-                Done
+                {connected ? 'Save and finish' : 'Done'}
               </Button>
             }
           />

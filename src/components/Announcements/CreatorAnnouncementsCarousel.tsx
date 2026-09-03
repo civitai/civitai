@@ -1,3 +1,4 @@
+import { Menu } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconTrash } from '@tabler/icons-react';
 import React from 'react';
@@ -11,10 +12,20 @@ import {
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
+/**
+ * Delete an announcement, as an icon button or as a menu entry. One component with `as`
+ * rather than two, following `HideUserButton` and its siblings: the permission, the confirm
+ * step and the in-flight state cannot then differ between the two chromes.
+ *
+ * In the panel this lives in the options menu — a destructive control does not belong loose
+ * in the card's top bar, which is chrome the reader scans.
+ */
 export function DeleteCreatorAnnouncementButton({
   announcement,
+  as = 'button',
 }: {
   announcement: CreatorAnnouncementModel;
+  as?: 'menu-item' | 'button';
 }) {
   const currentUser = useCurrentUser();
   const { deleteAnnouncement, isLoading } = useDeleteCreatorAnnouncement();
@@ -32,7 +43,7 @@ export function DeleteCreatorAnnouncementButton({
       onConfirm: () => deleteAnnouncement(announcement.id),
     });
 
-  return (
+  return as === 'button' ? (
     <LegacyActionIcon
       variant="subtle"
       color="red"
@@ -43,6 +54,15 @@ export function DeleteCreatorAnnouncementButton({
     >
       <IconTrash size={18} />
     </LegacyActionIcon>
+  ) : (
+    <Menu.Item
+      color="red"
+      disabled={isLoading}
+      leftSection={<IconTrash size={16} />}
+      onClick={handleDelete}
+    >
+      Delete announcement
+    </Menu.Item>
   );
 }
 

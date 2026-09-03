@@ -6,6 +6,7 @@ import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
 // import { modelGallerySettingsSchema } from '~/server/schema/model.schema';
 import { featureFlagKeys, userTiers } from '~/server/services/feature-flags.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { NAV_KEYS } from '~/shared/constants/nav.constants';
 import {
   ArticleEngagementType,
   BountyEngagementType,
@@ -274,8 +275,42 @@ export type UserContentSettings = UserSettingsSchema & {
   blurNsfw?: boolean;
   autoplayGifs?: boolean | null;
 };
+const navZone = z.array(z.enum(NAV_KEYS)).max(NAV_KEYS.length);
+
+/**
+ * A user's sub-nav layout. `bar` and `more` are GROUP MEMBERSHIP plus order — every item belongs
+ * to exactly one. `hidden` is visibility and is orthogonal, so an item switched off keeps its
+ * place in its group and comes back where the user left it.
+ *
+ * Bounded deliberately. This rides `User.settings`, which is Redis-cached per user and serialised
+ * into the HTML of every logged-in SSR render, so an unbounded user-writable array here is an
+ * amplification on the hot render path rather than a private preference.
+ */
+export type NavigationSettingsSchema = z.infer<typeof navigationSettingsSchema>;
+export const navigationSettingsSchema = z
+  .object({
+    bar: navZone,
+    more: navZone,
+    hidden: navZone,
+    showLabels: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    // A key in both groups makes "the nearest placed sibling" ambiguous during resolution and
+    // reaches React as a duplicate `key` prop. `hidden` deliberately OVERLAPS the groups — it is
+    // a visibility set, not a third group — so it is only checked against itself.
+    const grouped = [...value.bar, ...value.more];
+    if (new Set(grouped).size !== grouped.length)
+      ctx.addIssue({
+        code: 'custom',
+        message: 'A navigation item cannot appear in more than one group',
+      });
+    if (new Set(value.hidden).size !== value.hidden.length)
+      ctx.addIssue({ code: 'custom', message: 'A navigation item cannot be hidden twice' });
+  });
+
 export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.coerce.date().nullish(),
+  navigation: navigationSettingsSchema.optional(),
   features: z.record(z.string(), z.boolean()).optional(),
   newsletterSubscriber: z.boolean().optional(),
   dismissedAlerts: z.array(z.string()).optional(),
@@ -383,6 +418,9 @@ export const setUserSettingsInput = z.object({
   hideModelGenerations: z.boolean().optional(),
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
+  // Whole-object writes only: `splitSettingsPatch` routes this to `set`, which replaces the key
+  // outright. The modal must send every zone, not a delta.
+  navigation: navigationSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
   assistantPersonality: userAssistantPersonality.optional(),
   tosLastSeenDate: z.date().optional(),

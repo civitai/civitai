@@ -237,6 +237,9 @@ export const ECO = {
   // Reve AI
   Reve: 77,
 
+  // Meta
+  MuseImage: 86,
+
   // Child ecosystems of SDXL
   Pony: 100,
   Illustrious: 101,
@@ -701,6 +704,15 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 190,
   },
 
+  // Meta Family (familyId: 25)
+  {
+    id: ECO.MuseImage,
+    key: 'MuseImage',
+    displayName: 'Muse Image',
+    familyId: 25,
+    sortOrder: 195,
+  },
+
   // HiDream Family (familyId: 19)
   {
     id: ECO.HiDream,
@@ -1124,6 +1136,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Reve - checkpoint only (Reve 2.1, locked, FAL engine, no LoRA support)
   { ecosystemId: ECO.Reve, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // Muse Image - checkpoint only (Meta Muse Image, locked, FAL engine, no LoRA support)
+  { ecosystemId: ECO.MuseImage, supportType: 'generation', modelTypes: checkpointOnly },
 
   // MageFlow - checkpoint only (Microsoft Mage Flow, six official builds, no community LoRAs yet)
   { ecosystemId: ECO.MageFlow, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1700,6 +1715,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     },
   },
   {
+    ecosystemId: ECO.MuseImage,
+    defaults: {
+      model: { id: 3291238 },
+      modelLocked: true,
+    },
+  },
+  {
     ecosystemId: ECO.MageFlow,
     defaults: {
       model: { id: 3172038 },
@@ -2193,6 +2215,7 @@ export const BM = {
   Pixal3D: 102,
   Trellis2: 103,
   MiniMaxMusic3: 104,
+  MuseImage: 105,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2495,6 +2518,13 @@ export const licenses: LicenseRecord[] = [
     // Section 3.1 demands this exact string on the UI of a commercial product.
     attribution: 'MiniMax-Music3',
   },
+  {
+    id: 43,
+    // Muse Image ships API-only through fal; Meta publishes no model-specific
+    // licence, so the governing text is Meta's general AI terms.
+    name: 'Meta AI Terms of Service',
+    url: 'https://www.meta.com/legal/ai-terms/',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2623,6 +2653,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 24,
     name: 'Reve AI',
     description: "Reve AI's controllable 4K text-to-image generation and editing models",
+  },
+  {
+    id: 25,
+    name: 'Meta',
+    description: "Meta Superintelligence Labs' agentic image generation and editing models",
   },
 ];
 
@@ -3320,6 +3355,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Reve,
     licenseId: 38,
+  },
+
+  // Muse Image
+  {
+    id: BM.MuseImage,
+    name: 'Muse Image',
+    description: "Meta's agentic image generation and editing model",
+    type: 'image',
+    ecosystemId: ECO.MuseImage,
+    licenseId: 43,
   },
 
   // Seedream

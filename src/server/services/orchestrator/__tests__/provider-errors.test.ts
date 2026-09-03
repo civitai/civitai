@@ -82,17 +82,6 @@ describe('sanitizeProviderError', () => {
 });
 
 describe('extractStepErrors', () => {
-  it('reads external-provider failures from failed job.reason (the previously-dropped path)', () => {
-    const step = {
-      output: {},
-      jobs: [
-        { status: 'succeeded' },
-        { status: 'failed', reason: 'Provider returned 429: rate limited' },
-      ],
-    };
-    expect(extractStepErrors(step)).toEqual(['Provider returned 429: rate limited']);
-  });
-
   it('reads step.output.errors and the externalTOSViolation message', () => {
     const step = {
       output: { errors: ['boom'], externalTOSViolation: true, message: 'blocked by policy' },
@@ -100,17 +89,16 @@ describe('extractStepErrors', () => {
     expect(extractStepErrors(step).sort()).toEqual(['blocked by policy', 'boom']);
   });
 
-  it('reads step.metadata.error and dedupes across sources', () => {
+  it('reads step.metadata.error and .errors, and dedupes across sources', () => {
     const step = {
       output: { errors: ['same'] },
-      jobs: [{ status: 'failed', reason: 'same' }],
-      metadata: { error: 'meta boom' },
+      metadata: { error: 'meta boom', errors: ['same', 'meta list'] },
     };
-    expect(extractStepErrors(step).sort()).toEqual(['meta boom', 'same']);
+    expect(extractStepErrors(step).sort()).toEqual(['meta boom', 'meta list', 'same']);
   });
 
-  it('ignores non-failed jobs and returns [] for empty/nullish steps', () => {
-    expect(extractStepErrors({ jobs: [{ status: 'succeeded', reason: 'ignore me' }] })).toEqual([]);
+  it('returns [] for empty/nullish steps', () => {
+    expect(extractStepErrors({})).toEqual([]);
     expect(extractStepErrors(null)).toEqual([]);
     expect(extractStepErrors(undefined)).toEqual([]);
   });

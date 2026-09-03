@@ -57,6 +57,8 @@ const call = async ({
   baseModel = 'Anima',
   root = animaRoot as Root,
   licensingSourceVersionId = ANIMA_ROOT_VERSION_ID as number | null,
+  omitSource = false,
+  storedLicensingSourceVersionId = null as number | null,
 }: {
   modelTypes: Record<number, string | null>;
   id?: number;
@@ -64,6 +66,14 @@ const call = async ({
   baseModel?: string;
   root?: Root;
   licensingSourceVersionId?: number | null;
+  /**
+   * Leave the key off the payload entirely. Not `licensingSourceVersionId: undefined` — a
+   * destructuring default fires on `undefined`, so that spelling would quietly send the default
+   * source instead of omitting it, and every test below would be testing the ordinary path.
+   */
+  omitSource?: boolean;
+  /** What the row being edited already holds — what a payload that omits the field falls back to. */
+  storedLicensingSourceVersionId?: number | null;
 }) => {
   dbMock.dbWrite.licensingRoot.findUnique.mockResolvedValue(root);
   // Keyed on the argument, NOT a flat `mockResolvedValue`. A mock that ignores its `where` hands
@@ -72,7 +82,13 @@ const call = async ({
   // mock, changing the guard to read `input.modelId` left all nine tests green.
   dbMock.dbWrite.modelVersion.findUnique.mockImplementation(
     async (args: { where: { id: number } }) =>
-      args.where.id === VERSION_ID ? { usageControl: 'Download', modelId: STORED_MODEL_ID } : null
+      args.where.id === VERSION_ID
+        ? {
+            usageControl: 'Download',
+            modelId: STORED_MODEL_ID,
+            licensingSourceVersionId: storedLicensingSourceVersionId,
+          }
+        : null
   );
   dbMock.dbWrite.model.findUnique.mockImplementation(async (args: { where: { id: number } }) => {
     const type = modelTypes[args.where.id];
@@ -92,7 +108,7 @@ const call = async ({
       // tier-cap branch out. Neither is what this file is about.
       usageControl: 'Download',
       licensingFee: null,
-      licensingSourceVersionId,
+      ...(omitSource ? {} : { licensingSourceVersionId }),
     },
     ctx: {
       user: { id: OWNER_ID, isModerator: false, meta: {} },
@@ -230,6 +246,80 @@ describe('upsertModelVersionHandler — licensing lineage scope', () => {
   // whole block deleted. Dropped rather than left in as apparent coverage.
   it('leaves an unset source alone without reading the root table', async () => {
     await call({ ...creating('LORA'), licensingSourceVersionId: null });
+    expect(dbMock.dbWrite.licensingRoot.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 A save does not have to NAME the stamp to invalidate it. `licensingSourceVersionId` is nullish
+ * in the schema while `baseModel` and `modelId` are required, and a field absent from the payload
+ * leaves the column untouched — so the guard, gated on the submitted value, never ran on the save
+ * that broke the row. `TrainingSubmit` sends exactly that shape: it updates the first version with a
+ * newly chosen `baseModel` and no stamp field, so a creator who stamped that version and then re-ran
+ * training on a different base kept a third party's per-image fee.
+ *
+ * Measured on prod 2026-09-02 before the fix: 0 rows in that state (2,124 stamped versions, 0 with a
+ * base model disagreeing with their root), and 0 base-model coercions in `entityChangeEvents` ever.
+ * Reachable and unguarded, not an incident — sized accordingly.
+ */
+describe('upsertModelVersionHandler — a save that omits the stamp', () => {
+  const omitting = (overrides: Partial<Parameters<typeof call>[0]> = {}) => ({
+    id: VERSION_ID,
+    modelTypes: { [PAYLOAD_MODEL_ID]: 'Checkpoint', [STORED_MODEL_ID]: 'Checkpoint' },
+    omitSource: true,
+    storedLicensingSourceVersionId: ANIMA_ROOT_VERSION_ID,
+    ...overrides,
+  });
+
+  it('coerces a stored source the save has moved the base model away from', async () => {
+    const written = await call(omitting({ baseModel: 'Illustrious' }));
+    expect(written.licensingSourceVersionId).toBeNull();
+    expect(written.licensingSourceCoercedReason).toBe('base-model-mismatch');
+  });
+
+  // The control, and the only thing that makes the test above worth anything: same call, same omitted
+  // field, base model still matching the root. A fix that cleared the stamp on every stamp-omitting
+  // save — which is what "coerce whenever the client didn't send it" would do — fails here.
+  it('keeps a stored source the save leaves matching', async () => {
+    const written = await call(omitting());
+    expect(written.licensingSourceVersionId).toBe(ANIMA_ROOT_VERSION_ID);
+    expect(written.licensingSourceCoercedReason).toBeUndefined();
+  });
+
+  // Judging the stored value means the model-type half of the same guard now fires on these saves
+  // too. That is a deliberate widening beyond the base-model path — the same repair the guard already
+  // performs on a full save, now reached by a partial one. It is pinned here so that removing it is a
+  // decision rather than an accident.
+  it('coerces a stored source whose model type no longer matches, not only its base model', async () => {
+    const written = await call(omitting({ modelTypes: { [PAYLOAD_MODEL_ID]: 'LORA' } }));
+    expect(written.licensingSourceVersionId).toBeNull();
+    expect(written.licensingSourceCoercedReason).toBe('model-type-mismatch');
+  });
+
+  // The seed opens the whole rejection ladder to partial saves, not only its base-model rung, so the
+  // other rungs are pinned here too rather than left to be discovered by whoever changes one.
+  it('coerces a stored source that is no longer a registered root', async () => {
+    const written = await call(omitting({ root: null }));
+    expect(written.licensingSourceVersionId).toBeNull();
+    expect(written.licensingSourceCoercedReason).toBe('not-a-root');
+  });
+
+  it('coerces a stored source when the destination model cannot be read', async () => {
+    const written = await call(omitting({ modelTypes: { [STORED_MODEL_ID]: 'Checkpoint' } }));
+    expect(written.licensingSourceVersionId).toBeNull();
+    expect(written.licensingSourceCoercedReason).toBe('model-not-found');
+  });
+
+  // `undefined` is "the client said nothing"; `null` is the owner clearing the stamp. Seeding on
+  // anything looser than `=== undefined` restores a source the creator just removed.
+  it('does not restore a stored source over an explicit null', async () => {
+    const written = await call(omitting({ omitSource: false, licensingSourceVersionId: null }));
+    expect(written.licensingSourceVersionId).toBeNull();
+    expect(dbMock.dbWrite.licensingRoot.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('reads no root table when the stored row carries no source either', async () => {
+    await call(omitting({ storedLicensingSourceVersionId: null }));
     expect(dbMock.dbWrite.licensingRoot.findUnique).not.toHaveBeenCalled();
   });
 });

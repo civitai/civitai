@@ -195,6 +195,29 @@ export const redisCacheMetrics = {
   }),
 };
 
+// Per-pod in-memory state, so `size` is a fleet-wide MINIMUM: alert on
+// min(mew_metric_excluded_users) == 0, since one pod counting farm reactions
+// drifts the shared cache.
+export const excludedUsersMetrics = {
+  size: new Gauge({
+    name: 'mew_metric_excluded_users',
+    help: 'Number of users in this pod\'s in-memory reaction-farm exclusion list',
+    registers: [register],
+  }),
+  skipped: new Counter({
+    name: 'mew_metric_excluded_skipped_total',
+    help: 'Total cache increments and live signals suppressed because the originating user is metric-excluded',
+    labelNames: ['operation'],
+    registers: [register],
+  }),
+  refreshErrors: new Counter({
+    name: 'mew_metric_excluded_refresh_errors_total',
+    help: 'Failed refreshes of the exclusion list, by cause',
+    labelNames: ['cause'],
+    registers: [register],
+  }),
+};
+
 // Cache Drift Monitor Metrics
 // Periodically compares the Redis metric cache against the deduped ClickHouse
 // ground truth for a sample of hot entities. This is the leading indicator for

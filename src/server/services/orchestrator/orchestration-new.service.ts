@@ -1801,16 +1801,10 @@ export async function whatIfFromGraph({
     },
   });
 
-  // Check if all jobs are ready (have available support)
   let ready = true;
   for (const workflowStep of workflow.steps ?? []) {
-    for (const job of workflowStep.jobs ?? []) {
-      const { queuePosition } = job;
-      if (!queuePosition) continue;
-
-      const { support } = queuePosition;
-      if (support !== 'available' && ready) ready = false;
-    }
+    const support = workflowStep.queuePosition?.support;
+    if (support && support !== 'available') ready = false;
   }
 
   // Silent checkpoint substitutions from the validation above (#3520 / #3665).
@@ -1854,7 +1848,7 @@ import type {
   Workflow,
   WorkflowStatus,
   WorkflowStep,
-  WorkflowStepJobQueuePosition,
+  WorkflowStepQueuePosition,
 } from '@civitai/client';
 import type { SessionUser } from '~/types/session';
 import type * as z from 'zod';
@@ -2050,7 +2044,7 @@ export interface NormalizedStep {
   status?: WorkflowStatus;
   timeout?: string | null;
   completedAt?: string | null;
-  queuePosition?: WorkflowStepJobQueuePosition;
+  queuePosition?: WorkflowStepQueuePosition;
   /** Metadata with resolved params/resources */
   metadata: NormalizedStepMetadata;
   /** Output items (image / video / audio) */
@@ -2230,7 +2224,8 @@ type StepWithOutput = WorkflowStep & {
     // job (e.g. LTX 2.3). Each slot uses Seed + slotIndex.
     additionalVideos?: VideoBlob[] | null;
     blobs?: ImageBlob[];
-    // For aceStepAudio: blob.type is 'audio' (audio-only) or 'video' (audio + cover image).
+    // Audio steps bundle a cover image into a VideoBlob when they have one, so the
+    // container type varies per result — discriminate on blob.type, not on $type.
     blob?: ImageBlob | VideoBlob | AudioBlob;
     // PolyGen: composite output with a primary 3D model, optional alternate-
     // format export, a 2D preview thumbnail, and optional rigged / animated
@@ -2308,6 +2303,9 @@ function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
       if (output.blob.type === 'video')
         return [{ ...(output.blob as VideoBlob), type: 'video' as const }];
       return [{ ...(output.blob as AudioBlob), type: 'audio' as const }];
+    case 'miniMaxMusic3':
+      // Always audio-only — MiniMaxMusic3Output has no cover-image variant.
+      return output.blob ? [{ ...(output.blob as AudioBlob), type: 'audio' as const }] : [];
     case 'polyGen':
       // Bundle every PolyGen sibling onto a single item — the format step
       // turns this into one NormalizedModel3DOutput per generated mesh
@@ -2572,8 +2570,6 @@ export function formatStepOutputs(
     } satisfies NormalizedImageOutput;
   });
 
-  // Collect step errors (including external-provider job.reason failures) and
-  // sanitize each before surfacing to the client.
   const engine =
     (params.engine as string | undefined) ??
     (step as { input?: { engine?: string } }).input?.engine;
@@ -2706,7 +2702,7 @@ function formatStep(
     status: step.status,
     timeout: step.timeout,
     completedAt: step.completedAt,
-    queuePosition: step.jobs?.[0]?.queuePosition,
+    queuePosition: step.queuePosition,
     metadata: {
       ...removeEmpty({
         params: finalParams,
@@ -3137,6 +3133,7 @@ export async function getWorkflowStatusUpdate({
           name: step.name,
           status: step.status,
           completedAt: step.completedAt,
+          queuePosition: step.queuePosition,
           output,
           // TEMPORARY: dual-emit under the legacy `images` key for pre-rename clients.
           images: output,
