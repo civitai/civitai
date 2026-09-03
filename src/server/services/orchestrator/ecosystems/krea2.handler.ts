@@ -96,6 +96,12 @@ export const createKrea2Input = defineHandler<Krea2Ctx, [ImageGenStepTemplate]>(
   if (isEdit) {
     if (!data.model) throw new Error('A Krea 2 base model is required to edit');
     diffusionModel = ctx.airs.getOrThrow(data.model.id);
+  } else if (
+    data.model &&
+    data.model.id !== krea2VersionIds.raw &&
+    data.model.id !== krea2VersionIds.turbo
+  ) {
+    diffusionModel = ctx.airs.getOrThrow(data.model.id);
   }
 
   return [

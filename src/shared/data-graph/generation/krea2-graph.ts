@@ -1,9 +1,9 @@
 /**
  * Krea 2 Family Graph
  *
- * Controls for the Krea 2 ecosystem. The checkpoint is locked (modelLocked), but
- * the version selector offers four official variants that split across two
- * engines:
+ * Controls for the Krea 2 ecosystem. The version selector offers four official
+ * variants that split across two engines (community checkpoints take the raw
+ * control set):
  *
  * FAL engine (Krea2FalImageGenInput) — size tiers, no LoRA:
  * - medium: smaller/faster model
@@ -97,7 +97,8 @@ export const krea2VersionIdToSize = new Map<number, Krea2Size>([
 
 /**
  * Map version ID → control-set variant. medium/large share the FAL control set;
- * raw/turbo each get the comfy control set. Unknown IDs fall back to 'fal'.
+ * raw/turbo each get the comfy control set. Unknown IDs (community checkpoints)
+ * fall back to 'raw'.
  */
 const krea2VersionIdToVariant = new Map<number, Krea2Variant>([
   [krea2VersionIds.medium, 'fal'],
@@ -343,7 +344,7 @@ export const krea2Graph = new DataGraph<
     (ctx): Krea2Variant => {
       if (ctx.workflow === 'img2img:edit')
         return ctx.model?.id === krea2VersionIds.raw ? 'editRaw' : 'editTurbo';
-      return (ctx.model?.id ? krea2VersionIdToVariant.get(ctx.model.id) : undefined) ?? 'fal';
+      return (ctx.model?.id ? krea2VersionIdToVariant.get(ctx.model.id) : undefined) ?? 'raw';
     },
     ['model', 'workflow']
   )
