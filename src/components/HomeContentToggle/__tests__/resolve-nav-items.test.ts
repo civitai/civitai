@@ -1,25 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import type { NavGateContext, NavRegistryEntry } from '~/components/HomeContentToggle/nav-registry';
 import type { NavConfig } from '~/components/HomeContentToggle/resolve-nav-items';
-import { resolveNavItems } from '~/components/HomeContentToggle/resolve-nav-items';
+import {
+  resolveNavItems,
+  resolveNavLayout,
+} from '~/components/HomeContentToggle/resolve-nav-items';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
-const ctx = (gated: string[] = []): NavGateContext => ({
-  features: {} as FeatureAccess,
-  isAuthed: true,
-  // `gated` names keys the viewer CANNOT see; the registry entries below read it.
-  ...({ gated } as object),
-});
+const ctx = (gated: string[] = []): NavGateContext =>
+  ({ features: {} as FeatureAccess, isAuthed: true, gated } as unknown as NavGateContext);
 
-const entry = (
-  key: string,
-  defaultPlacement: NavRegistryEntry['defaultPlacement'] = 'bar'
-): NavRegistryEntry => ({
-  key,
-  url: `/${key}`,
-  defaultPlacement,
-  visible: (c) => !((c as unknown as { gated: string[] }).gated ?? []).includes(key),
-});
+const entry = (key: string, extra: Partial<NavRegistryEntry> = {}): NavRegistryEntry =>
+  ({
+    key,
+    url: `/${key}`,
+    defaultGroup: 'bar',
+    visible: (c: NavGateContext) =>
+      !((c as unknown as { gated: string[] }).gated ?? []).includes(key),
+    ...extra,
+  } as NavRegistryEntry);
 
 const config = (over: Partial<NavConfig> = {}): NavConfig => ({
   bar: [],
@@ -33,17 +32,18 @@ const keys = (entries: NavRegistryEntry[]) => entries.map((e) => e.key);
 describe('resolveNavItems', () => {
   const ABC = [entry('a'), entry('b'), entry('c')];
 
-  it('with no config, places every item at its default', () => {
-    const registry = [entry('a'), entry('b', 'more'), entry('c', 'hidden')];
+  it('with no config, places every item in its default group', () => {
+    const registry = [entry('a'), entry('b', { defaultGroup: 'more' }), entry('c')];
     const resolved = resolveNavItems(registry, ctx());
-    expect(keys(resolved.bar)).toEqual(['a']);
+    expect(keys(resolved.bar)).toEqual(['a', 'c']);
     expect(keys(resolved.more)).toEqual(['b']);
   });
 
   /**
    * Kills "return the registry order, ignore the config". Nothing else here specifies a config
    * whose ORDER differs from the registry's, which is the whole point of the feature — an
-   * implementation that ignored the saved order passed every case this suite originally had.
+   * implementation that ignored the saved order passed every case an earlier version of this
+   * suite had.
    */
   it("preserves the user's order when it differs from the registry's", () => {
     const resolved = resolveNavItems(ABC, ctx(), config({ bar: ['c', 'b', 'a'] }));
@@ -51,8 +51,8 @@ describe('resolveNavItems', () => {
   });
 
   /**
-   * Kills the preceding/following anchor swap. The two rules give DIFFERENT arrays here, which is
-   * what makes it a discriminator: preceding → [c,a,b], following → [b,c,a].
+   * Kills the preceding/following anchor swap: the two rules give DIFFERENT arrays here —
+   * preceding → [c,a,b], following → [b,c,a].
    */
   it('anchors an unseen item after its nearest PRECEDING placed sibling', () => {
     const resolved = resolveNavItems(ABC, ctx(), config({ bar: ['c', 'a'] }));
@@ -62,6 +62,15 @@ describe('resolveNavItems', () => {
   it('falls back to the nearest FOLLOWING sibling when nothing precedes it', () => {
     const resolved = resolveNavItems(ABC, ctx(), config({ bar: ['c'] }));
     expect(keys(resolved.bar)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('anchors within the TARGET group, ignoring neighbours the user moved elsewhere', () => {
+    // `b` defaults to `more`; its registry neighbours `a` and `c` are both in `bar`, so neither
+    // can anchor it. A rule that ignored the group would place it beside one of them.
+    const registry = [entry('a'), entry('b', { defaultGroup: 'more' }), entry('c')];
+    const resolved = resolveNavItems(registry, ctx(), config({ bar: ['c', 'a'], more: [] }));
+    expect(keys(resolved.bar)).toEqual(['c', 'a']);
+    expect(keys(resolved.more)).toEqual(['b']);
   });
 
   /**
@@ -75,39 +84,31 @@ describe('resolveNavItems', () => {
     expect(keys(resolved.bar)).toEqual(['n', 'b', 'a']);
   });
 
-  it('drops an item the viewer cannot see even when they pinned it', () => {
+  it('drops an item the viewer cannot see even when they placed it', () => {
     const resolved = resolveNavItems(ABC, ctx(['b']), config({ bar: ['a', 'b', 'c'] }));
     expect(keys(resolved.bar)).toEqual(['a', 'c']);
   });
 
-  it('distinguishes a hide-everything config from no config at all', () => {
-    const emptied = resolveNavItems(ABC, ctx(), config({ hidden: ['a', 'b', 'c'] }));
-    expect(keys(emptied.bar)).toEqual([]);
-    expect(keys(emptied.more)).toEqual([]);
-
-    const absent = resolveNavItems(ABC, ctx());
-    expect(keys(absent.bar)).toEqual(['a', 'b', 'c']);
-  });
-
   /**
-   * A config whose three zones are ALL empty places nothing, so every item anchors at its default
-   * — the same answer as no config. Deliberate, and pinned so it is not "fixed" into a special
-   * case: hiding everything writes the keys into `hidden` (the test above), and a reset deletes
-   * the key entirely, so all-empty is only reachable from a malformed write. Defaults are the
-   * right answer for one of those.
+   * Visibility is orthogonal to group membership: a switched-off item keeps its slot so that
+   * switching it back on returns it where the user left it, rather than at the end.
    */
-  it('resolves an all-empty config to the defaults, same as no config', () => {
-    const allEmpty = resolveNavItems(ABC, ctx(), config());
-    expect(keys(allEmpty.bar)).toEqual(keys(resolveNavItems(ABC, ctx()).bar));
-    expect(keys(allEmpty.bar)).toEqual(['a', 'b', 'c']);
+  it('hides an item without moving it out of its group', () => {
+    // The saved order is REVERSED from the registry's on purpose. With the registry order, an
+    // implementation that dropped a hidden key from its group would re-anchor it into the same
+    // slot and this would pass either way — which it did, until a mutant survived it.
+    const cfg = config({ bar: ['c', 'b', 'a'], hidden: ['b'] });
+    expect(keys(resolveNavItems(ABC, ctx(), cfg).bar)).toEqual(['c', 'a']);
+
+    const { groups, hidden } = resolveNavLayout(ABC, cfg);
+    expect(groups.bar).toEqual(['c', 'b', 'a']);
+    expect([...hidden]).toEqual(['b']);
   });
 
-  /** Kills "defaultPlacement wins over the saved placement". Both directions. */
-  it("honours a saved placement that contradicts the item's default", () => {
-    const registry = [entry('a', 'bar'), entry('b', 'hidden')];
-    const resolved = resolveNavItems(registry, ctx(), config({ more: ['a'], bar: ['b'] }));
-    expect(keys(resolved.bar)).toEqual(['b']);
-    expect(keys(resolved.more)).toEqual(['a']);
+  it('resolves an all-empty config to the defaults, same as no config', () => {
+    expect(keys(resolveNavItems(ABC, ctx(), config()).bar)).toEqual(
+      keys(resolveNavItems(ABC, ctx()).bar)
+    );
   });
 
   it('drops a saved key the registry no longer has', () => {
@@ -115,7 +116,7 @@ describe('resolveNavItems', () => {
     expect(keys(resolved.bar)).toEqual(['a', 'b', 'c']);
   });
 
-  it('emits a key at most once when the config lists it in two zones', () => {
+  it('emits a key at most once when the config lists it in both groups', () => {
     const resolved = resolveNavItems(ABC, ctx(), config({ bar: ['a', 'b'], more: ['b', 'c'] }));
     expect(keys(resolved.bar)).toEqual(['a', 'b']);
     expect(keys(resolved.more)).toEqual(['c']);
@@ -125,7 +126,7 @@ describe('resolveNavItems', () => {
     ['no config', undefined],
     ['a partial config', config({ bar: ['c'], more: ['a'] })],
     ['a config with a dead key', config({ bar: ['a', 'gone'], more: ['b'] })],
-  ])('emits no duplicates across zones — %s', (_label, cfg) => {
+  ])('emits no duplicates across groups — %s', (_label, cfg) => {
     const resolved = resolveNavItems(ABC, ctx(), cfg);
     const all = [...keys(resolved.bar), ...keys(resolved.more)];
     expect(new Set(all).size).toBe(all.length);
@@ -148,8 +149,32 @@ describe('resolveNavItems', () => {
   });
 });
 
+describe('resolveNavItems — locked items', () => {
+  const registry = [entry('home', { locked: true }), entry('a'), entry('b')];
+
+  it('keeps a locked item in its default group whatever the config says', () => {
+    const resolved = resolveNavItems(
+      registry,
+      ctx(),
+      config({ bar: ['a', 'b'], more: ['home'], hidden: ['home'] })
+    );
+    expect(keys(resolved.bar)).toEqual(['home', 'a', 'b']);
+    expect(keys(resolved.more)).toEqual([]);
+  });
+
+  it('cannot be hidden', () => {
+    const { hidden } = resolveNavLayout(registry, config({ hidden: ['home', 'a'] }));
+    expect(hidden.has('home')).toBe(false);
+    expect(hidden.has('a')).toBe(true);
+  });
+});
+
 describe('resolveNavItems — retired nav-flag seed', () => {
-  const registry = [entry('home'), entry('posts', 'hidden'), entry('events', 'hidden')];
+  const registry = [
+    entry('home'),
+    entry('posts', { defaultHidden: true }),
+    entry('events', { defaultHidden: true }),
+  ];
 
   /**
    * 🔴 The discriminating fixture: the RESOLVED flag is false while the STORED settings value is
@@ -179,14 +204,12 @@ describe('resolveNavItems — retired nav-flag seed', () => {
     expect(keys(resolved.bar)).toEqual(['home', 'posts']);
   });
 
-  it('does not re-seed over a placement the user chose', () => {
+  it('does not re-seed over a visibility the user chose', () => {
     const resolved = resolveNavItems(
       registry,
       ctx(),
-      config({ bar: ['home'], hidden: ['posts'] }),
-      {
-        postsNavItem: true,
-      }
+      config({ bar: ['home', 'posts'], hidden: ['posts'] }),
+      { postsNavItem: true }
     );
     expect(keys(resolved.bar)).toEqual(['home']);
   });

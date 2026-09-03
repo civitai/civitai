@@ -7,7 +7,8 @@ import type { NavKey } from '~/shared/constants/nav.constants';
  * `homeOptions` had no tests. Icons are looked up by key in `nav-icons.tsx`.
  */
 
-export type NavPlacement = 'bar' | 'more' | 'hidden';
+/** Which of the modal's two groups an item sits in. Visibility is separate — see `NavConfig`. */
+export type NavGroup = 'bar' | 'more';
 
 /**
  * Gates take the whole context rather than `FeatureAccess` alone. Neighbouring rows in the user
@@ -22,7 +23,14 @@ export type NavGateContext = {
 export type NavRegistryEntry = {
   key: NavKey;
   url: string;
-  defaultPlacement: NavPlacement;
+  defaultGroup: NavGroup;
+  /** Off by default. Group membership still applies — the item is just switched off. */
+  defaultHidden?: true;
+  /**
+   * Cannot be moved, reordered or switched off. Only `home` — it is the way back from anywhere,
+   * so a user who hides it has no route home from a page whose own nav they broke.
+   */
+  locked?: true;
   visible?: (ctx: NavGateContext) => boolean;
   new?: Date;
   classes?: string[];
@@ -31,63 +39,64 @@ export type NavRegistryEntry = {
 const authed = (ctx: NavGateContext) => ctx.isAuthed;
 
 /**
- * Order is the default order. `defaultPlacement` replaces the old `grouped` flag plus the
- * container queries that used to decide placement by viewport width.
+ * Order is the default order. `defaultGroup` replaces the old `grouped` flag plus the container
+ * queries that used to decide placement by viewport width; `defaultHidden` replaces the two
+ * account-settings switches.
  *
  * `posts` and `events` are `hidden` because that is what every user sees today: their flags are
  * `default: false`, so a user who never opened account settings has never seen those tabs.
  */
 export const navRegistry: NavRegistryEntry[] = [
-  { key: 'home', url: '/', defaultPlacement: 'bar' },
-  { key: 'models', url: '/models', defaultPlacement: 'bar' },
-  { key: 'images', url: '/images', defaultPlacement: 'bar' },
-  { key: 'videos', url: '/videos', defaultPlacement: 'bar' },
+  { key: 'home', url: '/', defaultGroup: 'bar', locked: true },
+  { key: 'models', url: '/models', defaultGroup: 'bar' },
+  { key: 'images', url: '/images', defaultGroup: 'bar' },
+  { key: 'videos', url: '/videos', defaultGroup: 'bar' },
   {
     key: '3d-models',
     url: '/3d-models',
-    defaultPlacement: 'bar',
+    defaultGroup: 'bar',
     visible: (ctx) => ctx.features.model3dFeed,
     new: new Date('2026-06-30'),
   },
-  { key: 'hubs', url: '/hubs', defaultPlacement: 'bar', visible: (ctx) => ctx.features.userHubs },
+  { key: 'hubs', url: '/hubs', defaultGroup: 'bar', visible: (ctx) => ctx.features.userHubs },
   /**
    * `posts` and `events` carry NO gate. Their flags still exist and still seed a placement for
    * users who had them on, but placement is the config's job now — gating the rows would filter
    * them out of the customization modal for the default-off majority, leaving no way to turn them
    * on at all once the account switches retire.
    */
-  { key: 'posts', url: '/posts', defaultPlacement: 'hidden' },
+  { key: 'posts', url: '/posts', defaultGroup: 'bar', defaultHidden: true },
   {
     key: 'articles',
     url: '/articles',
-    defaultPlacement: 'bar',
+    defaultGroup: 'bar',
     visible: (ctx) => ctx.features.articles,
   },
   {
     key: 'comics',
     url: '/comics',
-    defaultPlacement: 'bar',
+    defaultGroup: 'bar',
     visible: (ctx) => ctx.features.comicCreator,
     new: new Date('2026-03-01'),
   },
   {
     key: 'bounties',
     url: '/bounties',
-    defaultPlacement: 'more',
+    defaultGroup: 'more',
     visible: (ctx) => ctx.features.bounties,
   },
   {
     key: 'challenges',
     url: '/challenges',
-    defaultPlacement: 'bar',
+    defaultGroup: 'bar',
     visible: (ctx) => ctx.features.challengePlatform,
   },
-  { key: 'events', url: '/events', defaultPlacement: 'hidden' },
-  { key: 'updates', url: '/changelog', defaultPlacement: 'bar' },
+  { key: 'events', url: '/events', defaultGroup: 'bar', defaultHidden: true },
+  { key: 'updates', url: '/changelog', defaultGroup: 'bar' },
   {
     key: 'shop',
     url: '/shop',
-    defaultPlacement: 'bar',
+    defaultGroup: 'bar',
     visible: (ctx) => ctx.features.cosmeticShop,
     classes: ['tabRainbow'],
   },
@@ -102,20 +111,34 @@ export const navRegistry: NavRegistryEntry[] = [
    * them from signed-out visitors — `useGetMenuItems` has a second `visible: !currentUser` group
    * that offers Leaderboard and Auctions to anonymous users.
    */
-  { key: 'leaderboard', url: '/leaderboard/overall', defaultPlacement: 'hidden', visible: authed },
+  {
+    key: 'leaderboard',
+    url: '/leaderboard/overall',
+    defaultGroup: 'more',
+    defaultHidden: true,
+    visible: authed,
+  },
   {
     key: 'auctions',
     url: '/auctions',
-    defaultPlacement: 'hidden',
+    defaultGroup: 'more',
+    defaultHidden: true,
     visible: (ctx) => ctx.isAuthed && ctx.features.auctions,
   },
   {
     key: 'vault',
     url: '/user/vault',
-    defaultPlacement: 'hidden',
+    defaultGroup: 'more',
+    defaultHidden: true,
     visible: (ctx) => ctx.isAuthed && ctx.features.vault,
   },
-  { key: 'collections', url: '/collections', defaultPlacement: 'hidden', visible: authed },
+  {
+    key: 'collections',
+    url: '/collections',
+    defaultGroup: 'more',
+    defaultHidden: true,
+    visible: authed,
+  },
 ];
 
 export const navRegistryKeys = navRegistry.map((entry) => entry.key);

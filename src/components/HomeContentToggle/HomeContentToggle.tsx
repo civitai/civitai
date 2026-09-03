@@ -102,7 +102,15 @@ export function HomeTabs() {
         return showLabels ? (
           button
         ) : (
-          <Tooltip key={entry.key} label={label} withinPortal>
+          <Tooltip
+            key={entry.key}
+            // The SAME `capitalize` transform the pill's label uses, rather than a title-cased
+            // copy of the string — a helper would be a second source of casing free to drift
+            // from the CSS, which is what made the tooltip read "models" beside a pill reading
+            // "Models".
+            label={<span className="capitalize">{label}</span>}
+            withinPortal
+          >
             {button}
           </Tooltip>
         );

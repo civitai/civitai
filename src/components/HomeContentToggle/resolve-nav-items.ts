@@ -1,10 +1,15 @@
 import type {
   NavGateContext,
-  NavPlacement,
+  NavGroup,
   NavRegistryEntry,
 } from '~/components/HomeContentToggle/nav-registry';
 import type { NavKey } from '~/shared/constants/nav.constants';
 
+/**
+ * `bar` and `more` are GROUP MEMBERSHIP plus order — every item belongs to exactly one. `hidden`
+ * is visibility, and is orthogonal: an item switched off keeps its place in whichever group it
+ * sits in, so turning it back on puts it where the user left it rather than at the end.
+ */
 export type NavConfig = {
   bar: NavKey[];
   more: NavKey[];
@@ -23,7 +28,10 @@ export type NavSeedFlags = {
   eventsNavItem?: boolean;
 };
 
-export type NavZones = Record<NavPlacement, NavKey[]>;
+export type NavLayout = {
+  groups: Record<NavGroup, NavKey[]>;
+  hidden: Set<NavKey>;
+};
 
 export type ResolvedNav = {
   bar: NavRegistryEntry[];
@@ -31,18 +39,17 @@ export type ResolvedNav = {
   showLabels: boolean;
 };
 
-const PLACED_ZONES = ['bar', 'more', 'hidden'] as const;
+const GROUPS = ['bar', 'more'] as const;
 
-function seedPlacement(entry: NavRegistryEntry, seedFlags: NavSeedFlags | undefined): NavPlacement {
-  if (!seedFlags) return entry.defaultPlacement;
-  if (entry.key === 'posts' && seedFlags.postsNavItem) return 'bar';
-  if (entry.key === 'events' && seedFlags.eventsNavItem) return 'bar';
-  return entry.defaultPlacement;
+function seedHidden(entry: NavRegistryEntry, seedFlags: NavSeedFlags | undefined): boolean {
+  if (entry.key === 'posts') return !seedFlags?.postsNavItem;
+  if (entry.key === 'events') return !seedFlags?.eventsNavItem;
+  return !!entry.defaultHidden;
 }
 
 /**
- * The merge, ungated: a user's saved zones with every registry item they have never placed folded
- * in beside its neighbours.
+ * The merge: a user's saved groups, with every registry item they have never placed folded in
+ * beside its neighbours.
  *
  * 🔴 This is the ONE implementation. The nav reads it through `resolveNavItems`; the settings
  * modal reads it directly. What the modal shows, what its Save writes, and what the nav renders
@@ -53,43 +60,46 @@ function seedPlacement(entry: NavRegistryEntry, seedFlags: NavSeedFlags | undefi
  *
  * A newly-shipped nav item must reach everyone without a backfill, so an item absent from the
  * config is anchored beside the registry neighbours the user placed rather than appended.
- * Anchoring is scoped to the TARGET ZONE: "insert after the preceding sibling" names no position
- * when that sibling lives in a different zone, which is the common case the day a `bar`-default
+ * Anchoring is scoped to the TARGET GROUP: "insert after the preceding sibling" names no position
+ * when that sibling lives in the other group, which is the common case the day a `bar`-default
  * item ships under an anchor the user moved to `more`.
- *
- * An all-empty config resolves the same as no config — nothing is placed, so everything anchors at
- * its default. Deliberate: hiding everything writes the keys into `hidden`, and a reset deletes
- * the key, so all-empty is only reachable from a malformed write.
  */
-export function resolveNavZones(
+export function resolveNavLayout(
   registry: NavRegistryEntry[],
   config?: NavConfig,
   seedFlags?: NavSeedFlags
-): NavZones {
-  const known = new Set(registry.map((entry) => entry.key));
-  const zones: NavZones = { bar: [], more: [], hidden: [] };
-  const zoneOf = new Map<NavKey, NavPlacement>();
+): NavLayout {
+  const byKey = new Map(registry.map((entry) => [entry.key, entry]));
+  const groups: Record<NavGroup, NavKey[]> = { bar: [], more: [] };
+  const groupOf = new Map<NavKey, NavGroup>();
+  const hidden = new Set<NavKey>();
 
   if (config) {
-    for (const zone of PLACED_ZONES) {
-      for (const key of config[zone]) {
-        // Drops keys the registry no longer has, and a key repeated across zones.
-        if (!known.has(key) || zoneOf.has(key)) continue;
-        zones[zone].push(key);
-        zoneOf.set(key, zone);
+    for (const group of GROUPS) {
+      for (const key of config[group]) {
+        const entry = byKey.get(key);
+        // Drops keys the registry no longer has, a key repeated across groups, and any attempt to
+        // move a locked item — which is placed from the registry below, not from the config.
+        if (!entry || entry.locked || groupOf.has(key)) continue;
+        groups[group].push(key);
+        groupOf.set(key, group);
       }
+    }
+    for (const key of config.hidden) {
+      const entry = byKey.get(key);
+      if (entry && !entry.locked) hidden.add(key);
     }
   }
 
   for (let i = 0; i < registry.length; i++) {
     const entry = registry[i];
-    if (zoneOf.has(entry.key)) continue;
+    if (groupOf.has(entry.key)) continue;
 
     // Per KEY, not per config object. A user who saved a config before this item existed still
     // gets the seed for it; keying the seed on "no config at all" loses Posts permanently for
     // anyone who had the flag on and then saved anything.
-    const zone = seedPlacement(entry, seedFlags);
-    const target = zones[zone];
+    const group = entry.defaultGroup;
+    const target = groups[group];
 
     let index = -1;
     for (let before = i - 1; before >= 0 && index === -1; before--) {
@@ -103,16 +113,21 @@ export function resolveNavZones(
     if (index === -1) index = target.length;
 
     target.splice(index, 0, entry.key);
-    zoneOf.set(entry.key, zone);
+    groupOf.set(entry.key, group);
+    // Only unplaced items reach here, so their visibility is seeded rather than read from the
+    // config — which is what carries a newly-shipped `defaultHidden` item, and what carries
+    // posts/events for a user whose retired account switch had them on.
+    if (!entry.locked && seedHidden(entry, seedFlags)) hidden.add(entry.key);
   }
 
-  return zones;
+  return { groups, hidden };
 }
 
 /**
- * The nav's view of the merge: the two visible zones, with items the viewer cannot reach removed.
+ * The nav's view: the two groups, minus what the user switched off and minus what the viewer
+ * cannot reach.
  *
- * Gates run LAST, over both zones alike, so an item the user pinned but has since lost access to
+ * Gates run LAST, over both groups alike, so an item the user pinned but has since lost access to
  * is dropped whatever the config says — and a gated item still occupies its slot while anchoring,
  * so it can anchor a neighbour before it disappears.
  */
@@ -123,16 +138,17 @@ export function resolveNavItems(
   seedFlags?: NavSeedFlags
 ): ResolvedNav {
   const byKey = new Map(registry.map((entry) => [entry.key, entry]));
-  const zones = resolveNavZones(registry, config, seedFlags);
+  const { groups, hidden } = resolveNavLayout(registry, config, seedFlags);
 
   const resolve = (keys: NavKey[]) =>
     keys
+      .filter((key) => !hidden.has(key))
       .map((key) => byKey.get(key))
       .filter((entry): entry is NavRegistryEntry => !!entry && (entry.visible?.(ctx) ?? true));
 
   return {
-    bar: resolve(zones.bar),
-    more: resolve(zones.more),
+    bar: resolve(groups.bar),
+    more: resolve(groups.more),
     showLabels: config?.showLabels ?? true,
   };
 }

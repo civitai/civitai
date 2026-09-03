@@ -27,7 +27,7 @@ describe('FEATURE_NOTICES', () => {
   // Each string below was copied from the `const ALERT_ID` that lived beside
   // its component before the consolidation.
   const ID_AT_ITS_ORIGINAL_CALL_SITE: Record<keyof typeof FEATURE_NOTICES, string> = {
-    navTidy: 'nav-tidy-notice',
+    navCustomize: 'nav-customize-notice',
     yellowBuzzMigration: 'yellow-buzz-migration',
     cryptoOnrampGuidance: 'crypto-onramp-guidance',
     earnBlueBuzzRewards: 'earn-blue-buzz-rewards',
@@ -61,7 +61,7 @@ describe('FEATURE_NOTICES', () => {
     // Positive control on the uniqueness check above: an empty or truncated
     // array would make `new Set(...).size === length` pass vacuously.
     expect(FEATURE_NOTICE_IDS).toHaveLength(Object.keys(FEATURE_NOTICES).length);
-    expect(FEATURE_NOTICE_IDS).toContain('nav-tidy-notice');
+    expect(FEATURE_NOTICE_IDS).toContain('nav-customize-notice');
   });
 
   test('no id is blank or carries stray whitespace — either would never match a stored value', () => {
@@ -73,14 +73,14 @@ describe('FEATURE_NOTICES', () => {
 });
 
 describe('isNoticeDismissed', () => {
-  const notice = FEATURE_NOTICES.navTidy;
+  const notice = FEATURE_NOTICES.navCustomize;
 
   test('true when the id is present', () => {
-    expect(isNoticeDismissed(['nav-tidy-notice'], notice)).toBe(true);
+    expect(isNoticeDismissed(['nav-customize-notice'], notice)).toBe(true);
   });
 
   test('true when present among other ids', () => {
-    expect(isNoticeDismissed(['a', 'nav-tidy-notice', 'b'], notice)).toBe(true);
+    expect(isNoticeDismissed(['a', 'nav-customize-notice', 'b'], notice)).toBe(true);
   });
 
   test('false when a DIFFERENT notice is dismissed', () => {
@@ -108,12 +108,12 @@ describe('isNoticeDismissed', () => {
   });
 
   test('matching is exact, not prefix or substring', () => {
-    // `nav-tidy-notice-v2` is what a future replacement notice would be called.
+    // `nav-customize-notice-v2` is what a future replacement notice would be called.
     // If the predicate ever became a `startsWith`/`some(includes)`, dismissing
     // v2 would retroactively dismiss v1 and vice versa.
-    expect(isNoticeDismissed(['nav-tidy-notice-v2'], notice)).toBe(false);
+    expect(isNoticeDismissed(['nav-customize-notice-v2'], notice)).toBe(false);
     expect(isNoticeDismissed(['tidy'], notice)).toBe(false);
-    expect(isNoticeDismissed(['xnav-tidy-notice'], notice)).toBe(false);
+    expect(isNoticeDismissed(['xnav-customize-notice'], notice)).toBe(false);
   });
 
   test('reads the notice it is given, not a captured default', () => {
@@ -122,7 +122,7 @@ describe('isNoticeDismissed', () => {
     expect(
       isNoticeDismissed(['crypto-onramp-guidance'], FEATURE_NOTICES.cryptoOnrampGuidance)
     ).toBe(true);
-    expect(isNoticeDismissed(['crypto-onramp-guidance'], FEATURE_NOTICES.navTidy)).toBe(false);
+    expect(isNoticeDismissed(['crypto-onramp-guidance'], FEATURE_NOTICES.navCustomize)).toBe(false);
   });
 });
 

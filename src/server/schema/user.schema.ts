@@ -278,13 +278,13 @@ export type UserContentSettings = UserSettingsSchema & {
 const navZone = z.array(z.enum(NAV_KEYS)).max(NAV_KEYS.length);
 
 /**
- * A user's sub-nav layout: three ordered zones plus a label toggle. Absent means "defaults",
- * which is what every user starts with and what a reset writes back (the key is deleted, not
- * emptied).
+ * A user's sub-nav layout. `bar` and `more` are GROUP MEMBERSHIP plus order — every item belongs
+ * to exactly one. `hidden` is visibility and is orthogonal, so an item switched off keeps its
+ * place in its group and comes back where the user left it.
  *
- * Bounded deliberately. This rides `User.settings`, which is Redis-cached per user and
- * serialised into the HTML of every logged-in SSR render, so an unbounded user-writable array
- * here is an amplification on the hot render path rather than a private preference.
+ * Bounded deliberately. This rides `User.settings`, which is Redis-cached per user and serialised
+ * into the HTML of every logged-in SSR render, so an unbounded user-writable array here is an
+ * amplification on the hot render path rather than a private preference.
  */
 export type NavigationSettingsSchema = z.infer<typeof navigationSettingsSchema>;
 export const navigationSettingsSchema = z
@@ -295,14 +295,17 @@ export const navigationSettingsSchema = z
     showLabels: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
-    const all = [...value.bar, ...value.more, ...value.hidden];
-    if (new Set(all).size !== all.length)
+    // A key in both groups makes "the nearest placed sibling" ambiguous during resolution and
+    // reaches React as a duplicate `key` prop. `hidden` deliberately OVERLAPS the groups — it is
+    // a visibility set, not a third group — so it is only checked against itself.
+    const grouped = [...value.bar, ...value.more];
+    if (new Set(grouped).size !== grouped.length)
       ctx.addIssue({
         code: 'custom',
-        // A key in two zones makes "the nearest placed sibling" ambiguous during resolution and
-        // reaches React as a duplicate `key` prop.
-        message: 'A navigation item cannot appear in more than one zone',
+        message: 'A navigation item cannot appear in more than one group',
       });
+    if (new Set(value.hidden).size !== value.hidden.length)
+      ctx.addIssue({ code: 'custom', message: 'A navigation item cannot be hidden twice' });
   });
 
 export const userSettingsSchema = z.object({

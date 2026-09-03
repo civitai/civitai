@@ -10,7 +10,7 @@ import { ModelFeedFilters } from '~/components/Filters/FeedFilters/ModelFeedFilt
 import { PostFeedFilters } from '~/components/Filters/FeedFilters/PostFeedFilters';
 import { VideoFeedFilters } from '~/components/Filters/FeedFilters/VideoFeedFilters';
 import { ToolFeedFilters } from '~/components/Filters/FeedFilters/ToolFeedFilters';
-import { NavTidyNotice } from '~/components/Alerts/NavTidyNotice';
+import { NavCustomizeNotice } from '~/components/Alerts/NavCustomizeNotice';
 import { HomeTabs } from '~/components/HomeContentToggle/HomeContentToggle';
 import { SubNavSettingsButton } from '~/components/HomeContentToggle/SubNavSettingsButton';
 import { ToolImageFeedFilters } from '~/components/Filters/FeedFilters/ToolImageFeedFilters';
@@ -44,7 +44,7 @@ export function SubNav2() {
       })}
     >
       <HomeTabs />
-      <NavTidyNotice />
+      <NavCustomizeNotice />
       {section?.component}
       <SubNavSettingsButton
         withHomepageOption={router.pathname === '/'}

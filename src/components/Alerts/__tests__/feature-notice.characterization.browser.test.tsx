@@ -20,7 +20,7 @@ import type * as TrpcUtils from '~/utils/trpc';
 //
 // Mount contexts covered, deliberately structurally different (a notice's bugs
 // live in how it is mounted):
-//   * NavTidyNotice            — a deferred-open Popover under the sub-nav
+//   * NavCustomizeNotice            — a deferred-open Popover under the sub-nav
 //   * YellowBuzzMigrationNotice — a Popover that WRAPS children in the header
 //   * OnrampGuidance + Toggle  — an inline page card, and the only restore path
 // =============================================================================
@@ -146,7 +146,7 @@ vi.mock('~/providers/AppProvider', () => ({
 }));
 
 import { renderWithProviders } from '../../../../test/component-setup';
-import { NavTidyNotice } from '~/components/Alerts/NavTidyNotice';
+import { NavCustomizeNotice } from '~/components/Alerts/NavCustomizeNotice';
 import { YellowBuzzMigrationNotice } from '~/components/Alerts/YellowBuzzMigrationNotice';
 import {
   OnrampGuidance,
@@ -165,7 +165,7 @@ beforeEach(() => {
 });
 
 // -----------------------------------------------------------------------------
-// NavTidyNotice — sub-nav Popover, opens on a post-mount defer.
+// NavCustomizeNotice — sub-nav Popover, opens on a post-mount defer.
 //
 // 🔴 This block does NOT use `vi.waitFor(() => expect(...).toHaveLength(0))`.
 // A negative assertion is satisfied at t=0, and this tree mounts asynchronously
@@ -181,13 +181,13 @@ beforeEach(() => {
 // assert absence — against `document`, because the trigger is not in the
 // accessibility tree until the popover opens.
 // -----------------------------------------------------------------------------
-describe('NavTidyNotice (sub-nav popover)', () => {
+describe('NavCustomizeNotice (sub-nav popover)', () => {
   const NAV_TRIGGER_SELECTOR = '[aria-label="Navigation updated"]';
   const OPEN_DEFER_MS = 1500;
   const navTriggerCount = () => document.querySelectorAll(NAV_TRIGGER_SELECTOR).length;
 
-  // The component hides one of these behind a feature flag; the notice only
-  // nudges users who actually lost a nav item.
+  // The notice no longer gates on any feature flag — the gear it announces is offered to every
+  // signed-in user — so these set flags only to prove the notice ignores them.
   const withHiddenNavItem = () => {
     mocks.state.features = { postsNavItem: false, eventsNavItem: true };
   };
@@ -195,14 +195,14 @@ describe('NavTidyNotice (sub-nav popover)', () => {
   const renderWithSentinel = () =>
     renderWithProviders(
       <>
-        <NavTidyNotice />
-        <span data-testid="nav-tidy-sentinel">mounted</span>
+        <NavCustomizeNotice />
+        <span data-testid="nav-customize-sentinel">mounted</span>
       </>
     );
 
   /** Commit the tree, then let the open defer elapse. */
   const settle = async () => {
-    await expect.element(page.getByTestId('nav-tidy-sentinel')).toBeVisible();
+    await expect.element(page.getByTestId('nav-customize-sentinel')).toBeVisible();
     await new Promise((resolve) => setTimeout(resolve, OPEN_DEFER_MS + 400));
   };
 
@@ -216,12 +216,12 @@ describe('NavTidyNotice (sub-nav popover)', () => {
     await settle();
     expect(navTriggerCount()).toBe(1);
     await expect.element(page.getByRole('button', { name: 'Navigation updated' })).toBeVisible();
-    await expect.element(page.getByText('We tidied up the nav')).toBeVisible();
+    await expect.element(page.getByText('Make this nav yours')).toBeVisible();
   });
 
   test('renders nothing when the notice id is already in dismissedAlerts', async () => {
     withHiddenNavItem();
-    mocks.state.settings = { dismissedAlerts: ['nav-tidy-notice'] };
+    mocks.state.settings = { dismissedAlerts: ['nav-customize-notice'] };
     renderWithSentinel();
 
     await settle();
@@ -237,25 +237,27 @@ describe('NavTidyNotice (sub-nav popover)', () => {
     expect(navTriggerCount()).toBe(0);
   });
 
-  test('renders nothing when no nav item is hidden', async () => {
+  test('still renders when both nav flags are on — it no longer gates on them', async () => {
+    // The notice it replaced showed only to users missing Posts or Events. This one announces a
+    // feature everyone got, so a flag state that used to suppress it must not.
     mocks.state.features = { postsNavItem: true, eventsNavItem: true };
     renderWithSentinel();
 
     await settle();
-    expect(navTriggerCount()).toBe(0);
+    expect(navTriggerCount()).toBe(1);
   });
 
-  test('dismissing persists `nav-tidy-notice`, updates the cache optimistically, and reconciles', async () => {
+  test('dismissing persists `nav-customize-notice`, updates the cache optimistically, and reconciles', async () => {
     withHiddenNavItem();
     renderWithSentinel();
 
-    await expect.element(page.getByText('We tidied up the nav')).toBeVisible();
+    await expect.element(page.getByText('Make this nav yours')).toBeVisible();
     await userEvent.click(page.getByRole('button', { name: 'Dismiss' }));
 
     await vi.waitFor(() => {
-      expect(mocks.state.mutateCalls).toEqual([{ alertId: 'nav-tidy-notice' }]);
+      expect(mocks.state.mutateCalls).toEqual([{ alertId: 'nav-customize-notice' }]);
       // Optimistic write landed in the cache...
-      expect(mocks.state.settings?.dismissedAlerts).toEqual(['nav-tidy-notice']);
+      expect(mocks.state.settings?.dismissedAlerts).toEqual(['nav-customize-notice']);
       // ...and the truncated-settings reconcile fired exactly once.
       expect(mocks.state.invalidateCount).toBe(1);
     });
@@ -399,7 +401,9 @@ describe('OnrampGuidance + OnrampGuidanceToggle (page card with restore)', () =>
   });
 
   test('an unknown id in dismissedAlerts does not dismiss this notice', async () => {
-    mocks.state.settings = { dismissedAlerts: ['crypto-onramp-guidance-v2', 'nav-tidy-notice'] };
+    mocks.state.settings = {
+      dismissedAlerts: ['crypto-onramp-guidance-v2', 'nav-customize-notice'],
+    };
     renderWithProviders(bothMounted);
 
     await expect.element(page.getByRole('heading', { name: 'New to crypto?' })).toBeVisible();

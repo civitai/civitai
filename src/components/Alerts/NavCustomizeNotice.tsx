@@ -6,7 +6,6 @@ import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
-import { useFeatureFlags, useFeatureFlagsReady } from '~/providers/FeatureFlagsProvider';
 
 const SubNavSettingsModal = dynamic(
   () => import('~/components/HomeContentToggle/SubNavSettingsModal'),
@@ -15,27 +14,24 @@ const SubNavSettingsModal = dynamic(
 const openSubNavSettings = createDialogTrigger(SubNavSettingsModal);
 
 /**
- * Floating popover under the sub nav, where the Posts / Events tabs used to live. The audience is
- * unchanged — users who have one of those items tidied away — but the destination is now the
- * sub-nav customization modal, because that is where placement lives. The account switches it used
- * to point at are gone; leaving the link would have sent people to a page with nothing on it.
+ * Floating popover under the sub nav announcing that the nav is now customizable.
+ *
+ * Replaces the tidy-away notice, which pointed at two account switches that no longer exist. Its
+ * audience widened with it: the old one nudged only users missing Posts or Events, while what
+ * this announces — reorder, group, hide, icon-only — is new to everyone signed in. It carries a
+ * new dismissal id for the same reason; reusing the old one would have hidden it from everybody
+ * who dismissed the notice it replaces.
  */
-export function NavTidyNotice() {
+export function NavCustomizeNotice() {
   const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
 
-  const enabled = !!currentUser;
-  const ready = useFeatureFlagsReady();
-  const { isDismissed, hasSettings, dismiss } = useFeatureNotice(FEATURE_NOTICES.navTidy);
+  const { isDismissed, hasSettings, dismiss } = useFeatureNotice(FEATURE_NOTICES.navCustomize);
 
-  // Only nudge users who actually have one of the tidied items hidden.
-  const hasHiddenNavItem = !features.postsNavItem || !features.eventsNavItem;
-  // Two separate gates. `ready` waits for the per-user feature-flag overlay, so
-  // `hasHiddenNavItem` is read from real flags rather than defaults.
-  // `hasSettings` waits for a resolved settings object, so a rare failed SSR
-  // snapshot cannot flash this at someone who already dismissed it; on the
-  // normal SSR-seeded path it is true on the first render, so there is no delay.
-  const show = enabled && ready && hasSettings && !isDismissed && hasHiddenNavItem;
+  // No feature-flag gate: the gear is offered to every signed-in user, so the announcement has the
+  // same audience. `hasSettings` waits for a resolved settings object, so a rare failed SSR
+  // snapshot cannot flash this at someone who already dismissed it; on the normal SSR-seeded path
+  // it is true on the first render, so there is no delay.
+  const show = !!currentUser && hasSettings && !isDismissed;
 
   // Open only AFTER the above-the-fold layout has settled. The popover is anchored
   // to a subnav target; opening it during the initial layout-settle window made its
@@ -83,7 +79,7 @@ export function NavTidyNotice() {
         <div className="flex flex-col gap-2 p-3">
           <div className="flex items-start justify-between gap-2">
             <Text size="sm" fw={600} style={{ color: '#f59f00' }}>
-              We tidied up the nav
+              Make this nav yours
             </Text>
             <CloseButton
               size="xs"
@@ -97,8 +93,8 @@ export function NavTidyNotice() {
           </div>
 
           <Text size="xs" c="dimmed" lh={1.4}>
-            We trimmed a few items from the navigation to keep things simple. Miss Posts or Events?
-            You can put them back — and reorder the rest — from here.
+            Reorder these tabs, move the ones you rarely use into More, hide what you never touch,
+            or drop the labels for an icon-only bar.
           </Text>
 
           <Button
