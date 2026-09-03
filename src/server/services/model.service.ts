@@ -1944,12 +1944,21 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
   //     REAP_AGE_DAYS, which is what a restored model is entitled to.
   //  2. THE `old-draft` WARNING, and this is the stronger one. That notification
   //     warns on `Draft` ONLY — a `Deleted` model is deliberately never warned —
-  //     and its band is evaluated ONCE, at `U + OLD_DRAFT_NOTICE_DAYS`, never
-  //     re-evaluated for that `U` (`model.notifications.ts`). A model restored
-  //     with its pre-restore `U` is now `Draft`, so it is warnable for the first
-  //     time, but its band is already in the past — so it is cascade-deleted
-  //     UNWARNED. The bump re-arms the band, which is the only way the user ever
-  //     hears about it.
+  //     and its band is evaluated ONCE, at `U + OLD_DRAFT_NOTICE_DAYS` (23 days),
+  //     never re-evaluated for that `U` (`model.notifications.ts`). A model
+  //     restored while carrying its pre-restore `U` is now `Draft`, so it is
+  //     warnable for the first time — but only if its band has not already gone
+  //     by.
+  //       - restored BEFORE `U + 23d`: the band still matches, and it IS warned.
+  //         Deleted day 0, restored day 10 -> `Draft` at day 23 with `U` = day 0
+  //         -> warned. The bump is not what saves this one.
+  //       - restored AFTER `U + 23d` (the day-29 case above, or a path where
+  //         `downloadCount` drops below 10 late): the band is in the past and is
+  //         never revisited, so the model is cascade-deleted UNWARNED.
+  //     So the bump re-arms the band, and that is the only way the user hears
+  //     about it in the second case. Stated at that width deliberately: this
+  //     comment tells the next editor not to justify the line from a story, so
+  //     it has to meet its own bar.
   //
   // And independently of the reaper: restoring a model is a write to the row, so
   // the bump is what the column is supposed to mean.

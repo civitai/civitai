@@ -69,9 +69,26 @@ const LEDGER: { file: string; draftingStatements: number }[] = [
  * this file: that statement extracted 156 characters and ended mid-ternary.
  *
  * So the scan tracks `${...}` interpolations by brace depth, recursing through
- * nested templates and skipping quoted strings inside the JS. Known limits, both
- * absent from this corpus: a brace or backtick inside a regex literal or a `//`
- * comment within an interpolation would confuse the depth count.
+ * nested templates and skipping quoted strings inside the JS.
+ *
+ * KNOWN LIMITS, none present in this corpus. 🔴 They are listed WITH THE
+ * DIRECTION THEY FAIL, because a limits list that mixes the two is more
+ * dangerous than no list — a reader assumes the whole list is as harmless as
+ * whichever entry they check first:
+ *
+ *  - FAILS CLOSED — a brace or backtick inside a regex literal or a `//` comment
+ *    within an interpolation confuses the depth count. The scan then runs long
+ *    or never terminates, which surfaces as the unterminated-template error or a
+ *    wrong count. Loud, and it cannot un-watch a statement.
+ *  - 🔴 FAILS OPEN — an `UPDATE "Model"` written INSIDE an interpolation of
+ *    another `UPDATE "Model"` template. Because the scan now correctly reads to
+ *    the OUTER close, the inner statement is absorbed into the outer one rather
+ *    than enumerated separately. Measured: outer bumped, inner drafting and
+ *    unbumped gives `drafting=1, bumped=1` and an exact count of 1 — all green
+ *    over an unbumped drafting statement. Deliberately NOT engineered around:
+ *    nobody nests an `UPDATE "Model"` inside another one, and a parser change to
+ *    catch it would cost more risk than the shape is worth. Recorded so the next
+ *    person weighing that trade has the measurement rather than a guess.
  */
 function templateEnd(source: string, start: number): number {
   let i = start;
@@ -226,12 +243,22 @@ describe('a raw SQL write that drafts a Model bumps its "updatedAt"', () => {
   // The exact number fails in BOTH directions: a statement that disappears from
   // the extractor's view, and one that ARRIVES unwatched. Bumping the number is
   // how you record a deliberate decision about a new site.
+  //
+  // 🔴 But an INCREASE has two causes and only one of them is a new site. The
+  // extractor anchors on the raw text `UPDATE "Model"`, so a `//` comment or a
+  // string that merely QUOTES the statement counts as one. That is not
+  // hypothetical here: the comment block on `restoreModelById` already contains
+  // `'Draft'` and `"updatedAt" = now()`, so it is one `UPDATE "Model"` mention
+  // away from tripping this — and prose about this very guard is exactly the
+  // kind of text that would do it. The failure message therefore has to name
+  // that cause, because a maintainer who follows a bare "bump the count" would
+  // permanently install a phantom statement in the ledger.
   it.each(LEDGER)(
     '$file holds exactly the drafting statements this ledger claims',
     ({ file, draftingStatements: expected }: (typeof LEDGER)[number]) => {
       expect(
         draftingStatements(file).length,
-        `${file}: expected ${expected} raw UPDATE "Model" statement(s) writing Draft. Fewer means one dropped out of the extractor's view and is no longer checked; more means a new drafting site arrived — bump the count here once you have confirmed it carries the bump.`
+        `${file}: expected ${expected} raw UPDATE "Model" statement(s) writing Draft. FEWER means one dropped out of the extractor's view and is no longer checked. MORE means one of two things: either a real new drafting site arrived, in which case confirm it carries the bump and then raise the count here — or a comment or string literal now quotes the statement text, which this text-anchored extractor cannot tell from real SQL. If it is prose, REWORD THE PROSE; do not raise the count, or you install a phantom statement in this ledger permanently.`
       ).toBe(expected);
     }
   );

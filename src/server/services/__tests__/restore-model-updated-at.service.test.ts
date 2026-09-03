@@ -17,9 +17,11 @@ import type * as ModelVersionService from '~/server/services/model-version.servi
  * missing bump does not make a model reapable that was not already. It costs two
  * other things: a restored model keeps only the REMAINDER of its 30 days rather
  * than a fresh window (deleted day 0, restored day 29 -> reaped the night of day
- * 30/31), and — the stronger one — it is cascade-deleted UNWARNED, because the
- * `old-draft` notification warns on `Draft` only and evaluates its band once at
- * `U + OLD_DRAFT_NOTICE_DAYS`, which a carried-over `U` has already passed.
+ * 30/31), and — the stronger one — a model restored after its band has gone by
+ * is cascade-deleted UNWARNED, because the `old-draft` notification warns on
+ * `Draft` only and evaluates its band once at `U + OLD_DRAFT_NOTICE_DAYS` (23
+ * days), never revisiting it. Restored EARLIER than that and the band still
+ * matches, so it is warned and the bump is not what saves it.
  *
  * Same defect class as the two sweep sites fixed in #4595, and the same fix.
  * `no-unbumped-draft-status-write.test.ts` holds all three sites to the rule as
@@ -230,7 +232,7 @@ describe('restoreModelById', () => {
 
       expect(
         modelUpdateSql(),
-        'without the bump a restored model keeps only the remainder of its 30 days before remove-old-drafts cascade-deletes it, and is deleted unwarned because the old-draft notification band for that carried-over timestamp has already passed'
+        'without the bump a restored model keeps only the remainder of its 30 days before remove-old-drafts cascade-deletes it, and if the restore lands after the old-draft notification band at U + 23 days it is deleted unwarned, because that band is evaluated once and never revisited'
       ).toContain('"updatedAt" = now()');
     });
 
