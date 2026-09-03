@@ -407,8 +407,8 @@ importers:
         specifier: ^2.0.5
         version: 2.0.5
       form-graph:
-        specifier: ^0.3.2
-        version: 0.3.2(react@18.3.1)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(zod@4.0.17)
+        specifier: ^0.3.3
+        version: 0.3.3(react@18.3.1)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(zod@4.0.17)
       google-auth-library:
         specifier: ^9.15.0
         version: 9.15.1
@@ -7729,8 +7729,8 @@ packages:
     resolution: {integrity: sha512-vKatAh4SlVfgbv+YtmhiRjhEMJsYpsG1Y2rMQtR+SVSbytsSD1YGzDIcrAJmdFec88u/+VoGmxnl+80gL1tRCQ==}
     engines: {node: '>= 6'}
 
-  form-graph@0.3.2:
-    resolution: {integrity: sha512-TQV9Ogdx7SvqIP4tmoS12IDZqC7eJfcb/uQ3iPE1QOp9XDopK9Wn/xf2T+wYOPrvWYacujOo0hwFyvkJCbSwvQ==}
+  form-graph@0.3.3:
+    resolution: {integrity: sha512-V6QS8TwMxYhCCmiU8pkogmmUMJheT+weSCwwv92D/3ft6jBxO1zEd3BDJ548MB6UWFyKpnhOTwss5YDtvOLNFA==}
     engines: {node: '>=20'}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
@@ -19814,7 +19814,7 @@ snapshots:
       hasown: 2.0.4
       mime-types: 2.1.35
 
-  form-graph@0.3.2(react@18.3.1)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(zod@4.0.17):
+  form-graph@0.3.3(react@18.3.1)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(zod@4.0.17):
     optionalDependencies:
       react: 18.3.1
       svelte: 5.56.3(@typescript-eslint/types@8.60.1)

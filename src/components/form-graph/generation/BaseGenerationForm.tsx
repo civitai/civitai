@@ -66,12 +66,6 @@ import { useOutputType, type GenerationStore } from './store';
 
 const STORAGE_KEY = 'form-graph:generation';
 
-// Session memory for adopted defaults — module scope so the session's view of
-// "what the form showed" survives the Generate tab unmounting on tab
-// switches. A plain Map on purpose: it dies with the page, so a reload
-// re-derives today's defaults (see the lib's rules docs, "adopted defaults").
-const sessionMemory = new Map<string, unknown>();
-
 export function BaseGenerationForm() {
   const status = useGenerationStatus();
   const currentUser = useCurrentUser();
@@ -114,7 +108,7 @@ export function BaseGenerationForm() {
   }, []);
   useEffect(() => () => storage?.dispose(), [storage]);
 
-  const store = useForm(generationHub, { ext, storage, sessionMemory }) as GenerationStore;
+  const store = useForm(generationHub, { ext, storage }) as GenerationStore;
 
   return (
     <FormProvider store={store}>
