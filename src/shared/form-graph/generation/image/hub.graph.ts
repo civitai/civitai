@@ -18,6 +18,7 @@ import { krea2 } from './krea2.graph';
 import { imagen4 } from './imagen4.graph';
 import { ponyV7 } from './pony-v7.graph';
 import { reve } from './reve.graph';
+import { museImage } from './muse-image.graph';
 import { mai } from './mai.graph';
 import { ernie } from './ernie.graph';
 import { seedream } from './seedream.graph';
@@ -89,6 +90,7 @@ export const imageHub = defineGraph<RootCtx>()
       [['Imagen4'], imagen4],
       [['PonyV7'], ponyV7],
       [['Reve'], reve],
+      [['MuseImage'], museImage],
       [['MAI'], mai],
       [['Ernie'], ernie],
       [['Seedream'], seedream],

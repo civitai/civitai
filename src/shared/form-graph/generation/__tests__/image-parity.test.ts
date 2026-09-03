@@ -248,6 +248,7 @@ const ECOSYSTEMS = [
   'Imagen4',
   'PonyV7',
   'Reve',
+  'MuseImage',
   'MAI',
   'Ernie',
   'Seedream',
