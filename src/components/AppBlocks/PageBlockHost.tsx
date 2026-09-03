@@ -249,10 +249,12 @@ const WILDCARD_REVIEW_NACK_CODE: WildcardPackErrorCode = 'forbidden';
  * unreachable content), so the number's only job is to make the band as small as
  * it can be while still catching the degenerate case. Raising it widens the
  * population that sees two scrollbars, so the value is bounded on BOTH sides —
- * in `__tests__/pageRunScrollContract.test.ts` (the GATING node suite; that is
- * the copy that can block a merge) and again in
- * `PageBlockHostScrollFit.browser.test.tsx` (report-only, which is why it is not
- * the only one). The NUMBERS deliberately live in those tests, not here: a band
+ * in `__tests__/pageRunScrollContract.test.ts` (the node `unit` suite, which
+ * renders a real verdict on a push to `main`) and again in
+ * `PageBlockHostScrollFit.browser.test.tsx` (the report-only browser tier, which
+ * is why it is not the only one). NEITHER TIER BLOCKS A MERGE: `main` requires
+ * no status check at all in this repo, so both are signals a reviewer must read,
+ * not doors that stay shut. The NUMBERS deliberately live in those tests, not here: a band
  * declared beside the value it bounds can be moved in the same edit. What lives
  * here is the ARITHMETIC that justifies them.
  *
@@ -3999,8 +4001,10 @@ export function PageBlockHost({
           `AppBlocks` browser suite green while the app column collapses to ~150px at a
           900px content height — a running App Block reduced to a sliver, with every tier
           green. `__tests__/pageBlockHostMaxWidth.test.ts` therefore pins this style block
-          verbatim in the GATING tier; that source pin is the only thing standing between
-          that mutation and production.
+          verbatim in the node `unit` tier; that source pin is the only thing that CATCHES
+          that mutation at all. It does not BLOCK it: `main` requires no status check in
+          this repo, so what the pin buys is a red run a reviewer has to read (and an
+          honest verdict on a push to `main`), not a door that stays shut.
 
           ⚠️ `minHeight: 0` IS DEFENCE, NOT A LOAD-BEARING PROPERTY — SAY SO RATHER THAN
           NAMING A TEST THAT DOES NOT COVER IT. Measured: removing it leaves the scroll-fit
