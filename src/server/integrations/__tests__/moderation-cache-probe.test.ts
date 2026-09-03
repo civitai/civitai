@@ -29,7 +29,7 @@ const env = vi.hoisted(() => ({
   EXTERNAL_MODERATION_THRESHOLD: 0.5,
   EXTERNAL_MODERATION_TIMEOUT_MS: 5000,
   EXTERNAL_MODERATION_CATEGORIES: undefined as Record<string, string> | undefined,
-  EXTERNAL_MODERATION_CACHE_PROBE: 'testns' as string,
+  EXTERNAL_MODERATION_CACHE_PROBE: 'next' as string,
 }));
 vi.mock('~/env/server', () => ({ env }));
 
@@ -105,7 +105,7 @@ async function untilProbeTotal(n: number) {
 beforeEach(() => {
   promClient.register.getSingleMetric(PROBE)?.reset();
   promClient.register.getSingleMetric(HIST)?.reset();
-  env.EXTERNAL_MODERATION_CACHE_PROBE = 'testns';
+  env.EXTERNAL_MODERATION_CACHE_PROBE = 'next';
   // 🔴 `resetSharedMocks()` in src/__tests__/setup.ts runs once PER FILE, not per test, so
   // `sysRedis.set`'s call history accumulates across every case here. Without this, the
   // `not.toHaveBeenCalled()` assertion in the flag-off case passes only because it happens to run
@@ -132,7 +132,7 @@ describe('cache probe — the flag is the arming switch', () => {
     stubFetchOk();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    env.EXTERNAL_MODERATION_CACHE_PROBE = 'testns';
+    env.EXTERNAL_MODERATION_CACHE_PROBE = 'next';
     await extModeration.moderatePrompt('a warmup prompt', 'generate');
     await untilProbeTotal(2);
     const redisCallsWhileOn = redisMock.sysRedis.set.mock.calls.length;
@@ -144,10 +144,13 @@ describe('cache probe — the flag is the arming switch', () => {
     expect(await probeTotal()).toBe(2);
     expect(redisMock.sysRedis.set.mock.calls.length).toBe(redisCallsWhileOn);
     // 🔴 SHIPPING INERT MUST ALSO MEAN SHIPPING SILENT, and without this assertion the empty-string
-    // early return is untested: delete it and the probe is STILL off (the charset pattern rejects
-    // '' anyway), so every other case here stays green — a mutant removing it SURVIVED. What it
-    // actually buys is that a DELIBERATELY unarmed deployment — which today is every deployment —
-    // does not log a misconfiguration error on every single generation.
+    // early return is untested: delete it and the probe is STILL off ('' is not in the allowlist
+    // either), so every other case here stays green — a mutant removing it SURVIVED. What it buys
+    // is that a DELIBERATELY unarmed deployment — which today is every deployment — logs no
+    // misconfiguration error at all. ⚠️ Measured cost of the mutant: ONE line per process per
+    // distinct value, not one per generation, because `warnedNamespace` dedupes. An earlier
+    // revision of this comment and of the PR body said "on every generation", which overstated it
+    // by orders of magnitude.
     expect(
       errorSpy.mock.calls.filter((c) => String(c[0]).includes('moderation-cache-probe'))
     ).toHaveLength(0);
@@ -399,22 +402,28 @@ describe('cache probe — the namespace IS the arming switch', () => {
     expect(await probeCount('generate', '5m', 'hit')).toBe(0);
   });
 
-  it('an ON/OFF WORD never arms the probe, however the operator spells it', async () => {
-    // 🔴 THE HIGHEST-RISK VALUE, and the charset alone accepts every one of these as a perfectly
-    // good namespace. This variable was a boolean one commit ago, so `=false` is the PREVIOUS
-    // contract's spelling for "off" and the likeliest thing an operator writes. Without this guard
-    // it would ARM the probe under a namespace literally called `false` — and two deployments
-    // "disabled" that way would share the keyspace `…:false:…` and score hits on each other's
-    // prompts, which is the exact collision the namespace exists to prevent.
+  it('no off-ish spelling arms the probe, including the ones a denylist would miss', async () => {
+    // 🔴 THE HIGHEST-RISK VALUES. This variable was a boolean two commits ago, so `=false` is the
+    // PREVIOUS contract's spelling for "off" and the likeliest thing an operator writes. Under a
+    // charset-plus-denylist guard it would ARM the probe under a namespace literally called
+    // `false`, and two deployments "disabled" that way would share `…:false:…` and score hits on
+    // each other's prompts — the exact collision the namespace exists to prevent.
+    //
+    // 🔴 THE SECOND HALF OF THIS LIST IS THE POINT. `y`, `n`, `none`, `null`, `undefined`, `nil`,
+    // `disable`, `enable` and `2` all passed the charset AND the ten-word denylist that shipped one
+    // commit ago — audit round 3 enumerated them. `y`/`n` are not exotic: zod's own `stringbool`
+    // treats them as boolean spellings. That is why the guard is now a closed ALLOWLIST rather than
+    // a denylist: a list of forbidden members can only ever forbid the members someone thought of.
     installRedisFake();
     stubFetchOk();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    env.EXTERNAL_MODERATION_CACHE_PROBE = 'testns';
+    env.EXTERNAL_MODERATION_CACHE_PROBE = 'next';
     await extModeration.moderatePrompt('a warmup prompt', 'generate');
     await untilProbeTotal(2);
 
     for (const word of [
+      // the original denylist
       'true',
       'false',
       'on',
@@ -425,6 +434,16 @@ describe('cache probe — the namespace IS the arming switch', () => {
       '1',
       'enabled',
       'disabled',
+      // the ones that walked straight through it
+      'y',
+      'n',
+      'none',
+      'null',
+      'undefined',
+      'nil',
+      'disable',
+      'enable',
+      '2',
     ]) {
       env.EXTERNAL_MODERATION_CACHE_PROBE = word;
       await extModeration.moderatePrompt(`prompt for ${word}`, 'generate');
@@ -452,7 +471,7 @@ describe('cache probe — the namespace IS the arming switch', () => {
     expect(String(forThisValue[0][0])).toContain('is DISABLED');
   });
 
-  it('an out-of-charset namespace is treated as OFF, not sanitised', async () => {
+  it('an unknown namespace is treated as OFF, not sanitised', async () => {
     // A typo must produce NO SERIES — which the help text already tells the reader means "not
     // armed" — rather than quietly opening a second keyspace that looks armed and measures a
     // fiction. Sanitising would silently map two distinct typos onto one namespace.
@@ -461,7 +480,7 @@ describe('cache probe — the namespace IS the arming switch', () => {
 
     // Warm the lazy import with a valid namespace first, so the absence below is evidence and not
     // an insufficient wait (same reasoning as the flag-off case).
-    env.EXTERNAL_MODERATION_CACHE_PROBE = 'testns';
+    env.EXTERNAL_MODERATION_CACHE_PROBE = 'next';
     await extModeration.moderatePrompt('a warmup prompt', 'generate');
     await untilProbeTotal(2);
 

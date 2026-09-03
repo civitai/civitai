@@ -636,12 +636,14 @@ export const serverSchema = z
     // `''` — routing the probe through it would put production and stage in one shared probe
     // keyspace, which is precisely the collision this namespace exists to prevent.
     //
-    // Values are restricted to /^[a-z0-9][a-z0-9-]{0,31}$/ AND rejected if they are an on/off word
-    // (`true`/`false`/`on`/`off`/`yes`/`no`/`0`/`1`/`enabled`/`disabled`) — the charset alone would
-    // happily accept `false` as a namespace, so the most likely way to spell "turn this off" would
-    // ARM the probe. Anything rejected is treated as OFF and logged once, rather than sanitised, so
-    // a typo produces NO SERIES (already documented as "not armed") plus a line saying why, instead
-    // of a second silent keyspace. See src/server/integrations/moderation-cache-probe.ts.
+    // The accepted values are a CLOSED ALLOWLIST of deployment labels, defined in
+    // moderation-cache-probe.ts and deliberately not restated here (one rule, one place). Anything
+    // else — including every on/off spelling — is treated as OFF and logged once, so a typo yields
+    // NO SERIES (already documented as "not armed") plus a line saying why, rather than a second
+    // silent keyspace. An allowlist rather than a charset plus a denylist because a denylist is a
+    // guard SPELLED rather than STRUCTURAL: the charset alone accepts `false`, `n` and `disabled`
+    // as perfectly good namespaces, so the likeliest spelling of "turn this off" would ARM the
+    // probe. See src/server/integrations/moderation-cache-probe.ts.
     EXTERNAL_MODERATION_CACHE_PROBE: z.string().trim().optional().default(''),
     BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
     MODERATION_KNIGHT_TAGS: commaDelimitedStringArray().default([]),

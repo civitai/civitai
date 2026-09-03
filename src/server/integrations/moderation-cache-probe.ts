@@ -63,59 +63,61 @@ type ProbeWindowLabel = (typeof PROBE_WINDOWS)[number]['label'];
  * result toward "caching pays". Requiring a namespace to arm at all is what makes that unforgettable
  * rather than a note in a doc.
  *
- * An out-of-charset or over-long value returns `null` (i.e. OFF) rather than being sanitised: a
- * typo then yields NO SERIES, which the metric's help text already tells the reader means "not
- * armed", instead of quietly opening a second keyspace that looks armed and measures a fiction.
- * Unlike the previous boolean spelling, which failed boot loudly on garbage, a rejected value here
- * is otherwise silent — so it is logged once, on the same reasoning (and in the same shape) as
- * `cache-key-prefix.ts`'s misconfiguration guard: loud enough to find, never able to fail boot.
+ * A value that is not a known deployment label returns `null` (i.e. OFF) rather than being
+ * sanitised or accepted: a typo then yields NO SERIES, which the metric's help text already tells
+ * the reader means "not armed", instead of quietly opening a second keyspace that looks armed and
+ * measures a fiction. It is logged once so the operator can tell the two apart.
  *
- * 🔴 A BOOLEAN-SHAPED VALUE IS REJECTED, AND THAT IS NOT PEDANTRY. The charset alone accepts
- * `false`, `off`, `no`, `0` and `disabled` as perfectly good namespaces — so the single most likely
- * way an operator spells "turn this off" would instead ARM the probe under a namespace called
- * `false`. Worse, it reintroduces the very collision this namespace exists to prevent: two
- * deployments each "disabled" that way share the keyspace `…:false:…` and score hits on each
- * other's prompts. This variable was a `zc.booleanString` one commit ago, so `=false` is not a
- * hypothetical spelling — it is the previous contract, and `civitai-dp-prod` sets other env flags
- * to the literal string `false` today.
+ * 🔴 A CLOSED ALLOWLIST, NOT A CHARSET PLUS A DENYLIST — and the denylist it replaces is why.
+ * The first version of this guard accepted any `/^[a-z0-9][a-z0-9-]{0,31}$/` and rejected ten
+ * on/off words. That is a guard SPELLED rather than STRUCTURAL: it defends a class by listing its
+ * members, so every spelling nobody thought of walks straight through. Audit round 3 enumerated
+ * the survivors — `y`, `n`, `none`, `null`, `undefined`, `nil`, `disable`, `enable`, `2` — and
+ * `y`/`n` are not exotic: zod's own `stringbool` treats them as boolean spellings, so an operator
+ * carrying that habit writes `=n`, the probe ARMS under a namespace called `n`, and two
+ * deployments "disabled" that way share `…:n:…` and score hits on each other's prompts. That is
+ * the exact collision this namespace exists to prevent, arriving at the moment the operator
+ * believes the probe is off.
+ *
+ * An allowlist cannot be walked by a spelling nobody thought of. The cost is that arming a NEW
+ * deployment needs a one-line code change — acceptable, and arguably correct, for a temporary
+ * measurement instrument whose deployment set is known, small, and expected to shrink to zero when
+ * the probe is removed.
  */
-const NAMESPACE_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
-
-/**
- * Values whose PLAIN MEANING is on/off rather than a place. Rejected even though the charset admits
- * them, because a namespace is not what the operator typing one of these intends.
- */
-const BOOLEANISH = new Set([
-  'true',
-  'false',
-  'on',
-  'off',
-  'yes',
-  'no',
-  '0',
-  '1',
-  'enabled',
-  'disabled',
-]);
+const PROBE_NAMESPACES: ReadonlySet<string> = new Set(['prod', 'next', 'next-stage', 'preview']);
 
 let warnedNamespace: string | null = null;
 
 function probeNamespace(): string | null {
   const raw = env.EXTERNAL_MODERATION_CACHE_PROBE?.trim() ?? '';
+  // Empty is the DELIBERATELY-unarmed case — every deployment today — so it returns before the
+  // diagnostic below. Shipping inert has to mean shipping silent: without this line the probe is
+  // still off (an empty string is not in the allowlist either), but every unarmed pod logs a
+  // misconfiguration error it has done nothing to deserve.
   if (raw === '') return null;
-  if (NAMESPACE_PATTERN.test(raw) && !BOOLEANISH.has(raw)) return raw;
+  if (PROBE_NAMESPACES.has(raw)) return raw;
 
   // Warn ONCE per distinct bad value: this runs on the generation hot path, and a per-call log on a
   // misconfigured deployment would be its own incident. `console.error` rather than a throw for the
   // reason cache-key-prefix.ts gives for the same choice — a namespace mistake must not be able to
   // take a deployment down.
+  //
+  // ⚠️ NOT because the previous spelling "failed boot loudly on garbage" — that claim was in this
+  // comment for one commit and it was FALSE. `zc.booleanString` is
+  // `z.preprocess((v) => v === true || v === 'true', z.boolean())`, and that preprocess maps EVERY
+  // input to a boolean, so the inner schema can never fail: executed against the installed zod,
+  // `'off'`, `'garbage'`, `'$$$'` and `''` all parse successfully to `false`. The old contract
+  // swallowed garbage silently too. The log is worth having on its own merits — it is the only way
+  // to tell "armed, no repeats" from "my value was rejected" — not because it restores a guard
+  // that never existed.
   if (warnedNamespace !== raw) {
     warnedNamespace = raw;
     console.error(
       `[moderation-cache-probe] EXTERNAL_MODERATION_CACHE_PROBE=${JSON.stringify(raw)} is not a ` +
-        `valid namespace (expected /^[a-z0-9][a-z0-9-]{0,31}$/ and not an on/off word). The probe ` +
-        `is DISABLED. Set it to a deployment label such as "prod" or "next" to arm it, or leave it ` +
-        `empty to disable it deliberately.`
+        `known deployment namespace (${[...PROBE_NAMESPACES].join(
+          ', '
+        )}). The probe is DISABLED. ` +
+        `Set it to one of those to arm it, or leave it empty to disable it deliberately.`
     );
   }
   return null;
@@ -147,10 +149,13 @@ const probeCounter = registerCounterWithLabels({
     'exist to reveal. 🔴 IGNORE THE FIRST FULL WINDOW AFTER ARMING — the probe keyspace starts ' +
     'empty, so every observation is necessarily a miss until it has been running longer than the ' +
     'window it is measuring, and a hit rate read too early is biased toward zero by construction. ' +
-    '🔴 THE RESULT IS SCOPED, NOT ABSOLUTE: against a fixed-TTL, NON-COALESCING read-through cache ' +
-    'it is an UPPER bound (it simulates coalescing, which that design does not do); against a ' +
-    'SLIDING-TTL cache it is a LOWER bound, because this TTL never extends on a hit. Quote the ' +
-    'comparison you mean rather than netting the two — see the SET NX note in the source. ' +
+    '🔴 THE RESULT IS SCOPED, NOT ABSOLUTE — it differs from a real cache on TWO independent axes ' +
+    '(it coalesces concurrent duplicates; its TTL never extends on a hit), so the bound depends on ' +
+    'BOTH. vs a fixed-TTL NON-COALESCING cache: an UPPER bound. vs a sliding-TTL COALESCING cache: ' +
+    'a LOWER bound. vs a sliding-TTL NON-COALESCING cache — the ordinary design, since singleflight ' +
+    'is a feature you must build — the two effects OPPOSE and NO bound is established; treat the ' +
+    'number as an estimate. Name both axes of the design you are comparing against before quoting ' +
+    'a direction — see the SET NX note in the source. ' +
     'Armed per deployment via EXTERNAL_MODERATION_CACHE_PROBE, whose value is the key namespace; ' +
     'unarmed there are no series at all, which is what makes the arming instant readable.',
   labelNames: ['source', 'window', 'result'] as const,
@@ -247,11 +252,15 @@ async function runProbe(
         // earlier revision of this comment got that wrong: it named both biases, said they "do not
         // cancel to anything knowable", and then concluded "upper bound" anyway — a conclusion its
         // own premise withdraws. State the scope instead:
-        //   · vs a fixed-TTL, NON-COALESCING read-through cache — this OVERSTATES (upper bound).
-        //   · vs a SLIDING-TTL cache — this UNDERSTATES; that design can only score higher.
-        // The two biases also differ in reach: coalescing only touches duplicates arriving inside
-        // the ~200 ms in-flight window, while fixed-vs-sliding touches every duplicate recurring
-        // near the window edge. Do not net them; quote the comparison you mean.
+        //   · vs a fixed-TTL, NON-COALESCING cache — this OVERSTATES (upper bound).
+        //   · vs a sliding-TTL, COALESCING cache — this UNDERSTATES (lower bound).
+        //   · vs a sliding-TTL, NON-COALESCING cache — INDETERMINATE. The two effects oppose and
+        //     neither dominates, so no bound holds in either direction.
+        // ⚠️ That third line is the one an earlier revision got wrong: it said "vs a SLIDING-TTL
+        // cache — that design can only score higher", pinning only the TTL axis. A sliding-TTL
+        // cache that is not ALSO coalescing still never repays this probe's coalescing bonus, and
+        // singleflight is an extra feature you must build, so the ordinary sliding-TTL design is
+        // exactly the indeterminate case. Name BOTH axes before quoting a direction.
         //
         // The namespace segment keeps two armed deployments off each other's keyspace; see
         // `probeNamespace`.
