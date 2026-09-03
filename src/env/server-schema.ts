@@ -622,15 +622,26 @@ export const serverSchema = z
     // the result toward "caching pays" — the direction that gets a cache built that does not pay.
     //
     // Making the namespace the ARMING SWITCH is what stops that being a thing to remember: there is
-    // no way to turn the probe on without naming a keyspace for it. A separate namespace variable
-    // could be left unset while the probe ran, which is exactly how CACHE_KEY_NAMESPACE behaves in
-    // practice — measured 2026-09-03, it is ABSENT on all of civitai-dp-prod, civitai-next and
-    // civitai-next-stage, including the deployment its own doc says should set it. A fix routed
-    // through it would have been inert while looking like a fix.
+    // no way to turn the probe on without naming a keyspace for it.
     //
-    // Values are restricted to /^[a-z0-9][a-z0-9-]{0,31}$/; anything else is treated as OFF rather
-    // than sanitised, so a typo produces NO SERIES (loud, and already documented as "not armed")
-    // instead of a second silent keyspace. See src/server/integrations/moderation-cache-probe.ts.
+    // ⚠️ WHY NOT REUSE CACHE_KEY_NAMESPACE — corrected 2026-09-03, because the first version of this
+    // comment asserted a measurement that was FALSE. It claimed that variable is "ABSENT on all of
+    // civitai-dp-prod, civitai-next and civitai-next-stage". It is not: `CACHE_KEY_NAMESPACE=next`
+    // is set on civitai-next (in the deployment env, which the original check never read — it
+    // looked only at ConfigMaps and generalised one source into a claim about all of them).
+    //
+    // The real reason it cannot serve here is the opposite of "nobody sets it": it is set EXACTLY
+    // as designed, and its design is wrong for this purpose. cache-key-prefix.ts requires
+    // production to be the EMPTY prefix, so civitai-dp-prod and civitai-next-stage BOTH resolve to
+    // `''` — routing the probe through it would put production and stage in one shared probe
+    // keyspace, which is precisely the collision this namespace exists to prevent.
+    //
+    // Values are restricted to /^[a-z0-9][a-z0-9-]{0,31}$/ AND rejected if they are an on/off word
+    // (`true`/`false`/`on`/`off`/`yes`/`no`/`0`/`1`/`enabled`/`disabled`) — the charset alone would
+    // happily accept `false` as a namespace, so the most likely way to spell "turn this off" would
+    // ARM the probe. Anything rejected is treated as OFF and logged once, rather than sanitised, so
+    // a typo produces NO SERIES (already documented as "not armed") plus a line saying why, instead
+    // of a second silent keyspace. See src/server/integrations/moderation-cache-probe.ts.
     EXTERNAL_MODERATION_CACHE_PROBE: z.string().trim().optional().default(''),
     BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
     MODERATION_KNIGHT_TAGS: commaDelimitedStringArray().default([]),

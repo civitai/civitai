@@ -130,6 +130,7 @@ describe('cache probe — the flag is the arming switch', () => {
     // DO land in this window, so the flag-off leg finding none is evidence.
     installRedisFake();
     stubFetchOk();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     env.EXTERNAL_MODERATION_CACHE_PROBE = 'testns';
     await extModeration.moderatePrompt('a warmup prompt', 'generate');
@@ -142,6 +143,14 @@ describe('cache probe — the flag is the arming switch', () => {
 
     expect(await probeTotal()).toBe(2);
     expect(redisMock.sysRedis.set.mock.calls.length).toBe(redisCallsWhileOn);
+    // 🔴 SHIPPING INERT MUST ALSO MEAN SHIPPING SILENT, and without this assertion the empty-string
+    // early return is untested: delete it and the probe is STILL off (the charset pattern rejects
+    // '' anyway), so every other case here stays green — a mutant removing it SURVIVED. What it
+    // actually buys is that a DELIBERATELY unarmed deployment — which today is every deployment —
+    // does not log a misconfiguration error on every single generation.
+    expect(
+      errorSpy.mock.calls.filter((c) => String(c[0]).includes('moderation-cache-probe'))
+    ).toHaveLength(0);
   });
 
   it('POSITIVE CONTROL: the identical call with the flag ON does record', async () => {
@@ -388,6 +397,59 @@ describe('cache probe — the namespace IS the arming switch', () => {
 
     expect(await probeCount('generate', '5m', 'miss')).toBe(2);
     expect(await probeCount('generate', '5m', 'hit')).toBe(0);
+  });
+
+  it('an ON/OFF WORD never arms the probe, however the operator spells it', async () => {
+    // 🔴 THE HIGHEST-RISK VALUE, and the charset alone accepts every one of these as a perfectly
+    // good namespace. This variable was a boolean one commit ago, so `=false` is the PREVIOUS
+    // contract's spelling for "off" and the likeliest thing an operator writes. Without this guard
+    // it would ARM the probe under a namespace literally called `false` — and two deployments
+    // "disabled" that way would share the keyspace `…:false:…` and score hits on each other's
+    // prompts, which is the exact collision the namespace exists to prevent.
+    installRedisFake();
+    stubFetchOk();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    env.EXTERNAL_MODERATION_CACHE_PROBE = 'testns';
+    await extModeration.moderatePrompt('a warmup prompt', 'generate');
+    await untilProbeTotal(2);
+
+    for (const word of [
+      'true',
+      'false',
+      'on',
+      'off',
+      'yes',
+      'no',
+      '0',
+      '1',
+      'enabled',
+      'disabled',
+    ]) {
+      env.EXTERNAL_MODERATION_CACHE_PROBE = word;
+      await extModeration.moderatePrompt(`prompt for ${word}`, 'generate');
+    }
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(await probeTotal()).toBe(2);
+  });
+
+  it('logs once per distinct bad value, so a misconfiguration is findable but not a per-call flood', async () => {
+    // The previous boolean spelling failed boot loudly on garbage; a rejected namespace is
+    // otherwise completely silent, which would leave an operator staring at an absent metric with
+    // no way to tell "armed, no repeats" from "my value was rejected".
+    installRedisFake();
+    stubFetchOk();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    env.EXTERNAL_MODERATION_CACHE_PROBE = 'NOT-VALID';
+    await extModeration.moderatePrompt('one', 'generate');
+    await extModeration.moderatePrompt('two', 'generate');
+    await extModeration.moderatePrompt('three', 'generate');
+
+    const forThisValue = spy.mock.calls.filter((c) => String(c[0]).includes('NOT-VALID'));
+    expect(forThisValue).toHaveLength(1);
+    expect(String(forThisValue[0][0])).toContain('is DISABLED');
   });
 
   it('an out-of-charset namespace is treated as OFF, not sanitised', async () => {
