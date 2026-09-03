@@ -26,6 +26,16 @@ import { describe, expect, it } from 'vitest';
  * If this fails: use `parseImageQueryParams` from `~/components/Image/image.utils`,
  * which safeParses and degrades to `{}`. It takes an optional schema for the
  * `.omit(...)` variants.
+ *
+ * ⚠️ WHAT THIS GUARD CANNOT SEE, stated so nobody reads it as covering the class:
+ * a CAST. The third site in that incident was `ImageDetailProvider` reading
+ * `browserRouter.query as { postId?: number }` — no parse, no throw, no runtime
+ * behaviour whatsoever, so it appears in no grep for `.parse(` and this matcher
+ * would never have flagged it. It was found by a reviewer following the data flow,
+ * not by any pattern search. Widening this regex will not catch the next one;
+ * catching that class needs a different guard, keyed on a cast applied to a
+ * router-query value. Recorded because a guard that looks adjacent to a defect is
+ * read as covering it.
  */
 
 const SRC_DIR = path.resolve(__dirname, '../../..');
