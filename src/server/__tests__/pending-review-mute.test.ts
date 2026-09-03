@@ -89,17 +89,25 @@ const {
           return row ? { id: row.id } : null;
         }
       ),
-      findUnique: vi.fn(async ({ where }: { where: { id: number } }) => {
-        const row = store.restrictions.find((r) => r.id === where.id);
-        if (!row) return null;
-        const user = store.users.get(row.userId);
-        return {
-          id: row.id,
-          userId: row.userId,
-          status: row.status,
-          user: user ? { email: user.email, username: user.username } : null,
-        };
-      }),
+      // 🔴 Honours `select` for `type` alone, unlike every other read in this fake. The ruling-scope
+      // suite turns on the service having asked for it: a version that refuses non-generation rows but
+      // forgets `type: true` in its `select` reads `undefined` from the real Prisma client and either
+      // refuses everything or nothing. A fake that answered with the column regardless would hide that
+      // entirely — the test would pass against code that cannot work.
+      findUnique: vi.fn(
+        async ({ where, select }: { where: { id: number }; select?: Record<string, unknown> }) => {
+          const row = store.restrictions.find((r) => r.id === where.id);
+          if (!row) return null;
+          const user = store.users.get(row.userId);
+          return {
+            id: row.id,
+            userId: row.userId,
+            status: row.status,
+            ...(select?.type ? { type: row.type } : {}),
+            user: user ? { email: user.email, username: user.username } : null,
+          };
+        }
+      ),
       update: vi.fn(
         async ({ where, data }: { where: { id: number }; data: Record<string, unknown> }) => {
           const row = store.restrictions.find((r) => r.id === where.id);
@@ -184,8 +192,16 @@ import {
   applyPendingReviewMute,
   buildManualMuteTriggers,
   PENDING_REVIEW_MUTE_NOTIFICATION,
+  RULINGS_WIRED_FOR,
+  USER_RESTRICTION_TYPES,
+  unwiredRulingReason,
+  type UserRestrictionType,
 } from '~/server/services/user-restriction.service';
-import { overturnPendingReviewMute } from '~/server/services/user-restriction-resolve.service';
+import {
+  overturnPendingReviewMute,
+  resolveUserRestriction,
+} from '~/server/services/user-restriction-resolve.service';
+import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
 
 const USER_ID = 101;
 const MOD_ID = 102;
@@ -576,6 +592,190 @@ describe('pending-review mute — restriction type', () => {
     expect(result).toEqual({ muted: true, userRestrictionId: 99, deduped: true });
     expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: null });
     expect(store.restrictions).toHaveLength(1);
+  });
+});
+
+/**
+ * 🔴 The type a mute is filed under crosses an HTTP boundary and a JSON body before it reaches this
+ * service, so TypeScript's word about it is worth nothing at the seam whose entire purpose is
+ * accepting a caller-supplied value.
+ */
+describe('pending-review mute — type is validated at runtime', () => {
+  beforeEach(seed);
+
+  it.each([
+    ['a near miss', 'bot-acount'],
+    ['a plausible-looking new kind', 'spam-account'],
+    ['an empty string', ''],
+  ])('refuses %s and mutes nobody', async (_label, type) => {
+    await expect(
+      applyPendingReviewMute({
+        userId: USER_ID,
+        triggers,
+        updateSource: 'test',
+        type: type as UserRestrictionType,
+      })
+    ).rejects.toThrow(`Unknown user restriction type "${type}"`);
+
+    // The harm the throw prevents, spelled out: an out-of-vocabulary value used to MUTE the account,
+    // file a row the queue's `z.enum(...).catch(...)` can never select, and — the notification map
+    // returning `undefined` for it — tell the user nothing. A silently muted user, no reviewable case.
+    expect(store.users.get(USER_ID)).toMatchObject({ muted: false, mutedAt: null });
+    expect(store.restrictions).toHaveLength(0);
+    expect(dbWrite.$transaction).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  // The positive control. Without it the guard above could be rejecting every type, and the suite
+  // would still be green — `it.each` over the real vocabulary is what makes the refusal specific.
+  it.each(USER_RESTRICTION_TYPES)('accepts %s', async (type) => {
+    const result = await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers,
+      updateSource: 'test',
+      type,
+    });
+
+    expect(result).toMatchObject({ muted: true });
+    expect(store.restrictions).toHaveLength(1);
+    expect(store.restrictions[0].type).toBe(type);
+  });
+});
+
+/**
+ * 🔴 Finding 1 of the adversarial audit on #4609, closed one level BELOW the routes.
+ *
+ * `resolveUserRestriction` is the single write path for a verdict, and everything it does is
+ * generation-shaped: the `generation-restriction-upheld` / `-overturned` notification types, a
+ * `moderator:generationRestriction*` update source, a generation-worded email, and — on an overturn —
+ * `resetProhibitedRequestCount`, which wipes the account's real PROMPT-violation counter.
+ *
+ * Five callers reach it: the tRPC router, `/api/mod/restriction/resolve` (which is what BOTH moderator
+ * ruling surfaces post through — the audit queue AND the retool User Lookup panel), and
+ * `overturnPendingReviewMute`. Only the audit queue checked the type, so three of those five would have
+ * run the whole generation-shaped sequence against a bot-account row. The check lives here now, which
+ * is why these tests address the SERVICE rather than any one route.
+ */
+describe('resolveUserRestriction — ruling scope', () => {
+  beforeEach(seed);
+
+  const fileRestriction = (type: string, status = 'Pending') => {
+    store.restrictions.push({
+      id: 1,
+      userId: USER_ID,
+      type,
+      status,
+      triggers: [],
+      createdAt: new Date(),
+    });
+    return 1;
+  };
+
+  it.each([UserRestrictionStatus.Overturned, UserRestrictionStatus.Upheld] as const)(
+    'refuses to %s a restriction whose type has no verdict path',
+    async (status) => {
+      const id = fileRestriction('bot-account');
+
+      await expect(
+        resolveUserRestriction({ userRestrictionId: id, status, moderatorId: MOD_ID })
+      ).rejects.toThrow('Rulings are not yet available for "bot-account" restrictions');
+
+      // Nothing at all happened — checked rather than assumed, because the refusal is only worth
+      // anything if it lands BEFORE the first write.
+      expect(dbWrite.userRestriction.update).not.toHaveBeenCalled();
+      expect(store.restrictions[0].status).toBe('Pending');
+      expect(dbWrite.user.update).not.toHaveBeenCalled();
+      expect(createNotification).not.toHaveBeenCalled();
+      expect(cancelSubscription).not.toHaveBeenCalled();
+      expect(reinstateSubscription).not.toHaveBeenCalled();
+      // The one with a lasting cost: this counter is the account's real prompt-violation history, and
+      // an overturn on an unrelated case used to reset it to zero.
+      expect(resetProhibitedRequestCount).not.toHaveBeenCalled();
+    }
+  );
+
+  /**
+   * The positive control for the pair above, and it is doing more work than it looks: the fixture rows
+   * differ ONLY in `type`. Without it the refusal could be rejecting every ruling — which is exactly
+   * what happens if the service stops selecting `type` and reads `undefined`.
+   */
+  it('still overturns a generation restriction, with every side effect intact', async () => {
+    const id = fileRestriction('generation');
+
+    const result = await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Overturned,
+      moderatorId: MOD_ID,
+    });
+
+    expect(result).toEqual({ userId: USER_ID });
+    expect(store.restrictions[0]).toMatchObject({ status: 'Overturned', resolvedBy: MOD_ID });
+    expect(reinstateSubscription).toHaveBeenCalledWith({ userId: USER_ID });
+    expect(resetProhibitedRequestCount).toHaveBeenCalledWith(USER_ID);
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'generation-restriction-overturned' })
+    );
+  });
+
+  it('still upholds a generation restriction, with every side effect intact', async () => {
+    const id = fileRestriction('generation');
+
+    await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Upheld,
+      moderatorId: MOD_ID,
+    });
+
+    expect(store.restrictions[0]).toMatchObject({ status: 'Upheld' });
+    expect(store.users.get(USER_ID)?.mutedAt).toBeInstanceOf(Date);
+    expect(cancelSubscription).toHaveBeenCalledWith({ userId: USER_ID, atPeriodEnd: true });
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'generation-restriction-upheld' })
+    );
+  });
+
+  // The refusal precedes the already-resolved check, so a row this path cannot rule on reports the
+  // reason it cannot rather than an argument about its status.
+  it('refuses an unwired type before it argues about the status', async () => {
+    const id = fileRestriction('bot-account', 'Upheld');
+
+    await expect(
+      resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      })
+    ).rejects.toThrow('Rulings are not yet available for "bot-account" restrictions');
+  });
+
+  /**
+   * An INVARIANT GUARD, not regression coverage — it passes against pre-change code too. Recorded
+   * because it is the reason the service-facing overturn was never the reachable half of this hazard,
+   * and a later "simplification" that drops the predicate would make it one.
+   */
+  it('overturnPendingReviewMute cannot reach a non-generation row at all', async () => {
+    store.users.set(USER_ID, makeUser(USER_ID, { muted: true }));
+    fileRestriction('bot-account');
+
+    const result = await overturnPendingReviewMute({ userId: USER_ID, moderatorId: MOD_ID });
+
+    expect(result).toEqual({ unmuted: false, skipped: 'no-pending-restriction' });
+    expect(store.restrictions[0].status).toBe('Pending');
+  });
+
+  describe('the wired-for list itself', () => {
+    it('is a subset of the types that can be filed', () => {
+      // A verdict path for a type nothing can file is dead code; the reverse — a filed type with no
+      // verdict path — is the deliberate state this whole guard exists for.
+      for (const type of RULINGS_WIRED_FOR) expect(USER_RESTRICTION_TYPES).toContain(type);
+    });
+
+    it('names generation and refuses everything else', () => {
+      expect([...RULINGS_WIRED_FOR]).toEqual(['generation']);
+      expect(unwiredRulingReason('generation')).toBeNull();
+      for (const type of USER_RESTRICTION_TYPES.filter((t) => !RULINGS_WIRED_FOR.includes(t)))
+        expect(unwiredRulingReason(type)).toContain(`"${type}"`);
+    });
   });
 });
 

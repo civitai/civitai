@@ -10,13 +10,22 @@ import { updateUserById } from '~/server/services/user.service';
 import { clearedMuteFields } from '~/server/services/mute-provenance';
 import { dbRead } from '~/server/db/client';
 import type { UserMeta } from '~/server/schema/user.schema';
-import { PROTECTED_USER_IDS } from '~/server/services/user-restriction.service';
+import {
+  PROTECTED_USER_IDS,
+  unwiredRulingReason,
+} from '~/server/services/user-restriction.service';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
 
 /**
  * Uphold or overturn a generation restriction. The single write path for a
  * verdict — the moderator router and the service-facing overturn endpoint both
  * go through here so the membership and violation-count side effects can't drift.
+ *
+ * 🔴 Being the single write path is also why the type refusal lives here rather than at the routes.
+ * Everything below this line is generation-shaped — the notification types, the update source, the
+ * email wording, and `resetProhibitedRequestCount`, which wipes the account's real prompt-violation
+ * counter. Five callers reach it (the tRPC router, `/api/mod/restriction/resolve`, and
+ * `overturnPendingReviewMute`), and only one of them used to check. See `unwiredRulingReason`.
  */
 export async function resolveUserRestriction({
   userRestrictionId,
@@ -35,11 +44,18 @@ export async function resolveUserRestriction({
       id: true,
       userId: true,
       status: true,
+      // Read back rather than assumed: callers address the row by primary key, so none of them can
+      // tell what type it is, and the refusal below is the only thing that looks.
+      type: true,
       user: { select: { email: true, username: true } },
     },
   });
 
   if (!restriction) throw new Error('Restriction record not found');
+  // Checked BEFORE the already-resolved test and before any write: a row this path cannot rule on is
+  // not a row whose status is worth arguing about.
+  const unwired = unwiredRulingReason(restriction.type);
+  if (unwired) throw new Error(unwired);
   if (restriction.status !== UserRestrictionStatus.Pending)
     throw new Error('Restriction has already been resolved');
 

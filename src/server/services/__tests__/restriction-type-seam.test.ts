@@ -3,7 +3,9 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   PENDING_REVIEW_MUTE_NOTIFICATION,
+  RULINGS_WIRED_FOR,
   USER_RESTRICTION_TYPES,
+  unwiredRulingReason,
 } from '~/server/services/user-restriction.service';
 
 /**
@@ -23,24 +25,59 @@ import {
 const repoRoot = path.resolve(__dirname, '../../../..');
 
 /**
- * Reads the `RESTRICTION_TYPES` array literal out of the moderator app's source.
+ * The moderator app's vocabulary file, read as TEXT rather than imported: it is a separate SvelteKit
+ * project with its own `$lib` aliasing and its own Vitest project, so the main app's suite cannot
+ * resolve its modules.
  *
- * Read as TEXT rather than imported: the moderator app is a separate SvelteKit project with its own
- * `$lib` aliasing and its own Vitest project, so the main app's suite cannot resolve its modules. The
- * parse is deliberately narrow — it takes the array literal and fails loudly if the declaration is not
- * where it says it is, so a moved or renamed constant reports as a broken guard rather than silently
- * matching nothing and passing.
+ * Every parse below is deliberately narrow — it takes one literal and fails loudly if the declaration
+ * is not where it says it is, so a moved or renamed constant reports as a broken guard rather than
+ * silently matching nothing and passing.
  */
-function moderatorRestrictionTypes(): string[] {
-  const file = path.join(repoRoot, 'apps/moderator/src/lib/restriction-types.ts');
-  const source = readFileSync(file, 'utf-8');
-  const match = /export const RESTRICTION_TYPES = \[([^\]]*)\] as const;/.exec(source);
+const MODERATOR_TYPES_FILE = path.join(repoRoot, 'apps/moderator/src/lib/restriction-types.ts');
+
+function moderatorSource(): string {
+  return readFileSync(MODERATOR_TYPES_FILE, 'utf-8');
+}
+
+/** The single-quoted strings inside the array literal a declaration assigns. */
+function moderatorArray(declaration: RegExp, name: string): string[] {
+  const match = declaration.exec(moderatorSource());
   if (!match) {
     throw new Error(
-      `Could not find a \`RESTRICTION_TYPES\` array literal in ${file}. If it moved, update this guard — do not delete it.`
+      `Could not find a \`${name}\` array literal in ${MODERATOR_TYPES_FILE}. If it moved, update this guard — do not delete it.`
     );
   }
   return [...match[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+}
+
+/** The moderator app's copy of the types that can be FILED and reviewed. */
+function moderatorRestrictionTypes(): string[] {
+  return moderatorArray(
+    /export const RESTRICTION_TYPES = \[([^\]]*)\] as const;/,
+    'RESTRICTION_TYPES'
+  );
+}
+
+/** The moderator app's copy of the types a VERDICT may be handed to. */
+function moderatorRulingsWiredFor(): string[] {
+  return moderatorArray(/export const RULINGS_WIRED_FOR[^=]*=\s*\[([^\]]*)\]/, 'RULINGS_WIRED_FOR');
+}
+
+/**
+ * The moderator app's refusal message, with `${type}` substituted — read out of its template literal.
+ *
+ * The list is the rule; this is the sentence a moderator reads. They are pinned separately because
+ * they fail differently: a drifted LIST is a security hole, a drifted SENTENCE is two surfaces
+ * explaining the same refusal in two ways.
+ */
+function moderatorUnwiredRulingMessage(type: string): string {
+  const match = /return \(RULINGS_WIRED_FOR[\s\S]*?: `([^`]+)`;/.exec(moderatorSource());
+  if (!match) {
+    throw new Error(
+      `Could not find the \`unwiredRulingReason\` message template in ${MODERATOR_TYPES_FILE}. If it moved, update this guard — do not delete it.`
+    );
+  }
+  return match[1].replaceAll('${type}', type);
 }
 
 describe('restriction type — main app ⇄ moderator app', () => {
@@ -61,6 +98,45 @@ describe('restriction type — main app ⇄ moderator app', () => {
    */
   it('files exactly the types the moderator queue can show', () => {
     expect([...moderatorRestrictionTypes()].sort()).toEqual([...USER_RESTRICTION_TYPES].sort());
+  });
+});
+
+/**
+ * 🔴 The third thing that has to agree, added after the audit on #4609: WHICH types a verdict may be
+ * handed to. That is enforced in the main app, inside `resolveUserRestriction`, because five callers
+ * reach it and a guard replicated per route is wrong at all but one of them. The moderator app holds a
+ * copy anyway, and needs to — a list read forward is what lets a form that cannot possibly succeed be
+ * DISABLED rather than merely rejected, and what lets the audit queue refuse a ban BEFORE it bans
+ * (that action bans and then rules, so a late refusal strands a Pending row on a banned account).
+ *
+ * Two separate builds with no runtime import path between them, so the copy is pinned here rather than
+ * left to drift. A moderator app that thought `bot-account` was rulable would render live Uphold and
+ * Ban buttons whose only possible outcome is a rejected call.
+ */
+describe('restriction type — ruling scope ⇄ moderator app', () => {
+  it('reads a non-empty wired-for list out of the moderator app', () => {
+    // Positive control on this file's second parser, for the same reason the first one has one: a
+    // regex that silently matched nothing would compare two empty things and pass.
+    expect(moderatorRulingsWiredFor().length).toBeGreaterThan(0);
+    expect(moderatorRulingsWiredFor()).toContain('generation');
+  });
+
+  it('agrees with the main app about which types a verdict can be handed to', () => {
+    expect([...moderatorRulingsWiredFor()].sort()).toEqual([...RULINGS_WIRED_FOR].sort());
+  });
+
+  it('refuses the same types on both sides, word for word', () => {
+    // Every type that can be FILED, so a type added to the vocabulary without a verdict path is
+    // covered here the day it is added rather than the day someone remembers this file.
+    for (const type of USER_RESTRICTION_TYPES) {
+      const main = unwiredRulingReason(type);
+      const moderator = moderatorRulingsWiredFor().includes(type)
+        ? null
+        : moderatorUnwiredRulingMessage(type);
+      expect(moderator).toEqual(main);
+    }
+    // The whole comparison above is vacuous if no type is currently refused — assert one is.
+    expect(USER_RESTRICTION_TYPES.some((t) => unwiredRulingReason(t) !== null)).toBe(true);
   });
 });
 

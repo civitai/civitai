@@ -56,6 +56,38 @@ export const PENDING_REVIEW_MUTE_NOTIFICATION: Record<UserRestrictionType, strin
   'bot-account': null,
 };
 
+/**
+ * The restriction types a moderator's verdict can actually be applied to.
+ *
+ * 🔴 Deliberately NARROWER than `USER_RESTRICTION_TYPES`: a type can be *filed and reviewed* long
+ * before anyone builds a verdict path for it. `resolveUserRestriction` is still generation-shaped —
+ * it hardcodes the `generation-restriction-upheld` / `-overturned` notification types, a
+ * `moderator:generationRestriction*` update source and a generation-worded email, and on an overturn
+ * it calls `resetProhibitedRequestCount`, which wipes the account's *prompt*-violation counter. Run
+ * that against a bot-account row and the user is told their generation access was restored over
+ * something that has nothing to do with generation, and a real counter is cleared with it.
+ *
+ * Adding a type here means parameterising that verdict path first.
+ */
+export const RULINGS_WIRED_FOR: readonly UserRestrictionType[] = ['generation'];
+
+/**
+ * Why a verdict may not be handed to a row of this type, or `null` when it may.
+ *
+ * 🔴 Lives HERE, one level below every ruling surface, on purpose. There are five entry points into
+ * `resolveUserRestriction` — the tRPC router, `/api/mod/restriction/resolve` (which is what BOTH
+ * moderator-app ruling surfaces post through: the audit queue and the retool User Lookup panel), and
+ * `overturnPendingReviewMute` — and a guard replicated per route is a predicate open-coded at N sites,
+ * wrong at N−1 of them. The moderator app cannot import this module (separate build, separate
+ * project), so its copy of the list is pinned to this one by
+ * `src/server/services/__tests__/restriction-type-seam.test.ts` rather than left to drift.
+ */
+export function unwiredRulingReason(type: string): string | null {
+  return (RULINGS_WIRED_FOR as readonly string[]).includes(type)
+    ? null
+    : `Rulings are not yet available for "${type}" restrictions — the verdict path still sends generation-specific notices. This restriction was NOT resolved.`;
+}
+
 export type PendingReviewMuteResult =
   | { muted: true; userRestrictionId: number; deduped: boolean }
   | { muted: false; skipped: 'protected' | 'moderator' | 'banned' | 'deleted' };
@@ -92,6 +124,21 @@ export async function applyPendingReviewMute({
   updateSource: string;
   type?: UserRestrictionType;
 }): Promise<PendingReviewMuteResult> {
+  // 🔴 Runtime, not just TypeScript. This is the one seam whose entire purpose is accepting a
+  // caller-supplied type, and the types reaching it cross an HTTP boundary and a JSON body, where the
+  // compiler's word is worth nothing. An out-of-vocabulary value is not a harmless typo: it MUTES the
+  // account, files a row the queue's `z.enum(RESTRICTION_TYPES).catch(...)` can never select, and — via
+  // `PENDING_REVIEW_MUTE_NOTIFICATION[type]` coming back `undefined` — tells the user nothing. The
+  // result is a silently muted account with no reviewable case anywhere.
+  //
+  // A throw rather than a `skipped` result: the `skipped` union describes facts about the USER that a
+  // caller is expected to handle, and this is a defect in the CALLER. Thrown before any write, so a
+  // rejected call mutes nobody.
+  if (!(USER_RESTRICTION_TYPES as readonly string[]).includes(type))
+    throw new Error(
+      `Unknown user restriction type "${type}". Known types: ${USER_RESTRICTION_TYPES.join(', ')}.`
+    );
+
   if (PROTECTED_USER_IDS.has(userId)) return { muted: false, skipped: 'protected' };
 
   // Primary, not the replica: this is a security gate, and replica lag would let
