@@ -15,7 +15,6 @@ const mocks = vi.hoisted(() => ({
   tags: [] as { id: number; name: string; nsfwLevel: number }[],
   hiddenTagIds: [] as number[],
   loadingPreferences: false,
-  maxNsfwLevel: 1,
   tagsLoading: false,
   getAll: vi.fn(),
 }));
@@ -46,12 +45,18 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 // client. `hiddenTagIds` drives it so the bar's use of it is observable rather than
 // assumed — a bar that ignored the hook would keep rendering a category the viewer has
 // personally hidden.
+//
+// ⚠️ It proves the WIRING, not the filtering rule: the real hook drops hidden tags,
+// system-hidden tags and anything above PG13 that is not a moderated tag. This filter is
+// not that rule and must not be read as pinning it.
+//
+// One state it can produce that production cannot: the real hook returns `items: []`
+// ALONGSIDE `loadingPreferences: true`, never a populated list mid-load. Tests that set
+// `loadingPreferences` should empty `tags` too unless they mean to exercise that.
 vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', async (importOriginal) => ({
   ...(await importOriginal<typeof HiddenPreferences>()),
   useApplyHiddenPreferences: ({ data }: { data?: { id: number; nsfwLevel?: number }[] }) => ({
-    items: (data ?? []).filter(
-      (x) => !mocks.hiddenTagIds.includes(x.id) && (x.nsfwLevel ?? 1) <= mocks.maxNsfwLevel
-    ),
+    items: (data ?? []).filter((x) => !mocks.hiddenTagIds.includes(x.id)),
     loadingPreferences: mocks.loadingPreferences,
   }),
 }));
@@ -93,11 +98,14 @@ function clickButton(container: HTMLElement, label: string) {
 }
 
 function activeLabels(container: HTMLElement) {
-  // Active chips are `color="blue"`, inactive ones grey. Mantine writes the colour onto
-  // the element as a `--button-*` CSS variable rather than a class, so read that.
-  return Array.from(container.querySelectorAll('button'))
-    .filter((b) => (b.getAttribute('style') ?? '').includes('blue'))
-    .map((b) => b.textContent?.trim());
+  // `data-active` is written by `TagChipRow` from the `active` prop. The earlier version
+  // of this helper sniffed Mantine's `--button-bg` for the substring `blue`, which is a
+  // theme token: rename the active colour, or have Mantine emit a hex, and every
+  // `activeLabels()` call returns [] while three assertions in this file go quietly
+  // vacuous. Selection is not a colour.
+  return Array.from(container.querySelectorAll('button[data-active]')).map((b) =>
+    b.textContent?.trim()
+  );
 }
 
 function reservedRows(container: HTMLElement) {
@@ -118,7 +126,6 @@ describe('ArticleCategories', () => {
     mocks.pathname = '/articles';
     mocks.query = {};
     mocks.hiddenTagIds = [];
-    mocks.maxNsfwLevel = 1;
     mocks.loadingPreferences = false;
     mocks.tagsLoading = false;
     // Names and ids as they are in production, in the order the server returns them
@@ -144,7 +151,7 @@ describe('ArticleCategories', () => {
     render();
     expect(mocks.getAll).toHaveBeenCalledTimes(1);
     expect(mocks.getAll).toHaveBeenCalledWith(
-      expect.objectContaining({ entityType: [TagTarget.Article], categories: true })
+      expect.objectContaining({ entityType: [TagTarget.Article], categories: true, limit: 100 })
     );
   });
 
@@ -233,6 +240,47 @@ describe('ArticleCategories', () => {
     expect(reservedRows(container)).toHaveLength(1);
   });
 
+  // 🔴 The other half of the pair below, and the one that was missing: with a `?tags=`
+  // deep link on a COLD load, the clear control must not appear and then be swapped for
+  // the chip row a moment later. Without this test, `chipsGone` could be deleted whole —
+  // `placeholder={<ActiveTagFilter tagIds={tagIds} />}` unconditionally — and all 13
+  // other tests stayed green, because the only test that set `tagsLoading` had no
+  // `?tags=`, so `ActiveTagFilter` rendered null either way. Verified by running that
+  // mutation: 13 passed.
+  it('does not offer the clear control while the categories are still loading', () => {
+    mocks.tagsLoading = true;
+    mocks.tags = [];
+    mocks.query = { tags: ['121951'] };
+    const container = render();
+
+    expect(buttonLabels(container)).toEqual([]);
+    expect(reservedRows(container)).toHaveLength(1);
+  });
+
+  // `useCategoryTags` folds the hidden-preferences fetch into its `isLoading`, and the
+  // component leans on that: a category this viewer has hidden must not flash as a chip
+  // while that fetch is in flight. Nothing else in the repo reddens if the
+  // `|| loadingPreferences` is dropped from the hook.
+  //
+  // 🔴 The `?tags=` is what gives this test teeth, and it is not decoration. The real hook
+  // returns `items: []` whenever hidden preferences are loading, so `!categories.length`
+  // already holds the chips back on its own — with no `?tags=` set, dropping
+  // `|| loadingPreferences` from `useCategoryTags` changes NOTHING observable and this
+  // test passes over the mutation. Measured: without the query, 15 passed against that
+  // mutant. What the term actually buys is keeping `chipsGone` false: settled-empty is
+  // how the clear control gets on screen, and mid-load is not settled.
+  it('does not flash the clear control while hidden preferences are still loading', () => {
+    mocks.loadingPreferences = true;
+    // Empty, because that is what the real hook returns mid-load — see the note on the
+    // stand-in above.
+    mocks.tags = [];
+    mocks.query = { tags: ['121951'] };
+    const container = render();
+
+    expect(buttonLabels(container)).toEqual([]);
+    expect(reservedRows(container)).toHaveLength(1);
+  });
+
   // Settled and empty — a failed category fetch. Permanent, unlike the state above, so
   // the escape hatch has to come back or a `?tags=` deep link is a dead end forever.
   it('falls back to the clear control when the category list comes back empty', () => {
@@ -286,7 +334,7 @@ describe('the articles feed mounts the category bar', () => {
     const mounted = code
       .split('\n')
       .map((line) => line.trim())
-      .filter((line) => line.includes('<ArticleCategories') && !line.startsWith('//'));
+      .filter((line) => /<ArticleCategories[\s/>]/.test(line) && !line.startsWith('//'));
 
     expect(source).toContain("from '~/components/Article/Infinite/ArticleCategories'");
     expect(mounted).toHaveLength(1);
