@@ -1,3 +1,4 @@
+import { error } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { orchestratorToken } from './orchestrator-token';
 
@@ -13,4 +14,15 @@ export async function resolveOrchestratorToken(locals: App.Locals): Promise<stri
     console.warn('[training-studio] orchestratorToken failed', err);
     return null;
   }
+}
+
+/** Resolve the token or throw a 503 with the endpoint's own message. For the API routes that can't
+ *  degrade — they need to actually call the orchestrator — so it narrows the result to a non-null token. */
+export async function requireToken(
+  locals: App.Locals,
+  unavailableMessage: string
+): Promise<string> {
+  const token = await resolveOrchestratorToken(locals);
+  if (token == null) error(503, unavailableMessage);
+  return token;
 }

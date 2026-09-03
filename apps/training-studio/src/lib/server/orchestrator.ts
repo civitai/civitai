@@ -20,6 +20,12 @@ import {
 /** Days of history the reconnect list pulls — matches the main app's 30-day workflow retention. */
 const RETENTION_DAYS = 30;
 
+/** Flux.2 engines train through the `imageResourceTraining` step; everything else uses ai-toolkit
+ *  `training`. The whatif quote and the real submit MUST agree on this branch, so it lives in one place. */
+export function isFlux2(engine?: string): boolean {
+  return engine === 'flux2-dev' || engine === 'flux2-dev-edit';
+}
+
 export function orchestratorClient(token: string) {
   return createCivitaiClient({
     baseUrl: env.ORCHESTRATOR_ENDPOINT,
@@ -80,7 +86,7 @@ export async function trainingWhatIf(
   const count = input.imageCount ?? WHATIF_IMAGE_COUNT;
   // The SDK type marks server-computed fields (defaultSteps, usesStepPricing, …) as required outputs we
   // must not send; cast past them, as the main app's training step builders do.
-  const step = (input.engine === 'flux2-dev' || input.engine === 'flux2-dev-edit'
+  const step = (isFlux2(input.engine)
     ? {
         $type: 'imageResourceTraining',
         priority: 'normal',

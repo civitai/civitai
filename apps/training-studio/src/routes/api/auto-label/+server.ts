@@ -1,14 +1,16 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { resolveOrchestratorToken } from '$lib/server/token';
+import { requireToken } from '$lib/server/token';
 import { submitAutoLabel, type AutoLabelItem, type AutoLabelMode } from '$lib/server/autolabel';
 import type { Media } from '$lib/data/trainingModels';
 
 // Submit one free auto-label workflow for a batch of uploaded blobs; returns its id for the client to
 // poll via GET /api/auto-label/[id].
 export const POST: RequestHandler = async ({ locals, request }) => {
-  const token = await resolveOrchestratorToken(locals);
-  if (token == null) error(503, 'Auto-labeling is unavailable right now — no orchestrator token.');
+  const token = await requireToken(
+    locals,
+    'Auto-labeling is unavailable right now — no orchestrator token.'
+  );
 
   const body = (await request.json().catch(() => null)) as {
     mode?: AutoLabelMode;

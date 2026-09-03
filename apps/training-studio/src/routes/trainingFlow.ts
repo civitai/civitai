@@ -4,9 +4,11 @@ import {
   MODEL_CARDS,
   cardByType,
   cardsForMedia,
+  type LabelType,
   type Media,
   type ModelCard,
 } from '$lib/data/trainingModels';
+import type { TrainingRunPayload } from '$lib/train';
 
 export const CUSTOM_VERSION_KEY = 'custom';
 export const MAX_RUNS = 5;
@@ -141,7 +143,7 @@ export interface RunParams {
   batchSize: string;
 }
 
-/** A run + its params, handed to the Results step when training starts. */
+/** A run + its chosen params, produced by the Review step's Start and fed to `buildTrainingRuns`. */
 export interface LaunchedRun {
   run: Run;
   params: RunParams;
@@ -155,4 +157,68 @@ export function runCost(fromPrice: number | undefined, run: Run, steps: number):
   if (fromPrice == null) return null;
   const base = Math.max(fromPrice, Math.round(fromPrice * (steps / 2000)));
   return base + (isCustom(run) ? CUSTOM_MODEL_SURCHARGE : 0);
+}
+
+/** The per-image label sent to the orchestrator: joined tags for tag models, the caption for caption
+ *  models. The trigger word is applied server-side (triggerWord), so it isn't included here. */
+export function labelString(img: Img, mode: LabelType): string {
+  return mode === 'tag' ? img.tags.join(', ') : img.caption.trim();
+}
+
+// Parse a Review-step numeric field, falling back to its default when blank/garbage: Number('') is NaN,
+// which JSON-serializes to null, and the orchestrator rejects a null `lr`. Fallbacks match the seeds.
+function num(value: string, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Assemble the Start payload: one run per training run, each carrying the shared uploaded-blob dataset
+ *  (labels resolved by the dataset's single label type), the chosen params, prompts, trigger, and the
+ *  metadata the reconnect list/detail read back. Params arrive as strings from the Review inputs. */
+export function buildTrainingRuns(
+  selection: Selection,
+  images: Img[],
+  trigger: string,
+  launched: LaunchedRun[],
+  prompts: string[]
+): TrainingRunPayload[] {
+  const mode = runCard(selection.runs[0]!).label;
+  const items = images
+    .filter((i) => i.status === 'uploaded' && !!i.blobId)
+    .map((i) => ({ air: i.blobId!, caption: labelString(i, mode) }));
+  const t = trigger.trim();
+
+  return launched.map(({ run, params }) => {
+    const card = runCard(run);
+    const version = card.versions.find((v) => v.key === run.versionKey) ?? card.versions[0]!;
+    return {
+      ecosystem: version.ecosystem,
+      modelVariant: version.modelVariant,
+      version: version.version,
+      engine: version.engine,
+      model: version.air,
+      steps: params.steps,
+      epochs: params.epochs,
+      unetLr: num(params.unetLr, 0.0004),
+      textEncoderLr: num(params.textEncoderLr, 0.00005),
+      networkDim: num(params.networkDim, 32),
+      networkAlpha: num(params.networkAlpha, 16),
+      resolution: num(params.resolution, 1024),
+      batchSize: num(params.batchSize, 2),
+      lrScheduler: params.lrScheduler,
+      optimizer: params.optimizer,
+      trigger: t,
+      items,
+      prompts,
+      meta: {
+        name: t || selection.loraType,
+        media: selection.media,
+        loraType: selection.loraType,
+        cardType: run.cardType,
+        versionKey: run.versionKey,
+        imageCount: items.length,
+        trigger: t,
+      },
+    };
+  });
 }

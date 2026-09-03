@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
   import DataStep from './DataStep.svelte';
   import ReviewStep from './ReviewStep.svelte';
-  import ResultsStep from './ResultsStep.svelte';
-  import { isTrainable, type Img, type LaunchedRun, type Selection } from './trainingFlow';
+  import { buildTrainingRuns, isTrainable, type Img, type LaunchedRun, type Selection } from './trainingFlow';
+  import { postTraining } from '$lib/train';
   import type { FromPrices } from '$lib/data/trainingModels';
 
   let { prices, onExit }: { prices: FromPrices; onExit: () => void } = $props();
@@ -13,7 +14,6 @@
     { n: 1, label: 'Select' },
     { n: 2, label: 'Data & labels' },
     { n: 3, label: 'Review & start' },
-    { n: 4, label: 'Results' },
   ] as const;
 
   let step = $state(1);
@@ -21,7 +21,6 @@
   // Dataset + trigger are owned here so they survive Back/Continue between steps.
   let images = $state<Img[]>([]);
   let trigger = $state('');
-  let launched = $state<LaunchedRun[] | null>(null);
   // Only successfully uploaded + scanned images train — blocked / in-flight tiles don't count.
   const trainableCount = $derived(images.filter(isTrainable).length);
 
@@ -34,6 +33,18 @@
 
   function jump(n: number) {
     if (n <= step) step = n;
+  }
+
+  // The one write in the whole flow: assemble each run and submit real workflow(s), then land on the run
+  // to watch it live — a single run opens its detail, a sweep goes to the list. Errors propagate to
+  // ReviewStep, which shows them on the Start button.
+  async function start(launched: LaunchedRun[], prompts: string[]) {
+    if (!selection) return;
+    const runs = buildTrainingRuns(selection, images, trigger, launched, prompts);
+    const ids = await postTraining(runs);
+    // A single run opens its detail; a sweep (or a partial submit) goes to the list, where every run that
+    // landed appears — so a partial failure never re-submits the successful, already-charged runs.
+    await goto(runs.length === 1 && ids[0] ? `/${ids[0]}` : '/', { invalidateAll: true });
   }
 </script>
 
@@ -82,17 +93,6 @@
   {:else if step === 2 && selection}
     <DataStep {selection} bind:images bind:trigger onContinue={() => (step = 3)} onBack={() => (step = 1)} />
   {:else if step === 3 && selection}
-    <ReviewStep
-      {selection}
-      {prices}
-      imageCount={trainableCount}
-      onStart={(l) => {
-        launched = l;
-        step = 4;
-      }}
-      onBack={() => (step = 2)}
-    />
-  {:else if step === 4 && launched}
-    <ResultsStep {launched} {trigger} onExit={onExit} />
+    <ReviewStep {selection} {prices} imageCount={trainableCount} onStart={start} onBack={() => (step = 2)} />
   {/if}
 </section>

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { browser } from '$app/environment';
+  import { invalidate } from '$app/navigation';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
@@ -9,6 +11,16 @@
 
   let { data }: { data: PageData } = $props();
   const d = $derived(data.detail);
+
+  // Live updates while training: re-run the load every few seconds so new epochs/samples stream in. The
+  // one-shot timeout re-arms via this effect after each refetch and stops on its own once the run reaches
+  // a terminal state (the guard fails, so no new timeout is set).
+  const POLL_MS = 5000;
+  $effect(() => {
+    if (!browser || d.state !== 'training') return;
+    const timer = setTimeout(() => invalidate('app:training-detail'), POLL_MS);
+    return () => clearTimeout(timer);
+  });
 
   const createdLabel = $derived(
     new Date(d.createdAt).toLocaleDateString(undefined, {

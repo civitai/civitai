@@ -25,13 +25,17 @@
     selection: Selection;
     prices: FromPrices;
     imageCount: number;
-    onStart: (launched: LaunchedRun[]) => void;
+    onStart: (launched: LaunchedRun[], prompts: string[]) => Promise<void>;
     onBack: () => void;
   } = $props();
 
+  let starting = $state(false);
+  let startError = $state('');
+
   const SAMPLE_RATE = 30;
   const OPTIMIZERS = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'];
-  const LR_SCHEDULERS = ['constant', 'cosine', 'cosine_with_restarts', 'linear'];
+  // ai-toolkit's supported set — no `cosine_with_restarts` (the orchestrator rejects it).
+  const LR_SCHEDULERS = ['cosine', 'constant', 'constant_with_warmup', 'linear'];
 
   const presetTypes = $derived(typesForMedia(selection.media));
   const seenFor = (id: string) => loraTypeById(id).seen;
@@ -110,8 +114,20 @@
   function removePrompt(i: number) {
     if (prompts.length > 1) prompts = prompts.filter((_, k) => k !== i);
   }
-  function start() {
-    onStart(selection.runs.map((run, i) => ({ run, params: params[i]! })));
+  async function start() {
+    if (starting) return;
+    starting = true;
+    startError = '';
+    try {
+      await onStart(
+        selection.runs.map((run, i) => ({ run, params: params[i]! })),
+        prompts.map((p) => p.text)
+      );
+    } catch (e) {
+      startError = e instanceof Error ? e.message : 'Could not start training';
+    } finally {
+      starting = false;
+    }
   }
 
   const multi = $derived(selection.runs.length > 1);
@@ -293,9 +309,16 @@
     <div class="mt-1 text-right font-mono text-[11px] text-dark-2">
       ~{etaMin} min{multi ? ' · parallel' : ''} · {imageCount} images
     </div>
-    <Button class="mt-4 w-full" onclick={start}>
-      ⚡ {multi ? `Start ${selection.runs.length} runs` : 'Start training'}
+    <Button class="mt-4 w-full" onclick={start} disabled={starting}>
+      {#if starting}
+        ⚡ Starting…
+      {:else}
+        ⚡ {multi ? `Start ${selection.runs.length} runs` : 'Start training'}
+      {/if}
     </Button>
+    {#if startError}
+      <p class="mt-2 text-center font-mono text-[11px] text-red-400">{startError}</p>
+    {/if}
     <p class="mt-3 text-center font-mono text-[11px] text-dark-2">
       Refunded automatically if training fails
     </p>
