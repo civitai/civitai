@@ -1,3 +1,6 @@
+// 🔴 THIS FILE ASSERTS PIXELS, SO IT LOADS THE REAL CASCADE — see the header note
+// "WHY THIS FILE LOADS THE STYLESHEET" below before removing this line.
+import '@mantine/core/styles.css';
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -18,7 +21,8 @@ import type * as TrpcMod from '~/utils/trpc';
  * that simply OMITS `maxHeight` is bounded only at 8000px. A block
  * self-reporting 3000px therefore got a 3000px-tall iframe inside a ~640px
  * phone viewport — the slot swallowed the page. Layer 4 bounds the block's
- * stated height to `Math.max(minHeight, viewport − chrome)`; the block scrolls
+ * stated height to `Math.max(minHeight, viewport − overhead)`, where the
+ * overhead is the host chrome plus the frame's own borders; the block scrolls
  * internally instead, which is the intended outcome.
  *
  * 🔴 WHAT LAYER 4 DOES NOT BOUND, SO NO ONE READS THESE CASES AS WIDER THAN THEY
@@ -29,18 +33,47 @@ import type * as TrpcMod from '~/utils/trpc';
  * up to 4000, at which one schema-legal field reproduces this defect in full —
  * measured, a 4000px slot on a 640px screen with the clamp present. Even at
  * modest values it bites: over the complete approved population (11 of 11) the
- * floors are 400 x1 / 600 x5 / 640 x3 / 700 x2, so at a 640px viewport 10 of 11
- * are bound by their own floor and overflow by 58-158px. Capping the floor is a
- * manifest-CONTRACT change with byte-mirrors outside this repo and is tracked
- * separately; it would not close that residue anyway. Every case below fixes a
- * modest `minHeight` and varies what the BLOCK states, which is the surface
- * layer 4 actually governs.
+ * floors are 400 x1 / 600 x5 / 640 x3 / 700 x2, and at a 640px viewport the
+ * budget is 640 - 33 = 607, so the 640-tier (x3) and the 700-tier (x2) are bound
+ * by their OWN floor and overflow by 33px and 93px — 5 of 11. The 400- and
+ * 600-tiers fit. Capping the floor is a manifest-CONTRACT change with
+ * byte-mirrors outside this repo and is tracked separately; it would not close
+ * that residue anyway. Every case below fixes a modest `minHeight` and varies
+ * what the BLOCK states, which is the surface layer 4 actually governs.
  *
  * 🔴 ASSERT THE FRAME, NOT THE IFRAME. `framed()` renders AppBlockChrome above
  * the iframe inside one bordered box, so a viewport-sized IFRAME is a
- * `viewport + chrome` WIDGET. Measured at 390x640 before the fix: iframe 640,
- * frame 738, chrome 98 — an iframe-only assertion passes that straight through,
- * which is exactly how the first version of this suite did.
+ * `viewport + chrome + borders` WIDGET. Measured at 390x640 with the stylesheet
+ * loaded: chrome 31, frame borders 1px each, so the overhead is 33 and a
+ * pre-fix 3000px report gives a 3033px widget. An iframe-only assertion passes
+ * that straight through, which is exactly how the first version of this suite
+ * did.
+ *
+ * 🔴 WHY THIS FILE LOADS THE STYLESHEET, AND WHY THAT IS NOT A CONTRADICTION OF
+ * THE SIBLING'S RULE. `AppBlockChromeResponsive.browser.test.tsx` says its
+ * siblings MUST NOT import `@mantine/core/styles.css` — and that rule is scoped
+ * to suites asserting ATTRIBUTES AND ARIA, which is what the shared scaffold is
+ * built for. This suite asserts PIXELS, so it is the same exception that file
+ * takes for itself, for the same stated reason: "without it each computes to
+ * something meaningless while the assertions still pass". Browser mode runs each
+ * file in its own iframe, so the import cannot leak sideways.
+ *
+ * 🔴 IT IS NOT COSMETIC — MEASURED. Without the stylesheet this suite reported a
+ * chrome overhead of 98 and a frame border of ZERO (the `Box`'s
+ * `border: 1px solid var(--mantine-color-default-border)` is
+ * invalid-at-computed-value-time with no cascade), and every assertion still
+ * passed because they are all self-relative. The published residue table was
+ * computed from that 98 and was wrong in a way that mattered: it claimed the
+ * 600-tier — FIVE of the eleven live blocks — does not fit, when at the real
+ * budget of 607 it does. `renderReady` now asserts the sheet is loaded, so this
+ * file cannot silently slide back into the meaningless harness.
+ *
+ * The longer-term home for pixel assertions is the `geometry` vitest project
+ * added by #4601 (`.geometry.test.tsx` + `test/geometry-setup.tsx`), which loads
+ * the real cascade by construction. This file stays in `component` because it is
+ * mostly a postMessage/handshake suite that happens to assert geometry, and it
+ * needs the component scaffold's mocks; the single import buys the same
+ * correctness here.
  *
  * 🔴 THE HARNESS WILL MAKE THIS FILE PASS VACUOUSLY IF YOU LET IT. Vitest's
  * browser default viewport is 414x896 (measured: `resolved.browser.viewport
@@ -223,15 +256,40 @@ function appliedHeight(): number {
  * `appliedHeight()` above reads the iframe alone, and an iframe-only assertion
  * is exactly how the first version of this suite passed while the widget still
  * overflowed the screen: at 390x640 the iframe was a correct 640 and the frame
- * was 738. Anything claiming "fits the viewport" must assert THIS number.
+ * was 673. Anything claiming "fits the viewport" must assert THIS number.
  */
 function frameHeight(): number {
   return frameEl().getBoundingClientRect().height;
 }
 
-/** The host chrome's own laid-out height — measured, never assumed. */
+/** The host chrome's own laid-out height — measured, never assumed (31 at 390px). */
 function chromeHeight(): number {
   return chromeEl().getBoundingClientRect().height;
+}
+
+/**
+ * The frame's own top+bottom border, measured from the cascade (1px each).
+ *
+ * 🔴 NOT DECORATION — it is 2 of the 33px the clamp has to subtract, and leaving
+ * it out is how the budget assertions below would be wrong by exactly that much.
+ * It is also the half that is INVISIBLE without `@mantine/core/styles.css`:
+ * `border: 1px solid var(--mantine-color-default-border)` is
+ * invalid-at-computed-value-time with no cascade, so it computes to 0 and the
+ * omission hides itself.
+ *
+ * Read from `getComputedStyle` rather than as `frameHeight() - appliedHeight()`
+ * on purpose: that subtraction is the implementation's OWN arithmetic, so an
+ * expectation built from it would be vacuously true. Chrome height plus border
+ * width are independent observables.
+ */
+function frameBorderPx(): number {
+  const cs = getComputedStyle(frameEl());
+  return Number.parseFloat(cs.borderTopWidth) + Number.parseFloat(cs.borderBottomWidth);
+}
+
+/** The height budget layer 4 should leave the iframe, derived independently. */
+function expectedBudget(viewportHeight: number): number {
+  return viewportHeight - chromeHeight() - frameBorderPx();
 }
 
 function postFromBlock(type: string, payload?: unknown) {
@@ -293,6 +351,19 @@ async function renderReady(
     />
   );
   await driveToReady();
+  // 🔴 THE GUARD THAT KEEPS EVERY PIXEL BELOW MEANINGFUL. Same predicate the
+  // styled sibling uses: the chrome's `Group` only computes to `display: flex`
+  // once `@mantine/core/styles.css` is in the cascade. Without it this suite
+  // still passes — every assertion is self-relative — while measuring a chrome
+  // of 98 and a frame border of 0, which is exactly how a wrong residue table
+  // got published. If the import at the top of this file is ever dropped, this
+  // fails instead of quietly going meaningless.
+  expect(
+    getComputedStyle(chromeEl()).display,
+    '@mantine/core/styles.css is not loaded: the chrome computes to ' +
+      `"${getComputedStyle(chromeEl()).display}" instead of "flex", so every pixel this suite ` +
+      'measures is a property of the empty cascade rather than of the real component'
+  ).toBe('flex');
   expect(
     appliedHeight(),
     'precondition: the iframe should start at the manifest minHeight, so a later pass ' +
@@ -305,16 +376,17 @@ describe('IframeHost height layer 4 — the viewport clamp', () => {
   test('a 3000px self-report at a 640px viewport leaves the WHOLE FRAMED WIDGET inside the viewport', async () => {
     // 🔴 THE ASSERTION IS ON THE FRAME, NOT THE IFRAME, AND THAT IS THE POINT.
     // `framed()` renders AppBlockChrome ABOVE the iframe inside one bordered box,
-    // so bounding the iframe at the viewport still yields a `viewport + chrome`
-    // widget. Measured before the fix at 390x640: iframe 640 (correct), frame
-    // 738, chrome 98 — a 738px widget on a 640px screen, which an iframe-only
-    // assertion passes straight through.
+    // so bounding the iframe at the viewport still yields a
+    // `viewport + chrome + borders` widget. Measured before the fix at 390x640:
+    // iframe 640 (correct), frame 673 (chrome 31 + 1px top + 1px bottom) — a
+    // 673px widget on a 640px screen, which an iframe-only assertion passes
+    // straight through.
     await renderReady(PHONE);
 
     postFromBlock('RESIZE_IFRAME', { height: REPORT });
 
     // 🔴 `toBe(PHONE_H)`, NOT `toBeLessThanOrEqual` — measured, the loose form is
-    // satisfied by the PRE-UPDATE state (the minHeight reserve, 160 + 98 = 258
+    // satisfied by the PRE-UPDATE state (the minHeight reserve, 160 + 33 = 193
     // ≤ 640), so `vi.waitFor` returns before the resize has been applied and the
     // assertions after it grade the wrong frame. Requiring the widget to fill the
     // viewport exactly is both the real property and a condition the initial
@@ -324,21 +396,22 @@ describe('IframeHost height layer 4 — the viewport clamp', () => {
         frameHeight(),
         `layer 4 did not bound the WIDGET: the block asked for ${REPORT}px inside a ${PHONE_H}px ` +
           `viewport and the framed widget is ${frameHeight()}px (iframe ${appliedHeight()}px + ` +
-          `chrome ${chromeHeight()}px). With no manifest maxHeight the only other bound is ` +
+          `chrome ${chromeHeight()}px + border ${frameBorderPx()}px). With no manifest ` +
+          `maxHeight the only other bound is ` +
           `HARD_HEIGHT_CEILING (8000), which cannot produce ${PHONE_H}.`
       ).toBe(PHONE_H)
     );
 
-    // The iframe therefore takes exactly the budget the chrome leaves. The chrome
-    // is MEASURED here, never assumed: hardcoding the 98px observed above is one
-    // theme or breakpoint away from wrong.
+    // The iframe therefore takes exactly the budget the overhead leaves. Both
+    // halves are MEASURED here, never assumed: hardcoding the 33px observed
+    // above is one theme or breakpoint away from wrong.
     expect(
       appliedHeight(),
       `the iframe should take exactly the viewport budget left by the chrome: viewport ` +
-        `${PHONE_H} − chrome ${chromeHeight()} = ${
-          PHONE_H - chromeHeight()
-        }, got ${appliedHeight()}`
-    ).toBe(PHONE_H - chromeHeight());
+        `${PHONE_H} − chrome ${chromeHeight()} − border ${frameBorderPx()} = ${expectedBudget(
+          PHONE_H
+        )}, got ${appliedHeight()}`
+    ).toBe(expectedBudget(PHONE_H));
 
     // Nothing below the widget is pushed off-screen.
     expect(
@@ -357,9 +430,10 @@ describe('IframeHost height layer 4 — the viewport clamp', () => {
     // Precondition, so this test cannot silently change meaning if the chrome
     // ever grows past 240px and the budget drops below SHORT.
     expect(
-      PHONE_H - chromeHeight(),
+      expectedBudget(PHONE_H),
       `fixture precondition broken: the ${PHONE_H}px viewport leaves only ` +
-        `${PHONE_H - chromeHeight()}px after ${chromeHeight()}px of chrome, which is not more ` +
+        `${expectedBudget(PHONE_H)}px after ${chromeHeight()}px of chrome and ` +
+        `${frameBorderPx()}px of border, which is not more ` +
         `than the ${SHORT}px this test reports — the clamp would legitimately fire and this ` +
         `case would stop testing what it says it does`
     ).toBeGreaterThan(SHORT);
@@ -453,7 +527,7 @@ describe('IframeHost height layer 4 — re-clamp on viewport change', () => {
           `${atPhone}px at the ${PHONE_H}px viewport) — it is either not listening for viewport ` +
           `changes at all, or re-clamping its own clamped value rather than the block's stated ` +
           `height.`
-      ).toBe(TALL_H - chromeHeight())
+      ).toBe(expectedBudget(TALL_H))
     );
     expect(
       frameHeight(),
