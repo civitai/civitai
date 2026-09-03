@@ -7,6 +7,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { isDefined } from '~/utils/type-guards';
 import { v4 as uuidv4 } from 'uuid';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { attachUploadSettlement } from '~/utils/upload-settlement';
 
 type TrackedFileStatus = 'pending' | 'error' | 'success' | 'uploading' | 'aborted' | 'blocked';
 type TrackedFile = AsyncReturnType<typeof getDataFromFile> & {
@@ -94,12 +95,20 @@ export const useCFImageUpload: UseCFImageUpload = () => {
     let resolvedId = id;
 
     const xhr = new XMLHttpRequest();
+
+    // The relay is a `fetch`, not the xhr, so `xhr.abort()` is a spec no-op once the
+    // xhr is DONE. Cancelling during a fallback has to cancel this instead.
+    const relayController = new AbortController();
+
     setFiles((x) => [
       ...x,
       {
         ...pendingTrackedFile,
         ...imageData,
-        abort: xhr.abort.bind(xhr),
+        abort: () => {
+          xhr.abort();
+          relayController.abort();
+        },
         url: resolvedId,
       },
     ]);
@@ -127,11 +136,12 @@ export const useCFImageUpload: UseCFImageUpload = () => {
      * bytes through a second route would mask a real fault rather than route around
      * an unreachable host.
      */
-    async function relayUpload() {
+    async function relayUpload(signal: AbortSignal) {
       const relayRes = await fetch('/api/v1/image-upload/relay', {
         method: 'POST',
         headers: { 'Content-Type': file.type || 'application/octet-stream' },
         body: file,
+        signal,
       });
       if (!relayRes.ok) throw new Error(`Upload fallback failed (status ${relayRes.status})`);
       const relayData: { id?: string; error?: unknown } = await relayRes.json();
@@ -164,34 +174,21 @@ export const useCFImageUpload: UseCFImageUpload = () => {
           });
         }
       });
-      xhr.addEventListener('loadend', () => {
-        const success = xhr.readyState === 4 && xhr.status === 200;
-        if (success) {
-          updateFile({ status: 'success' });
-          // URL.revokeObjectURL(imageData.objectUrl);
-        }
-        resolve(success);
-      });
-      xhr.addEventListener('error', () => {
-        // Direct-to-storage PUT could not reach the host. Try our own origin, which
-        // the browser has demonstrably resolved — it just fetched the presign from it.
-        relayUpload()
-          .then((relayedId) => {
-            resolvedId = relayedId;
-            updateFile({ status: 'success' });
-            resolve(true);
-          })
-          .catch(() => {
-            // Report the ORIGINAL failure. The fallback is a recovery attempt, and
-            // surfacing its error instead would rename the user's problem.
-            updateFile({ status: 'error' });
-            reject(new Error(`Upload failed (status ${xhr.status})`));
-          });
-      });
-      xhr.addEventListener('abort', () => {
-        updateFile({ status: 'aborted' });
-        reject(new Error('Upload canceled'));
-      });
+      // Terminal-event handling — including the relay fallback and which side is
+      // allowed to settle — lives in `attachUploadSettlement`, so the ordering rule
+      // is real code a unit test can drive rather than logic duplicated in a test.
+      attachUploadSettlement(xhr, () => relayUpload(relayController.signal), {
+        onRelayed: (relayedId) => {
+          resolvedId = relayedId;
+        },
+        onSuccess: () => updateFile({ status: 'success' }),
+        onError: () => updateFile({ status: 'error' }),
+        onAborted: () => updateFile({ status: 'aborted' }),
+      }).then(
+        (outcome) => resolve(outcome.kind === 'relayed' ? true : outcome.success),
+        (error) => reject(error)
+      );
+
       xhr.open('PUT', url);
       xhr.send(file);
     });
