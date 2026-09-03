@@ -429,20 +429,33 @@ removed here without that being a deliberate, reviewed change.
 **What actually guards the snippet above.** The CSS block on this page is read by
 `src/components/AppBlocks/__tests__/ledgerSelectorSurvivesProdStrip.test.ts`,
 which parses the strip list out of `next.config.mjs` and fails if the selector
-shown here depends on an attribute production removes. That test runs in the node
-`unit` project, which is a **blocking** CI check — so the specific way this recipe
-went wrong before (the `data-testid` spelling) cannot come back silently.
+shown here depends on an attribute production removes — and parses
+`PageBlockHost.tsx` and fails if the attributes the selector chains are not
+stamped **together on one element**, the other way a compound selector silently
+matches nothing. Both are real checks and both catch the specific ways this
+recipe has gone wrong (the `data-testid` spelling; a half of the selector moved
+onto another box).
+
+🔴 **What that does NOT mean is that the mistake is impossible.** The guard runs
+in the node `unit` project, which on a pull request is **report-only** — the job
+carries `continue-on-error` there, so the check annotates and the run still
+concludes green — and renders a real verdict only on pushes to `main`, after the
+merge. And **no status check is required on `main` in this repo at all**: branch
+protection declares none, so nothing a test does stops a merge. A red guard here
+is a signal a reviewer has to read, not a gate that holds the door.
 
 Two things it does **not** promise. It compares the doc against the compiler
-config; it does not render anything, so it cannot tell you the rule still has the
-visual effect described. And the rule's measured behaviour —
-`src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx` injects a rule
-of this shape at a 2560px viewport and asserts the host goes back to full width —
-runs in the browser `component` project, which reports as the **non-blocking**
-`preview / component-tests` status. Useful evidence, not a gate: it can go red
-without stopping a merge. And the guard covers the CSS **selector** on this page,
-nothing else: that test is the only thing in the repo that reads this file, so
-every other claim here is unverified prose and should be read as such.
+config and against the host's JSX; it does not render anything, so it cannot tell
+you the rule still has the visual effect described. And the rule's measured
+behaviour — `src/components/AppBlocks/PageBlockHostMaxWidth.browser.test.tsx`
+injects a rule of this shape at a 2560px viewport and asserts the host goes back
+to full width — runs in the browser `component` project, which reports as the
+`preview / component-tests` status. Useful evidence, not a gate — and, as above,
+neither tier is one: both can go red without stopping a merge. What this tier
+alone can do is see a rendered width at all. And the guard covers the CSS
+**selector** on this page, nothing else: that test is the only thing in the repo
+that reads this file, so every other claim here is unverified prose and should be
+read as such.
 
 ### Manifest re-publish behavior
 

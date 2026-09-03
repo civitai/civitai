@@ -22,11 +22,15 @@ import { describe, expect, it } from 'vitest';
  * 🔴 WHY A SOURCE GUARD AS WELL AS A RENDERED ONE. The measurement lives in
  * `PageBlockHostMaxWidth.browser.test.tsx`, which is the only tier that can see a
  * width at all — but the browser `component` project runs in CI as the
- * REPORT-ONLY `preview / component-tests` status, so nothing there can block a
- * merge. This file is in the node `unit` project, which can. The same split, and
- * the same reasoning, as `pageRunScrollContract.test.ts` (whose own header
- * records the measured case where a fully-reverted floor left the gating tier
- * 9/9 green and only the non-blocking tier red).
+ * REPORT-ONLY `preview / component-tests` status. This file is in the node
+ * `unit` project, which is report-only on a pull request too (`continue-on-error`)
+ * and renders a real verdict only on a push to `main`. 🔴 NEITHER TIER BLOCKS A
+ * MERGE — `main` requires no status check at all in this repo — so what a source
+ * guard buys is a verdict that is honest on `main` and an annotation a reviewer
+ * can read, NOT a door that stays shut. The same split, and the same reasoning,
+ * as `pageRunScrollContract.test.ts` (whose own header records the measured case
+ * where a fully-reverted floor left this node tier 9/9 green and only the browser
+ * tier red).
  *
  * WHAT IS PINNED HERE — each is a thing whose absence is SILENT. Deliberately an
  * unnumbered list: it has grown twice, and a count stated beside the thing it counts
@@ -480,8 +484,10 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    *
    * Measured by mutation, in a copy: reverting the whole change (cap back on the
    * frame, chrome capped again) left the FULL node suite — 1569 files, 24,879 tests
-   * — byte-identically green. Only the report-only browser tier caught it, and
-   * that tier cannot block a merge. This test is the gating-tier half.
+   * — byte-identically green. Only the browser tier caught it, and that tier is
+   * report-only everywhere. This test is the node-tier half — the one that renders
+   * an honest verdict on a push to `main` (neither tier blocks a merge; see the
+   * header).
    */
   it('the cap sits on `app-page-content`, and that box is a real DESCENDANT of the frame', () => {
     const { frame, content } = hostElements();
@@ -594,7 +600,7 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    * `ledgerSelectorSurvivesProdStrip.test.ts`. Measured: moving that attribute off
    * the host root onto the `app-page-content` wrapper — which re-creates the
    * shipped production defect exactly, since the compound selector then matches
-   * zero elements — left the ENTIRE gating node tier byte-identically green
+   * zero elements — left the ENTIRE node tier byte-identically green
    * (`7 failed | 741 passed`, the same pre-existing failures, both ways). Only the
    * report-only browser tier caught it. Asking `hostElements()` for the frame and
    * reading ITS attribute list is what makes "on the root" a checkable claim.

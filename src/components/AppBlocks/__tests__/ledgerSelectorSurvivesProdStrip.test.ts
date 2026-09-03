@@ -35,19 +35,24 @@ import { describe, expect, it } from 'vitest';
  * which is what this file does — it restates neither side.
  *
  * WHAT IS PINNED HERE:
- *   · the strip list is parseable out of `next.config.mjs`, non-empty, and
+ *   · the strip list is parseable out of `next.config.mjs`, non-empty, ENTIRELY
+ *     readable (every array element a plain literal — a mixed array would let
+ *     this guard grade a SHORTER list than production applies), and
  *     production-gated — asserted on the `compiler:` property's OWN conditional,
  *     not on "the words appear earlier in the file" (the reason the other tiers
  *     cannot see this defect)
  *   · at least one ledger rule is parseable out of `globals.css`
  *   · NO attribute any ledger selector depends on is removed by that strip list
- *     — checked over the shipped rules, over the ledger's own "HOW TO ADD ONE"
- *     template, AND over the publisher-facing HOW-TO in
- *     `docs/features/app-blocks.md`, because an example teaching the broken
- *     spelling re-creates the bug on the next entry
  *   · every ledger selector's attributes are stamped TOGETHER ON ONE ELEMENT by
  *     `PageBlockHost.tsx` — surviving the strip is worthless if nothing renders
  *     them, and a compound selector is satisfied by neither half alone
+ *
+ *   Those last two are applied to all THREE surfaces that carry a selector: the
+ *   shipped rules, the ledger's own "HOW TO ADD ONE" template, and the
+ *   publisher-facing HOW-TO in `docs/features/app-blocks.md` — because an example
+ *   re-creates the bug on the next entry, and it can do so through EITHER
+ *   mechanism (a stripped attribute, or a misspelled/renamed one that nothing
+ *   stamps). A guard on only one of the two would be narrower than this sentence.
  *
  * FAILS CLOSED. An unparseable config, an empty strip list, or zero parsed ledger
  * rules is a FAILURE, not a quiet pass: a reassuring zero here is indistinguishable
@@ -169,11 +174,36 @@ function stripPatterns(): string[] {
       'strip list would let every ledger selector pass unchecked.'
   ).toBe(true);
 
-  const patterns = (list!.initializer as ts.ArrayLiteralExpression).elements
+  const elements = (list!.initializer as ts.ArrayLiteralExpression).elements;
+  const patterns = elements
     .filter((e): e is ts.StringLiteral | ts.NoSubstitutionTemplateLiteral =>
       ts.isStringLiteralLike(e)
     )
     .map((e) => e.text);
+
+  // 🔴 EVERY ELEMENT MUST BE READABLE, NOT JUST SOME OF THEM. Filtering to the
+  // string literals and grading what survives FAILS OPEN on a mixed array: a
+  // spread, an identifier, a template with a substitution or a conditional is
+  // silently dropped, and this guard then certifies the ledger against a strip
+  // list SHORTER than the one production applies. Measured, before this check
+  // existed: with `properties: ['^data-testid$', ...EXTRA_STRIPS]` where
+  // `EXTRA_STRIPS = ['^data-app-page-frame$']`, this file reported 7 passed / 7
+  // while production was stripping the very attribute the ledger had just been
+  // re-keyed onto — i.e. it re-certified the shipped defect as fixed. Same
+  // fail-closed direction as the two assertions above it.
+  expect(
+    patterns.length,
+    `next.config.mjs lists ${elements.length} entries in \`reactRemoveProperties.properties\` ` +
+      `but only ${patterns.length} of them are plain string literals this parse can read ` +
+      `(unreadable: ${elements
+        .filter((e) => !ts.isStringLiteralLike(e))
+        .map((e) => norm(e.getText()))
+        .join(', ')}). A spread, a variable or an interpolated template hides part of the strip ` +
+      'list, and everything below would then compare the ledger against a SHORTER list than ' +
+      'production applies — passing while an attribute the ledger depends on is being removed. ' +
+      'Inline the entries, or extend this parse to follow them; do not let it grade a subset.'
+  ).toBe(elements.length);
+
   expect(
     patterns,
     'next.config.mjs declares `reactRemoveProperties` with an EMPTY property list. Either the ' +
@@ -184,8 +214,14 @@ function stripPatterns(): string[] {
   return patterns;
 }
 
-/** The `compiler:` value's own conditional — the strip's actual gate. */
-function compilerGate(): { condition: string; whenTrue: string; whenFalse: string } {
+/**
+ * The `compiler:` value's own conditional — the strip's actual gate.
+ *
+ * `whenFalse` is deliberately NOT returned: the assertion that used to read it
+ * was unreachable (see the note in the gate test), and a field nobody reads
+ * invites the next person to re-add an assertion that can never fire.
+ */
+function compilerGate(): { condition: string; whenTrue: string } {
   const hits = propertyAssignments(nextConfigAst(), 'compiler');
   expect(
     hits.length,
@@ -211,7 +247,6 @@ function compilerGate(): { condition: string; whenTrue: string; whenFalse: strin
   return {
     condition: norm(c.condition.getText()),
     whenTrue: norm(c.whenTrue.getText()),
-    whenFalse: norm(c.whenFalse.getText()),
   };
 }
 
@@ -261,15 +296,19 @@ function strippedAttrsIn(selector: LedgerSelector, patterns: string[]): string[]
  * Measured: moving `data-app-page-frame=""` off the host root onto the
  * `app-page-content` wrapper re-creates the shipped production defect exactly —
  * `[data-app-page-frame][data-block-id='…']` matches zero elements, because the
- * two halves are now on different boxes — and the whole gating node tier stayed
- * BYTE-IDENTICALLY green. Only the report-only browser tier caught it, and that
- * tier cannot block a merge. Relocation is the mutation this shape exists to
- * catch, and it survived the guard written against it.
+ * two halves are now on different boxes — and the whole node tier stayed
+ * BYTE-IDENTICALLY green. Only the report-only browser tier caught it. (Neither
+ * tier blocks a merge — `main` requires no status check in this repo — so what a
+ * node-tier guard buys is an honest verdict on a push to `main` and an annotation
+ * a reviewer has to read, not a door that stays shut.) Relocation is the mutation
+ * this shape exists to catch, and it survived the guard written against it.
  *
- * 🔴 A SPREAD IS NOT COUNTED, DELIBERATELY. `{...props}` could carry anything, so
- * crediting a spread-bearing element with an attribute would be a guess in the
- * PASSING direction. Not counting it means such an element cannot satisfy a
- * selector, which fails closed — the right way round for a guard.
+ * 🔴 A SPREAD'S CONTENTS ARE NOT COUNTED, DELIBERATELY. `{...props}` could carry
+ * anything, so crediting a spread-bearing element with an attribute it might be
+ * passing would be a guess in the PASSING direction. Its EXPLICITLY WRITTEN
+ * attributes still count, so such an element can satisfy a selector on those; what
+ * cannot satisfy one is an attribute arriving only via the spread. Fail-closed on
+ * the unknown half — the right way round for a guard.
  */
 function stampedAttributeSets(): string[][] {
   const sf = ts.createSourceFile(HOST, read(HOST), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -303,12 +342,25 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
     // unconditional, the browser suite would start failing on its own and this
     // guard's framing would need rewriting.
     //
-    // 🔴 THREE ASSERTIONS, ON THE `compiler:` PROPERTY'S OWN CONDITIONAL. The
-    // condition must BE the production test; the strip must live in the branch
-    // that condition selects; and it must NOT also live in the other branch. A
-    // substring search over the file's prefix could make none of these claims —
-    // `const isProd = process.env.NODE_ENV === 'production'` on line 9 satisfied
-    // the old spelling by itself, so an unconditional strip passed 5/5.
+    // 🔴 TWO ASSERTIONS, ON THE `compiler:` PROPERTY'S OWN CONDITIONAL: the
+    // condition must BE the production test, and the strip must live in the branch
+    // that condition selects. A substring search over the file's prefix could make
+    // neither claim — `const isProd = process.env.NODE_ENV === 'production'` on
+    // line 9 satisfied the old spelling by itself, so an unconditional strip
+    // passed 5/5.
+    //
+    // 🔴 THERE USED TO BE A THIRD, `whenFalse` NOT CONTAINING THE STRIP, AND IT WAS
+    // UNREACHABLE. Both shapes it named are consumed earlier, so its message could
+    // never print. Measured: the strip in BOTH branches dies in `stripPatterns()`
+    // — which this test calls at its very first line, before any of this — with
+    // "declares `reactRemoveProperties` 2 times, not once" (5 failed / 2 passed);
+    // the strip in the non-production branch ONLY dies on the `whenTrue` assertion
+    // below (1 failed / 6 passed). With exactly one `reactRemoveProperties`, the
+    // only inputs that could still have reached the deleted assertion were text
+    // coincidences in `getText()` — false positives of the spelled-not-structural
+    // kind this file exists to remove. A coverage sentence wider than what is
+    // actually asserted reads as protection while providing none, so both the
+    // assertion and its share of this comment are gone rather than left standing.
     const gate = compilerGate();
     expect(
       gate.condition,
@@ -326,13 +378,6 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
         'SELECTS. Either it moved to the non-production branch (then every tier now runs with ' +
         'the stripped DOM and this guard is inverted), or it left the conditional entirely.'
     ).toContain('reactRemoveProperties');
-    expect(
-      gate.whenFalse,
-      'the `reactRemoveProperties` strip also appears in the NON-production branch of ' +
-        '`compiler:`, so it is effectively unconditional. That contradicts the premise this ' +
-        'whole file rests on — that the stripped DOM exists only in production, which is why no ' +
-        'rendered test tier can see a ledger selector keyed on a stripped attribute.'
-    ).not.toContain('reactRemoveProperties');
   });
 
   /**
@@ -447,9 +492,12 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
   /**
    * The ledger's own worked example is the thing the next person copies. If it
    * teaches the stripped spelling, the next entry re-creates the production-only
-   * defect — so the template is held to the same rule as the rules.
+   * defect — so the template is held to the same rules as the rules: it must
+   * survive the strip AND name attributes something actually stamps together.
+   * The shipped-rule guards below run over `stripComments()`d CSS and therefore
+   * cannot see this template at all.
    */
-  it('🔴 the ledger’s HOW-TO-ADD-ONE template teaches a spelling that survives production', () => {
+  it('🔴 the ledger’s HOW-TO-ADD-ONE template teaches a selector that survives production AND matches something', () => {
     const patterns = stripPatterns();
     const raw = read(GLOBALS_CSS);
     const documented = ledgerSelectors(raw);
@@ -470,6 +518,22 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
         'example is what the next entry is copied from, so it reproduces the defect one commit ' +
         'later. Update the "HOW TO ADD ONE" template as well as the rules.'
     ).toEqual([]);
+
+    const elements = stampedAttributeSets();
+    expect(
+      elements.length,
+      'no JSX elements were parsed out of PageBlockHost.tsx at all, so the check below would be ' +
+        'vacuous in the PASSING direction.'
+    ).toBeGreaterThan(0);
+
+    expect(
+      documented.filter((s) => !stampedTogether(s, elements)).map((s) => s.text),
+      'the "HOW TO ADD ONE" template in src/styles/globals.css chains attributes that NO SINGLE ' +
+        'element in PageBlockHost.tsx stamps together, so an entry copied from it matches ' +
+        'nothing. A misspelling reaches this assertion and not the strip one above (nothing ' +
+        'strips a misspelling); so does a rename that updated the shipped rules and the host but ' +
+        'not the comment they are copied from.'
+    ).toEqual([]);
   });
 
   /**
@@ -481,8 +545,20 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
    * the live site, which is precisely the defect this file was created for,
    * re-entering through the door marked documentation. This assertion is what
    * lets that doc claim it is checked.
+   *
+   * 🔴 BOTH MECHANISMS, NOT JUST THE STRIP. A documented selector can match zero
+   * elements two ways, and this file's own header names both: an attribute the
+   * compiler removes, or attributes nothing stamps TOGETHER. Checking only the
+   * first is a guard narrower than the sentence describing it. Measured, before
+   * the second check existed: changing the recipe to
+   * `[data-app-page-fram][data-block-id='your-app-slug']` — one dropped `e` — left
+   * this file 7 passed / 7, because a typo'd attribute is stripped by nothing. An
+   * author copying it gets a rule matching zero elements and a letterboxed app:
+   * the same user-visible outcome as the shipped bug, through the other door. The
+   * realistic trigger is a RENAME, where `globals.css` and `PageBlockHost.tsx` are
+   * both pinned and the doc is pinned by nothing.
    */
-  it('🔴 the publisher HOW-TO in docs/features/app-blocks.md teaches a production-surviving spelling', () => {
+  it('🔴 the publisher HOW-TO in docs/features/app-blocks.md teaches a selector that survives production AND matches something', () => {
     const patterns = stripPatterns();
     const documented = ledgerSelectors(read(PUBLISHER_DOC));
     expect(
@@ -505,6 +581,24 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
         'This is the copy app authors read, so it teaches a rule that works in every preview and ' +
         'matches nothing on civitai.com. Key it on a marker the compiler keeps, such as ' +
         '`data-app-page-frame`.'
+    ).toEqual([]);
+
+    const elements = stampedAttributeSets();
+    expect(
+      elements.length,
+      'no JSX elements were parsed out of PageBlockHost.tsx at all, so the check below would be ' +
+        'vacuous in the PASSING direction — the reassuring-zero shape this file refuses.'
+    ).toBeGreaterThan(0);
+
+    expect(
+      documented.filter((s) => !stampedTogether(s, elements)).map((s) => s.text),
+      'the full-bleed recipe in docs/features/app-blocks.md chains attributes that NO SINGLE ' +
+        'element in PageBlockHost.tsx stamps together, so a rule copied from it matches nothing — ' +
+        'surviving the production strip is worthless if nothing renders the attributes. A typo in ' +
+        'the documented attribute name reaches this assertion and not the strip one (nothing ' +
+        'strips a misspelling), and a rename of the real marker reaches it too, because this doc ' +
+        'is the one copy of the recipe that no other guard pins. Spell the attributes exactly as ' +
+        'PageBlockHost stamps them, on the element that stamps them both.'
     ).toEqual([]);
   });
 
@@ -543,7 +637,7 @@ describe('the full-bleed opt-out ledger survives the production attribute strip'
         'silent outcome as keying it on a stripped attribute, arrived at from the other side. ' +
         'Both halves existing somewhere in the file is NOT enough: splitting them across the ' +
         'host root and the `app-page-content` wrapper is exactly the relocation that re-creates ' +
-        'the shipped production defect, and the whole gating tier stayed green under it until ' +
+        'the shipped production defect, and the whole node tier stayed green under it until ' +
         'this assertion was written per-element. Either stamp every attribute the selector ' +
         'chains on the SAME element, or re-key the ledger onto attributes that are.'
     ).toEqual([]);
