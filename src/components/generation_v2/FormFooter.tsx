@@ -59,6 +59,7 @@ import {
   useGraphSubscriptions,
   MultiController,
 } from '~/libs/data-graph/react';
+import { useGenerationFormValue } from '~/components/Generate/useGenerationFormBridge';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
@@ -349,12 +350,10 @@ function ConnectedBuzzTypeSelector() {
  */
 export function useSelfHostedBlock() {
   const { selfHostedMode, selfHostedDisabledEcosystems, gateRules } = useGenerationConfig();
-  const graph = useGraph<GenerationGraphTypes>();
-  // Subscribe to only `ecosystem` — not the whole graph — so prompt/seed/etc.
-  // edits (which fire the global watcher) don't needlessly re-render this.
-  const { ecosystem: selectedEcosystem } = useGraphSubscriptions(graph, ['ecosystem'] as const) as {
-    ecosystem?: string;
-  };
+  // Subscribe to only `ecosystem` — not the whole form — so prompt/seed/etc.
+  // edits don't needlessly re-render this. Bridge-based: GenerationLayout
+  // renders in both form lanes.
+  const selectedEcosystem = useGenerationFormValue<string>('ecosystem');
   if (!selectedEcosystem)
     return { blockedEcosystem: undefined, state: undefined, message: undefined };
 

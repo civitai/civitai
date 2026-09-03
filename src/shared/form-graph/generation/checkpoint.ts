@@ -96,6 +96,26 @@ export function ecosystemKeyForBaseModel(baseModelName: string): string | undefi
   return ecosystemById.get(baseModel.ecosystemId)?.key;
 }
 
+// Static schema pair — the def object itself is rebuilt per pass (cheap),
+// while everything ext-dependent (locked substitution, the metrics record)
+// lives in `correct`, whose per-pass closure may safely capture the
+// request-scoped ext. Never move that into a cached schema: a cached
+// transform would keep recording into the FIRST request's collector.
+const CHECKPOINT_INPUT = z
+  .union([
+    z.number().transform((id) => ({ id })),
+    z.looseObject({ id: z.number(), baseModel: z.string().optional() }),
+  ])
+  .optional()
+  .transform((val) => {
+    if (!val) return undefined;
+    if (!('model' in val) || !val.model) {
+      return { ...val, model: { type: 'Checkpoint' } };
+    }
+    return val;
+  });
+const CHECKPOINT_OUTPUT = resourceSchema.optional();
+
 export function checkpointDef(opts: {
   ecosystem: string;
   workflow: string;
@@ -124,33 +144,8 @@ export function checkpointDef(opts: {
   const validVersionIds = visibleVersions ? getAllVersionIds(visibleVersions) : undefined;
 
   return {
-    input: z
-      .union([
-        z.number().transform((id) => ({ id })),
-        z.looseObject({ id: z.number(), baseModel: z.string().optional() }),
-      ])
-      .optional()
-      .transform((val) => {
-        if (!val) return undefined;
-        if (modelLocked && modelVersionId && val.id !== modelVersionId) {
-          if (!validVersionIds?.has(val.id)) {
-            // Observe-only substitution record — see common.ts for why this
-            // exists; a caller billed for model A and given model B can find out.
-            ext.modelSubstitutions?.record({
-              requested: val.id,
-              applied: modelVersionId,
-              ecosystem: ecosystemKey,
-              workflow,
-            });
-            return { id: modelVersionId, model: { type: 'Checkpoint' } };
-          }
-        }
-        if (!('model' in val) || !val.model) {
-          return { ...val, model: { type: 'Checkpoint' } };
-        }
-        return val;
-      }),
-    output: resourceSchema.optional(),
+    input: CHECKPOINT_INPUT,
+    output: CHECKPOINT_OUTPUT,
     default: modelVersionId
       ? ({ id: modelVersionId, model: { type: 'Checkpoint' } } as ResourceData)
       : undefined,
@@ -167,20 +162,40 @@ export function checkpointDef(opts: {
       versions: visibleVersions,
       defaultModelId: modelVersionId,
     }),
-    // data-graph's `transform`, step 1: a model from another ecosystem resets to
-    // this ecosystem's default. (Step 2, the workflow-version transform, only
-    // applies to graphs configured with `workflowVersions` — not the video ones.)
-    correct: opts.modelWins
-      ? undefined
-      : (value) => {
-          if (!value?.baseModel || !modelVersionId) return undefined;
-          const modelEcosystemKey = ecosystemKeyForBaseModel(value.baseModel);
-          if (!modelEcosystemKey || modelEcosystemKey === ecosystemKey) return undefined;
+    correct: (value) => {
+      // Locked substitution (was the input transform's job): an unknown
+      // version on a model-locked family swaps to the locked default, with
+      // the observe-only substitution record — see common.ts for why; a
+      // caller billed for model A and given model B can find out. Runs once
+      // per server parse (one resolve pass); client ext has no collector.
+      if (modelLocked && modelVersionId && value && value.id !== modelVersionId) {
+        if (!validVersionIds?.has(value.id)) {
+          ext.modelSubstitutions?.record({
+            requested: value.id,
+            applied: modelVersionId,
+            ecosystem: ecosystemKey,
+            workflow,
+          });
           return {
             value: { id: modelVersionId, model: { type: 'Checkpoint' } } as ResourceData,
-            reason: 'ecosystem_mismatch',
-            detail: { ecosystem: ecosystemKey, baseModel: value.baseModel },
+            reason: 'locked_default',
+            detail: { ecosystem: ecosystemKey, requested: value.id },
           };
-        },
+        }
+      }
+      // data-graph's `transform`, step 1: a model from another ecosystem
+      // resets to this ecosystem's default. (Step 2, the workflow-version
+      // transform, only applies to graphs configured with `workflowVersions`
+      // — not the video ones.)
+      if (opts.modelWins) return undefined;
+      if (!value?.baseModel || !modelVersionId) return undefined;
+      const modelEcosystemKey = ecosystemKeyForBaseModel(value.baseModel);
+      if (!modelEcosystemKey || modelEcosystemKey === ecosystemKey) return undefined;
+      return {
+        value: { id: modelVersionId, model: { type: 'Checkpoint' } } as ResourceData,
+        reason: 'ecosystem_mismatch',
+        detail: { ecosystem: ecosystemKey, baseModel: value.baseModel },
+      };
+    },
   } satisfies FieldDef<ResourceData | undefined, CheckpointMeta>;
 }

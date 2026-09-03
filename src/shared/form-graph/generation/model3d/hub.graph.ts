@@ -1,8 +1,6 @@
-import { z } from 'zod';
 import { branch, defineGraph } from 'form-graph';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
-import { getEcosystemStates, resolveCompatibleEcosystem } from '../ecosystem-gates';
-import type { RootCtx } from '../shared';
+import { getEcosystemStates } from '../ecosystem-gates';
+import { ecosystemFieldSchemas, type RootCtx } from '../shared';
 
 import { polygen } from './polygen.graph';
 import { tripo } from './tripo.graph';
@@ -23,7 +21,6 @@ export const model3dHub = defineGraph<RootCtx>()
       _ext.workflow,
       _ext
     );
-    const hiddenSet = new Set(hiddenEcosystems);
     const disabledSet = new Set(ecosystemStates.map((e) => e.key));
     const usableEcosystems = disabledSet.size
       ? compatibleEcosystems.filter((key) => !disabledSet.has(key))
@@ -33,23 +30,11 @@ export const model3dHub = defineGraph<RootCtx>()
       : usableEcosystems[0] ?? compatibleEcosystems[0] ?? 'PolyGen';
 
     return {
-      input: z
-        .string()
-        .optional()
-        .transform((v) => {
-          if (!v) return undefined;
-          // an unknown key would have no member graph — fall to the default,
-          // like a hidden one; disabled/memberOnly are kept for the picker and
-          // refused on output
-          if (!ecosystemByKey.has(v) || hiddenSet.has(v)) return undefined;
-          return resolveCompatibleEcosystem(_ext.workflow, v);
-        }),
-      output:
-        hiddenSet.size || disabledSet.size
-          ? z.string().refine((v) => !hiddenSet.has(v) && !disabledSet.has(v), {
-              message: 'Ecosystem is currently unavailable',
-            })
-          : z.string(),
+      ...ecosystemFieldSchemas(
+        _ext.workflow,
+        hiddenEcosystems,
+        ecosystemStates.map((e) => e.key)
+      ),
       default: defaultValue,
       // v1 stores the ecosystem selection per OUTPUT type
       scope: 'model3d',

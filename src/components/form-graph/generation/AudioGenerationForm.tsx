@@ -3,7 +3,6 @@ import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller } from 'form-graph/react';
 
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
-import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
 import { SeedInput } from '~/components/generation_v2/inputs/SeedInput';
@@ -23,20 +22,6 @@ import { ControllerLabel, VersionGroupSelector } from './form-helpers';
 export function AudioGenerationForm() {
   return (
     <Stack gap="sm">
-      <Controller
-        graph={audioHub}
-        name="ecosystem"
-        render={({ value, meta, onChange }) => (
-          <BaseModelInput
-            value={value}
-            onChange={onChange}
-            compatibleEcosystems={meta?.compatibleEcosystems}
-            excludeEcosystems={meta?.hiddenEcosystems}
-            ecosystemStates={meta?.ecosystemStates}
-            outputType={meta?.mediaType}
-          />
-        )}
-      />
       <Controller
         graph={audioHub}
         name="model"

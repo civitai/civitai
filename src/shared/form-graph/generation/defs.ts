@@ -31,6 +31,7 @@ export type AspectRatioOption = {
 };
 
 export * from '../defs';
+import { cachedFactory } from 'form-graph';
 import { snapToStep, type NumberMeta } from '../defs';
 
 /**
@@ -96,7 +97,7 @@ export interface AspectRatioMeta {
 }
 
 /** common.ts `aspectRatioNode` */
-export function aspectRatioDef(opts: {
+export const aspectRatioDef = cachedFactory(function aspectRatioDef(opts: {
   options: AspectRatioOption[];
   default?: string;
   priorityOptions?: string[];
@@ -137,7 +138,7 @@ export function aspectRatioDef(opts: {
     default: toValue(defaultOption),
     meta: { options, ...(opts.priorityOptions ? { priorityOptions: opts.priorityOptions } : {}) },
   } satisfies FieldDef<AspectRatioValue, AspectRatioMeta>;
-}
+});
 
 // --- text (prompt / negativePrompt) -------------------------------------------
 
@@ -160,13 +161,18 @@ export interface TextMeta {
  * (prompt is required only when no images are attached), so it lives at the
  * call site as an output spread — this definition carries the unconditional part.
  */
-export function textDef(name: string, maxLength = MAX_PROMPT_LENGTH) {
+// Not the lib's `textOf`: v1 trims on output and words its messages by field
+// name, both pinned by the differential suites.
+export const textDef = cachedFactory(function textDef(
+  name: string,
+  maxLength: number = MAX_PROMPT_LENGTH
+) {
   return {
     input: z.string().optional(),
     output: z.string().trim().max(maxLength, `${name} is too long`),
     default: '',
   } satisfies FieldDef<string>;
-}
+});
 
 // --- snippets ------------------------------------------------------------------
 
@@ -243,7 +249,7 @@ export interface ResourcesMeta {
  * ecosystem-compatibility filter (an effect in v1, a `correct` here — the
  * oracle drops incompatible resources DURING parse, pinned by the suites).
  */
-export function resourcesDef(opts: {
+export const resourcesDef = cachedFactory(function resourcesDef(opts: {
   ecosystem: string;
   limit: number;
   resourceTypes?: ModelType[];
@@ -286,14 +292,14 @@ export function resourcesDef(opts: {
       };
     },
   } satisfies FieldDef<ResourceData[], ResourcesMeta>;
-}
+});
 
 /**
  * common.ts `vaeNode` + `createVaeGraph`: a single optional resource, no
  * default; an incompatible VAE is cleared (v1 effect → `correct`, parse-time
  * behaviour pinned by the suites).
  */
-export function vaeDef(opts: { ecosystem: string }) {
+export const vaeDef = cachedFactory(function vaeDef(opts: { ecosystem: string }) {
   const selectOptions = getResourceSelectOptions(opts.ecosystem, ['VAE'] as ModelType[]);
   const ecosystemData = ecosystemByKey.get(opts.ecosystem);
   return {
@@ -320,7 +326,7 @@ export function vaeDef(opts: { ecosystem: string }) {
       };
     },
   } satisfies FieldDef<ResourceData | undefined, Omit<ResourcesMeta, 'limit'>>;
-}
+});
 
 export interface CheckpointMeta {
   options: { canGenerate: boolean; resources: ResourceSelectOption[]; excludeIds: number[] };
@@ -367,7 +373,7 @@ export interface ImagesMeta {
 }
 
 /** common.ts `imagesNode`: min from required slots, max from slots length. */
-export function imagesDef(config: {
+export const imagesDef = cachedFactory(function imagesDef(config: {
   min?: number;
   max?: number;
   slots?: { label: string; required?: boolean }[];
@@ -410,7 +416,7 @@ export function imagesDef(config: {
       aspectRatios: config.aspectRatios,
     },
   } satisfies FieldDef<ImageEntry[], ImagesMeta>;
-}
+});
 
 const videoMetadataSchema = z.object({
   fps: z.number(),
@@ -444,7 +450,10 @@ export const defaultSamplerPresets = [
 // --- quantity -------------------------------------------------------------------
 
 /** common.ts `quantityNode`: min and default both equal the step (draft = 4s). */
-export function quantityDef(opts: { max: number; step?: number }) {
+export const quantityDef = cachedFactory(function quantityDef(opts: {
+  max: number;
+  step?: number;
+}) {
   const step = opts.step ?? 1;
   const min = step;
   const { max } = opts;
@@ -457,7 +466,7 @@ export function quantityDef(opts: { max: number; step?: number }) {
     default: min,
     meta: { min, max, step },
   } satisfies FieldDef<number, NumberMeta>;
-}
+});
 
 /**
  * A bounded number that REFUSES out-of-range input (falls to the default with
@@ -465,7 +474,7 @@ export function quantityDef(opts: { max: number; step?: number }) {
  * (grok/kling durations, ltx frame count, wan shift), distinct from
  * `sliderDef`, which clamps.
  */
-export function refusingRangeDef(opts: {
+export const refusingRangeDef = cachedFactory(function refusingRangeDef(opts: {
   min: number;
   max: number;
   step?: number;
@@ -478,7 +487,7 @@ export function refusingRangeDef(opts: {
     default: opts.default,
     meta: { min, max, step },
   } satisfies FieldDef<number, NumberMeta>;
-}
+});
 
 // --- controlNets ----------------------------------------------------------------
 
@@ -537,7 +546,7 @@ export interface ControlNetsMeta {
  * allowed, forced-preprocessed modes applied), image-less entries filtered
  * before the strict output pass; category-grouped picker options in meta.
  */
-export function controlNetsDef(opts: {
+export const controlNetsDef = cachedFactory(function controlNetsDef(opts: {
   preprocessors: readonly ControlNetPreprocessorKey[];
   limit?: number;
 }) {
@@ -628,7 +637,7 @@ export function controlNetsDef(opts: {
       step: { min: 0, max: 1, step: 0.05 },
     },
   } satisfies FieldDef<ControlNetEntry[] | undefined, ControlNetsMeta>;
-}
+});
 
 /** v1's Low/Balanced/High guidance presets — shared by chroma, flux, flux2 and pony-v7. */
 export const guidancePresetsLowBalHigh = [

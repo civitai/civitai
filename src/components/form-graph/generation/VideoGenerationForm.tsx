@@ -6,7 +6,6 @@ import { ActiveWildcards } from '~/components/Generate/Input/ActiveWildcards';
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
 import { ResourceAlerts } from '~/components/generation_v2/ResourceAlerts';
 import { AspectRatioInput } from '~/components/generation_v2/inputs/AspectRatioInput';
-import { BaseModelInput } from '~/components/generation_v2/inputs/BaseModelInput';
 import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { ResourceSelectInput } from '~/components/generation_v2/inputs/ResourceSelectInput';
 import { ResourceSelectMultipleInput } from '~/components/generation_v2/inputs/ResourceSelectMultipleInput';
@@ -36,20 +35,6 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
 
   return (
     <Stack gap="sm">
-      <Controller
-        graph={videoHub}
-        name="ecosystem"
-        render={({ value, meta, onChange }) => (
-          <BaseModelInput
-            value={value}
-            onChange={onChange}
-            compatibleEcosystems={meta?.compatibleEcosystems}
-            excludeEcosystems={meta?.hiddenEcosystems}
-            ecosystemStates={meta?.ecosystemStates}
-            outputType={meta?.mediaType}
-          />
-        )}
-      />
       <div className="flex flex-col gap-1">
         <Controller
           graph={videoHub}

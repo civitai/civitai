@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { branch, defineGraph } from 'form-graph';
+import { branch, defFamily, defineGraph } from 'form-graph';
 import {
   getInputTypeForWorkflow,
   getOutputTypeForWorkflow,
@@ -101,20 +101,35 @@ const workflowKinds = branch('workflowKind', [
   [['ecosystem'], outputHubs],
 ] as const);
 
+const WORKFLOW_INPUT = z.string().optional().transform(migrateWorkflowKey);
+const workflowOutput = defFamily((gatedKey: string) => {
+  const gated = new Set(gatedKey ? gatedKey.split('|') : []);
+  return gated.size
+    ? z.string().refine((v) => !gated.has(v), {
+        message: 'Workflow is currently unavailable',
+      })
+    : z.string();
+});
+const priorityInput = defFamily((isMember: boolean) =>
+  z
+    .enum(priorityOptions)
+    .optional()
+    .transform((val) => (!isMember && val === 'high' ? ('low' as const) : val))
+);
+const PRIORITY_OUTPUT = z.enum(priorityOptions);
+const OUTPUT_FORMAT_INPUT = z.enum(outputFormatOptions).optional();
+const OUTPUT_FORMAT_OUTPUT = z.enum(outputFormatOptions);
+
 export const generationHub = defineGraph<GenerationCtx>()
   .field('workflow', ({ _ext }) => {
     const { hidden, states } = mergeGateStates(
       undefined,
       rulesToStates(_ext.gateRules ?? []).workflows
     );
-    const gated = new Set([...hidden, ...states.map((s) => s.key)]);
+    const gated = [...new Set([...hidden, ...states.map((s) => s.key)])].sort();
     return {
-      input: z.string().optional().transform(migrateWorkflowKey),
-      output: gated.size
-        ? z.string().refine((v) => !gated.has(v), {
-            message: 'Workflow is currently unavailable',
-          })
-        : z.string(),
+      input: WORKFLOW_INPUT,
+      output: workflowOutput(gated.join('|')),
       default: 'txt2img',
       // hiddenWorkflows leave the picker; workflowStates are badged
       meta: { hiddenWorkflows: hidden, workflowStates: states },
@@ -144,11 +159,8 @@ export const generationHub = defineGraph<GenerationCtx>()
           { label: 'Highest', value: 'high', offset: 20, memberOnly: true },
         ];
     return {
-      input: z
-        .enum(priorityOptions)
-        .optional()
-        .transform((val) => (!isMember && val === 'high' ? ('low' as const) : val)),
-      output: z.enum(priorityOptions),
+      input: priorityInput(isMember),
+      output: PRIORITY_OUTPUT,
       default: 'low' as const,
       meta: { options, isMember },
     };
@@ -157,8 +169,8 @@ export const generationHub = defineGraph<GenerationCtx>()
     output !== 'image' || workflow === 'img2img:remove-background'
       ? null
       : {
-          input: z.enum(outputFormatOptions).optional(),
-          output: z.enum(outputFormatOptions),
+          input: OUTPUT_FORMAT_INPUT,
+          output: OUTPUT_FORMAT_OUTPUT,
           default: 'jpeg' as const,
           meta: {
             options: [

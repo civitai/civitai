@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { boolOf, cachedFactory } from 'form-graph';
 import type { FieldDef } from 'form-graph';
 
 /**
@@ -23,8 +24,12 @@ export interface NumberMeta {
   presets?: { label: string; value: number }[];
 }
 
-/** A numeric slider: lenient input snaps into range, output enforces it. */
-export function sliderDef(opts: {
+/**
+ * A numeric slider: lenient input snaps into range, output enforces it.
+ * Near-twin of the lib's `slider` minus its `coerce`; kept separate so the
+ * snap semantics stay pinned to v1's exactly.
+ */
+export const sliderDef = cachedFactory(function sliderDef(opts: {
   min: number;
   max: number;
   step?: number;
@@ -41,14 +46,15 @@ export function sliderDef(opts: {
     default: opts.default ?? min,
     meta: { min, max, step, presets: opts.presets },
   } satisfies FieldDef<number, NumberMeta>;
-}
+});
 
 export interface EnumMeta<T extends string | number> {
   options: readonly { label: string; value: T }[];
 }
 
-/** A closed option set: coerces, then REFUSES values outside the options. */
-export function enumDef<const T extends string | number>(opts: {
+const enumCache = new Map<string, unknown>();
+
+function buildEnumDef<const T extends string | number>(opts: {
   options: readonly { label: string; value: T }[];
   default?: T;
 }) {
@@ -64,13 +70,32 @@ export function enumDef<const T extends string | number>(opts: {
   } satisfies FieldDef<T, EnumMeta<T>>;
 }
 
+/**
+ * A closed option set: coerces, then REFUSES values outside the options.
+ * Deliberately NOT the lib's `enumOf`, which corrects to the first open
+ * option — v1's nodes refuse, and the differential suites pin that. Don't
+ * consolidate the two without accepting the wire change.
+ */
+export function enumDef<const T extends string | number>(opts: {
+  options: readonly { label: string; value: T }[];
+  default?: T;
+}): ReturnType<typeof buildEnumDef<T>> {
+  const cacheKey = JSON.stringify(opts);
+  let hit = enumCache.get(cacheKey) as ReturnType<typeof buildEnumDef<T>> | undefined;
+  if (hit === undefined) {
+    hit = buildEnumDef(opts);
+    enumCache.set(cacheKey, hit);
+  }
+  return hit;
+}
+
 export interface SelectMeta {
   options: { label: string; value: string }[];
   presets?: { label: string; value: string }[];
 }
 
 /** A string select: unlike enumDef, an out-of-set input FALLS BACK to the default. */
-export function selectDef(opts: {
+export const selectDef = cachedFactory(function selectDef(opts: {
   options: readonly string[];
   default?: string;
   presets?: { label: string; value: string }[];
@@ -91,11 +116,8 @@ export function selectDef(opts: {
     default: resolvedDefault,
     meta: { options: options.map((s) => ({ label: s, value: s })), presets: opts.presets },
   } satisfies FieldDef<string, SelectMeta>;
-}
+});
 
-export const boolDef = (dflt: boolean) =>
-  ({
-    input: z.boolean().optional(),
-    output: z.boolean(),
-    default: dflt,
-  } satisfies FieldDef<boolean>);
+// The lib's boolOf IS this def (schemas cached internally); only the
+// positional-argument signature is ours, kept for the 36 call sites.
+export const boolDef = (dflt: boolean) => boolOf({ default: dflt });

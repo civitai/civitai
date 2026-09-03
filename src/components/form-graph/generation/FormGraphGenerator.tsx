@@ -2,7 +2,6 @@ import { useIsClient } from '~/providers/IsClientProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { Announcements } from '~/components/Announcements/Announcements';
-import { ResourceDataProvider } from '~/components/generation_v2/inputs/ResourceDataProvider';
 
 import { BaseGenerationForm } from './BaseGenerationForm';
 
@@ -26,9 +25,7 @@ export function FormGraphGenerator() {
           className="flex flex-col gap-2"
         >
           <Announcements type="generator" />
-          <ResourceDataProvider>
-            <BaseGenerationForm />
-          </ResourceDataProvider>
+          <BaseGenerationForm />
         </ScrollArea>
       </div>
     </GenerationProvider>

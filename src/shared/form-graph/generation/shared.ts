@@ -1,5 +1,8 @@
-import { defineGraph, rootScope, type Scope } from 'form-graph';
-import { getEcosystemGroupByKey } from '~/shared/constants/basemodel.constants';
+import { z } from 'zod';
+import { cachedFactory, defineGraph, rootScope, type Scope } from 'form-graph';
+import { ecosystemByKey, getEcosystemGroupByKey } from '~/shared/constants/basemodel.constants';
+import { resolveCompatibleEcosystem } from './ecosystem-gates';
+
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import {
   MAX_NEGATIVE_PROMPT_LENGTH,
@@ -130,12 +133,12 @@ export function makeTextBlock(
       // the snippets slice's PRESENCE doubles as the wildcards feature flag.
       .field('prompt', ({ triggerWords, snippets, _ext }) => {
         const required = promptAlwaysRequired || !_ext.images?.length;
-        const base = textDef('prompt');
         return {
-          ...base,
-          output: required
-            ? base.output.refine((v) => v.trim().length > 0, { message: 'Prompt is required' })
-            : base.output,
+          ...textDef('prompt'),
+          refine: required
+            ? (output: z.ZodString) =>
+                output.refine((v) => v.trim().length > 0, { message: 'Prompt is required' })
+            : undefined,
           meta: {
             required,
             targetKey: 'prompt',
@@ -250,3 +253,41 @@ export function versionModeOf<M extends string>(
 /** The common case: prompt + negative prompt. */
 export const textBlock = makeTextBlock();
 export const promptOnlyTextBlock = makeTextBlock({ negativePrompt: false });
+
+/**
+ * The per-output hubs' `ecosystem` field schemas, memoized on what they
+ * actually depend on — the workflow (the input transform redirects
+ * unsupported selections) and the hidden/disabled sets (the output refuses
+ * them). Unmemoized these rebuilt every pass, the single hottest schema on
+ * the keystroke path. Meta and the default stay per-pass at the call site.
+ */
+export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchemas(
+  workflow: string,
+  hiddenEcosystems: readonly string[],
+  disabledKeys: readonly string[]
+) {
+  const hiddenSet = new Set(hiddenEcosystems);
+  const disabledSet = new Set(disabledKeys);
+  return {
+    input: z
+      .string()
+      .optional()
+      .transform((v) => {
+        if (!v) return undefined;
+        // Hidden values are dropped at the boundary so a stale stored value
+        // falls back to the default; disabled/memberOnly are kept so the
+        // picker can explain them, and refused on output. An unknown key
+        // would have no member graph — it falls to the default too. A value
+        // that doesn't support the workflow redirects to the workflow's
+        // default (v1's sync effect).
+        if (!ecosystemByKey.has(v) || hiddenSet.has(v)) return undefined;
+        return resolveCompatibleEcosystem(workflow, v);
+      }),
+    output:
+      hiddenSet.size || disabledSet.size
+        ? z.string().refine((v) => !hiddenSet.has(v) && !disabledSet.has(v), {
+            message: 'Ecosystem is currently unavailable',
+          })
+        : z.string(),
+  };
+});

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import { SEED, enumDef, sliderDef, textDef } from '../defs';
@@ -41,13 +42,10 @@ const editorMeta = (name: string, required: boolean) => ({
   triggerWords: [] as string[],
 });
 
-const requiredText = (name: string, message: string, maxLength?: number) => {
-  const base = textDef(name, maxLength);
-  return {
-    ...base,
-    output: base.output.refine((v) => v.trim().length > 0, { message }),
-  };
-};
+const requiredText = (name: string, message: string, maxLength?: number) => ({
+  ...textDef(name, maxLength),
+  refine: (output: z.ZodString) => output.refine((v) => v.trim().length > 0, { message }),
+});
 
 const simple = defineGraph<MinimaxMusicExt>().field('prompt', {
   ...requiredText('prompt', 'Prompt is required'),

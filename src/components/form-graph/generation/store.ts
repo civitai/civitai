@@ -1,9 +1,7 @@
 import { useSyncExternalStore } from 'react';
-import type { FormStore } from 'form-graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { generationHub } from '~/shared/form-graph/generation/hub.graph';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type GenerationStore = FormStore<any, GenerationCtx>;
+export type GenerationStore = ReturnType<(typeof generationHub)['createStore']>;
 
 /** The store's active field keys, in declaration order. */
 export function useActiveKeys(store: GenerationStore): readonly string[] {

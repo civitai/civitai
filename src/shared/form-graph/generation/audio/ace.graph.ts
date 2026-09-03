@@ -71,13 +71,10 @@ const editorMeta = (name: string, required: boolean, triggerWords: string[] | un
   triggerWords: triggerWords ?? [],
 });
 
-const requiredText = (name: string, message: string, maxLength?: number) => {
-  const base = textDef(name, maxLength);
-  return {
-    ...base,
-    output: base.output.refine((v) => v.trim().length > 0, { message }),
-  };
-};
+const requiredText = (name: string, message: string, maxLength?: number) => ({
+  ...textDef(name, maxLength),
+  refine: (output: z.ZodString) => output.refine((v) => v.trim().length > 0, { message }),
+});
 
 const simple = defineGraph<AceExt>().field('prompt', ({ _ext }) => ({
   ...requiredText('prompt', 'Prompt is required'),

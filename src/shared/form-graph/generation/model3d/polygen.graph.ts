@@ -111,10 +111,10 @@ export const polygen = defineGraph<FamilyExt>({ scope: familyScope })
   // --- text-to-3D fields (v6 only; v7 has no text branch) ---
   .field('prompt', ({ _ext }) => {
     if (!_ext.workflow.startsWith('txt')) return null;
-    const base = textDef('prompt', POLYGEN_MAX_PROMPT_LENGTH);
     return {
-      ...base,
-      output: base.output.refine((v) => v.trim().length > 0, { message: 'Prompt is required' }),
+      ...textDef('prompt', POLYGEN_MAX_PROMPT_LENGTH),
+      refine: (output: z.ZodString) =>
+        output.refine((v) => v.trim().length > 0, { message: 'Prompt is required' }),
       meta: { required: true, targetKey: 'prompt', snippets: undefined, triggerWords: [] },
     };
   })

@@ -1,15 +1,12 @@
-import { z } from 'zod';
 import { branch, defineGraph, rootScope } from 'form-graph';
 import {
   getEcosystemStates,
-  resolveCompatibleEcosystem,
   supportsEnhancedCompatibility,
   supportsSdcpp,
 } from '../ecosystem-gates';
 import { boolDef, quantityDef } from '../defs';
 import { modelSelectorRules } from '../reconcile';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
-import { familyScope, type RootCtx } from '../shared';
+import { ecosystemFieldSchemas, familyScope, type RootCtx } from '../shared';
 
 import { chroma } from './chroma.graph';
 import { flux } from './flux.graph';
@@ -51,7 +48,6 @@ export const imageHub = defineGraph<RootCtx>()
       _ext.workflow,
       _ext
     );
-    const hiddenSet = new Set(hiddenEcosystems);
     const disabledSet = new Set(ecosystemStates.map((e) => e.key));
     const usableEcosystems = disabledSet.size
       ? compatibleEcosystems.filter((key) => !disabledSet.has(key))
@@ -61,26 +57,11 @@ export const imageHub = defineGraph<RootCtx>()
       : usableEcosystems[0] ?? compatibleEcosystems[0] ?? 'SDXL';
 
     return {
-      input: z
-        .string()
-        .optional()
-        .transform((v) => {
-          if (!v) return undefined;
-          // Hidden values are dropped at the boundary so a stale stored value
-          // falls back to the default; disabled/memberOnly are kept so the
-          // picker can explain them, and refused on output. A value that
-          // doesn't support the workflow redirects to the workflow's default
-          // (v1's sync effect). An unknown key would have no member graph —
-          // it falls to the default too.
-          if (!ecosystemByKey.has(v) || hiddenSet.has(v)) return undefined;
-          return resolveCompatibleEcosystem(_ext.workflow, v);
-        }),
-      output:
-        hiddenSet.size || disabledSet.size
-          ? z.string().refine((v) => !hiddenSet.has(v) && !disabledSet.has(v), {
-              message: 'Ecosystem is currently unavailable',
-            })
-          : z.string(),
+      ...ecosystemFieldSchemas(
+        _ext.workflow,
+        hiddenEcosystems,
+        ecosystemStates.map((e) => e.key)
+      ),
       default: defaultValue,
       // v1 stores the ecosystem selection per OUTPUT type
       scope: 'image',
