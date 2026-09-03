@@ -798,22 +798,36 @@ jobs:
     # of magnitude more expensive, with 212 files of pass/fail history nobody has
     # ever seen in this workflow. Do it deliberately, not as a rider.
     #
-    # REPORT-ONLY to start, mirroring `unit` and for the same stated reason:
-    # blocking on a brand-new tier from day one would red unrelated PRs and the
-    # job would be switched off within a week. Be precise about what
-    # `continue-on-error` does and does not change here — `main` has NO
-    # required_status_checks, so nothing in this workflow blocks a merge either
-    # way. What it buys is that a red renders as red-but-ignored rather than as a
-    # failing check on unrelated work while the tier settles.
+    # REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` — the same expression
+    # `unit` uses, and NOT a literal `true`. Both halves matter:
+    #
+    #   PR side: blocking on a brand-new tier from day one would red unrelated
+    #   PRs and the job would be switched off within a week. `main` has NO
+    #   required_status_checks, so nothing here blocks a merge either way; what
+    #   this buys is that a red renders as red-but-ignored rather than as a
+    #   failing check on someone else's work while the tier settles.
+    #
+    #   PUSH side: on a push the merge has already happened, so there is no
+    #   unrelated work to red. What `continue-on-error: true` WOULD buy there is
+    #   a run reporting `success` while the step underneath failed — a green that
+    #   has to be disbelieved, which is worse than no run at all.
+    #
+    # 🔴 THIS WAS WRITTEN AS A LITERAL `true` FIRST AND CI CAUGHT IT.
+    # `scripts/__tests__/main-branch-ci-coverage.test.ts` > "has no
+    # unconditionally report-only job on the push path" went red on the PR that
+    # added this job. The guard is not a style rule: it forbids exactly the
+    # stale-TRUE shape described above, and it accepts a conditional value
+    # BECAUSE a conditional can differ between a PR and a push while a literal
+    # cannot. Do not "simplify" this back to `true`.
     #
     # FLIP TO BLOCKING once a couple of weeks of runs show a clean pass rate, and
     # remove `continue-on-error` and this paragraph together. What would make that
     # safe, concretely: no run red for a reason other than a real geometry
     # regression — in particular no Chromium launch failures and no timeouts on a
-    # 2-core runner. The tier is 10 tests and ~9s locally, so unlike `unit` there
-    # is no import/transform phase to blame; if it goes red it is either the code
-    # or the browser, and both are worth someone's attention.
-    continue-on-error: true
+    # 2-core runner. The tier is 10 tests and ~19s on a runner, so unlike `unit`
+    # there is no import/transform phase to blame; if it goes red it is either the
+    # code or the browser, and both are worth someone's attention.
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
