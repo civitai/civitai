@@ -91,6 +91,24 @@ export const resetToDraftWithoutRequirements = createJob(
     // Draft (their only version was just reset above; keep the model recoverable
     // in the Training tab); everything else flips to Unpublished. See the
     // no-posts branch for the trained-vs-rest rationale.
+    //
+    // 🔴 "updatedAt" = now() is load-bearing, not cosmetic. This is $executeRaw, so
+    // Prisma's @updatedAt does NOT fire and the row would keep whatever timestamp it
+    // had while it was Published — often years old. remove-old-drafts reaps
+    // `status IN ('Draft','Deleted') AND m."updatedAt" < now() - INTERVAL '30 days'`
+    // and cascade-deletes the model with its versions, files and training data, so a
+    // model this sweep flips to Draft would arrive with its 30-day grace period
+    // already spent and be destroyable on the next run. The Unpublished branch is
+    // bumped too: the backfill in src/pages/api/admin/temp/backfill-swept-trained-models.ts
+    // later flips those rows to Draft, and a stale clock carried forward lands in
+    // exactly the same hole.
+    //
+    // 🔴 Do NOT mirror this onto the "ModelVersion" statements above.
+    // ModelVersion."updatedAt" means "a creator edited this version" — see
+    // src/server/services/model-version.service.ts (raw SQL used specifically so
+    // Prisma does not bump it on system writes) — and remove-old-drafts' activity
+    // fence reads mv."updatedAt" as a creator-activity signal. Bumping it on a
+    // system sweep would make every swept version look freshly edited.
     await dbWrite.$executeRaw`
       UPDATE "Model" m
       SET
@@ -100,7 +118,8 @@ export const resetToDraftWithoutRequirements = createJob(
           THEN 'Draft'::"ModelStatus"
           ELSE 'Unpublished'::"ModelStatus"
         END,
-        meta = jsonb_set(jsonb_set(iif(jsonb_typeof(meta) != 'object', '{}', meta), '{unpublishedReason}', '"no-versions"'), '{unpublishedAt}', to_jsonb(now()))
+        meta = jsonb_set(jsonb_set(iif(jsonb_typeof(meta) != 'object', '{}', meta), '{unpublishedReason}', '"no-versions"'), '{unpublishedAt}', to_jsonb(now())),
+        "updatedAt" = now()
       WHERE
         m."status" = 'Published'
         AND m."deletedAt" IS NULL
