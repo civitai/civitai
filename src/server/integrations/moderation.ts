@@ -74,7 +74,9 @@ async function moderatePrompt(
   // It also runs BEFORE the outcome is known, so it claims a window slot even for a call that then
   // fails. A real cache would store only successful verdicts, so this overstates the hit rate by
   // exactly the non-`ok` share — measured at ~0.01% in production, i.e. immaterial, but stated
-  // rather than assumed.
+  // rather than assumed. That is the SAME DIRECTION as the coalescing effect documented on the
+  // `SET NX` in the probe module: both make the reported hit rate optimistic, which is why the
+  // help text calls the result an upper bound and not a floor.
   probeModerationCacheRepeat(metricSource, preparedPrompt);
 
   // Wall-clock timing of the whole classifier call — the interval the generation submission actually

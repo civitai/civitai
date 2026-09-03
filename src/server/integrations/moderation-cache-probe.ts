@@ -54,6 +54,27 @@ const PROBE_WINDOWS = [
 type ProbeWindowLabel = (typeof PROBE_WINDOWS)[number]['label'];
 
 /**
+ * The deployment namespace the probe writes under, or `null` when it is not armed.
+ *
+ * 🔴 ARMING AND NAMESPACING ARE ONE ACTION. `EXTERNAL_MODERATION_CACHE_PROBE` is a LABEL, not a
+ * boolean: several civitai-web deployments share one sysRedis, and sys keys — unlike cache keys —
+ * carry no environment segment (`cache-key-prefix.ts`: "This is CACHE-ONLY"). Two armed
+ * deployments writing one probe keyspace would each score HITS on the other's prompts, biasing the
+ * result toward "caching pays". Requiring a namespace to arm at all is what makes that unforgettable
+ * rather than a note in a doc.
+ *
+ * An out-of-charset or over-long value returns `null` (i.e. OFF) rather than being sanitised: a
+ * typo then yields NO SERIES, which the metric's help text already tells the reader means "not
+ * armed", instead of quietly opening a second keyspace that looks armed and measures a fiction.
+ */
+const NAMESPACE_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+function probeNamespace(): string | null {
+  const raw = env.EXTERNAL_MODERATION_CACHE_PROBE?.trim() ?? '';
+  return NAMESPACE_PATTERN.test(raw) ? raw : null;
+}
+
+/**
  * `miss` = this exact prepared prompt had not been seen inside the window (a real cache would have
  * called the classifier). `hit` = it had (a real cache would have skipped the call). `error` = the
  * probe itself failed — Redis unreachable, a command deadline, anything.
@@ -72,12 +93,17 @@ const probeCounter = registerCounterWithLabels({
     'moderation verdicts would pay. Labeled by source (same population split as ' +
     'external_moderation_duration_seconds), window (5m|1h) and result (hit|miss|error). A hit means ' +
     'a real cache with that TTL WOULD have skipped the call — the classifier was still called. ' +
-    'COMPUTE THE HIT RATE AS hit/(hit+miss), never over the total: error is Redis failing, and ' +
-    'folding it in makes an outage look like "prompts stopped repeating". 🔴 IGNORE THE FIRST FULL ' +
-    'WINDOW AFTER ARMING — the probe keyspace starts empty, so every observation is necessarily a ' +
-    'miss until it has been running longer than the window it is measuring, and a hit rate read too ' +
-    'early is biased toward zero by construction. Gated by EXTERNAL_MODERATION_CACHE_PROBE; with the ' +
-    'flag off there are no series at all, which is what makes the arming instant readable.',
+    'COMPUTE THE HIT RATE AS sum by (window) (rate(...{result="hit"}[..])) / sum by (window) ' +
+    '(rate(...{result=~"hit|miss"}[..])). BOTH halves matter: dividing over the TOTAL folds in ' +
+    'error, so a Redis outage reads as "prompts stopped repeating"; and omitting `by (window)` ' +
+    'averages the 5m and 1h series into one number, which is exactly the shape the two windows ' +
+    'exist to reveal. 🔴 IGNORE THE FIRST FULL WINDOW AFTER ARMING — the probe keyspace starts ' +
+    'empty, so every observation is necessarily a miss until it has been running longer than the ' +
+    'window it is measuring, and a hit rate read too early is biased toward zero by construction. ' +
+    '🔴 THE RESULT IS AN UPPER BOUND, NOT A FLOOR: it simulates a cache that COALESCES concurrent ' +
+    'duplicates (see the SET NX note in the source), which a plain read-through cache does not do. ' +
+    'Armed per deployment via EXTERNAL_MODERATION_CACHE_PROBE, whose value is the key namespace; ' +
+    'unarmed there are no series at all, which is what makes the arming instant readable.',
   labelNames: ['source', 'window', 'result'] as const,
 });
 
@@ -125,16 +151,26 @@ export function probeModerationCacheRepeat(
   source: ExternalModerationSource,
   preparedPrompt: string
 ): void {
-  if (!env.EXTERNAL_MODERATION_CACHE_PROBE) return;
-  // `void` + a terminal catch: an unhandled rejection here would be a process-level event raised by
-  // an instrument that is explicitly not allowed to affect anything.
-  void runProbe(clampExternalModerationSource(source), preparedPrompt).catch(() => {
+  const namespace = probeNamespace();
+  if (namespace === null) return;
+  // 🔴 CLAMP HERE, NOT ONLY AT THE CALLER. `moderatePrompt` already clamps and passes the clamped
+  // value, so this looks redundant and an audit mutant that removed it SURVIVED a green 14-case
+  // suite. It is not redundant: this function is EXPORTED, so its `source` is reachable from a
+  // future direct caller and from the test tree, which `tsconfig.json` excludes — and an unbounded
+  // string on a hot-path prom label is a cardinality incident that arrives with no error anywhere.
+  // The clamp is now exercised directly by a test that calls this function rather than
+  // `moderatePrompt`; without that test the guard reads as covered while being untested.
+  void runProbe(clampExternalModerationSource(source), preparedPrompt, namespace).catch(() => {
     // `runProbe` already records `error` per window; this only guards a throw before that point
     // (e.g. the dynamic import itself failing), which has no window to attribute.
   });
 }
 
-async function runProbe(source: ExternalModerationSource, preparedPrompt: string): Promise<void> {
+async function runProbe(
+  source: ExternalModerationSource,
+  preparedPrompt: string,
+  namespace: string
+): Promise<void> {
   const digest = digestPrompt(preparedPrompt);
   const { sysRedis, REDIS_SYS_KEYS } = await import('~/server/redis/client');
 
@@ -143,14 +179,25 @@ async function runProbe(source: ExternalModerationSource, preparedPrompt: string
       try {
         // SET NX EX is the whole measurement, in one atomic round trip: it returns a truthy reply
         // when the key did NOT exist (a miss, and the key is now claimed for `seconds`) and null
-        // when it did (a hit). Doing this as GET-then-SET would race two concurrent submissions of
-        // the same prompt into two misses and undercount exactly the population being measured.
+        // when it did (a hit). One round trip rather than GET-then-SET keeps the two windows cheap
+        // and the observation self-consistent — but do NOT read that atomicity as accuracy:
         //
-        // 🔴 The TTL is FIXED FROM FIRST WRITE, not sliding — NX means a hit does not extend it. So
-        // this simulates the CONSERVATIVE cache design; one that refreshed its TTL on every hit
-        // would score at least as high. Read the result as a floor on the achievable hit rate.
+        // 🔴 BUT NX ALSO MAKES THIS AN UPPER BOUND, NOT A FLOOR — do not read the atomicity as pure
+        // fidelity. `SET NX` claims the slot the moment the request STARTS, whereas a plain
+        // read-through cache cannot store a verdict until the classifier ANSWERS ~200 ms later. So
+        // for two identical prompts submitted 50 ms apart (a re-roll double-click, or a trending
+        // prompt) this scores miss+hit while a non-coalescing cache would score miss+miss. What it
+        // faithfully simulates is a cache with request COALESCING (singleflight); against one
+        // without, the number here is optimistic.
+        //
+        // The TTL is separately FIXED FROM FIRST WRITE, not sliding — NX means a hit does not
+        // extend it — which pushes the other way. The two do not cancel to anything knowable, so
+        // the honest summary is the one in the help text: upper bound.
+        //
+        // The namespace segment keeps two armed deployments off each other's keyspace; see
+        // `probeNamespace`.
         const key =
-          `${REDIS_SYS_KEYS.GENERATION.MODERATION_CACHE_PROBE}:${label}:${digest}` as const;
+          `${REDIS_SYS_KEYS.GENERATION.MODERATION_CACHE_PROBE}:${namespace}:${label}:${digest}` as const;
         const claimed = await sysRedis.set(key, '1', { NX: true, EX: seconds });
         record(source, label, claimed ? 'miss' : 'hit');
       } catch {

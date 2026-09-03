@@ -29,13 +29,14 @@ const env = vi.hoisted(() => ({
   EXTERNAL_MODERATION_THRESHOLD: 0.5,
   EXTERNAL_MODERATION_TIMEOUT_MS: 5000,
   EXTERNAL_MODERATION_CATEGORIES: undefined as Record<string, string> | undefined,
-  EXTERNAL_MODERATION_CACHE_PROBE: true,
+  EXTERNAL_MODERATION_CACHE_PROBE: 'testns' as string,
 }));
 vi.mock('~/env/server', () => ({ env }));
 
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { serverSchema } from '~/env/server-schema';
 import { extModeration } from '~/server/integrations/moderation';
+import { probeModerationCacheRepeat } from '~/server/integrations/moderation-cache-probe';
 
 const PROBE = 'civitai_app_external_moderation_cache_probe_total';
 const HIST = 'civitai_app_external_moderation_duration_seconds';
@@ -104,7 +105,7 @@ async function untilProbeTotal(n: number) {
 beforeEach(() => {
   promClient.register.getSingleMetric(PROBE)?.reset();
   promClient.register.getSingleMetric(HIST)?.reset();
-  env.EXTERNAL_MODERATION_CACHE_PROBE = true;
+  env.EXTERNAL_MODERATION_CACHE_PROBE = 'testns';
   // 🔴 `resetSharedMocks()` in src/__tests__/setup.ts runs once PER FILE, not per test, so
   // `sysRedis.set`'s call history accumulates across every case here. Without this, the
   // `not.toHaveBeenCalled()` assertion in the flag-off case passes only because it happens to run
@@ -130,12 +131,12 @@ describe('cache probe — the flag is the arming switch', () => {
     installRedisFake();
     stubFetchOk();
 
-    env.EXTERNAL_MODERATION_CACHE_PROBE = true;
+    env.EXTERNAL_MODERATION_CACHE_PROBE = 'testns';
     await extModeration.moderatePrompt('a warmup prompt', 'generate');
     await untilProbeTotal(2);
     const redisCallsWhileOn = redisMock.sysRedis.set.mock.calls.length;
 
-    env.EXTERNAL_MODERATION_CACHE_PROBE = false;
+    env.EXTERNAL_MODERATION_CACHE_PROBE = '';
     await extModeration.moderatePrompt('an entirely different prompt', 'generate');
     await new Promise((r) => setTimeout(r, 200));
 
@@ -301,6 +302,23 @@ describe('cache probe — label bounds', () => {
     expect(await probeCount('not-a-real-source', '5m', 'miss')).toBe(0);
   });
 
+  it('clamps when called DIRECTLY, not only through moderatePrompt', async () => {
+    // 🔴 THE CASE ABOVE DOES NOT TEST THE PROBE'S OWN CLAMP. `moderatePrompt` clamps first and
+    // passes the clamped value, so the probe's `clampExternalModerationSource` never sees a bad
+    // string on that path — an audit mutant that DELETED the probe's clamp survived a green 14-case
+    // suite. `probeModerationCacheRepeat` is exported, so a future direct caller (or a helper in
+    // the test tree, which tsconfig.json excludes) can reach it with a widened `string`, and an
+    // unbounded value on a hot-path prom label is a cardinality incident with no error anywhere.
+    // This drives the exported function directly, which is the only way to exercise that guard.
+    installRedisFake();
+
+    probeModerationCacheRepeat('not-a-real-source' as never, 'a serene landscape');
+
+    await untilProbeTotal(2);
+    expect(await probeCount('other', '5m', 'miss')).toBe(1);
+    expect(await probeCount('not-a-real-source', '5m', 'miss')).toBe(0);
+  });
+
   it('emits exactly two observations per call — one per window, never more', async () => {
     installRedisFake();
     stubFetchOk();
@@ -336,13 +354,72 @@ describe('cache probe — label bounds', () => {
   });
 });
 
+describe('cache probe — the namespace IS the arming switch', () => {
+  it('writes the configured namespace into the key, so two armed deployments cannot collide', async () => {
+    // 🔴 WHY THIS MATTERS: several civitai-web deployments share ONE sysRedis, and sys keys carry
+    // no environment segment (cache-key-prefix.ts: "This is CACHE-ONLY"). Two armed deployments on
+    // one keyspace would each score HITS on the other's prompts, biasing the answer toward
+    // "caching pays" — the direction that gets a cache built that does not pay.
+    installRedisFake();
+    stubFetchOk();
+    env.EXTERNAL_MODERATION_CACHE_PROBE = 'next';
+
+    await extModeration.moderatePrompt('a serene landscape', 'generate');
+    await untilProbeTotal(2);
+
+    const keys = (redisMock.sysRedis.set.mock.calls as [string][]).map(([k]) => k);
+    expect(keys).toHaveLength(2);
+    expect(keys.every((k) => k.startsWith('generation:moderation-cache-probe:next:'))).toBe(true);
+  });
+
+  it('the SAME prompt under a DIFFERENT namespace is a miss, not a hit', async () => {
+    // The behavioural half of the case above: a structural `startsWith` assertion would still pass
+    // if the namespace were appended somewhere that does not separate the keyspaces.
+    installRedisFake();
+    stubFetchOk();
+
+    env.EXTERNAL_MODERATION_CACHE_PROBE = 'prod';
+    await extModeration.moderatePrompt('a serene landscape', 'generate');
+    await untilProbeTotal(2);
+
+    env.EXTERNAL_MODERATION_CACHE_PROBE = 'next';
+    await extModeration.moderatePrompt('a serene landscape', 'generate');
+    await untilProbeTotal(4);
+
+    expect(await probeCount('generate', '5m', 'miss')).toBe(2);
+    expect(await probeCount('generate', '5m', 'hit')).toBe(0);
+  });
+
+  it('an out-of-charset namespace is treated as OFF, not sanitised', async () => {
+    // A typo must produce NO SERIES — which the help text already tells the reader means "not
+    // armed" — rather than quietly opening a second keyspace that looks armed and measures a
+    // fiction. Sanitising would silently map two distinct typos onto one namespace.
+    installRedisFake();
+    stubFetchOk();
+
+    // Warm the lazy import with a valid namespace first, so the absence below is evidence and not
+    // an insufficient wait (same reasoning as the flag-off case).
+    env.EXTERNAL_MODERATION_CACHE_PROBE = 'testns';
+    await extModeration.moderatePrompt('a warmup prompt', 'generate');
+    await untilProbeTotal(2);
+
+    for (const bad of ['Prod', 'has space', 'has:colon', '-leading', 'x'.repeat(33)]) {
+      env.EXTERNAL_MODERATION_CACHE_PROBE = bad;
+      await extModeration.moderatePrompt(`prompt for ${bad}`, 'generate');
+    }
+    await new Promise((r) => setTimeout(r, 200));
+
+    expect(await probeTotal()).toBe(2);
+  });
+});
+
 describe('cache probe — env schema', () => {
-  it('defaults to OFF, so the code ships inert and the arming instant is readable', () => {
+  it('defaults to EMPTY, so the code ships inert and the arming instant is readable', () => {
     const parsed = serverSchema.safeParse({});
     // The schema has many required keys; only this field's default is under test.
     const value = parsed.success
       ? parsed.data.EXTERNAL_MODERATION_CACHE_PROBE
       : serverSchema.shape.EXTERNAL_MODERATION_CACHE_PROBE.parse(undefined);
-    expect(value).toBe(false);
+    expect(value).toBe('');
   });
 });

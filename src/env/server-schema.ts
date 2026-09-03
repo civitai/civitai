@@ -607,13 +607,31 @@ export const serverSchema = z
     // ~116-day timeout) re-introduces the unbounded-park failure the deadline exists
     // to prevent. Any out-of-range value falls back to 5000.
     EXTERNAL_MODERATION_TIMEOUT_MS: z.coerce.number().int().min(100).max(60000).catch(5000),
-    // Dark measurement probe for "would a moderation-result cache pay?". OFF by default and
-    // deliberately so: it ships inert, gets flipped on in config, and the metric's ARMING DATE is
-    // then visible as the instant its series appear — which is the only thing that distinguishes
-    // "no repeats" from "probe never ran". It never changes the verdict, never skips the
-    // classifier, and never adds latency to the request (the Redis round trip is fire-and-forget).
-    // See src/server/integrations/moderation-cache-probe.ts.
-    EXTERNAL_MODERATION_CACHE_PROBE: zc.booleanString.optional().default(false),
+    // Dark measurement probe for "would a moderation-result cache pay?". Empty/unset = OFF, and
+    // deliberately so: it ships inert, gets armed in config, and the metric's ARMING DATE is then
+    // visible as the instant its series appear — which is the only thing that distinguishes "no
+    // repeats" from "probe never ran". It never changes the verdict, never skips the classifier,
+    // and never adds latency to the request (the Redis round trip is fire-and-forget).
+    //
+    // 🔴 IT IS A NAMESPACE, NOT A BOOLEAN, AND THAT IS THE WHOLE POINT. Set it to a short label for
+    // the deployment being measured (`prod`, `next`, `stage`); the value becomes a segment of the
+    // probe's Redis key. Several civitai-web deployments SHARE ONE sysRedis, and unlike cache keys
+    // — which get an environment prefix via CACHE_KEY_NAMESPACE — sys keys carry no environment
+    // segment at all (see cache-key-prefix.ts: "This is CACHE-ONLY"). So two armed deployments
+    // would write the same probe keyspace and each would score HITS on the other's prompts, biasing
+    // the result toward "caching pays" — the direction that gets a cache built that does not pay.
+    //
+    // Making the namespace the ARMING SWITCH is what stops that being a thing to remember: there is
+    // no way to turn the probe on without naming a keyspace for it. A separate namespace variable
+    // could be left unset while the probe ran, which is exactly how CACHE_KEY_NAMESPACE behaves in
+    // practice — measured 2026-09-03, it is ABSENT on all of civitai-dp-prod, civitai-next and
+    // civitai-next-stage, including the deployment its own doc says should set it. A fix routed
+    // through it would have been inert while looking like a fix.
+    //
+    // Values are restricted to /^[a-z0-9][a-z0-9-]{0,31}$/; anything else is treated as OFF rather
+    // than sanitised, so a typo produces NO SERIES (loud, and already documented as "not armed")
+    // instead of a second silent keyspace. See src/server/integrations/moderation-cache-probe.ts.
+    EXTERNAL_MODERATION_CACHE_PROBE: z.string().trim().optional().default(''),
     BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
     MODERATION_KNIGHT_TAGS: commaDelimitedStringArray().default([]),
 
