@@ -242,39 +242,46 @@ export class PayloadTooLargeError extends Error {
  * arbitrarily large body that we only measure at the end. `Content-Length` is not
  * trusted for this — it is caller-supplied and may be absent under chunked encoding.
  *
- * 🔴 The 413 is written HERE, and then the remainder is DRAINED. Both halves are
- * required, and this is the third attempt at it — the first two were measured wrong.
+ * 🔴 The 413 is written HERE, and NOTHING is done to the socket afterwards. Both
+ * halves matter, and this is the fourth attempt — the first three were each measured
+ * wrong, so the arms are recorded rather than the conclusion.
  *
- * Attempt 1 wrote the status and then called `req.destroy()`. `IncomingMessage`'s
- * destroy tears down the SHARED socket, and `socket.destroy()` DISCARDS queued writes
- * rather than flushing them, so the client got ECONNRESET instead of the status.
+ * Attempt 1 wrote the status then called `req.destroy()`. That tears down the SHARED
+ * socket and discards queued writes rather than flushing them: ECONNRESET, no status.
  *
- * Attempt 2 removed the destroy and set `Connection: close` instead, reasoning that
- * the response would flush and the close would tell the client to stop. It does not:
- * `res.end()` on a `Connection: close` response sets `_last`, `resOnFinish` calls
- * `socket.destroySoon()`, and closing a socket that still has unread inbound data
- * RSTs — losing the status the same way, with a different errno.
+ * Attempt 2 removed the destroy and set `Connection: close`. Also loses it: `res.end()`
+ * on a close-delimited response sets `_last`, `resOnFinish` calls `socket.destroySoon()`,
+ * and closing a socket with unread inbound data RSTs. EPIPE, no status.
  *
- * Measured against a real HTTP client, 5 runs per arm, chunked and Content-Length:
+ * Attempt 3 kept `Connection: close` off AND added `req.resume()` to drain, believing
+ * the drain was what delivered the status. It is not, and the resume was INERT:
+ * `readCappedBody` drives the stream's async iterator, which keeps a `'readable'`
+ * listener registered, and `Readable.resume()` is a no-op while `readableListening` is
+ * true — it sets `flowing = false` and the stream stays paused.
  *
- *     req.destroy()                    -> ECONNRESET, no 413        5/5
- *     Connection: close, stop reading  -> EPIPE,      no 413        5/5
- *     Connection: close + resume       -> EPIPE,      no 413        3/3
- *     req.resume()                     -> 413 + JSON body           5/5
+ * Measured against a real HTTP client, Node 24.19.0, 5 runs per arm, 64MB body / 1MB
+ * limit — note the middle two rows are IDENTICAL, which is what settles it:
  *
- * So the drain is the ONLY arm that delivers the status, and `Connection: close` is
- * the ingredient that breaks it. An earlier version of this comment refused the drain
- * on cost grounds; that reasoning conflated two costs. Draining does NOT buffer —
- * `resume()` reads and discards, so memory stays flat, which is the cost the cap
- * exists to bound. What it does spend is time on the wire for bytes we are throwing
- * away, and the in-flight slot is held while we do it. That is the trade being made
- * knowingly: a bounded bandwidth cost on an already-rejected request, in exchange for
- * the caller learning WHY it was rejected.
+ *     req.destroy()                      -> ECONNRESET, no 413      5/5
+ *     Connection: close                  -> EPIPE,      no 413      5/5
+ *     neither (this code)                -> 413 + body              5/5, 3.7MB read
+ *     neither + req.resume()             -> 413 + body              5/5, 3.7MB read
+ *     neither + a REAL drain             -> 413 + body              5/5, 64MB read
  *
- * ⚠ Measured at the pod hop only. In production Traefik sits in front, and
- * `Connection` is hop-by-hop, so what a browser finally sees is NOT established here.
- * The unit test cannot see any of this either — it drives a `Readable.from` and an
- * object literal, which have no socket — so it pins the CALL, never the delivery.
+ * So: NOT closing the connection is the entire fix. The drain was removed because it
+ * bought nothing — and a real one (clearing the iterator's listener first) would pull
+ * the whole rejected body over the wire, which is a cost worth NOT paying for a request
+ * we have already refused. The client gets its status either way; the unread remainder
+ * simply back-pressures and the socket closes on the keep-alive path a few seconds later.
+ *
+ * ⚠ The in-flight slot is NOT held for any of this: the throw below returns through the
+ * `finally` that releases it, measured at ~2ms. A slow client cannot hold a slot by
+ * dribbling a rejected body.
+ *
+ * ⚠ Measured at the pod hop only. Traefik sits in front in production and `Connection`
+ * is hop-by-hop, so what a browser finally sees is NOT established here. The unit test
+ * cannot see delivery either — it drives a `Readable.from` and an object literal — so it
+ * pins the calls this measurement showed matter, and nothing more.
  */
 async function readCappedBody(
   req: NextApiRequest,
@@ -298,16 +305,13 @@ async function readCappedBody(
     total += buf.length;
     if (total > limit) {
       if (!res.headersSent) {
-        // NO `Connection: close` — measured, it is what destroys the socket before
-        // the status reaches the client. See the note above.
+        // NO `Connection: close`, and NO drain. Measured: the close is what destroys
+        // the socket before the status reaches the client, and the drain is inert here
+        // (and pointless if made real). See the note above.
         res.status(413).json({ error: 'File too large for the upload fallback' });
       }
-      // Release the buffered chunks BEFORE draining: the drain can take a while on a
-      // large body and there is no reason to hold what we already rejected.
+      // Drop what we buffered — we have rejected it and are about to unwind.
       chunks.length = 0;
-      // Drain and discard, so the response can be delivered rather than RST away.
-      // `resume()` does not buffer.
-      req.resume();
       throw new PayloadTooLargeError();
     }
     chunks.push(buf);

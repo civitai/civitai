@@ -99,6 +99,16 @@ function decorate(
     trace?.push('destroy');
     return (realDestroy as (...a: unknown[]) => unknown)(...args);
   }) as typeof stream.destroy;
+  // Pass-THROUGH spy, deliberately not a stub. An earlier version replaced `resume`
+  // outright, which could only observe the call and not its effect — and that is how a
+  // `resume()` that was inert (a no-op while the async iterator holds a `'readable'`
+  // listener) survived a green suite. Calling through keeps the real behaviour
+  // observable while still recording that it happened.
+  const realResume = stream.resume.bind(stream);
+  stream.resume = ((...args: unknown[]) => {
+    trace?.push('resume');
+    return (realResume as (...a: unknown[]) => unknown)(...args);
+  }) as typeof stream.resume;
   return stream;
 }
 
@@ -210,47 +220,46 @@ describe('image-upload relay', () => {
 
   // AUDIT-F5 + AUDIT-F6. Two properties of the oversize path.
   //
-  //  * F5: the 413 must reach the client. Two earlier attempts did not — `req.destroy()`
-  //    RSTs the socket, and `Connection: close` makes `res.end()` call
-  //    `socket.destroySoon()` which RSTs it too when inbound data is unread. Measured
-  //    against a real HTTP client, only DRAINING delivers the status. So: no
-  //    `Connection` header, and the request IS resumed.
+  //  * F5: the 413 must reach the client. Three earlier attempts did not deliver it or
+  //    delivered it for the wrong reason — `req.destroy()` RSTs the socket;
+  //    `Connection: close` makes `res.end()` call `socket.destroySoon()` which RSTs it
+  //    too when inbound data is unread; and a `req.resume()` "drain" turned out to be a
+  //    no-op, because driving the stream's async iterator keeps a `'readable'` listener
+  //    registered and `Readable.resume()` does nothing while `readableListening` is
+  //    true. Measured against a real socket, NOT closing the connection is the whole
+  //    fix. So: no `Connection` header, no destroy, and no resume call.
   //  * F6: the running-total property. Asserting the 413 alone does NOT pin it — a
-  //    measure-at-the-end implementation returns the same 413, which is why the first
-  //    draft's cap test left that mutant alive. What discriminates is that a running
-  //    total STOPS READING: it throws on the chunk that crosses the limit, so the
-  //    stream never reaches EOF. `readableEnded` is that fact directly.
+  //    measure-at-the-end implementation returns the same 413. What discriminates is
+  //    that a running total STOPS READING, so the stream never reaches EOF.
   //
-  // 🔴 THIS TEST CANNOT SEE F5's ACTUAL PROPERTY. `makeReq` is a `Readable.from` and
-  // `makeRes` is an object literal — there is no socket, so "the client received the
-  // status" is unobservable here. It pins the CALLS that the real-socket measurement
-  // showed are necessary (drain yes, Connection header no); delivery itself was
-  // established by that measurement, not by this. Do not read a green here as proof
-  // the client got the 413.
+  // 🔴 THIS TEST CANNOT SEE DELIVERY. `makeReq` is a `Readable.from` and `makeRes` an
+  // object literal — no socket. It pins the calls the real-socket measurement showed
+  // matter. An earlier version ALSO stubbed `req.resume` to assert it was called, which
+  // could only ever observe the call and not its effect — which is exactly how an inert
+  // line survived a green suite. The stub is gone; `readableFlowing` below is a state
+  // assertion the fixture genuinely supports.
   //
-  // ⚠ What does NOT work, so nobody re-derives it: counting how many chunks the async
-  // source yielded. Node's Readable reads AHEAD of the consumer, so the real
-  // running-total implementation still pulls the chunk after the one that trips the
-  // cap. Generator-pull count measures the stream's buffering, not the handler's.
-  it('writes the 413, drains rather than closing, and stops reading before EOF', async () => {
+  // ⚠ What does NOT work: counting chunks the async source yielded. Node's Readable
+  // reads AHEAD of the consumer, so the running-total implementation still pulls the
+  // chunk after the one that trips the cap.
+  it('writes the 413 without closing or draining, and stops reading before EOF', async () => {
     const trace: Trace = [];
     const half = Math.floor(MAX_RELAY_BYTES / 2) + 1;
     const req = makeReq([Buffer.alloc(half), Buffer.alloc(half)], { trace });
     const res = makeRes(trace);
-    let resumed = false;
-    (req as unknown as { resume: () => void }).resume = () => {
-      resumed = true;
-    };
 
     await handler(req, res);
 
     expect(res.statusCode).toBe(413);
     // F5: `Connection: close` is what destroyed the socket before the status landed.
     expect(res.headers['Connection']).toBeUndefined();
-    // F5: the drain is the only arm measured to deliver the status.
-    expect(resumed).toBe(true);
-    // F5: and nothing may destroy the request.
-    expect(trace).toEqual(['status:413']);
+    // F5: and nothing may destroy the request either.
+    expect(trace).toEqual(['status:413']); // no 'destroy', no 'resume'
+    // F5: no drain is attempted at all. `readableFlowing`/`readableEnded` CANNOT pin
+    // this — `resume()` schedules its reads asynchronously, so on this fixture a real
+    // drain has moved neither by the time the handler returns (measured: a
+    // `removeAllListeners('readable') + resume()` mutant passes both). The trace above
+    // is what pins it, via a pass-through spy rather than a stub.
     // F6: a measure-at-the-end implementation consumes to EOF and fails here while
     // still returning the same 413.
     expect((req as unknown as { readableEnded: boolean }).readableEnded).toBe(false);
