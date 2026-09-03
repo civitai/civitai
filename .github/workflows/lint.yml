@@ -763,3 +763,152 @@ jobs:
       # selected a real package, and collects every failure. See its header.
       - name: Typecheck apps
         run: node scripts/ci/typecheck-apps.mjs
+
+  geometry:
+    name: Geometry tests
+    runs-on: ubuntu-latest
+    # The browser-mode `geometry` project — real Chromium, the real app cascade,
+    # an explicit phone viewport. See `test/geometry-setup.tsx` for what it loads
+    # and why it is a separate project from `component`.
+    #
+    # 🔴 THIS IS THE FIRST JOB IN THIS WORKFLOW THAT INSTALLS A BROWSER, AND IT IS
+    # ALIGNED WITH THE `unit` JOB'S COMMENT RATHER THAN AN OVERRIDE OF IT.
+    # That comment gives exactly one reason for keeping browser tests out:
+    #
+    #   "Node env, no browser — component tests (`*.browser.test.tsx`) are not
+    #    here on purpose: they need Chromium, which this job does not install.
+    #    That is the whole reason."
+    #
+    # It is a statement about what THAT job provides, not a ban on providing it.
+    # The same comment then retracts the only other objection on the record —
+    # "Don't cite a cold-cache flake as a reason to keep this job Chromium-free"
+    # — and points at vitest.config.mts's dedupe + optimizeDeps pre-bundling as
+    # the canonical fix for it. So a job that DOES install Chromium satisfies the
+    # stated condition instead of overriding a decision.
+    #
+    # 🔴 GEOMETRY ONLY; `component` IS STILL UNGATED, AND THAT IS NOW VISIBLE
+    # RATHER THAN FIXED. No project selector in this workflow matches it
+    # (`unit*`, `@civitai/*`, `app:*`), and its only CI home is the preview
+    # pipeline's report-only `preview / component-tests`. Adding it here is a
+    # much larger change than this harness and belongs in its own PR, on measured
+    # cost: locally, on a 16-core box, `geometry` is 2 files / 10 tests in 9.07s
+    # while `component` is 212 files / 2,362 tests in 112.92s wall — and 334s of
+    # that is test time spread across workers, so a 2-core runner (browser pool
+    # `min(12, cpus - 1)` = 1 instance) does not divide it. That is a job an order
+    # of magnitude more expensive, with 212 files of pass/fail history nobody has
+    # ever seen in this workflow. Do it deliberately, not as a rider.
+    #
+    # REPORT-ONLY to start, mirroring `unit` and for the same stated reason:
+    # blocking on a brand-new tier from day one would red unrelated PRs and the
+    # job would be switched off within a week. Be precise about what
+    # `continue-on-error` does and does not change here — `main` has NO
+    # required_status_checks, so nothing in this workflow blocks a merge either
+    # way. What it buys is that a red renders as red-but-ignored rather than as a
+    # failing check on unrelated work while the tier settles.
+    #
+    # FLIP TO BLOCKING once a couple of weeks of runs show a clean pass rate, and
+    # remove `continue-on-error` and this paragraph together. What would make that
+    # safe, concretely: no run red for a reason other than a real geometry
+    # regression — in particular no Chromium launch failures and no timeouts on a
+    # 2-core runner. The tier is 10 tests and ~9s locally, so unlike `unit` there
+    # is no import/transform phase to blame; if it goes red it is either the code
+    # or the browser, and both are worth someone's attention.
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # 🔴 THE WORKSPACE-LOCAL PLAYWRIGHT, NOT A PINNED VERSION WRITTEN HERE.
+      # `pnpm exec` resolves this repo's own `playwright` (^1.57.0), which knows
+      # the exact Chromium revision it wants and fetches THAT. A version named in
+      # this file would be a second pin to keep in step, and desynchronising the
+      # two is the documented failure: CLAUDE.md records a bump attempt where 59
+      # preview specs died with "Executable doesn't exist at
+      # .../chromium_headless_shell-<rev>/..." and not one spec ran.
+      #
+      # `--with-deps` installs the shared libraries Chromium needs on a bare
+      # ubuntu-latest image; `chromium` alone, because the browser config in
+      # vitest.config.mts declares `instances: [{ browser: 'chromium' }]` and
+      # firefox/webkit would be several hundred MB of download for nothing.
+      #
+      # NOTE FOR ANYONE DEBUGGING THIS FROM A NIXOS LAPTOP: a local
+      # revision mismatch (a nixpkgs `playwright-driver.browsers` bundle carrying
+      # chromium-1228 against this repo's 1200) is a property of THAT HOST, not of
+      # this repo. The escape hatch is `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`,
+      # honoured by vitest.config.mts. Do NOT move the repo's playwright pin to
+      # match a laptop — see CLAUDE.md, "Browser/component tests on NixOS".
+      - name: Install Chromium for Playwright
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Geometry tests
+        run: pnpm exec vitest run --project geometry --reporter=default --reporter=json --outputFile=geometry-report.json
+
+      # 🔴 A GREEN VITEST RUN IS A CLAIM, NOT EVIDENCE — the same hazard the
+      # `packages` job's ledger exists for, one project over. `--project` matching
+      # NOTHING exits 0, and so does a config whose globs stopped resolving: this
+      # tier's glob (`src/**/*.geometry.test.tsx`) is deliberately disjoint from
+      # every other project's, which is exactly the kind of narrow pattern that
+      # can quietly stop matching. A job that silently runs zero tests is worse
+      # than no job, because it reports success.
+      #
+      # Both numbers are FLOORS, not equalities, so adding a geometry test never
+      # breaks this — only losing one does.
+      #
+      # 🔴 THE FILE COUNT COMES FROM `testResults.length`, NOT FROM
+      # `numTotalTestSuites`. Measured against a real report: this run is 2 files
+      # and `numTotalTestSuites` is 4, because that field counts `describe` blocks
+      # rather than files. A floor written against it would have been off by a
+      # factor that changes whenever someone adds a `describe`.
+      #
+      # `if: always()` so this runs when the tests FAIL too — an aborted runner
+      # writes no report at all, which is precisely the case this must catch, and
+      # it is indistinguishable from a healthy run if you only read the step's
+      # own status.
+      #
+      # All three arms were exercised before this was committed: a real report
+      # exits 0; a report with `testResults: []` / `numTotalTests: 0` exits 1; a
+      # missing report exits 1 with its own message.
+      - name: Assert the geometry tier actually collected something
+        if: always()
+        run: |
+          node - <<'JS'
+          // Minimum ledger for the `geometry` tier.
+          const MIN_FILES = 2;
+          const MIN_TESTS = 10;
+          const REPORT = 'geometry-report.json';
+
+          const fs = require('fs');
+          if (!fs.existsSync(REPORT)) {
+            console.error(
+              `geometry ledger: ${REPORT} was never written. The runner did not finish — a ` +
+                'browser that failed to launch, or a config error. That is NOT "the suite is ' +
+                'fine"; fail loudly.'
+            );
+            process.exit(1);
+          }
+          const r = JSON.parse(fs.readFileSync(REPORT, 'utf8'));
+          const files = Array.isArray(r.testResults) ? r.testResults.length : 0;
+          const tests = Number(r.numTotalTests ?? 0);
+          console.error(`geometry ledger: ${files} file(s), ${tests} test(s) collected`);
+          if (files < MIN_FILES || tests < MIN_TESTS) {
+            console.error(
+              `geometry ledger FAILED: expected at least ${MIN_FILES} file(s) and ${MIN_TESTS} ` +
+                `test(s), got ${files} and ${tests}. A vitest run whose --project matches ` +
+                'nothing exits 0, so a green verdict here would otherwise be a claim about the ' +
+                'selector, not about the code.'
+            );
+            process.exit(1);
+          }
+          JS
