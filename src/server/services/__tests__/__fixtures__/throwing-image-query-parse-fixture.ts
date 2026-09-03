@@ -34,6 +34,15 @@ export const wrappedChain = imagesQueryParamSchema
 export const wrappedPlain = imagesQueryParamSchema
   .parse(query);
 
+// A chain link whose argument contains a STATEMENT. The house style in
+// `zod-helpers.ts` puts `ctx.addIssue(...)` inside a block-bodied callback, so this is
+// what adding validation to a chained call looks like here — and a matcher that bounds
+// the argument with `[^;]` dies on the semicolon and silently un-guards the call.
+// prettier-ignore
+export const chainWithStatement = imagesQueryParamSchema
+  .refine((v) => { const ok = !!v; return ok; }, 'needs a value')
+  .parse(query);
+
 export const asyncParse = imagesQueryParamSchema.parseAsync(query);
 
 export const optionalChain = imagesQueryParamSchema?.parse(query);

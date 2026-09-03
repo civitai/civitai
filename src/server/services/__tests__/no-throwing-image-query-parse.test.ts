@@ -61,9 +61,23 @@ const SRC_DIR = path.resolve(__dirname, '../../..');
  *
  * `safeParse` must NOT match: the chain arm requires a following `.`, and the tail
  * alternation is anchored on the literal `parse`, so `.safeParse(` fails both.
+ *
+ * The chain argument is matched as BALANCED PARENS, not `[^;]`. Bounding it with
+ * `[^;]` looked tighter and silently un-guarded any chain whose callback has a block
+ * body — `.refine((v) => { ...; })` — which is the house style in `zod-helpers.ts`.
+ * The two alternatives are disjoint (one cannot start with a paren, the other must),
+ * so there is nothing to backtrack over: 200 chained links match in 0 ms.
+ *
+ * 🔴 A FACTORY, not a shared constant, and that is not style. A module-level `/g`
+ * regex carries `lastIndex` as mutable state. `matchAll` is safe — it clones and never
+ * writes back, measured — but a single `THROWING_PARSE.test(...)` anywhere in this file
+ * leaves `lastIndex` mid-source, and every following file then starts scanning from
+ * that offset and skips violations by scan order. It fails GREEN, and the previous
+ * version of this guard used `.test(line)`, so a revert or a copy-paste out of git
+ * history is exactly what reintroduces it. A fresh regex per call cannot be poisoned.
  */
-const THROWING_PARSE =
-  /imagesQueryParamSchema\s*(?:\?\.|\.)\s*(?:\w+\s*\([^;]*?\)\s*(?:\?\.|\.)\s*)*(?:parse|parseAsync)\s*\(/g;
+const throwingParse = () =>
+  /imagesQueryParamSchema\s*(?:\?\.|\.)\s*(?:\w+\s*\((?:[^()]|\([^()]*\))*\)\s*(?:\?\.|\.)\s*)*(?:parse|parseAsync)\s*\(/g;
 
 /**
  * Strip comments while PRESERVING newlines, so a reported line number still refers to
@@ -91,7 +105,7 @@ function findViolations(files: string[]) {
   const hits: string[] = [];
   for (const file of files) {
     const source = stripComments(fs.readFileSync(file, 'utf-8'));
-    for (const match of source.matchAll(THROWING_PARSE)) {
+    for (const match of source.matchAll(throwingParse())) {
       const line = source.slice(0, match.index).split('\n').length;
       const rel = path.relative(SRC_DIR, file).split('\\').join('/');
       hits.push(`${rel}:${line}: ${match[0].replace(/\s+/g, ' ').trim()}`);
@@ -101,32 +115,48 @@ function findViolations(files: string[]) {
 }
 
 /**
- * 🔴 Reach, not count. A file COUNT cannot fail in the way that matters: measured,
- * a walk that had lost `components/` and `pages/` entirely — every one of the three
- * call sites from the incident — still returned 3,077 files and cleared a floor of
- * 2,000 with room to spare. The natural way that happens is someone adding a third
- * `continue` to `walk` above.
+ * 🔴 Reach AND count, because each one alone has a blind spot the other covers.
  *
- * So assert the walk actually reaches the files this guard exists to watch. Note the
- * negative-control test below hands its paths to `findViolations` DIRECTLY, which
- * proves the matcher is quiet on them and proves nothing about the walk.
+ * A count alone cannot fail in the way that matters: a walk that had lost `components/`
+ * and `pages/` — every call site from the incident — still returned 3,077 files and
+ * cleared a floor of 2,000. Reach alone cannot see a directory holding none of these
+ * four files go missing: a walk that had lost 2,945 files, half the tree including all
+ * of `components/Image/DetailV2/`, passed every assertion here. Both measured.
+ *
+ * Note the negative-control test below hands its paths to `findViolations` DIRECTLY,
+ * which proves the matcher is quiet on them and proves nothing about the walk.
  */
 const MUST_REACH = [
   'pages/images/[imageId].tsx',
   'components/Image/Detail/ImageDetailModal.tsx',
   'components/Image/Detail/ImageDetailProvider.tsx',
   'components/Image/image.utils.ts',
+  // Named explicitly because no COUNT can catch it: `components/Image/DetailV2/` is 12
+  // files, so losing the whole directory leaves 5,830 and clears any usable floor. It
+  // holds `ImageDetail2`, the component `[imageId].tsx` actually renders, which makes it
+  // the likeliest home for the next call site.
+  'components/Image/DetailV2/ImageDetail2.tsx',
 ];
 
 const FIXTURE = path.join(__dirname, '__fixtures__/throwing-image-query-parse-fixture.ts');
 
 describe('no bare imagesQueryParamSchema.parse', () => {
-  it('reaches the files it exists to watch', () => {
+  it('reaches the files it exists to watch, and still scans the whole tree', () => {
     expect(fs.existsSync(SRC_DIR)).toBe(true);
     const scanned = walk(SRC_DIR);
+
     for (const rel of MUST_REACH) {
       expect(scanned, `the walk no longer reaches ${rel}`).toContain(path.resolve(SRC_DIR, rel));
     }
+
+    // Reach and count are COMPLEMENTS, and the first version of this guard had only one
+    // of each in turn. Reach alone cannot see any directory that holds none of the four
+    // files above go missing: measured, a walk that had lost 2,945 files — half the tree,
+    // including all 12 of `components/Image/DetailV2/`, the most likely home for the next
+    // call site — passed every assertion in this file. The old count alone missed
+    // targeted losses. Note this floor sits just under the real number (5,842); the one
+    // it replaces sat at 2,000, which is what made it useless rather than merely coarse.
+    expect(scanned.length, 'the walk lost a large part of the tree').toBeGreaterThanOrEqual(5000);
   });
 
   it('detects every shape a person would call the same defect', () => {
@@ -140,6 +170,7 @@ describe('no bare imagesQueryParamSchema.parse', () => {
       'imagesQueryParamSchema.omit({ tags: true }).parse(',
       'imagesQueryParamSchema .omit({ tags: true }) .parse(',
       'imagesQueryParamSchema .parse(',
+      "imagesQueryParamSchema .refine((v) => { const ok = !!v; return ok; }, 'needs a value') .parse(",
       'imagesQueryParamSchema.parseAsync(',
       'imagesQueryParamSchema?.parse(',
     ]);
@@ -156,7 +187,7 @@ describe('no bare imagesQueryParamSchema.parse', () => {
     // passed with stripComments deleted outright.
     const raw = fs.readFileSync(FIXTURE, 'utf-8');
     expect(raw).toContain('// A commented violation');
-    expect(findViolations([FIXTURE])).toHaveLength(6);
+    expect(findViolations([FIXTURE])).toHaveLength(7);
   });
 
   it('reports the real line number, not one shifted by stripped comments', () => {
