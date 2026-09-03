@@ -47,6 +47,7 @@ import { Model3dGenerationForm } from './Model3dGenerationForm';
 import { FormFooter } from './FormFooter';
 import { WhatIfProvider } from './WhatIfProvider';
 import { migrateV1GenerationStorage } from './migrate-v1-storage';
+import { useGenerationIngestion } from './ingestion';
 import { useOutputType, type GenerationStore } from './store';
 
 /**
@@ -166,6 +167,7 @@ function useResourceHydrationSync(store: GenerationStore) {
 
 function GenerationFormBody({ store, isMember }: { store: GenerationStore; isMember: boolean }) {
   useResourceHydrationSync(store);
+  useGenerationIngestion(store);
   const output = useOutputType(store);
   const workflow = useField<string>(store, 'workflow')?.value;
   const ecosystem = useField<string>(store, 'ecosystem')?.value;
