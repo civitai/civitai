@@ -84,17 +84,34 @@ type ProbeWindowLabel = (typeof PROBE_WINDOWS)[number]['label'];
  * measurement instrument whose deployment set is known, small, and expected to shrink to zero when
  * the probe is removed.
  *
- * 🔴 THERE IS NO `preview` MEMBER, AND ITS ABSENCE IS THE POINT. It was in the first version of
- * this list and audit round 4 removed it: `preview` is not a deployment, it is a CLASS. Measured
- * live, ~10 concurrent `civitai-pr-*` namespaces each run this code, each take their config from
- * one shared template (so they would all arm together, with the same value) and they share one
- * `civitai-pr-sysredis`. Arming them would put every PR preview in the keyspace
- * `…:preview:<window>:<digest>` at once — mutual hits across unrelated PRs, the exact collision
- * the paragraph above says an allowlist prevents. A member that defeats the invariant the guard
- * enforces is worse than no guard, because the guard is what stops anyone looking. If preview
- * traffic is ever worth measuring it needs a PER-PR segment, not a shared word.
+ * 🔴 THE ONLY MEMBER IS `prod`, AND BOTH OMISSIONS ARE LOAD-BEARING. The list held four members
+ * two rounds ago; audit rounds 4 and 5 removed three of them, each for a measured reason:
+ *
+ *   · `preview` is not a deployment, it is a CLASS — ~10 concurrent `civitai-pr-*` namespaces run
+ *     this code and share one `civitai-pr-sysredis`, so arming that one word arms all of them into
+ *     a single keyspace and they score mutual hits across unrelated PRs.
+ *   · `next` LOOKS like a single deployment and is not, for the same reason one level up: the
+ *     PR-preview Tekton task copies civitai-next's `civitai-cfg` ConfigMap WHOLESALE into every
+ *     `civitai-pr-<N>` namespace, overriding only an explicit key list this variable is not on.
+ *     So arming `next` silently arms every open PR's preview too, onto that same shared sysRedis.
+ *     Removing `preview` alone did not close the hazard; it moved it.
+ *   · `next-stage` is a genuine single deployment, and arming it would still be useless: it has
+ *     NO ServiceMonitor or PodMonitor, so nothing scrapes it. Measured — `civitai-next` and
+ *     `civitai-next-stage` have zero monitors between them, and the probe's population twin
+ *     `civitai_app_external_moderation_duration_seconds_count` exists in exactly one namespace,
+ *     `civitai-dp-prod`. An operator arming a non-scraped deployment sees no series at all, which
+ *     this metric's own help text defines as "not armed" — the two states the whole arming design
+ *     exists to keep apart.
+ *
+ * 🔴 SO BEFORE ADDING A MEMBER, CHECK BOTH: that it names ONE running population rather than a
+ * template other namespaces inherit, and that something actually scrapes it. A member that fails
+ * either test makes this guard assert an invariant it does not enforce, which is worse than no
+ * guard because the guard is what stops anyone looking.
+ *
+ * Exported so a test can assert the membership as a LEDGER — failing when the set grows OR shrinks,
+ * not merely when a known member disappears.
  */
-const PROBE_NAMESPACES: ReadonlySet<string> = new Set(['prod', 'next', 'next-stage']);
+export const PROBE_NAMESPACES: ReadonlySet<string> = new Set(['prod']);
 
 let warnedNamespace: string | null = null;
 

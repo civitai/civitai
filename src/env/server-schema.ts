@@ -614,8 +614,9 @@ export const serverSchema = z
     // and never adds latency to the request (the Redis round trip is fire-and-forget).
     //
     // 🔴 IT IS A NAMESPACE, NOT A BOOLEAN, AND THAT IS THE WHOLE POINT. Set it to a short label for
-    // the deployment being measured — the accepted set is the allowlist named below, currently
-    // `prod`, `next`, `next-stage`; the value becomes a segment of the
+    // the deployment being measured. The accepted set is the allowlist in
+    // moderation-cache-probe.ts and is deliberately NOT restated here — restating it is exactly how
+    // this sentence went stale once already. The value becomes a segment of the
     // probe's Redis key. Several civitai-web deployments SHARE ONE sysRedis, and unlike cache keys
     // — which get an environment prefix via CACHE_KEY_NAMESPACE — sys keys carry no environment
     // segment at all (see cache-key-prefix.ts: "This is CACHE-ONLY"). So two armed deployments

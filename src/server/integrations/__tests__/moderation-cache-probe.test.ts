@@ -29,14 +29,17 @@ const env = vi.hoisted(() => ({
   EXTERNAL_MODERATION_THRESHOLD: 0.5,
   EXTERNAL_MODERATION_TIMEOUT_MS: 5000,
   EXTERNAL_MODERATION_CATEGORIES: undefined as Record<string, string> | undefined,
-  EXTERNAL_MODERATION_CACHE_PROBE: 'next' as string,
+  EXTERNAL_MODERATION_CACHE_PROBE: 'prod' as string,
 }));
 vi.mock('~/env/server', () => ({ env }));
 
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { serverSchema } from '~/env/server-schema';
 import { extModeration } from '~/server/integrations/moderation';
-import { probeModerationCacheRepeat } from '~/server/integrations/moderation-cache-probe';
+import {
+  PROBE_NAMESPACES,
+  probeModerationCacheRepeat,
+} from '~/server/integrations/moderation-cache-probe';
 
 const PROBE = 'civitai_app_external_moderation_cache_probe_total';
 const HIST = 'civitai_app_external_moderation_duration_seconds';
@@ -105,7 +108,7 @@ async function untilProbeTotal(n: number) {
 beforeEach(() => {
   promClient.register.getSingleMetric(PROBE)?.reset();
   promClient.register.getSingleMetric(HIST)?.reset();
-  env.EXTERNAL_MODERATION_CACHE_PROBE = 'next';
+  env.EXTERNAL_MODERATION_CACHE_PROBE = 'prod';
   // 🔴 `resetSharedMocks()` in src/__tests__/setup.ts runs once PER FILE, not per test, so
   // `sysRedis.set`'s call history accumulates across every case here. Without this, the
   // `not.toHaveBeenCalled()` assertion in the flag-off case passes only because it happens to run
@@ -132,7 +135,7 @@ describe('cache probe — the flag is the arming switch', () => {
     stubFetchOk();
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    env.EXTERNAL_MODERATION_CACHE_PROBE = 'next';
+    env.EXTERNAL_MODERATION_CACHE_PROBE = 'prod';
     await extModeration.moderatePrompt('a warmup prompt', 'generate');
     await untilProbeTotal(2);
     const redisCallsWhileOn = redisMock.sysRedis.set.mock.calls.length;
@@ -367,39 +370,80 @@ describe('cache probe — label bounds', () => {
 });
 
 describe('cache probe — the namespace IS the arming switch', () => {
-  it('writes the configured namespace into the key, so two armed deployments cannot collide', async () => {
-    // 🔴 WHY THIS MATTERS: several civitai-web deployments share ONE sysRedis, and sys keys carry
-    // no environment segment (cache-key-prefix.ts: "This is CACHE-ONLY"). Two armed deployments on
-    // one keyspace would each score HITS on the other's prompts, biasing the answer toward
-    // "caching pays" — the direction that gets a cache built that does not pay.
+  it('gives the namespace its own key SEGMENT, so a second member could never share a keyspace', async () => {
+    // 🔴 WHY A NAMESPACE SEGMENT EXISTS AT ALL: several civitai-web deployments share ONE sysRedis,
+    // and sys keys carry no environment segment (cache-key-prefix.ts: "This is CACHE-ONLY"). Two
+    // armed deployments on one keyspace would each score HITS on the other's prompts, biasing the
+    // answer toward "caching pays" — the direction that gets a cache built that does not pay.
+    //
+    // ⚠️ THIS USED TO BE A TWO-NAMESPACE BEHAVIOURAL TEST and cannot be any more: audit round 5
+    // reduced the allowlist to a single member, so "the same prompt under a different namespace"
+    // is a scenario config can no longer reach. That is a STRONGER guarantee than the test it
+    // replaces, not a weaker one — but the segment stays in the key as defence-in-depth for a
+    // future second member, so what is still assertable is its SHAPE.
+    //
+    // Asserting the segment COUNT and POSITION rather than just `startsWith` is what keeps this
+    // from passing when the namespace is appended somewhere that does not separate keyspaces —
+    // the mutant that drops `${namespace}:` from the template yields one segment fewer and dies.
     installRedisFake();
     stubFetchOk();
-    env.EXTERNAL_MODERATION_CACHE_PROBE = 'next';
 
     await extModeration.moderatePrompt('a serene landscape', 'generate');
     await untilProbeTotal(2);
 
     const keys = (redisMock.sysRedis.set.mock.calls as [string][]).map(([k]) => k);
     expect(keys).toHaveLength(2);
-    expect(keys.every((k) => k.startsWith('generation:moderation-cache-probe:next:'))).toBe(true);
+    for (const key of keys) {
+      // generation:moderation-cache-probe : <namespace> : <window> : <digest>
+      const [prefix, namespace, window, digest, ...rest] = key.split(':').slice(1);
+      expect(`generation:${prefix}`).toBe('generation:moderation-cache-probe');
+      expect(namespace).toBe('prod');
+      expect(['5m', '1h']).toContain(window);
+      expect(digest).toMatch(/^[0-9a-f]{32}$/);
+      expect(rest).toEqual([]);
+    }
+    expect(new Set(keys).size).toBe(2);
   });
 
-  it('the SAME prompt under a DIFFERENT namespace is a miss, not a hit', async () => {
-    // The behavioural half of the case above: a structural `startsWith` assertion would still pass
-    // if the namespace were appended somewhere that does not separate the keyspaces.
+  it('pins the allowlist MEMBERSHIP as a ledger — asserted whole, so growth fails too', async () => {
+    // 🔴 ASSERT THE SET ITSELF, NOT A LOOP OVER CANDIDATES I THOUGHT OF. The first version of this
+    // case probed four hardcoded candidates and claimed to fail "whether the set GROWS or SHRINKS".
+    // Half true, and audit round 5 measured it: adding `'staging'` to the allowlist SURVIVED 21/21,
+    // because a loop can only see growth by a member already in its own list. Comparing the whole
+    // normalised set to a literal is what closes the growth direction for any member at all.
+    expect([...PROBE_NAMESPACES].sort()).toEqual(['prod']);
+  });
+
+  it('every allowlist member arms, and the three removed ones do not', async () => {
+    // 🔴 THE BEHAVIOURAL HALF. The structural assertion above type-checks past a set whose members
+    // do not actually arm anything, so this drives each candidate through the real path.
+    //
+    // `preview`, `next` and `next-stage` are asserted ABSENT rather than merely omitted — each was
+    // a member at some point and each was removed for a measured reason (a shared preview keyspace,
+    // a ConfigMap the preview pipeline clones wholesale, and a deployment nothing scrapes). Someone
+    // will eventually try to add one back as an obvious convenience; this is what stops it being
+    // quiet.
     installRedisFake();
     stubFetchOk();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    env.EXTERNAL_MODERATION_CACHE_PROBE = 'prod';
-    await extModeration.moderatePrompt('a serene landscape', 'generate');
-    await untilProbeTotal(2);
+    const armed: string[] = [];
+    for (const candidate of ['prod', 'next', 'next-stage', 'preview']) {
+      promClient.register.getSingleMetric(PROBE)?.reset();
+      env.EXTERNAL_MODERATION_CACHE_PROBE = candidate;
+      await extModeration.moderatePrompt(`a prompt for ${candidate}`, 'generate');
+      await new Promise((r) => setTimeout(r, 150));
+      if ((await probeTotal()) > 0) armed.push(candidate);
+    }
 
-    env.EXTERNAL_MODERATION_CACHE_PROBE = 'next';
-    await extModeration.moderatePrompt('a serene landscape', 'generate');
-    await untilProbeTotal(4);
-
-    expect(await probeCount('generate', '5m', 'miss')).toBe(2);
-    expect(await probeCount('generate', '5m', 'hit')).toBe(0);
+    expect(armed).toEqual(['prod']);
+    // The removed ones must be rejected LOUDLY, i.e. through the same path as any other unknown
+    // value — not silently, which is reserved for the deliberately-empty case.
+    for (const removed of ['next', 'next-stage', 'preview']) {
+      expect(errorSpy.mock.calls.filter((c) => String(c[0]).includes(`"${removed}"`))).toHaveLength(
+        1
+      );
+    }
   });
 
   it('no off-ish spelling arms the probe, including the ones a denylist would miss', async () => {
@@ -418,7 +462,7 @@ describe('cache probe — the namespace IS the arming switch', () => {
     stubFetchOk();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
-    env.EXTERNAL_MODERATION_CACHE_PROBE = 'next';
+    env.EXTERNAL_MODERATION_CACHE_PROBE = 'prod';
     await extModeration.moderatePrompt('a warmup prompt', 'generate');
     await untilProbeTotal(2);
 
@@ -474,39 +518,6 @@ describe('cache probe — the namespace IS the arming switch', () => {
     expect(String(forThisValue[0][0])).toContain('is DISABLED');
   });
 
-  it('pins the allowlist MEMBERSHIP — every member arms, and `preview` deliberately does not', async () => {
-    // 🔴 AN ASSERTED LEDGER, FAILING WHETHER THE SET GROWS OR SHRINKS. The allowlist is now the
-    // entire arming contract, and before this case only 2 of its members were exercised anywhere —
-    // audit round 4 measured that deleting `next-stage` left all 20 cases GREEN. A rebase, a
-    // "one rule one place" tidy, or a non-ASCII hyphen in `next‑stage` would then silently stop
-    // that deployment from ever arming, and the failure surfaces only as an absent series, which
-    // the help text tells the reader means "not armed".
-    //
-    // 🔴 `preview` is asserted ABSENT, not merely omitted. It was a member until round 4, and it
-    // defeats the invariant the allowlist exists to enforce: ~10 concurrent PR-preview namespaces
-    // take their config from one shared template and share one sysRedis, so arming that word arms
-    // all of them into a single keyspace and they score mutual hits across unrelated PRs. Someone
-    // will eventually try to add it back as an obvious convenience; this is what stops it being
-    // quiet.
-    installRedisFake();
-    stubFetchOk();
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-
-    const armed: string[] = [];
-    for (const candidate of ['prod', 'next', 'next-stage', 'preview']) {
-      promClient.register.getSingleMetric(PROBE)?.reset();
-      env.EXTERNAL_MODERATION_CACHE_PROBE = candidate;
-      await extModeration.moderatePrompt(`a prompt for ${candidate}`, 'generate');
-      await new Promise((r) => setTimeout(r, 150));
-      if ((await probeTotal()) > 0) armed.push(candidate);
-    }
-
-    expect(armed).toEqual(['prod', 'next', 'next-stage']);
-    // `preview` must be rejected LOUDLY, i.e. through the same path as any other unknown value —
-    // not silently, which is reserved for the deliberately-empty case.
-    expect(errorSpy.mock.calls.filter((c) => String(c[0]).includes('"preview"'))).toHaveLength(1);
-  });
-
   it('an unknown namespace is treated as OFF, not sanitised', async () => {
     // A typo must produce NO SERIES — which the help text already tells the reader means "not
     // armed" — rather than quietly opening a second keyspace that looks armed and measures a
@@ -516,7 +527,7 @@ describe('cache probe — the namespace IS the arming switch', () => {
 
     // Warm the lazy import with a valid namespace first, so the absence below is evidence and not
     // an insufficient wait (same reasoning as the flag-off case).
-    env.EXTERNAL_MODERATION_CACHE_PROBE = 'next';
+    env.EXTERNAL_MODERATION_CACHE_PROBE = 'prod';
     await extModeration.moderatePrompt('a warmup prompt', 'generate');
     await untilProbeTotal(2);
 
