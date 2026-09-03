@@ -91,6 +91,28 @@ export const resetToDraftWithoutRequirements = createJob(
     // Draft (their only version was just reset above; keep the model recoverable
     // in the Training tab); everything else flips to Unpublished. See the
     // no-posts branch for the trained-vs-rest rationale.
+    //
+    // 🔴 "updatedAt" = now() is load-bearing, not cosmetic. This is $executeRaw, so
+    // Prisma's @updatedAt does NOT fire and the row would keep whatever timestamp it
+    // had while it was Published — often years old. remove-old-drafts reaps
+    // `status IN ('Draft','Deleted') AND m."updatedAt" < now() - INTERVAL '30 days'`
+    // and cascade-deletes the model with its versions, files and training data, so a
+    // model this sweep flips to Draft would arrive with its 30-day grace period
+    // already spent and be destroyable on the next run. The Unpublished branch is
+    // bumped too: the backfill in src/pages/api/admin/temp/backfill-swept-trained-models.ts
+    // later flips those rows to Draft, and a stale clock carried forward lands in
+    // exactly the same hole.
+    //
+    // This PR deliberately scopes itself to Model."updatedAt". The "ModelVersion"
+    // statements above are left alone — NOT because bumping that column on a
+    // system write is forbidden. It is not: unpublishModelById
+    // (src/server/services/model.service.ts) is a system/moderator take-down that
+    // raw-SQL-updates "ModelVersion" and sets "updatedAt" = NOW() on purpose,
+    // because the column is on the public v1 payload via
+    // src/server/selectors/modelVersion.selector.ts and a taken-down version
+    // otherwise serves a pre-take-down timestamp. Whether this sweep should do
+    // the same is a real question with a public-payload consequence, and it
+    // wants its own change and its own review rather than riding along here.
     await dbWrite.$executeRaw`
       UPDATE "Model" m
       SET
@@ -100,7 +122,8 @@ export const resetToDraftWithoutRequirements = createJob(
           THEN 'Draft'::"ModelStatus"
           ELSE 'Unpublished'::"ModelStatus"
         END,
-        meta = jsonb_set(jsonb_set(iif(jsonb_typeof(meta) != 'object', '{}', meta), '{unpublishedReason}', '"no-versions"'), '{unpublishedAt}', to_jsonb(now()))
+        meta = jsonb_set(jsonb_set(iif(jsonb_typeof(meta) != 'object', '{}', meta), '{unpublishedReason}', '"no-versions"'), '{unpublishedAt}', to_jsonb(now())),
+        "updatedAt" = now()
       WHERE
         m."status" = 'Published'
         AND m."deletedAt" IS NULL

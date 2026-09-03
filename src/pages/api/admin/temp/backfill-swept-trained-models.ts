@@ -195,11 +195,26 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       // Draft the parent models the no-versions sweep left Unpublished with no
       // published version. Scoped to the cron's 'no-versions' reason so a
       // moderator-unpublished parent (different reason) is never resurfaced.
+      //
+      // 🔴 "updatedAt" = now() is load-bearing: raw SQL bypasses Prisma's @updatedAt,
+      // and remove-old-drafts reaps Draft models whose Model."updatedAt" is older than
+      // REAP_AGE_DAYS. Without the bump a model drafted here starts with its grace
+      // period already spent.
+      //
+      // Deliberately NOT applied to the "ModelVersion" statement above — but not
+      // because bumping that column on a system write is forbidden. It is not:
+      // unpublishModelById (src/server/services/model.service.ts) does exactly that,
+      // on purpose, because ModelVersion."updatedAt" is on the public v1 payload via
+      // src/server/selectors/modelVersion.selector.ts. Changing it here is a separate
+      // decision with a public-payload consequence, so it is left alone rather than
+      // ridden along with this fix. (An earlier revision of this comment claimed the
+      // column was a creator-activity signal the reaper's fence reads and must never
+      // move; that reasoning was wrong and is retracted.)
       let draftedModels = 0;
       const modelTasks = chunk([...draftedModelIds], batchSize).map((batch) => async () => {
         const rows = await dbWrite.$queryRaw<{ id: number }[]>`
           UPDATE "Model" m
-          SET status = 'Draft'
+          SET status = 'Draft', "updatedAt" = now()
           WHERE m.id IN (${Prisma.join(batch)})
             AND m.status = 'Unpublished'
             AND m.meta->>'unpublishedReason' = 'no-versions'
