@@ -135,17 +135,38 @@ export const ownContentPickerFilters = (userId: number | undefined) =>
  * interpolated a null `postId` into the literal string `null`, and 25,135 images
  * on prod have a null `postId` (article covers, mainly).
  *
- * The emitter is fixed too, but links already delivered sit in users'
- * notification history forever and cannot be rewritten — so the READ side has to
- * survive junk on its own. Dropping the filters is the right degradation here:
- * `useZodRouteParams` has always done the same `safeParse`-then-`{}` with this
- * same schema over this same query, and the page it feeds only uses these params
- * to seed feed navigation.
+ * The emitter is fixed too, and that fix IS retroactive for in-app notifications:
+ * the URL is not stored, it is recomputed at render by `getNotificationMessage`
+ * from the stored `details` JSON, so old rows re-render with the corrected link.
+ * The read side still has to survive junk on its own, because a URL already copied
+ * out of the app — shared, bookmarked, crawled, or baked into an email by the
+ * external notifications service — is beyond the emitter's reach, and because
+ * `?postId=abc` from any source hits the same throw.
+ *
+ * Dropping the whole filter object is consistent with `useZodRouteParams`, which
+ * has always done this same `safeParse`-then-`{}` over this same schema and query.
+ * Note what that costs: zod object parsing is all-or-nothing, so one junk key
+ * discards the valid ones beside it. That is a known coarse edge, not a claim that
+ * per-key recovery would be wrong.
+ *
+ * The optional `schema` is for `ImageDetailModal`, which parses a variant
+ * (`.omit({ tags: true })`) off the SAME `useBrowserRouter` query. `removeEmpty`
+ * there drops null *values*, not the string `'null'`, so the junk reaches the
+ * parse either way — the modal is the next thing a user touches after landing on
+ * one of these links, and it threw for the same reason the page did.
  */
-export const parseImageQueryParams = (query: Record<string, unknown>): ImagesQueryParamSchema => {
-  const result = imagesQueryParamSchema.safeParse(query);
+export function parseImageQueryParams(query: Record<string, unknown>): ImagesQueryParamSchema;
+export function parseImageQueryParams<TSchema extends z.ZodObject>(
+  query: Record<string, unknown>,
+  schema: TSchema
+): Partial<z.infer<TSchema>>;
+export function parseImageQueryParams(
+  query: Record<string, unknown>,
+  schema: z.ZodObject = imagesQueryParamSchema
+) {
+  const result = schema.safeParse(query);
   return result.success ? result.data : {};
-};
+}
 
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 

@@ -5,7 +5,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { PageModal } from '~/components/Dialog/Templates/PageModal';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
-import { imagesQueryParamSchema } from '~/components/Image/image.utils';
+import { imagesQueryParamSchema, parseImageQueryParams } from '~/components/Image/image.utils';
 import type { PostTailDescriptor } from '~/components/Image/AsPosts/usePostImagesWithTail';
 import { usePostImagesWithTail } from '~/components/Image/AsPosts/usePostImagesWithTail';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -36,7 +36,10 @@ export default function ImageDetailModal({
   const queryFilters = useMemo(
     () =>
       !images
-        ? imagesQueryParamSchema.omit({ tags: true }).parse(removeEmpty({ ...query, ...filters }))
+        ? parseImageQueryParams(
+            removeEmpty({ ...query, ...filters }),
+            imagesQueryParamSchema.omit({ tags: true })
+          )
         : {},
     [query, images]
   );
