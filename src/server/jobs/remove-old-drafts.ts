@@ -8,38 +8,23 @@ import { chunk } from 'lodash-es';
 const log = createLogger('remove-old-drafts');
 
 /**
- * How recently something under a model must have moved for the model to count as
- * still in use, and therefore be SPARED.
+ * The reaping schedule now lives in `src/server/common/draft-reaping.ts` and is
+ * re-exported here so existing importers keep working.
  *
- * Two places have to agree on this number: the three fence `INTERVAL` literals in
- * the SELECT below, and `filterModelsWithRecentActivity`. A Prisma tagged
- * template cannot bind an interval without turning the predicate into an opaque
- * expression, so the SQL keeps the literal and `remove-old-drafts.test.ts` pins
- * the two together instead.
+ * It had to move: the `old-draft` notification is the second consumer of these
+ * numbers, and it cannot import THIS module — that would pull `src/server/db/`
+ * and `src/utils/logging.ts` into a graph `no-server-infra-in-app-graph.test.ts`
+ * forbids them from reaching. The constants module is dependency-free for that
+ * reason.
  *
- * 🔴 Deliberately SEPARATE from `REAP_AGE_DAYS` even though both are 30 today.
- * Raising this spares more; lowering it spares fewer. It must never be the same
- * symbol as the age threshold, or a maintainer narrowing the fence would be
- * steered by a failing test into narrowing what the reaper deletes as well.
+ * `ACTIVITY_WINDOW_DAYS` is read at runtime by `filterModelsWithRecentActivity`.
+ * `REAP_AGE_DAYS` still has no runtime reader HERE — the SELECT below spells the
+ * threshold as a SQL literal, and `remove-old-drafts.test.ts` pins the literal
+ * against the constant — but it is now genuinely load-bearing elsewhere, since
+ * the notification derives its own lead time from it.
  */
-export const ACTIVITY_WINDOW_DAYS = 30;
-
-/**
- * How long a model's own row must have gone untouched before it is even a
- * deletion CANDIDATE — the abandonment threshold, not part of the fence.
- * Lowering it WIDENS what the reaper destroys.
- *
- * 🔴 This constant has NO runtime reader, and changing it alone changes NOTHING.
- * The SELECT below spells the threshold as a SQL literal — a literal cannot read
- * a TypeScript constant — so this is a documentation anchor that
- * `remove-old-drafts.test.ts` pins the literal against, and nothing more. To
- * actually move the threshold you must edit the `m."updatedAt"` literal in the
- * SQL as well; the test will fail until you do.
- *
- * Note the asymmetry with `ACTIVITY_WINDOW_DAYS`, which IS read at runtime, by
- * `filterModelsWithRecentActivity`. The two are not interchangeable.
- */
-export const REAP_AGE_DAYS = 30;
+export { ACTIVITY_WINDOW_DAYS, REAP_AGE_DAYS } from '~/server/common/draft-reaping';
+import { ACTIVITY_WINDOW_DAYS } from '~/server/common/draft-reaping';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 

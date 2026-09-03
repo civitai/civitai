@@ -1,4 +1,5 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
+import { OLD_DRAFT_LEAD_TEXT, OLD_DRAFT_NOTICE_DAYS } from '~/server/common/draft-reaping';
 import { NotificationCategory } from '~/server/common/enums';
 import {
   createNotificationProcessor,
@@ -281,29 +282,41 @@ export const modelNotifications = createNotificationProcessor({
     category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `Your ${details.modelName} model that is in draft mode will be deleted in 1 week.`,
+      message: `Your ${details.modelName} model that is in draft mode will be deleted in ${OLD_DRAFT_LEAD_TEXT}.`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}`,
     }),
     /**
      * 🔴 This predicate must stay in step with the reaper's in
-     * src/server/jobs/remove-old-drafts.ts. The message promises deletion in 1
-     * week, so every term the reaper uses to decide what it destroys has to be
+     * src/server/jobs/remove-old-drafts.ts. The message promises the deletion is
+     * coming, so every term the reaper uses to decide what it destroys has to be
      * mirrored here or the promise is false. Until 2026-09 only the status and
-     * age terms were carried, so the notification would have warned every old
-     * Draft regardless of whether the reaper could touch it.
+     * age terms were carried, so it warned every old Draft regardless of whether
+     * the reaper could touch it.
      *
-     * The two are NOT one shared SQL string, deliberately: the reaper spells the
-     * download term as an INNER `JOIN "ModelMetric"` and this query as an
-     * EXISTS, and the age windows differ on purpose (23 days here, 30 there).
-     * `old-draft-reaper-parity.test.ts` is the seam guard that keeps the terms
-     * they DO share from drifting apart.
+     * 🔴 THE FENCE INTERVALS ARE **NOT** THE REAPER'S 30 DAYS, AND COPYING THEM
+     * VERBATIM IS A BUG. The two queries run at different instants, so a
+     * `now()`-relative window is a DIFFERENT absolute window on each side. This
+     * fires at `U + OLD_DRAFT_NOTICE_DAYS`; the reaper acts at `U + REAP_AGE_DAYS`.
+     * To ask the reaper's question — "was there activity after `U`?" — the
+     * interval here must be `now() - OLD_DRAFT_NOTICE_DAYS`, which resolves to
+     * exactly `U`. Spelling `30` here instead resolves to `U - LEAD`, which is
+     * STRICTER by the lead time: the canonical abandoned draft (model, version
+     * and file all created at `U`, then abandoned — the norm this whole feature
+     * exists for) is EXCLUDED from the warning and then reaped a week later.
+     * That shipped briefly in this PR's own history; it is why every interval
+     * below is derived from a constant and pinned by
+     * `old-draft-reaper-parity.test.ts` SEMANTICALLY rather than textually.
      *
-     * ⚠ APPROXIMATION, not an exact prediction. This evaluates at day 23 and the
-     * reaper acts at day 30, so `downloadCount` can cross 10 in between and new
-     * version/file activity can appear. A model warned here may therefore be
-     * spared later. That is the safe direction — warn, then spare — and it is
-     * the opposite of the pre-2026-09 behaviour, which warned models the reaper
-     * was never going to touch at all.
+     * The two queries are NOT one shared SQL string, deliberately: the reaper
+     * spells the download term as an INNER `JOIN "ModelMetric"` and this query as
+     * an EXISTS, and — per the paragraph above — their intervals must differ.
+     *
+     * ⚠ APPROXIMATION, not an exact prediction. This evaluates
+     * `OLD_DRAFT_LEAD_DAYS` before the reaper acts, so in the gap a model's
+     * `downloadCount` can cross 10 or new version/file activity can arrive. Both
+     * make the reaper SPARE a model this warned. That is the only residual
+     * direction, and it is the safe one — warn, then spare. The reverse
+     * (reaped without warning) is what the interval derivation above prevents.
      */
     prepareQuery: ({ lastSent }) => `
       with to_add AS (
@@ -316,7 +329,7 @@ export const modelNotifications = createNotificationProcessor({
           ) details
         FROM "Model" m
         WHERE m.status IN ('Draft')
-        AND m."updatedAt" BETWEEN '${lastSent}'::timestamp - INTERVAL '23 days' AND NOW() - INTERVAL '23 days'
+        AND m."updatedAt" BETWEEN '${lastSent}'::timestamp - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days' AND NOW() - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days'
         AND m."availability" != 'Private'::"Availability"
         -- EXISTS, not a JOIN, but the same semantics as the reaper's INNER
         -- JOIN + DISTINCT: a model with no "ModelMetric" row is not reapable,
@@ -326,12 +339,12 @@ export const modelNotifications = createNotificationProcessor({
                        AND mm."downloadCount" < 10)
         AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv
                          WHERE mv."modelId" = m.id
-                           AND (mv."createdAt" > now() - INTERVAL '30 days'
-                             OR mv."updatedAt" > now() - INTERVAL '30 days'))
+                           AND (mv."createdAt" > now() - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days'
+                             OR mv."updatedAt" > now() - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days'))
         AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv2
                          JOIN "ModelFile" mf ON mf."modelVersionId" = mv2.id
                          WHERE mv2."modelId" = m.id
-                           AND mf."createdAt" > now() - INTERVAL '30 days')
+                           AND mf."createdAt" > now() - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days')
       )
       SELECT
         concat('old-draft:', details->>'modelId', ':', details->>'updatedAt') "key",

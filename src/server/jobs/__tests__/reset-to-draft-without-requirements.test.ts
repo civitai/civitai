@@ -240,10 +240,12 @@ describe('resetToDraftWithoutRequirements', () => {
       await runJob();
 
       for (const sql of versionUpdateSqls()) {
+        // Matched unquoted: `updatedAt = now()` is valid SQL here and would slip
+        // past a guard that only looks for the quoted identifier.
         expect(
           sql,
           'changing ModelVersion."updatedAt" alters the public v1 payload; that is a separate decision, not a drive-by'
-        ).not.toContain('"updatedAt"');
+        ).not.toMatch(/updatedAt/);
       }
     });
   });
