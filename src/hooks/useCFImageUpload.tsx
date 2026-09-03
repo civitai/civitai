@@ -7,7 +7,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { isDefined } from '~/utils/type-guards';
 import { v4 as uuidv4 } from 'uuid';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { attachUploadSettlement } from '~/utils/upload-settlement';
+import { attachUploadSettlement, relayWithRetry } from '~/utils/upload-settlement';
 
 type TrackedFileStatus = 'pending' | 'error' | 'success' | 'uploading' | 'aborted' | 'blocked';
 type TrackedFile = AsyncReturnType<typeof getDataFromFile> & {
@@ -136,13 +136,24 @@ export const useCFImageUpload: UseCFImageUpload = () => {
      * bytes through a second route would mask a real fault rather than route around
      * an unreachable host.
      */
-    async function relayUpload(signal: AbortSignal) {
-      const relayRes = await fetch('/api/v1/image-upload/relay', {
+    async function postToRelay(signal: AbortSignal) {
+      return fetch('/api/v1/image-upload/relay', {
         method: 'POST',
         headers: { 'Content-Type': file.type || 'application/octet-stream' },
         body: file,
         signal,
       });
+    }
+
+    async function relayUpload(signal: AbortSignal) {
+      // Retry-on-429 lives in `relayWithRetry` so it can be tested; see its comment
+      // for why a shed must not be terminal.
+      const relayRes = await relayWithRetry(() => postToRelay(signal), {
+        signal,
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        defaultRetryAfterSeconds: 2,
+      });
+
       if (!relayRes.ok) throw new Error(`Upload fallback failed (status ${relayRes.status})`);
       const relayData: { id?: string; error?: unknown } = await relayRes.json();
       if (!relayData.id) throw new Error('Upload fallback returned no id');

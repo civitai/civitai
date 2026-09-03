@@ -17,10 +17,16 @@ import type * as OriginHelpers from '~/server/utils/origin-helpers';
 // are red against that draft.
 //
 // Mocks are SURGICAL (spread `importOriginal`, override one symbol). A one-key
-// wholesale factory for `~/utils/s3-utils` — which exports ~30 runtime symbols —
-// collapses the whole file to "no tests" the moment the route imports a second
-// symbol from it, which is the silent-zero shape `local-rules/no-wholesale-module-mock`
-// exists to prevent.
+// wholesale factory for `~/utils/s3-utils` — which exports 31 runtime symbols —
+// collapses the whole file to "no tests" the moment the route imports a second symbol
+// from it: a silent zero, not a failure.
+//
+// ⚠ NOTHING ENFORCES THIS. An earlier version of this comment said the shape is what
+// `local-rules/no-wholesale-module-mock` "exists to prevent", implying that rule
+// covers this file. Measured in a round-2 audit: it does NOT — the rule is configured
+// with an explicit five-module allowlist and none of the modules mocked here is on
+// it. Planting the wholesale factory produces zero errors from that rule. Keep the
+// mocks surgical by hand; no lint will catch you.
 
 const {
   mockGetServerAuthSession,
@@ -65,7 +71,9 @@ vi.mock('~/server/utils/origin-helpers', async (importOriginal) => ({
 import handler, {
   MAX_RELAY_BYTES,
   MAX_CONCURRENT_RELAYS,
+  RELAY_RETRY_AFTER_SECONDS,
   __getInFlightForTest,
+  __resetInFlightForTest,
 } from '~/pages/api/v1/image-upload/relay';
 
 /** Records the order in which the handler wrote a status vs destroyed the request. */
@@ -128,6 +136,9 @@ const authed = { user: { id: 7, bannedAt: null } };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // A case that leaves a slot held would otherwise make the NEXT case fail for an
+  // unrelated reason — measured as a false cascading failure during round-2 mutation.
+  __resetInFlightForTest();
   prodFlag.value = false;
   mockGetServerAuthSession.mockResolvedValue(authed);
   mockUploadImageBufferToStore.mockResolvedValue({
@@ -197,24 +208,25 @@ describe('image-upload relay', () => {
     expect(mockUploadImageBufferToStore).not.toHaveBeenCalled();
   });
 
-  // AUDIT-F5 + AUDIT-F6, and this single trace pins BOTH — deliberately, because
-  // neither is expressible on its own here.
+  // AUDIT-F5 + AUDIT-F6. Two properties, both about the oversize path.
   //
-  //  * F5: `req.destroy()` tears down the socket, so a status written afterwards
-  //    goes into a dead socket and the client sees a transport error, never the 413.
-  //    Hence `status:413` must precede `destroy`.
+  //  * F5: the client must actually RECEIVE the 413. An earlier draft wrote the
+  //    status and then called `req.destroy()`, which tears down the shared socket
+  //    and discards queued writes — the client got a transport error instead. The
+  //    route no longer destroys the request at all; it sets `Connection: close` and
+  //    lets the response flush. So: a status is written, and the request is NOT
+  //    destroyed.
   //  * F6: the running-total property. Asserting the 413 alone does NOT pin it — a
   //    measure-at-the-end implementation returns the same 413, which is why the
-  //    first draft's cap test left that mutant alive. The tell is the LEADING
-  //    entry: measure-at-end consumes to EOF, and a stream that ends auto-destroys,
-  //    producing ['destroy', 'status:413', 'destroy']. A running total throws before
-  //    EOF, so no destroy precedes the status. Confirmed by mutation.
+  //    first draft's cap test left that mutant alive. What discriminates is that a
+  //    running total STOPS READING: it throws on the chunk that crosses the limit,
+  //    so the stream never reaches EOF. `readableEnded` is that fact directly.
   //
   // ⚠ What does NOT work, so nobody re-derives it: counting how many chunks the
   // async source yielded. Node's Readable reads AHEAD of the consumer, so the real
   // running-total implementation still pulls the chunk after the one that trips the
   // cap. Generator-pull count measures the stream's buffering, not the handler's.
-  it('writes the 413 before destroying, and does not consume the stream to EOF', async () => {
+  it('writes the 413 without destroying the request, and stops reading before EOF', async () => {
     const trace: Trace = [];
     const half = Math.floor(MAX_RELAY_BYTES / 2) + 1;
     const req = makeReq([Buffer.alloc(half), Buffer.alloc(half)], { trace });
@@ -223,7 +235,12 @@ describe('image-upload relay', () => {
     await handler(req, res);
 
     expect(res.statusCode).toBe(413);
-    expect(trace).toEqual(['status:413', 'destroy']);
+    expect(res.headers['Connection']).toBe('close');
+    // F5: a destroy must not race the write we just made.
+    expect(trace).toEqual(['status:413']);
+    // F6: a measure-at-the-end implementation consumes to EOF and fails here while
+    // still returning the same 413.
+    expect((req as unknown as { readableEnded: boolean }).readableEnded).toBe(false);
   });
 
   it('accepts a body exactly AT the cap — the boundary is inclusive', async () => {
@@ -321,7 +338,7 @@ describe('image-upload relay', () => {
 
   // AUDIT-F4. The route buffers whole, so unbounded concurrency is an OOMKill of the
   // pod — taking every unrelated request on it down, not just uploads.
-  it('sheds with 503 once MAX_CONCURRENT_RELAYS are in flight', async () => {
+  it('sheds with 429 once MAX_CONCURRENT_RELAYS are in flight', async () => {
     // Hold every slot open by never resolving the store call.
     let release: () => void = () => undefined;
     mockUploadImageBufferToStore.mockImplementation(
@@ -344,8 +361,11 @@ describe('image-upload relay', () => {
 
     const shedRes = makeRes();
     await handler(makeReq([Buffer.from('bytes')]), shedRes);
-    expect(shedRes.statusCode).toBe(503);
-    expect(shedRes.headers['Retry-After']).toBe('5');
+    // 429, NOT 503: `instrumentApiResponse` counts every status >= 500 as an app
+    // error, so shedding with a 5xx would report deliberate healthy load-shedding as
+    // a server fault in this route's own attribution.
+    expect(shedRes.statusCode).toBe(429);
+    expect(shedRes.headers['Retry-After']).toBe(String(RELAY_RETRY_AFTER_SECONDS));
 
     release();
     await Promise.all(held);

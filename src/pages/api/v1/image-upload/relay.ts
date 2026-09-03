@@ -51,19 +51,28 @@ export const config = {
 
 // Bounds what this route will buffer in memory. NOT a general upload limit and NOT
 // "the largest media the app accepts" — `constants.mediaUpload.maxVideoFileSize` is
-// far larger. It matches the ceiling every current caller of `useCFImageUpload`
-// already enforces client-side, and exists because this route buffers whole.
-// A file above it cannot use the fallback; the direct path is unaffected.
+// 750MB. It matches the ceiling the DROPZONE callers of `useCFImageUpload` enforce
+// client-side (`richTextEditor.maxFileSize`); the programmatic callers that upload
+// generated blobs enforce nothing, so this is their only bound. Exists because this
+// route buffers whole. A file above it cannot use the fallback; the direct path is
+// unaffected.
 export const MAX_RELAY_BYTES = 1024 * 1024 * 50;
 
 /**
  * Ceiling on relays held in memory at once, PER POD.
  *
- * At `MAX_RELAY_BYTES` and ~2x peak amplification this bounds the route at roughly
- * 400MB — survivable beside a steady-state heap on the pod's limit, where an
- * unbounded queue is not. Deliberately small: this is a fallback that only fires for
- * clients who cannot reach the storage host, so sustained high concurrency here is
- * itself the anomaly rather than the expected load.
+ * 8 x `MAX_RELAY_BYTES` is 400MB of body, and `Buffer.concat` roughly doubles that at
+ * peak (see `readCappedBody`), so the real bound this sets is **~800MB** — survivable
+ * beside a steady-state heap under the pod's memory limit, where an unbounded queue
+ * is not. Buffers are external, so `--max-old-space-size` does not bound them and
+ * this constant is the only thing that does.
+ *
+ * 🔴 This is a MEMORY bound, not a throughput target, and it is deliberately BELOW
+ * the batch sizes callers use — the image dropzone defaults to 10 files and uploads
+ * them concurrently. Shedding a legitimate request is therefore EXPECTED, not
+ * exceptional, which is why the shed must not be terminal: the client retries once,
+ * honouring `Retry-After`. If you raise this, raise it for a measured memory reason;
+ * do not raise it to stop clients seeing 429s.
  *
  * NOT env-configurable, which means it is not a runtime kill switch — changing it
  * needs a deploy. Left that way on purpose rather than adding an env var to the
@@ -71,12 +80,27 @@ export const MAX_RELAY_BYTES = 1024 * 1024 * 50;
  */
 export const MAX_CONCURRENT_RELAYS = 8;
 
+/** Seconds advertised in `Retry-After` when shedding, and honoured by the client. */
+export const RELAY_RETRY_AFTER_SECONDS = 2;
+
 /** In-flight relay count for this process. Module-scoped: per pod, not per cluster. */
 let inFlight = 0;
 
 /** Test seam — asserting the cap requires observing the counter. */
 export function __getInFlightForTest() {
   return inFlight;
+}
+
+/**
+ * Test seam — reset the counter between cases.
+ *
+ * Without this a case that leaves a slot held (a timeout, a mutant under test) makes
+ * the NEXT case fail for a reason that has nothing to do with it. Measured during
+ * round-2 mutation: a stuck shed test produced a false cascading failure in an
+ * unrelated case two tests later.
+ */
+export function __resetInFlightForTest() {
+  inFlight = 0;
 }
 
 export default async function imageUploadRelay(req: NextApiRequest, res: NextApiResponse) {
@@ -89,14 +113,29 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
     return;
   }
 
-  // CSRF guard. This raw route is cookie-authenticated and bypasses the tRPC
-  // pipeline, so it never gets createContext's same-origin check. It also accepts an
-  // arbitrary Content-Type, which makes a cross-site POST a CORS-*simple* request —
-  // no preflight — so without this any third-party page could make a logged-in
-  // visitor write attacker-chosen bytes into the media bucket. The direct presign
-  // route is not exposed this way (its presigned URL is unreadable cross-origin), so
-  // this is new surface rather than parity. Mirrors the posture and the !isProd
-  // exemption of `blocks/submit-version.ts`, which is the in-repo precedent.
+  // CSRF guard. This raw route bypasses the tRPC pipeline, so it never gets
+  // createContext's same-origin check. It also accepts an arbitrary Content-Type,
+  // which makes a cross-site POST a CORS-*simple* request — no preflight — so
+  // without this any third-party page could make a logged-in visitor write
+  // attacker-chosen bytes into the media bucket. The direct presign route is not
+  // exposed this way (its presigned URL is unreadable cross-origin), so this is new
+  // surface rather than parity.
+  //
+  // ⚠ NOT cookie-only, and the distinction matters. `getServerAuthSession` also
+  // accepts `Authorization: Bearer <api key>` and `?token=`, and this route lives
+  // under the public `/api/v1/` namespace. `blocks/submit-version.ts` uses the same
+  // expression but IS cookie-only (`ModEndpoint`), which is why its comment says no
+  // bearer exemption is needed — that justification does NOT transfer here.
+  // `createContext.ts` does exempt bearer callers, deriving `isBearerAuth` from an
+  // apiKeyId that only exists AFTER the session lookup.
+  //
+  // So this check is deliberately WIDER than either precedent: it 403s an API-key
+  // client with no Origin. Chosen on purpose — the relay exists to rescue BROWSERS
+  // whose DNS cannot resolve the storage host, and a non-browser client has neither
+  // that failure mode nor any reason to push bytes through us instead of straight at
+  // the store. It runs BEFORE the session lookup so an unauthenticated cross-origin
+  // probe costs nothing. Revisit both the placement and this paragraph together if a
+  // bearer client ever needs the fallback.
   if (isProd && !isAllowedOriginRequest(req)) {
     res.status(403).json({ error: 'Cross-origin request blocked' });
     return;
@@ -117,8 +156,14 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
   // on it down too. Shedding here is strictly better: the client keeps its original
   // error and the direct path is untouched.
   if (inFlight >= MAX_CONCURRENT_RELAYS) {
-    res.setHeader('Retry-After', '5');
-    res.status(503).json({ error: 'Upload fallback is busy' });
+    // 🔴 429, NOT 503. `instrumentApiResponse` counts every `status >= 500` into
+    // `civitai_app_http_errors_total`, so shedding with a 5xx makes deliberate,
+    // healthy load-shedding indistinguishable from a server fault in this route's
+    // own error attribution — the same reasoning that makes `handleEndpointError`
+    // map a client disconnect to 499. 429 is also the honest semantic: the request
+    // was fine, there was no capacity for it right now.
+    res.setHeader('Retry-After', String(RELAY_RETRY_AFTER_SECONDS));
+    res.status(429).json({ error: 'Upload fallback is busy' });
     return;
   }
 
@@ -129,8 +174,7 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
       body = await readCappedBody(req, res, MAX_RELAY_BYTES);
     } catch (e) {
       if (e instanceof PayloadTooLargeError) {
-        // The 413 was already written by `readCappedBody`, before the socket was torn
-        // down — see the comment there for why the order matters.
+        // The 413 was already written by `readCappedBody` — see the note there.
         return;
       }
       res.status(400).json({ error: 'Failed to read upload body' });
@@ -183,11 +227,21 @@ export class PayloadTooLargeError extends Error {
  * arbitrarily large body that we only measure at the end. `Content-Length` is not
  * trusted for this — it is caller-supplied and may be absent under chunked encoding.
  *
- * 🔴 The 413 is written HERE, before `req.destroy()`. Destroying the request tears
- * down the socket, and a `res.status(413)` afterwards writes into a dead socket: it
- * does not throw, it reports `headersSent`, and the client sees a transport-level
- * connection error instead of the status. Ordering is the whole fix — the caller
- * must learn the file was too large, not that the connection broke.
+ * 🔴 The 413 is written HERE, and the request is NOT destroyed.
+ *
+ * An earlier draft wrote the status and then called `req.destroy()`. Ordering was
+ * necessary — a status written AFTER a destroy goes into a dead socket, does not
+ * throw, reports `headersSent`, and the client sees a transport error instead of the
+ * 413 — but it is not sufficient: `IncomingMessage.destroy()` tears down the SHARED
+ * socket, and `socket.destroy()` DISCARDS queued writes rather than flushing them
+ * (unlike `socket.end()`). On an idle socket a ~60-byte body usually lands inline, so
+ * it looks fine; under backpressure the client still loses the status.
+ *
+ * Instead: set `Connection: close` and let the response flush, then simply stop
+ * reading. Node closes the socket once the response is written, which is what tells
+ * the client to stop sending — without racing the write we just made. We deliberately
+ * do NOT drain the remainder with `req.resume()`: draining a body we rejected for
+ * being too large is exactly the cost the cap exists to avoid.
  */
 async function readCappedBody(
   req: NextApiRequest,
@@ -197,15 +251,24 @@ async function readCappedBody(
   const chunks: Buffer[] = [];
   let total = 0;
 
-  for await (const chunk of req) {
-    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  // 🔴 Iterated MANUALLY rather than with `for await`. Breaking out of a `for await`
+  // invokes the iterator's `return()`, which DESTROYS the underlying stream — the
+  // exact socket teardown this function is trying to avoid, applied by the language
+  // rather than by us. Measured: with `for await`, a destroy still lands right after
+  // the 413 write. Driving `next()` by hand and simply not calling `return()` leaves
+  // the socket intact so the response can flush; `Connection: close` then closes it
+  // once the write is out.
+  const iterator = req[Symbol.asyncIterator]();
+  for (;;) {
+    const { value, done } = await iterator.next();
+    if (done) break;
+    const buf = Buffer.isBuffer(value) ? value : Buffer.from(value);
     total += buf.length;
     if (total > limit) {
       if (!res.headersSent) {
+        res.setHeader('Connection', 'close');
         res.status(413).json({ error: 'File too large for the upload fallback' });
       }
-      // Only now stop the client from streaming into a request we have abandoned.
-      req.destroy();
       throw new PayloadTooLargeError();
     }
     chunks.push(buf);

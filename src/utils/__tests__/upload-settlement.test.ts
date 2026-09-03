@@ -163,7 +163,12 @@ describe('attachUploadSettlement', () => {
     expect(relay).not.toHaveBeenCalled();
   });
 
-  it('settles exactly once even if terminal events fire more than once', async () => {
+  // Renamed after a round-2 audit: this used to be called "settles exactly once" and
+  // was attributed to a `settled` latch, which was measured INERT and has been
+  // removed. What actually protects this is `relayPending` — a later `loadend` yields
+  // to the relay that already settled. Naming the real mechanism so the next reader
+  // does not go looking for a latch that is not there.
+  it('ignores a later loadend once a relay has already settled', async () => {
     const xhr = new StubXhr();
     const cb = callbacks();
     const relay = vi.fn(() => Promise.resolve('RELAYED-ID'));
