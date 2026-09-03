@@ -407,8 +407,8 @@ importers:
         specifier: ^2.0.5
         version: 2.0.5
       form-graph:
-        specifier: ^0.3.3
-        version: 0.3.3(react@18.3.1)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(zod@4.0.17)
+        specifier: ^0.3.4
+        version: 0.3.4(react@18.3.1)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(zod@4.0.17)
       google-auth-library:
         specifier: ^9.15.0
         version: 9.15.1
@@ -7142,8 +7142,8 @@ packages:
   electron-to-chromium@1.5.198:
     resolution: {integrity: sha512-G5COfnp3w+ydVu80yprgWSfmfQaYRh9DOxfhAxstLyetKaLyl55QrNjx8C38Pc/C+RaDmb1M0Lk8wPEMQ+bGgQ==}
 
-  electron-to-chromium@1.5.420:
-    resolution: {integrity: sha512-2yD6XreGusOfNV+dUcvipJEXc3n/n7fgr7996aszTG+YY5E4mqM4tOq/3uhP129cazL9YHbVWSpc79ePotWtPA==}
+  electron-to-chromium@1.5.421:
+    resolution: {integrity: sha512-cUhfpHQy+PGbt+X90DMcAVazDCziIZr73hpxD4LRs4BGQoJCifPzTfQWa7S6c+uhokTOBe8tot09GBSEO6c9LA==}
 
   embla-carousel-autoplay@8.6.0:
     resolution: {integrity: sha512-OBu5G3nwaSXkZCo1A6LTaFMZ8EpkYbwIaH+bPqdBnDGQ2fh4+NbzjXjs2SktoPNKCtflfVMc75njaDHOYXcrsA==}
@@ -7729,8 +7729,8 @@ packages:
     resolution: {integrity: sha512-vKatAh4SlVfgbv+YtmhiRjhEMJsYpsG1Y2rMQtR+SVSbytsSD1YGzDIcrAJmdFec88u/+VoGmxnl+80gL1tRCQ==}
     engines: {node: '>= 6'}
 
-  form-graph@0.3.3:
-    resolution: {integrity: sha512-V6QS8TwMxYhCCmiU8pkogmmUMJheT+weSCwwv92D/3ft6jBxO1zEd3BDJ548MB6UWFyKpnhOTwss5YDtvOLNFA==}
+  form-graph@0.3.4:
+    resolution: {integrity: sha512-kfFLzsNhEEF3XPIpMYevZB0tFArkPcASuPkSll6Ddwyzcnkw2eE6vVXgR1JejW+6jhPNx/HFyZ8IFKdqDdla8g==}
     engines: {node: '>=20'}
     peerDependencies:
       react: ^18.0.0 || ^19.0.0
@@ -18195,7 +18195,7 @@ snapshots:
     dependencies:
       baseline-browser-mapping: 2.11.21
       caniuse-lite: 1.0.30001810
-      electron-to-chromium: 1.5.420
+      electron-to-chromium: 1.5.421
       node-releases: 2.0.54
       update-browserslist-db: 1.3.2(browserslist@4.28.8)
 
@@ -18957,7 +18957,7 @@ snapshots:
 
   electron-to-chromium@1.5.198: {}
 
-  electron-to-chromium@1.5.420: {}
+  electron-to-chromium@1.5.421: {}
 
   embla-carousel-autoplay@8.6.0(embla-carousel@8.6.0):
     dependencies:
@@ -19814,7 +19814,7 @@ snapshots:
       hasown: 2.0.4
       mime-types: 2.1.35
 
-  form-graph@0.3.3(react@18.3.1)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(zod@4.0.17):
+  form-graph@0.3.4(react@18.3.1)(svelte@5.56.3(@typescript-eslint/types@8.60.1))(zod@4.0.17):
     optionalDependencies:
       react: 18.3.1
       svelte: 5.56.3(@typescript-eslint/types@8.60.1)
