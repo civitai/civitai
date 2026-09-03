@@ -1910,13 +1910,18 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
   //
   // 🔴 `"updatedAt" = now()` is load-bearing, not cosmetic. This is `$queryRaw`,
   // so Prisma's `@updatedAt` does NOT fire and the row keeps the timestamp it
-  // carried before it was deleted — by construction older than its own deletion.
+  // carried while it was deleted. `deleteModelById` writes through the Prisma
+  // client, so that timestamp is the DELETION instant — measured, not assumed:
+  // the restore statement below is the only raw SQL in `src/` that touches a
+  // Model's `'Deleted'` status, every other path is a client write.
   // `remove-old-drafts` reaps
   // `status IN ('Draft','Deleted') AND m."updatedAt" < now() - INTERVAL '30 days'`
   // and cascade-deletes the model with its versions, files and training data,
-  // irreversibly. Without the bump a model restored today can be destroyed
-  // tonight, its entire 30-day grace period already spent. Restoring a model is
-  // a write to the row, so the bump is also what the column is supposed to mean.
+  // irreversibly. So without the bump, a model that sat deleted for longer than
+  // 30 days is PAST the reaper's threshold the instant it is restored, and the
+  // job's activity fences do not save it: they read ModelVersion timestamps,
+  // which the same delete froze at the same instant. Restoring a model is a
+  // write to the row, so the bump is also what the column is supposed to mean.
   // Pinned by `no-unbumped-draft-status-write.test.ts` and exercised through
   // this function by `restore-model-updated-at.service.test.ts`.
   const result = await dbWrite.$transaction(async (tx) => {

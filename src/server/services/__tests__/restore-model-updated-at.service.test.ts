@@ -4,14 +4,16 @@ import type * as ModelVersionService from '~/server/services/model-version.servi
 
 /**
  * `restoreModelById` un-deletes a model with raw SQL, so Prisma's `@updatedAt`
- * does not fire and the restored row keeps the timestamp it carried BEFORE it
- * was deleted — by construction older than its own deletion.
- * `src/server/jobs/remove-old-drafts.ts` reaps
+ * does not fire and the restored row keeps the timestamp it carried while it was
+ * deleted — the DELETION instant, since `deleteModelById` writes through the
+ * Prisma client. `src/server/jobs/remove-old-drafts.ts` reaps
  * `status IN ('Draft','Deleted') AND m."updatedAt" < now() - INTERVAL '30 days'`
  * and cascade-deletes the model together with its versions, files and training
- * data, irreversibly. Without a bump, a model restored today is eligible for
- * that cascade tonight, with only `downloadCount < 10` and the job's activity
- * fences between it and destruction.
+ * data, irreversibly. So without a bump, a model that sat deleted for longer
+ * than 30 days is past that threshold the instant it is restored and is eligible
+ * for the cascade the same night, with only `downloadCount < 10` between it and
+ * destruction — the job's activity fences read ModelVersion timestamps, which
+ * the same delete froze at the same instant.
  *
  * Same defect class as the two sweep sites fixed in #4595, and the same fix.
  * `no-unbumped-draft-status-write.test.ts` holds all three sites to the rule as
@@ -215,9 +217,9 @@ describe('restoreModelById', () => {
 
   describe('the UPDATE "Model" statement', () => {
     // 🔴 THE FIX. See the file header: this statement is raw SQL, so
-    // `@updatedAt` does not fire and a restored model lands in Draft carrying a
-    // clock older than its own deletion — inside remove-old-drafts' 30-day
-    // window from the instant it is restored.
+    // `@updatedAt` does not fire and a restored model lands in Draft carrying
+    // the clock it had when it was deleted — already outside remove-old-drafts'
+    // 30-day window for anything that sat deleted longer than that.
     it('bumps "updatedAt" so a restored model gets a real grace period before the reaper', async () => {
       await restoreModelById({ id: MODEL_ID });
 
