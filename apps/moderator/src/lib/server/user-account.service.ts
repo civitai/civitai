@@ -8,6 +8,7 @@ import { getNotifications } from './notifications';
 import { getModeratorDb } from './moderator-db';
 import { usersByIds } from './users.service';
 import { RATING_ACTIVITIES } from '$lib/mod-activity';
+import { MIN_FLAGGED } from '$lib/reactions';
 import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-history';
 
 // Everything behind `/api/user-account`, plus the two endpoints that exist only because their query is
@@ -295,42 +296,113 @@ export async function getCommentsV2(userId: number, limit = 25): Promise<Capped<
 }
 
 // REACTIONS GIVEN, grouped by the creator whose images were reacted to (Retool's ReactionsGrouped).
-// The concentration is the signal — a normal account spreads reactions over hundreds of creators, a
-// vote-ring account puts most of them on one.
 //
-// `ReactionsAll` (every raw reaction row) is not ported: it is unbounded, and the top of this list
-// answers the question the raw rows were being scanned to answer.
+// Two lists in one query: the top `limit` by volume, plus up to `flagLimit` whose mix is majority
+// Laugh/Cry/Dislike over `MIN_FLAGGED`. Volume alone misses harassment — on the account this was
+// built for, the reported target sat at 64 of 21,840 reactions, outside the top ten.
 //
-// Reads a 744M-row table, so it stays off the page load. Bounded by the ImageReaction_userId index:
-// ~47ms at 49K reactions, ~605ms for the heaviest account on the site (6M).
-// `UserStat.reactionCountAllTime` is NOT this number — it counts reactions the user RECEIVED (measured:
-// 51,775 received against 312 given for the same account). The window function totals every group
-// before LIMIT trims them, so the total costs no extra round trip and stays honest.
-export type ReactionTarget = { userId: number; username: string | null; count: number };
-export type ReactionSummary = { total: number; creators: number; targets: ReactionTarget[] };
+// A per-minute burst count was tried and dropped: it does not discriminate (152 of 3,307 targets had
+// a 20+/minute burst — what thumbing through a gallery looks like) and cost 22s against 4.4s.
+// `ClickHouse.reactions.time` is NOT an alternative source for cadence: it is batch-flushed, so 43
+// reactions 1.4s apart here share five timestamps there and read as a bot.
+//
+// `ReactionsAll` (every raw reaction row) is not ported: unbounded, and the top of this list answers
+// what the raw rows were being scanned for.
+//
+// Reads a 744M-row table, so it stays off the page load — ~150ms at 22K reactions, 4.4s on the
+// heaviest account sampled, bounded by the ImageReaction_userId index; the FILTERs and min/max ride
+// the scan the count already pays for. `UserStat.reactionCountAllTime` is NOT this number: it counts
+// reactions RECEIVED (51,775 received against 312 given, same account). The window functions total
+// every group before the outer WHERE trims them, so the totals cost no extra round trip.
 
-export async function getReactionTargets(userId: number, limit = 10): Promise<ReactionSummary> {
-  const rows = await dbRead
-    .selectFrom('ImageReaction as ir')
-    .innerJoin('Image as i', 'i.id', 'ir.imageId')
-    .leftJoin('User as u', 'u.id', 'i.userId')
-    .select((eb) => [
-      'i.userId',
-      'u.username',
-      eb.fn.countAll<string>().as('count'),
-      sql<string>`sum(count(*)) over ()`.as('total'),
-      sql<string>`count(*) over ()`.as('creators'),
-    ])
-    .where('ir.userId', '=', userId)
-    .groupBy(['i.userId', 'u.username'])
-    .orderBy('count', 'desc')
-    .limit(limit)
-    .execute();
+export type ReactionTarget = {
+  userId: number;
+  username: string | null;
+  count: number;
+  like: number;
+  heart: number;
+  laugh: number;
+  cry: number;
+  dislike: number;
+  first: Date;
+  last: Date;
+  /** Laugh+Cry+Dislike as a fraction of `count`, 0..1. Computed here because the ranking needs it,
+   *  and returned so the panel cannot arrive at a second answer to "which reactions are negative". */
+  negativeShare: number;
+  /** Majority Laugh/Cry/Dislike over `MIN_FLAGGED`. The PATTERN, not how the row was selected — a
+   *  creator in the volume top-N carrying the same mix is flagged too. */
+  flagged: boolean;
+};
+export type ReactionSummary = {
+  total: number;
+  creators: number;
+  targets: ReactionTarget[];
+  /** Every creator matching `flagged`, not just the `flagLimit` returned — rendering the cap as the
+   *  total would read as the whole victim list. */
+  flaggedTotal: number;
+};
+
+type ReactionRow = ReactionTarget & { total: number; creators: number; flaggedTotal: number };
+
+// flagLimit is generous because on a harassment account this half of the list IS the finding: the
+// example that prompted it had 22 qualifying creators, the reported one fifteenth by share.
+export async function getReactionTargets(
+  userId: number,
+  limit = 10,
+  flagLimit = 20
+): Promise<ReactionSummary> {
+  const { rows } = await sql<ReactionRow>`
+    WITH agg AS (
+      SELECT i."userId" AS "targetId",
+        count(*)::int AS count,
+        count(*) FILTER (WHERE ir.reaction = 'Like')::int AS "like",
+        count(*) FILTER (WHERE ir.reaction = 'Heart')::int AS heart,
+        count(*) FILTER (WHERE ir.reaction = 'Laugh')::int AS laugh,
+        count(*) FILTER (WHERE ir.reaction = 'Cry')::int AS cry,
+        count(*) FILTER (WHERE ir.reaction = 'Dislike')::int AS dislike,
+        min(ir."createdAt") AS first,
+        max(ir."createdAt") AS last,
+        (sum(count(*)) OVER ())::int AS total,
+        (count(*) OVER ())::int AS creators
+      FROM "ImageReaction" ir
+      JOIN "Image" i ON i.id = ir."imageId"
+      WHERE ir."userId" = ${userId}
+      GROUP BY 1
+    ), scored AS (
+      SELECT a.*,
+        (a.count >= ${MIN_FLAGGED} AND (a.laugh + a.cry + a.dislike) * 2 > a.count) AS flagged,
+        ((a.laugh + a.cry + a.dislike)::float8 / a.count) AS "negativeShare"
+      FROM agg a
+    ), ranked AS (
+      SELECT s.*,
+        -- PARTITION BY flagged keeps the mix ranking inside the qualifying set; over every group,
+        -- browse-heavy creators with a few hundred incidental Laughs take the slots and the
+        -- 38-of-40 target never appears. Share, not absolute, for the same reason: 100% of 25
+        -- outranks 55% of 400.
+        (row_number() OVER (
+           PARTITION BY s.flagged
+           ORDER BY s."negativeShare" DESC, s.count DESC, s."targetId"
+         ))::int AS by_negative,
+        -- Ties are broken on targetId so a reload cannot silently swap which creators are shown.
+        (row_number() OVER (ORDER BY s.count DESC, s."targetId"))::int AS by_count,
+        (count(*) FILTER (WHERE s.flagged) OVER ())::int AS "flaggedTotal"
+      FROM scored s
+    )
+    SELECT k."targetId" AS "userId", u.username, k.count, k."like", k.heart, k.laugh, k.cry,
+           k.dislike, k.first, k.last, k."negativeShare", k.total, k.creators, k.flagged,
+           k."flaggedTotal"
+    FROM ranked k
+    LEFT JOIN "User" u ON u.id = k."targetId"
+    WHERE k.by_count <= ${limit}
+       OR (k.flagged AND k.by_negative <= ${flagLimit})
+    ORDER BY k.count DESC
+  `.execute(dbRead);
 
   return {
-    total: Number(rows[0]?.total ?? 0),
-    creators: Number(rows[0]?.creators ?? 0),
-    targets: rows.map((r) => ({ userId: r.userId, username: r.username, count: Number(r.count) })),
+    total: rows[0]?.total ?? 0,
+    creators: rows[0]?.creators ?? 0,
+    flaggedTotal: rows[0]?.flaggedTotal ?? 0,
+    targets: rows.map(({ total: _t, creators: _c, flaggedTotal: _f, ...target }) => target),
   };
 }
 
