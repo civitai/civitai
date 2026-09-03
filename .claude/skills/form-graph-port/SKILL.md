@@ -5,7 +5,7 @@ description: Port an existing form (a data-graph graph, or a bespoke RHF+zod for
 
 # Porting a form to form-graph
 
-The method that took the generation form (14 ecosystem families, 4 output types, 7
+The method that took the generation form (~45 family graphs, 4 output types, 7
 standalone workflows, ~12k differential cases) onto form-graph, distilled so the next
 port (e.g. model training) doesn't rediscover it. The worked example is
 `src/shared/form-graph/generation/` + `docs/form-graph-port-plan.md`; read the plan
@@ -87,7 +87,7 @@ Until the old graph is deleted, EVERY merge from main needs:
 `git diff HEAD...origin/main --stat -- src/shared/data-graph` — then mirror each
 change into the port AND add a differential shape covering the changed path.
 The suites only catch drift where shapes exercise it: krea2's
-community-checkpoint fix (2026-09-04) passed parity under BOTH the old and new
+community-checkpoint fix (2026-09-03) passed parity under BOTH the old and new
 fallback because no shape used an unknown model id. A mirrored change without
 a new shape is unverified.
 

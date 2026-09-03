@@ -191,11 +191,6 @@ export function perModelScope(ext: { model?: unknown }): Scope | undefined {
 }
 
 /**
- * A model's version id from either shape it takes in ctx: the STORE keeps the
- * raw input (a bare number from remix/deep-link), parse normalizes to an
- * object — mode picks and scopes must read both.
- */
-/**
  * Runtime-checked narrowing for a multi-ecosystem family's `effectiveEcosystem`
  * emit: the value is one of the family's served keys, typed as their literal
  * union so `GenerationData` discriminates per arm. The fallback can only fire
@@ -209,6 +204,11 @@ export function narrowEcosystem<const E extends readonly string[]>(
   return (served.includes(value) ? value : served[0]) as E[number];
 }
 
+/**
+ * A model's version id from either shape it takes in ctx: the STORE keeps the
+ * raw input (a bare number from remix/deep-link), parse normalizes to an
+ * object — mode picks and scopes must read both.
+ */
 export function modelIdOf(model: unknown): number | undefined {
   if (typeof model === 'number') return model;
   if (model && typeof model === 'object') return (model as { id?: number }).id;

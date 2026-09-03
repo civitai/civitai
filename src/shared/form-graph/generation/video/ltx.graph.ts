@@ -49,13 +49,12 @@ export const DISTILLED_IDS = new Set<number>([
   SULPHUR2_DISTILLED_ID,
 ]);
 
+export const SULPHUR2_IDS = new Set<number>([SULPHUR2_DEV_ID, SULPHUR2_DISTILLED_ID]);
+
 /**
  * Registered base model names — must match `baseModelRecords` entries; the
  * checkpoint graph resolves an option's ecosystem via `baseModelByName`.
  */
-/** Sulphur 2 version IDs — route through LTXV23 with a diffusionModel AIR override. */
-export const SULPHUR2_IDS = new Set<number>([SULPHUR2_DEV_ID, SULPHUR2_DISTILLED_ID]);
-
 const LTXV2_BASE_MODEL = 'LTXV2';
 const LTXV23_BASE_MODEL = 'LTXV 2.3';
 const LTXV25_BASE_MODEL = 'LTXV 2.5';

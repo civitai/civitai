@@ -1,8 +1,9 @@
 /**
  * Wan handler for the form-graph lane. Converts `generationHub.parse().data`
- * into @civitai/client steps. Video only — the wan-image family (WanImage27)
- * has not been ported yet, so `data.ecosystem` here is always a Wan VIDEO
- * backend key (the derived value the family's `backendEcosystem` emits).
+ * into @civitai/client steps. Video only — WanImage27 routes to
+ * wan-image.handler.ts in the dispatcher, so `data.ecosystem` here is always
+ * a Wan VIDEO backend key (the derived value the family's `backendEcosystem`
+ * emits).
  */
 
 import type {
@@ -286,7 +287,7 @@ export const createWanSteps = defineHandler<WanGenerationData, WanSteps>(async (
       ];
     }
 
-    // v2.7: video only in this lane (WanImage27 is unported).
+    // v2.7 video (WanImage27 routes to wan-image.handler).
     // Per fal spec: cfgScale, steps, frameRate, loras are NOT supported for v2.7.
     case 'v2.7': {
       const v27Base = {

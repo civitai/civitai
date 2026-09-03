@@ -10,8 +10,8 @@ Domain-agnostic def builders (slider/enum/select/bool) live at `src/shared/form-
 shared by every domain; `generation/defs.ts` re-exports them plus the generation-specific defs.
 
 **Closing condition for the whole effort:** `src/libs/data-graph/` and
-`src/shared/data-graph/` are deleted; every former consumer imports `form-graph` (npm,
-`^0.2.0`); `pnpm run typecheck` and `pnpm run test:unit:run` are green; and Briant has
+`src/shared/data-graph/` are deleted; every former consumer imports `form-graph` (npm —
+`^0.3.3` in package.json, 0.3.4 installed); `pnpm run typecheck` and `pnpm run test:unit:run` are green; and Briant has
 reviewed the final diff. Each phase below has its own closing condition — do not start a
 phase before the previous one's condition is met.
 
@@ -42,7 +42,7 @@ phase before the previous one's condition is met.
 
 ### The new system (npm package)
 
-- **`form-graph@^0.2.0`** — published by Briant (`bkdiehl`), repo
+- **`form-graph`** (`^0.3.3`, 0.3.4 installed) — published by Briant (`bkdiehl`), repo
   `github.com/bkdiehl/form-graph`. Docs: https://bkdiehl.github.io/form-graph/docs —
   **read the docs site before writing any code**; the API changed heavily right before
   0.2.0 and your training data does not contain it.
@@ -59,10 +59,10 @@ phase before the previous one's condition is met.
 
 ---
 
-## 2. form-graph API primer (as of 0.2.0 — trust this over training data)
+## 2. form-graph API primer (as of 0.3.4 — trust this over training data)
 
 ```ts
-import { defineGraph, branch, branchOn, defFamily } from 'form-graph';
+import { defineGraph, branch, defFamily, cachedFactory } from 'form-graph';
 import { slider, enumOf, textOf, boolOf } from 'form-graph/defs';
 ```
 
@@ -86,16 +86,23 @@ import { slider, enumOf, textOf, boolOf } from 'form-graph/defs';
 - **Reuse:** a section is just another graph; its "needs" are its `Ext`; mount it with
   `.use(sectionGraph)` (the child reads needs via `_ext`, satisfied by the parent's fields
   plus ext). `.use(fn)` is plain function application for transforms like key prefixing.
-- **Branching (discriminated unions):**
-  - `branchOn(key, def, { a: graphA, b: graphB })` — the discriminator is a FIELD the hub
-    declares; state is a union discriminated on `key`.
-  - `branch(key, (ext) => memberKey, members)` — the discriminator is DERIVED from ext;
-    the picked member key is stamped into state under `key` as a computed (this is how
-    version tags like `wanVersion` work).
-  - `branch((ext) => memberKey, members)` — untagged; no state key, and member-attached
-    effects are NOT auto-scoped (they must self-guard).
+- **Branching (discriminated unions):** ONE combinator, `branch` (`branchOn` was merged
+  into it):
+  - `branch(key, [[keys, member], ...] as const)` — pair-list form: the discriminator is
+    a FIELD declared above the dispatch; group related keys into one pair so arm count =
+    family count. This is the root's form (`hub.graph.ts`).
+  - `branch(key, (ext) => memberKey, members, opts?)` — the discriminator is DERIVED; the
+    picked member key is stamped into state under `key` as a computed (version tags like
+    `wanVersion`). `{ emit: false }` keeps a state-only tag off the wire.
   - Hubs merge member registries (`.defs`) and effects; hubs nest (a branch of hubs is
     fine) and carry the same runtime (`hub.createStore()`, `hub.parse()`).
+- **Adopted defaults (0.3.2+):** the STORE adopts displayed defaults as intent —
+  stickiness needs no rule. Coherence rules only redirect impossible pairs (see
+  `selector-coherence.ts`). `StoreOptions.sessionMemory` was removed in 0.3.3 (adoption
+  is RAM-only; the remount re-derivation window is the pinned trade).
+- **Refine errors are submit-time (0.3.4):** a def's `refine` narrowing is judged at
+  `validate()`/`parse` only — a pristine field never shows a refine error; the optional
+  `input` schema owns the live path.
 - **Rules (effects)** run on `set()` and rewrite the patch before it becomes intent:
   - Map form: `.effect({ triggerKey: (value, { patch, state, next, _ext... }) => additions })`
     — fires when `triggerKey` is in the patch. `next` = state with the patch overlaid
@@ -138,16 +145,16 @@ const ported = newFamilyGraph.parse(input, ctx);            // form-graph
 
 Put differential tests in `src/shared/form-graph/generation/__tests__/` (new directory;
 they run in the `unit` vitest project automatically). Ported graphs live in
-`src/shared/form-graph/generation/<family>.ts` until the final swap, so old and new
+`src/shared/form-graph/generation/<output-type>/<family>.graph.ts` until the final swap, so old and new
 coexist without touching consumers.
 
 ---
 
 ## 4. Phases
 
-### Phase 0 — dependency + spike (small)
+### Phase 0 — dependency + spike (small) — DONE (2026-09-01, cce03da47f)
 
-1. `pnpm add form-graph@^0.2.0` (root workspace package).
+1. `pnpm add form-graph` (done at ^0.2.0; the dep has since moved to ^0.3.3).
 2. Write a 20-line spike test: build a 2-field graph with `defineGraph`, `parse` a raw
    record, assert the result — proving the package imports, zod v4 interop works, and the
    vitest `unit` project picks it up.
@@ -155,7 +162,7 @@ coexist without touching consumers.
 
 **Closing condition:** the spike test passes in this worktree; committed.
 
-### Phase 1 — the video slice (medium)
+### Phase 1 — the video slice (medium) — DONE (2026-09-01; 936-case parity, see §8)
 
 **Scouting findings — read before starting. The reference ports are a SHAPE GUIDE, not
 code to copy:**
@@ -185,8 +192,8 @@ Steps:
 1. Port `ltx`, `wan` (all six versions) and the video hub into
    `src/shared/form-graph/generation/video/`, reading the live `*-graph.ts` as the source
    of truth and the reference ports as the shape guide.
-2. Import every table and version id from the live graph files via
-   `~/shared/data-graph/generation/…`.
+2. Copy every table and version id out of the live graph files into the port (see the
+   COPY rule in the scouting bullets above — the earlier import-only rule was reversed).
 3. Build the family case list on the differential harness (below).
 4. Grow the case list: every LTX/Wan ecosystem × workflow × a gated-ext variant, plus the
    reconcile probes (workflow↔ecosystem coupling).
@@ -203,14 +210,14 @@ fail. `harness.smoke.test.ts` holds its negative controls — keep them green.
 documented) delta allowlist; committed. If a delta cannot be explained, STOP and write it
 up for Briant instead of allowlisting it.
 
-### Phase 2 — remaining families, one PR-sized commit each (large, repetitive)
+### Phase 2 — remaining families, one PR-sized commit each (large, repetitive) — DONE (2026-09-03; every checklist row green, incl. Muse Image)
 
 There are ~50 more family graphs. For each family (suggested order: `flux-graph.ts` first
 — the form-graph repo's corpus has a flux sample to crib from — then the SD/image
 families, then audio/video exotics):
 
 1. Read the old `<family>-graph.ts` end to end.
-2. Write `src/shared/form-graph/generation/<family>.ts` as a form-graph graph. Patterns:
+2. Write `src/shared/form-graph/generation/<output-type>/<family>.graph.ts` as a form-graph graph. Patterns:
    - per-version subgraphs + `branch('versionKey', pick, members)` for version families;
    - shared segments as graphs mounted with `.use`;
    - node `transform`/`correct` logic → def `correct` policies;
@@ -229,7 +236,7 @@ a ported twin and a green differential test; the composed root (next phase's sub
 is the only thing left. Keep a checklist table at the bottom of this file updated as
 families land.
 
-### Phase 3 — the composed root + ecosystem hub (medium, delicate)
+### Phase 3 — the composed root + ecosystem hub (medium, delicate) — DONE (composed root + all four hubs; see checklist)
 
 Port `generation-graph.ts` + `ecosystem-graph.ts` as the top-level hub: head fields
 (workflow/ecosystem/gates/quantity/priority/outputFormat), the family dispatch (a
@@ -241,7 +248,7 @@ rules. The reference `video-hub.ts` shows exactly this shape for two families.
 gives each output type its own hub owning only its ecosystems (`videoHub` is already
 trimmed this way — its default is video-only, its quantity has no image branch). The
 root then becomes: workflow + the output/input computeds hoisted up, and a
-`branchOn`-style dispatch over the per-output-type hubs. Each hub keeps the
+keyed `branch` dispatch over the per-output-type hubs. Each hub keeps the
 selection/derived split internally: the family's `emit: 'ecosystem'` computed
 shadows the same-named selection field off the wire implicitly — no
 `emit: false` needed on the field.
@@ -252,7 +259,7 @@ shadows the same-named selection field off the wire implicitly — no
 reconcile-sequence probes through live stores. This is the effort's centerpiece test;
 budget real time for the case list.
 
-**Phase 4/5 groundwork (built 2026-09-01, uncommitted):** the handler lane lives at
+**Phase 4/5 groundwork (built 2026-09-01, since committed and extended):** the handler lane lives at
 `src/server/services/orchestrator/form-graph/` — per-family `*.handler.ts` transcribed
 from the data-graph handlers but importing only ported modules, a dispatcher
 (`createFormGraphStepInput`, loud error on unported ecosystems), and a differential
@@ -268,9 +275,10 @@ state type), wired to the REAL generation_v2 input components
 GenerationTextEditor, ControlNetsInput, AspectRatioInput, Priority/OutputFormat,
 ActiveWildcards with the ported add/remove flow, ResourceAlerts via
 MultiController). Demo at `/form-graph` (standalone page; mounts
-ResourceDataProvider itself). Not yet ported from v2's form: compatibility-confirm
-modal flows, prompt-enhance button, presets, tours, remix handling, and the whatIf
-cost footer; submit ends at `validate()`.
+ResourceDataProvider itself). Since ported into the client lane: prompt-enhance, tours, remix/preset/handoff/wildcard
+ingestion (`ingestion.ts`), the whatIf cost footer (`WhatIfProvider`/`FormFooter`), and
+real submission (validate → track → mutate). Still not ported: the compatibility-confirm
+modal flow on direct selector changes (ingestion's remix path does use the modal).
 
 **Persistence (2026-09-01):** v1's ~540-line grouped storage adapter maps onto
 per-graph scopes. The lib grew `defineGraph({ scope })` (graph-level default scope;
@@ -312,7 +320,7 @@ graph: its input/computed partition differs in the hub (workflow/ecosystem are
 fields, not computeds), so it moves in Phase 6 with a behavior decision, not
 mechanically. Flip criterion: a sustained zero on diverged/error outcomes.
 
-### Phase 5 — client swap (large, UI)
+### Phase 5 — client swap (large, UI) — BUILT, staged behind `formGraphGenerator` (mod-only); awaiting Briant's hands-on pass
 
 Replace `DataGraphProvider`/`useDataGraph` usage with `form-graph/react`
 (`useForm(rootGraph, { ext, storage: persistedStorage(...) })`, `useTypedField`,
@@ -357,8 +365,10 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 - Do not modify the `form-graph` package from this repo. If the port reveals a
   form-graph bug or missing capability, STOP and write it up for Briant — the fix
   happens in `C:\work\form-graph`, gets published, and the version bumps here.
-- Do not touch `src/shared/data-graph/` or `src/libs/data-graph/` (the oracle) until
-  Phase 6. The old system must keep working untouched through Phases 0–5.
+- Do not change the BEHAVIOR of `src/shared/data-graph/` or `src/libs/data-graph/` (the
+  oracle) until Phase 6 — additive `export` keywords for port reuse are the only
+  permitted edits (two exist: `getEcosystemStates`, `migrateWorkflowKey`). The old system
+  must keep working untouched through Phases 0–5.
 - When a differential test disagrees with the port, **the oracle is right** — fix the
   port. Only allowlist a delta with a written reason; a delta you cannot explain is a
   stop-and-ask.
@@ -462,7 +472,6 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 | model3d: tripo / hunyuan3d / pixal3d / trellis2 | DONE | DONE | image-to-3D only; pixal3d and trellis2 are field-identical (one factory, two instances for their own family scopes); hunyuan keeps its `hunyuan*` field prefixes, mapped back in the handler |
 | model3d hub | DONE | DONE | ecosystem scoped 'model3d', default PolyGen; the four newer 3D ecosystems are flag-hidden fail-closed via the shared getEcosystemStates |
 | standalone workflows (img2img:upscale / remove-background / preprocess, vid2vid:upscale / interpolate, img2meta, prompt:enhance) | DONE | DONE | seven arms on a state-only `workflowKind` dispatch at the root (the oracle wire has no such key); priority/outputFormat moved to the ROOT gated on image output, matching v1 — they apply to standalone image workflows too. The upscale batch reset (v1 transform) is a `correct`; preprocess kind specs import from the v1 module (they mirror @civitai/client, not the engine). The two empty panels (img2meta, prompt:enhance) are bare graphs. Step creation stays in the submit service keyed on workflow — data parity covers it, no lane handlers needed |
-| _…add a row per `*-graph.ts` file during Phase 2 inventory…_ | | | |
 
 ---
 

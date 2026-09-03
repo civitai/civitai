@@ -37,10 +37,11 @@ import { zimage } from './zimage.graph';
 
 /**
  * The IMAGE hub: ecosystem selection scoped to image output, the image-only
- * the family dispatch (a keyed branch whose table types each arm) and the two
+ * family dispatch (a keyed branch whose table types each arm) and the two
  * fields the oracle declares AFTER its family discriminator because they read
  * family state (`enhancedCompatibility` reads the model; `quantity` reads
- * both). Workflow and the output/input computeds live on the root (`../hub.ts`).
+ * both). Workflow and the output/input computeds live on the root
+ * (`../hub.graph.ts`).
  */
 
 export const imageHub = defineGraph<RootCtx>()

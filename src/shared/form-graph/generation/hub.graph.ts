@@ -31,8 +31,6 @@ import { videoInterpolation, videoUpscale } from './workflows/video-enhance.grap
  */
 
 // ---- copied from generation-graph.ts, which dies with the data-graph engine
-
-// Copied from generation-graph.ts, which dies with the data-graph engine.
 const priorityOptions = ['low', 'normal', 'high'] as const;
 const outputFormatOptions = ['jpeg', 'png'] as const;
 
