@@ -129,7 +129,7 @@ disappears when `earlyAccessConfig` is removed above. "The goal for this sale" b
 Critically this is `now()`, **never `NULL`**: `endsAt IS NULL` means *permanent*, so clearing it would flip
 "goal met → free" into "permanently paid" (an inversion the safety review caught). Today the completion path
 writes the old columns via raw SQL
-([donation-goal.service.ts:157](../../src/server/services/donation-goal.service.ts)); it must be an explicit
+([donation-goal.service.ts:157](../../../src/server/services/donation-goal.service.ts)); it must be an explicit
 member of the dual-write set (Migration Part 1 step 3b).
 
 **Why it stays a first-class entity, not a facet of `PaidAccess` (empirical, prod 2026-07-24).** A goal is
@@ -160,7 +160,7 @@ is the *config* side finally matching it. `resolveAccess` joins the two.
 `download` is a superset of `generation` (buying it grants both) and `download.price ≥ generation.price`
 (§7 invariant). So a user who already bought the generation tier should pay only the **difference** to upgrade,
 not full download price. Today's code charges **full** `downloadPrice` on that path
-([model-version.service.ts:1832](../../src/server/services/model-version.service.ts)) — a buyer's-regret
+([model-version.service.ts:1832](../../../src/server/services/model-version.service.ts)) — a buyer's-regret
 penalty. Proration removes it, needing no stored amount — the user's existing `EarlyAccessGeneration` bit is the
 only state:
 
@@ -188,7 +188,7 @@ is unchanged by anything else here.
 anchor.** Findings:
 
 - **`ComicChapter.publishedAt` is not write-once.** `publishChapter`
-  ([comics.router.ts:4773](../../src/server/routers/comics.router.ts)) sets `publishedAt = now()` on *every*
+  ([comics.router.ts:4773](../../../src/server/routers/comics.router.ts)) sets `publishedAt = now()` on *every*
   publish, and a normal `unpublishChapter` leaves the old value — so a Draft→republish round-trip overwrites it
   and **restarts the early-access clock** (a live bug models don't have). Comics needs a genuine write-once
   `initialPublishedAt`, set only when `NULL` (the pattern `ComicProject.publishedAt` already uses). This is why
@@ -245,7 +245,7 @@ destination, and the mapping **changes no behavior** — bundle semantics are ke
 **Gating is unchanged — the gate is still the window, the tiers are still tiers.** Today, being in the paid
 window gates download and generation together; the `chargeFor*`/`*Price` fields define *purchase tiers*, and a
 `download` purchase grants **both** permissions (the bundle,
-[model-version.service.ts:1861](../../src/server/services/model-version.service.ts)). The new model keeps all of
+[model-version.service.ts:1861](../../../src/server/services/model-version.service.ts)). The new model keeps all of
 this: `PaidAccess` row active = gated; `terms.download` is the full-access tier (grants both); `terms.generation`
 is the optional cheaper generation-only tier; `terms.freeGeneration` preserves the "generation free" case. **A
 missing `generation` grant does NOT mean generation is free** — generation is still gated by the download bundle,

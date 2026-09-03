@@ -128,7 +128,7 @@ they are a decision or a verification, not a known way in.
         access. It fills the form; it never applies a charge.
   - [ ] **Named templates, targeting model type × base model/ecosystem.** The real ask: creator-authored
         templates in the studio, replacing the per-type memory above. Plan:
-        [creator-studio/pricing-templates.md](creator-studio/pricing-templates.md).
+        [creator-studio/pricing-templates.md](creator-studio/monetization/pricing-templates.md).
   - [ ] **The rest of the block.** Only monetization is remembered — trained words, description,
         recommended resources and the file-level settings still reset. The wizard's existing
         "use a template" flow (copy a whole model's settings) covers some of this; whether it should

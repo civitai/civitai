@@ -3,7 +3,7 @@
 > ⚠️ **Superseded for caps.** The per-tier price ceilings and the concurrent permanent-gate limit
 > described below were removed in the monetization revamp — membership now limits how many NEW prices a
 > creator may set per month, and there is a 10k creator-score floor on monetizing at all. See R3 in
-> [../features/monetization-rules.md](../features/monetization-rules.md). Everything here about the gate
+> [../features/monetization-rules.md](../../features/monetization-rules.md). Everything here about the gate
 > mechanics themselves still holds.
 
 **Start here to continue paid-access work.** This is the living "where things are now" doc, written after the
@@ -26,7 +26,7 @@ generation too. Early-access state is derived **live** from an active `PaidAcces
 - **Timed Early Access + Permanent Paid Access.** Permanent = `endsAt IS NULL`. Permanent is open to every
   creator who meets the eligibility floor; applying it to a version that carries no price yet spends one of
   the owner's monthly pricing slots (free 3 / bronze 10 / silver 25 / gold ∞ — see R3 in
-  [../features/monetization-rules.md](../features/monetization-rules.md)). Enforced server-side on every
+  [../features/monetization-rules.md](../../features/monetization-rules.md)). Enforced server-side on every
   write path, with an **already-priced carve-out** (re-saving a version that already carries a price is
   always free, at any score and any remaining allowance). Permanent is
   **settable post-publish**; a *timed* window can't be *started* after publish.

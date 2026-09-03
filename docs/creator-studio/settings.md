@@ -10,7 +10,7 @@ As a creator, I open `/settings` and see at a glance whether I'm **set up to get
 not) and whether my **membership** is active and at what `tier`. I don't re-do onboarding or billing here — I click out
 to the existing flows. I can *see* the **fee suggestion** the form will seed for each model type, but I don't set it here —
 **B9** kept that a fixed system value, and my own defaults are named templates instead
-([pricing-templates.md](pricing-templates.md)). (**Settlement currency isn't a creator choice** — Civitai handles cash
+([pricing-templates.md](monetization/pricing-templates.md)). (**Settlement currency isn't a creator choice** — Civitai handles cash
 settlement in special cases.)
 
 ## Layout & components
@@ -39,7 +39,7 @@ Loaded server-side (kysely via `@civitai/db`), scoped to `locals.user.id`:
 
 **None.** Onboarding, billing and withdrawal are link-outs. The one write this page was specced to own — setting a
 per-account fee default — was decided against by **B9**, which kept the suggestion a fixed system value; creator-authored
-defaults are named templates on their own route instead ([pricing-templates.md](pricing-templates.md)).
+defaults are named templates on their own route instead ([pricing-templates.md](monetization/pricing-templates.md)).
 
 ## States
 

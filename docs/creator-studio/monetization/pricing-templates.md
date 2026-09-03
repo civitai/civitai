@@ -29,10 +29,10 @@ designed.
 
 | Piece | Where | Note |
 |---|---|---|
-| Two-axis targeting UI | [`/models`](../../apps/creator-studio/src/routes/(app)/models/+page.svelte) | Model-type and base-model filters, both faceted from the creator's own catalogue ([`models.ts`](../../apps/creator-studio/src/lib/server/models.ts)) |
+| Two-axis targeting UI | [`/models`](../../../apps/creator-studio/src/routes/(app)/models/+page.svelte) | Model-type and base-model filters, both faceted from the creator's own catalogue ([`models.ts`](../../../apps/creator-studio/src/lib/server/models.ts)) |
 | Value editors | `BulkActionDialog.svelte`, `PaidAccessEditor.svelte` | The fee and gate editors a template needs, already built for the bulk bar |
-| Retrospective apply | [`bulk-actions.ts`](../../apps/creator-studio/src/lib/monetization/bulk-actions.ts) | `bulkSetFee` / `bulkSetPaidAccess` + select-all-across-filter |
-| Per-type memory | [`model-version-monetization-defaults.store.ts`](../../src/store/model-version-monetization-defaults.store.ts) | localStorage, keyed by model type — the stopgap this replaces |
+| Retrospective apply | [`bulk-actions.ts`](../../../apps/creator-studio/src/lib/monetization/bulk-actions.ts) | `bulkSetFee` / `bulkSetPaidAccess` + select-all-across-filter |
+| Per-type memory | [`model-version-monetization-defaults.store.ts`](../../../src/store/model-version-monetization-defaults.store.ts) | localStorage, keyed by model type — the stopgap this replaces |
 | Ecosystem hierarchy | `@civitai/shared/basemodel.constants` | `getEcosystem()`, `getEcosystemFamily()`, `getBaseModelsByEcosystemId()` |
 | The key shape, designed | `ModelVersion.licensingSourceVersionId` comment | Refers to a `(baseModel, modelType)` **`BaseModelLicensingFee`** rule table that **does not exist** — a system-level rule that was specced and never built. Not this feature (that one is Civitai's default, this one is the creator's), but the same key. |
 
@@ -116,6 +116,80 @@ goal ends a *window* early, and a permanent gate has no window. So the goal fiel
 the template's gate is timed, and disappears when it is switched to permanent.
 
 ---
+
+## Price tags — a competing direction
+
+> ⏸ **Review deferred, 2026-09-03.** This is not being evaluated until Justin decides whether
+> `DonationGoal` is kept — see
+> [donation-goals.md](donation-goals.md#whether-to-keep-donation-goals-at-all). Both questions change
+> what creator-facing pricing looks like, and settling the targeting axis first would risk redoing it.
+>
+> **Unblocks when:** Justin answers the `DonationGoal` question, after which Briant reviews the
+> findings below and picks a targeting axis. Until then this section is a record, not a plan.
+
+From the **Creator Studio Review** group DM, 2026-09-02 (JustMaier and alexds9, 8:37 AM – 12:07 PM).
+It began as a question about this plan and became a proposal to replace its targeting model.
+
+> *"Something that's on my mind as we discuss this is a different direction: instead of having
+> defaults defined by base model and type, just have **price tags**."* — JustMaier, 9:32 AM
+
+### The proposal
+
+A creator defines named price tags and picks one — or defines a new one — when setting up a model.
+Two use cases were named:
+
+- **Lifecycle buckets** — *"my latest and greatest models"*, *"my last versions"*, *"bargain bin"*.
+  Target by price tag in the bulk model UI and move models between buckets as they age.
+- **Ecosystem pricing** — an *"Anima LoRAs"* tag applied as models are posted; when Anima ages out,
+  lower the tag's price and every model carrying it follows.
+
+### Why it was preferred over base-model/type defaults
+
+All three reasons are removals of ambiguity, and each maps to a problem this plan currently solves
+with machinery:
+
+| Price tags remove | This plan handles it with |
+|---|---|
+| *"Did I leave this at the default, so will changing the default fix it?"* | precedence rules against the other pre-fill sources |
+| *"What if I want a different price?"* — just do not apply a tag | the published-version drop rule and re-clamping |
+| **Overlapping defaults** — one tag per version, always chosen explicitly | explicit template ordering, first match wins, plus conflict detection |
+
+🔑 **That third row is the substantive claim.** Conflict detection between double-matching templates
+is a real cost in this plan — it needs ordering, a UI to surface conflicts, and a rule for what a
+creator sees when two templates match. Price tags do not need any of it, because a version carries
+exactly one tag and a human chose it.
+
+### Where it landed
+
+Agreed in principle, no implementation decision recorded. alexds9 (10:28 AM, 👍) called it a good
+solution and noted it specifically handles publishing models on the same base model at different
+prices — with one condition: creators must be able to **create new tags and apply them to existing
+models in bulk**, then hand-edit specific versions.
+
+JustMaier added two scope points at 12:07 PM (both 👍):
+
+- The applied price tag must be **visible in the bulk edit UI**
+- Price tags should cover **all monetization**, so generation fees are managed through them too
+
+The conversation then moved to paid galleries. Nothing since.
+
+### What this means for this plan
+
+The two are not compatible as written — they are different answers to *how does a creator say which
+models get this price*. Targeting by model type × base model is automatic and can double-match;
+tagging is manual and cannot.
+
+**Unresolved, and it should be settled before Phase 1** — though not yet, per the deferral above. The table, the fee half and the pre-fill
+mechanism survive either way; what changes is the targeting axis, the conflict-detection work, and
+the authoring UI. Note that alexds9's bulk-apply condition reintroduces much of what the
+auto-assignment in the mockups already did, so the gap between the two is smaller than it first
+appears.
+
+Also tracked as an open item at
+[creator-studio-feedback-2026-08-03.md](../../creator-studio-feedback-2026-08-03.md) — *"Named price
+groups / price tags"*. The Discord thread is newer and materially extends it: bulk
+creation/assignment, visibility in bulk edit, one tag per version, coverage of generation fees, and
+the no-overlapping-defaults rationale.
 
 ## Data model
 
@@ -242,7 +316,7 @@ New route `apps/creator-studio/src/routes/(app)/templates/`, plus a nav entry.
   can validate the fee against the **real** ceiling (5× on video) and refuse an impossible template
   at authoring time instead of clamping it silently months later.
 - **Writes** — SvelteKit form actions → Kysely, scoped to `locals.user.id`, matching how the studio
-  already writes fees ([`monetization/licensing-fee.ts`](../../apps/creator-studio/src/lib/server/monetization/licensing-fee.ts)).
+  already writes fees ([`monetization/licensing-fee.ts`](../../../apps/creator-studio/src/lib/server/monetization/licensing-fee.ts)).
   No main-app endpoint is needed: this table has no side effects, no buzz call, and no cache to bust.
 
 ### Main app — consumption
@@ -271,7 +345,7 @@ An earlier draft of this plan called this "the one place the shipped seam does n
 **The server already guards it, by name.** `assertPricingAllowed` computes `movesToStricterMedia`
 and refuses the write with a message that names the ceiling and the base model —
 *"A licensing fee can be at most 100 Buzz per generation on this base model. Lower the fee to
-continue."* ([`paid-access.service.ts`](../../src/server/services/paid-access.service.ts), the fee
+continue."* ([`paid-access.service.ts`](../../../src/server/services/paid-access.service.ts), the fee
 ceiling block). The comment there already explains the video-to-image case in full. So the failure
 mode is a specific, actionable error, not silent corruption.
 

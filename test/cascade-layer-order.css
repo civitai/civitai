@@ -1,0 +1,16 @@
+/* The cascade layer ORDER, as the first CSS the geometry harness parses.
+ *
+ * A layer's priority is fixed at its FIRST APPEARANCE in the CSSOM, so this has
+ * to be parsed before `globals.css` or any Mantine `styles.layer.css`. The
+ * production copy of this declaration is a `<style>` node emitted as the first
+ * child of `<head>` in `src/pages/_document.tsx`; a setup module cannot do the
+ * same imperatively, because ES imports are hoisted and evaluate before any
+ * statement in the module body. A stylesheet imported FIRST is the one ordering
+ * mechanism that runs early enough.
+ *
+ * Keep this string byte-identical to the one in `_document.tsx`. If they drift,
+ * the harness measures a different cascade from production while looking correct
+ * — Tailwind preflight would start winning over Mantine, or Mantine over CSS
+ * modules, and every geometry number would move for a reason nothing reports.
+ */
+@layer tailwind-preflight, theme, mantine, modules;
