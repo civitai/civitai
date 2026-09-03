@@ -3,7 +3,16 @@ import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { dbRead } from './db';
 import { getSysRedis } from './redis';
 
-export const RESTRICTION_TYPE = 'generation';
+import { RESTRICTION_TYPE, type RestrictionType } from '$lib/restriction-types';
+
+// Re-exported so server-side callers have one import site for the queue's vocabulary. The definitions
+// live in a client-safe module because the filter component needs them as values — see the note there.
+export {
+  RESTRICTION_TYPE,
+  RESTRICTION_TYPES,
+  RESTRICTION_TYPE_LABELS,
+  type RestrictionType,
+} from '$lib/restriction-types';
 
 /** One prohibited request recorded against a restriction. Every field is optional: the shape is
  *  written by two producers (the live audit and the ClickHouse backfill) and older rows predate both. */
@@ -27,6 +36,8 @@ export type RestrictionRow = {
   id: number;
   userId: number;
   username: string | null;
+  /** Read back rather than assumed: a by-id lookup is type-agnostic, so the caller cannot infer it. */
+  type: string;
   status: UserRestrictionStatus;
   createdAt: Date;
   resolvedAt: Date | null;
@@ -39,6 +50,14 @@ export type RestrictionRow = {
 export type RestrictionQuery = {
   page: number;
   limit: number;
+  /**
+   * Omitted means `generation`, so every pre-seam caller keeps the queue it had.
+   *
+   * `'any'` drops the filter, and exists for the ONE caller that addresses a row by its primary key —
+   * where a type predicate cannot make the answer more correct, only turn a real row into a 404. It is
+   * deliberately absent from the page's query schema, so no URL can put the list view into it.
+   */
+  type?: RestrictionType | 'any';
   status?: UserRestrictionStatus;
   username?: string;
   userId?: number;
@@ -69,12 +88,17 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
   items: RestrictionRow[];
   totalCount: number;
 }> {
-  const { page, limit, status, username, userId, restrictionId } = query;
+  const { page, limit, type = RESTRICTION_TYPE, status, username, userId, restrictionId } = query;
 
+  // 🔴 The type predicate is what separates one review queue from another, and it is applied for every
+  // value of `type` except the explicit `'any'`. It is written as a `$if` on a NEGATIVE so that
+  // omitting `type` still filters — folding it in with the optional predicates below on a truthiness
+  // test would make "no type given" mean "every type", i.e. silently render one queue's rows in
+  // another's. The count query is built off this same `base`, so the total cannot drift from the list.
   const base = dbRead
     .selectFrom('UserRestriction as ur')
     .innerJoin('User as u', 'u.id', 'ur.userId')
-    .where('ur.type', '=', RESTRICTION_TYPE)
+    .$if(type !== 'any', (qb) => qb.where('ur.type', '=', type))
     .where('u.deletedAt', 'is', null)
     .$if(!!status, (qb) => qb.where('ur.status', '=', status!))
     .$if(!!userId, (qb) => qb.where('ur.userId', '=', userId!))
@@ -87,6 +111,7 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
         'ur.id',
         'ur.userId',
         'u.username',
+        'ur.type',
         'ur.status',
         'ur.triggers',
         'ur.createdAt',

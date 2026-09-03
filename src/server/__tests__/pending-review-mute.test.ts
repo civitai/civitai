@@ -183,6 +183,7 @@ import { setUserMuted } from '~/server/services/user.service';
 import {
   applyPendingReviewMute,
   buildManualMuteTriggers,
+  PENDING_REVIEW_MUTE_NOTIFICATION,
 } from '~/server/services/user-restriction.service';
 import { overturnPendingReviewMute } from '~/server/services/user-restriction-resolve.service';
 
@@ -364,6 +365,213 @@ describe('pending-review mute', () => {
 
     expect(result).toMatchObject({ muted: true });
     expect(store.users.get(USER_ID)).toMatchObject({ muted: true });
+  });
+
+  it('notifies the user that generation access is restricted', async () => {
+    const { userRestrictionId } = (await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers,
+      updateSource: 'test',
+    })) as { userRestrictionId: number };
+
+    // Pinned whole rather than by `objectContaining`: the key is the notification service's dedupe
+    // handle, so a change to its shape re-notifies every already-notified user.
+    expect(createNotification).toHaveBeenCalledExactlyOnceWith({
+      type: 'generation-muted',
+      key: `generation-muted:${USER_ID}:${userRestrictionId}`,
+      category: 'System',
+      userId: USER_ID,
+      details: {},
+    });
+  });
+});
+
+/**
+ * The seam a bot-account detector files through. Nothing raises a non-generation restriction yet — this
+ * is the parameter that lets one, and the properties below are what keep it from cannibalising the
+ * queue that already exists.
+ */
+describe('pending-review mute — restriction type', () => {
+  beforeEach(seed);
+
+  it('files a generation restriction when no type is given', async () => {
+    await applyPendingReviewMute({ userId: USER_ID, triggers, updateSource: 'test' });
+
+    expect(store.restrictions).toHaveLength(1);
+    expect(store.restrictions[0]).toMatchObject({ type: 'generation', status: 'Pending' });
+  });
+
+  it('files a restriction of the type it was given', async () => {
+    await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers,
+      updateSource: 'test',
+      type: 'bot-account',
+    });
+
+    expect(store.restrictions).toHaveLength(1);
+    expect(store.restrictions[0]).toMatchObject({
+      userId: USER_ID,
+      type: 'bot-account',
+      status: 'Pending',
+    });
+    expect(store.restrictions[0].triggers).toEqual(triggers);
+  });
+
+  // 🔴 The pair below is the point of the whole change. Dedupe reads "this user already has an open
+  // case", and scoped to the user alone it means the FIRST queue to mute someone permanently silences
+  // every other queue for that account — a detector's findings would return `deduped: true` against a
+  // row about something else entirely, and file nothing a moderator could ever see.
+  it('does not let an open generation case swallow a bot-account mute', async () => {
+    const first = await applyPendingReviewMute({ userId: USER_ID, triggers, updateSource: 'test' });
+    const second = await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers,
+      updateSource: 'test',
+      type: 'bot-account',
+    });
+
+    expect(second).toMatchObject({ muted: true, deduped: false });
+    expect((second as { userRestrictionId: number }).userRestrictionId).not.toBe(
+      (first as { userRestrictionId: number }).userRestrictionId
+    );
+    expect(store.restrictions.map((r) => r.type)).toEqual(['generation', 'bot-account']);
+  });
+
+  it('does not let an open bot-account case swallow a generation mute', async () => {
+    const first = await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers,
+      updateSource: 'test',
+      type: 'bot-account',
+    });
+    const second = await applyPendingReviewMute({ userId: USER_ID, triggers, updateSource: 'test' });
+
+    expect(second).toMatchObject({ muted: true, deduped: false });
+    expect((second as { userRestrictionId: number }).userRestrictionId).not.toBe(
+      (first as { userRestrictionId: number }).userRestrictionId
+    );
+    expect(store.restrictions.map((r) => r.type)).toEqual(['bot-account', 'generation']);
+  });
+
+  it('still dedupes within a type, so a retry files nothing new', async () => {
+    const first = await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers,
+      updateSource: 'test',
+      type: 'bot-account',
+    });
+    const second = await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers,
+      updateSource: 'test',
+      type: 'bot-account',
+    });
+
+    expect(store.restrictions).toHaveLength(1);
+    expect(second).toEqual({
+      muted: true,
+      userRestrictionId: (first as { userRestrictionId: number }).userRestrictionId,
+      deduped: true,
+    });
+  });
+
+  /**
+   * 🔴 `createNotification` validates `type` against NOTHING — `z.string()` at the schema, `text` at
+   * both tables, and the fan-out worker inserts it verbatim. An unregistered type is persisted and
+   * increments the user's unread badge, while the bell dropdown drops it at render, leaving a phantom
+   * count with no click target. And `generation-muted` reads "your generation access has been
+   * restricted", which is a lie about a bot-account mute. So a type with no notification of its own
+   * sends none until someone registers one.
+   */
+  it('sends no notification for a type that has none mapped', async () => {
+    await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers,
+      updateSource: 'test',
+      type: 'bot-account',
+    });
+
+    expect(PENDING_REVIEW_MUTE_NOTIFICATION['bot-account']).toBeNull();
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('mutes the account and refreshes the session for a non-generation type all the same', async () => {
+    const result = await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers,
+      updateSource: 'test',
+      type: 'bot-account',
+    });
+
+    expect(result).toMatchObject({ muted: true });
+    expect(store.users.get(USER_ID)).toMatchObject({ muted: true });
+    expect(refreshSession).toHaveBeenCalledWith(USER_ID, { caller: 'moderation' });
+  });
+
+  it('writes the mute and a typed restriction in one transaction', async () => {
+    await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers,
+      updateSource: 'test',
+      type: 'bot-account',
+    });
+
+    expect(dbWrite.$transaction).toHaveBeenCalledOnce();
+    expect(dbWrite.$transaction.mock.calls[0][0]).toHaveLength(2);
+  });
+
+  it.each(['generation', 'bot-account'] as const)(
+    'never writes mutedAt for a %s restriction',
+    async (type) => {
+      await applyPendingReviewMute({ userId: USER_ID, triggers, updateSource: 'test', type });
+
+      const dataArgs = dbWrite.user.update.mock.calls.map(([arg]) => arg.data);
+      expect(dataArgs).toEqual([{ muted: true }]);
+      expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: null });
+    }
+  );
+
+  it.each([
+    ['moderator', MOD_ID, 'moderator'],
+    ['banned user', BANNED_ID, 'banned'],
+    ['deleted user', DELETED_ID, 'deleted'],
+    ['the official brand account', constants.system.officialUserId, 'protected'],
+    ['the system actor', constants.system.user.id, 'protected'],
+  ])('refuses to file a bot-account restriction against a %s', async (_label, userId, skipped) => {
+    const result = await applyPendingReviewMute({
+      userId,
+      triggers,
+      updateSource: 'test',
+      type: 'bot-account',
+    });
+
+    expect(result).toEqual({ muted: false, skipped });
+    expect(store.restrictions).toHaveLength(0);
+    expect(store.users.get(userId)?.muted ?? false).toBe(false);
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('repairs an unmuted user holding an open case of the SAME type only', async () => {
+    store.restrictions.push({
+      id: 99,
+      userId: USER_ID,
+      type: 'bot-account',
+      status: 'Pending',
+      triggers: [],
+      createdAt: new Date(),
+    });
+
+    const result = await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers,
+      updateSource: 'test',
+      type: 'bot-account',
+    });
+
+    expect(result).toEqual({ muted: true, userRestrictionId: 99, deduped: true });
+    expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: null });
+    expect(store.restrictions).toHaveLength(1);
   });
 });
 

@@ -27,8 +27,17 @@ import {
  *
  * The driver ignores the SQL and answers every query with the same `rows`, so the count a chain sees is
  * fixed here and never by the query's own LIMIT.
+ *
+ * 🔴 **Pass `params` when the VALUE bound to a predicate is the thing under test.** The SQL text alone
+ * cannot see it: `where('ur.type','=',x)` compiles to `"ur"."type" = $1` for every `x`, so a mutant that
+ * ignores its argument and hardcodes a literal emits byte-identical SQL and survives an assertion over
+ * `sql`. `params[i]` holds the parameters of `sql[i]`.
  */
-export function capturingDb(sql: string[], rows: unknown[] = []): Kysely<never> {
+export function capturingDb(
+  sql: string[],
+  rows: unknown[] = [],
+  params?: readonly unknown[][]
+): Kysely<never> {
   class CannedRowDriver extends DummyDriver {
     async acquireConnection(): Promise<DatabaseConnection> {
       return {
@@ -50,7 +59,10 @@ export function capturingDb(sql: string[], rows: unknown[] = []): Kysely<never> 
       createQueryCompiler: () => new PostgresQueryCompiler(),
     },
     log: (e) => {
-      if (e.level === 'query') sql.push(e.query.sql);
+      if (e.level !== 'query') return;
+      sql.push(e.query.sql);
+      // Pushed in the same branch so the two arrays stay index-aligned by construction.
+      (params as unknown[][] | undefined)?.push([...e.query.parameters]);
     },
   });
 }
