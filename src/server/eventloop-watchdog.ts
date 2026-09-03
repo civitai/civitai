@@ -410,19 +410,24 @@ async function captureWedge(wedgeStartMs) {
   }
 }
 
+// Every verdict is recorded, 'disabled' included. Leaving that one silent made the
+// counter denominator-less: on a pool with capture off the only label that could move
+// was skipped-starved, so the counter read 100% starved no matter what the classifier
+// said, and "capture is not enabled here" was indistinguishable from "every wedge was
+// refused".
 function maybeCaptureWedge(wedgeStartMs) {
   const verdict = captureAllowed(Date.now());
   if (verdict !== 'ok') {
-    if (verdict !== 'disabled') tallyCapture('skipped-' + verdict);
+    tallyCapture('skipped-' + verdict);
     return;
   }
   captureWedge(wedgeStartMs);
 }
 
 function renderCaptureMetrics(out) {
-  out.push('# HELP civitai_app_watchdog_capture_total Wedge CPU-profile captures attempted, by result. skipped-* results mean the trigger fired but was refused by backoff or the hourly capCfg.');
+  out.push('# HELP civitai_app_watchdog_capture_total Wedge CPU-profile capture decisions, by result — exactly one per detected wedge, so the labels sum to the wedge count and any one of them can be read as a share. skipped-disabled means capture is not turned on for this pool at all, which is the reading that separates a refused capture from an absent one; the other skipped-* results mean the trigger fired and was refused, by the starvation gate or by the in-flight, backoff and hourly limits.');
   out.push('# TYPE civitai_app_watchdog_capture_total counter');
-  const captureKeys = ['ok', 'error', 'skipped-in-flight', 'skipped-backoff', 'skipped-hourly-cap', 'skipped-starved'];
+  const captureKeys = ['ok', 'error', 'skipped-in-flight', 'skipped-backoff', 'skipped-hourly-cap', 'skipped-starved', 'skipped-disabled'];
   for (const k of captureKeys) {
     out.push('civitai_app_watchdog_capture_total{result="' + k + '"} ' + (captureResults[k] || 0));
   }
