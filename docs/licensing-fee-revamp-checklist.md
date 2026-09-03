@@ -221,7 +221,7 @@ that have to happen, or be decided, before it reaches creators.
 - [x] **Push and open the PR** — [#4270](https://github.com/civitai/civitai/pull/4270), one PR for the
       whole revamp, reviewed 2026-08-24.
 - [ ] **Update Justin's article** to the monthly allowance — tracked in
-      [creator-studio/paid-access-followups](creator-studio/paid-access-followups.md), which warns that
+      [creator-studio/paid-access-followups](creator-studio/monetization/paid-access-followups.md), which warns that
       the old and new numbers look identical and mean different things.
 
 ### Should be decided

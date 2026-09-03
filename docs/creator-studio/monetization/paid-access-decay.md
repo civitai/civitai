@@ -6,6 +6,11 @@
 > Originates in creator feedback asking us to reconcile early access and paid access so creators stop
 > having to think about which one they are using. The structure below is theirs; the analysis,
 > numbers and open questions are ours.
+>
+> ⚠️ **Reopened 2026-09-03.** A second creator thread raised an abuse path this design does not
+> close — see [Reopened: does a window imply a guarantee?](#reopened-does-a-window-imply-a-guarantee).
+> Three questions, one axis: whether a guarantee is ever created *automatically*. Nothing else in
+> this plan changes, and Phase 1 stays unblocked.
 
 ## The ask
 
@@ -63,7 +68,7 @@ as-of date, and re-measure before acting on one.
 What does hold from that audit: 13 sale items cover versions with no gate at all, so they discount
 nothing. Both their sales are over, so the rows are inert — see Q13.
 The wall between them is deliberate. From
-[`sale-eligibility.ts`](../../apps/creator-studio/src/lib/server/monetization/sale-eligibility.ts):
+[`sale-eligibility.ts`](../../../apps/creator-studio/src/lib/server/monetization/sale-eligibility.ts):
 
 > **Permanent only** — a sale never covers a timed early-access window.
 
@@ -115,7 +120,7 @@ no cap, and no new policy. A guarantee needs all three, and is one small object.
 **This is a smaller change than an earlier draft claimed.** That draft said permanent paid access was
 Studio-only and called opening it up "a real widening". It is not: the main-site form already renders
 an undisabled `Paid Access (permanent)` option
-([`ModelVersionUpsertForm.tsx`](../../src/components/Resource/Forms/ModelVersionUpsertForm.tsx)), and
+([`ModelVersionUpsertForm.tsx`](../../../src/components/Resource/Forms/ModelVersionUpsertForm.tsx)), and
 `canConfigurePaidAccess` admits any published version. The 403 in the REST endpoint restricts *that
 endpoint*, which is the Studio's own channel — not the main site.
 
@@ -145,7 +150,7 @@ enum PriceStepMode {
 
 🔴 **Do not reuse `SaleDiscountType`.** An earlier draft did. In that enum `Fixed` means *Buzz taken
 off* — `saleDiscountFor` computes `off = discountAmount` and subtracts it
-([`paid-access.ts`](../../packages/civitai-buzz/src/paid-access.ts)). A step needs the opposite: the
+([`paid-access.ts`](../../../packages/civitai-buzz/src/paid-access.ts)). A step needs the opposite: the
 amount **is** the price. Same enum, inverted meaning, with a shared helper sitting right there for
 someone to reach for — on a 5,000 base with a 1,250 step that charges **3,750 instead of 1,250**.
 `SetTo`/`ReduceBy` cannot be passed to `saleDiscountFor` by accident.
@@ -677,7 +682,7 @@ to undo. That property disappears at step 6, which is why 6 is a separate migrat
 ### What it costs in code
 
 11 files read gate terms, but the shape logic concentrates in
-[`packages/civitai-buzz/src/paid-access.ts`](../../packages/civitai-buzz/src/paid-access.ts) —
+[`packages/civitai-buzz/src/paid-access.ts`](../../../packages/civitai-buzz/src/paid-access.ts) —
 `gatePrices`, `paidGenerationGrant`, `isFreeGeneration`, `saleAnchorPrice`. **Those helpers already act
 as an anti-corruption layer over the JSONB.** Keep their signatures, change what feeds them, and most
 of the other ten files do not move.
@@ -752,7 +757,7 @@ nothing in the ordinary gate lifecycle can touch it.
 
 🔴 **Not `publishedAt`.** `process-ending-early-access` **overwrites `ModelVersion.publishedAt` with
 `NOW()`** when a timed gate expires, to resurface the version as New. The service says so where it
-guards against exactly this ([`model-version.service.ts`](../../src/server/services/model-version.service.ts)):
+guards against exactly this ([`model-version.service.ts`](../../../src/server/services/model-version.service.ts)):
 
 > `initialPublishedAt` is the test — `publishedAt` is what that job rewrites
 
@@ -924,6 +929,110 @@ engagement rate against a 14.5% completion rate says goals mostly work as a **ti
 target**, not as a reliable early-unlock mechanism. Worth remembering when deciding how prominent
 they should be, and decisive on the main point: any unified model has to carry them forward intact.
 
+## Reopened: does a window imply a guarantee?
+
+Raised by creators in Discord, 2026-09-03. The design so far makes a guarantee **opt-in**, and the
+migration never invents one. This asks whether a timed window should imply one on its own.
+
+> *"A creator sets up early access and tells users that it will be free after a certain period of
+> time. Currently, a creator can remove early access and switch it to paid access. […] I think it
+> would be dishonest to set up early access with donation goals, receive donations, and then switch
+> to paid access."*
+
+### The claim that this is already handled is false
+
+The thread settled on the belief that donors are refunded when a creator switches within 30 days.
+**They are not.** A 30-day early-access refund does exist — `model-early-access-refund.service.ts` —
+but it differs on both axes that matter:
+
+- It refunds **buyers of paid access**, not **donors to a goal**. A donor is only ever refunded when
+  their own donation transaction fails mid-flight (`donation-goal.service.ts`).
+- It fires on **unpublish**, not on a config change. The gate write path contains no refund at all —
+  `paid-access.service.ts` mentions the word once, in a comment.
+
+So switching early access → paid access today refunds nobody and notifies nobody.
+
+🔴 **We already learned this exact lesson on the buyer side.** The refund service records that it
+used to require an active `PaidAccess` row, and that doing so *"put the switch in the obligated
+party's hands"* — an ordinary editor save that omits `paidAccess` deletes the gate row, so two saves
+cleared the obligation and a take-down refunded nobody. That was fixed for buyers by keying the
+obligation to the **purchase** rather than to the gate's current state. Donors have the unfixed
+version of the same hole, and the fix has the same shape: key the promise to something the obligated
+party cannot edit.
+
+### Exposure, measured 2026-09-03
+
+| | |
+|---|---|
+| Donation goals on gated versions | **1,992** |
+| — on a **timed** gate | 1,017 |
+| — **timed and have taken money** | **764** (4.5M Buzz) |
+| — on a **permanent** gate, with money | 840 |
+
+The 764 are the exposure: money already collected against a stated free-by date the creator can
+withdraw with one save.
+
+**Past abuse is not measurable, and will not become measurable.** The gate keeps no history, and
+`ModelVersion.earlyAccessTimeFrame` is `0` for all 840 permanent-gate goals — it is a legacy column
+predating `PaidAccess` (6,033 non-zero repo-wide, none in this set). We can say the path is open, not
+how often it has been walked. Do not go looking for a number to justify the fix; there is not one.
+
+### Why this argues for the guarantee rather than a validation rule
+
+The thread surfaced a second escape hatch: a creator can keep the download gated by dropping to
+**generation-only** rather than switching to permanent paid access.
+
+That is the argument for shape. A transition rule has to enumerate every downgrade — drop download
+but keep generation, raise the price, switch to permanent, shorten the window — and a missed one
+leaks the promise. A guarantee does not: **Q1** already defines it as freeing **every grant** on the
+entity, so generation-only closes by construction. The machinery is designed and needs no change;
+only the question of when a guarantee is created automatically is open.
+
+> 🔴 **Q18 and Q19 are superseded (2026-09-03).** The donation-goal half of this question moved to
+> [donation-goals.md](donation-goals.md) and was answered differently: a goal that is **met** (not
+> merely funded) makes the model free to everyone for **30 days**, not permanently, and a lapsed
+> window simply becomes **ungated** rather than guaranteed. **30 days is now the only guaranteed
+> free.** Q20 below is still open. The two subsections are kept for the reasoning, not the
+> recommendations.
+
+> ⚠️ **This invalidates `PaidAccessGuarantee` as specified in this document** — an irrevocable,
+> *permanent* free date whose `freeAt` only moves earlier, is never cleared, and is a ceiling on
+> every read. Either that guarantee also becomes a 30-day window, or the product carries two
+> different meanings of *free*: the ladder's and the goal's. Tracked as **D1** in
+> [donation-goals.md](donation-goals.md#open-questions), and it has to be settled before either
+> document is built from.
+
+### Q18 — Does a timed window plus a funded donation goal create a guarantee?
+
+**Recommended: yes.** Money changed hands on the strength of a stated date, which is the honest case
+and the one the thread is actually about. A goal that has received **no** donation has nothing to
+protect, so the trigger is the first donation, not the goal's existence.
+
+### Q19 — Does a timed window with no donation goal create one?
+
+**Recommended: no — disclose instead.** Show the date as *expected*, with one action to make it
+guaranteed. A creator testing a timed price has promised nothing, and auto-binding all 1,017 existing
+windows would invent obligations nobody made. This is the line between the two recommendations: a
+guarantee follows the money, not the calendar.
+
+### Q20 — Are the 764 existing funded windows bound retroactively?
+
+**No recommendation — this is a judgement call about fairness, not a technical one.** Those donations
+were taken under today's rules, where a window carried no promise. Binding them applies a rule
+created after the fact; not binding them leaves the disclosed harm in place for the population that
+actually experienced it.
+
+⚠️ Answering **yes** contradicts the recorded decision that the migration never invents a guarantee
+(see [Decided](#decided)). That decision was made about *unfunded* windows and did not consider this
+case, so it is reopened rather than violated — but it has to be edited if Q20 lands on yes.
+
+### Enforce, or compensate?
+
+Refunding donors when a promise is withdrawn is the alternative to enforcing it. **Enforcement is the
+recommendation**: a donation was never a purchase, so compensating means putting a price on a gift,
+and the amount that would make a donor whole is not a number anyone can derive. Enforcement also
+needs no new money path — the guarantee already exists.
+
 ## What this resolves
 
 An earlier pass at this listed the 30-day cap and the irreversibility guarantee as the two hardest
@@ -944,7 +1053,7 @@ normalization, which is a prerequisite that ships on its own.
 **The ratchet shrinks to one object.** Not every rung of a ladder — just the guarantee, with the rules
 above. The codebase already reasons in this shape: the licensing-fee ceiling check is
 raise-only, with a named exception for a write that moves a version onto a stricter media axis
-([`paid-access.service.ts`](../../src/server/services/paid-access.service.ts)).
+([`paid-access.service.ts`](../../../src/server/services/paid-access.service.ts)).
 
 ## Decided
 
@@ -971,7 +1080,9 @@ raise-only, with a named exception for a write that moves a version onto a stric
 
 ## Follow-ups
 
-**Nothing blocking — every question this plan raised has been answered.** See [Decided](#decided).
+**Nothing blocking.** Every question this plan originally raised has been answered — see
+[Decided](#decided). Three later ones (Q18–Q20) are open on a single axis and are tracked in
+[Reopened](#reopened-does-a-window-imply-a-guarantee), not here.
 
 Four things the answers themselves raised. None changes the schema; all four are decisions about
 copy, cadence or a resolution rule, and each is written up in the section it belongs to.

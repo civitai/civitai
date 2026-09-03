@@ -54,7 +54,7 @@ Code fixes committed on `creator-studio-implementation`: **`d70d871`** (models/s
     The two halves land separately: the **bulk apply** was decided the other way by **B7** and already shipped
     (`bulkSetFee` / `bulkSetPaidAccess` + select-all-across-filter), and the **default** is a creator-authored
     template, which B9 never spoke to — it governs *Civitai's* suggested values. Plan:
-    [pricing-templates.md](pricing-templates.md).
+    [pricing-templates.md](monetization/pricing-templates.md).
 
 ## Models
 
