@@ -65,7 +65,7 @@ export const load: PageServerLoad = async ({ url }) => {
 // `type: 'any'` on purpose. A form posts to `?/resolve`, which REPLACES the query string — so an action
 // never sees the `type` the moderator was looking at, and defaulting the lookup would 404 every row
 // outside the default queue. The id is a primary key, so dropping the predicate cannot widen the
-// result; what it changes is which types an action can be handed, and `rulingsAreWired` below is what
+// result; what it changes is which types an action can be handed, and `unwiredRuling` below is what
 // governs that.
 async function restrictionById(id: number): Promise<RestrictionRow | null> {
   const { items } = await getGenerationRestrictions({

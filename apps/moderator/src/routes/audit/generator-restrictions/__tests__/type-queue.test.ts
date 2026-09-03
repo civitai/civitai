@@ -174,13 +174,33 @@ describe('generator-restrictions actions — ruling scope', () => {
       totalCount: 1,
     });
 
-    const result = (await actions.ban(
-      formEvent({ userRestrictionId: '5', reasonCode: 'TOS' })
-    )) as { status: number; data: { error: string } };
+    // `reasonCode` is omitted deliberately — it is optional, so this payload is VALID. An invalid one
+    // is also answered `400` with `setBanned` untouched, which made an earlier version of this test
+    // pass against pre-change code for a reason that had nothing to do with the type. The message is
+    // asserted for the same reason: `400` alone cannot tell the two refusals apart.
+    const result = (await actions.ban(formEvent({ userRestrictionId: '5' }))) as {
+      status: number;
+      data: { error: string };
+    };
 
     expect(result.status).toBe(400);
+    expect(result.data.error).toMatch(/not yet available for "bot-account"/);
     expect(setBanned).not.toHaveBeenCalled();
     expect(resolveRestriction).not.toHaveBeenCalled();
+  });
+
+  it('still bans off a generation restriction', async () => {
+    // The positive control for the refusal above: the same payload, differing only in the row's type,
+    // must go all the way through. Without it the refusal could be rejecting every ban.
+    getGenerationRestrictions.mockResolvedValue({ items: [row()], totalCount: 1 });
+
+    const result = await actions.ban(formEvent({ userRestrictionId: '5' }));
+
+    expect(result).toEqual({ success: true });
+    expect(setBanned).toHaveBeenCalledWith(expect.objectContaining({ userId: 42, ban: true }));
+    expect(resolveRestriction).toHaveBeenCalledWith(
+      expect.objectContaining({ userRestrictionId: 5, status: 'Upheld' })
+    );
   });
 
   // A by-id lookup must not be filtered by the default type: a form posts to `?/resolve`, which

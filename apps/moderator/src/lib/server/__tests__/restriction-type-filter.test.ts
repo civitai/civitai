@@ -121,6 +121,10 @@ describe('getGenerationRestrictions — type scoping', () => {
     // SELECT that check silently compares against `undefined`.
     const [list] = await compile({ ...base });
 
-    expect(list.sql).toMatch(/"ur"\."type"[,\s]/);
+    // 🔴 Sliced to the SELECT list first. Asserted against the whole statement, this passes on the
+    // `"ur"."type" = $1` in the WHERE — which every pre-change version also emitted — so the guard
+    // would report coverage of a column that is not being selected at all.
+    const selectList = list.sql.slice(0, list.sql.indexOf(' from "UserRestriction"'));
+    expect(selectList).toContain('"ur"."type"');
   });
 });

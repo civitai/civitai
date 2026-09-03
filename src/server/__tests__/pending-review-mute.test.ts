@@ -445,7 +445,11 @@ describe('pending-review mute — restriction type', () => {
       updateSource: 'test',
       type: 'bot-account',
     });
-    const second = await applyPendingReviewMute({ userId: USER_ID, triggers, updateSource: 'test' });
+    const second = await applyPendingReviewMute({
+      userId: USER_ID,
+      triggers,
+      updateSource: 'test',
+    });
 
     expect(second).toMatchObject({ muted: true, deduped: false });
     expect((second as { userRestrictionId: number }).userRestrictionId).not.toBe(
