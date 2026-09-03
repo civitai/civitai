@@ -78,6 +78,7 @@ const ENDPOINT_ROUTES = [
   '/api/auth/oauth/authorize',
   '/api/auth/oauth/device',
   '/api/auth/oauth/device-approve',
+  '/api/auth/oauth/device-deny',
   '/api/auth/oauth/device-info',
   '/api/auth/oauth/device-token',
   '/api/auth/oauth/introspect',
