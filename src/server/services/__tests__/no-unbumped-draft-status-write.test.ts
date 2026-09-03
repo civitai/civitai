@@ -35,12 +35,100 @@ import { describe, expect, it } from 'vitest';
  */
 const repoRoot = path.resolve(__dirname, '../../../..');
 
-/** Files with a raw `UPDATE "Model"` statement that moves a model into Draft. */
-const LEDGER = [
-  'src/server/jobs/reset-to-draft-without-requirements.ts',
-  'src/pages/api/admin/temp/backfill-swept-trained-models.ts',
-  'src/server/services/model.service.ts',
+/**
+ * Files with a raw `UPDATE "Model"` statement that moves a model into Draft, and
+ * HOW MANY such statements each one holds.
+ *
+ * 🔴 The count is not decoration — it is the control that makes a dropped
+ * statement impossible to hide. The per-file rule below iterates the drafting
+ * statements, so anything that removes one from the list (a broken extractor, a
+ * reworded literal, a moved statement) makes the rule iterate a shorter list and
+ * pass. "At least one" was the previous control, and it is only sufficient while
+ * every ledger file holds exactly one: with two, the guard can silently stop
+ * watching one of them and still be green. Pinning the exact number closes that,
+ * and it also forces a deliberate decision when a file GAINS a drafting
+ * statement, rather than letting it arrive unwatched.
+ */
+const LEDGER: { file: string; draftingStatements: number }[] = [
+  { file: 'src/server/jobs/reset-to-draft-without-requirements.ts', draftingStatements: 1 },
+  { file: 'src/pages/api/admin/temp/backfill-swept-trained-models.ts', draftingStatements: 1 },
+  { file: 'src/server/services/model.service.ts', draftingStatements: 1 },
 ];
+
+/**
+ * Index of the backtick that CLOSES the tagged template `start` sits inside, or
+ * `-1` if it never closes.
+ *
+ * 🔴 "The next backtick" is WRONG, and the failure mode is TRUNCATION, not
+ * over-reading. A template carrying an interpolated expression that is itself a
+ * tagged template — `${cond ? Prisma.empty : Prisma.sql`...`}`, which is exactly
+ * the shape of the description write in `model.service.ts` — closes on the
+ * NESTED opening backtick. The extracted text then stops mid-expression, and
+ * because truncation REMOVES text it can drop the `'Draft'` literal and quietly
+ * take a statement out of scope entirely. Measured on the previous revision of
+ * this file: that statement extracted 156 characters and ended mid-ternary.
+ *
+ * So the scan tracks `${...}` interpolations by brace depth, recursing through
+ * nested templates and skipping quoted strings inside the JS. Known limits, both
+ * absent from this corpus: a brace or backtick inside a regex literal or a `//`
+ * comment within an interpolation would confuse the depth count.
+ */
+function templateEnd(source: string, start: number): number {
+  let i = start;
+  while (i < source.length) {
+    const ch = source[i];
+    if (ch === '\\') {
+      i += 2;
+      continue;
+    }
+    if (ch === '`') return i;
+    if (ch === '$' && source[i + 1] === '{') {
+      i = skipInterpolation(source, i + 2);
+      continue;
+    }
+    i++;
+  }
+  return -1;
+}
+
+/** Index just past the `}` closing an interpolation opened before `i`. */
+function skipInterpolation(source: string, i: number): number {
+  let depth = 1;
+  while (i < source.length && depth > 0) {
+    const ch = source[i];
+    if (ch === '\\') {
+      i += 2;
+      continue;
+    }
+    if (ch === '`') {
+      const nested = templateEnd(source, i + 1);
+      if (nested < 0) return source.length;
+      i = nested + 1;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      i = skipQuoted(source, i + 1, ch);
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+    i++;
+  }
+  return i;
+}
+
+/** Index just past the closing `quote`. */
+function skipQuoted(source: string, i: number, quote: string): number {
+  while (i < source.length) {
+    if (source[i] === '\\') {
+      i += 2;
+      continue;
+    }
+    if (source[i] === quote) return i + 1;
+    i++;
+  }
+  return i;
+}
 
 /**
  * EVERY raw `UPDATE "Model"` statement in a file, `--` comments stripped.
@@ -75,9 +163,9 @@ const LEDGER = [
  * did. When extending a ledger like this, re-derive the extractor against the
  * NEW file before trusting the green it reports.
  *
- * Each statement is read to the end of its tagged template (the next backtick).
- * That over-reads on a template carrying an interpolated expression, which is
- * deliberate: it can only pull MORE text into scope, so it fails closed.
+ * Each statement is read to the end of its tagged template via `templateEnd`,
+ * which is nesting-aware — see the 🔴 note on that function for why "the next
+ * backtick" silently TRUNCATED a statement rather than over-reading it.
  * Comment stripping is load-bearing too — these statements carry `--` comments,
  * and a `-- "updatedAt" = now()` would otherwise satisfy this guard over SQL
  * that does not do it.
@@ -86,8 +174,14 @@ function modelUpdateStatements(relPath: string): string[] {
   const source = readFileSync(path.join(repoRoot, relPath), 'utf8');
   const statements: string[] = [];
   for (let start = source.indexOf('UPDATE "Model"'); start >= 0; ) {
-    const end = source.indexOf('`', start);
-    expect(end, `${relPath}: could not find the end of the tagged template`).toBeGreaterThan(start);
+    const end = templateEnd(source, start);
+    // An unterminated template means the scan is wrong about this file, so every
+    // statement after it is suspect. Fail rather than skip: a skipped statement
+    // leaves the rule silently unbound, which is the whole hazard here.
+    expect(
+      end,
+      `${relPath}: tagged template starting at offset ${start} never closes — the extractor cannot be trusted on this file`
+    ).toBeGreaterThan(start);
     statements.push(source.slice(start, end).replace(/--[^\n]*/g, ' '));
     start = source.indexOf('UPDATE "Model"', end);
   }
@@ -104,23 +198,41 @@ function draftingStatements(relPath: string): string[] {
 }
 
 describe('a raw SQL write that drafts a Model bumps its "updatedAt"', () => {
-  it.each(LEDGER)('%s sets "updatedAt" = now() on every drafting statement', (relPath) => {
-    for (const statement of draftingStatements(relPath)) {
-      expect(
-        statement,
-        `${relPath}: without the bump this model is immediately reapable by remove-old-drafts, which cascade-deletes it`
-      ).toContain('"updatedAt" = now()');
+  it.each(LEDGER)(
+    '$file sets "updatedAt" = now() on every drafting statement',
+    ({ file }: (typeof LEDGER)[number]) => {
+      // Indexed, so a failure names WHICH of a file's drafting statements is
+      // unbumped rather than just the file.
+      draftingStatements(file).forEach((statement, i) => {
+        expect(
+          statement,
+          `${file}: drafting statement #${
+            i + 1
+          } does not bump "updatedAt" — a model it drafts carries a spent clock into remove-old-drafts, which cascade-deletes it`
+        ).toContain('"updatedAt" = now()');
+      });
     }
-  });
+  );
 
-  // POSITIVE CONTROL. Without it, a renamed file, a moved statement or a
-  // reworded `Draft` literal would make the assertion above vacuous rather than
-  // red — it iterates an empty list and passes. A ledger that silently checks
-  // nothing is the failure mode this whole class of guard is prone to.
-  it.each(LEDGER)('%s actually drafts a model, so the guard above is not vacuous', (relPath) => {
-    expect(
-      draftingStatements(relPath).length,
-      `${relPath} no longer writes Draft status in a raw UPDATE "Model"; if that is intended, remove it from the ledger`
-    ).toBeGreaterThan(0);
-  });
+  // 🔴 POSITIVE CONTROL, and an EXACT count rather than "at least one".
+  //
+  // The rule above iterates a list, so anything that shortens the list weakens it
+  // silently: a broken extractor, a reworded `Draft` literal, a moved statement.
+  // "At least one" only catches that while a file holds exactly one drafting
+  // statement — true of every ledger file today, which is a property of this
+  // corpus and not of the guard. With two, one can drop out and the file still
+  // reports a non-empty list.
+  //
+  // The exact number fails in BOTH directions: a statement that disappears from
+  // the extractor's view, and one that ARRIVES unwatched. Bumping the number is
+  // how you record a deliberate decision about a new site.
+  it.each(LEDGER)(
+    '$file holds exactly the drafting statements this ledger claims',
+    ({ file, draftingStatements: expected }: (typeof LEDGER)[number]) => {
+      expect(
+        draftingStatements(file).length,
+        `${file}: expected ${expected} raw UPDATE "Model" statement(s) writing Draft. Fewer means one dropped out of the extractor's view and is no longer checked; more means a new drafting site arrived — bump the count here once you have confirmed it carries the bump.`
+      ).toBe(expected);
+    }
+  );
 });
