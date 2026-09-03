@@ -336,8 +336,8 @@ export default function CivitaiLinkWizardModal() {
               How do you want to connect?
             </Text>
             <Text fz="sm" c="dimmed" lh={1.55}>
-              Civitai Link sends models straight from the site to the machine you generate on — no
-              downloads, no file shuffling. Pick whichever you already run.
+              Civitai Link sends models straight from the site to the machine you generate on — it
+              downloads them and files them where your app expects. Pick whichever you already run.
             </Text>
           </Stack>
           <Flex direction={{ base: 'column', sm: 'row' }} gap="sm" align="stretch">
