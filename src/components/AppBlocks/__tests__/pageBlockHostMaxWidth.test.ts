@@ -38,9 +38,10 @@ import { describe, expect, it } from 'vitest';
  *     relationship the ledger's inheritance depends on, which no older pin covers
  *   · the content wrapper's whole box model, because a dropped `flex: 1` collapses
  *     the app to a sliver with every test in BOTH tiers green (measured)
- *   · `data-block-id` is stamped on the host root — the opt-out ledger's selector
- *     chains it with `data-app-page-frame`, so a rename makes every ledger rule
- *     match nothing without changing anything visible
+ *   · BOTH `data-app-page-frame` and `data-block-id` are stamped on the host root
+ *     ELEMENT — the opt-out ledger's selector chains them, so a rename OR a move
+ *     of either half onto another element makes every ledger rule match nothing
+ *     without changing anything visible
  *
  *   · the value is read through `var()` and never written inline
  *
@@ -584,26 +585,49 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    * nothing — and nothing about the page looks wrong, so no one finds out until
    * an app that opted out is reported as still capped.
    *
-   * The testid is only this guard's ANCHOR for finding the root region; the
-   * ledger no longer selects on it (production strips it). That both ledger
-   * attributes are really stamped is asserted in
-   * `ledgerSelectorSurvivesProdStrip.test.ts`, from the ledger's side.
+   * The testid is only this guard's ANCHOR for finding the root element; the
+   * ledger no longer selects on it (production strips it).
+   *
+   * 🔴 BOTH HALVES, ON THE PARSED FRAME ELEMENT — NOT A TEXT SEARCH OVER THE FILE.
+   * `data-app-page-frame` was added by the fix that re-keyed the ledger, and it
+   * was originally pinned only by a whole-file substring search in
+   * `ledgerSelectorSurvivesProdStrip.test.ts`. Measured: moving that attribute off
+   * the host root onto the `app-page-content` wrapper — which re-creates the
+   * shipped production defect exactly, since the compound selector then matches
+   * zero elements — left the ENTIRE gating node tier byte-identically green
+   * (`7 failed | 741 passed`, the same pre-existing failures, both ways). Only the
+   * report-only browser tier caught it. Asking `hostElements()` for the frame and
+   * reading ITS attribute list is what makes "on the root" a checkable claim.
    */
-  it('stamps `data-block-id` on the host root — the opt-out ledger keys on it', () => {
-    const src = code(read(HOST));
-    const root = region(
-      src,
-      /data-testid="app-page-frame"[\s\S]*?data-needs-consent=/,
-      'host root attributes'
-    );
+  it('stamps BOTH ledger attributes on the host root — the opt-out selector chains them', () => {
+    const { frame } = hostElements();
+    const attrs = frame.attributes.properties.filter(ts.isJsxAttribute);
+    const names = attrs.map((a) => a.name.getText());
+
     expect(
-      root,
-      'the host root no longer stamps `data-block-id={blockId}` between its testid and ' +
-        '`data-needs-consent`. The full-bleed ledger in src/styles/globals.css selects on ' +
-        "`[data-app-page-frame][data-block-id='…']`, so every entry in it is now inert. " +
-        '`blockId` (the app slug) is the required value — `blockInstanceId` is per-install ' +
-        'and is NOT what an app author knows their app by.'
-    ).toContain('data-block-id={blockId}');
+      names,
+      'the host ROOT no longer stamps `data-app-page-frame`. The full-bleed ledger in ' +
+        "src/styles/globals.css selects on `[data-app-page-frame][data-block-id='…']` — a " +
+        'compound selector, so BOTH halves must be on the SAME element. `data-testid` cannot ' +
+        'stand in for it: `next.config.mjs` strips every testid from the production DOM, which ' +
+        'is the defect that made this attribute necessary. Moving it to the content wrapper ' +
+        'reads as a tidy-up and makes every ledger entry match nothing, with nothing visibly wrong.'
+    ).toContain('data-app-page-frame');
+
+    expect(
+      names,
+      'the host root no longer stamps `data-block-id`. The full-bleed ledger selects on ' +
+        "`[data-app-page-frame][data-block-id='…']`, so every entry in it is now inert."
+    ).toContain('data-block-id');
+
+    const blockIdAttr = attrs.find((a) => a.name.getText() === 'data-block-id');
+    expect(
+      norm(blockIdAttr!.getText()),
+      'the host root stamps `data-block-id` from something other than `blockId`. `blockId` (the ' +
+        'app slug, what builds `<slug>.civit.ai`) is the required value — `blockInstanceId` is ' +
+        'per-install and is NOT what an app author knows their app by, so a ledger entry written ' +
+        'against the slug would match nothing.'
+    ).toBe('data-block-id={blockId}');
   });
 
   /**
