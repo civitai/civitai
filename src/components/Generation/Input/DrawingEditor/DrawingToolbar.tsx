@@ -50,9 +50,7 @@ function ShapesPopover({
     { tool: 'text', icon: <IconTypography size={18} />, label: 'Text' },
   ];
 
-  const isShapeActive = ['rectangle', 'circle', 'arrow', 'speechBubble', 'text'].includes(
-    currentTool
-  );
+  const isShapeActive = ['rectangle', 'circle', 'arrow', 'speechBubble', 'text'].includes(currentTool);
   const activeShape = shapeTools.find((s) => s.tool === currentTool);
 
   return (
@@ -126,7 +124,11 @@ const SPEECH_BUBBLE_STAMPS = [
 ];
 
 /** Speech Bubbles popover - shows available bubble stamps */
-function SpeechBubblesPopover({ onSelect }: { onSelect: (imagePath: string) => void }) {
+function SpeechBubblesPopover({
+  onSelect,
+}: {
+  onSelect: (imagePath: string) => void;
+}) {
   return (
     <Popover position="top" withArrow shadow="md" radius="md" width={200}>
       <Popover.Target>
@@ -138,9 +140,7 @@ function SpeechBubblesPopover({ onSelect }: { onSelect: (imagePath: string) => v
       </Popover.Target>
       <Popover.Dropdown>
         <Stack gap="xs">
-          <Text size="xs" fw={600}>
-            Speech Bubbles
-          </Text>
+          <Text size="xs" fw={600}>Speech Bubbles</Text>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
             {SPEECH_BUBBLE_STAMPS.map((stamp) => (
               <Tooltip key={stamp.id} label={stamp.name} withArrow>
@@ -352,7 +352,9 @@ export function DrawingToolbar({
 
           {/* Actions - Undo visible, rest in overflow menu */}
           <div className={styles.actions}>
-            {onAddSpeechBubble && <SpeechBubblesPopover onSelect={onAddSpeechBubble} />}
+            {onAddSpeechBubble && (
+              <SpeechBubblesPopover onSelect={onAddSpeechBubble} />
+            )}
             {onAddImage && (
               <Tooltip label="Add Image" withArrow>
                 <ActionIcon variant="subtle" size="lg" radius="md" onClick={onAddImage}>
@@ -572,7 +574,9 @@ export function DrawingToolbar({
 
         {/* Actions */}
         <div className={styles.actions}>
-          {onAddSpeechBubble && <SpeechBubblesPopover onSelect={onAddSpeechBubble} />}
+          {onAddSpeechBubble && (
+            <SpeechBubblesPopover onSelect={onAddSpeechBubble} />
+          )}
           {onAddImage && (
             <Tooltip label="Add Image Overlay" withArrow>
               <ActionIcon variant="subtle" size="lg" radius="md" onClick={onAddImage}>

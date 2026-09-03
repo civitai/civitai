@@ -41,7 +41,8 @@ export function PresetHeaderButton() {
 
   const openPicker = () =>
     dialogStore.trigger({ id: 'preset-picker', component: PresetPickerModal });
-  const openSave = () => dialogStore.trigger({ id: 'save-preset', component: SavePresetModal });
+  const openSave = () =>
+    dialogStore.trigger({ id: 'save-preset', component: SavePresetModal });
   const openManage = () =>
     dialogStore.trigger({ id: 'manage-presets', component: ManagePresetsModal });
 

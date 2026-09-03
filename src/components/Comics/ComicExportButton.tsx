@@ -3,7 +3,10 @@ import { IconDownload, IconFileTypePdf, IconFileZip } from '@tabler/icons-react'
 import { useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useChapterPermission } from '~/components/Comics/comic-chapter.utils';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+} from '~/utils/notifications';
 
 interface ChapterExportButtonProps {
   projectName: string;
@@ -33,7 +36,11 @@ async function fetchPanelBlobs(panels: { imageUrl: string | null }[]) {
       const url = getEdgeUrl(panel.imageUrl!, { original: true });
       const response = await fetchWithRetry(url);
       const blob = await response.blob();
-      const ext = blob.type.includes('png') ? 'png' : blob.type.includes('webp') ? 'webp' : 'jpg';
+      const ext = blob.type.includes('png')
+        ? 'png'
+        : blob.type.includes('webp')
+          ? 'webp'
+          : 'jpg';
       return { blob, ext };
     })
   );
@@ -83,7 +90,11 @@ function safeName(name: string) {
  * button + the mobile kebab menu items) share a single implementation
  * instead of replicating the fetch/zip/pdf machinery.
  */
-export function useChapterExport({ projectName, chapterName, panels }: ChapterExportButtonProps) {
+export function useChapterExport({
+  projectName,
+  chapterName,
+  panels,
+}: ChapterExportButtonProps) {
   const [exporting, setExporting] = useState(false);
 
   const filename = `${safeName(projectName)}_${safeName(chapterName)}`;
@@ -119,7 +130,9 @@ export function useChapterExport({ projectName, chapterName, panels }: ChapterEx
   const exportPDF = async () => {
     try {
       setExporting(true);
-      const { pdf, Document, Page, Image, StyleSheet } = await import('@react-pdf/renderer');
+      const { pdf, Document, Page, Image, StyleSheet } = await import(
+        '@react-pdf/renderer'
+      );
       const saveAs = await getSaveAs();
       const React = await import('react');
 
@@ -212,7 +225,11 @@ export function ChapterExportButton({
         >
           PDF
         </Menu.Item>
-        <Menu.Item leftSection={<IconFileZip size={16} />} onClick={exportCBZ} disabled={exporting}>
+        <Menu.Item
+          leftSection={<IconFileZip size={16} />}
+          onClick={exportCBZ}
+          disabled={exporting}
+        >
           CBZ (Comic Book Archive)
         </Menu.Item>
       </Menu.Dropdown>
@@ -247,12 +264,7 @@ export function ChapterDownloadButton({
   if (!canDownload) return null;
 
   return (
-    <span
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      }}
-    >
+    <span onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
       <ChapterExportButton
         projectName={projectName}
         chapterName={chapter.name}
