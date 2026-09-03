@@ -107,6 +107,7 @@ import {
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
+import { buildRepublishImageIndexTouch } from '~/server/services/model-republish-image-index.sql';
 import {
   expandBlurbs,
   getReferencedBlurbIds,
@@ -3208,6 +3209,18 @@ export const publishModelById = async ({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
   });
+
+  // Republish only: a dropped Update on this path has no recovery without an updatedAt bump (both
+  // image indexes re-derive a missing Update solely from a delta scan of moved rows, and a
+  // republish otherwise never touches the image rows — see buildRepublishImageIndexTouch). A
+  // first/scheduled publish's images were just created, so they carry a fresh updatedAt the delta
+  // scan already sees; bumping thousands of rows there is pure duplicate work against the direct
+  // queueUpdate below.
+  if (republishing && allVersionIds.length > 0) {
+    await dbWrite.$executeRaw(
+      buildRepublishImageIndexTouch({ userId: model.userId, versionIds: allVersionIds })
+    );
+  }
 
   // Update search index for model
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
