@@ -117,21 +117,21 @@ describe('getMultipliersForUser floors the value it pays with', () => {
   // 🔴 THE DECISION THIS PINS. If you are here because you are adding a `clampRewardMultiplier` to
   // `purchasesMultiplier` for symmetry: don't. It feeds `getBuzzBulkMultiplier`, which is called
   // UNCONDITIONALLY unlike every UI consumer, and there `mainBuzzAdded = floor(amount * m - amount)`
-  // — so a 0 makes `totalCustomBuzz` 0 and a completed Stripe/Paddle/NowPayments purchase credits
-  // NOTHING. `completeStripeBuzzPurchase` then writes the `transactionId` its own early return uses
-  // as an idempotency marker, so a retry can never repair it. A 0 means "earns nothing" on the
-  // rewards side and nothing at all on the purchases side. That path needs its own floor, decided
-  // on its own terms. Without this test the reverted regression comes back green.
+  // — so a 0 makes `totalCustomBuzz` 0 and a completed Stripe/Paddle purchase credits NOTHING.
+  // `completeStripeBuzzPurchase` then writes the `transactionId` its own early return uses as an
+  // idempotency marker, so a retry can never repair it. A 0 means "earns nothing" on the rewards
+  // side and nothing at all on the purchases side.
   //
-  // Closing condition, so this does not become a wall: the decision is "0 is the WRONG repair", not
-  // "no repair". When the purchases path gets its own floor — likely at 1, which delivers what was
-  // paid for — this test is UPDATED to assert that, not deleted.
+  // The purchases repair landed where the arithmetic is, NOT here: `getBuzzBulkMultiplier` floors at
+  // 1 (finite `Math.max(m, 1)`, no ceiling) — ClickUp 868m0axkg. So `getMultipliersForUser` still
+  // must NOT floor: a second floor here would be redundant and would change what the award
+  // computation and Redis Lua cap (other consumers of this value) see. This test keeps pinning that
+  // absence; without it the reverted regression comes back green.
   //
   // Read the assertions knowing this: `clampRewardMultiplier` only alters negatives and non-finites,
-  // so every value able to witness "not floored" is a value that must never reach the payment path.
-  // `-3` credits a NEGATIVE grant and `NaN` an unpayable one — both already broken today, and both
-  // worse than the 0 this argues against. The test pins the absence of a repair, not the health of
-  // the path.
+  // so every value able to witness "not floored" is a value the downstream floor now neutralises on
+  // the payment path. `-3` and `NaN` reach `getMultipliersForUser` unchanged and are clamped to 1 at
+  // `getBuzzBulkMultiplier`. The test pins where the repair lives, not the health of this function.
   it('does NOT floor purchasesMultiplier — that is a different money path', async () => {
     h.fetch.mockResolvedValue({
       [USER]: {

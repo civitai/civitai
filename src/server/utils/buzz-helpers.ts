@@ -4,12 +4,19 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 export const getBuzzBulkMultiplier = ({
   buzzAmount: _buzzAmount,
-  purchasesMultiplier,
+  purchasesMultiplier: _purchasesMultiplier,
 }: {
   buzzAmount: number;
   purchasesMultiplier: number;
 }) => {
   const buzzAmount = Number(_buzzAmount);
+  // Floor at 1 (no bonus), never 0: on the paid-purchase path a non-finite or sub-1 multiplier makes
+  // `buzzAmount * m - buzzAmount` zero/negative, and the caller's `metadata.transactionId`
+  // idempotency marker makes that zero-credit unrepairable by retry. See ClickUp 868m0axkg.
+  const parsedMultiplier = Number(_purchasesMultiplier);
+  const purchasesMultiplier = Number.isFinite(parsedMultiplier)
+    ? Math.max(parsedMultiplier, 1)
+    : 1;
   const bulkBuzzMultiplier = buzzBulkBonusMultipliers.reduce((acc, [amount, multiplier]) => {
     if (buzzAmount >= amount) {
       return multiplier;
