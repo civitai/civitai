@@ -53,10 +53,27 @@ const LEDGER = [
  *    breaks the line after the table name, which is how `restoreModelById`
  *    writes it. The closing quote is what excludes `UPDATE "ModelVersion"`;
  *    the space was never doing that job.
- *  - `model.service.ts` holds THREE raw `UPDATE "Model"` statements and only
+ *  - `model.service.ts` holds SEVEN raw `UPDATE "Model"` statements and only
  *    one of them drafts. Taking the first match would have anchored this guard
  *    on `captureMinorFlagSnapshot`'s meta write — a different statement, in a
  *    different function, with nothing to do with the reaper.
+ *
+ * 🔴 The two defects COMPOSE, which is why neither was visible on its own. The
+ * drafting statement is the FIRST of the seven, so a first-match rule alone
+ * would have found it; it is the space anchor that skips it, and only then does
+ * first-match land on the meta write. Fixing either half in isolation would have
+ * produced a guard that happened to be right for the wrong reason.
+ *
+ * 🔴 And the reason no review round could have caught this: both files this
+ * extractor was originally written against hold EXACTLY ONE raw `UPDATE "Model"`
+ * each, and both spell it `UPDATE "Model" m` — with a space, because of the
+ * alias. Both assumptions were therefore true of the entire corpus the guard
+ * could see. A guard's doc comment states a RULE ("a raw-SQL write that drafts a
+ * Model"); its implementation covered two files that happened to satisfy two
+ * unstated assumptions. Nothing short of pointing it at a file it was not
+ * written for can tell those apart — which is exactly what adding the third site
+ * did. When extending a ledger like this, re-derive the extractor against the
+ * NEW file before trusting the green it reports.
  *
  * Each statement is read to the end of its tagged template (the next backtick).
  * That over-reads on a template carrying an interpolated expression, which is
