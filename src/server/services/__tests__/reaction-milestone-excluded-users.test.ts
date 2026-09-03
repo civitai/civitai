@@ -3,6 +3,7 @@ import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import { CacheTTL } from '~/server/common/constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { reactionNotifications } from '~/server/notifications/reaction.notifications';
 
 // The reaction milestone counted every `ImageReaction` row, while every displayed
 // count filters the reaction-farm suppression list — 24 against a displayed 4 on
@@ -177,6 +178,29 @@ describe('createReactionNotification', () => {
       key: 'image-reaction-milestone:141298569:20',
       userId: 42,
     });
+  });
+
+  // The producer -> consumer seam. `prepareMessage` builds the notification URL from
+  // `details.postId`, but nothing else ties the key it reads to the key this controller
+  // writes: rename or drop `postId` here and the handler's `postId != null` goes false
+  // for every notification, every link silently loses its post context, and a test that
+  // hand-writes its own `details` fixture stays green. So feed the CAPTURED details
+  // through the real handler rather than a fixture of it.
+  it('emits details the milestone handler can actually build a URL from', async () => {
+    cachePassthrough();
+    h.chQuery.mockResolvedValue([]);
+    count.mockResolvedValue(10);
+
+    await run();
+
+    const { details } = h.createNotification.mock.calls[0][0];
+    const message = reactionNotifications['image-reaction-milestone'].prepareMessage({
+      type: 'image-reaction-milestone',
+      details,
+    });
+
+    // findFirst above resolves postId: 7, so the real post context must survive.
+    expect(message?.url).toBe('/images/141298569?postId=7');
   });
 
   // An empty list must not become `notIn: []`, which is a different query.
