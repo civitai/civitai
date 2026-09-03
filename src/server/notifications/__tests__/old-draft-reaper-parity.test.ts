@@ -9,7 +9,6 @@ vi.mock('~/server/jobs/job', () => ({ createJob: (_n: string, _c: string, fn: un
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { modelNotifications } from '~/server/notifications/model.notifications';
 import {
-  ACTIVITY_WINDOW_DAYS,
   OLD_DRAFT_LEAD_DAYS,
   OLD_DRAFT_LEAD_TEXT,
   OLD_DRAFT_NOTICE_DAYS,
@@ -18,23 +17,35 @@ import {
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
- * SEAM GUARD between two queries that independently spell ONE rule: which old
- * Draft models `remove-old-drafts` will actually destroy.
+ * SEAM GUARD between the `old-draft` notification and the reaper in
+ * `src/server/jobs/remove-old-drafts.ts`.
  *
- * The `old-draft` notification tells a creator their model "will be deleted in
- * <lead>" and is `toggleable: false`, so it is not a hint — it is a promise, and
- * it is only true if this query selects the same population the reaper will.
+ * The notification promises "will be deleted in <lead>" and is
+ * `toggleable: false`, so it is not a hint — a model it EXCLUDES is a model
+ * destroyed with no notice at all.
  *
- * 🔴 THE INVARIANT IS THE RESOLVED WINDOW, NOT THE SOURCE TEXT — and getting that
- * wrong is not hypothetical, it shipped in this PR's own history. An earlier
- * revision of this file asserted the notification spelled the reaper's
- * `INTERVAL '30 days'` VERBATIM. That is the wrong invariant: the two queries run
- * `OLD_DRAFT_LEAD_DAYS` apart, so the same `now()`-relative text is a DIFFERENT
- * absolute window on each side. The textual guard passed while the notification's
- * fence resolved a week earlier than the reaper's, which silently excluded the
- * canonical abandoned draft from the warning and then let it be reaped. Worse, the
- * textual guard would have gone RED on the correct fix — a guard that blocks its
- * own repair. Everything below compares RESOLVED windows.
+ * 🔴 THE PROPERTY IS ONE-DIRECTIONAL, AND IT IS NOT PARITY.
+ *
+ *     No term in the notification may exclude a model the reaper will destroy.
+ *
+ * Warning a model the reaper later spares is fine. Failing to warn one it
+ * destroys is the bug. Two earlier revisions of this PR asserted TWO-WAY parity
+ * — that the notification mirror the reaper's terms — and both shipped a defect,
+ * because mirroring a `now()`-relative clause into a query that runs at a
+ * different time changes what the clause MEANS:
+ *
+ *   - round 2 copied the reaper's fences verbatim; they resolved a week early.
+ *   - round 3 re-derived the interval assuming the reaper is a ONE-SHOT
+ *     evaluation at `U + REAP_AGE_DAYS`. It is a nightly cron that RETRIES, so
+ *     it really fires at `max(U, activity) + REAP_AGE_DAYS`. Any model whose
+ *     version or file landed after its model row was last written — the norm —
+ *     was still excluded, permanently, and reaped later unwarned.
+ *
+ * The fences are now GONE from the notification rather than re-tuned, and the
+ * guards below pin that shape rather than a parity relation. `activityAt` is
+ * parameterised precisely because a single fixture is what let round 3 through:
+ * the old headline test pinned `activityAt = U`, the one offset at which the
+ * broken predicate happened to be correct.
  */
 
 /** `--` comments stripped, whitespace collapsed. Both sources carry `--` comments. */
@@ -58,34 +69,32 @@ type MessageDef = Def & {
   prepareMessage?: (args: { details: Record<string, unknown> }) => { message: string };
 };
 
-/** The notification's SELECT, as actually produced by its own prepareQuery. */
-function notificationSql() {
-  const def = (modelNotifications as unknown as Record<string, Def>)['old-draft'];
+function notificationDef(source: typeof modelNotifications = modelNotifications) {
+  const def = (source as unknown as Record<string, MessageDef>)['old-draft'];
   expect(def?.prepareQuery, 'the old-draft notification no longer builds a query').toBeTypeOf(
     'function'
   );
-  return executable(def!.prepareQuery!({ lastSent: '2026-01-01' }));
+  return def;
+}
+
+/** The notification's SELECT, as actually produced by its own prepareQuery. */
+function notificationSql() {
+  return executable(notificationDef().prepareQuery!({ lastSent: '2026-01-01' }));
 }
 
 /**
- * The three activity-fence clauses, as `[alias.column, days]`.
+ * Every `now()`-relative comparison in a query, as `{ alias, column, days }`.
  *
- * Matching on `> now() - INTERVAL 'N days'` deliberately captures N rather than
- * asserting it, so the tests below can do arithmetic on it. A fence written any
- * other way is not found, and the count assertions turn that into a failure
- * rather than a silent pass.
+ * Captures the interval rather than asserting it, so the tests can do arithmetic
+ * on the numbers the query ACTUALLY carries instead of on numbers the test
+ * assumes. Covers both `>` and `<`.
  */
-function fenceWindows(sql: string): Record<string, number> {
-  const out: Record<string, number> = {};
-  const re = /(\w+)\."(\w+)" > now\(\) - INTERVAL '(\d+) days'/g;
-  for (const m of sql.matchAll(re)) out[`${m[1]}."${m[2]}"`] = Number(m[3]);
+function timeRelativeTerms(sql: string) {
+  const out: { alias: string; column: string; op: string; days: number }[] = [];
+  const re = /(\w+)\."(\w+)" ([<>]) now\(\) - INTERVAL '(\d+) days'/gi;
+  for (const m of sql.matchAll(re))
+    out.push({ alias: m[1], column: m[2], op: m[3], days: Number(m[4]) });
   return out;
-}
-
-/** The reaper's own abandonment threshold: `m."updatedAt" < now() - INTERVAL 'N days'`. */
-function reapAgeDays(sql: string): number | undefined {
-  const m = sql.match(/m\."updatedAt" < now\(\) - INTERVAL '(\d+) days'/);
-  return m ? Number(m[1]) : undefined;
 }
 
 /** The notification's firing band: `BETWEEN … - INTERVAL 'N days' AND NOW() - INTERVAL 'N days'`. */
@@ -95,19 +104,31 @@ function noticeBandDays(sql: string): number[] {
   );
 }
 
-/** Terms that carry no interval, so textual comparison IS the right invariant. */
-const SHARED_EXACT_TERMS = [
+/**
+ * Value terms — no time component, so they mean the same thing whenever they are
+ * evaluated. These ARE required on both sides, and textual comparison is the
+ * right invariant for them.
+ */
+const SHARED_VALUE_TERMS = [
   `m."availability" != 'Private'::"Availability"`,
   `mm."downloadCount" < 10`,
 ];
 
-const FENCE_KEYS = ['mv."createdAt"', 'mv."updatedAt"', 'mf."createdAt"'];
+/**
+ * Activity offsets to exercise, relative to the model row's last write `U`.
+ *
+ * `U + 0` is the all-at-once draft. `U + 0.5` and `U + 2` are the offsets that
+ * broke rounds 2 and 3 — the finished resource landing hours or days after the
+ * model row, which `remove-old-drafts.ts` documents as the norm. `U + 20` and
+ * `U + 40` push activity past the notification's own firing instant.
+ */
+const ACTIVITY_OFFSET_DAYS = [0, 0.5, 2, 20, 40];
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('old-draft notification tracks the remove-old-drafts reaper', () => {
+describe('old-draft notification never excludes a model the reaper will destroy', () => {
   // POSITIVE CONTROL. Both sides must be real, distinct, non-empty SQL over
   // "Model", or every assertion below is satisfied by two empty strings.
   it('reads a real, distinct query from each side', async () => {
@@ -121,90 +142,150 @@ describe('old-draft notification tracks the remove-old-drafts reaper', () => {
     expect(notification).not.toBe(reaper);
   });
 
-  describe('🔴 the resolved fence windows — the regression guard', () => {
+  describe('🔴 the structural rule: no time-relative activity clause', () => {
     /**
-     * THE GUARD THIS SEAM WAS MISSING.
+     * THE GUARD THAT WOULD HAVE CAUGHT BOTH REGRESSIONS.
      *
-     * Simulates the canonical abandoned draft against the numbers the two queries
-     * ACTUALLY carry: model row, version and file all last touched at `U`, then
-     * abandoned. `remove-old-drafts.ts` describes this as the norm — "the finished
-     * resource lands hours or weeks later" — and it is the population the reaper
-     * exists to collect.
+     * The notification evaluates ONCE, in a ~1-minute band; the reaper retries
+     * nightly until its condition holds. So a `now()`-relative clause over a
+     * table whose rows can move — ModelVersion, ModelFile — asks the question at
+     * an instant that has no fixed relationship to when the reaper will act. No
+     * choice of interval fixes that, which is why the rule is "none", not "the
+     * right one".
      *
-     * With the defect (fences spelled 30) this test fails: the notification's
-     * window resolves to `U - 7d`, activity at `U` is newer than that, the
-     * `NOT EXISTS` is false, and the model is never warned — then reaped.
+     * The firing band on `Model."updatedAt"` is the deliberate exception: it is
+     * the same column the reaper's own age threshold tests, so the two move
+     * together. It is written as a `BETWEEN`, so it does not appear in
+     * `timeRelativeTerms` at all and is pinned by its own test below.
      */
-    it('warns the canonical abandoned draft before the reaper destroys it', async () => {
-      const reaper = await reaperSql();
-      const notification = notificationSql();
+    it('carries no now()-relative comparison at all', () => {
+      const terms = timeRelativeTerms(notificationSql());
 
-      const U = 0;
-      const DAY = 1;
-      const notifyAt = U + OLD_DRAFT_NOTICE_DAYS * DAY;
-      const reapAt = U + REAP_AGE_DAYS * DAY;
-
-      // Every timestamp under the model sits at U — the abandoned case.
-      const activityAt = U;
-
-      const notifFences = fenceWindows(notification);
-      const reaperFences = fenceWindows(reaper);
-
-      for (const key of FENCE_KEYS) {
-        expect(notifFences[key], `the notification lost its ${key} fence`).toBeTypeOf('number');
-        expect(reaperFences[key], `the reaper lost its ${key} fence`).toBeTypeOf('number');
-
-        const reaperSpares = activityAt > reapAt - reaperFences[key] * DAY;
-        const notificationSkips = activityAt > notifyAt - notifFences[key] * DAY;
-
-        expect(
-          reaperSpares,
-          `${key}: fixture is wrong — the reaper must DESTROY this model, or the assertion below is vacuous`
-        ).toBe(false);
-        expect(
-          notificationSkips,
-          `${key}: a model the reaper WILL destroy is excluded from the warning — it gets deleted with no notice. The fence interval must resolve to the reaper's window, so it is OLD_DRAFT_NOTICE_DAYS here, NOT the reaper's ${ACTIVITY_WINDOW_DAYS}.`
-        ).toBe(false);
-      }
+      expect(
+        terms.map((t) => `${t.alias}."${t.column}" ${t.op}`),
+        'a now()-relative clause over ModelVersion/ModelFile is unsound here: this query runs once, the reaper retries until it fires, so the clause excludes models the reaper later destroys — permanently and silently. Do not re-add an activity fence; see the comment on the query. (The firing band on Model."updatedAt" is a BETWEEN and is pinned separately.)'
+      ).toEqual([]);
     });
 
-    it('resolves both sides to the same absolute instant', async () => {
-      const reaper = await reaperSql();
-      const notification = notificationSql();
-      const notifFences = fenceWindows(notification);
-      const reaperFences = fenceWindows(reaper);
-
-      for (const key of FENCE_KEYS) {
-        expect(
-          OLD_DRAFT_NOTICE_DAYS - notifFences[key],
-          `${key}: the notification fires ${OLD_DRAFT_LEAD_DAYS}d early, so its window must be shorter by exactly that much`
-        ).toBe(REAP_AGE_DAYS - reaperFences[key]);
-      }
+    it('has no NOT EXISTS activity fence at all', () => {
+      expect(
+        (notificationSql().match(/NOT EXISTS \(/g) ?? []).length,
+        "the reaper's activity fences must NOT be mirrored here — they are the terms whose correctness depends on predicting when the reaper fires"
+      ).toBe(0);
     });
 
-    it('derives the notice band from the reap age and the lead, on both intervals', () => {
-      const band = noticeBandDays(notificationSql());
+    // Widest form of the same rule, and the one a reworded fence cannot walk
+    // past: this query has no business reading the tables whose rows move after
+    // the model row was last written. It needs "Model" and "ModelMetric" only.
+    it('does not reference ModelVersion or ModelFile at all', () => {
+      const sql = notificationSql();
 
-      expect(band, 'the BETWEEN band must carry the same interval on both sides').toEqual([
-        OLD_DRAFT_NOTICE_DAYS,
-        OLD_DRAFT_NOTICE_DAYS,
-      ]);
+      for (const table of ['"ModelVersion"', '"ModelFile"']) {
+        expect(
+          sql,
+          `${table} rows land AFTER the model row is last written, so any clause over them excludes exactly the models the reaper is coming for`
+        ).not.toContain(table);
+      }
+      // Positive control: the tables it SHOULD read are still there, so this is
+      // not passing because the query went missing.
+      expect(sql, 'the query must still read the tables it legitimately needs').toContain(
+        '"ModelMetric"'
+      );
+    });
+
+    // Guards the exception above: the one permitted time term is the age band,
+    // and it must be the reaper's own column and the derived window.
+    it('keeps its firing band on Model."updatedAt", derived from the reap age', () => {
+      const sql = notificationSql();
+
+      expect(
+        noticeBandDays(sql),
+        'the BETWEEN band must carry the same interval on both sides'
+      ).toEqual([OLD_DRAFT_NOTICE_DAYS, OLD_DRAFT_NOTICE_DAYS]);
       expect(
         OLD_DRAFT_NOTICE_DAYS + OLD_DRAFT_LEAD_DAYS,
-        'the warning must fire exactly one lead time before the reap age'
+        'the warning must fire exactly one lead time before the earliest possible reap'
       ).toBe(REAP_AGE_DAYS);
+    });
+  });
+
+  describe('🔴 the property, across activity offsets', () => {
+    /**
+     * Property test, deliberately NOT a single fixture.
+     *
+     * The reap instant is modelled as `max(U, activityAt) + REAP_AGE_DAYS`,
+     * because the reaper is a nightly cron that retries: it cannot fire while its
+     * own activity fence still sees recent work, so activity PUSHES the reap
+     * later. Hardcoding `U + REAP_AGE_DAYS` — a one-shot reaper — is precisely
+     * the modelling error that let round 3's defect through a green suite.
+     *
+     * For each offset: whatever time-relative terms the notification actually
+     * carries are evaluated at the notification's firing instant, and the model
+     * must not be excluded before the reaper destroys it.
+     */
+    it.each(ACTIVITY_OFFSET_DAYS)('warns a model whose activity lands at U + %s days', (offset) => {
+      const U = 0;
+      const activityAt = U + offset;
+      const notifyAt = U + OLD_DRAFT_NOTICE_DAYS;
+      // The reaper retries nightly, so activity postpones the reap.
+      const reapAt = Math.max(U, activityAt) + REAP_AGE_DAYS;
+
+      expect(
+        notifyAt,
+        `fixture is wrong at offset ${offset}: the warning must precede the reap, or the assertion below is vacuous`
+      ).toBeLessThan(reapAt);
+
+      for (const term of timeRelativeTerms(notificationSql())) {
+        // Only activity terms can wrongly exclude; the Model age band is the
+        // firing condition itself, not an exclusion.
+        if (term.alias === 'm' && term.column === 'updatedAt') continue;
+
+        const excluded = term.op === '>' && activityAt > notifyAt - term.days;
+        expect(
+          excluded,
+          `${term.alias}."${term.column}" excludes a model whose activity is at U+${offset} — the reaper destroys it at U+${reapAt} and this is the only warning it would ever get. The reaper RETRIES, so activity moves the reap later; no fixed interval here can track it.`
+        ).toBe(false);
+      }
+    });
+  });
+
+  describe('the shared value terms', () => {
+    // These carry no time component, so they mean the same thing at day 23 and at
+    // the reap: downloadCount is monotonically non-decreasing in practice, and
+    // availability is NOT NULL with a Public default whose change writes the
+    // Model row (bumping updatedAt, which re-arms this band). That is why these
+    // may be mirrored when the fences may not.
+    it.each(SHARED_VALUE_TERMS)('the reaper spells %s', async (term) => {
+      expect(
+        await reaperSql(),
+        'this term is in the shared ledger but the reaper no longer has it — remove it from SHARED_VALUE_TERMS, and from the notification'
+      ).toContain(term);
+    });
+
+    it.each(SHARED_VALUE_TERMS)('the old-draft notification spells %s', (term) => {
+      expect(
+        notificationSql(),
+        'without this term the notification warns models the reaper will never touch — the ~1,308 false alarms this predicate exists to prevent'
+      ).toContain(term);
     });
 
     it('pins the reaper age literal to the shared constant', async () => {
+      const ageTerm = timeRelativeTerms(await reaperSql()).find(
+        (t) => t.alias === 'm' && t.column === 'updatedAt' && t.op === '<'
+      );
+
       expect(
-        reapAgeDays(await reaperSql()),
+        ageTerm?.days,
         'the reaper destroys on this literal; the notification derives its own schedule from the constant it must equal'
       ).toBe(REAP_AGE_DAYS);
     });
+  });
 
+  describe('derivation', () => {
     it('states the lead in the message with the same constant it schedules on', () => {
-      const def = (modelNotifications as unknown as Record<string, MessageDef>)['old-draft'];
-      const { message } = def.prepareMessage!({ details: { modelName: 'Fixture', modelId: 7 } });
+      const { message } = notificationDef().prepareMessage!({
+        details: { modelName: 'Fixture', modelId: 7 },
+      });
 
       expect(
         message,
@@ -213,18 +294,14 @@ describe('old-draft notification tracks the remove-old-drafts reaper', () => {
     });
 
     /**
-     * 🔴 THE MECHANICAL CONTROL for every "derives from the constant" claim above.
+     * 🔴 MECHANICAL CONTROL for every "derives from the constant" claim.
      *
-     * Those assertions compare the query and the copy against the constants' own
-     * CURRENT values — `OLD_DRAFT_NOTICE_DAYS` is 23 and `OLD_DRAFT_LEAD_TEXT` is
-     * "1 week" — so a hardcoded literal `23` or `"1 week"` satisfies every one of
-     * them. Measured, not assumed: a mutant replacing the interpolation with the
-     * literal `1 week` SURVIVED the whole file before this test existed.
-     *
-     * The only way to tell derivation from coincidence is to feed a value the
-     * constant CANNOT currently equal and watch the output move. This re-imports
-     * the module against a doubled lead, so every derived value changes: the copy
-     * becomes "2 weeks" and the notice window becomes 16 days.
+     * The assertions above compare against the constants' own CURRENT values —
+     * `OLD_DRAFT_NOTICE_DAYS` is 23, `OLD_DRAFT_LEAD_TEXT` is "1 week" — so a
+     * hardcoded literal satisfies them. Measured, not assumed: three such mutants
+     * SURVIVED the whole file before this existed. The only way to tell
+     * derivation from coincidence is to feed a value the constant cannot equal
+     * and watch the output move.
      */
     it('MOVES with the constants — a literal that merely equals them does not pass', async () => {
       vi.resetModules();
@@ -248,10 +325,6 @@ describe('old-draft notification tracks the remove-old-drafts reaper', () => {
 
         const sql = executable(def.prepareQuery!({ lastSent: '2026-01-01' }));
         expect(
-          Object.values(fenceWindows(sql)),
-          'a fence interval is hardcoded, not derived — it happens to equal the constant today'
-        ).toEqual([16, 16, 16]);
-        expect(
           noticeBandDays(sql),
           'the BETWEEN band is hardcoded, not derived — it happens to equal the constant today'
         ).toEqual([16, 16]);
@@ -259,48 +332,6 @@ describe('old-draft notification tracks the remove-old-drafts reaper', () => {
         vi.doUnmock('~/server/common/draft-reaping');
         vi.resetModules();
       }
-    });
-  });
-
-  describe('the shared reapability terms', () => {
-    it.each(SHARED_EXACT_TERMS)('the reaper spells %s', async (term) => {
-      expect(
-        await reaperSql(),
-        'this term is in the shared ledger but the reaper no longer has it — remove it from SHARED_EXACT_TERMS, and from the notification'
-      ).toContain(term);
-    });
-
-    it.each(SHARED_EXACT_TERMS)('the old-draft notification spells %s', (term) => {
-      expect(
-        notificationSql(),
-        'the notification promises deletion; a reapability term it does not carry makes that promise false'
-      ).toContain(term);
-    });
-
-    // Catches the fence set GROWING or SHRINKING on one side only — neither the
-    // per-term assertions nor the window arithmetic can see a fence that exists
-    // on one side and not the other.
-    it('carries the same fence columns on both sides', async () => {
-      const reaperKeys = Object.keys(fenceWindows(await reaperSql())).sort();
-      const notifKeys = Object.keys(fenceWindows(notificationSql())).sort();
-
-      expect(reaperKeys, 'the reaper must still carry exactly the known fences').toEqual(
-        [...FENCE_KEYS].sort()
-      );
-      expect(
-        notifKeys,
-        'a fence added to or removed from the reaper must be mirrored in the notification'
-      ).toEqual(reaperKeys);
-    });
-
-    it('carries the same number of NOT EXISTS fences on both sides', async () => {
-      const fences = (sql: string) => (sql.match(/NOT EXISTS \(/g) ?? []).length;
-
-      expect(fences(await reaperSql()), 'the reaper must still have both activity fences').toBe(2);
-      expect(
-        fences(notificationSql()),
-        'a fence added to or removed from the reaper must be mirrored in the notification'
-      ).toBe(fences(await reaperSql()));
     });
   });
 });

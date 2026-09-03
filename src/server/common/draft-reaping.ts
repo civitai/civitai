@@ -45,9 +45,15 @@ export const OLD_DRAFT_LEAD_DAYS: number = 7;
 /**
  * The model age at which the `old-draft` warning fires.
  *
- * 🔴 Derived, never hardcoded. The notification's `BETWEEN` band AND its three
- * activity-fence intervals must all come from this one expression — see the
- * comment on the query itself for why the fences are NOT the reaper's 30.
+ * 🔴 Derived from `REAP_AGE_DAYS`, never hardcoded, and deliberately NOT from
+ * `ACTIVITY_WINDOW_DAYS`: the notification's `BETWEEN` band keys on
+ * `Model."updatedAt"`, which is the very column the reaper's age threshold
+ * tests. The two constants are 30 today, so an expression built on the wrong one
+ * is indistinguishable by value — see the warning on `REAP_AGE_DAYS` above.
+ *
+ * This is the ONLY interval in the `old-draft` query. It carries no activity
+ * fence, because a `now()`-relative activity clause evaluated once cannot track a
+ * reaper that retries nightly — the reasoning is on the query itself.
  */
 export const OLD_DRAFT_NOTICE_DAYS: number = REAP_AGE_DAYS - OLD_DRAFT_LEAD_DAYS;
 

@@ -286,37 +286,56 @@ export const modelNotifications = createNotificationProcessor({
       url: `/models/${details.modelId}/${slugit(details.modelName)}`,
     }),
     /**
-     * 🔴 This predicate must stay in step with the reaper's in
-     * src/server/jobs/remove-old-drafts.ts. The message promises the deletion is
-     * coming, so every term the reaper uses to decide what it destroys has to be
-     * mirrored here or the promise is false. Until 2026-09 only the status and
-     * age terms were carried, so it warned every old Draft regardless of whether
-     * the reaper could touch it.
+     * Selects models the reaper in `src/server/jobs/remove-old-drafts.ts` is
+     * heading for, `OLD_DRAFT_LEAD_DAYS` ahead of time. The message promises the
+     * deletion is coming and is `toggleable: false`, so a model this EXCLUDES is
+     * a model destroyed with no notice at all.
      *
-     * 🔴 THE FENCE INTERVALS ARE **NOT** THE REAPER'S 30 DAYS, AND COPYING THEM
-     * VERBATIM IS A BUG. The two queries run at different instants, so a
-     * `now()`-relative window is a DIFFERENT absolute window on each side. This
-     * fires at `U + OLD_DRAFT_NOTICE_DAYS`; the reaper acts at `U + REAP_AGE_DAYS`.
-     * To ask the reaper's question — "was there activity after `U`?" — the
-     * interval here must be `now() - OLD_DRAFT_NOTICE_DAYS`, which resolves to
-     * exactly `U`. Spelling `30` here instead resolves to `U - LEAD`, which is
-     * STRICTER by the lead time: the canonical abandoned draft (model, version
-     * and file all created at `U`, then abandoned — the norm this whole feature
-     * exists for) is EXCLUDED from the warning and then reaped a week later.
-     * That shipped briefly in this PR's own history; it is why every interval
-     * below is derived from a constant and pinned by
-     * `old-draft-reaper-parity.test.ts` SEMANTICALLY rather than textually.
+     * 🔴 THE ONE INVARIANT: no term here may exclude a model the reaper will
+     * destroy. Errors are allowed in exactly one direction — warn, then spare.
      *
-     * The two queries are NOT one shared SQL string, deliberately: the reaper
-     * spells the download term as an INNER `JOIN "ModelMetric"` and this query as
-     * an EXISTS, and — per the paragraph above — their intervals must differ.
+     * 🔴 THAT IS WHY THERE IS NO ACTIVITY FENCE HERE, and re-adding one is a bug.
+     * The reaper carries two `NOT EXISTS` clauses over recent ModelVersion /
+     * ModelFile activity. They cannot be mirrored into this query, and the reason
+     * is a difference in EVALUATION SCHEDULE, not in wording:
      *
-     * ⚠ APPROXIMATION, not an exact prediction. This evaluates
-     * `OLD_DRAFT_LEAD_DAYS` before the reaper acts, so in the gap a model's
-     * `downloadCount` can cross 10 or new version/file activity can arrive. Both
-     * make the reaper SPARE a model this warned. That is the only residual
-     * direction, and it is the safe one — warn, then spare. The reverse
-     * (reaped without warning) is what the interval derivation above prevents.
+     *   - the reaper is a nightly cron that RETRIES FOREVER, so it fires at
+     *     `max(model row write, latest version/file activity) + REAP_AGE_DAYS`;
+     *   - this notification evaluates ONCE, in a ~1-minute band at
+     *     `U + OLD_DRAFT_NOTICE_DAYS`, and is never re-evaluated for that `U`.
+     *
+     * So any `now()`-relative activity clause here is asking the question at the
+     * wrong instant. Worked example: model row last written Jan 1, version and
+     * file land Jan 3 — which `remove-old-drafts.ts` documents as the NORM, "the
+     * finished resource lands hours or weeks later". The notification runs Jan 24
+     * with a cutoff of Jan 1, sees activity on Jan 3, excludes the model, and
+     * never looks again. The reaper first fires Feb 3 with a cutoff of Jan 4, the
+     * fence clears, and the model plus its versions, files and training data are
+     * cascade-deleted — unwarned. Two successive revisions of this PR shipped a
+     * variant of that bug; the fences are gone rather than re-tuned because no
+     * choice of interval fixes a predicate evaluated at a single instant against
+     * a condition that keeps moving.
+     *
+     * Dropping them costs nothing this notification was for: every one of the
+     * ~1,308 false alarms this predicate was tightened to prevent came from
+     * `downloadCount >= 10`, not from activity.
+     *
+     * ✅ WHY THE VALUE TERMS ARE SAFE, when the fences were not — they do not
+     * depend on predicting WHEN the reaper fires:
+     *   - `downloadCount` is monotonically non-decreasing in practice, so a
+     *     reading of `< 10` at day 23 still holds at day 30. A model excluded
+     *     here (>= 10) is one the reaper's own `< 10` term will also exclude.
+     *   - `availability` is NOT NULL with a `Public` default, and changing it
+     *     writes the Model row — which bumps `Model."updatedAt"` and therefore
+     *     re-arms this band at the new `U` as well as resetting the reaper's
+     *     clock. The two move together.
+     *
+     * ⚠ Residual, one-directional: in the gap between day 23 and the reap,
+     * `downloadCount` can cross 10 or new activity can arrive, both of which make
+     * the reaper SPARE a model this warned; and because the reaper retries, the
+     * real gap can exceed `OLD_DRAFT_LEAD_DAYS`, so the warning may arrive
+     * earlier than the message implies. Warned-then-spared and warned-early are
+     * the only errors this can make.
      */
     prepareQuery: ({ lastSent }) => `
       with to_add AS (
@@ -337,14 +356,6 @@ export const modelNotifications = createNotificationProcessor({
         AND EXISTS (SELECT 1 FROM "ModelMetric" mm
                      WHERE mm."modelId" = m.id
                        AND mm."downloadCount" < 10)
-        AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv
-                         WHERE mv."modelId" = m.id
-                           AND (mv."createdAt" > now() - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days'
-                             OR mv."updatedAt" > now() - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days'))
-        AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv2
-                         JOIN "ModelFile" mf ON mf."modelVersionId" = mv2.id
-                         WHERE mv2."modelId" = m.id
-                           AND mf."createdAt" > now() - INTERVAL '${OLD_DRAFT_NOTICE_DAYS} days')
       )
       SELECT
         concat('old-draft:', details->>'modelId', ':', details->>'updatedAt') "key",
