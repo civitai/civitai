@@ -124,6 +124,29 @@ export const imagesQueryParamSchema = z
 export const ownContentPickerFilters = (userId: number | undefined) =>
   ({ userId, publishedOnly: true } as const);
 
+/**
+ * Read `imagesQueryParamSchema` off a router query WITHOUT throwing.
+ *
+ * 🔴 This must never become a bare `.parse`. `postId` (and every other
+ * `numericString` key) rejects anything `Number()` turns into NaN, so a single
+ * junk param made the whole schema throw — and a throw in a page's render is a
+ * 500, not a degraded page. `/images/[imageId]?postId=null` returned 500 on prod
+ * for exactly that reason: the `image-reaction-milestone` notification
+ * interpolated a null `postId` into the literal string `null`, and 25,135 images
+ * on prod have a null `postId` (article covers, mainly).
+ *
+ * The emitter is fixed too, but links already delivered sit in users'
+ * notification history forever and cannot be rewritten — so the READ side has to
+ * survive junk on its own. Dropping the filters is the right degradation here:
+ * `useZodRouteParams` has always done the same `safeParse`-then-`{}` with this
+ * same schema over this same query, and the page it feeds only uses these params
+ * to seed feed navigation.
+ */
+export const parseImageQueryParams = (query: Record<string, unknown>): ImagesQueryParamSchema => {
+  const result = imagesQueryParamSchema.safeParse(query);
+  return result.success ? result.data : {};
+};
+
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
 // The media-type scope a feed falls back to when its filters are cleared.
