@@ -278,13 +278,15 @@ function BulkWorkflowMenu({
 
   return (
     <Menu zIndex={imageGenerationDrawerZIndex + 2} withinPortal position="bottom-start">
-      <Menu.Target>
-        <Tooltip label="Apply workflow to selected">
+      {/* Tooltip WRAPS Menu.Target, not the other way round — the inner nesting
+          silently stops the menu opening. See AppListingActionsMenu.tsx. */}
+      <Tooltip label="Apply workflow to selected">
+        <Menu.Target>
           <LegacyActionIcon size={actionIconSize} variant="light" color="violet">
             <IconWand size={iconSize} />
           </LegacyActionIcon>
-        </Tooltip>
-      </Menu.Target>
+        </Menu.Target>
+      </Tooltip>
       <Menu.Dropdown>
         {hasImageWorkflows && (
           <>

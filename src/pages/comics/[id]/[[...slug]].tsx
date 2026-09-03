@@ -556,13 +556,16 @@ function ComicOverview({ project }: { project: Project }) {
                 )}
                 {isMod && (
                   <Menu position="bottom-end" withinPortal>
-                    <Menu.Target>
-                      <Tooltip label="Moderator actions">
+                    {/* Tooltip WRAPS Menu.Target, not the other way round — the inner
+                        nesting silently stops the menu opening. See
+                        AppListingActionsMenu.tsx. */}
+                    <Tooltip label="Moderator actions">
+                      <Menu.Target>
                         <ActionIcon variant="subtle" color="yellow">
                           <IconBan size={18} />
                         </ActionIcon>
-                      </Tooltip>
-                    </Menu.Target>
+                      </Menu.Target>
+                    </Tooltip>
                     <Menu.Dropdown>
                       <Menu.Label>Moderator</Menu.Label>
                       <Menu.Item
@@ -1275,13 +1278,16 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                     )}
                     {isMod && activeChapter?.status === ComicChapterStatus.Published && (
                       <Menu position="bottom-end" withinPortal>
-                        <Menu.Target>
-                          <Tooltip label="Moderator actions">
+                        {/* Tooltip WRAPS Menu.Target, not the other way round — the
+                            inner nesting silently stops the menu opening. See
+                            AppListingActionsMenu.tsx. */}
+                        <Tooltip label="Moderator actions">
+                          <Menu.Target>
                             <ActionIcon variant="subtle" color="yellow">
                               <IconBan size={18} />
                             </ActionIcon>
-                          </Tooltip>
-                        </Menu.Target>
+                          </Menu.Target>
+                        </Tooltip>
                         <Menu.Dropdown>
                           <Menu.Label>Moderator</Menu.Label>
                           <Menu.Item
