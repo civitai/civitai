@@ -3868,8 +3868,8 @@ export function PageBlockHost({
         // the `data-block-id` opt-out ledger — the custom property is still declared
         // once in globals.css and still overridden per-app on THIS element, from
         // which it INHERITS to the content wrapper. So a ledger entry keyed on
-        // `[data-testid='app-page-frame'][data-block-id='…']` keeps working exactly
-        // as documented, with no change to its selector.
+        // `[data-app-page-frame][data-block-id='…']` keeps working exactly as
+        // documented, with no change to its selector.
         width: '100%',
         // See the `fit` prop for why these are the two modes and why the
         // viewport arithmetic can never agree with its own scroll viewport.
@@ -3892,6 +3892,28 @@ export function PageBlockHost({
             }),
       }}
       data-testid="app-page-frame"
+      // 🔴 THE OPT-OUT LEDGER'S OTHER HALF, AND IT EXISTS BECAUSE `data-testid`
+      // DOES NOT SHIP. `next.config.mjs` sets
+      // `compiler.reactRemoveProperties: { properties: ['^data-testid$'] }` under
+      // `NODE_ENV === 'production'`, so EVERY `data-testid` is compiled out of the
+      // production DOM. The ledger in globals.css used to be keyed on
+      // `[data-testid='app-page-frame'][data-block-id='…']`, which therefore
+      // matched nothing on the live site while passing in every test tier (they
+      // all run with `NODE_ENV !== 'production'`, where the testid is present) —
+      // measured on civitai.com/apps/run/playable-collections: the rule shipped
+      // verbatim in the CSS, 0 elements matched the compound selector, 1 matched
+      // `[data-block-id='playable-collections']`, and the app was letterboxed at
+      // the 1600px cap. This attribute is the production-surviving spelling of
+      // "this is the page host", the same way `data-app-footer` and
+      // `data-adhesive-ad` mark their elements for `globals.css` elsewhere.
+      //
+      // It carries no value on purpose: it is a presence marker, not data. Never
+      // re-key the ledger onto `data-testid` (stripped) and never delete this —
+      // both make every ledger rule inert with nothing visibly wrong. Guarded by
+      // `__tests__/ledgerSelectorSurvivesProdStrip.test.ts`, which reads the strip
+      // list out of `next.config.mjs` and the ledger selectors out of globals.css
+      // and compares them, rather than restating either.
+      data-app-page-frame=""
       // Observable sizing mode, so a regression test (and DevTools) can assert
       // WHICH branch a surface took rather than re-deriving it from computed
       // styles that jsdom does not resolve.
@@ -3963,7 +3985,7 @@ export function PageBlockHost({
           same element, which is precisely the rule shape the opt-out ledger uses — so
           writing the value inline would silently make the opt-out inert while looking
           tidier. The property is set on the ROOT and inherits down to here, so the
-          ledger's existing `[data-testid='app-page-frame'][data-block-id='…']` selector
+          ledger's existing `[data-app-page-frame][data-block-id='…']` selector
           is unchanged by the move.
 
           🔴 IT REPRODUCES THE VERTICAL CHAIN IT WAS INSERTED INTO, which is the only

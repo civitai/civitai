@@ -4,7 +4,8 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 /**
- * THE ULTRAWIDE CAP — the GATING half.
+ * THE ULTRAWIDE CAP — the SOURCE half. (`PageBlockHostMaxWidth.browser.test.tsx`
+ * is the MEASURED half. Neither half is a merge gate — see below.)
  *
  * A full-page App Block had no width bound anywhere in its chain (page wrapper,
  * host root and iframe are each `width: 100%`), so on a 2560px display an app
@@ -22,11 +23,15 @@ import { describe, expect, it } from 'vitest';
  * 🔴 WHY A SOURCE GUARD AS WELL AS A RENDERED ONE. The measurement lives in
  * `PageBlockHostMaxWidth.browser.test.tsx`, which is the only tier that can see a
  * width at all — but the browser `component` project runs in CI as the
- * REPORT-ONLY `preview / component-tests` status, so nothing there can block a
- * merge. This file is in the node `unit` project, which can. The same split, and
- * the same reasoning, as `pageRunScrollContract.test.ts` (whose own header
- * records the measured case where a fully-reverted floor left the gating tier
- * 9/9 green and only the non-blocking tier red).
+ * REPORT-ONLY `preview / component-tests` status. This file is in the node
+ * `unit` project, which is report-only on a pull request too (`continue-on-error`)
+ * and renders a real verdict on a push to `main` or a `workflow_dispatch`.
+ * 🔴 NEITHER TIER BLOCKS A MERGE — `main` requires no status check at all in this
+ * repo — so what a source guard buys is a verdict that is honest on `main` and an
+ * annotation a reviewer can read, NOT a door that stays shut. The same split, and
+ * the same reasoning, as `pageRunScrollContract.test.ts` (whose own header records
+ * the measured case where a fully-reverted floor left this node tier 9/9 green and
+ * only the browser tier red).
  *
  * WHAT IS PINNED HERE — each is a thing whose absence is SILENT. Deliberately an
  * unnumbered list: it has grown twice, and a count stated beside the thing it counts
@@ -38,10 +43,20 @@ import { describe, expect, it } from 'vitest';
  *     relationship the ledger's inheritance depends on, which no older pin covers
  *   · the content wrapper's whole box model, because a dropped `flex: 1` collapses
  *     the app to a sliver with every test in BOTH tiers green (measured)
- *   · `data-block-id` is stamped on the SAME element as the host testid — the
- *     opt-out ledger's selector chains the two, so a rename makes every ledger
- *     rule match nothing without changing anything visible
+ *   · BOTH `data-app-page-frame` and `data-block-id` are stamped on the host root
+ *     ELEMENT — the opt-out ledger's selector chains them, so a rename OR a move
+ *     of either half onto another element makes every ledger rule match nothing
+ *     without changing anything visible
+ *
  *   · the value is read through `var()` and never written inline
+ *
+ * 🔴 WHAT IS **NOT** PINNED HERE, AND WHY. That the ledger's selector survives the
+ * PRODUCTION compiler is a different claim, and this file cannot make it: it reads
+ * source, not the build config. `next.config.mjs` strips `data-testid` from the DOM
+ * under `NODE_ENV === 'production'`, so a ledger keyed on the testid ships in the
+ * stylesheet and matches nothing live — which is exactly what happened, with this
+ * file and the browser suite both green. That seam is owned by
+ * `ledgerSelectorSurvivesProdStrip.test.ts`.
  */
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
@@ -151,9 +166,11 @@ function hostElements(): {
   return {
     frame: one(
       'app-page-frame',
-      'no element in PageBlockHost.tsx carries `data-testid="app-page-frame"`. The opt-out ' +
-        'ledger selects on it, so every ledger rule is inert. Re-point this guard only if the ' +
-        'element was deliberately renamed.'
+      'no element in PageBlockHost.tsx carries `data-testid="app-page-frame"`. This guard uses ' +
+        'it to locate the host ROOT and prove the capped content wrapper is inside it — the ' +
+        "relationship the ledger's inheritance depends on. (The ledger itself selects on " +
+        '`data-app-page-frame`, not on the testid, which production strips.) Re-point this ' +
+        'guard only if the element was deliberately renamed.'
     ),
     content: one(
       'app-page-content',
@@ -198,7 +215,7 @@ function isDescendant(
  * an empty string satisfies trivially. Measured: lifting the frame's inline style into
  * a `const` in a sibling module and putting the cap back in it, with the exact pinned
  * spelling, left this file 9/9 GREEN while the app chrome was capped again — the one
- * regression this file exists to block, through an entirely ordinary refactor. A
+ * regression this file exists to catch, through an entirely ordinary refactor. A
  * spread `{...{ style: … }}` did the same.
  *
  * So the two cases are now distinguishable and the callers must assert on it: a style
@@ -259,8 +276,11 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
     expect(
       declared,
       'APP_PAGE_MAX_WIDTH_PX declaration not found in PageBlockHost.tsx — if it was renamed or ' +
-        'derived, re-point this guard rather than deleting it: it is the only BLOCKING check on ' +
-        'the ultrawide cap.'
+        'derived, re-point this guard rather than deleting it: it is the ONLY assertion anywhere ' +
+        'that reads this declaration. The browser tier deliberately imports nothing from the ' +
+        'host (it measures a rendered width instead), so deleting this leaves the constant and ' +
+        'its band unchecked. It is not a merge gate — no status check is required on `main` — ' +
+        'but it is the only thing that would say so.'
     ).toBeDefined();
 
     const cap = Number(declared);
@@ -455,7 +475,7 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
 
   /**
    * 🔴 THE CAP AND THE CHROME ARE ON DIFFERENT ELEMENTS NOW, AND UNTIL THIS GUARD
-   * EXISTED THE GATING TIER COULD NOT SEE THAT AT ALL.
+   * EXISTED THE NODE TIER COULD NOT SEE THAT AT ALL.
    *
    * The cap used to sit on the host root, so the two guards above — "the cap pair
    * appears verbatim somewhere" and "`data-block-id` is on the frame" — described
@@ -468,8 +488,10 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    *
    * Measured by mutation, in a copy: reverting the whole change (cap back on the
    * frame, chrome capped again) left the FULL node suite — 1569 files, 24,879 tests
-   * — byte-identically green. Only the report-only browser tier caught it, and
-   * that tier cannot block a merge. This test is the gating-tier half.
+   * — byte-identically green. Only the browser tier caught it, and that tier is
+   * report-only everywhere. This test is the node-tier half — the one that renders
+   * an honest verdict on a push to `main` or a `workflow_dispatch` (neither tier
+   * blocks a merge; see the header).
    */
   it('the cap sits on `app-page-content`, and that box is a real DESCENDANT of the frame', () => {
     const { frame, content } = hostElements();
@@ -480,7 +502,7 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
     // sibling, cousin and unrelated later element also satisfies. Measured on that
     // version: closing the frame before the content box, so the two are genuine SIBLINGS
     // and the ledger's inheritance is dead, left this file 9/9 green AND the whole
-    // gating suite (1569 files / 24,879 tests) byte-identically green, while the
+    // node suite (1569 files / 24,879 tests) byte-identically green, while the
     // report-only browser tier correctly failed BOTH ledger tests. A guard whose message
     // says "no longer renders inside" must actually mean inside.
     expect(
@@ -489,7 +511,9 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
         'opt-out ledger sets `--app-page-max-width` ON THE FRAME and relies on CSS ' +
         'INHERITANCE to reach the capped box, so lifting that box out from under the ' +
         'frame — even into a sibling that still renders — makes every ledger entry ' +
-        'silently inert. Nothing rendered in the gating tier can see this.'
+        'silently inert. This node tier renders nothing, so this source-level ' +
+        'containment check is its only view of the relationship; the only tier that ' +
+        'can observe it at runtime is the report-only browser tier.'
     ).toBe(true);
 
     // The cap must live in the CONTENT element's style prop, not the FRAME's.
@@ -567,27 +591,55 @@ describe('the full-page App Block host caps its width, and the cap is overridabl
    * in the file.
    *
    * The ledger in globals.css is written as
-   * `[data-testid='app-page-frame'][data-block-id='…']`. If `data-block-id` moves
-   * to a different element, or is renamed, or is fed the per-install
+   * `[data-app-page-frame][data-block-id='…']`. If `data-block-id` moves to a
+   * different element, or is renamed, or is fed the per-install
    * `blockInstanceId` instead of the app's slug, every ledger rule matches
    * nothing — and nothing about the page looks wrong, so no one finds out until
    * an app that opted out is reported as still capped.
+   *
+   * The testid is only this guard's ANCHOR for finding the root element; the
+   * ledger no longer selects on it (production strips it).
+   *
+   * 🔴 BOTH HALVES, ON THE PARSED FRAME ELEMENT — NOT A TEXT SEARCH OVER THE FILE.
+   * `data-app-page-frame` was added by the fix that re-keyed the ledger, and it
+   * was originally pinned only by a whole-file substring search in
+   * `ledgerSelectorSurvivesProdStrip.test.ts`. Measured: moving that attribute off
+   * the host root onto the `app-page-content` wrapper — which re-creates the
+   * shipped production defect exactly, since the compound selector then matches
+   * zero elements — left the ENTIRE node tier byte-identically green
+   * (`7 failed | 741 passed`, the same pre-existing failures, both ways). Only the
+   * report-only browser tier caught it. Asking `hostElements()` for the frame and
+   * reading ITS attribute list is what makes "on the root" a checkable claim.
    */
-  it('stamps `data-block-id` on the same element as the host testid — the opt-out ledger keys on both', () => {
-    const src = code(read(HOST));
-    const root = region(
-      src,
-      /data-testid="app-page-frame"[\s\S]*?data-needs-consent=/,
-      'host root attributes'
-    );
+  it('stamps BOTH ledger attributes on the host root — the opt-out selector chains them', () => {
+    const { frame } = hostElements();
+    const attrs = frame.attributes.properties.filter(ts.isJsxAttribute);
+    const names = attrs.map((a) => a.name.getText());
+
     expect(
-      root,
-      'the host root no longer stamps `data-block-id={blockId}` between its testid and ' +
-        '`data-needs-consent`. The full-bleed ledger in src/styles/globals.css selects on ' +
-        "`[data-testid='app-page-frame'][data-block-id='…']`, so every entry in it is now " +
-        'inert. `blockId` (the app slug) is the required value — `blockInstanceId` is per-install ' +
-        'and is NOT what an app author knows their app by.'
-    ).toContain('data-block-id={blockId}');
+      names,
+      'the host ROOT no longer stamps `data-app-page-frame`. The full-bleed ledger in ' +
+        "src/styles/globals.css selects on `[data-app-page-frame][data-block-id='…']` — a " +
+        'compound selector, so BOTH halves must be on the SAME element. `data-testid` cannot ' +
+        'stand in for it: `next.config.mjs` strips every testid from the production DOM, which ' +
+        'is the defect that made this attribute necessary. Moving it to the content wrapper ' +
+        'reads as a tidy-up and makes every ledger entry match nothing, with nothing visibly wrong.'
+    ).toContain('data-app-page-frame');
+
+    expect(
+      names,
+      'the host root no longer stamps `data-block-id`. The full-bleed ledger selects on ' +
+        "`[data-app-page-frame][data-block-id='…']`, so every entry in it is now inert."
+    ).toContain('data-block-id');
+
+    const blockIdAttr = attrs.find((a) => a.name.getText() === 'data-block-id');
+    expect(
+      norm(blockIdAttr!.getText()),
+      'the host root stamps `data-block-id` from something other than `blockId`. `blockId` (the ' +
+        'app slug, what builds `<slug>.civit.ai`) is the required value — `blockInstanceId` is ' +
+        'per-install and is NOT what an app author knows their app by, so a ledger entry written ' +
+        'against the slug would match nothing.'
+    ).toBe('data-block-id={blockId}');
   });
 
   /**
