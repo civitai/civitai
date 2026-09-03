@@ -50,12 +50,13 @@ export const navRegistry: NavRegistryEntry[] = [
     new: new Date('2026-06-30'),
   },
   { key: 'hubs', url: '/hubs', defaultPlacement: 'bar', visible: (ctx) => ctx.features.userHubs },
-  {
-    key: 'posts',
-    url: '/posts',
-    defaultPlacement: 'hidden',
-    visible: (ctx) => ctx.features.postsNavItem,
-  },
+  /**
+   * `posts` and `events` carry NO gate. Their flags still exist and still seed a placement for
+   * users who had them on, but placement is the config's job now — gating the rows would filter
+   * them out of the customization modal for the default-off majority, leaving no way to turn them
+   * on at all once the account switches retire.
+   */
+  { key: 'posts', url: '/posts', defaultPlacement: 'hidden' },
   {
     key: 'articles',
     url: '/articles',
@@ -81,12 +82,7 @@ export const navRegistry: NavRegistryEntry[] = [
     defaultPlacement: 'bar',
     visible: (ctx) => ctx.features.challengePlatform,
   },
-  {
-    key: 'events',
-    url: '/events',
-    defaultPlacement: 'hidden',
-    visible: (ctx) => ctx.features.eventsNavItem,
-  },
+  { key: 'events', url: '/events', defaultPlacement: 'hidden' },
   { key: 'updates', url: '/changelog', defaultPlacement: 'bar' },
   {
     key: 'shop',
@@ -99,8 +95,12 @@ export const navRegistry: NavRegistryEntry[] = [
   /**
    * Promotable user-menu destinations. They stay in the user menu as well — the sub nav is an
    * additional surface, not a move — so they default to `hidden` and only appear once a user puts
-   * them somewhere. All four are signed-in only: the rows they come from sit inside a
-   * `visible: !!currentUser` group, and the resolver runs for anonymous visitors too.
+   * them somewhere.
+   *
+   * All four are gated on `isAuthed` because only a signed-in user has anywhere to persist a
+   * layout, and the resolver runs for anonymous visitors too. NOT because the user menu hides
+   * them from signed-out visitors — `useGetMenuItems` has a second `visible: !currentUser` group
+   * that offers Leaderboard and Auctions to anonymous users.
    */
   { key: 'leaderboard', url: '/leaderboard/overall', defaultPlacement: 'hidden', visible: authed },
   {

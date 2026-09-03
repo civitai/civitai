@@ -13,8 +13,12 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
  * itself and pin nothing — the point is that changing a `defaultPlacement` has to fail here and be
  * re-approved, because it changes the nav of every user who has not configured one.
  *
- * The pre-refactor version of this file asserted the same two vectors against `filterHomeOptions`,
- * and the three deliberate deltas from it are called out on the assertions below.
+ * ⚠️ This is a snapshot of NEW behaviour, not a re-approval of old. No test covered
+ * `filterHomeOptions` on `main` — there was nothing to diff against, and the draft that did run
+ * against it was never committed, so a reader cannot check it. What WAS verified by hand against
+ * `origin/main`'s `filterHomeOptions`: the all-flags-off vector is unchanged, and of the five
+ * items that were `grouped` there (`posts`, `bounties`, `challenges`, `events`, `updates`) only
+ * `bounties` became `more`.
  */
 
 const allFlags = (value: boolean) =>
@@ -27,8 +31,8 @@ describe('sub-nav default layout', () => {
   it('places every gate-passing item at its default with all flags on', () => {
     const { bar, more } = resolve(allFlags(true));
 
-    // DELTA 1: `bounties` is the one item defaulting to More; it was a `grouped` item that showed
-    // as a pill above `xl` before placement stopped depending on viewport width.
+    // `bounties` is the one item defaulting to More. It was one of five `grouped` items, all of
+    // which showed as pills above `xl` before placement stopped depending on viewport width.
     expect(bar.map((e) => e.key)).toEqual([
       'home',
       'models',
@@ -46,12 +50,12 @@ describe('sub-nav default layout', () => {
   });
 
   /**
-   * DELTA 2: `posts` and `events` are absent even with their flags on, because placement and
-   * access are now separate. Their flags are `default: false`, so this matches what a user who
-   * never touched account settings has always seen; the seed below is what carries the users who
-   * DID turn them on.
+   * `posts` and `events` are absent because they default to `hidden`, not because a gate hides
+   * them — they carry no gate at all now, so the modal can offer them to everyone. This matches
+   * what a user who never touched account settings has always seen; the seed below carries the
+   * users who DID turn them on.
    *
-   * DELTA 3: the four promoted user-menu destinations (leaderboard, auctions, vault, collections)
+   * The four promoted user-menu destinations (leaderboard, auctions, vault, collections)
    * exist in the registry but default to hidden — the sub nav is an additional surface for them,
    * not a move, so they appear only once a user places them.
    */

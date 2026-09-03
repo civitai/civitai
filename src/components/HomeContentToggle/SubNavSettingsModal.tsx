@@ -9,12 +9,17 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { navIcons } from '~/components/HomeContentToggle/nav-icons';
 import { navRegistry } from '~/components/HomeContentToggle/nav-registry';
+import type { NavRow as Row } from '~/components/HomeContentToggle/nav-rows';
+import { seedRows } from '~/components/HomeContentToggle/nav-rows';
 import type { NavPlacement } from '~/components/HomeContentToggle/nav-registry';
 import { useSeededState } from '~/components/CreatorShop/useSeededState';
-import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
+import {
+  useCurrentUserSettingsState,
+  useMutateUserSettings,
+} from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { NavigationSettingsSchema, UserContentSettings } from '~/server/schema/user.schema';
+import type { NavigationSettingsSchema } from '~/server/schema/user.schema';
 import type { NavKey } from '~/shared/constants/nav.constants';
 import { getDisplayName } from '~/utils/string-helpers';
 
@@ -24,7 +29,6 @@ import { getDisplayName } from '~/utils/string-helpers';
  * does this go" and "in what order" — and it stays operable by keyboard, which a cross-container
  * pointer drag does not.
  */
-type Row = { key: NavKey; placement: NavPlacement };
 
 // Sections only reorder up/down.
 const restrictToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 });
@@ -34,28 +38,6 @@ const ZONE_OPTIONS = [
   { label: 'More', value: 'more' },
   { label: 'Hidden', value: 'hidden' },
 ];
-
-function seedRows(settings: UserContentSettings | null | undefined): Row[] {
-  const config = settings?.navigation;
-  const known = new Set(navRegistry.map((entry) => entry.key));
-  const rows: Row[] = [];
-  const seen = new Set<NavKey>();
-
-  if (config) {
-    for (const placement of ['bar', 'more', 'hidden'] as const) {
-      for (const key of config[placement]) {
-        if (!known.has(key) || seen.has(key)) continue;
-        rows.push({ key, placement });
-        seen.add(key);
-      }
-    }
-  }
-  // Anything the saved config never mentioned — including items added since they last saved.
-  for (const entry of navRegistry) {
-    if (!seen.has(entry.key)) rows.push({ key: entry.key, placement: entry.defaultPlacement });
-  }
-  return rows;
-}
 
 const NavRow = forwardRef<
   HTMLDivElement,
@@ -100,12 +82,15 @@ export default function SubNavSettingsModal() {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const settings = useCurrentUserSettings();
+  const { settings, isResolved } = useCurrentUserSettingsState();
   const mutate = useMutateUserSettings({ onSuccess: () => dialog.onClose() });
 
-  const [rows, setRows] = useSeededState(settings, seedRows);
+  // `undefined` until the query resolves, so `useSeededState` re-seeds when it lands rather than
+  // treating a still-loading `{}` as the user's saved config and writing defaults over it.
+  const source = isResolved ? settings ?? null : undefined;
+  const [rows, setRows] = useSeededState(source, seedRows);
   const [showLabels, setShowLabels] = useSeededState(
-    settings,
+    source,
     (s) => s?.navigation?.showLabels ?? true
   );
 
@@ -196,10 +181,15 @@ export default function SubNavSettingsModal() {
         </Stack>
 
         <Group justify="space-between">
-          <Button variant="subtle" color="gray" onClick={handleReset} disabled={mutate.isPending}>
+          <Button
+            variant="subtle"
+            color="gray"
+            onClick={handleReset}
+            disabled={mutate.isPending || !isResolved}
+          >
             Reset to default
           </Button>
-          <Button onClick={handleSave} loading={mutate.isPending}>
+          <Button onClick={handleSave} loading={mutate.isPending} disabled={!isResolved}>
             Save
           </Button>
         </Group>

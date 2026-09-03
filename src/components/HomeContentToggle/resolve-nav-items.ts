@@ -23,6 +23,8 @@ export type NavSeedFlags = {
   eventsNavItem?: boolean;
 };
 
+export type NavZones = Record<NavPlacement, NavKey[]>;
+
 export type ResolvedNav = {
   bar: NavRegistryEntry[];
   more: NavRegistryEntry[];
@@ -31,10 +33,6 @@ export type ResolvedNav = {
 
 const PLACED_ZONES = ['bar', 'more', 'hidden'] as const;
 
-/**
- * `hidden` here is the USER'S placement. An item the viewer has no access to is a separate
- * concept — it is dropped by the gate pass at the end, whatever zone it sits in.
- */
 function seedPlacement(entry: NavRegistryEntry, seedFlags: NavSeedFlags | undefined): NavPlacement {
   if (!seedFlags) return entry.defaultPlacement;
   if (entry.key === 'posts' && seedFlags.postsNavItem) return 'bar';
@@ -43,32 +41,40 @@ function seedPlacement(entry: NavRegistryEntry, seedFlags: NavSeedFlags | undefi
 }
 
 /**
- * Merges a user's saved nav config with the registry.
+ * The merge, ungated: a user's saved zones with every registry item they have never placed folded
+ * in beside its neighbours.
+ *
+ * 🔴 This is the ONE implementation. The nav reads it through `resolveNavItems`; the settings
+ * modal reads it directly. What the modal shows, what its Save writes, and what the nav renders
+ * therefore cannot disagree — which they did in the first cut of this feature, where the modal
+ * carried its own merge that skipped the seed, so a user with Posts in their bar saw it as Hidden
+ * and lost it on their next save. The same defect is live today in `creatorShop.sections`, whose
+ * writer adopts new keys while `StorefrontSections` reads the saved array verbatim.
  *
  * A newly-shipped nav item must reach everyone without a backfill, so an item absent from the
- * config is anchored beside the registry neighbours the user actually placed rather than appended.
+ * config is anchored beside the registry neighbours the user placed rather than appended.
  * Anchoring is scoped to the TARGET ZONE: "insert after the preceding sibling" names no position
  * when that sibling lives in a different zone, which is the common case the day a `bar`-default
  * item ships under an anchor the user moved to `more`.
  *
- * A config of `{ bar: [], more: [], hidden: [] }` means the user hid everything and is NOT the
- * same as no config — resetting to defaults deletes the key rather than writing empty arrays.
+ * An all-empty config resolves the same as no config — nothing is placed, so everything anchors at
+ * its default. Deliberate: hiding everything writes the keys into `hidden`, and a reset deletes
+ * the key, so all-empty is only reachable from a malformed write.
  */
-export function resolveNavItems(
+export function resolveNavZones(
   registry: NavRegistryEntry[],
-  ctx: NavGateContext,
   config?: NavConfig,
   seedFlags?: NavSeedFlags
-): ResolvedNav {
-  const byKey = new Map(registry.map((entry) => [entry.key, entry]));
-  const zones: Record<(typeof PLACED_ZONES)[number], NavKey[]> = { bar: [], more: [], hidden: [] };
+): NavZones {
+  const known = new Set(registry.map((entry) => entry.key));
+  const zones: NavZones = { bar: [], more: [], hidden: [] };
   const zoneOf = new Map<NavKey, NavPlacement>();
 
   if (config) {
     for (const zone of PLACED_ZONES) {
       for (const key of config[zone]) {
         // Drops keys the registry no longer has, and a key repeated across zones.
-        if (!byKey.has(key) || zoneOf.has(key)) continue;
+        if (!known.has(key) || zoneOf.has(key)) continue;
         zones[zone].push(key);
         zoneOf.set(key, zone);
       }
@@ -100,8 +106,25 @@ export function resolveNavItems(
     zoneOf.set(entry.key, zone);
   }
 
-  // Gates run LAST, over both visible zones alike, so an item the user pinned but has since lost
-  // access to is dropped whatever the config says.
+  return zones;
+}
+
+/**
+ * The nav's view of the merge: the two visible zones, with items the viewer cannot reach removed.
+ *
+ * Gates run LAST, over both zones alike, so an item the user pinned but has since lost access to
+ * is dropped whatever the config says — and a gated item still occupies its slot while anchoring,
+ * so it can anchor a neighbour before it disappears.
+ */
+export function resolveNavItems(
+  registry: NavRegistryEntry[],
+  ctx: NavGateContext,
+  config?: NavConfig,
+  seedFlags?: NavSeedFlags
+): ResolvedNav {
+  const byKey = new Map(registry.map((entry) => [entry.key, entry]));
+  const zones = resolveNavZones(registry, config, seedFlags);
+
   const resolve = (keys: NavKey[]) =>
     keys
       .map((key) => byKey.get(key))

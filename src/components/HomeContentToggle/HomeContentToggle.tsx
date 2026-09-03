@@ -73,26 +73,37 @@ export function HomeTabs() {
     <div className="flex items-center gap-1 overflow-x-auto overflow-y-hidden text-black @md:overflow-visible dark:text-white">
       {bar.map((entry) => {
         const label = getDisplayName(entry.key);
-        return (
-          <Tooltip key={entry.key} label={label} disabled={showLabels} withinPortal>
-            <Button
-              variant="default"
-              component={Link}
-              href={entry.url}
-              // Icon-only tabs lose their accessible name with the text, so it moves to the label.
-              aria-label={showLabels ? undefined : label}
-              className={clsx('h-8 overflow-visible rounded-full border-none py-2', {
-                ['pl-3 pr-4']: showLabels,
-                ['px-3']: !showLabels,
-                ['bg-gray-4 dark:bg-dark-4']: isActive(entry.key),
-                [classes.tabHighlight]: entry.key === 'shop',
-              })}
-              classNames={{ label: 'flex gap-2 items-center capitalize overflow-visible' }}
-            >
-              {navIcons[entry.key]({ size: 16 })}
-              {showLabels && <span className="text-base font-medium capitalize">{label}</span>}
-              {dot(entry, '-ml-1 -mr-2')}
-            </Button>
+        // Mantine's `disabled` only gates the Transition, not the portal — a disabled Tooltip
+        // still appends a div to document.body per item and pays useFloating on every render of
+        // a component that re-renders on every navigation. Nobody has a saved config on day one,
+        // so `showLabels` is true for everyone: wrap only when the tooltip can actually open.
+        const button = (
+          <Button
+            key={entry.key}
+            variant="default"
+            component={Link}
+            href={entry.url}
+            // Icon-only tabs lose their accessible name with the text, so it moves to the label.
+            aria-label={showLabels ? undefined : label}
+            className={clsx('h-8 overflow-visible rounded-full border-none py-2', {
+              ['pl-3 pr-4']: showLabels,
+              ['px-3']: !showLabels,
+              ['bg-gray-4 dark:bg-dark-4']: isActive(entry.key),
+              [classes.tabHighlight]: entry.key === 'shop',
+            })}
+            classNames={{ label: 'flex gap-2 items-center capitalize overflow-visible' }}
+          >
+            {navIcons[entry.key]({ size: 16 })}
+            {showLabels && <span className="text-base font-medium capitalize">{label}</span>}
+            {dot(entry, '-ml-1 -mr-2')}
+          </Button>
+        );
+
+        return showLabels ? (
+          button
+        ) : (
+          <Tooltip key={entry.key} label={label} withinPortal>
+            {button}
           </Tooltip>
         );
       })}
