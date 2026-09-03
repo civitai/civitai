@@ -1123,7 +1123,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Ernie, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Ernie, supportType: 'training', modelTypes: loraOnly },
 
-  // Krea 2 - base/turbo comfy variants support LoRA and community checkpoints (medium/large FAL tiers do not); LoRA training via AI-Toolkit
+  // Krea 2 - raw/turbo comfy variants support LoRA and community checkpoints (medium/large FAL tiers do not); LoRA training via AI-Toolkit
   {
     ecosystemId: ECO.Krea2,
     supportType: 'generation',

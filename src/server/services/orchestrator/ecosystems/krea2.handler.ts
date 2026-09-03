@@ -1,8 +1,7 @@
 /**
  * Krea 2 Ecosystem Handler
  *
- * The Krea 2 checkpoint is locked, but its version selector splits across two
- * engines (see krea2-graph.ts):
+ * The Krea 2 version selector splits across two engines (see krea2-graph.ts):
  *
  * - medium/large → FAL engine (Krea2FalImageGenInput). Size tiers, no LoRA;
  *   exposes creativity + style references.
@@ -27,7 +26,11 @@ import type {
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
-import { krea2VersionIds, krea2VersionIdToSize } from '~/shared/data-graph/generation/krea2-graph';
+import {
+  isOfficialKrea2Version,
+  krea2VersionIds,
+  krea2VersionIdToSize,
+} from '~/shared/data-graph/generation/krea2-graph';
 import { defineHandler } from './handler-factory';
 
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
@@ -89,18 +92,14 @@ export const createKrea2Input = defineHandler<Krea2Ctx, [ImageGenStepTemplate]>(
   const images = 'images' in data ? data.images?.map((x) => x.url) : undefined;
   if (isEdit && !images?.length) throw new Error('At least one image is required to edit');
 
-  // `model: 'edit'` selects the edit graph, not a checkpoint — the base build it
-  // runs on rides along as a diffusionModel AIR (same override the LTX handler
-  // uses to point at a community fine-tune).
+  // `diffusionModel` overrides the weights the named build loads (same override
+  // the LTX handler uses to point at a community fine-tune). Edit always needs it:
+  // `model: 'edit'` names the edit graph, not a checkpoint.
   let diffusionModel: string | undefined;
   if (isEdit) {
     if (!data.model) throw new Error('A Krea 2 base model is required to edit');
     diffusionModel = ctx.airs.getOrThrow(data.model.id);
-  } else if (
-    data.model &&
-    data.model.id !== krea2VersionIds.raw &&
-    data.model.id !== krea2VersionIds.turbo
-  ) {
+  } else if (data.model && !isOfficialKrea2Version(data.model.id)) {
     diffusionModel = ctx.airs.getOrThrow(data.model.id);
   }
 
