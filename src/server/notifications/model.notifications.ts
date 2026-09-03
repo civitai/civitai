@@ -291,8 +291,21 @@ export const modelNotifications = createNotificationProcessor({
      * deletion is coming and is `toggleable: false`, so a model this EXCLUDES is
      * a model destroyed with no notice at all.
      *
-     * 🔴 THE ONE INVARIANT: no term here may exclude a model the reaper will
-     * destroy. Errors are allowed in exactly one direction — warn, then spare.
+     * 🔴 THE INVARIANT, with its two exclusions named — it is NOT an absolute,
+     * and an earlier revision of this comment wrongly stated it as one:
+     *
+     *     For a model in `Draft`, no term here may exclude a model the reaper
+     *     will destroy, EXCEPT via the two carve-outs below.
+     *
+     *   1. `status`. The reaper destroys `('Draft', 'Deleted')`; this warns on
+     *      `Draft` only, so a `Deleted` model is cascade-deleted unwarned. That
+     *      is deliberate — a user who deleted a model has already expressed the
+     *      intent — and it is pinned by a test so it stays visible. Widening this
+     *      to `Deleted` is a product decision, not a bug fix.
+     *   2. `downloadCount`, which is an ASSUMPTION rather than a property. See
+     *      the value-term note below for the path on which it fails.
+     *
+     * Outside those two, errors are one-directional — warn, then spare.
      *
      * 🔴 THAT IS WHY THERE IS NO ACTIVITY FENCE HERE, and re-adding one is a bug.
      * The reaper carries two `NOT EXISTS` clauses over recent ModelVersion /
@@ -300,7 +313,9 @@ export const modelNotifications = createNotificationProcessor({
      * is a difference in EVALUATION SCHEDULE, not in wording:
      *
      *   - the reaper is a nightly cron that RETRIES FOREVER, so it fires at
-     *     `max(model row write, latest version/file activity) + REAP_AGE_DAYS`;
+     *     `max(U + REAP_AGE_DAYS, activity + ACTIVITY_WINDOW_DAYS)` — note the
+     *     two constants are distinct quantities that happen to both be 30 today,
+     *     so do NOT collapse this to one of them (see `draft-reaping.ts`);
      *   - this notification evaluates ONCE, in a ~1-minute band at
      *     `U + OLD_DRAFT_NOTICE_DAYS`, and is never re-evaluated for that `U`.
      *
@@ -320,22 +335,37 @@ export const modelNotifications = createNotificationProcessor({
      * ~1,308 false alarms this predicate was tightened to prevent came from
      * `downloadCount >= 10`, not from activity.
      *
-     * ✅ WHY THE VALUE TERMS ARE SAFE, when the fences were not — they do not
+     * WHY THE VALUE TERMS MAY BE MIRRORED, when the fences may not — they do not
      * depend on predicting WHEN the reaper fires:
-     *   - `downloadCount` is monotonically non-decreasing in practice, so a
-     *     reading of `< 10` at day 23 still holds at day 30. A model excluded
-     *     here (>= 10) is one the reaper's own `< 10` term will also exclude.
-     *   - `availability` is NOT NULL with a `Public` default, and changing it
-     *     writes the Model row — which bumps `Model."updatedAt"` and therefore
-     *     re-arms this band at the new `U` as well as resetting the reaper's
-     *     clock. The two move together.
      *
-     * ⚠ Residual, one-directional: in the gap between day 23 and the reap,
-     * `downloadCount` can cross 10 or new activity can arrive, both of which make
-     * the reaper SPARE a model this warned; and because the reaper retries, the
-     * real gap can exceed `OLD_DRAFT_LEAD_DAYS`, so the warning may arrive
-     * earlier than the message implies. Warned-then-spared and warned-early are
-     * the only errors this can make.
+     *   - `availability` is SAFE. It is NOT NULL with a `Public` default, and its
+     *     only raw-SQL writer (`entityAvailabilityUpdate` in
+     *     `src/server/services/common.service.ts`) sets `"updatedAt" = NOW()` in
+     *     the same statement, so a change bumps `Model."updatedAt()"` and re-arms
+     *     this band at the new `U` as well as resetting the reaper's clock.
+     *
+     *   - 🔴 `downloadCount` is an ASSUMPTION, not a property — do not restate it
+     *     as one. It has NO incrementing writer: every write is a full recompute
+     *     (`src/server/metrics/model.metrics.ts`, a `SUM` over surviving
+     *     `ModelVersionMetric` rows), so it is DECREASING-CAPABLE by
+     *     construction. The failure path, concretely: a Draft model rolled up to
+     *     12 is excluded here at day 23. A version carrying 8 downloads is then
+     *     deleted; `deleteVersionById` calls `updateModelLastVersionAt`, which
+     *     early-returns when the model has no `Published` version — true for a
+     *     Draft — so `Model."updatedAt"` is NOT bumped and this band never
+     *     re-arms. A later recompute yields 4, the reaper's `< 10` becomes true,
+     *     and the model is cascade-deleted UNWARNED.
+     *
+     *     That is architectural, not a bug to patch here: the band gives exactly
+     *     one evaluation per `U` (its lower edge is `lastSent - notice`), so
+     *     there is no second chance to catch the change. It is recorded so the
+     *     next person does not read `downloadCount` as a safe term.
+     *
+     * ⚠ Residual directions OUTSIDE the two exclusions above, both harmless: in
+     * the gap before the reap, `downloadCount` can rise past 10 or new activity
+     * can arrive, either of which makes the reaper SPARE a model this warned; and
+     * because the reaper retries, the real gap can exceed `OLD_DRAFT_LEAD_DAYS`,
+     * so the warning may arrive earlier than the message implies.
      */
     prepareQuery: ({ lastSent }) => `
       with to_add AS (
