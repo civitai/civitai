@@ -115,6 +115,7 @@ import {
   joinCreatorsProgram,
   withdrawCash,
 } from '~/server/services/creator-program.service';
+import { getCurrentValue, getForecastedValue } from '~/server/utils/creator-program.utils';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 // Globally stubbed in `src/__tests__/setup.ts` — imported here only to drive its rejection.
@@ -605,6 +606,52 @@ describe('getCompensationPool', () => {
     expect(result.phases).toBeDefined();
     expect(result.phases.bank).toBeDefined();
     expect(result.phases.extraction).toBeDefined();
+  });
+
+  it('clamps forecasted size to current once the banking deadline has passed', async () => {
+    // System time is pinned to 2026-04-15; the 2025-04 cycle's banking phase is long closed.
+    // getPoolForecast halves the raw balance (CREATOR_POOL_FORECAST_PORTION=50): 4M -> 2M > 1M current.
+    // Pool value is kept small (5k -> $400 after taxes/portion) so the per-buzz value stays under the
+    // $1/1000 cap — otherwise both projections pin to the cap and the closing-condition assertion below
+    // can't tell clamped from unclamped.
+    mockClickhouse.$query
+      .mockResolvedValueOnce([{ balance: 5000 }]) // pool value -> $400, below the cap at this size
+      .mockResolvedValueOnce([{ balance: 4000000 }]); // pool forecast -> 2M, above current
+    mockGetUserBuzzAccount.mockResolvedValueOnce([{ balance: 1000000 }]); // pool size (current)
+
+    const pool = await getCompensationPool({ month: new Date('2025-04-01') });
+
+    expect(pool.size.current).toBe(1000000);
+    expect(pool.size.forecasted).toBe(1000000);
+    // Closing condition: after the deposit deadline the forecast can't fall below the banked value.
+    // Reverting the clamp (forecasted stays 2M) drops the forecast to $200 vs the current $400 and fails.
+    const banked = pool.size.current;
+    expect(getForecastedValue(banked, pool)).toBeGreaterThanOrEqual(getCurrentValue(banked, pool));
+  });
+
+  it('leaves forecasted size untouched during the banking phase', async () => {
+    // 2026-04 cycle: banking runs 1st–27th and the pinned clock is the 15th, so it's still open.
+    mockClickhouse.$query
+      .mockResolvedValueOnce([{ balance: 50000 }]) // pool value
+      .mockResolvedValueOnce([{ balance: 4000000 }]); // pool forecast -> 2M, above current
+    mockGetUserBuzzAccount.mockResolvedValueOnce([{ balance: 1000000 }]); // pool size (current)
+
+    const pool = await getCompensationPool({ month: new Date('2026-04-01') });
+
+    expect(pool.size.forecasted).toBe(2000000);
+  });
+
+  it('leaves forecasted untouched on the cached (no-month) path before the deadline', async () => {
+    // No month -> cached current-month path; the April 2026 banking window is still open on the pinned clock.
+    mockClickhouse.$query
+      .mockResolvedValueOnce([{ balance: 50000 }]) // pool value
+      .mockResolvedValueOnce([{ balance: 4000000 }]); // pool forecast -> 2M, above current
+    mockGetUserBuzzAccount.mockResolvedValueOnce([{ balance: 1000000 }]); // pool size (current)
+
+    const pool = await getCompensationPool({});
+
+    expect(pool.size.current).toBe(1000000);
+    expect(pool.size.forecasted).toBe(2000000);
   });
 
   it('uses cache for current month queries', async () => {
