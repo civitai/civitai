@@ -81,6 +81,16 @@ the old records while anything still reads them.
 Flags off must be byte-identical. Deleting the old engine is a separate change after the
 flags have fully flipped.
 
+## Keeping parity during the dual-graph window
+
+Until the old graph is deleted, EVERY merge from main needs:
+`git diff HEAD...origin/main --stat -- src/shared/data-graph` — then mirror each
+change into the port AND add a differential shape covering the changed path.
+The suites only catch drift where shapes exercise it: krea2's
+community-checkpoint fix (2026-09-04) passed parity under BOTH the old and new
+fallback because no shape used an unknown model id. A mirrored change without
+a new shape is unverified.
+
 ## Gotchas that cost real time on the generation port
 
 - Cross-field coherence (a selection retargeting another selection) belongs in a
