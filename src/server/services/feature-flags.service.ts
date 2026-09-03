@@ -249,20 +249,6 @@ const featureFlags = createFeatureFlags({
     description: `Images displayed in the generator will be larger on small screens`,
     availability: ['public'],
   },
-  postsNavItem: {
-    toggleable: true,
-    default: false,
-    displayName: 'Posts in Navigation',
-    description: `Show the Posts item in the main site navigation.`,
-    availability: ['public'],
-  },
-  eventsNavItem: {
-    toggleable: true,
-    default: false,
-    displayName: 'Events in Navigation',
-    description: `Show the Events item in the main site navigation.`,
-    availability: ['public'],
-  },
   nativeVideoControls: {
     toggleable: true,
     default: false,
@@ -880,7 +866,7 @@ export type FeatureAccess = Record<FeatureFlagKey, boolean>;
  *   2. A toggleable flag whose `default === false` is absent at the base layer —
  *      logged-in users get their stored choice merged client-side (via
  *      user.getFeatureFlags), but anonymous users have no override, so a
- *      default-off toggleable (e.g. postsNavItem) must stay off on bare access.
+ *      default-off toggleable (e.g. largerGenerationImages) must stay off on bare access.
  *   3. Otherwise present.
  * `fliptContext` is threaded in (built once per compute via buildFliptContext)
  * so a single lazy request reuses one context across every accessed key, exactly
