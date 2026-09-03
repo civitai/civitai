@@ -29,6 +29,32 @@ export function labelNoun(card: ModelCard): 'tags' | 'captions' {
   return card.label === 'tag' ? 'tags' : 'captions';
 }
 
+// Trigger-word display rules, shared by the tile previews and the label editor: the trigger is only
+// prepended to a label that doesn't already contain it, and highlighted in place where it does. Matching
+// is case-insensitive.
+export function isTriggerTag(trigger: string, tag: string): boolean {
+  const t = trigger.trim();
+  return t.length > 0 && tag.toLowerCase() === t.toLowerCase();
+}
+export function tagsHaveTrigger(trigger: string, tags: string[]): boolean {
+  return tags.some((tag) => isTriggerTag(trigger, tag));
+}
+/** Split a caption around the first case-insensitive occurrence of the trigger, or null if absent. */
+export function captionTriggerHit(
+  trigger: string,
+  caption: string
+): { before: string; match: string; after: string } | null {
+  const t = trigger.trim();
+  if (!t) return null;
+  const idx = caption.toLowerCase().indexOf(t.toLowerCase());
+  if (idx < 0) return null;
+  return {
+    before: caption.slice(0, idx),
+    match: caption.slice(idx, idx + t.length),
+    after: caption.slice(idx + t.length),
+  };
+}
+
 /** Client-side selection carried across the flow. Nothing here is persisted until Start. */
 export interface Selection {
   media: Media;
