@@ -10,6 +10,7 @@ import {
   saveSuspiciousMatches,
   RESTRICTION_TYPE,
   RESTRICTION_TYPES,
+  unwiredRulingReason,
   type RestrictionRow,
 } from '$lib/server/user-restriction.service';
 
@@ -65,8 +66,13 @@ export const load: PageServerLoad = async ({ url }) => {
 // `type: 'any'` on purpose. A form posts to `?/resolve`, which REPLACES the query string — so an action
 // never sees the `type` the moderator was looking at, and defaulting the lookup would 404 every row
 // outside the default queue. The id is a primary key, so dropping the predicate cannot widen the
-// result; what it changes is which types an action can be handed, and `unwiredRuling` below is what
-// governs that.
+// result; what it changes is which types an action can be handed.
+//
+// Each action decides that for itself, and they do NOT all decide the same way — so this helper deliberately
+// makes no such decision. `resolve` and `ban` call `unwiredRuling` because they hand the row to a verdict
+// path that is still generation-shaped. `flagSuspicious` does not, and should not: it copies selected
+// triggers into the shared suspicious-match list, writes nothing to the account, and tells the user
+// nothing. A prompt worth flagging is worth flagging whatever queue it was raised in.
 async function restrictionById(id: number): Promise<RestrictionRow | null> {
   const { items } = await getGenerationRestrictions({
     page: 1,
@@ -88,13 +94,22 @@ async function restrictionById(id: number): Promise<RestrictionRow | null> {
  *
  * This is a refusal rather than a hidden button because the check has to hold against a posted id, not
  * just against what the page chose to render. Lifting it means parameterising that verdict path first.
+ * (The buttons are disabled as well now — see `RestrictionDetail.svelte`. That is an addition to this
+ * check, never a substitute for it.)
+ *
+ * 🔴 KEPT even though the refusal is now enforced by `resolveUserRestriction` itself — which is what
+ * closes the surfaces this check could never reach: the retool User Lookup panel, the tRPC router and
+ * the REST endpoint were all unguarded while it lived only here. This is not defence in depth; it is
+ * ORDERING. The `ban` action bans and THEN rules, so a refusal arriving inside the verdict call would
+ * leave the account banned against a restriction nobody can close — the stranded Pending row that
+ * handler exists to avoid. It also renders as an inline message rather than a failed API call.
+ *
+ * The predicate is IMPORTED, never re-spelled: `unwiredRulingReason` is one function in
+ * `$lib/restriction-types`, pinned to the main app's `RULINGS_WIRED_FOR` by the seam test. A second
+ * spelling here is exactly how the two would drift.
  */
-const RULINGS_WIRED_FOR: readonly string[] = [RESTRICTION_TYPE];
-
 function unwiredRuling(row: RestrictionRow): string | null {
-  return RULINGS_WIRED_FOR.includes(row.type)
-    ? null
-    : `Rulings are not yet available for "${row.type}" restrictions — the verdict path still sends generation-specific notices. This restriction was NOT resolved.`;
+  return unwiredRulingReason(row.type);
 }
 
 export const actions: Actions = {

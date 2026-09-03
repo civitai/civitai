@@ -11,6 +11,8 @@ export {
   RESTRICTION_TYPE,
   RESTRICTION_TYPES,
   RESTRICTION_TYPE_LABELS,
+  RULINGS_WIRED_FOR,
+  unwiredRulingReason,
   type RestrictionType,
 } from '$lib/restriction-types';
 

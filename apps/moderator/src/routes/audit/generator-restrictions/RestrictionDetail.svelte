@@ -9,6 +9,7 @@
   import { LINK_CLASS, dateTime } from '$lib/format';
   import { userLookupUrl } from '$lib/entity-url';
   import type { RestrictionRow } from '$lib/server/user-restriction.service';
+  import { unwiredRulingReason } from '$lib/restriction-types';
   import UserWorkflowsPanel from '$lib/components/UserWorkflowsPanel.svelte';
   import TriggerCard from './TriggerCard.svelte';
   import StatusBadge from './StatusBadge.svelte';
@@ -33,6 +34,13 @@
 
   const selected = new SvelteSet<string>();
   const toggle = (key: string) => (selected.has(key) ? selected.delete(key) : selected.add(key));
+
+  // The SERVER refuses these rows too, and that refusal is the guard — it holds against a posted id,
+  // which nothing rendered here can. This only stops the moderator being INVITED to click a button
+  // that can never do anything: an Uphold form on a bot-account row is a live control whose only
+  // possible outcome is a 400. Flagging triggers stays available, because it writes nothing to the
+  // account and is not a verdict.
+  const unwiredReason = $derived(unwiredRulingReason(restriction.type));
 
   let banning = $state(false);
 
@@ -82,21 +90,28 @@
   {/if}
 
   {#if restriction.status === 'Pending'}
+    {#if unwiredReason}
+      <p class="mb-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
+        {unwiredReason}
+      </p>
+    {/if}
     <div class="mb-3 flex flex-wrap items-center gap-2">
       <form method="POST" action="?/resolve" use:enhance={rule.enhance}>
         <input type="hidden" name="userRestrictionId" value={restriction.id} />
         <input type="hidden" name="userId" value={restriction.userId} />
         <input type="hidden" name="status" value="Upheld" />
-        <Button type="submit" size="sm" variant="destructive" disabled={rule.submitting}>Uphold mute</Button>
+        <Button type="submit" size="sm" variant="destructive" disabled={rule.submitting || !!unwiredReason}>Uphold mute</Button>
       </form>
       <form method="POST" action="?/resolve" use:enhance={rule.enhance}>
         <input type="hidden" name="userRestrictionId" value={restriction.id} />
         <input type="hidden" name="userId" value={restriction.userId} />
         <input type="hidden" name="status" value="Overturned" />
-        <Button type="submit" size="sm" disabled={rule.submitting}>Remove mute</Button>
+        <Button type="submit" size="sm" disabled={rule.submitting || !!unwiredReason}>Remove mute</Button>
       </form>
       {#if canBan}
-        <Button size="sm" variant="outline" onclick={() => (banning = !banning)}>Ban user</Button>
+        <!-- Disabled for the same reason, and it is the sharper case: this action bans and THEN rules,
+             so on a row that cannot be ruled on it would ban the account and strand the Pending row. -->
+        <Button size="sm" variant="outline" disabled={!!unwiredReason} onclick={() => (banning = !banning)}>Ban user</Button>
       {/if}
 
       {#if selected.size > 0}

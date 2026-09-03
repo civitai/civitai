@@ -25,3 +25,28 @@ export const RESTRICTION_TYPE_LABELS: Record<RestrictionType, string> = {
   generation: 'Generation',
   'bot-account': 'Bot account',
 };
+
+/**
+ * The types a VERDICT can be handed to — narrower than `RESTRICTION_TYPES`, which is what may be
+ * filed and reviewed.
+ *
+ * The refusal itself is enforced by the main app, one level below every ruling surface, in
+ * `resolveUserRestriction` — this app's ruling forms all post through `/api/mod/restriction/resolve`.
+ * This list is the same rule read forward instead of backward: it is what lets a form that cannot
+ * possibly succeed be disabled rather than merely rejected, and what lets the audit queue refuse a
+ * ban BEFORE it bans (that action bans and then rules, so a late refusal would leave the account
+ * banned against a restriction nobody can close).
+ *
+ * 🔴 Kept identical to the main app's `RULINGS_WIRED_FOR` by
+ * `src/server/services/__tests__/restriction-type-seam.test.ts`, which reads this file as text. The
+ * two apps are separate builds with no runtime import path between them, so a pinned copy is the
+ * strongest available form of "one rule, one place" — do not fork it by hand.
+ */
+export const RULINGS_WIRED_FOR: readonly RestrictionType[] = ['generation'];
+
+/** Why a ruling may not be handed to a row of this type, or `null` when it may. */
+export function unwiredRulingReason(type: string): string | null {
+  return (RULINGS_WIRED_FOR as readonly string[]).includes(type)
+    ? null
+    : `Rulings are not yet available for "${type}" restrictions — the verdict path still sends generation-specific notices. This restriction was NOT resolved.`;
+}

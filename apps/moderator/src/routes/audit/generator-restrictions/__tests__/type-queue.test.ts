@@ -43,6 +43,9 @@ vi.mock('$lib/server/access', () => ({
 }));
 
 const { load, actions } = await import('../+page.server');
+const { RESTRICTION_TYPES, RULINGS_WIRED_FOR, unwiredRulingReason } = await import(
+  '$lib/restriction-types'
+);
 
 type LoadResult = { type: string; items: unknown[] };
 const runLoad = (search = '') =>
@@ -202,6 +205,30 @@ describe('generator-restrictions actions — ruling scope', () => {
       expect.objectContaining({ userRestrictionId: 5, status: 'Upheld' })
     );
   });
+
+  /**
+   * An INVARIANT GUARD — this passed before the route stopped spelling its own message, and is
+   * recorded as such rather than counted as regression coverage.
+   *
+   * What it pins is that the route READS the shared predicate rather than carrying a second copy. The
+   * refusal that actually protects the account now lives in the main app's `resolveUserRestriction`
+   * (this route posts through it), and the two are pinned to each other by the seam test — but only if
+   * this end of the chain is the shared list and not a private one that happens to agree today.
+   */
+  it.each(RESTRICTION_TYPES.filter((t) => !RULINGS_WIRED_FOR.includes(t)))(
+    'refuses %s with the shared predicate’s own words, not a second copy of them',
+    async (type) => {
+      getGenerationRestrictions.mockResolvedValue({ items: [row({ type })], totalCount: 1 });
+
+      const result = (await actions.resolve(
+        formEvent({ userRestrictionId: '5', status: 'Upheld' })
+      )) as { status: number; data: { error: string } };
+
+      expect(result.data.error).toBe(unwiredRulingReason(type));
+      // Non-vacuous: `toBe(null)` would also pass if the action had returned success.
+      expect(unwiredRulingReason(type)).not.toBeNull();
+    }
+  );
 
   // A by-id lookup must not be filtered by the default type: a form posts to `?/resolve`, which
   // replaces the query string, so the action cannot know which queue the row came from.

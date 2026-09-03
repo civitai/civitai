@@ -32,11 +32,15 @@ import {
  * cannot see it: `where('ur.type','=',x)` compiles to `"ur"."type" = $1` for every `x`, so a mutant that
  * ignores its argument and hardcodes a literal emits byte-identical SQL and survives an assertion over
  * `sql`. `params[i]` holds the parameters of `sql[i]`.
+ *
+ * `params` is a MUTABLE `unknown[][]` and says so. Being written is the parameter's whole purpose, and
+ * a `readonly` annotation that has to be cast away at the one place it is used is a contract the code
+ * contradicts — it reads as a promise to callers that this function does not touch their array.
  */
 export function capturingDb(
   sql: string[],
   rows: unknown[] = [],
-  params?: readonly unknown[][]
+  params?: unknown[][]
 ): Kysely<never> {
   class CannedRowDriver extends DummyDriver {
     async acquireConnection(): Promise<DatabaseConnection> {
@@ -62,7 +66,7 @@ export function capturingDb(
       if (e.level !== 'query') return;
       sql.push(e.query.sql);
       // Pushed in the same branch so the two arrays stay index-aligned by construction.
-      (params as unknown[][] | undefined)?.push([...e.query.parameters]);
+      params?.push([...e.query.parameters]);
     },
   });
 }
