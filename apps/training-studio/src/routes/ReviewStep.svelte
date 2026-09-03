@@ -19,16 +19,20 @@
     selection,
     prices,
     imageCount,
+    labels,
     onStart,
     onBack,
   }: {
     selection: Selection;
     prices: FromPrices;
     imageCount: number;
-    onStart: (launched: LaunchedRun[], prompts: string[]) => Promise<void>;
+    /** The dataset's per-image labels (joined tags / captions) — the sample prompts seed from these. */
+    labels: string[];
+    onStart: (launched: LaunchedRun[], prompts: string[], name: string) => Promise<void>;
     onBack: () => void;
   } = $props();
 
+  let name = $state('');
   let starting = $state(false);
   let startError = $state('');
 
@@ -61,12 +65,21 @@
     ),
   );
   let stepsEdited = $state<boolean[]>(untrack(() => selection.runs.map(() => false)));
-  let prompts = $state([
-    { id: 0, text: 'standing in a park, natural daylight' },
-    { id: 1, text: 'close-up portrait, studio lighting' },
-    { id: 2, text: 'wearing a red jacket, city background at night' },
-  ]);
-  let promptSeq = 3;
+  // Seed the sample prompts from the dataset itself — 3 random image labels (joined tags or the caption) —
+  // so the test images generated during training reflect what the model actually learned. Falls back to a
+  // generic prompt when the dataset carries no usable labels.
+  function seedPrompts(source: string[]): { id: number; text: string }[] {
+    const pool = source.map((l) => l.trim()).filter((l) => l.length > 0);
+    const picks: string[] = [];
+    while (picks.length < 3 && pool.length > 0) {
+      picks.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]!);
+    }
+    const chosen = picks.length > 0 ? picks : ['a photo'];
+    return chosen.map((text, id) => ({ id, text }));
+  }
+  const initialPrompts = untrack(() => seedPrompts(labels));
+  let prompts = $state(initialPrompts);
+  let promptSeq = initialPrompts.length;
   let openAdv = $state(-1);
 
   const presetSeen = $derived(seenFor(presetType));
@@ -121,7 +134,8 @@
     try {
       await onStart(
         selection.runs.map((run, i) => ({ run, params: params[i]! })),
-        prompts.map((p) => p.text)
+        prompts.map((p) => p.text),
+        name
       );
     } catch (e) {
       startError = e instanceof Error ? e.message : 'Could not start training';
@@ -141,6 +155,18 @@
         Steps are set for you from your type and image count. Tweak if you like — everything else is
         optional.
       </p>
+    </div>
+
+    <div>
+      <label for="training-name" class="font-mono text-xs uppercase tracking-wider text-dark-2">
+        Name
+      </label>
+      <Input
+        id="training-name"
+        bind:value={name}
+        placeholder="Name this training — defaults to your trigger word"
+        class="mt-1.5"
+      />
     </div>
 
     <div class="flex items-center justify-between">
@@ -307,7 +333,7 @@
       </span>
     </div>
     <div class="mt-1 text-right font-mono text-[11px] text-dark-2">
-      ~{etaMin} min{multi ? ' · parallel' : ''} · {imageCount} images
+      ~{etaMin} min{multi ? ' · parallel' : ''} · {imageCount} image{imageCount === 1 ? '' : 's'}
     </div>
     <Button class="mt-4 w-full" onclick={start} disabled={starting}>
       {#if starting}

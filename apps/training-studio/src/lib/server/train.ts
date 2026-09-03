@@ -103,27 +103,29 @@ function describeSubmitError(error: unknown): string {
   return e?.detail ?? e?.title ?? 'no data returned';
 }
 
-/** Submit one real training workflow; returns its id. Charges Buzz. A whatif preflight validates the exact
- *  step first, so a bad field shape (or a Flux.2-blobs rejection) fails with ZERO spend rather than after
- *  the real submit has already charged. */
+/** A short tag-safe slug of the run name, so a training can be found by name later. */
+function nameSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+}
+
+/** Submit one real training workflow; returns its id. Charges Buzz — the single write in the flow. */
 export async function submitTraining(token: string, run: TrainingRunInput): Promise<string> {
-  const client = orchestratorClient(token);
   const metadata: TrainingStudioMeta = { ...run.meta, v: META_VERSION };
-  const body = {
-    tags: [CIVITAI_TAG, TRAINING_TAG],
-    metadata: metadata as Record<string, unknown>,
-    steps: [buildStep(run)],
-    currencies: CURRENCIES,
-  };
-
-  // Preflight: prices the exact step without executing/charging. A rejection here means the real submit
-  // would fail too — surface it before any Buzz moves.
-  const preflight = await submitWorkflow({ client, body, query: { whatif: true } });
-  if (!preflight.data) {
-    throw new Error(`training preflight failed: ${describeSubmitError(preflight.error)}`);
-  }
-
-  const { data, error } = await submitWorkflow({ client, body, query: { wait: 0 } });
+  const slug = run.meta.name ? nameSlug(run.meta.name) : '';
+  const { data, error } = await submitWorkflow({
+    client: orchestratorClient(token),
+    body: {
+      tags: slug ? [CIVITAI_TAG, TRAINING_TAG, `name:${slug}`] : [CIVITAI_TAG, TRAINING_TAG],
+      metadata: metadata as Record<string, unknown>,
+      steps: [buildStep(run)],
+      currencies: CURRENCIES,
+    },
+    query: { wait: 0 },
+  });
   if (!data?.id) throw new Error(`training submit failed: ${describeSubmitError(error)}`);
   return data.id;
 }

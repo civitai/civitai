@@ -196,6 +196,10 @@ export interface TrainingDetail {
   isVideo: boolean;
   /** The fixed sample prompts (usually 3). Rows of the compare grid; captions for each epoch's images. */
   prompts: string[];
+  /** The requested checkpoint count, for a "N of M" progress readout while training. */
+  plannedEpochs?: number;
+  /** Only epochs that have actually produced content (a sample or downloadable weights). A still-training
+   *  run's not-yet-produced epochs are excluded, so the page shows a processing state rather than empty cards. */
   epochs: TrainingDetailEpoch[];
 }
 
@@ -211,18 +215,22 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
   const slots =
     prompts.length || Math.max(0, ...(output.epochs ?? []).map((e) => e.samples?.length ?? 0));
 
-  const epochs: TrainingDetailEpoch[] = (output.epochs ?? []).map((e, idx) => {
-    const raw = e.samples ?? [];
-    return {
-      id: `${e.epochNumber ?? 'x'}-${idx}`,
-      number: e.epochNumber ?? 0,
-      samples: Array.from({ length: slots }, (_, i) => {
-        const s = raw[i];
-        return s?.available && typeof s.url === 'string' ? s.url : null;
-      }),
-      modelUrl: e.model?.available && typeof e.model.url === 'string' ? e.model.url : undefined,
-    };
-  });
+  const epochs: TrainingDetailEpoch[] = (output.epochs ?? [])
+    .map((e, idx) => {
+      const raw = e.samples ?? [];
+      return {
+        id: `${e.epochNumber ?? 'x'}-${idx}`,
+        number: e.epochNumber ?? 0,
+        samples: Array.from({ length: slots }, (_, i) => {
+          const s = raw[i];
+          return s?.available && typeof s.url === 'string' ? s.url : null;
+        }),
+        modelUrl: e.model?.available && typeof e.model.url === 'string' ? e.model.url : undefined,
+      };
+    })
+    // Drop epochs the orchestrator has listed but not yet produced (no sample, no weights) — otherwise a
+    // just-started run renders as N empty checkpoints instead of a "training underway" state.
+    .filter((e) => e.modelUrl != null || e.samples.some((s) => s !== null));
 
   return {
     workflowId: w.id,
@@ -233,6 +241,7 @@ export function workflowToDetail(w: Workflow): TrainingDetail | null {
     createdAt: w.createdAt,
     isVideo: media === 'video',
     prompts,
+    plannedEpochs: input.epochs,
     epochs,
   };
 }

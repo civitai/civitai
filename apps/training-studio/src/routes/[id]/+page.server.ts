@@ -8,7 +8,7 @@ export const load: PageServerLoad = async ({ locals, params, depends }) => {
   // Lets the detail page re-run this load on a timer while the run is still training (live epochs).
   depends('app:training-detail');
   // The dev-login stub has no real token; show the sample detail so the screen is previewable.
-  if (locals.devPreview) return { detail: SAMPLE_DETAIL };
+  if (locals.devPreview) return { detail: SAMPLE_DETAIL, username: locals.user.username };
 
   let detail;
   try {
@@ -19,5 +19,5 @@ export const load: PageServerLoad = async ({ locals, params, depends }) => {
     throw error(502, 'Could not load this training right now.');
   }
   if (!detail) throw error(404, 'Training not found.');
-  return { detail };
+  return { detail, username: locals.user.username };
 };

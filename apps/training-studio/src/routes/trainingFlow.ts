@@ -179,6 +179,7 @@ export function buildTrainingRuns(
   selection: Selection,
   images: Img[],
   trigger: string,
+  name: string,
   launched: LaunchedRun[],
   prompts: string[]
 ): TrainingRunPayload[] {
@@ -211,7 +212,7 @@ export function buildTrainingRuns(
       items,
       prompts,
       meta: {
-        name: t || selection.loraType,
+        name: name.trim() || t || selection.loraType,
         media: selection.media,
         loraType: selection.loraType,
         cardType: run.cardType,

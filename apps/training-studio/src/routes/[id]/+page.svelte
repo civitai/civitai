@@ -2,6 +2,7 @@
   import { browser } from '$app/environment';
   import { invalidate } from '$app/navigation';
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
+  import AppHeader from '$lib/components/AppHeader.svelte';
   import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
@@ -65,6 +66,8 @@
   }
 </script>
 
+<AppHeader username={data.username} />
+
 <section class="flex flex-col gap-6">
   <a href="/" class="font-mono text-xs text-dark-2 transition-colors hover:text-white">
     ← My trainings
@@ -85,7 +88,9 @@
     <dl class="mt-4 flex flex-wrap gap-x-8 gap-y-2 border-t border-dark-4 pt-4 font-mono text-[11px]">
       <div class="flex items-center gap-1.5">
         <dt class="text-dark-2">Checkpoints</dt>
-        <dd class="m-0 text-dark-0">{d.epochs.length}</dd>
+        <dd class="m-0 text-dark-0">
+          {d.epochs.length}{#if d.state === 'training' && d.plannedEpochs} / {d.plannedEpochs}{/if}
+        </dd>
       </div>
       <div class="flex items-center gap-1.5">
         <dt class="text-dark-2">Created</dt>
@@ -109,21 +114,27 @@
     </div>
   {:else if d.epochs.length === 0}
     <div class="rounded-md border border-dashed border-dark-4 bg-dark-6 p-10 text-center">
-      <p class="text-sm text-dark-2">
-        {#if d.state === 'training'}
-          Training is underway — sample images and checkpoints stream in here as each epoch finishes.
-        {:else}
-          No checkpoints yet. Samples appear here as the run produces them.
-        {/if}
-      </p>
+      {#if d.state === 'training'}
+        <div class="flex items-center justify-center gap-2 text-sm font-medium text-primary">
+          <span class="h-2.5 w-2.5 animate-pulse rounded-full bg-primary"></span>
+          Training in progress
+        </div>
+        <p class="mx-auto mt-2 max-w-md text-sm text-dark-2">
+          {#if d.plannedEpochs}0 of {d.plannedEpochs} checkpoints so far — {/if}sample images and
+          downloadable weights stream in here as each epoch finishes.
+        </p>
+      {:else}
+        <p class="text-sm text-dark-2">No checkpoints yet. Samples appear here as the run produces them.</p>
+      {/if}
     </div>
   {:else}
     {#if d.state === 'training'}
       <div
         class="flex items-center gap-2 rounded border border-primary/25 bg-primary/10 px-3 py-2 text-[11px] font-medium text-primary"
       >
-        <span class="h-2 w-2 rounded-full bg-primary"></span>
-        Still training — more checkpoints and samples will appear as they finish.
+        <span class="h-2 w-2 animate-pulse rounded-full bg-primary"></span>
+        Still training{#if d.plannedEpochs} — {d.epochs.length} of {d.plannedEpochs} checkpoints{/if}. More
+        appear as they finish.
       </div>
     {/if}
 

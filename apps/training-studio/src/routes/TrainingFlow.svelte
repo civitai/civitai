@@ -4,7 +4,15 @@
   import SelectStep from './SelectStep.svelte';
   import DataStep from './DataStep.svelte';
   import ReviewStep from './ReviewStep.svelte';
-  import { buildTrainingRuns, isTrainable, type Img, type LaunchedRun, type Selection } from './trainingFlow';
+  import {
+    buildTrainingRuns,
+    isTrainable,
+    labelString,
+    runCard,
+    type Img,
+    type LaunchedRun,
+    type Selection,
+  } from './trainingFlow';
   import { postTraining } from '$lib/train';
   import type { FromPrices } from '$lib/data/trainingModels';
 
@@ -24,6 +32,16 @@
   // Only successfully uploaded + scanned images train — blocked / in-flight tiles don't count.
   const trainableCount = $derived(images.filter(isTrainable).length);
 
+  // The dataset's own labels (joined tags or captions) — Review seeds its sample prompts from these.
+  const datasetLabels = $derived.by(() => {
+    if (!selection) return [];
+    const mode = runCard(selection.runs[0]!).label;
+    return images
+      .filter(isTrainable)
+      .map((i) => labelString(i, mode))
+      .filter((l) => l.length > 0);
+  });
+
   // Free the dataset preview object URLs when the flow unmounts (leaving to My-trainings). Reads
   // nothing reactive, so it's mount-only — not per-step; images and their previews live here and must
   // survive Back/Continue, so DataStep must not do this on its own unmount.
@@ -38,9 +56,9 @@
   // The one write in the whole flow: assemble each run and submit real workflow(s), then land on the run
   // to watch it live — a single run opens its detail, a sweep goes to the list. Errors propagate to
   // ReviewStep, which shows them on the Start button.
-  async function start(launched: LaunchedRun[], prompts: string[]) {
+  async function start(launched: LaunchedRun[], prompts: string[], name: string) {
     if (!selection) return;
-    const runs = buildTrainingRuns(selection, images, trigger, launched, prompts);
+    const runs = buildTrainingRuns(selection, images, trigger, name, launched, prompts);
     const ids = await postTraining(runs);
     // A single run opens its detail; a sweep (or a partial submit) goes to the list, where every run that
     // landed appears — so a partial failure never re-submits the successful, already-charged runs.
@@ -93,6 +111,13 @@
   {:else if step === 2 && selection}
     <DataStep {selection} bind:images bind:trigger onContinue={() => (step = 3)} onBack={() => (step = 1)} />
   {:else if step === 3 && selection}
-    <ReviewStep {selection} {prices} imageCount={trainableCount} onStart={start} onBack={() => (step = 2)} />
+    <ReviewStep
+      {selection}
+      {prices}
+      imageCount={trainableCount}
+      labels={datasetLabels}
+      onStart={start}
+      onBack={() => (step = 2)}
+    />
   {/if}
 </section>
