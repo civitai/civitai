@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import { probeModerationCacheRepeat } from '~/server/integrations/moderation-cache-probe';
 import {
   clampExternalModerationSource,
   isAbortDeadlineError,
@@ -62,6 +63,19 @@ async function moderatePrompt(
   }
 
   const preparedPrompt = removeFalsePositiveTriggers(prompt);
+
+  // Dark measurement: would a verdict cache have avoided this call? Off by default, fire-and-forget,
+  // reads nothing back — the request below is issued either way. Placed HERE, on `preparedPrompt`
+  // rather than on `prompt`, because that is the exact string the classifier receives, so the digest
+  // matches what a real cache would key on. `removeFalsePositiveTriggers` is many-to-one, so probing
+  // the raw prompt instead would count two requests that produce an identical classifier call as
+  // distinct and UNDERSTATE the repeat rate.
+  //
+  // It also runs BEFORE the outcome is known, so it claims a window slot even for a call that then
+  // fails. A real cache would store only successful verdicts, so this overstates the hit rate by
+  // exactly the non-`ok` share — measured at ~0.01% in production, i.e. immaterial, but stated
+  // rather than assumed.
+  probeModerationCacheRepeat(metricSource, preparedPrompt);
 
   // Wall-clock timing of the whole classifier call — the interval the generation submission actually
   // parks on. Started before the span so the observation cannot be biased by span setup, and read

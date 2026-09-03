@@ -1810,6 +1810,15 @@ export const REDIS_SYS_KEYS = {
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
     REMIX_AUDIT_CHECKED: 'generation:remix-audit-checked',
     CLIENT: 'generation:client',
+    /**
+     * MEASUREMENT ONLY — a dark probe, not a cache. Holds `1` against a truncated SHA-256 of the
+     * exact string sent to the external prompt classifier, so we can count how often that string
+     * REPEATS inside a window. Nothing reads the value back to skip work; the classifier is called
+     * every time either way. Written only while EXTERNAL_MODERATION_CACHE_PROBE is on, and every
+     * key carries an EX, so the whole keyspace evaporates on its own when the flag goes off.
+     * See src/server/integrations/moderation-cache-probe.ts.
+     */
+    MODERATION_CACHE_PROBE: 'generation:moderation-cache-probe',
   },
   TRAINING: {
     STATUS: 'training:status',

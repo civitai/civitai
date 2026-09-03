@@ -607,6 +607,13 @@ export const serverSchema = z
     // ~116-day timeout) re-introduces the unbounded-park failure the deadline exists
     // to prevent. Any out-of-range value falls back to 5000.
     EXTERNAL_MODERATION_TIMEOUT_MS: z.coerce.number().int().min(100).max(60000).catch(5000),
+    // Dark measurement probe for "would a moderation-result cache pay?". OFF by default and
+    // deliberately so: it ships inert, gets flipped on in config, and the metric's ARMING DATE is
+    // then visible as the instant its series appear — which is the only thing that distinguishes
+    // "no repeats" from "probe never ran". It never changes the verdict, never skips the
+    // classifier, and never adds latency to the request (the Redis round trip is fire-and-forget).
+    // See src/server/integrations/moderation-cache-probe.ts.
+    EXTERNAL_MODERATION_CACHE_PROBE: zc.booleanString.optional().default(false),
     BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
     MODERATION_KNIGHT_TAGS: commaDelimitedStringArray().default([]),
 
