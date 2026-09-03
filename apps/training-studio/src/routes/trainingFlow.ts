@@ -87,6 +87,11 @@ export interface Img {
   blobUrl?: string;
   /** A block reason or upload error, shown on the tile. */
   message?: string;
+  /** True while an auto-label workflow step for this image is in flight. */
+  labeling?: boolean;
+  /** Set once auto-labeling has attempted this image (success, empty, or failure), so the automatic
+   *  drain labels each image at most once. A failed attempt falls back to manual editing. */
+  labelTried?: boolean;
   tags: string[];
   caption: string;
 }

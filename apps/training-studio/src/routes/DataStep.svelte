@@ -6,6 +6,7 @@
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import { loraTypeById } from '$lib/data/trainingModels';
   import { pool } from '$lib/pool';
+  import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
   import { isAbort, uploadFile, UploadError } from '$lib/upload';
   import { isTrainable, labelNoun, runCard, type Img, type Selection } from './trainingFlow';
 
@@ -36,13 +37,18 @@
   const busy = $derived(images.some((i) => i.status === 'uploading'));
   const blockedCount = $derived(images.filter((i) => i.status === 'blocked').length);
   // A trainable image needs a label — tags or a caption (a global trigger word isn't a per-image label).
-  // Auto-labeling (next slice) fills these for the whole set; until then it's manual, but an unlabeled
-  // dataset must not reach Review.
-  const labeledCount = $derived(
-    images.filter((i) => isTrainable(i) && (i.tags.length > 0 || i.caption.trim().length > 0)).length
-  );
+  // Auto-labeling fills these for the whole set; an unlabeled dataset must not reach Review.
+  const isLabeled = (i: Img) => i.tags.length > 0 || i.caption.trim().length > 0;
+  const labeledCount = $derived(images.filter((i) => isTrainable(i) && isLabeled(i)).length);
   const allLabeled = $derived(uploadedCount > 0 && labeledCount === uploadedCount);
-  const canContinue = $derived(uploadedCount > 0 && !busy && allLabeled);
+  const labelingActive = $derived(images.some((i) => i.labeling));
+  // Uploaded images with no label, not already being labeled, and not already auto-label-attempted —
+  // what an auto-label run targets. Excluding attempted ones stops the button re-offering a model that
+  // returned nothing (a failed step clears the flag, so genuine failures stay retryable).
+  const unlabeled = $derived(
+    images.filter((i) => isTrainable(i) && !isLabeled(i) && !i.labeling && !i.labelTried && !!i.blobUrl)
+  );
+  const canContinue = $derived(uploadedCount > 0 && !busy && !labelingActive && allLabeled);
   const enough = $derived(uploadedCount >= type.minImg);
 
   let seq = 0;
@@ -74,6 +80,8 @@
     }));
     images = [...images, ...added];
     await pool(added, 4, (img) => uploadOne(img.id, img.file));
+    // Auto-label as soon as this batch's uploads settle. If a run is already going, it drains this batch too.
+    void ensureLabeling();
   }
 
   async function uploadOne(id: number, file: File) {
@@ -97,7 +105,7 @@
 
   function retry(id: number) {
     const tile = images.find((x) => x.id === id);
-    if (tile) void uploadOne(id, tile.file);
+    if (tile) void uploadOne(id, tile.file).then(ensureLabeling);
   }
 
   function remove(id: number) {
@@ -106,6 +114,45 @@
     const tile = images.find((x) => x.id === id);
     if (tile) URL.revokeObjectURL(tile.previewUrl);
     images = images.filter((x) => x.id !== id);
+  }
+
+  // Free auto-labeling, automatic: it kicks off as soon as an upload batch settles (and after a retry),
+  // tag models get WD tags, caption models get a caption. A single drain loop labels every uploaded image
+  // once — images that finish uploading while a run is in flight are picked up on the next pass, so a
+  // second `ensureLabeling()` call during a run is a no-op. `labelRun` tracks the current pass for the
+  // progress counter (labeledCount is whole-set, so it can't stand in here).
+  let labelController: AbortController | null = null;
+  let labelRun = $state<{ total: number; done: number; keys: Set<string> } | null>(null);
+
+  async function ensureLabeling() {
+    if (labelController) return; // a drain loop is already running; it will pick up new uploads
+    const controller = new AbortController();
+    labelController = controller;
+    try {
+      while (unlabeled.length > 0) {
+        const targets = unlabeled;
+        const items = targets.map((t) => ({ key: String(t.id), mediaUrl: t.blobUrl! }));
+        labelRun = { total: targets.length, done: 0, keys: new Set(items.map((i) => i.key)) };
+        for (const t of targets) patch(t.id, { labeling: true });
+        await runAutoLabel(labelMode, media, items, applyLabel, controller.signal);
+      }
+    } catch (err) {
+      if (!isAbort(err)) for (const i of images) if (i.labeling) patch(i.id, { labeling: false });
+    } finally {
+      labelController = null;
+      labelRun = null;
+    }
+  }
+
+  function applyLabel(r: AutoLabelResult) {
+    const img = images.find((x) => String(x.id) === r.key);
+    if (!img) return;
+    img.labeling = false;
+    img.labelTried = true; // attempted (any outcome) — the drain labels each image once; failures go manual
+    if (labelRun?.keys.has(r.key)) labelRun.done += 1; // count only this pass's own targets
+    if (r.status === 'failed') return;
+    if (r.tags?.length) img.tags = [...new Set(r.tags)]; // chips are keyed on the tag string — keep unique
+    if (r.caption) img.caption = r.caption;
   }
 
   function onDrop(e: DragEvent) {
@@ -119,7 +166,7 @@
     input.value = ''; // let the same file be re-picked after a remove
   }
 
-  // ---- label editor (manual for now; auto-label is the next slice) ----
+  // ---- label editor: manual refinement of the auto-generated label for one image ----
   let editorOpen = $state(false);
   let editorId = $state(0);
   let newTag = $state('');
@@ -130,15 +177,69 @@
     newTag = '';
     editorOpen = true;
   }
+
+  // Accept one tag or a paste of comma/newline-separated tags; trim, drop blanks, dedupe against what's
+  // already there and within the paste.
   function addTag() {
-    const value = newTag.trim();
-    if (editing && value && !editing.tags.includes(value)) {
-      editing.tags = [...editing.tags, value];
-    }
+    if (!editing) return;
+    const existing = editing.tags;
+    const additions = [
+      ...new Set(
+        newTag
+          .split(/[,\n]/)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0 && !existing.includes(s))
+      ),
+    ];
+    if (additions.length) editing.tags = [...existing, ...additions];
     newTag = '';
   }
   function removeTag(tag: string) {
     if (editing) editing.tags = editing.tags.filter((t) => t !== tag);
+  }
+  function clearTags() {
+    if (editing) editing.tags = [];
+  }
+  // Backspace on an empty input removes the last chip — standard chip-input flow.
+  function tagKeydown(e: KeyboardEvent) {
+    if (e.key === 'Backspace' && newTag === '' && editing && editing.tags.length > 0) {
+      e.preventDefault();
+      editing.tags = editing.tags.slice(0, -1);
+    }
+  }
+
+  // Suggest tags that already exist elsewhere in THIS dataset (frequency-ranked), filtered by what's typed
+  // and not already on this image — keeps a dataset's vocabulary consistent, no external list needed.
+  const tagVocab = $derived.by(() => {
+    const freq = new Map<string, number>();
+    for (const img of images) for (const t of img.tags) freq.set(t, (freq.get(t) ?? 0) + 1);
+    return [...freq.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t);
+  });
+  const suggestions = $derived.by(() => {
+    if (!editing) return [];
+    const q = newTag.trim().toLowerCase();
+    const have = editing.tags;
+    return tagVocab.filter((t) => !have.includes(t) && (q === '' || t.toLowerCase().includes(q))).slice(0, 8);
+  });
+
+  // Re-run auto-label for this one image from inside the editor — clears its current label first, so an
+  // already-attempted image (labelTried) gets a fresh pass.
+  async function relabelOne(id: number) {
+    const img = images.find((x) => x.id === id);
+    if (!img || !img.blobUrl || img.labeling) return;
+    patch(id, { labeling: true, labelTried: false, tags: [], caption: '' });
+    try {
+      const item = [{ key: String(id), mediaUrl: img.blobUrl }];
+      await runAutoLabel(labelMode, media, item, applyLabel, new AbortController().signal);
+    } catch (err) {
+      if (!isAbort(err)) patch(id, { labeling: false });
+    }
+  }
+
+  // Focus the primary field (tag input / caption textarea) when the editor opens — this is a correction
+  // surface, the user came here to type. Dialog would otherwise land focus on the first chip's remove ✕.
+  function autofocusInput(node: HTMLElement) {
+    queueMicrotask(() => node.querySelector<HTMLElement>('input, textarea')?.focus());
   }
 
   // The trigger word is only prepended to a label that doesn't already contain it; where it's already
@@ -275,7 +376,14 @@
               </span>{/if}
             {#if blockedCount > 0}· <span class="text-red-400">{blockedCount} blocked</span>{/if}
           </b>
-          <Button variant="outline" size="xs" onclick={() => fileInput.click()}>＋ Add more</Button>
+          <div class="flex items-center gap-2">
+            {#if unlabeled.length > 0 || labelRun}
+              <Button size="xs" onclick={ensureLabeling} disabled={labelRun != null || unlabeled.length === 0}>
+                {#if labelRun}✨ Labeling… {labelRun.done}/{labelRun.total}{:else}✨ Auto-label {unlabeled.length}{/if}
+              </Button>
+            {/if}
+            <Button variant="outline" size="xs" onclick={() => fileInput.click()}>＋ Add more</Button>
+          </div>
         </div>
 
         <div class="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-3">
@@ -344,6 +452,8 @@
                   <div class="font-mono text-[11px] text-dark-2">
                     {img.status === 'uploading' ? 'uploading…' : img.status === 'blocked' ? 'blocked' : 'failed'}
                   </div>
+                {:else if img.labeling}
+                  <div class="font-mono text-[11px] text-primary">✨ labeling…</div>
                 {:else if img.tags.length === 0 && !img.caption}
                   <button
                     type="button"
@@ -405,7 +515,7 @@
 
 <!-- label editor -->
 <Dialog.Root bind:open={editorOpen}>
-  <Dialog.Content class="max-w-3xl">
+  <Dialog.Content class="sm:max-w-2xl">
     {#if editing}
       <Dialog.Header>
         <Dialog.Title>{labelMode === 'tag' ? 'Edit tags' : 'Edit caption'}</Dialog.Title>
@@ -413,31 +523,59 @@
       </Dialog.Header>
 
       {#if labelMode === 'tag'}
-        <div class="grid gap-4 sm:grid-cols-[220px_1fr]">
-          <img src={editing.previewUrl} alt="" class="w-full rounded border border-dark-4 object-cover" />
+        <div class="grid gap-4 sm:grid-cols-[200px_1fr]" use:autofocusInput>
+          <img
+            src={editing.previewUrl}
+            alt=""
+            class="max-h-48 w-full rounded border border-dark-4 object-cover sm:max-h-none"
+          />
           <div>
-            <div class="mb-2 font-mono text-xs uppercase tracking-wider text-dark-2">
-              Tags {#if triggerText}·
-                <span class="text-[#f59f00]">{triggerText}</span>
-                {tagsHaveTrigger(editing.tags) ? 'highlighted' : 'prepended'}{/if}
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Tags</span>
+              <div class="flex items-center gap-1">
+                <Button variant="ghost" size="xs" onclick={() => relabelOne(editing.id)} disabled={editing.labeling}>
+                  {editing.labeling ? '✨ labeling…' : '✨ Re-run'}
+                </Button>
+                {#if editing.tags.length > 0}
+                  <Button variant="ghost" size="xs" onclick={clearTags}>Clear all</Button>
+                {/if}
+              </div>
             </div>
-            <div class="flex min-h-[64px] flex-wrap content-start gap-1.5 rounded border border-dark-4 bg-dark-7 p-2.5">
-              {#if triggerText && !tagsHaveTrigger(editing.tags)}
-                <span class="rounded border border-[#f59f00]/30 bg-[#f59f00]/10 px-2 py-1 font-mono text-xs text-[#f59f00]">
+
+            {#if triggerText && !tagsHaveTrigger(editing.tags)}
+              <div class="mb-2 flex items-center gap-2 text-[11px] text-dark-2">
+                <span class="rounded border border-[#f59f00]/30 bg-[#f59f00]/10 px-2 py-0.5 font-mono text-[#f59f00]">
                   {triggerText}
+                </span>
+                <span class="font-mono">auto-prepended to every tag</span>
+              </div>
+            {/if}
+
+            <div class="flex min-h-[64px] flex-wrap content-start gap-1.5 rounded border border-dark-4 bg-dark-7 p-2.5">
+              {#if editing.tags.length === 0}
+                <span class="self-center font-mono text-[11px] text-dark-2">
+                  No tags yet — type below, paste comma-separated, or re-run auto-label.
                 </span>
               {/if}
               {#each editing.tags as t (t)}
                 <span
-                  class="inline-flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-xs {isTriggerTag(t)
+                  class="inline-flex items-center gap-0.5 rounded border py-1 pl-2 pr-1 font-mono text-xs {isTriggerTag(t)
                     ? 'border-[#f59f00]/30 bg-[#f59f00]/10 text-[#f59f00]'
                     : 'border-dark-4 bg-dark-6 text-dark-0'}"
                 >
                   {t}
-                  <button type="button" aria-label={`Remove ${t}`} onclick={() => removeTag(t)} class="text-dark-2 hover:text-red-400">✕</button>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${t}`}
+                    onclick={() => removeTag(t)}
+                    class="grid h-5 w-5 place-items-center rounded text-dark-1 hover:bg-red-500/20 hover:text-red-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  >
+                    ✕
+                  </button>
                 </span>
               {/each}
             </div>
+
             <form
               class="mt-2 flex gap-2"
               onsubmit={(e) => {
@@ -445,17 +583,47 @@
                 addTag();
               }}
             >
-              <Input bind:value={newTag} placeholder="Add a tag and press Enter" class="font-mono" />
+              <Input
+                bind:value={newTag}
+                onkeydown={tagKeydown}
+                placeholder="Add or paste tags…"
+                class="min-w-0 flex-1 font-mono"
+              />
               <Button type="submit" variant="outline">Add</Button>
             </form>
+
+            {#if suggestions.length > 0}
+              <div class="mt-2">
+                <div class="mb-1 font-mono text-[10px] uppercase tracking-wider text-dark-2">From this dataset</div>
+                <div class="flex flex-wrap gap-1">
+                  {#each suggestions as s (s)}
+                    <button
+                      type="button"
+                      onclick={() => {
+                        newTag = s;
+                        addTag();
+                      }}
+                      class="rounded border border-dark-4 bg-dark-6 px-2 py-0.5 font-mono text-[11px] text-dark-1 hover:border-primary hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    >
+                      + {s}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/if}
           </div>
         </div>
       {:else}
-        <div class="flex flex-col gap-3">
-          <img src={editing.previewUrl} alt="" class="h-44 w-full rounded border border-dark-4 object-contain" />
+        <div class="flex flex-col gap-3" use:autofocusInput>
+          <img src={editing.previewUrl} alt="" class="max-h-72 w-full rounded border border-dark-4 object-contain" />
           <div>
-            <div class="mb-2 font-mono text-xs uppercase tracking-wider text-dark-2">Caption</div>
-            <Textarea bind:value={editing.caption} rows={6} />
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Caption</span>
+              <Button variant="ghost" size="xs" onclick={() => relabelOne(editing.id)} disabled={editing.labeling}>
+                {editing.labeling ? '✨ labeling…' : '✨ Re-run'}
+              </Button>
+            </div>
+            <Textarea bind:value={editing.caption} rows={6} placeholder="Describe the image…" />
             <p class="mt-2 text-xs text-dark-2">
               {#if !triggerText}
                 No trigger word set.
@@ -468,10 +636,6 @@
           </div>
         </div>
       {/if}
-
-      <Dialog.Footer>
-        <Button onclick={() => (editorOpen = false)}>Done</Button>
-      </Dialog.Footer>
     {/if}
   </Dialog.Content>
 </Dialog.Root>
