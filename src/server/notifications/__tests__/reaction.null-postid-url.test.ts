@@ -27,12 +27,30 @@ import { reactionNotifications } from '~/server/notifications/reaction.notificat
  * render from the stored `details` JSON, so the emitter fix IS retroactive for
  * in-app notifications.
  *
- * ⚠️ These tests assert the emitter and the helper. They do NOT pin the page's
- * call site — reverting `[imageId].tsx` to a bare `.parse` while leaving the helper
- * exported and unused keeps every test here green and restores the production 500.
- * That call site is pinned by the convention guard
- * `src/server/services/__tests__/no-throwing-image-query-parse.test.ts`. Do not
- * read this file as covering it.
+ * 🔴 KNOWN GAP, and nothing currently closes it. These tests assert the emitter and
+ * the helper. They do NOT pin the page's call site: reverting `[imageId].tsx` to a
+ * bare `imagesQueryParamSchema.parse(router.query)`, while leaving the helper
+ * exported and unused, keeps every test in this file green — typecheck green, lint
+ * green — and restores the production 500. Verified by running that mutation.
+ *
+ * A regex-based convention guard was written for exactly this and then REMOVED
+ * before merge, deliberately. Three drafts were each green while blind, every one
+ * found by a reviewer running shapes through it rather than by reasoning: it matched
+ * line-by-line while its pattern spanned lines (prettier wraps this very call); its
+ * scan-reach floor tolerated losing every directory it watched; and its argument
+ * bound could not cross a nested call — so it missed the `zod-helpers.ts` idiom that
+ * its own docblock cited as the motivating example. The invariant is "a call whose
+ * callee resolves to this schema", which is a property of the syntax TREE. Every
+ * regex approximating it is a guess about how deeply the next author will nest, and
+ * it fails GREEN.
+ *
+ * The replacement is an AST check — resolve the callee of each `.parse`/`.parseAsync`
+ * back to its import — which also catches the aliasing and destructuring that no text
+ * matcher can. It is a separate PR on purpose, so it gets its own review instead of
+ * riding in on this one. `no-server-infra-in-app-graph.test.ts` already walks the
+ * tree with `typescript` this way.
+ *
+ * Until that lands: this file does not cover the page, and no other test does either.
  */
 
 const urlFor = (postId: number | null) =>

@@ -178,15 +178,13 @@ Worked examples of both fixes: the two retry tests in
 
 ### Convention guards
 
-25 live in `src/server/services/__tests__/no-*.test.ts`:
+24 live in `src/server/services/__tests__/no-*.test.ts`:
 `no-agent-ground-truth-write`, `no-coerce-boolean-in-api`, `no-direct-shared-module-mock`,
 `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
 ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
 `no-lint-rules-script-drift`,
 `no-module-scope-cache`, `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
-`no-sharp-outside-native-project`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`, `no-throwing-image-query-parse` (a bare `.parse` of
-`imagesQueryParamSchema` — one junk query param threw in a page render and returned a 500 on links the
-app had mailed its own users),
+`no-sharp-outside-native-project`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
 `no-unbounded-paging-fake`, `no-unguarded-billable-submit` (a user-token orchestrator submit must have its
 owner checked — see `assertWorkflowOwner`), `no-unguarded-user-text`, `no-unloadable-image-fixture`,
 `no-unmuteable-comment-processor`, `no-unscoped-email-verification-exemption`,
@@ -199,7 +197,7 @@ fail only in a full-suite run. Five were missing when this was last audited, on 
 wired in then. If the diff adds a guard, check it was wired into the script, and don't treat a green
 `test:lint-rules` as "all guards passed".
 
-`test:lint-rules` names 30 files today.
+`test:lint-rules` names 29 files today.
 
 Both numbers and the list are checked by `no-lint-rules-script-drift`, which reads the two phrasings
 above literally — edit the numbers, not the shapes.
