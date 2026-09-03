@@ -103,12 +103,16 @@ export const resetToDraftWithoutRequirements = createJob(
     // later flips those rows to Draft, and a stale clock carried forward lands in
     // exactly the same hole.
     //
-    // 🔴 Do NOT mirror this onto the "ModelVersion" statements above.
-    // ModelVersion."updatedAt" means "a creator edited this version" — see
-    // src/server/services/model-version.service.ts (raw SQL used specifically so
-    // Prisma does not bump it on system writes) — and remove-old-drafts' activity
-    // fence reads mv."updatedAt" as a creator-activity signal. Bumping it on a
-    // system sweep would make every swept version look freshly edited.
+    // This PR deliberately scopes itself to Model."updatedAt". The "ModelVersion"
+    // statements above are left alone — NOT because bumping that column on a
+    // system write is forbidden. It is not: unpublishModelById
+    // (src/server/services/model.service.ts) is a system/moderator take-down that
+    // raw-SQL-updates "ModelVersion" and sets "updatedAt" = NOW() on purpose,
+    // because the column is on the public v1 payload via
+    // src/server/selectors/modelVersion.selector.ts and a taken-down version
+    // otherwise serves a pre-take-down timestamp. Whether this sweep should do
+    // the same is a real question with a public-payload consequence, and it
+    // wants its own change and its own review rather than riding along here.
     await dbWrite.$executeRaw`
       UPDATE "Model" m
       SET

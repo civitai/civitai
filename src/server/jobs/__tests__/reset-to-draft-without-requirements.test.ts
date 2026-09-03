@@ -63,6 +63,55 @@ function versionUpdateSqls(): string[] {
   return executableStatements().filter((sql) => sql.startsWith('UPDATE "ModelVersion" '));
 }
 
+/**
+ * The `UPDATE "Model"` statement's SET clause, parsed into ordered
+ * `[target, value]` pairs.
+ *
+ * Split on commas at paren-depth 0, so the commas inside `jsonb_set(...)` and
+ * inside the CASE's `EXISTS (...)` subqueries do not fragment an assignment. No
+ * string literal in this statement contains a comma, so quote handling is not
+ * needed and is deliberately not attempted — if one is ever added, this helper
+ * has to learn about quotes rather than being loosened.
+ *
+ * 🔴 Reading the assignments as a LIST is the point. A `toContain` guard can only
+ * see a clause that was removed; it is blind to one that was ADDED. Injecting
+ * `"publishedAt" = now(),` or `"createdAt" = now(),` into this SET clause passed
+ * every guard in this file before this existed — and `publishedAt` is a column
+ * the codebase guards explicitly against spurious bumps elsewhere.
+ */
+function modelSetAssignments(): [string, string][] {
+  const sql = modelUpdateSql();
+  // The CASE and NOT EXISTS subqueries carry their own WHEREs, so the top-level
+  // one is located by the column it opens on, not by the first ` WHERE `.
+  const whereAt = sql.indexOf(` WHERE m."status"`);
+  expect(
+    whereAt,
+    'could not locate the top-level WHERE; every SET-clause guard would be vacuous'
+  ).toBeGreaterThan(0);
+  const setClause = sql.slice(sql.indexOf(' SET ') + ' SET '.length, whereAt);
+
+  const parts: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of setClause) {
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    if (ch === ',' && depth === 0) {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(current);
+
+  return parts.map((part) => {
+    const eq = part.indexOf(' = ');
+    expect(eq, `SET fragment is not an assignment: ${part.trim()}`).toBeGreaterThan(0);
+    return [part.slice(0, eq).trim(), part.slice(eq + 3).trim()] as [string, string];
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   // The job logs a per-batch progress line in the no-files branch.
@@ -120,32 +169,32 @@ describe('resetToDraftWithoutRequirements', () => {
       );
     });
 
+    // 🔴 The ledger. Fails when the SET list GROWS as well as when it shrinks —
+    // an added column write is otherwise invisible to every `toContain` above.
+    it('writes exactly status, meta and "updatedAt" — no other column', async () => {
+      await runJob();
+
+      expect(
+        modelSetAssignments().map(([target]) => target),
+        'this statement must not acquire another column write without a deliberate decision — "publishedAt" in particular is guarded against spurious bumps elsewhere'
+      ).toEqual(['status', 'meta', '"updatedAt"']);
+    });
+
     // The bump is deliberately unconditional across both CASE branches: the
     // Unpublished rows are later flipped to Draft by the backfill in
     // src/pages/api/admin/temp/backfill-swept-trained-models.ts, and a stale clock
-    // carried through that hop lands in exactly the same hole. A `CASE ... THEN
-    // now() ELSE "updatedAt" END` mutant is what this catches.
-    it('assigns "updatedAt" in the SET clause, unconditionally', async () => {
+    // carried through that hop lands in exactly the same hole. Pinning the VALUE
+    // (not just the presence of the target) is what catches a
+    // `CASE ... THEN now() ELSE m."updatedAt" END` mutant, and equally a
+    // `now() - INTERVAL '31 days'` one.
+    it('assigns "updatedAt" exactly now(), unconditionally', async () => {
       await runJob();
 
-      const sql = modelUpdateSql();
-      // The statement's CASE and NOT EXISTS subqueries carry their own WHEREs, so
-      // the top-level one is located by the column it opens on rather than by the
-      // first ` WHERE ` in the text.
-      const whereAt = sql.indexOf(` WHERE m."status"`);
+      const updatedAt = modelSetAssignments().find(([target]) => target === '"updatedAt"');
       expect(
-        whereAt,
-        'could not locate the top-level WHERE; the guards below would be vacuous'
-      ).toBeGreaterThan(0);
-      const setClause = sql.slice(sql.indexOf(' SET '), whereAt);
-      expect(
-        setClause.match(/"updatedAt" = CASE/),
-        'a conditional bump would leave the Unpublished rows carrying a stale clock into the backfill'
-      ).toBeNull();
-      expect(
-        setClause,
-        'the bump must be an assignment in the SET clause, not a term somewhere else in the statement'
-      ).toContain('"updatedAt" = now()');
+        updatedAt?.[1],
+        'a conditional or offset bump would leave rows carrying a stale clock into the backfill and the reaper'
+      ).toBe('now()');
     });
   });
 
@@ -165,26 +214,35 @@ describe('resetToDraftWithoutRequirements', () => {
       expect(sqls[1]).toContain(`'{unpublishedReason}', '"no-files"'`);
     });
 
-    // 🔴 A GUARD AGAINST A WELL-MEANING FUTURE EDIT, not a description of a bug.
+    // 🔴 A SCOPE GUARD, not a prohibition — read this before "fixing" it.
     //
-    // ModelVersion."updatedAt" means "a CREATOR edited this version". The codebase
-    // uses raw SQL specifically to keep Prisma's @updatedAt from firing on system
-    // writes — see the comment in src/server/services/model-version.service.ts
-    // ("a blurb re-materialization is not a creator edit"). remove-old-drafts'
-    // activity fence reads mv."updatedAt" as a creator-activity signal and SPARES
-    // any model whose version moved inside the window.
+    // Bumping ModelVersion."updatedAt" on a system write is NOT forbidden in this
+    // codebase. unpublishModelById (src/server/services/model.service.ts) is a
+    // system/moderator take-down that raw-SQL-updates "ModelVersion" and sets
+    // "updatedAt" = NOW() deliberately, because the column is on the public v1
+    // payload via src/server/selectors/modelVersion.selector.ts (returned by
+    // src/pages/api/v1/model-versions/[id].ts) and a taken-down version would
+    // otherwise serve a pre-take-down timestamp.
     //
-    // So mirroring the Model fix onto these statements would not be a harmless
-    // symmetry: it would make every system-swept version look freshly edited by
-    // its creator, permanently sparing rows the reaper is supposed to be able to
-    // collect — corrupting the fence rather than the clock.
-    it('does NOT bump ModelVersion."updatedAt" — that column is a creator-activity signal', async () => {
+    // What this guard pins is that THIS change did not quietly do that too. The
+    // sweep's effect on the public payload is a separate decision with its own
+    // consequences; it wants its own change and its own review. If you are making
+    // that decision on purpose, delete this test — do not work around it.
+    //
+    // (For the record, the reaper is NOT a reason to keep it out. If the sweep
+    // bumped mv."updatedAt" at T, the activity fence would spare the model only
+    // until T+30d — and with this change Model."updatedAt" is also T, so the
+    // reaper's own age test admits it at T+30d as well. Both expire at the same
+    // instant, so the net effect on the reaper is zero. The sweep cannot renew it
+    // either: all three of its statements require status = 'Published', which no
+    // longer holds after the first pass.)
+    it('keeps this change scoped to Model."updatedAt" and leaves ModelVersion alone', async () => {
       await runJob();
 
       for (const sql of versionUpdateSqls()) {
         expect(
           sql,
-          'bumping ModelVersion."updatedAt" on a system sweep corrupts the remove-old-drafts activity fence'
+          'changing ModelVersion."updatedAt" alters the public v1 payload; that is a separate decision, not a drive-by'
         ).not.toContain('"updatedAt"');
       }
     });

@@ -284,6 +284,27 @@ export const modelNotifications = createNotificationProcessor({
       message: `Your ${details.modelName} model that is in draft mode will be deleted in 1 week.`,
       url: `/models/${details.modelId}/${slugit(details.modelName)}`,
     }),
+    /**
+     * 🔴 This predicate must stay in step with the reaper's in
+     * src/server/jobs/remove-old-drafts.ts. The message promises deletion in 1
+     * week, so every term the reaper uses to decide what it destroys has to be
+     * mirrored here or the promise is false. Until 2026-09 only the status and
+     * age terms were carried, so the notification would have warned every old
+     * Draft regardless of whether the reaper could touch it.
+     *
+     * The two are NOT one shared SQL string, deliberately: the reaper spells the
+     * download term as an INNER `JOIN "ModelMetric"` and this query as an
+     * EXISTS, and the age windows differ on purpose (23 days here, 30 there).
+     * `old-draft-reaper-parity.test.ts` is the seam guard that keeps the terms
+     * they DO share from drifting apart.
+     *
+     * ⚠ APPROXIMATION, not an exact prediction. This evaluates at day 23 and the
+     * reaper acts at day 30, so `downloadCount` can cross 10 in between and new
+     * version/file activity can appear. A model warned here may therefore be
+     * spared later. That is the safe direction — warn, then spare — and it is
+     * the opposite of the pre-2026-09 behaviour, which warned models the reaper
+     * was never going to touch at all.
+     */
     prepareQuery: ({ lastSent }) => `
       with to_add AS (
         SELECT DISTINCT
@@ -296,6 +317,21 @@ export const modelNotifications = createNotificationProcessor({
         FROM "Model" m
         WHERE m.status IN ('Draft')
         AND m."updatedAt" BETWEEN '${lastSent}'::timestamp - INTERVAL '23 days' AND NOW() - INTERVAL '23 days'
+        AND m."availability" != 'Private'::"Availability"
+        -- EXISTS, not a JOIN, but the same semantics as the reaper's INNER
+        -- JOIN + DISTINCT: a model with no "ModelMetric" row is not reapable,
+        -- so it must not be warned either.
+        AND EXISTS (SELECT 1 FROM "ModelMetric" mm
+                     WHERE mm."modelId" = m.id
+                       AND mm."downloadCount" < 10)
+        AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv
+                         WHERE mv."modelId" = m.id
+                           AND (mv."createdAt" > now() - INTERVAL '30 days'
+                             OR mv."updatedAt" > now() - INTERVAL '30 days'))
+        AND NOT EXISTS (SELECT 1 FROM "ModelVersion" mv2
+                         JOIN "ModelFile" mf ON mf."modelVersionId" = mv2.id
+                         WHERE mv2."modelId" = m.id
+                           AND mf."createdAt" > now() - INTERVAL '30 days')
       )
       SELECT
         concat('old-draft:', details->>'modelId', ':', details->>'updatedAt') "key",
