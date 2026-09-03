@@ -221,8 +221,8 @@ const DECLARED_MIGRATIONS: Record<string, DeclaredMigration> = {
           '"redirectUris", "allowedOrigins", "grants", "allowedScopes", "isConfidential", ' +
           '"accessMode", "userId", "isVerified", "createdAt", "updatedAt" ) SELECT ' +
           "'civitai-link-desktop', NULL, 'Civitai Link', 'Official Civitai Link desktop app. " +
-          'Connects your local Stable Diffusion install to Civitai so you can send models to it ' +
-          "from the site, and reads your Vault.', NULL, ARRAY[]::TEXT[], ARRAY[]::TEXT[], " +
+          'Downloads models from Civitai onto the machine you generate on and files them where ' +
+          "your app expects, and reads your Vault.', NULL, ARRAY[]::TEXT[], ARRAY[]::TEXT[], " +
           "ARRAY['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token']::TEXT[], " +
           "159383553, false, 'open', -1, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP WHERE " +
           'EXISTS (SELECT 1 FROM "User" WHERE "id" = -1) ON CONFLICT ("id") DO NOTHING;',
