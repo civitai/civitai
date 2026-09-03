@@ -129,24 +129,85 @@ function viewportHeightPx(): number | null {
 }
 
 /**
+ * Everything inside the host frame that is NOT the iframe — the `AppBlockChrome`
+ * bar, plus the frame's own borders — measured live rather than assumed.
+ *
+ * 🔴 THE IFRAME IS NOT THE WIDGET. `framed()` renders the chrome ABOVE the
+ * iframe inside one bordered box, so a viewport-sized iframe produces a
+ * `viewport + chrome` widget. Measured at 390x640: iframe 640, frame 738, chrome
+ * 98 — a 738px widget on a 640px screen, i.e. layer 4 bounding exactly the wrong
+ * box. The clamp's budget is therefore `viewport - overhead`.
+ *
+ * MEASURED, NEVER HARDCODED. `CHROME_BAR_PX` is a *resting* contract for one
+ * row at one breakpoint; the real bar wraps, changes with theme and Mantine
+ * sizing, and has already gone stale once in this arc. Reading
+ * `frame.offsetHeight - iframe.offsetHeight` is invariant to whatever height the
+ * iframe currently has, so it measures the overhead itself — and it stays
+ * correct if the frame ever gains another sibling.
+ *
+ * Returns 0 (i.e. no overhead, plain viewport clamp) whenever the measurement is
+ * not usable — either element unmounted, or a non-positive difference. Same
+ * degradation rule as `viewportHeightPx`: a failed measurement must never make
+ * the budget SMALLER than the honest fallback.
+ *
+ * KNOWN LIMIT, stated rather than implied: this is re-measured when the clamp
+ * RUNS — on a RESIZE_IFRAME and on a window `resize`. A chrome bar that changes
+ * height with no viewport change (a menu opening, a late font swap) does not
+ * itself re-trigger the clamp, so the widget can be off by that delta until the
+ * next event. Closing that would need a ResizeObserver on the chrome, which is
+ * not warranted for a bound whose job is "roughly one screen".
+ */
+function frameOverheadPx(frame: HTMLElement | null, iframe: HTMLElement | null): number {
+  if (!frame || !iframe) return 0;
+  const overhead = frame.offsetHeight - iframe.offsetHeight;
+  return Number.isFinite(overhead) && overhead > 0 ? overhead : 0;
+}
+
+/**
  * The height layers 2–4, as one pure function of a height the block has already
- * stated and the manifest's declared bounds. Layer 1 (the `isFinite`/positive
- * value guard) stays at the call site, because it decides whether there is a
- * stated height at all.
+ * stated, the manifest's declared bounds, and the measured frame overhead. Layer
+ * 1 (the `isFinite`/positive value guard) stays at the call site, because it
+ * decides whether there is a stated height at all.
  *
  * Kept out of the component so the RESIZE_IFRAME path and the viewport-change
  * re-clamp cannot drift apart — they are the same four rules applied to the same
  * stashed number, differing only in what triggered them.
+ *
+ * 🔴 WHAT LAYER 4 DOES AND DOES NOT GUARANTEE. It bounds every height the BLOCK
+ * can state: whatever a block reports over RESIZE_IFRAME, the framed widget ends
+ * up no taller than the viewport. It does NOT bound the PUBLISHER's declared
+ * `iframe.minHeight`, which deliberately still wins — `Math.max(min, budget)`,
+ * not a bare `budget`, so the manifest's own reserve is not silently undone and
+ * a short/failed block keeps the space it asked for.
+ *
+ * That floor is now capped at 800 in the manifest contract
+ * (`MIN_HEIGHT_MAX_CEILING` in
+ * `src/server/services/block-manifest-validator.service.ts`, mirrored in
+ * `public/schemas/app-block/v1.json`); it was 4000, at which a single
+ * schema-legal field reproduced this defect in full. 🔴 The cap does NOT close
+ * the residue, and must not be read as doing so: measured against the complete
+ * approved population (11 of 11 blocks), declared floors are 400 x1, 600 x5,
+ * 640 x3, 700 x2 — so at a 640px viewport, where the budget after ~98px of
+ * chrome is 542, 10 of 11 blocks are bound by their OWN floor and overflow by
+ * 58-158px. At an 844px viewport (budget 746) all 11 fit. Shrinking that
+ * residue is a per-publisher change or a change to which of floor/viewport
+ * wins, not a constant — deliberately out of scope here.
  */
-function clampBlockHeight(h: number, min: number, max: number | null | undefined): number {
+function clampBlockHeight(
+  h: number,
+  min: number,
+  max: number | null | undefined,
+  overhead: number
+): number {
   let next = Math.max(h, min);
   if (typeof max === 'number') next = Math.min(next, max);
   next = Math.min(next, HARD_HEIGHT_CEILING);
   const viewport = viewportHeightPx();
-  // Layer 4. `Math.max(min, viewport)` — not a bare `viewport` — so the
-  // manifest's floor still wins on a viewport shorter than it, rather than the
-  // clamp silently undoing the `Math.max(h, min)` above.
-  if (viewport !== null) next = Math.min(next, Math.max(min, viewport));
+  // Layer 4. The budget is the viewport MINUS the chrome the host renders above
+  // the iframe, so it is the whole widget that fits the screen rather than the
+  // iframe alone. `Math.max(min, …)` for the publisher-floor reason in the
+  // docblock above.
+  if (viewport !== null) next = Math.min(next, Math.max(min, viewport - overhead));
   return next;
 }
 
@@ -189,7 +250,8 @@ function storageErrorMessage(err: unknown): string {
  *   2. Wait for BLOCK_READY (≤10s). Timeout shows BlockFallback("timeout").
  *   3. BLOCK_ERROR with `fatal: true` shows BlockFallback("fatal_block_error").
  *   4. RESIZE_IFRAME updates the iframe height, clamped to manifest bounds and
- *      to the viewer's viewport (see `clampBlockHeight`).
+ *      sized so the FRAMED WIDGET (chrome + iframe) fits the viewer's viewport
+ *      (see `clampBlockHeight`).
  *   5. Page-visibility change drives SUSPEND / RESUME.
  *   6. Token rotation triggers TOKEN_REFRESH (host-pushed) with the new
  *      wrapped token. A block-initiated REQUEST_TOKEN is answered CONDITIONALLY:
@@ -994,6 +1056,10 @@ export function IframeHost({
   // `getServerSideProps` conjunction, not just the pages flag.
   const features = useFeatureFlags();
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  // The host trust frame (`framed()` below) — the box the VIEWER sees, which is
+  // the chrome bar plus the iframe. Needed so layer 4 of the height clamp can
+  // measure its own overhead rather than assume it; see `frameOverheadPx`.
+  const frameRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<Status>('loading');
   // Mirror of `status`, read by the four status-gated message handlers
   // (RESIZE_IFRAME, REQUEST_SIGN_IN, REQUEST_CONSENT, OPEN_BUZZ_PURCHASE) via
@@ -1186,44 +1252,59 @@ export function IframeHost({
   //   3. HARD_HEIGHT_CEILING — independent backstop in case maxHeight is
   //      null (allowed by the manifest validator) and the block sends a
   //      huge number. This is the OOM guard.
-  //   4. The viewer's viewport height — the layer that binds the COMMON case.
-  //      `iframe.maxHeight` is `["integer","null"]` in the manifest schema and
-  //      `iframe` requires no fields at all, so a manifest that simply omits it
-  //      is bounded only by layer 3: a block self-reporting 3000px got a 3000px
-  //      iframe inside a ~640px phone viewport. The block scrolls internally
-  //      instead, which is the intended outcome. Read at CALL time, never
-  //      captured at mount — a value stashed at mount is stale after a rotate or
-  //      a browser-chrome resize. See `clampBlockHeight`.
+  //   4. The viewer's viewport height, MINUS the host chrome rendered above the
+  //      iframe — the layer that binds the COMMON case, and it bounds the framed
+  //      WIDGET rather than the iframe alone. `iframe.maxHeight` is
+  //      `["integer","null"]` in the manifest schema and `iframe` requires no
+  //      fields at all, so a manifest that simply omits it is bounded only by
+  //      layer 3: a block self-reporting 3000px got a 3000px iframe inside a
+  //      ~640px phone viewport. The block scrolls internally instead, which is
+  //      the intended outcome. Both the viewport AND the chrome overhead are
+  //      read at CALL time, never captured at mount — either value stashed at
+  //      mount is stale after a rotate, a browser-chrome resize, or a chrome bar
+  //      that re-wraps. What it does NOT bound is the publisher's `minHeight`;
+  //      see `clampBlockHeight`.
   const applyHeight = useCallback(
     (h: unknown) => {
       if (typeof h !== 'number' || !Number.isFinite(h) || h <= 0) return;
       const min = install.manifest.iframe?.minHeight ?? 200;
       const max = install.manifest.iframe?.maxHeight;
       reportedHeightRef.current = h;
-      setIframeHeight(clampBlockHeight(h, min, max));
+      setIframeHeight(
+        clampBlockHeight(h, min, max, frameOverheadPx(frameRef.current, iframeRef.current))
+      );
     },
     [install.manifest.iframe?.minHeight, install.manifest.iframe?.maxHeight]
   );
 
   // Layer 4 is only a bound if it MOVES with the viewport. A block that reported
-  // 3000px while the viewport was 900px tall must shrink to 640 when the viewer
-  // rotates to a 640px one — otherwise the clamp is a one-shot decided by
-  // whatever the viewport happened to be at handshake time.
+  // 3000px while the viewport was 900px tall must shrink when the viewer rotates
+  // to a 640px one — otherwise the clamp is a one-shot decided by whatever the
+  // viewport happened to be at handshake time.
   //
   // Host-side only: nothing is posted back to the block. The re-clamp reads the
   // block's own last stated height out of the ref and re-applies the same four
   // rules, so a viewport change can shrink AND re-grow within the bounds the
-  // block already asked for.
+  // block already asked for. The chrome overhead is re-measured on each event
+  // too, so a bar that re-wraps at the new width is accounted for.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const min = install.manifest.iframe?.minHeight ?? 200;
     const max = install.manifest.iframe?.maxHeight;
     const onViewportChange = () => {
       const reported = reportedHeightRef.current;
-      // Nothing stated yet: the iframe is still at its minHeight reserve, which
-      // layer 4 would not move anyway.
+      // 🔴 A TYPE NARROWING, NOT A COVERED BRANCH — labelled so nobody reads it
+      // as a guard that is tested. It is behaviourally INERT on every reachable
+      // input: the ref is null only pre-handshake, when `iframeHeight` is already
+      // `min`, and the clamp of any value against `Math.max(min, …)` returns
+      // `min` there anyway. It exists because `reportedHeightRef.current` is
+      // `number | null` and `clampBlockHeight` takes a `number`. The suite's
+      // pre-handshake case is an INVARIANT guard on that equivalence, not
+      // regression coverage for this line.
       if (reported === null) return;
-      setIframeHeight(clampBlockHeight(reported, min, max));
+      setIframeHeight(
+        clampBlockHeight(reported, min, max, frameOverheadPx(frameRef.current, iframeRef.current))
+      );
     };
     window.addEventListener('resize', onViewportChange);
     return () => window.removeEventListener('resize', onViewportChange);
@@ -1555,7 +1636,8 @@ export function IframeHost({
       // Validate the shape — payload comes from cross-origin iframe code and
       // is functionally untyped. Reject anything that isn't {height?:number}.
       // (`applyHeight` is the value guard: it drops anything non-finite/≤0 and
-      // clamps to manifest min/max + HARD_HEIGHT_CEILING + the viewport.)
+      // clamps to manifest min/max + HARD_HEIGHT_CEILING + the viewport
+      // budget left over after the host chrome.)
       const payload =
         raw && typeof raw === 'object' && 'height' in raw ? (raw as { height?: unknown }) : {};
       // Record the offered height for the ready-transition effect below to apply
@@ -2690,6 +2772,7 @@ export function IframeHost({
   // a visible frame on failure.
   const framed = (children: ReactNode) => (
     <Box
+      ref={frameRef}
       data-testid="app-block-frame"
       data-block-instance-id={install.blockInstanceId}
       style={{

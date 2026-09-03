@@ -17,9 +17,29 @@ import type * as TrpcMod from '~/utils/trpc';
  * `["integer","null"]` and `iframe` declares NO required fields, so a manifest
  * that simply OMITS `maxHeight` is bounded only at 8000px. A block
  * self-reporting 3000px therefore got a 3000px-tall iframe inside a ~640px
- * phone viewport — the slot swallowed the page. Layer 4 bounds the iframe to
- * `Math.max(minHeight, viewportHeight)`; the block scrolls internally instead,
- * which is the intended outcome.
+ * phone viewport — the slot swallowed the page. Layer 4 bounds the block's
+ * stated height to `Math.max(minHeight, viewport − chrome)`; the block scrolls
+ * internally instead, which is the intended outcome.
+ *
+ * 🔴 WHAT LAYER 4 DOES NOT BOUND, SO NO ONE READS THESE CASES AS WIDER THAN THEY
+ * ARE: the publisher's own `iframe.minHeight`. `Math.max(min, …)` means the
+ * manifest floor always wins. That floor is now capped at 800 by the manifest
+ * contract (`MIN_HEIGHT_MAX_CEILING` in
+ * `src/server/services/block-manifest-validator.service.ts`; guarded against the
+ * canonical schema by
+ * `src/server/services/blocks/__tests__/manifest-iframe-height.schema-drift.test.ts`)
+ * — it was 4000, at which one schema-legal field reproduced this defect in full.
+ * The cap does not close the residue: measured over the complete approved
+ * population (11 of 11), floors are 400 x1 / 600 x5 / 640 x3 / 700 x2, so at a
+ * 640px viewport 10 of 11 are bound by their own floor and overflow by 58-158px.
+ * Every case below fixes a modest `minHeight` and varies what the BLOCK states,
+ * which is the surface layer 4 actually governs.
+ *
+ * 🔴 ASSERT THE FRAME, NOT THE IFRAME. `framed()` renders AppBlockChrome above
+ * the iframe inside one bordered box, so a viewport-sized IFRAME is a
+ * `viewport + chrome` WIDGET. Measured at 390x640 before the fix: iframe 640,
+ * frame 738, chrome 98 — an iframe-only assertion passes that straight through,
+ * which is exactly how the first version of this suite did.
  *
  * 🔴 THE HARNESS WILL MAKE THIS FILE PASS VACUOUSLY IF YOU LET IT. Vitest's
  * browser default viewport is 414x896 (measured: `resolved.browser.viewport
@@ -27,9 +47,9 @@ import type * as TrpcMod from '~/utils/trpc';
  * .tsx` sets none. At 896px tall, every height any neighbouring IframeHost suite
  * asserts (640, 700, 800) is already UNDER the bound, so the clamp never fires
  * and a test written without `page.viewport(...)` cannot tell layer 4 from its
- * absence. Every test here calls `page.viewport(...)` FIRST, and
- * `assertViewportHeight` re-reads `window.innerHeight` afterwards so a
- * `page.viewport` that silently did not take is a failure rather than a green.
+ * absence. Every test here goes through `setViewport`, which calls
+ * `page.viewport(...)` and then re-reads `window.innerHeight` so a viewport that
+ * silently did not take is a failure rather than a green.
  *
  * 🔴 THIS SUITE IS THE WHOLE COVERAGE, AND DELIBERATELY SO. `IframeHost` is the
  * only `RESIZE_IFRAME` consumer in `src/`; the full-page sibling
@@ -118,7 +138,8 @@ const SAME_ORIGIN_SRC = `${window.location.origin}/`;
 
 /**
  * Fixture geometry. Every number is distinct from every other AND from every
- * constant the assertions name, so no assertion can be satisfied by a collision:
+ * constant the assertions or the SOURCE name, so no assertion can be satisfied
+ * by a collision:
  *
  *   PHONE_H  640  — the bound under test.
  *   TALL_H   900  — a second viewport, for the re-clamp on resize.
@@ -126,8 +147,15 @@ const SAME_ORIGIN_SRC = `${window.location.origin}/`;
  *                   demonstrably what acts) and well UNDER HARD_HEIGHT_CEILING
  *                   (8000), so layer 3 cannot be what produces a pass.
  *   SHORT    400  — under both viewports, so the clamp must NOT fire.
- *   MIN_H    200  — the manifest floor.
+ *   MIN_H    160  — the manifest floor.
  * `maxHeight` is ABSENT: that omission is the gap this file exists for.
+ *
+ * 🔴 MIN_H IS 160 AND NOT 200 FOR A MEASURED REASON. The source defaults the
+ * floor with `install.manifest.iframe?.minHeight ?? 200`, so a fixture floor of
+ * 200 is numerically identical to the source's own literal — and a mutant that
+ * replaces the `min` argument with a hardcoded `200` then SURVIVES the whole
+ * file (6 passed). 160 makes the fixture value and the source literal disagree,
+ * which is the only thing that can see that mutant.
  */
 const PHONE: [number, number] = [390, 640];
 const PHONE_H = 640;
@@ -135,7 +163,7 @@ const TALL: [number, number] = [390, 900];
 const TALL_H = 900;
 const REPORT = 3000;
 const SHORT = 400;
-const MIN_H = 200;
+const MIN_H = 160;
 
 function makeInstall(iframeOverrides: Record<string, unknown> = {}): BlockInstall {
   return {
@@ -179,10 +207,30 @@ const context: ModelSlotContext = {
 
 const iframeEl = () => page.getByTestId('block-iframe').element() as HTMLIFrameElement;
 const iframeQuery = () => page.getByTestId('block-iframe').query() as HTMLIFrameElement | null;
+const frameEl = () => page.getByTestId('app-block-frame').element() as HTMLElement;
+const chromeEl = () => page.getByTestId('app-block-chrome').element() as HTMLElement;
 
 /** The height the host has actually written onto the iframe element. */
 function appliedHeight(): number {
   return Number.parseFloat(iframeEl().style.height);
+}
+
+/**
+ * 🔴 THE OBSERVABLE THAT MATTERS — the LAID-OUT height of the whole widget the
+ * viewer sees, chrome bar included.
+ *
+ * `appliedHeight()` above reads the iframe alone, and an iframe-only assertion
+ * is exactly how the first version of this suite passed while the widget still
+ * overflowed the screen: at 390x640 the iframe was a correct 640 and the frame
+ * was 738. Anything claiming "fits the viewport" must assert THIS number.
+ */
+function frameHeight(): number {
+  return frameEl().getBoundingClientRect().height;
+}
+
+/** The host chrome's own laid-out height — measured, never assumed. */
+function chromeHeight(): number {
+  return chromeEl().getBoundingClientRect().height;
 }
 
 function postFromBlock(type: string, payload?: unknown) {
@@ -229,13 +277,13 @@ async function setViewport([w, h]: [number, number]) {
   ).toBe(h);
 }
 
-/** Render at a viewport, hand the block ready, and return the applied height. */
+/** Render at a viewport and hand the block ready. */
 async function renderReady(
   viewport: [number, number],
   iframeOverrides: Record<string, unknown> = {}
 ) {
   await setViewport(viewport);
-  renderWithProviders(
+  const rendered = renderWithProviders(
     <IframeHost
       install={makeInstall(iframeOverrides)}
       context={context}
@@ -249,29 +297,71 @@ async function renderReady(
     'precondition: the iframe should start at the manifest minHeight, so a later pass ' +
       'cannot be "it was already there"'
   ).toBe(MIN_H);
+  return rendered;
 }
 
 describe('IframeHost height layer 4 — the viewport clamp', () => {
-  test('a 3000px self-report at a 640px viewport is clamped to the viewport, not honoured', async () => {
+  test('a 3000px self-report at a 640px viewport leaves the WHOLE FRAMED WIDGET inside the viewport', async () => {
+    // 🔴 THE ASSERTION IS ON THE FRAME, NOT THE IFRAME, AND THAT IS THE POINT.
+    // `framed()` renders AppBlockChrome ABOVE the iframe inside one bordered box,
+    // so bounding the iframe at the viewport still yields a `viewport + chrome`
+    // widget. Measured before the fix at 390x640: iframe 640 (correct), frame
+    // 738, chrome 98 — a 738px widget on a 640px screen, which an iframe-only
+    // assertion passes straight through.
     await renderReady(PHONE);
 
     postFromBlock('RESIZE_IFRAME', { height: REPORT });
 
+    // 🔴 `toBe(PHONE_H)`, NOT `toBeLessThanOrEqual` — measured, the loose form is
+    // satisfied by the PRE-UPDATE state (the minHeight reserve, 160 + 98 = 258
+    // ≤ 640), so `vi.waitFor` returns before the resize has been applied and the
+    // assertions after it grade the wrong frame. Requiring the widget to fill the
+    // viewport exactly is both the real property and a condition the initial
+    // state cannot meet.
     await vi.waitFor(() =>
       expect(
-        appliedHeight(),
-        `layer 4 did not bound the slot: the block asked for ${REPORT}px inside a ${PHONE_H}px ` +
-          `viewport and the host applied ${appliedHeight()}px. With no manifest maxHeight the ` +
-          `only other bound is HARD_HEIGHT_CEILING (8000), which cannot produce ${PHONE_H}.`
+        frameHeight(),
+        `layer 4 did not bound the WIDGET: the block asked for ${REPORT}px inside a ${PHONE_H}px ` +
+          `viewport and the framed widget is ${frameHeight()}px (iframe ${appliedHeight()}px + ` +
+          `chrome ${chromeHeight()}px). With no manifest maxHeight the only other bound is ` +
+          `HARD_HEIGHT_CEILING (8000), which cannot produce ${PHONE_H}.`
       ).toBe(PHONE_H)
     );
+
+    // The iframe therefore takes exactly the budget the chrome leaves. The chrome
+    // is MEASURED here, never assumed: hardcoding the 98px observed above is one
+    // theme or breakpoint away from wrong.
+    expect(
+      appliedHeight(),
+      `the iframe should take exactly the viewport budget left by the chrome: viewport ` +
+        `${PHONE_H} − chrome ${chromeHeight()} = ${
+          PHONE_H - chromeHeight()
+        }, got ${appliedHeight()}`
+    ).toBe(PHONE_H - chromeHeight());
+
+    // Nothing below the widget is pushed off-screen.
+    expect(
+      document.documentElement.scrollHeight,
+      `the document overflows the viewport by ` +
+        `${document.documentElement.scrollHeight - PHONE_H}px`
+    ).toBeLessThanOrEqual(PHONE_H);
   });
 
   test('a 400px self-report at a 640px viewport is honoured unchanged — the clamp is a ceiling, not a pin', async () => {
     // 🔴 The negative half, and it is not optional: without it a mutant that
-    // replaces the clamp with `next = viewportHeight` outright satisfies the test
-    // above and survives. 400 ≠ 640, so this one sees it.
+    // replaces the clamp with `next = budget` outright satisfies the test above
+    // and survives. 400 ≠ the budget, so this one sees it.
     await renderReady(PHONE);
+
+    // Precondition, so this test cannot silently change meaning if the chrome
+    // ever grows past 240px and the budget drops below SHORT.
+    expect(
+      PHONE_H - chromeHeight(),
+      `fixture precondition broken: the ${PHONE_H}px viewport leaves only ` +
+        `${PHONE_H - chromeHeight()}px after ${chromeHeight()}px of chrome, which is not more ` +
+        `than the ${SHORT}px this test reports — the clamp would legitimately fire and this ` +
+        `case would stop testing what it says it does`
+    ).toBeGreaterThan(SHORT);
 
     postFromBlock('RESIZE_IFRAME', { height: SHORT });
 
@@ -285,15 +375,16 @@ describe('IframeHost height layer 4 — the viewport clamp', () => {
   });
 
   test('the manifest minHeight still wins on a viewport shorter than it', async () => {
-    // `Math.max(min, viewport)`, not a bare `viewport`: a clamp that ignored the
-    // floor would undo the manifest's own reserve and pin the slot at 100px.
+    // `Math.max(min, budget)`, not a bare `budget`: a clamp that ignored the
+    // floor would undo the manifest's own reserve and pin the slot at the
+    // viewport (or, once the chrome is subtracted, below it).
     //
     // 🔴 This assertion has the shape of a reassuring ZERO — "the height did not
     // move off minHeight" — which a RESIZE_IFRAME that was never delivered would
     // also produce. What rules that out is the mutation control rather than
-    // anything visible here: replacing `Math.max(min, viewport)` with a bare
-    // `viewport` fails this test with `not 100px`, i.e. the message reports the
-    // VIEWPORT height, so the message did arrive and did drive the clamp.
+    // anything visible here: replacing `Math.max(min, budget)` with a bare
+    // `budget` fails this test reporting the BUDGET, so the message did arrive
+    // and did drive the clamp.
     await renderReady([320, 100]);
 
     postFromBlock('RESIZE_IFRAME', { height: REPORT });
@@ -338,26 +429,35 @@ describe('IframeHost height layer 4 — re-clamp on viewport change', () => {
     await renderReady(PHONE);
 
     postFromBlock('RESIZE_IFRAME', { height: REPORT });
+    // Exact, for the reason spelled out in the first test: a `<=` wait is
+    // satisfied by the pre-update minHeight reserve and would capture `atPhone`
+    // below as the reserve rather than the clamped height.
     await vi.waitFor(() =>
-      expect(appliedHeight(), `the ${PHONE_H}px viewport did not bound a ${REPORT}px report`).toBe(
+      expect(frameHeight(), `the ${PHONE_H}px viewport did not bound a ${REPORT}px report`).toBe(
         PHONE_H
       )
     );
+    const atPhone = appliedHeight();
 
     // Rotate to the tall viewport. Nothing is re-sent by the block, and the host
     // must re-derive from what the block STATED (3000), not from what it applied
-    // (640) — a host that re-clamped its own clamped value could only ever
-    // ratchet downward and would stay at 640 here.
+    // — a host that re-clamped its own clamped value could only ever ratchet
+    // downward and would stay at the phone-sized height here.
     await setViewport(TALL);
     await vi.waitFor(() =>
       expect(
         appliedHeight(),
-        `the slot did not re-grow when the viewport did: the block stated ${REPORT}px and the ` +
-          `viewport is now ${TALL_H}px, so the host must apply ${TALL_H}px and not ` +
-          `${appliedHeight()}px — it is either not listening for viewport changes at all, or ` +
-          `re-clamping its own clamped value rather than the block's stated height.`
-      ).toBe(TALL_H)
+        `the slot did not re-grow when the viewport did: the block stated ${REPORT}px, the ` +
+          `viewport is now ${TALL_H}px, and the host still applies ${appliedHeight()}px (it was ` +
+          `${atPhone}px at the ${PHONE_H}px viewport) — it is either not listening for viewport ` +
+          `changes at all, or re-clamping its own clamped value rather than the block's stated ` +
+          `height.`
+      ).toBe(TALL_H - chromeHeight())
     );
+    expect(
+      frameHeight(),
+      `the re-grown widget overflows the ${TALL_H}px viewport at ${frameHeight()}px`
+    ).toBeLessThanOrEqual(TALL_H);
 
     // …and back down, so the bound is shown to track the viewport in both
     // directions rather than only ratcheting one way.
@@ -365,16 +465,56 @@ describe('IframeHost height layer 4 — re-clamp on viewport change', () => {
     await vi.waitFor(() =>
       expect(
         appliedHeight(),
-        `the slot did not shrink on a viewport change: it was ${TALL_H}px, the viewport is now ` +
-          `${PHONE_H}px, and the host still applies ${appliedHeight()}px.`
-      ).toBe(PHONE_H)
+        `the slot did not shrink on a viewport change: the viewport is now ${PHONE_H}px and the ` +
+          `host still applies ${appliedHeight()}px.`
+      ).toBe(atPhone)
     );
   });
 
-  test('a viewport change before the block has stated any height leaves the slot at minHeight', async () => {
-    // The resize listener is registered at mount, so it runs while the block is
-    // still pre-handshake. It must be a no-op then rather than writing a height
-    // the block never asked for.
+  test('shrinking the viewport BELOW the manifest floor falls back to the floor, not through it', async () => {
+    // 🔴 WITHOUT THIS CASE THE RE-CLAMP'S `min` ARGUMENT IS UNTESTED. Measured: a
+    // mutant hardcoding the source's own default (`clampBlockHeight(reported,
+    // 200, …)`) in the re-clamp call site SURVIVED the rest of this file — every
+    // other re-clamp case runs at a viewport where the BUDGET wins, so which
+    // number is passed as the floor never shows. Only a viewport small enough for
+    // the floor to win can see it, and only because MIN_H is not 200.
+    await renderReady(PHONE);
+
+    postFromBlock('RESIZE_IFRAME', { height: REPORT });
+    await vi.waitFor(() =>
+      expect(
+        frameHeight(),
+        `setup for the floor case: the widget should first settle at the ${PHONE_H}px viewport ` +
+          `before it is shrunk, and it is ${frameHeight()}px`
+      ).toBe(PHONE_H)
+    );
+
+    await setViewport([320, 100]);
+
+    await vi.waitFor(() =>
+      expect(
+        appliedHeight(),
+        `the re-clamp used the wrong floor: the manifest declares minHeight ${MIN_H} and the ` +
+          `viewport (100px) leaves less than that, so the host must fall back to ${MIN_H}px and ` +
+          `not ${appliedHeight()}px`
+      ).toBe(MIN_H)
+    );
+  });
+
+  /**
+   * 🔴 AN INVARIANT GUARD, NOT REGRESSION COVERAGE — labelled so nobody counts it
+   * as the latter. The line it corresponds to (`if (reported === null) return;`)
+   * is a TYPE NARROWING and is behaviourally inert on every reachable input:
+   * pre-handshake the height state is already `min`, and clamping anything
+   * against `Math.max(min, budget)` at that moment returns `min` too, so
+   * neutering the early-out changes nothing observable. Deleting the line is not
+   * possible without a `??` because the ref is `number | null`.
+   *
+   * What this case genuinely pins is that equivalence: a viewport change before
+   * the handshake must not move the slot off its reserve. If someone later makes
+   * the pre-handshake path do real work, this goes red.
+   */
+  test('INVARIANT: a viewport change before the block has stated any height leaves the slot at minHeight', async () => {
     await renderReady(TALL);
 
     await setViewport(PHONE);
@@ -385,5 +525,72 @@ describe('IframeHost height layer 4 — re-clamp on viewport change', () => {
       `a viewport change moved the slot before the block stated any height: expected the ` +
         `${MIN_H}px minHeight reserve, got ${appliedHeight()}px`
     ).toBe(MIN_H);
+  });
+
+  /**
+   * 🔴 THE CLEANUP HAS NO OBSERVABLE OF ITS OWN, SO PIN THE RELATIONSHIP. Deleting
+   * the effect's `removeEventListener` return survives every behavioural test in
+   * this file — React does not warn on a setState from an unmounted component, so
+   * a leaked `resize` listener is completely silent. The honest guard is a ledger:
+   * capture the identity of every `resize` handler the component ADDS and every
+   * one it REMOVES, then require the two sets to match after unmount. That fails
+   * if the cleanup is dropped, if it removes a different function than it added,
+   * and if a future second listener is added without a matching removal.
+   */
+  test('the resize listener is removed on unmount — no leaked handler', async () => {
+    const added = new Set<EventListenerOrEventListenerObject>();
+    const removed = new Set<EventListenerOrEventListenerObject>();
+    // 🔴 A DIRECT PATCH, NOT `vi.spyOn(...).mockImplementation(...)`. Both
+    // `addEventListener` and `removeEventListener` are OVERLOADED, and
+    // `mockImplementation` wants one concrete signature — every spelling of the
+    // parameters is rejected by `pnpm typecheck` (TS2345, then TS2769) while
+    // running green locally, which is the worst combination. Patching the two
+    // methods behind a single cast each is honest about where the unavoidable
+    // unsoundness is, and both are restored in `finally`.
+    const origAdd = window.addEventListener;
+    const origRemove = window.removeEventListener;
+    window.addEventListener = ((
+      type: string,
+      fn: EventListenerOrEventListenerObject,
+      opts?: boolean | AddEventListenerOptions
+    ) => {
+      if (type === 'resize' && fn) added.add(fn);
+      origAdd.call(window, type, fn, opts);
+    }) as typeof window.addEventListener;
+    window.removeEventListener = ((
+      type: string,
+      fn: EventListenerOrEventListenerObject,
+      opts?: boolean | EventListenerOptions
+    ) => {
+      if (type === 'resize' && fn) removed.add(fn);
+      origRemove.call(window, type, fn, opts);
+    }) as typeof window.removeEventListener;
+
+    try {
+      const rendered = await renderReady(PHONE);
+      postFromBlock('RESIZE_IFRAME', { height: REPORT });
+      await vi.waitFor(() => expect(appliedHeight()).not.toBe(MIN_H));
+
+      // POSITIVE CONTROL for the ledger itself: a zero-vs-zero comparison would
+      // pass with the spies wired to nothing at all.
+      expect(
+        added.size,
+        'the ledger observed no `resize` listener being added at all, so the emptiness of the ' +
+          'leak set below would prove nothing about the cleanup'
+      ).toBeGreaterThan(0);
+
+      await rendered.unmount();
+
+      const leaked = [...added].filter((fn) => !removed.has(fn));
+      expect(
+        leaked.length,
+        `${leaked.length} of ${added.size} \`resize\` listener(s) added by the host outlived its ` +
+          `unmount. The effect's cleanup either does not run, or removes a different function ` +
+          `than it added.`
+      ).toBe(0);
+    } finally {
+      window.addEventListener = origAdd;
+      window.removeEventListener = origRemove;
+    }
   });
 });
