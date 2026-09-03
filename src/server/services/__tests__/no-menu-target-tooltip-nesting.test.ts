@@ -63,12 +63,21 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 /**
- * Strip comments before matching. This guard's own prose spells the forbidden
- * nesting out in full, and each of the six fixed sites now carries a comment naming
- * it too — an unstripped scan would flag the documentation describing the rule.
+ * Blank out comments before matching. Each of the six fixed sites now carries a
+ * comment naming the forbidden nesting, so an unstripped scan would flag the
+ * documentation describing the rule.
+ *
+ * 🔴 Comment CHARACTERS are replaced with spaces rather than deleted, so every byte
+ * offset — and therefore every reported line number — still refers to the real file.
+ * Deleting them instead shifts every line after a block comment, which produced
+ * `ComicExportButton.tsx:206` for a defect on line 210: a `file:line` that looks
+ * authoritative and sends the reader to the wrong place. Pinned by
+ * `reports line numbers that match the real file` below.
  */
 const stripComments = (s: string) =>
-  s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  s
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/^([ \t]*)\/\/.*$/gm, (m) => ' '.repeat(m.length));
 
 /**
  * From `i` (just past a tag NAME), find the index one past the `>` that closes the
@@ -232,6 +241,31 @@ describe('🔴 Tooltip wraps Menu.Target, never the reverse', () => {
       const commented = `// <Menu.Target><Tooltip label="x">`;
       expect(stripComments(`${commented}\nconst a = 1;`)).toContain('const a = 1;');
       expect(brokenNesting(stripComments(commented))).toHaveLength(0);
+    });
+
+    /**
+     * 🔴 The reported line must be the line in the REAL file. Stripping comments by
+     * DELETING them renumbers everything after a block comment, so the guard names a
+     * `file:line` that reads as authoritative and points somewhere else — measured at
+     * three of the six original sites (line 210 was reported as 206) before the
+     * stripper was changed to blank comments in place.
+     */
+    it('reports line numbers that match the real file', () => {
+      const source = [
+        `const a = 1;`, // 1
+        `/* a block comment`, // 2
+        `   spanning`, // 3
+        `   several lines */`, // 4
+        `<Menu.Target>`, // 5  <- the offence
+        `  <Tooltip label="x"><b /></Tooltip>`, // 6
+        `</Menu.Target>`, // 7
+      ].join('\n');
+
+      expect(brokenNesting(stripComments(source))).toEqual([5]);
+      // ...and the stripper really did neutralise the comment, so the 5 above is not
+      // just an artefact of the comment having been harmless.
+      expect(stripComments(source).split('\n')).toHaveLength(7);
+      expect(stripComments(source)).not.toContain('block comment');
     });
   });
 
