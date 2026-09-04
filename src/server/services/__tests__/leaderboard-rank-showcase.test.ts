@@ -66,6 +66,62 @@ describe('leaderboard rank — showcase is a preference, not a filter', () => {
   });
 });
 
+describe('mature boards earn a badge on every domain', () => {
+  /**
+   * If you are here because you are about to re-add a domain filter: this was removed
+   * deliberately (Justin, 2026-09-04, ClickUp 868m1b61y), and the reasoning is not
+   * recoverable from the diff.
+   *
+   * The old `AND NOT (l.domain <@ ARRAY['red']::"DomainColor"[])` existed so a
+   * red-exclusive board's title could not render on civitai.com. Measured on prod the
+   * day it was removed: it withheld a badge from 174 users, 120 of whom had no badge at
+   * all, to suppress a title containing the word "mature" for 86 of them. 88 of the 174
+   * were on `new_creators-red` / `images-new-red`, whose titles are character-identical
+   * to their SFW twins, so they leaked nothing and were excluded anyway. The cosmetic
+   * art is a chili-pepper motif, not explicit. Justin's call was that the string is
+   * acceptable sitewide and the mechanism was not worth its cost.
+   *
+   * Restoring per-domain badges is a bigger change than restoring this line: `UserRank`
+   * is one global row per user and feeds a single users search index, so it would need a
+   * domain dimension in both. Re-adding the filter alone just reintroduces the 120.
+   *
+   * Asserted on the whole statement rather than the exact old line, so a re-spelling
+   * that names the column (`&&`, `=`, `@>`, a join to "Leaderboard".domain) fails too.
+   * The board-LISTING surface stayed domain-scoped on purpose — see
+   * `leaderboard-domain-visibility.test.ts`. Only the badge path opted out.
+   */
+  it.each([
+    ['full rebuild', () => updateLeaderboardRank()],
+    ['per-user rebuild', () => updateLeaderboardRankForUsers({ userIds: 42 })],
+  ])('%s does not filter candidate boards by domain', async (_label, run) => {
+    await run();
+    expect(insertStatement().sql).not.toMatch(/domain/i);
+  });
+
+  // The statement text elides interpolated values as placeholders, so an exclusion
+  // smuggled in as one — `AND lr."leaderboardId" NOT IN (${Prisma.join(RED_IDS)})` —
+  // never contains the word "domain" and passes the case above. The full rebuild binds
+  // nothing today, so any parameter at all is that shape arriving.
+  it('binds no parameters on the full rebuild, so no board list can hide in them', async () => {
+    await updateLeaderboardRank();
+    expect(insertStatement().values).toEqual([]);
+  });
+
+  // The domain filter went; the visibility one did not. Dropping `l.public` would put
+  // unlisted boards on profiles, which no part of the above licenses.
+  //
+  // Matched as a conjunction rather than a substring: `toContain('l.public')` stays
+  // green through `AND NOT l.public`, `AND l.public = false` and `OR l.public` — the
+  // exact inversions it claims to catch — while breaking on a harmless `l."public"`.
+  it('still restricts candidates to public boards', async () => {
+    await updateLeaderboardRank();
+    const sql = insertStatement().sql.replace(/\s+/g, ' ');
+
+    expect(sql).toMatch(/JOIN "Leaderboard" l ON l\.id = lr\."leaderboardId" AND l\."?public"?/);
+    expect(sql).not.toMatch(/NOT\s+l\."?public|l\."?public"?\s*=\s*false/i);
+  });
+});
+
 describe('updateLeaderboardRankForUsers', () => {
   it('scopes the rebuild to the given users and never truncates', async () => {
     await updateLeaderboardRankForUsers({ userIds: 42 });

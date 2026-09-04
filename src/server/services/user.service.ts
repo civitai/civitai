@@ -1594,12 +1594,6 @@ const leaderboardRankInsert = ({
     JOIN "Leaderboard" l ON l.id = lr."leaderboardId" AND l.public
     WHERE lr.date = current_date
       AND lr.position <= 100
-      -- UserRank is a single global table but the badge (title + cosmetic) renders
-      -- on every domain, so a RED-EXCLUSIVE board would leak its name sitewide —
-      -- e.g. "Creators (mature)" on civitai.com. Exclude only those; a board that
-      -- is visible on any SFW domain still earns a badge (requiring 'all' would
-      -- strip the badge from everyone on the green/blue-scoped boards).
-      AND NOT (l.domain <@ ARRAY['red']::"DomainColor"[])
       ${leaderboardFilter}
       ${userFilter}
   ),
