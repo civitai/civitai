@@ -26,3 +26,11 @@ packages/civitai-db-schema/src/schema-drift/__tests__/fixtures/catalog-productio
 packages/civitai-db-schema/src/enums.ts
 packages/civitai-db-schema/src/models.ts
 packages/civitai-db-schema/src/kysely/
+
+# 🔴 THE FORMATTING IS THE FIXTURE. These modules exist so
+# `src/server/services/__tests__/moderator-restriction-vocabulary.test.ts` can prove its reader sees a
+# divergence in the moderator app's restriction vocabulary regardless of how that vocabulary is
+# written — double-quoted entries, a trailing comma, a multi-line array, a comment containing a `]`.
+# Prettier normalises exactly those differences away, which would silently collapse four distinct
+# cases into one and leave the suite green while testing a third of what it claims to.
+src/server/services/__tests__/__fixtures__/moderator-vocabulary/

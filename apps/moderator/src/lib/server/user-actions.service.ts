@@ -8,6 +8,7 @@ import { bustUserCosmeticCaches } from './cache';
 import { getModeratorDb } from './moderator-db';
 import { recordModActivity } from './mod-activity';
 import { recordUserActivity } from './user-activity';
+import { restErrorReason } from './rest-error-reason';
 import { invalidateUserSessions } from './sessions';
 import { PROFILE_FIELD_KEYS, type ProfileField } from '$lib/enforcement';
 
@@ -57,13 +58,13 @@ async function callMainApp(
 export type JsonResult = { ok: true; body: Record<string, unknown> } | { ok: false; error: string };
 
 /** The refusal an endpoint wrote for the operator. A rate limit also carries how long is left, which
- *  is the difference between "try later" and a moderator retrying immediately. */
+ *  is the difference between "try later" and a moderator retrying immediately.
+ *
+ *  The body-shape rule lives in `./rest-error-reason` because the main app emits TWO envelopes and
+ *  reading only one drops the reason — see that file. It is kept import-free so the main app's suite
+ *  can drive the real emitter into this real reader in one process. */
 async function readError(res: Response): Promise<string | null> {
-  const body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-  const error = typeof body?.error === 'string' ? body.error : null;
-  if (!error) return null;
-  const retry = body?.retryAfterSeconds;
-  return res.status === 429 && typeof retry === 'number' ? `${error} — retry in ${retry}s.` : error;
+  return restErrorReason(await res.json().catch(() => null), res.status);
 }
 
 /** The one JSON poster. Two auth schemes because the endpoint families disagree, not because the
