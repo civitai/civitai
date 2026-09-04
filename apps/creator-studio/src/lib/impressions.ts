@@ -5,6 +5,12 @@
 export const IMPRESSIONS_SINCE = '2026-08-17';
 export const IMPRESSIONS_FULL = '2026-08-18';
 
+// Announcement reach, clicks and mute events start here — the day that instrumentation shipped,
+// which is later than the feed dates above and unrelated to them. It is also the floor every
+// `actions` read uses, so moving it earlier makes those queries scan more of a 92.8M-row table
+// for rows that cannot exist.
+export const ANNOUNCEMENT_METRICS_SINCE = '2026-09-04';
+
 const monthDay = new Intl.DateTimeFormat('en-US', {
   month: 'long',
   day: 'numeric',
@@ -24,3 +30,5 @@ export const IMPRESSIONS_FULL_LABEL = long(IMPRESSIONS_FULL);
 // whole calendar months, so testing `from` suppresses August 2026 — the ramp month, which holds ~14 days of a
 // month and three of those hours at 1% traffic, and would otherwise render +100-300% on every row.
 export const impressionsComparable = (compareFrom: string) => compareFrom >= IMPRESSIONS_FULL;
+
+export const ANNOUNCEMENT_METRICS_SINCE_LABEL = long(ANNOUNCEMENT_METRICS_SINCE);

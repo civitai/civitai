@@ -8,6 +8,7 @@ import {
   saveAnnouncement,
 } from '$lib/server/announcements';
 import { announcementFormSchema, deleteAnnouncementSchema } from '$lib/server/announcements-schema';
+import { getAnnouncementMetrics } from '$lib/server/announcement-analytics';
 
 async function assertEnabled(locals: App.Locals) {
   if (!(await announcementsEnabled(locals.user))) error(404, 'Not found');
@@ -21,8 +22,17 @@ export const load: PageServerLoad = async ({ locals, request }) => {
     getMyAnnouncements(locals.user.id),
   ]);
 
+  // Runs after the list because the ids to ask ClickHouse about are the rows Postgres just
+  // returned. `null` on failure rather than a throw: these numbers decorate a page whose real
+  // job is composing and deleting announcements, and a ClickHouse outage must not take that away.
+  const metrics = await getAnnouncementMetrics(
+    locals.user.id,
+    announcements.map((a) => a.id)
+  ).catch(() => null);
+
   return {
     announcements,
+    metrics,
     allowance: allowance.ok ? allowance.data : null,
     allowanceError: allowance.ok ? null : allowance.error,
   };

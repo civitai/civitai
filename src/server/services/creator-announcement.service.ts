@@ -523,17 +523,28 @@ export async function toggleAnnouncementMute({
 }) {
   if (userId === creatorId) throw throwBadRequestError('You cannot mute yourself');
 
+  // `changed` says whether this call moved the row, and the caller records an analytics
+  // event only when it did. Without it a client that re-sends the state it is already in
+  // — a double-tap, a retry, a stale toggle — writes a second mute event for one muter,
+  // and the creator's chart counts people who never changed their mind.
+  //
+  // `createMany` with `skipDuplicates` rather than a read-then-create: it reports whether
+  // a row appeared, and two concurrent mutes cannot both believe they were first.
+  let changed: boolean;
   if (muted) {
-    await dbWrite.userAnnouncementMute.upsert({
-      where: { userId_creatorId: { userId, creatorId } },
-      create: { userId, creatorId },
-      update: {},
+    const { count } = await dbWrite.userAnnouncementMute.createMany({
+      data: { userId, creatorId },
+      skipDuplicates: true,
     });
+    changed = count > 0;
   } else {
-    await dbWrite.userAnnouncementMute.deleteMany({ where: { userId, creatorId } });
+    const { count } = await dbWrite.userAnnouncementMute.deleteMany({
+      where: { userId, creatorId },
+    });
+    changed = count > 0;
   }
 
-  return { muted };
+  return { muted, changed };
 }
 
 export async function isAnnouncementCreatorMuted({

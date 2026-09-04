@@ -6,13 +6,17 @@
   import EdgeImage from '$lib/components/EdgeImage.svelte';
   import { DOMAIN_LABELS, type AnnouncementDomain } from '$lib/announcements';
   import type { AnnouncementRow } from '$lib/server/announcements';
+  import type { AnnouncementMetrics } from '$lib/server/announcement-analytics';
 
   let {
     announcements,
+    metrics,
     deleteError = null,
     onEdit,
   }: {
     announcements: AnnouncementRow[];
+    /** Null when the metrics read failed — rows then say so rather than showing a zero. */
+    metrics: AnnouncementMetrics | null;
     /** Carries the row it belongs to, so a failure renders beside that row and nowhere else. */
     deleteError?: { id: number | null; message: string } | null;
     onEdit: (announcement: AnnouncementRow) => void;
@@ -20,6 +24,11 @@
 
   let confirmingId = $state<number | null>(null);
   let deletingId = $state<number | null>(null);
+
+  const seen = (id: number) => metrics?.impressions[id] ?? 0;
+  const clicked = (id: number) => metrics?.clicks[id] ?? 0;
+
+  const num = (value: number) => value.toLocaleString();
 
   const formatDate = (value: Date | string) =>
     new Date(value).toLocaleDateString(undefined, {
@@ -95,6 +104,22 @@
             Posted {formatDate(announcement.createdAt)}
             {#if announcement.endsAt}· ends {formatDate(announcement.endsAt)}{/if}
           </p>
+          {#if metrics}
+            {@const impressions = seen(announcement.id)}
+            {@const clicks = clicked(announcement.id)}
+            <p class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-dark-2">
+              <span><span class="font-medium text-white">{num(impressions)}</span> seen</span>
+              {#if announcement.link}
+                <!-- Clicks are raw presses and "seen" is deduplicated people, so the two are
+                     deliberately not divided into a rate: the units differ and one person
+                     clicking twice would read as 200%. -->
+                <span
+                  ><span class="font-medium text-white">{num(clicks)}</span>
+                  link {clicks === 1 ? 'click' : 'clicks'}</span
+                >
+              {/if}
+            </p>
+          {/if}
         </div>
         <div class="flex shrink-0 flex-col items-end gap-2">
           <Button variant="outline" size="sm" onclick={() => onEdit(announcement)}>Edit</Button>
