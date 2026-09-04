@@ -947,6 +947,18 @@ async function assertExcludedModelsFit(modelIds: number[]) {
  * of the same intent exist would leave a user believing they had set something they
  * had not.
  */
+/**
+ * The vocabulary rule as a `where` fragment, so the add path and the paste-a-link
+ * path cannot disagree about what a hub may be keyed on. `HUB_TAG_SOURCE_FILTER` is
+ * the values; this is the query that applies them.
+ */
+const hubTagWhere = {
+  unlisted: false,
+  adminOnly: false,
+  target: { hasEvery: [...HUB_TAG_SOURCE_FILTER.entityType] },
+  type: { in: [...HUB_TAG_SOURCE_FILTER.types] },
+};
+
 async function assertHubTagsUsable(sources: UserHubSourceInput[]) {
   const tagIds = sources
     .filter((source) => source.type === UserHubSourceType.Tag)
@@ -954,9 +966,13 @@ async function assertHubTagsUsable(sources: UserHubSourceInput[]) {
   if (!tagIds.length) return;
 
   const [tags, replacedTagIds] = await Promise.all([
+    // Filtered in the QUERY, by the same fragment `resolveHubSourceFromUrl` uses to
+    // look one up by name. Re-deriving the rule from selected columns here would be
+    // a second spelling of it, and the two would drift the first time the vocabulary
+    // moved.
     dbRead.tag.findMany({
-      where: { id: { in: tagIds } },
-      select: { id: true, name: true, type: true, target: true, unlisted: true, adminOnly: true },
+      where: { id: { in: tagIds }, ...hubTagWhere },
+      select: { id: true },
     }),
     // A replaced tag still exists and still reads as browsable, but the index carries
     // its REPLACEMENT's id — so as a source it matches nothing, and as an exclusion it
@@ -965,21 +981,14 @@ async function assertHubTagsUsable(sources: UserHubSourceInput[]) {
     getReplacedTagIds(),
   ]);
   const replaced = new Set(replacedTagIds);
+  const usable = new Set(tags.map((tag) => tag.id));
 
   for (const id of tagIds) {
-    const tag = replaced.has(id) ? undefined : tags.find((t) => t.id === id);
     // A tag that fails the rule is a not-found rather than a refusal naming it: this
     // is an id-addressed lookup over a dense id space, so an error that distinguishes
     // "no such tag" from "that one is a moderation label" enumerates the moderation
     // vocabulary for anyone willing to count.
-    if (
-      !tag ||
-      tag.unlisted ||
-      tag.adminOnly ||
-      !HUB_TAG_SOURCE_FILTER.entityType.every((target) => tag.target.includes(target)) ||
-      !HUB_TAG_SOURCE_FILTER.types.some((type) => tag.type === type)
-    )
-      throw throwNotFoundError(`Tag ${id} not found`);
+    if (!usable.has(id) || replaced.has(id)) throw throwNotFoundError(`Tag ${id} not found`);
   }
 }
 
@@ -1059,6 +1068,28 @@ export async function resolveHubSourceFromUrl({
       targetId: version.id,
       alias: `${version.model.name} - ${version.name}`,
     };
+  }
+
+  if (ref.type === 'tag' || ref.type === 'tagId') {
+    // Name lookup is a plain equals because `Tag.name` is citext — case-insensitive
+    // AND index-served, the same reason `User.username` is matched this way above
+    // rather than with `mode: 'insensitive'`.
+    const [tag, replacedTagIds] = await Promise.all([
+      dbRead.tag.findFirst({
+        where:
+          ref.type === 'tag'
+            ? { name: { equals: ref.tagname }, ...hubTagWhere }
+            : { id: ref.tagId, ...hubTagWhere },
+        select: { id: true, name: true },
+      }),
+      getReplacedTagIds(),
+    ]);
+    // Null for a moderation label exactly as for a tag that does not exist. This
+    // endpoint answers before anything is saved, so a distinguishable refusal here
+    // would be a name oracle over the vocabulary the add path hides.
+    if (!tag || replacedTagIds.includes(tag.id)) return null;
+
+    return { type: UserHubSourceType.Tag, targetId: tag.id, alias: tag.name };
   }
 
   // Same gate the write path enforces, and in the same order: refusing after

@@ -2,7 +2,13 @@ export type CivitaiEntityRef =
   | { type: 'user'; username: string }
   | { type: 'model'; modelId: number; modelVersionId?: number }
   | { type: 'modelVersion'; modelVersionId: number }
-  | { type: 'collection'; collectionId: number };
+  | { type: 'collection'; collectionId: number }
+  // Two members rather than one with both fields optional, because the two links
+  // carry genuinely different things: /tag/<name> is what the address bar holds,
+  // and ?tags=<id> is what a tag chip in a feed links to. A consumer has to look
+  // one up by name and the other by id, so the type says which it got.
+  | { type: 'tag'; tagname: string }
+  | { type: 'tagId'; tagId: number };
 
 // Hosts we recognise without being told. The domain env vars are optional, so a
 // bare dev environment supplies no runtime host list and this backstop is what
@@ -95,6 +101,21 @@ export function parseCivitaiUrlSafe(
   if (head === 'collections') {
     const collectionId = toInt(second);
     return collectionId ? { type: 'collection', collectionId } : null;
+  }
+
+  if (head === 'tag') {
+    const tagname = second?.trim();
+    return tagname ? { type: 'tag', tagname } : null;
+  }
+
+  // A feed link carrying exactly ONE tag. Two or more is a filter, not an
+  // identity, and picking the first would silently drop what the sender meant —
+  // so it stays unrecognised rather than becoming an arbitrary one of them.
+  if (head === 'images') {
+    const tags = url.searchParams.getAll('tags');
+    if (tags.length !== 1) return null;
+    const tagId = toInt(tags[0]);
+    return tagId ? { type: 'tagId', tagId } : null;
   }
 
   if (head === 'user') {

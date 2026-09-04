@@ -493,14 +493,33 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
     expect(dbMock.dbWrite.userHub.create).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    ['a moderation label', imageTag({ type: TagType.Moderation })],
-    ['a system tag', imageTag({ type: TagType.System })],
-    ['an unlisted tag', imageTag({ unlisted: true })],
-    ['an admin-only tag', imageTag({ adminOnly: true })],
-    ['a tag that does not apply to images', imageTag({ target: [TagTarget.Model] })],
-  ])('refuses %s', async (_label, tag) => {
-    findTags.mockResolvedValue([tag]);
+  it('asks the database for the vocabulary rather than filtering rows it got back', () => {
+    // 🔴 Asserted on the QUERY, and it has to be. The rule moved into the `where` so
+    // that this path and `resolveHubSourceFromUrl` cannot disagree about it — and a
+    // mocked Prisma IGNORES `where`, returning whatever the fake holds. So feeding it
+    // a moderation label and expecting a throw would test the fake, not the code:
+    // every one of those cases passed for a service with no rule at all.
+    //
+    // Deleting any clause below is a hub keyed on a moderation label in production,
+    // and this expectation is the only thing that reddens for it.
+    findTags.mockResolvedValue([imageTag()]);
+
+    return upsertUserHub(withTag()).then(() => {
+      expect(findTags.mock.calls[0][0].where).toEqual({
+        id: { in: [77] },
+        unlisted: false,
+        adminOnly: false,
+        target: { hasEvery: [TagTarget.Image] },
+        type: { in: [TagType.UserGenerated, TagType.Label] },
+      });
+    });
+  });
+
+  it('refuses a tag the query did not return, whatever the reason', async () => {
+    // The behavioural half: whether a row was withheld for being unlisted, admin-only,
+    // the wrong type or the wrong target, the service sees the same thing — an id it
+    // asked about and did not get back — and must refuse it.
+    findTags.mockResolvedValue([]);
 
     await expect(upsertUserHub(withTag())).rejects.toThrow(/not found/i);
     expect(dbMock.dbWrite.userHub.create).not.toHaveBeenCalled();
@@ -544,9 +563,13 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
     // The direction that reads as harmless — keeping something out cannot show
     // anything. It still names a moderation label by id, and the error text would
     // confirm which ids are moderation labels to anyone counting.
-    findTags.mockResolvedValue([imageTag({ type: TagType.Moderation })]);
+    findTags.mockResolvedValue([]);
 
     await expect(upsertUserHub(withTag(true))).rejects.toThrow(/not found/i);
+    // And the same query, so the exclude side cannot drift onto a looser rule.
+    expect(findTags.mock.calls[0][0].where).toEqual(
+      expect.objectContaining({ type: { in: [TagType.UserGenerated, TagType.Label] } })
+    );
   });
 });
 
@@ -890,6 +913,94 @@ describe('resolving a pasted link', () => {
 
     expect(source).toBeNull();
     expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
+  });
+
+  describe('tag links', () => {
+    const findTag = dbMock.dbRead.tag.findFirst;
+
+    it('resolves a tag page by NAME, matched the citext way', async () => {
+      findTag.mockResolvedValue({ id: 5499, name: 'dragon' });
+
+      const source = await resolveHubSourceFromUrl({
+        url: 'https://civitai.com/tag/dragon',
+        userId: 5,
+      });
+
+      expect(source).toEqual({ type: UserHubSourceType.Tag, targetId: 5499, alias: 'dragon' });
+      // `equals`, NOT `mode: 'insensitive'`. Tag.name is citext, so a plain equals is
+      // already case-insensitive and index-served; the ILIKE the other spelling emits
+      // is served by no btree. The same argument the username lookup makes above.
+      expect(findTag.mock.calls[0][0].where).toEqual(
+        expect.objectContaining({ name: { equals: 'dragon' } })
+      );
+    });
+
+    it('resolves a single-tag feed link by id', async () => {
+      findTag.mockResolvedValue({ id: 5499, name: 'dragon' });
+
+      const source = await resolveHubSourceFromUrl({
+        url: 'https://civitai.com/images?tags=5499',
+        userId: 5,
+      });
+
+      expect(source).toEqual({ type: UserHubSourceType.Tag, targetId: 5499, alias: 'dragon' });
+      expect(findTag.mock.calls[0][0].where).toEqual(expect.objectContaining({ id: 5499 }));
+    });
+
+    it('applies the SAME vocabulary rule the add path applies', async () => {
+      // 🔴 The whole point of the shared `where` fragment. If this endpoint looked a
+      // tag up without it, a moderation label would resolve here — showing its name —
+      // and only be refused later at the add. Refusing after showing the name is not
+      // refusing. Asserted on the query, because the fake returns whatever it is told
+      // and cannot enforce a filter itself.
+      findTag.mockResolvedValue({ id: 5499, name: 'dragon' });
+
+      await resolveHubSourceFromUrl({ url: 'https://civitai.com/tag/dragon', userId: 5 });
+
+      expect(findTag.mock.calls[0][0].where).toEqual(
+        expect.objectContaining({
+          unlisted: false,
+          adminOnly: false,
+          target: { hasEvery: [TagTarget.Image] },
+          type: { in: [TagType.UserGenerated, TagType.Label] },
+        })
+      );
+    });
+
+    it('returns null for a REPLACED tag, which the index would never match', async () => {
+      findTag.mockResolvedValue({ id: 5499, name: 'dragon' });
+      replacedTagIdsMock.mockResolvedValue([5499]);
+
+      const source = await resolveHubSourceFromUrl({
+        url: 'https://civitai.com/tag/dragon',
+        userId: 5,
+      });
+
+      expect(source).toBeNull();
+    });
+
+    it('returns null when the tag does not exist', async () => {
+      findTag.mockResolvedValue(null);
+
+      const source = await resolveHubSourceFromUrl({
+        url: 'https://civitai.com/tag/nope',
+        userId: 5,
+      });
+
+      expect(source).toBeNull();
+    });
+
+    it('does not reach the database for a multi-tag feed link', async () => {
+      // The parser refuses it; this pins that the service does not paper over that
+      // by looking up an arbitrary one of them.
+      const source = await resolveHubSourceFromUrl({
+        url: 'https://civitai.com/images?tags=5499&tags=5133',
+        userId: 5,
+      });
+
+      expect(source).toBeNull();
+      expect(findTag).not.toHaveBeenCalled();
+    });
   });
 });
 

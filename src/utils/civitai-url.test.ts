@@ -140,6 +140,43 @@ describe('parseCivitaiUrlSafe', () => {
     expect(parseCivitaiUrlSafe('https://image.civitai.com/models/123')).toBeNull();
   });
 
+  it('reads a tag page as a NAME, not an id', () => {
+    // /tag/<name> is what the address bar holds. The name is what identifies it;
+    // there is no id in this URL to fall back on.
+    expect(parseCivitaiUrlSafe('https://civitai.com/tag/dragon')).toEqual({
+      type: 'tag',
+      tagname: 'dragon',
+    });
+    // Percent-escapes are decoded with the rest of the path, so a multi-word tag
+    // arrives as the name the database holds rather than as 'blue%20hair'.
+    expect(parseCivitaiUrlSafe('https://civitai.com/tag/blue%20hair')).toEqual({
+      type: 'tag',
+      tagname: 'blue hair',
+    });
+  });
+
+  it('reads a single-tag feed link as an ID', () => {
+    // What a tag chip in the feed links to.
+    expect(parseCivitaiUrlSafe('https://civitai.com/images?tags=5499')).toEqual({
+      type: 'tagId',
+      tagId: 5499,
+    });
+  });
+
+  it('refuses a feed link carrying more than one tag', () => {
+    // 🔴 The dangerous direction: a hub source is ONE tag, so picking the first of
+    // several would silently discard what the sender meant and add a source they
+    // did not choose. Unrecognised is the honest answer.
+    expect(parseCivitaiUrlSafe('https://civitai.com/images?tags=5499&tags=5133')).toBeNull();
+  });
+
+  it('refuses a feed link with no tag at all', () => {
+    // The control for the two above: without it, a parser that returned a tag ref
+    // for any /images link would pass them both.
+    expect(parseCivitaiUrlSafe('https://civitai.com/images')).toBeNull();
+    expect(parseCivitaiUrlSafe('https://civitai.com/images?tags=notanid')).toBeNull();
+  });
+
   it('returns null for a bare id so the caller decides what it means', () => {
     expect(parseCivitaiUrlSafe('123')).toBeNull();
     expect(parseCivitaiUrlSafe('')).toBeNull();
