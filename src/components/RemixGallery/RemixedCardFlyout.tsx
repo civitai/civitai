@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { useRemixPeelStore } from '~/components/RemixGallery/remix-card-demo';
+import { useRemixPeelStore } from '~/components/RemixGallery/remix-card-state';
 import { Flags } from '~/shared/utils/flags';
 import { useHoverCapable } from '~/components/UserAvatar/UserHoverCard';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
