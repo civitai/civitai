@@ -136,8 +136,24 @@ export const BLOCK_INIT_FRAGMENT_ALLOWLIST: ReadonlySet<string> = new Set<string
   //     the fragment) — invisible to a hash-shaped grep. So apply a SECOND check
   //     ALONGSIDE the read one, never instead of it: nothing may RE-INSTATE the
   //     fragment. Grep `location.href` / `replaceState` / `pushState` as well.
-  //     (`playable-collections` fails the READ half, which is why the read half
-  //     stays — a block can re-instate nothing and still be disqualified.)
+  //
+  //     🔴 A HIT ON THAT SECOND CHECK IS NOT AUTOMATICALLY A DISQUALIFICATION, and
+  //     `custom-generators` IS such a hit — so read this before concluding the entry
+  //     below is wrong. What separates safe from unsafe is LIVE versus CAPTURED:
+  //     its `getHref: () => window.location.href` is read at call time, so whatever
+  //     it writes back carries the CURRENT fragment and the write is a no-op with
+  //     respect to it. The unsafe shape is a block that CAPTURES an href early
+  //     (at mount, in a ref, in state) and writes that stale copy back later — that
+  //     one really can re-instate a fragment the transport had removed, and it
+  //     passes a `location.hash` grep exactly as this one does. So the second check
+  //     is a prompt to go LOOK at each hit, not a filter that rejects on sight.
+  //
+  //     The read half stays because the two checks catch different things: a block
+  //     can re-instate nothing and still be disqualified for reading the fragment
+  //     for its own routing. `playable-collections` is not a clean illustration of
+  //     that — it happens to fail BOTH halves (it reads the hash AND calls
+  //     `replaceState`), so it is evidence for neither half being independently
+  //     necessary. Keep the read half on the principle, not on that example.
   //
   //     🔴 AND DO NOT REST THAT ON THE SDK'S STRIP — IT DOES NOT RUN FOR ANY BLOCK
   //     LISTED HERE. An earlier revision of this comment said `custom-generators` is
@@ -149,8 +165,10 @@ export const BLOCK_INIT_FRAGMENT_ALLOWLIST: ReadonlySet<string> = new Set<string
   //     `history.replaceState` inside `seedFromFragment` throws, and that throw is
   //     swallowed by a `catch` documented as "nothing depends on this" — so the
   //     fragment is NOT stripped and persists in `location.hash` for the session.
-  //     These three are safe because of (b) itself — nothing in them reads or
-  //     re-instates it — not because of a strip that never executes.
+  //     These three are safe on their own terms, not because of a strip that never
+  //     executes: none of them READS the fragment, and the one URL write among them
+  //     (`custom-generators`, above) is built from a LIVE href read, so it cannot
+  //     re-instate anything.
   //
   //     Why that distinction is worth the words: the strip DOES start working if a
   //     block is later promoted to `verified`/`internal`. A maintainer who admitted
