@@ -171,3 +171,9 @@ export type GetMyArticleRatingReviewInput = z.infer<typeof getMyArticleRatingRev
 export const getMyArticleRatingReviewSchema = z.object({
   articleId: z.number(),
 });
+
+export type SetArticleOfficialInput = z.infer<typeof setArticleOfficialSchema>;
+export const setArticleOfficialSchema = z.object({
+  id: z.number(),
+  isOfficial: z.boolean(),
+});

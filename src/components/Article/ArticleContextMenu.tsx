@@ -24,7 +24,7 @@ import { ArticleStatus, CollectionType, CosmeticEntity } from '~/shared/utils/pr
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ToggleLockComments } from '../CommentsV2/ToggleLockComments';
-import { IconLock } from '@tabler/icons-react';
+import { IconLock, IconRosetteDiscountCheck } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { useRescanArticle } from '~/hooks/useRescanArticle';
@@ -85,6 +85,30 @@ export function ArticleContextMenu({ article, ...props }: Props) {
         ),
     });
   };
+
+  // Moderator-only, mirroring the model menu's Mark Official. The server is the authority
+  // (`article.setOfficial` is a `moderatorProcedure`); this only draws the control.
+  const setOfficialMutation = trpc.article.setOfficial.useMutation({
+    async onSuccess(result) {
+      showSuccessNotification({
+        title: result.isOfficial ? 'Marked official' : 'Unmarked official',
+        message: result.isOfficial
+          ? 'This article now shows the Civitai Official badge'
+          : 'The Civitai Official badge has been removed',
+      });
+
+      queryUtils.article.getById.setData({ id: article.id }, (old) =>
+        old ? { ...old, isOfficial: result.isOfficial } : old
+      );
+      await queryUtils.article.getInfinite.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to update official status',
+        error: new Error(error.message),
+      });
+    },
+  });
 
   const unpublishArticleMutation = trpc.article.unpublish.useMutation();
   const handleUnpublishArticle = () => {
@@ -231,6 +255,26 @@ export function ArticleContextMenu({ article, ...props }: Props) {
                 closeMenuOnClick={false}
               >
                 Rescan
+              </Menu.Item>
+            )}
+            {isModerator && (
+              <Menu.Item
+                color="blue"
+                leftSection={
+                  setOfficialMutation.isPending ? (
+                    <Loader size={14} />
+                  ) : (
+                    <IconRosetteDiscountCheck size={14} stroke={1.5} />
+                  )
+                }
+                disabled={setOfficialMutation.isPending}
+                onClick={(e: React.MouseEvent) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setOfficialMutation.mutate({ id: article.id, isOfficial: !article.isOfficial });
+                }}
+              >
+                {article.isOfficial ? 'Unmark Official' : 'Mark Official'}
               </Menu.Item>
             )}
             {isModerator && (
