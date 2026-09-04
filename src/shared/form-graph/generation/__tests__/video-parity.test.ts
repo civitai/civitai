@@ -188,6 +188,23 @@ const port = {
   parse: (raw: AnyRecord, ext: never) => generationHub.parse(reconcileSelectors(raw).raw, ext),
 };
 
+/**
+ * Family-specific extra shapes, keyed by ecosystem. A RECORD rather than a
+ * ternary chain so a typo'd key fails the canary by name instead of silently
+ * running zero extra shapes. LTX model shapes stay conditional in the loop —
+ * they are gated per-context on hidden ecosystems.
+ */
+const EXTRA_SHAPES: Record<string, AnyRecord[]> = {
+  Veo3: VEO3_ONLY_SHAPES,
+  Vidu: VIDU_ONLY_SHAPES,
+  Kling: KLING_ONLY_SHAPES,
+  MiniMaxH3: MINIMAX_ONLY_SHAPES,
+  HappyHorse: HAPPYHORSE_ONLY_SHAPES,
+  Sora2: SORA_ONLY_SHAPES,
+  Flux3Video: FLUX3V_ONLY_SHAPES,
+  Grok: GROK_VIDEO_SHAPES,
+};
+
 type Combo = { name: string; input: AnyRecord; ext: GenerationCtx };
 
 const COMBOS: Combo[] = [];
@@ -203,26 +220,11 @@ for (const [ctxName, ctx] of CONTEXTS) {
       const hiddenHere = new Set(
         (ctx.gateRules ?? []).flatMap((r) => (r.presentation === 'hidden' ? r.ecosystems : []))
       );
-      const shapes =
-        ecosystem === 'Veo3'
-          ? [...INPUT_SHAPES, ...VEO3_ONLY_SHAPES]
-          : ecosystem === 'Vidu'
-          ? [...INPUT_SHAPES, ...VIDU_ONLY_SHAPES]
-          : ecosystem === 'Kling'
-          ? [...INPUT_SHAPES, ...KLING_ONLY_SHAPES]
-          : ecosystem === 'MiniMaxH3'
-          ? [...INPUT_SHAPES, ...MINIMAX_ONLY_SHAPES]
-          : ecosystem === 'HappyHorse'
-          ? [...INPUT_SHAPES, ...HAPPYHORSE_ONLY_SHAPES]
-          : ecosystem === 'Sora2'
-          ? [...INPUT_SHAPES, ...SORA_ONLY_SHAPES]
-          : ecosystem === 'Flux3Video'
-          ? [...INPUT_SHAPES, ...FLUX3V_ONLY_SHAPES]
-          : ecosystem === 'Grok'
-          ? [...INPUT_SHAPES, ...GROK_VIDEO_SHAPES]
-          : ecosystem.startsWith('LTX') && !hiddenHere.has(ecosystem)
-          ? [...INPUT_SHAPES, ...LTX_MODEL_SHAPES]
-          : INPUT_SHAPES;
+      const shapes = [
+        ...INPUT_SHAPES,
+        ...(EXTRA_SHAPES[ecosystem] ?? []),
+        ...(ecosystem.startsWith('LTX') && !hiddenHere.has(ecosystem) ? LTX_MODEL_SHAPES : []),
+      ];
       for (const [i, shape] of shapes.entries()) {
         COMBOS.push({
           name: `${ctxName} | ${ecosystem} | ${workflow} | shape${i}`,
@@ -243,6 +245,9 @@ describe('video slice: differential parity with generationGraph', () => {
     expect(ECOSYSTEMS.filter((e) => !covered.has(e))).toEqual([]);
     // an ECOSYSTEMS entry the constants don't know would silently drop its rows
     expect(ECOSYSTEMS.filter((e) => !ecosystemByKey.has(e))).toEqual([]);
+    // every family-specific shape list must be keyed by a REAL matrix
+    // ecosystem — a typo here is zero extra shapes, invisibly
+    expect(Object.keys(EXTRA_SHAPES).filter((k) => !ECOSYSTEMS.includes(k))).toEqual([]);
   });
 
   it.each(COMBOS)('$name', ({ input, ext }) => {

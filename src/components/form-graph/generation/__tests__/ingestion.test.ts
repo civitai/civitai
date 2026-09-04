@@ -19,6 +19,12 @@ const makeStore = (record?: Record<string, unknown>) =>
 const state = (store: ReturnType<typeof makeStore>) =>
   store.getSnapshot().state as Record<string, unknown>;
 
+// Payloads are typed against the real signature so a GenerationData shape
+// change fails to compile here; only the resource entries stay a narrow cast
+// (fixtures carry the subset toResourceData reads, not full GenerationResource).
+type Payload = Parameters<typeof applyGenerationData>[1];
+const res = (r: Record<string, unknown>) => r as unknown as Payload['resources'][number];
+
 describe('applyGenerationData (v1 GenerationFormProvider parity)', () => {
   it('remix: full override, but output settings survive the reset', () => {
     const store = makeStore();
@@ -31,8 +37,8 @@ describe('applyGenerationData (v1 GenerationFormProvider parity)', () => {
         prompt: 'remixed prompt',
         quantity: 1, // must NOT override the user's 4
       },
-      resources: [{ id: 555, model: { type: 'Checkpoint' }, baseModel: 'Illustrious' }],
-    } as never);
+      resources: [res({ id: 555, model: { type: 'Checkpoint' }, baseModel: 'Illustrious' })],
+    } satisfies Payload);
     const s = state(store);
     expect(s.workflow).toBe('txt2img');
     expect(s.ecosystem).toBe('Illustrious');
@@ -47,7 +53,7 @@ describe('applyGenerationData (v1 GenerationFormProvider parity)', () => {
       runType: 'remix',
       params: { workflow: 'some:legacy-key', ecosystem: 'SDXL', prompt: 'p' },
       resources: [],
-    } as never);
+    } satisfies Payload);
     expect(state(store).workflow).toBe('txt2img');
   });
 
@@ -59,12 +65,12 @@ describe('applyGenerationData (v1 GenerationFormProvider parity)', () => {
       runType: 'wildcard',
       params: { wildcardSetId: 2 },
       resources: [],
-    } as never);
+    } satisfies Payload);
     applyGenerationData(store, {
       runType: 'wildcard',
       params: { wildcardSetId: 2 },
       resources: [],
-    } as never);
+    } satisfies Payload);
     const snippets = state(store).snippets as { wildcardSetIds: number[]; mode: string };
     expect(snippets.wildcardSetIds).toEqual([1, 2]);
     expect(snippets.mode).toBe('batch');
@@ -81,7 +87,7 @@ describe('applyGenerationData (v1 GenerationFormProvider parity)', () => {
       runType: 'append',
       params: { workflow: 'img2img:edit', images: [img('a'), img('b')] },
       resources: [],
-    } as never);
+    } satisfies Payload);
     const s = state(store);
     expect(s.workflow).toBe('img2img:edit');
     expect((s.images as { url: string }[]).map((i) => i.url)).toEqual(['a', 'b']);
@@ -94,8 +100,8 @@ describe('applyGenerationData (v1 GenerationFormProvider parity)', () => {
     applyGenerationData(store, {
       runType: 'run',
       params: {},
-      resources: [{ id: 2, model: { type: 'LORA' }, baseModel: 'SDXL 1.0' }],
-    } as never);
+      resources: [res({ id: 2, model: { type: 'LORA' }, baseModel: 'SDXL 1.0' })],
+    } satisfies Payload);
     const s = state(store);
     expect(s.ecosystem).toBe('SDXL');
     expect((s.resources as { id: number }[]).map((r) => r.id).sort()).toEqual([1, 2]);

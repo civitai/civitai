@@ -8,11 +8,15 @@
 import { Container } from '@mantine/core';
 
 import { IsClient } from '~/components/IsClient/IsClient';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { ResourceDataProvider } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { BaseGenerationForm } from '~/components/form-graph/generation/BaseGenerationForm';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export default function FormGraphDemoPage() {
+  const features = useFeatureFlags();
+  if (!features.formGraphGenerator) return <NotFound />;
   return (
     <Container size="xs" className="h-screen max-h-screen w-full overflow-y-auto px-0 py-3">
       <IsClient>

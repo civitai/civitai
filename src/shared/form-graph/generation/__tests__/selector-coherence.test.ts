@@ -31,7 +31,7 @@ describe('selector coherence rules', () => {
     expect(state(store).workflow).toBe('txt2img');
   });
 
-  it('a stored workflow that fits the new ecosystem is untouched', () => {
+  it('a stored workflow that fits the new ecosystem is untouched', (ctx) => {
     // a non-default image workflow Illustrious supports, from config
     const illustriousId = [...ecosystemById.entries()].find(
       ([, e]) => e.key === 'Illustrious'
@@ -39,7 +39,8 @@ describe('selector coherence rules', () => {
     const shared = ['txt2img:hires-fix', 'txt2img:face-fix', 'img2img'].find((w) =>
       getEcosystemsForWorkflow(w).includes(illustriousId!)
     );
-    if (!shared) return; // config offers no such workflow today — nothing to pin
+    // a visible skip, not a silent pass — re-derive the fixture if this fires
+    if (!shared) return ctx.skip('config offers no shared workflow to pin');
     const store = makeStore();
     store.set({ workflow: shared, ecosystem: 'SDXL' });
     store.set({ ecosystem: 'Illustrious' });
@@ -79,7 +80,7 @@ describe('selector coherence rules', () => {
     expect(state(store).ecosystem).toBe('Illustrious');
   });
 
-  it('a workflow write whose ecosystem no longer fits redirects the ecosystem', () => {
+  it('a workflow write whose ecosystem no longer fits redirects the ecosystem', (ctx) => {
     const store = makeStore();
     store.set({ workflow: 'txt2img', ecosystem: 'SDXL' });
     // an eco-carrying image workflow that excludes SDXL, found from config
@@ -90,7 +91,8 @@ describe('selector coherence rules', () => {
         const ids = getEcosystemsForWorkflow(w);
         return ids.length > 0 && !ids.some((id) => ecosystemById.get(id)?.key === 'SDXL');
       });
-    if (!restricted) return; // config offers no such workflow today — nothing to pin
+    // a visible skip, not a silent pass — re-derive the fixture if this fires
+    if (!restricted) return ctx.skip('config offers no SDXL-excluding image workflow to pin');
     store.set({ workflow: restricted });
     const eco = state(store).ecosystem;
     // the rule's invariant: the pair is compatible (overrides included)

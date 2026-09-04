@@ -2,6 +2,7 @@ import { isEqual } from 'lodash-es';
 import { FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { formGraphShadowParseCounter } from '~/server/prom/form-graph.metrics';
+import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
@@ -65,20 +66,26 @@ export function recordShadowComparison(
   hub: ReturnType<typeof runHubParse>,
   workflow: string
 ) {
+  // The workflow arrives pre-parse, so it is an arbitrary caller string: clamp
+  // to the known set before it becomes a prom label (unbounded cardinality) or
+  // an Axiom field (user content).
+  const label = workflowConfigByKey.has(workflow) ? workflow : 'unknown';
   const emit = (outcome: 'match' | 'diverged' | 'error', detail?: Record<string, unknown>) => {
-    formGraphShadowParseCounter.inc({ outcome, workflow });
+    formGraphShadowParseCounter.inc({ outcome, workflow: label });
     if (outcome !== 'match') {
       logToAxiom({
         name: 'form-graph-shadow-parse',
         type: outcome,
-        workflow,
+        workflow: label,
         ...detail,
       }).catch(() => undefined);
     }
   };
 
   if (hub.ok === null) {
-    emit('error', { message: hub.error instanceof Error ? hub.error.message : String(hub.error) });
+    // Only the error's NAME: a thrown zod error's message embeds the received
+    // value, which must not reach the log.
+    emit('error', { errorName: hub.error instanceof Error ? hub.error.name : typeof hub.error });
     return;
   }
 

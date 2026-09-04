@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type * as PromMetrics from '~/server/prom/form-graph.metrics';
+import type * as FliptClient from '~/server/flipt/client';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const { inc } = vi.hoisted(() => ({ inc: vi.fn() }));
@@ -8,7 +9,20 @@ vi.mock('~/server/prom/form-graph.metrics', async (importOriginal) => ({
   formGraphShadowParseCounter: { inc },
 }));
 
-import { recordShadowComparison, runHubParse } from '../shadow-parse';
+const flags = vi.hoisted(() => ({ serve: false, shadow: false }));
+vi.mock('~/server/flipt/client', async (importOriginal) => {
+  const mod = await importOriginal<typeof FliptClient>();
+  return {
+    ...mod,
+    isFliptSync: vi.fn((flag: string) => {
+      if (flag === mod.FLIPT_FEATURE_FLAGS.FORM_GRAPH_PARSE) return flags.serve;
+      if (flag === mod.FLIPT_FEATURE_FLAGS.FORM_GRAPH_SHADOW_PARSE) return flags.shadow;
+      return false;
+    }),
+  };
+});
+
+import { recordShadowComparison, runHubParse, shadowFlags } from '../shadow-parse';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 
 const logToAxiom = loggingMock.logToAxiom;
@@ -19,6 +33,13 @@ const EXT: GenerationCtx = {
   flags: {},
   gateRules: [],
 };
+
+const SENTINEL = 'SECRET USER PROMPT';
+
+/** Every emit path must be value-free: the sentinel never reaches the log. */
+function expectNoSentinelLogged() {
+  expect(JSON.stringify(logToAxiom.mock.calls)).not.toContain(SENTINEL);
+}
 
 describe('shadow-parse comparison', () => {
   it('a real parse compared against itself is a match', () => {
@@ -36,24 +57,42 @@ describe('shadow-parse comparison', () => {
     logToAxiom.mockClear();
     const hub = runHubParse({ workflow: 'txt2img', ecosystem: 'SDXL', prompt: 'a cat' }, EXT);
     if (hub.ok !== true) throw new Error('hub parse failed');
-    const v1Data = { ...hub.data, prompt: 'SECRET USER PROMPT' };
+    const v1Data = { ...hub.data, prompt: SENTINEL };
     recordShadowComparison({ success: true, data: v1Data }, hub, 'txt2img');
     expect(inc).toHaveBeenCalledWith({ outcome: 'diverged', workflow: 'txt2img' });
     const logged = JSON.stringify(logToAxiom.mock.calls);
     expect(logged).toContain('"prompt"');
-    expect(logged).not.toContain('SECRET USER PROMPT');
+    expect(logged).not.toContain(SENTINEL);
   });
 
-  it('success/failure disagreement diverges with the losing side error keys', () => {
+  it('success/failure disagreement logs error KEYS, never error messages', () => {
     inc.mockClear();
     logToAxiom.mockClear();
     recordShadowComparison(
-      { success: false, errors: { prompt: { message: 'Prompt is required' } } },
+      { success: false, errors: { prompt: { message: `rejected: ${SENTINEL}` } } },
       { ok: true, data: {}, computedKeys: [] },
       'txt2img'
     );
     expect(inc).toHaveBeenCalledWith({ outcome: 'diverged', workflow: 'txt2img' });
-    expect(JSON.stringify(logToAxiom.mock.calls)).toContain('success-disagreement');
+    const logged = JSON.stringify(logToAxiom.mock.calls);
+    expect(logged).toContain('success-disagreement');
+    expect(logged).toContain('"prompt"');
+    expectNoSentinelLogged();
+  });
+
+  it('differing error keys log the KEYS, never the messages', () => {
+    inc.mockClear();
+    logToAxiom.mockClear();
+    recordShadowComparison(
+      { success: false, errors: { prompt: { message: `v1 saw ${SENTINEL}` } } },
+      { ok: false, errors: { negativePrompt: { message: `hub saw ${SENTINEL}` } } },
+      'txt2img'
+    );
+    expect(inc).toHaveBeenCalledWith({ outcome: 'diverged', workflow: 'txt2img' });
+    const logged = JSON.stringify(logToAxiom.mock.calls);
+    expect(logged).toContain('error-keys');
+    expect(logged).toContain('"negativePrompt"');
+    expectNoSentinelLogged();
   });
 
   it('both failing with the same error keys is a match', () => {
@@ -66,13 +105,49 @@ describe('shadow-parse comparison', () => {
     expect(inc).toHaveBeenCalledWith({ outcome: 'match', workflow: 'txt2img' });
   });
 
-  it('a hub throw is the error outcome, not a crash', () => {
+  it('a hub throw is the error outcome, logging the error NAME — never its message', () => {
     inc.mockClear();
+    logToAxiom.mockClear();
     recordShadowComparison(
       { success: true, data: {} },
-      { ok: null, error: new Error('boom') },
+      { ok: null, error: new Error(`received "${SENTINEL}"`) },
       'txt2img'
     );
     expect(inc).toHaveBeenCalledWith({ outcome: 'error', workflow: 'txt2img' });
+    const logged = JSON.stringify(logToAxiom.mock.calls);
+    expect(logged).toContain('"errorName":"Error"');
+    expectNoSentinelLogged();
+  });
+
+  it('an unknown workflow string is clamped before it becomes a label or a log field', () => {
+    inc.mockClear();
+    logToAxiom.mockClear();
+    recordShadowComparison(
+      { success: true, data: { prompt: 'x' } },
+      { ok: true, data: {}, computedKeys: [] },
+      SENTINEL
+    );
+    expect(inc).toHaveBeenCalledWith({ outcome: 'diverged', workflow: 'unknown' });
+    expectNoSentinelLogged();
+  });
+});
+
+describe('shadowFlags', () => {
+  it('serve implies shadow — the reverse comparison must keep running during cutover', () => {
+    flags.serve = true;
+    flags.shadow = false;
+    expect(shadowFlags()).toEqual({ serve: true, shadow: true });
+  });
+
+  it('both flags off is the zero-cost fast path', () => {
+    flags.serve = false;
+    flags.shadow = false;
+    expect(shadowFlags()).toEqual({ serve: false, shadow: false });
+  });
+
+  it('shadow alone compares without serving', () => {
+    flags.serve = false;
+    flags.shadow = true;
+    expect(shadowFlags()).toEqual({ serve: false, shadow: true });
   });
 });

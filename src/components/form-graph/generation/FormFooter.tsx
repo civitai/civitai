@@ -806,7 +806,11 @@ export function FormFooter({
 
     // The wire schema strips `canGenerate`, so re-check against the resource
     // data store: drop resources the user can't actually use (v1 filters
-    // these off the snapshot, where the flag is still present)
+    // these off the snapshot, where the flag is still present).
+    // The not-yet-hydrated fallback below lets an unchecked resource through —
+    // safe ONLY because the server re-rejects !canGenerate resources
+    // (orchestration-new.service validateAndEnrichResources); this filter is
+    // UX, not the gate.
     if (Array.isArray(inputData.resources)) {
       const usable = new Set(resourceData.filter((r) => r.canGenerate !== false).map((r) => r.id));
       inputData.resources = (inputData.resources as { id: number }[]).filter(

@@ -129,6 +129,14 @@ export function assertDifferential(
       key
     );
   }
+  for (const key of valueDeltas) {
+    // the loop below only visits oracle keys, so an entry naming a key neither
+    // side produces would otherwise pass silently forever
+    expect(
+      oracleKeys.includes(key) && portKeys.includes(key),
+      `${label}: declared value-delta key "${key}" is not in both parses`
+    ).toBe(true);
+  }
 
   for (const key of oracleKeys) {
     if (!portKeys.includes(key)) continue;

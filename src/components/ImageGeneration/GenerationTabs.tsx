@@ -23,8 +23,8 @@ import {
 } from '~/components/ImageGeneration/utils/generationImage.select';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
-import { GenerationFormV2 } from '~/components/generation_v2';
-import { FormGraphGenerator } from '~/components/form-graph/generation/FormGraphGenerator';
+import dynamic from 'next/dynamic';
+import type { GenerationFormV2Props } from '~/components/generation_v2';
 import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 import { PresetHeaderButton } from '~/components/generation_v2/preset/PresetHeaderButton';
 import { useIsClient } from '~/providers/IsClientProvider';
@@ -37,6 +37,15 @@ import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useRemixStore } from '~/store/remix.store';
 import { WorkflowLookup } from '~/components/generation_v2/WorkflowLookup';
+
+// Each form lane pulls in its whole engine (~50 graph modules for form-graph,
+// the data-graph tree for v1), so load only the lane the flag selects.
+const GenerationFormV2 = dynamic<GenerationFormV2Props>(() =>
+  import('~/components/generation_v2').then((m) => m.GenerationFormV2)
+);
+const FormGraphGenerator = dynamic(() =>
+  import('~/components/form-graph/generation/FormGraphGenerator').then((m) => m.FormGraphGenerator)
+);
 
 type GenerationPanelView = 'queue' | 'generate' | 'feed';
 
@@ -252,7 +261,7 @@ type Tabs = Record<
   {
     Icon: ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>;
     label: string;
-    Component: React.FC;
+    Component: React.ComponentType;
   }
 >;
 
