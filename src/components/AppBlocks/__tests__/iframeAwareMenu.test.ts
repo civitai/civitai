@@ -4,9 +4,12 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * EVERY `<Menu>` in the app-block host chrome must be iframe-aware. Node `unit`
- * project — the GATING tier. The behavioural proof lives in
+ * project — the tier that EXECUTES this assertion (report-only on a pull request,
+ * an honest verdict on a push to `main`). The behavioural proof lives in
  * `AppBlockChrome.browser.test.tsx`, which runs in CI as the REPORT-ONLY
- * `preview / component-tests` status; this is the copy that can block a merge.
+ * `preview / component-tests` status. NEITHER TIER BLOCKS A MERGE: `main` requires
+ * no status check at all in this repo, so this is a signal a reviewer must read,
+ * not a door that stays shut.
  *
  * WHAT BROKE. `AppBlockChrome` renders two Mantine menus a hundred lines apart.
  * The platform-nav one was made CONTROLLED with a window-`blur` close, because

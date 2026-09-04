@@ -7,12 +7,12 @@
  * it silently did not: `ChromeSurfaceItem` wraps children in
  * `<Text size="sm" lineClamp={1}>` in its SHEET branch and rendered them raw in its
  * MENU branch, so the publisher-controlled app name lost the clamp the pre-primitive
- * chrome gave it. Nothing caught it — the full gating tier and all seven touched
+ * chrome gave it. Nothing caught it — the full node `unit` tier and all seven touched
  * browser suites were green with the defect present — because every existing test
  * either uses a short fixture name or asserts attributes rather than geometry.
  *
  * So the guard is a MEASUREMENT, not a source-text pin.
- * `__tests__/chromeItemClamp.test.ts` carries the structural half in the gating node
+ * `__tests__/chromeItemClamp.test.ts` carries the structural half in the node `unit`
  * tier; this is the half that would still fail if `clamp` were threaded correctly and
  * rendered something that does not actually clamp.
  *

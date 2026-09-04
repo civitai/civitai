@@ -513,11 +513,35 @@ describe('IframeHost ready transition — untrusted height payload', () => {
     }
   );
 
+  /**
+   * 🔴 THE VIEWPORT IS SET EXPLICITLY, AND IT HAS TO BE. This case is about
+   * LAYER 2 (the manifest's `maxHeight`), so every other height layer must be
+   * slack — otherwise it silently becomes a test of whichever layer happens to
+   * bind first.
+   *
+   * It used to rely on the harness default (414x896) and broke the day
+   * `IframeHost` gained layer 4, the viewport clamp: the budget at 896 is
+   * `896 - 98` of host chrome = 798, which is TIGHTER than this fixture's
+   * `MAX_HEIGHT` of 800, so the applied height was 798 and the assertion read
+   * `expected 798 to be 800`. The clamp was right and the test's premise was
+   * stale by 2px — a coincidence of the default viewport, not a real
+   * disagreement.
+   *
+   * 1200 leaves a budget of ~1102, well clear of 800, so `maxHeight` is
+   * unambiguously the binding layer again. Layer 4 has its own suite
+   * (`IframeHostViewportHeightClamp.browser.test.tsx`).
+   */
   test('an over-ceiling height is clamped to the manifest maxHeight', async () => {
+    await page.viewport(414, 1200);
     renderWithProviders(<IframeHost {...baseProps} />);
     await driveToReady({ height: 999_999 });
     await vi.waitFor(() => {
-      expect(appliedHeight()).toBe(MAX_HEIGHT);
+      expect(
+        appliedHeight(),
+        `layer 2 did not bind: with a ${1200}px viewport the chrome-adjusted budget is far above ` +
+          `the manifest maxHeight of ${MAX_HEIGHT}, so ${MAX_HEIGHT} is what must be applied, not ` +
+          `${appliedHeight()}`
+      ).toBe(MAX_HEIGHT);
     });
   });
 

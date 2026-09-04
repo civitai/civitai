@@ -44,10 +44,13 @@ import type * as TrpcMod from '~/utils/trpc';
  *
  * NOTE ON REACH: the browser `component` project runs in CI as the
  * `preview / component-tests` status — REPORT-ONLY, so a break here is visible
- * but does not block a merge. This file is the EMPIRICAL half; the gating half
- * is the source guard in `__tests__/pageBlockHostMaxWidth.test.ts`, which is in
- * the node `unit` project. Neither can replace the other: only a real layout can
- * see a width, and only the gating tier can stop a merge.
+ * but does not block a merge. This file is the EMPIRICAL half; the source-guard
+ * half is `__tests__/pageBlockHostMaxWidth.test.ts`, which is in the node `unit`
+ * project — report-only on a pull request too (`continue-on-error`), and an
+ * honest verdict on a push to `main` or a `workflow_dispatch`. NEITHER TIER
+ * BLOCKS A MERGE: `main` requires no status check at all in this repo. Neither
+ * can replace the other either: only a real layout can see a width, and only the
+ * node tier stays honest on `main`.
  */
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));

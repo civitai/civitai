@@ -16,8 +16,13 @@
  * (monotonic, and `base` == the pre-change constants) that no single rendered
  * viewport can express.
  *
- * It lives in the node `unit` project on purpose: that tier is GATING in CI,
- * while the browser `component` project is report-only.
+ * It lives in the node `unit` project on purpose: that tier EXECUTES the
+ * assertion, while the browser `component` project runs in CI as the REPORT-ONLY
+ * `preview / component-tests` status. The node tier is report-only on a pull
+ * request too (`continue-on-error`) and renders a real verdict on a push to
+ * `main` or a `workflow_dispatch`. NEITHER TIER BLOCKS A MERGE: `main` requires
+ * no status check at all in this repo, so this is a signal a reviewer must read,
+ * not a door that stays shut.
  */
 import { describe, expect, it } from 'vitest';
 import {

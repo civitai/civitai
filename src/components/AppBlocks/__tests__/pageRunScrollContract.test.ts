@@ -4,11 +4,14 @@ import { describe, expect, it } from 'vitest';
 
 /**
  * `/apps/run/<slug>` must declare a NON-SCROLLING layout, and its host must
- * claim no height of its own. Node `unit` project — the GATING suite. The
- * `.browser.test.tsx` component suites DO run in CI, as the report-only
- * `preview / component-tests` status (`pnpm run test:component`), so a break
- * there is visible but does not block a merge. The coupling is pinned here for
- * that reason, and only MEASURED in `PageBlockHostScrollFit.browser.test.tsx`.
+ * claim no height of its own. Node `unit` project — the suite that EXECUTES this
+ * assertion (report-only on a pull request via `continue-on-error`, an honest
+ * verdict on a push to `main` or a `workflow_dispatch`). The `.browser.test.tsx`
+ * component suites DO run in CI, as the report-only `preview / component-tests`
+ * status (`pnpm run test:component`), so a break there is visible but is only ever
+ * an annotation. NEITHER TIER BLOCKS A MERGE: `main` requires no status check at
+ * all in this repo. The coupling is pinned here so that it is at least visible on
+ * `main`, and only MEASURED in `PageBlockHostScrollFit.browser.test.tsx`.
  *
  * WHAT BROKE. The route shipped a bare `export default function AppPage`, so it
  * inherited `AppLayout`'s default `scrollable: true` — a `ScrollArea` with
@@ -474,7 +477,7 @@ describe('the run page and its host agree on who owns the height', () => {
   });
 
   /**
-   * 🔴 THE FLOOR'S VALUE BELONGS IN THE GATING TIER, NOT ONLY THE BROWSER ONE.
+   * 🔴 THE FLOOR'S VALUE BELONGS IN THE NODE TIER, NOT ONLY THE BROWSER ONE.
    *
    * `FILL_MIN_HEIGHT_PX` is the whole WCAG fix: too low and a short viewport
    * strands content behind `overflow-hidden`; too high and the page grows a
@@ -483,23 +486,26 @@ describe('the run page and its host agree on who owns the height', () => {
    * `PageBlockHostScrollFit.browser.test.tsx` — and that suite is REPORT-ONLY
    * (`preview / component-tests`) and historically ~16% flaky, i.e. exactly the
    * combination that trains people to click through. Measured: with the floor set
-   * to 0, this gating file was 9/9 GREEN and only the non-blocking tier went red.
+   * to 0, this node-tier file was 9/9 GREEN and only the browser tier went red.
    *
    * So the band is asserted HERE too, by reading the declaration out of the
    * source the same way the `HEADER_HEIGHT` tripwire above does. The browser
    * suite still measures the CONSEQUENCE (a real host, laid out, at two viewport
-   * sizes); this pins the DECISION so a merge cannot quietly change it.
+   * sizes); this pins the DECISION so that changing it cannot be silent. It is
+   * still only a signal — NEITHER TIER BLOCKS A MERGE (`main` requires no status
+   * check at all in this repo); what this buys is a red run on a push to `main`
+   * and an annotation a reviewer has to read.
    *
    * 🔴 THE BOUNDS ARE DELIBERATELY LITERALS HERE, NOT READ FROM THE SOURCE. A
    * band imported from (or regexed out of) `PageBlockHost.tsx` would be graded
    * against the same file it bounds, so a single edit could move the value and
    * its own limits together — the self-referential trap this whole guard exists
    * because of. The ARITHMETIC that justifies them lives on the constant's doc
-   * comment; the NUMBERS live here (gating) and in
-   * `PageBlockHostScrollFit.browser.test.tsx` (report-only). Both must admit a
+   * comment; the NUMBERS live here (node tier) and in
+   * `PageBlockHostScrollFit.browser.test.tsx` (browser tier). Both must admit a
    * value, so the tighter pair wins and drift is fail-safe.
    */
-  it('`FILL_MIN_HEIGHT_PX` stays inside its documented band — in the BLOCKING tier', () => {
+  it('`FILL_MIN_HEIGHT_PX` stays inside its documented band — in the node tier', () => {
     const declared = /export const FILL_MIN_HEIGHT_PX = (\d+);/.exec(code(read(HOST)))?.[1];
     expect(
       declared,
