@@ -47,10 +47,25 @@ import {
  *   (a) A column with genuinely VARIABLE, long content — an app name, a free-text reason,
  *       an event detail — is primary. The slack becomes headroom for real content that
  *       would otherwise truncate.
- *   (b) A table where NO column has that — every cell a slug, a badge, a date — takes its
- *       LAST (action) column as primary instead. A cell's content is left-aligned, so the
- *       control sits at the action column's LEFT edge: the slack then lands to the RIGHT
- *       of the button, AFTER the row, instead of between the row and its control.
+ *   (b) A table where NO column has that — every cell a slug, a badge, a date, or a
+ *       hard-CAPPED text — takes its LAST column as primary instead, so the slack TRAILS
+ *       the row rather than splitting it. That column is usually the action column, and
+ *       the reason it works is that a cell's content is left-aligned: the control sits at
+ *       its LEFT edge, so the slack lands to the RIGHT of the button. ⚠️ THAT ONLY HOLDS
+ *       IF THE CELL REALLY IS LEFT-ALIGNED — `OffsiteReportsQueue`'s action `Group` was
+ *       `justify="flex-end"`, which pins the buttons to the table's right edge and turns
+ *       case (b) into the defect. It is `flex-start` now; that is a no-op at every width
+ *       where the column sits at min-content, i.e. everywhere it is not the primary.
+ *
+ * 🔴 "VARIABLE" MEANS THE CELL CAN ACTUALLY USE THE PIXELS — measure it, do not read the
+ * field name. Two ledgers were wrong on exactly this and both were caught by rendering:
+ *   · `OffsiteReportsQueue`'s `Reason` looked like free text and is
+ *     `lineClamp={2} style={{ maxWidth: 260 }}`. Measured 1440 → 2560 with it primary:
+ *     the column went 587.73 → 1404.64 (+816.91) while the details box stayed **260 at
+ *     both** — ~1145px of dead space inside the cell, i.e. padding relabelled.
+ *   · `AppActivityPanel`'s `Detail` looked like the payload and is a fixed monospace ref.
+ *     With it primary the column went 971.56 → 1744.34 (+772.78) while its glyph box
+ *     stayed **151.72 at both**. The component's own comment said so; the ledger did not.
  *
  * `ActivePreviewsPanel` is why this is written down. Its first ledger made `App` primary
  * on the general rule — and `App` is a short `<Code>{slug}</Code>`, so 49% of the table
@@ -196,7 +211,15 @@ export const APPS_REVENUE_COLUMNS = {
  *
  *   columns  228.02 | 165.17 | 146.45 | 152.05 | 682.31   (1440)
  *            413.89 | 299.83 | 265.84 | 276.00 | 1238.44  (2560)
- *   slug → "Tear down" gap   609.67 → 1173.55   (+563.88)
+ *   slug → "Tear down" gap   817.36 → 1381.23   (+563.87)
+ *
+ * ⚠️ THAT PAIR WAS FIRST RECORDED AS `609.67 → 1173.55`, WHICH IS A DIFFERENT QUANTITY.
+ * The two differ by which endpoint the gap is measured to: 609.67/1173.55 is the `<Code>`
+ * BORDER BOX to the row's FIRST control (the "Open full-page preview" anchor); the shipped
+ * helper measures the slug's GLYPH RANGE to the "Tear down" BUTTON. The DELTA is +563.87
+ * either way, so nothing about the argument moved — but a live assertion message that
+ * quoted one pair while printing the other reads as a broken harness, so the numbers here
+ * are the ones the guard actually produces.
  *
  * i.e. half the container's 1120px delta landed between a row's identity and the control
  * acting on it — the exact phenomenon the header of this file calls THE DEFECT, on the
@@ -225,25 +248,74 @@ export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null]
  * The `/apps/review` REPORTS tab (`OffsiteReportsQueue`) —
  * **App** · Reason · Reporter · Reported · Status · actions.
  *
- * 🔴 REASON IS PRIMARY, NOT App — case (a), applied to the column that is actually
- * variable rather than the one that names the row. `App` is a slug: knowing which listing
- * a report is about takes ~150px and no more. `Reason` is operator-written free text, and
- * it is the thing the moderator has to read before deciding. Giving the slack to the slug
- * would widen an identifier while the sentence stayed wrapped.
+ * 🔴 THE ACTIONS COLUMN IS PRIMARY — case (b), and this ledger got it wrong twice before
+ * measurement settled it.
+ *
+ * The first version made `App` primary on "it names the row". The second made `Reason`
+ * primary on "it is operator-written free text, and giving the slack to the slug would
+ * widen an identifier while the sentence stayed wrapped". BOTH sentences are about what
+ * the fields MEAN; neither is about what the cells can DO, and the second is simply false:
+ * the details `Text` is `lineClamp={2} style={{ maxWidth: 260 }}`, so it renders 260px
+ * wide at 1440 and 260px wide at 2560. Measured with `Reason` primary, 1440 → 2560:
+ *
+ *   columns   140.59 | 587.73  | 90.36  | 98.41  | 74.8  | 414.11
+ *             252.59 | 1404.64 | 151.55 | 176.81 | 126.3 | 414.11
+ *   details box  260 → 260
+ *
+ * — the primary column took +816.91 and the sentence gained nothing.
+ *
+ * `App` is the near miss worth recording, because it is NOT a slug-only cell: it carries
+ * an uncapped listing NAME under the slug, and that name genuinely grows (glyph box
+ * 98.05 → 199.45 across the same pair). It is a real case-(a) candidate — and still the
+ * wrong one, because ~200px of name cannot absorb ~1350px of surplus either. When NO cell
+ * can, case (b) is the answer and the question stops being "which column deserves it".
+ *
+ * 🔴 `Reason` KEEPS A LARGE FIXED SHARE (21%) EVEN THOUGH IT IS NOT PRIMARY, and the
+ * number is set by the NARROW end, not the wide one. Its cell needs `260 + 32` of padding
+ * to render the capped text at all, and 12% — the share its content wants at 2528 — is only
+ * 169px at 1408, which measured a details box of **136.72** instead of 260. That is losing
+ * visible text on a 1440 monitor to tidy up a 2560 one, i.e. exactly what this module's
+ * provenance rule forbids. 21% of 1408 is 296, so the cap binds at both ends (260 → 260).
+ * The residue is ~239px of dead space inside `Reason` at 2528 — the honest cost of a
+ * hard-capped cell in a fluid table, and smaller than any alternative measured.
+ * `Reporter`, `Reported` and `Status` are shrink-to-content (3/4/3) so they stay at their
+ * own widths and the controls do not recede.
  */
-export const APPS_OFFSITE_REPORTS_COLUMNS: AppsTableColumns = [10, null, 6, 7, 5, 8];
+export const APPS_OFFSITE_REPORTS_COLUMNS: AppsTableColumns = [10, 21, 3, 4, 3, null];
 
 /**
  * The `/apps/installed` ACTIVITY tab (`AppActivityPanel`) —
  * When · App · Action · **Detail** · Status.
  *
- * 🔴 THE PRIMARY IS `Detail`, NOT `App`, and that is the only ledger here where it moves.
- * Every other row in this module is identified by an app and scanned down that column;
- * this one is a per-EVENT feed where the app repeats and the variable-length cell is what
- * the app did (an endpoint, a Buzz amount, a scope). Handing the slack to `App` would
- * widen a column of repeated slugs while the sentence that matters stayed truncated.
+ * 🔴 `Status` IS PRIMARY, AND `Detail` — WHICH THIS LEDGER PICKED FIRST — IS THE WORST
+ * CHOICE ON THE ROW. The original justification ("the variable-length cell is what the app
+ * did … the sentence that matters") named the wrong column, and the component's OWN comment
+ * at its render site says so: the ACTION cell carries the human sentence when a rich detail
+ * is present, and the DETAIL cell always shows the raw technical ref (workflow id / storage
+ * key / endpoint). Measured on a rich `tip` row, 1440 → 2560, with `Detail` primary:
+ *
+ *   columns        98.55 | 112.63 | 140.8 | 971.56  | 84.47
+ *                 176.95 | 202.23 | 252.8 | 1744.34 | 151.67
+ *   Action  glyph "Tipped 500 Buzz to user #4242"  102.97 → 166.34   (grows)
+ *   Detail  glyph "POST /api/v1/buzz/tip"          151.72 → 151.72   (fixed)
+ *
+ * So `Detail` took +772.78 for a token that cannot use one pixel of it.
+ *
+ * 🔴 AND THE FIX IS NOT "MAKE `Action` PRIMARY" — that is the trap one step along. The
+ * sentence is variable but BOUNDED: it grows to a few hundred px and stops, so handing it
+ * ~1800px would put 1500px of dead space in the MIDDLE of the row instead of the middle-
+ * right. `Action` gets a generous FIXED share (20% ≈ 506px at the current container, ~3×
+ * its measured glyph) and the LAST column takes the slack, so it trails. This table has no
+ * controls at all, which is why case (b)'s "action column" is really "the last column".
+ *
+ * 🔴 `Detail` IS 13%, NOT A SHRINK-TO-CONTENT SLIVER, and that number is again set by
+ * the NARROW end. Its ref is a spaced string, so min-content is the longest WORD (~120px)
+ * and a small share lets it wrap: measured at 7%, the glyph box was **115.59 at 1408**
+ * against 151.72 at 2528 — the monospace ref broken across two lines on an ordinary
+ * desktop. 13% of 1408 is 183, which holds it on one line at both ends. `When` and `App`
+ * are 3/4 because they genuinely are shrink-to-content and stay at min-content throughout.
  */
-export const APPS_ACTIVITY_COLUMNS: AppsTableColumns = [7, 8, 10, null, 6];
+export const APPS_ACTIVITY_COLUMNS: AppsTableColumns = [3, 4, 20, 13, null];
 
 /**
  * The agent code-review report's scope table (`ReportTabs`) —
@@ -286,7 +358,7 @@ export const APPS_TABLE_COLUMN_LEDGERS: Readonly<Record<string, AppsTableColumns
  * ⚠️ AND THE OBVIOUS JUSTIFICATION FOR THAT RULE IS WRONG HERE, SO DO NOT REPEAT IT.
  * "A browser ignores a misplaced `<colgroup>`" is what this comment used to say, and it
  * was refuted by mutating it: measured 2026-09-04 in `AppsWideLayout.geometry.test.tsx`,
- * moving this element AFTER `<Table.Tbody>` changed no rendered width at all — all eight
+ * moving this element AFTER `<Table.Tbody>` changed no rendered width at all — every
  * geometry assertions still passed. React inserts nodes through the DOM API rather than
  * the HTML parser, so the parser's table foster-parenting never runs and Chromium applies
  * the columns from wherever the element sits. The ordering is therefore a VALIDITY rule
@@ -385,7 +457,6 @@ export function AppsCardGrid({
     <div
       data-testid={testId}
       data-apps-card-grid=""
-      data-apps-card-grid-gap={String(gap)}
       style={{
         display: 'grid',
         gap,

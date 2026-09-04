@@ -22,7 +22,7 @@
  * "cannot see any of that". Both halves were refuted by mutation, in opposite directions:
  *
  *   - a `<colgroup>` moved AFTER `<Table.Tbody>` changed **no rendered width at all** (all
- *     eight assertions here stayed green), because React inserts nodes through the DOM API
+ *     assertion in this file stayed green), because React inserts nodes through the DOM API
  *     so the HTML parser's table foster-parenting never runs and Chromium honours the
  *     columns wherever the element sits — while the unit file's structural guard went red;
  *   - a `<colgroup>` DELETED entirely does turn these assertions red, which is the positive
@@ -96,42 +96,135 @@ vi.mock('~/hooks/useCurrentUser', () => ({
 }));
 // Spread the REAL module and override only `trpc` — the sub-nav's summary query is the
 // only network this file's tree reaches.
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    useUtils: () => ({
-      blocks: {
-        listActivePreviews: { invalidate: vi.fn() },
-        getReviewStatus: { invalidate: vi.fn() },
-      },
-    }),
-    blocks: {
-      getNavSummary: { useQuery: () => ({ data: undefined }) },
-      // `ActivePreviewsPanel`'s own read. One LIVE preview, so both of its buttons render
-      // — the shape the +563.88px gap was measured on.
-      listActivePreviews: {
-        useQuery: () => ({
-          data: {
-            cap: 3,
-            active: [
-              {
-                publishRequestId: 'pr_1',
-                slug: 'lighthouse',
-                version: '1.0.0',
-                state: 'preview-live',
-                updatedAt: new Date().toISOString(),
-              },
-            ],
-          },
-          error: null,
-          isFetching: false,
-          refetch: vi.fn(),
-        }),
-      },
-      teardownPreview: { useMutation: () => ({ mutate: vi.fn(), isPending: false }) },
+// 🔴 A PROXY, NOT A HAND-ENUMERATED TREE. Four real components now render in this
+// file and between them they touch a dozen procedures; a literal mock object fails
+// with `Cannot read properties of undefined (reading 'useMutation')` for every one
+// nobody remembered, which is a fixture problem masquerading as a component problem.
+// The proxy answers ANY path with an inert hook, and `DATA` overrides only the reads
+// whose CONTENT this file measures. Spread the real module and override `trpc` alone
+// (local-rules/no-wholesale-module-mock).
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const inertQuery = {
+    data: undefined,
+    error: null,
+    isLoading: false,
+    isFetching: false,
+    isPending: false,
+    hasNextPage: false,
+    isFetchingNextPage: false,
+    fetchNextPage: vi.fn(),
+    refetch: vi.fn(),
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    invalidate: vi.fn(),
+  };
+  const hooks = {
+    useQuery: () => inertQuery,
+    useInfiniteQuery: () => inertQuery,
+    useMutation: () => inertQuery,
+    invalidate: vi.fn(),
+    fetch: vi.fn(),
+  };
+  const node = (data?: unknown): unknown =>
+    new Proxy(
+      {},
+      {
+        get(_t, key: string) {
+          if (key === 'useQuery' || key === 'useInfiniteQuery') {
+            return () => (data === undefined ? inertQuery : { ...inertQuery, data });
+          }
+          if (key in hooks) return (hooks as Record<string, unknown>)[key];
+          if (key === 'then') return undefined; // never look thenable to await
+          return node();
+        },
+      }
+    );
+  /** The reads whose CONTENT this file measures — everything else is inert. */
+  const DATA: Record<string, unknown> = {
+    // `ActivePreviewsPanel`: one LIVE preview, so both of its controls render — the
+    // shape the +563.87px column delta was measured on.
+    'blocks.listActivePreviews': {
+      cap: 3,
+      active: [
+        {
+          publishRequestId: 'pr_1',
+          slug: 'lighthouse',
+          version: '1.0.0',
+          state: 'preview-live',
+          updatedAt: new Date().toISOString(),
+        },
+      ],
     },
-  },
-}));
+    // `AppActivityPanel`: one RICH scope row. The disputed column decision is only
+    // observable on that shape — `describeBlockAction` puts a SENTENCE in Action while
+    // `humaniseScopeEndpoint` puts a raw technical ref in Detail.
+    'blocks.listMyScopeInvocations': {
+      pages: [
+        {
+          items: [
+            {
+              id: 'sc_1',
+              createdAt: new Date('2026-09-01T00:00:00Z'),
+              appBlockId: 'ab_9',
+              appName: 'Lighthouse',
+              appSlug: 'lighthouse',
+              scope: 'buzz:tip',
+              endpoint: 'POST /api/v1/buzz/tip',
+              statusCode: 200,
+              detail: { action: 'tip', toUserId: 4242, amount: 500 },
+            },
+          ],
+          nextCursor: null,
+        },
+      ],
+    },
+    'blocks.listMyAppActivity': { pages: [{ items: [], nextCursor: null }] },
+    // `OffsiteReportsQueue`: a LONG app name AND a LONG `details`, so the two candidate
+    // primary columns can be told apart by what each cell does with the room.
+    'appListings.listListingReports': {
+      items: [
+        {
+          id: 'rep_1',
+          status: 'pending',
+          reason: 'TOSViolation',
+          details:
+            'The listing screenshots show a different application than the one actually ' +
+            'served at the external URL, and the description claims a Civitai partnership ' +
+            'that does not exist.',
+          createdAt: new Date('2026-09-01T00:00:00Z'),
+          reporter: { id: 11, username: 'reporter-one' },
+          appListing: {
+            id: 'apl_1',
+            slug: 'lighthouse',
+            name: 'Lighthouse — Model Diagnostics And Comparison Workbench',
+            status: 'approved',
+          },
+        },
+      ],
+      nextCursor: null,
+    },
+  };
+  const root: unknown = new Proxy(
+    {},
+    {
+      get(_t, router: string) {
+        if (router === 'useUtils') return () => node();
+        if (router === 'useQueries') return () => [];
+        if (router === 'then') return undefined;
+        return new Proxy(
+          {},
+          {
+            get(_t2, proc: string) {
+              if (proc === 'then') return undefined;
+              return node(DATA[`${router}.${proc}`]);
+            },
+          }
+        );
+      },
+    }
+  );
+  return { ...(await importOriginal<typeof TrpcMod>()), trpc: root };
+});
 // `/apps/installed`'s module calls `createServerSideProps` at import time, which pulls the
 // server graph into a browser bundle. Stubbed so the page's `InstalledAppCard` — the REAL
 // card whose gap this file measures — can be imported without it.
@@ -145,6 +238,8 @@ const { UnifiedReviewList } = await import('~/components/Apps/UnifiedReviewList'
 const { MyAppsBodyView } = await import('~/components/Apps/MyAppsBody');
 const { InstalledAppCard } = await import('~/pages/apps/installed');
 const { ActivePreviewsPanel } = await import('~/components/Apps/ActivePreviewsPanel');
+const { OffsiteReportsQueue } = await import('~/components/Apps/OffsiteReviewQueue');
+const { AppActivityPanel } = await import('~/components/Apps/AppActivityPanel');
 
 /** The container's own content width at each fixture viewport, as literals. */
 const NARROW = { width: 1440, height: 900, content: 1408 } as const;
@@ -428,7 +523,7 @@ describe('/apps/review — the active-previews panel keeps its buttons near its 
    *
    *   columns  228.02 | 165.17 | 146.45 | 152.05 | 682.31
    *            413.89 | 299.83 | 265.84 | 276.00 | 1238.44
-   *   slug → "Tear down"  609.67 → 1173.55
+   *   slug → "Tear down"  817.36 → 1381.23   (+563.87)
    *
    * i.e. removing the cap re-opened, on this table, exactly the defect the cap had been
    * suppressing. The ledger makes the ACTION column primary (case (b)), so the four short
@@ -472,7 +567,7 @@ describe('/apps/review — the active-previews panel keeps its buttons near its 
       wide,
       `the slug→"Tear down" gap went ${narrow} → ${wide} across a ${CONTAINER_DELTA}px ` +
         'container increase; the measured no-ledger baseline for this table was ' +
-        '609.67 → 1173.55, which is what removing the 1368 cap re-opened'
+        '817.36 → 1381.23, which is what removing the 1368 cap re-opened'
     ).toBeLessThanOrEqual(narrow + 1);
   });
 
@@ -489,6 +584,150 @@ describe('/apps/review — the active-previews panel keeps its buttons near its 
       `the action column took ${px(actionDelta)} of ${CONTAINER_DELTA}px and the four data ` +
         `columns took ${px(dataDelta)} between them`
     ).toBeGreaterThan(dataDelta);
+  });
+});
+
+// ── table routes 4 and 5 — the two ledgers ROUND 2 GOT WRONG ────────────────
+
+/** The glyph box of an element's text, rather than the box of the cell holding it. */
+function glyphWidth(el: Element | null | undefined): number {
+  if (!el) throw new Error('no element to measure');
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  return px(range.getBoundingClientRect().width);
+}
+
+/** The first row's `<td>`s of the first table on the page. */
+function bodyCells(): Element[] {
+  return Array.from(document.querySelectorAll('table tbody tr:first-child > td'));
+}
+
+describe('/apps/review reports — the primary column is one that can USE the width', () => {
+  /**
+   * 🔴 THE LEDGER THAT WAS WRONG TWICE. Round 2 made `Reason` primary because it is
+   * "operator-written free text". It is `lineClamp={2} style={{ maxWidth: 260 }}`, so it
+   * renders 260px wide at every container width — the column took +816.91 and the sentence
+   * gained nothing. `App` was the earlier guess and is a genuine case-(a) candidate (its
+   * uncapped listing name grows 98.05 → 199.45), just far too small to absorb ~1350px.
+   * With no cell able to use it, the slack trails in the actions column.
+   */
+  const queue = () => <OffsiteReportsQueue />;
+
+  test('the queue renders its row (guards a vacuous measurement)', async () => {
+    await renderRoute(queue(), WIDE);
+    expect(headerWidths()).toHaveLength(6);
+    expect(bodyCells()).toHaveLength(6);
+    expect(document.querySelectorAll('table tbody button').length).toBeGreaterThanOrEqual(1);
+    await cleanup();
+  });
+
+  test('🔴 the details box is CAPPED, so `Reason` could never have absorbed the slack', async () => {
+    // The measurement that decided the ledger, kept as the assertion: a column whose text
+    // cannot widen is a case-(b) signal no matter what the field is called. If someone
+    // lifts the 260px cap, this fails and the ledger becomes re-decidable on evidence.
+    const detailsBox = () => {
+      const cell = bodyCells()[1];
+      const texts = Array.from(cell.children);
+      return px(texts[texts.length - 1].getBoundingClientRect().width);
+    };
+    const { narrow, wide } = await atBothWidths(queue, detailsBox);
+    expect(narrow).toBe(260);
+    expect(wide).toBe(260);
+  });
+
+  test('🔴 the Status → first button gap does NOT grow with the container', async () => {
+    // The harm metric: the controls must not recede from the row they act on. This is what
+    // `justify="flex-end"` on the action `Group` would have broken the moment that column
+    // became primary — the buttons would pin to the table's right edge instead.
+    const gap = () => {
+      const statusBadge = bodyCells()[4].firstElementChild;
+      const button = document.querySelector('table tbody button');
+      if (!button) throw new Error('the reports queue rendered no action button');
+      return px(
+        button.getBoundingClientRect().left - (statusBadge as Element).getBoundingClientRect().right
+      );
+    };
+    const { narrow, wide } = await atBothWidths(queue, gap);
+    expect(narrow).toBeGreaterThan(0);
+    expect(
+      wide,
+      `the Status→button gap went ${narrow} → ${wide} across a ${CONTAINER_DELTA}px container increase`
+    ).toBeLessThanOrEqual(narrow + 1);
+  });
+
+  test('…and the APP NAME still grows, which is why its share is content-sized', async () => {
+    // The near-miss, kept as a measurement: `App` really is variable, so its fixed share is
+    // sized to the name rather than shrunk to a slug. A share that stopped tracking it would
+    // re-truncate the one cell on this row that benefits from room.
+    const nameGlyph = () => {
+      const cell = bodyCells()[0];
+      return glyphWidth(cell.children[cell.children.length - 1]);
+    };
+    const { narrow, wide } = await atBothWidths(queue, nameGlyph);
+    expect(wide).toBeGreaterThan(narrow);
+  });
+});
+
+describe('/apps/installed activity — the sentence is in ACTION, not DETAIL', () => {
+  /**
+   * 🔴 ROUND 2 MADE `Detail` PRIMARY AND THE COMPONENT'S OWN COMMENT SAID OTHERWISE.
+   * `describeBlockAction` writes the human sentence into ACTION; DETAIL always holds the
+   * raw technical ref. This block is the render that settled it — the fixture is a RICH
+   * `tip` row, because on a passive row both cells are short and the two readings agree.
+   */
+  const panel = () => <AppActivityPanel />;
+
+  test('the fixture really is the RICH shape (guards a vacuous measurement)', async () => {
+    // On a non-rich row `Action` falls back to `humaniseScopeInvocation` and the sentence
+    // never renders, so every assertion below would compare two short strings.
+    await renderRoute(panel(), WIDE);
+    const cells = bodyCells();
+    expect(cells).toHaveLength(5);
+    expect(cells[2].textContent).toContain('Tipped');
+    expect(cells[3].textContent).toContain('/api/v1/buzz/tip');
+    await cleanup();
+  });
+
+  test('🔴 DETAIL is a fixed token — it cannot use a single extra pixel', async () => {
+    const detailGlyph = () => glyphWidth(bodyCells()[3].firstElementChild);
+    const { narrow, wide } = await atBothWidths(panel, detailGlyph);
+    expect(wide).toBe(narrow);
+  });
+
+  test("…and ACTION's share holds its sentence on ONE line at BOTH widths", async () => {
+    // 🔴 THIS ASSERTION WAS WRITTEN FROM THE WRONG LEDGER'S NUMBERS AND HAD TO BE
+    // CORRECTED. Under round 2's `[7, 8, 10, null, 6]` the Action column was 140.8 at 1408,
+    // which WRAPPED the sentence — so its glyph measured 102.97 narrow and 166.34 wide and
+    // "Action grows with the container" looked true. It was measuring a squeeze, not a
+    // benefit. With a share sized to the sentence the glyph is 166.34 at BOTH widths, and
+    // the real claim is that it is never squeezed: constant, with headroom at the narrow
+    // end. A test that expected growth here would be asserting the defect.
+    const read = () => ({
+      glyph: glyphWidth(bodyCells()[2].firstElementChild),
+      cell: px(bodyCells()[2].getBoundingClientRect().width),
+    });
+    const { narrow, wide } = await atBothWidths(panel, read);
+    expect(narrow.glyph).toBe(wide.glyph);
+    // Headroom at the NARROW end is what proves it is not wrapping — the failure mode the
+    // share exists to prevent, and the one round 2 shipped.
+    expect(narrow.cell).toBeGreaterThan(narrow.glyph);
+    // Guard-the-guard: a fixture whose sentence was empty would satisfy both trivially.
+    expect(narrow.glyph).toBeGreaterThan(100);
+  });
+
+  test('🔴 the slack TRAILS the row: the last column takes more than the rest combined', async () => {
+    // The bounded-sentence trap, as an assertion. `Action` is variable but stops growing
+    // after a few hundred px, so making IT primary would park ~1500px mid-row. The last
+    // column takes the surplus instead.
+    const { narrow, wide } = await atBothWidths(panel, headerWidths);
+    const lastDelta = wide[4] - narrow[4];
+    const restDelta = wide.reduce((s, w, i) => (i === 4 ? s : s + (w - narrow[i])), 0);
+    expect(
+      lastDelta,
+      `the last column took ${px(lastDelta)} of ${CONTAINER_DELTA}px and the other four took ${px(
+        restDelta
+      )}`
+    ).toBeGreaterThan(restDelta);
   });
 });
 
@@ -544,6 +783,29 @@ describe('/apps/installed — the space-between row keeps its control near its c
     // Two 1fr tracks with a 16px gap: (2528 − 16) / 2 = 1256.
     expect(wide).toBe(1256);
     expect(wide).toBeLessThan(narrow);
+  });
+
+  test("🔴 the Hidden tab's 12px gap gives the SAME rung, measured in the browser", async () => {
+    // F8's equivalence, in the engine rather than in arithmetic. `appsCardGridColumnsAt`
+    // MIRRORS the CSS; this reads the CSS. Two tracks either way, and the child is the
+    // gap's own width narrower — which is also the only consumer the `gap` prop has, so
+    // deleting the prop is visible here as well as at its call site.
+    const { observed } = await renderAtViewport(
+      <AppsPageLayout title="Fixture">
+        <AppsCardGrid testId="apps-installed-hidden-grid" gap={12}>
+          <InstalledAppCard app={INSTALLED_APP} onManage={vi.fn()} />
+          <InstalledAppCard app={INSTALLED_APP} onManage={vi.fn()} />
+        </AppsCardGrid>
+      </AppsPageLayout>,
+      WIDE
+    );
+    expect(observed).toEqual({ width: WIDE.width, height: WIDE.height });
+    const gridEl = document.querySelector('[data-apps-card-grid]') as HTMLElement;
+    expect(getComputedStyle(gridEl).columnGap).toBe('12px');
+    // Two 1fr tracks with a 12px gap: (2528 − 12) / 2 = 1258 — the same TWO columns the
+    // 16px default yields at this width, which is the whole claim.
+    expect(px((gridEl.firstElementChild as HTMLElement).getBoundingClientRect().width)).toBe(1258);
+    await cleanup();
   });
 
   test('🔴 ON A PHONE the card fits the screen — the `min(100%, …)` is load-bearing', async () => {

@@ -4,6 +4,8 @@ import ts from 'typescript';
 import { describe, expect, test } from 'vitest';
 import {
   APPS_ACTIVE_PREVIEWS_COLUMNS,
+  APPS_CARD_LIST_GAP,
+  APPS_CARD_LIST_MIN_COLUMN,
   APPS_ACTIVITY_COLUMNS,
   APPS_AGENT_REPORT_SCOPE_COLUMNS,
   APPS_FULL_MEASURE_CONTENT_WIDTH,
@@ -33,7 +35,8 @@ import * as LEDGER_EXPORTS from '~/components/Apps/appsWideLayout';
  * ⚠️ THAT SPLIT IS NOT THE ONE IT LOOKS LIKE, AND IT WAS MEASURED RATHER THAN ASSUMED.
  * The ordering guard here was written believing a misplaced `<colgroup>` is ignored by the
  * browser — i.e. that geometry would be the real catch. Two mutations settled it on
- * 2026-09-04. Moving the element after `<Table.Tbody>` left all eight geometry assertions
+ * 2026-09-04, and re-confirmed after the file grew. Moving the element after
+ * `<Table.Tbody>` left EVERY geometry assertion
  * GREEN and turned only this file red: React inserts nodes through the DOM API, so the HTML
  * parser's table foster-parenting never runs and Chromium honours the columns wherever the
  * element sits. DELETING the colgroup outright turns the geometry assertions red — the
@@ -169,15 +172,34 @@ describe('every shipped ledger is valid', () => {
     expect(APPS_REVENUE_COLUMNS.withApp.length - APPS_REVENUE_COLUMNS.scoped.length).toBe(1);
   });
 
-  test('the PRIMARY column is where the ledger says it is', () => {
-    // Named positions, so moving the primary to a badge or a date column fails here
-    // rather than merely looking odd on screen.
-    expect(APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy.indexOf(null)).toBe(1); // App
-    expect(APPS_REVIEW_QUEUE_COLUMNS.withDeploy.indexOf(null)).toBe(1); // App
-    expect(APPS_MINE_COLUMNS.indexOf(null)).toBe(0); // App
-    expect(APPS_MOD_LISTINGS_COLUMNS.indexOf(null)).toBe(0); // App
-    expect(APPS_REVENUE_COLUMNS.withApp.indexOf(null)).toBe(1); // App
-    expect(APPS_REVENUE_COLUMNS.scoped.indexOf(null)).toBe(1); // Scope — there is no App
+  test('🔴 the PRIMARY column is where the ledger says it is — for EVERY ledger', () => {
+    // 🔴 THIS PIN WENT FROM 6/6 TO 6/10 WHEN FOUR LEDGERS WERE ADDED, AND THE GAP IS WHAT
+    // LET TWO WRONG DECISIONS SHIP. Measured at that revision: moving the primary in ALL
+    // FOUR new ledgers left the unit tier 31/31 green, and geometry caught only
+    // `ActivePreviewsPanel`. So the choice this module calls "a decision with two cases,
+    // and getting it wrong makes the defect WORSE" was unguarded at both tiers for
+    // `OffsiteReportsQueue`, `AppActivityPanel` and `ReportTabs` — and it WAS wrong for the
+    // first two. Keyed off the ledger record so a new entry cannot be added without one.
+    const PRIMARY_AT: Record<string, number> = {
+      'review queue (pending/rejected)': 1, // App — slug + optional title
+      'review queue (approved)': 1, // App
+      'my apps': 0, // App — icon + name + slug
+      'moderation listings': 0, // App — slug + kind/status chips
+      'revenue (unscoped)': 1, // App — link to the per-app page
+      'revenue (scoped)': 1, // Scope — there is no App column
+      'active previews': 4, // actions — case (b), no cell can use the room
+      'offsite reports': 5, // actions — case (b), Reason is hard-capped at 260px
+      'app activity': 4, // Status (last) — Action is bounded, Detail is a fixed token
+      'agent report scopes': 5, // Notes — uncapped reviewer prose
+    };
+    // The map and the ledger record must name the SAME set, or a ledger added without a
+    // decision would simply be skipped.
+    expect(Object.keys(PRIMARY_AT).sort()).toEqual(Object.keys(APPS_TABLE_COLUMN_LEDGERS).sort());
+    for (const [label, index] of Object.entries(PRIMARY_AT)) {
+      expect(APPS_TABLE_COLUMN_LEDGERS[label].indexOf(null), `${label}'s primary column`).toBe(
+        index
+      );
+    }
   });
 
   test('🔴 the primary column is left a MEANINGFUL share, not a sliver', () => {
@@ -200,20 +222,33 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
    * cap and gave ledgers to the two tables somebody had in mind. That route renders FOUR
    * tables, and the cap was the only thing holding the other two down: measured on
    * `ActivePreviewsPanel` at 1440 → 2560, the gap between a row's slug and its "Tear
-   * down" button grew 609.67 → 1173.55 — half the container delta, i.e. exactly the
+   * down" button grew 817.36 → 1381.23 — half the container delta, i.e. exactly the
    * defect this module exists to remove, newly introduced by removing its workaround.
    *
    * A list of files nobody derives cannot notice a table it never mentioned. So the set
    * is DERIVED by parsing every component under the two directories, and anything without
    * a ledger has to be EXEMPTED BY NAME with a reason.
    *
-   * ⚠️ WHAT THIS GUARD DOES NOT COVER, stated rather than implied:
+   * ⚠️ WHAT THIS GUARD DOES NOT COVER. This list was written as though it were closed
+   * ("stated rather than implied") and it was not — an audit found two more escapes, which
+   * is exactly the shape of over-claim the guard itself exists to stop. It is a list of the
+   * ones known TODAY, not a proof of completeness:
    *   · a table with NO header row is out of scope (there is no column ledger to attach
    *     and no header cell to count against one) — `AppAnalyticsPanel`'s two key/value
    *     tables are the live examples;
    *   · it reads `src/components/Apps` and `src/components/AppBlocks` only, so a table
-   *     defined outside those directories and rendered on an apps route is invisible to
-   *     it. Both limits are deliberate; neither is measured to be empty.
+   *     defined outside those directories and rendered on an apps route is invisible;
+   *   · the walk matches the literal tag `Table`, so a NEW file that imports it under
+   *     another name (`import { Table as DataTable }`) is not seen;
+   *   · `findThead` walks JSX DESCENDANTS, so a NEW file whose header row is extracted
+   *     into a sibling component renders a `<Table>` this walk does not classify as headed.
+   *
+   * The last two are escapes for a NEW file only: an existing table cannot use them,
+   * because the SITES ledger below is asserted as an exact list and reds on a SHRINK as
+   * well as a growth. Both are low-realism and neither is fixed here — widening the walk
+   * to resolve aliases and cross-component structure is a parser, and this repo's
+   * `--header-height` guard records five rounds in which each parser added to close a hole
+   * shipped a new false PASS.
    */
   const SCAN_DIRS = ['src/components/Apps', 'src/components/AppBlocks'];
 
@@ -580,6 +615,35 @@ describe('appsCardGridColumnsAt — the auto-fill ladder', () => {
     // `floor()` on a phone width is 0; a grid with zero tracks renders nothing.
     expect(appsCardGridColumnsAt(390)).toBe(1);
     expect(appsCardGridColumnsAt(0)).toBe(1);
+  });
+
+  test("🔴 the ladder is IDENTICAL at both shipped gaps (F8's equivalence, asserted)", () => {
+    // 🔴 THE CITATION EXISTED BEFORE THE ASSERTION DID. `appsWideLayout.tsx` said this was
+    // "pinned in __tests__/appsWideLayout.test.ts" and `appsPageWidths.ts` said it was
+    // "asserted rather than assumed", while every call site here used the DEFAULT gap —
+    // measured, deleting `gap={12}` from the Hidden tab left this file 31/31 green. The
+    // claim was arithmetically true and the citation was false, which is the same shape as
+    // the findings that produced this paragraph.
+    const HIDDEN_TAB_GAP = 12;
+    expect(HIDDEN_TAB_GAP).not.toBe(APPS_CARD_LIST_GAP);
+    for (const width of [APPS_LEGACY_CONTENT_WIDTH, APPS_FULL_MEASURE_CONTENT_WIDTH, 1408, 2416]) {
+      expect(
+        appsCardGridColumnsAt(width, APPS_CARD_LIST_MIN_COLUMN, HIDDEN_TAB_GAP),
+        `content ${width} at gap ${HIDDEN_TAB_GAP}`
+      ).toBe(appsCardGridColumnsAt(width, APPS_CARD_LIST_MIN_COLUMN, APPS_CARD_LIST_GAP));
+    }
+    // Guard-the-guard: a gap large enough to change the ladder MUST make them disagree, or
+    // the loop above is satisfied by an implementation that ignores its `gap` argument.
+    expect(appsCardGridColumnsAt(2528, APPS_CARD_LIST_MIN_COLUMN, 400)).not.toBe(
+      appsCardGridColumnsAt(2528, APPS_CARD_LIST_MIN_COLUMN, APPS_CARD_LIST_GAP)
+    );
+  });
+
+  test('🔴 the Hidden tab really does pass its own gap', () => {
+    // The other half: the equivalence above is about numbers, this is about the call site
+    // the numbers are for. Deleting the prop is what the arithmetic cannot see.
+    const src = codeOf('src/pages/apps/installed.tsx');
+    expect(src).toMatch(/<AppsCardGrid\s+testId="apps-installed-hidden-grid"\s+gap=\{12\}/);
   });
 
   test('the arithmetic is the CSS arithmetic (positive control on the parameters)', () => {

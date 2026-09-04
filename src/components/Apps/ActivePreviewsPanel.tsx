@@ -114,7 +114,7 @@ export function ActivePreviewsPanel() {
         {/* 🔴 FIRST CHILD, BEFORE the row groups — see `appsWideLayout`. This panel is
             the reason that module's guard ENUMERATES tables: `/apps/review` gave up its
             1368 body cap, and measured at 1440 → 2560 without a ledger the gap between a
-            row's slug and its "Tear down" button grew 609.67 → 1173.55. */}
+            row's slug and its "Tear down" button grew 817.36 → 1381.23. */}
         <AppsTableColgroup columns={APPS_ACTIVE_PREVIEWS_COLUMNS} />
         <Table.Thead>
           <Table.Tr>

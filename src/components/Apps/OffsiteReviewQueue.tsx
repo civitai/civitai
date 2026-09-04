@@ -1409,7 +1409,15 @@ export function OffsiteReportsQueue() {
                       </Badge>
                     </Table.Td>
                     <Table.Td>
-                      <Group gap={4} justify="flex-end" wrap="nowrap">
+                      {/* 🔴 `flex-start`, NOT `flex-end` — this cell is the ledger's
+                          PRIMARY column (see `APPS_OFFSITE_REPORTS_COLUMNS`), so its
+                          alignment decides where the buttons sit once it absorbs the
+                          container's surplus. `flex-end` pinned them to the table's
+                          right edge, which is the dead-gap defect the ledger exists to
+                          remove. It is a no-op at every width where this column sits at
+                          its min-content (measured 414.11 at 1440 AND 2560 before the
+                          ledger), i.e. everywhere it is not primary. */}
+                      <Group gap={4} justify="flex-start" wrap="nowrap">
                         {actions.map((action) => (
                           <Button
                             key={action}
