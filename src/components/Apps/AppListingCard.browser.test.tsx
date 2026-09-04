@@ -44,6 +44,7 @@ import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/comp
 import { Button, Text } from '@mantine/core';
 import {
   LISTING_ACTION_ROW_HEIGHT_PX,
+  LISTING_CARD_TITLE_LINES,
   LISTING_CARD_TITLE_LINE_HEIGHT,
 } from '~/components/Apps/appListingCardGeometry';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
@@ -651,9 +652,24 @@ describe('AppListingCard', () => {
       // …against the 24px the pinned constant produces. The gap is what the
       // reserved two lines are worth: 48px vs 66px.
       expect(getComputedStyle(pinned).lineHeight).toBe('24px');
-      // Stated as the arithmetic the card actually depends on, so a reader does not
-      // have to do it: 2 reserved lines at each.
-      expect(2 * 33 - 2 * 24).toBe(18);
+
+      // 🔴 THE "~18px SWING" THE COMMENTS QUOTE IS NOT ASSERTED SEPARATELY, AND
+      // THAT IS DELIBERATE — it is `LISTING_CARD_TITLE_LINES * (33 - 24)`, i.e.
+      // FULLY DETERMINED by the two measurements above. A third assertion over it
+      // could only fail in worlds where one of them has already failed, so it would
+      // be an UNREACHABLE guard: green for the whole life of the file, red only as
+      // a second copy of someone else's failure.
+      //
+      // 🔴 TWO WRONG VERSIONS SHIPPED BEFORE THIS COMMENT DID, both flagged by
+      // audit. First `expect(2 * 33 - 2 * 24).toBe(18)` — a tautology over two
+      // hardcoded literals, wired to neither measurement, unable to fail at all,
+      // with a comment calling it the arithmetic guard. Then a version computed
+      // from `getComputedStyle` on both probes, which is honest arithmetic but
+      // still unreachable for the reason above: measured, the mutation that retunes
+      // the pinned line-height (1.2 -> 1.4) kills the `24px` pin FIRST and the
+      // swing line never executes. Decoration that reads as a guard is the same
+      // class as the walkable spread check above, so it is stated in prose instead.
+      expect(LISTING_CARD_TITLE_LINES).toBe(2); // the multiplier in that arithmetic
     });
   });
 

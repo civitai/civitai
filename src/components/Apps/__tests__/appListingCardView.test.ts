@@ -318,8 +318,9 @@ describe('isEditableListingStatus / canOwnerEditListing (owner Edit gating)', ()
  *
  * 🔴 WHAT THIS TIER CAN AND CANNOT CLAIM. It cannot measure anything — that a
  * 36px control plus 10px of padding really renders a 46px row is a claim about a
- * browser and a stylesheet, and it lives in `AppListingCard.browser.test.tsx`
- * (which is REPORT-ONLY in CI). What it CAN gate, and what actually drifts, is
+ * browser and a stylesheet, and it lives in `AppListingCard.browser.test.tsx`,
+ * which never blocks anything. What this file CAN catch — on the next `main` push,
+ * NOT on the PR; see the canonical tier note in `appListingCardGeometry.ts` — is
  * (a) the arithmetic between the constants and (b) whether the component still
  * READS them instead of re-spelling the numbers. Both are checked below.
  *
@@ -459,18 +460,27 @@ describe('the card geometry module', () => {
   });
 
   /**
-   * 🔴 THE ACTION ROW'S PROP LEDGER — the assertion that makes the BLOCKING tier
-   * able to see a row-height regression at all.
+   * 🔴 THE ACTION ROW'S PROP LEDGER — the assertion that makes the NODE tier able
+   * to see a row-height regression at all.
+   *
+   * ⚠️ "NODE", NOT "BLOCKING". An earlier draft of this docblock called it the
+   * blocking tier and priced the guard as a merge gate. It is not one on a PR —
+   * `lint.yml` makes both `unit` and `geometry` `continue-on-error` for
+   * `pull_request` events. What this buys is catching the regression on the next
+   * push to `main` instead of never. Canonical statement:
+   * `appListingCardGeometry.ts`'s header.
    *
    * 🔴 THIS EXISTS BECAUSE THE OBVIOUS GUARD IS BLIND. Row height is 46px, derived
    * as `PT + CONTROL`, and MEASURED at three container widths — in the browser
-   * project, which is REPORT-ONLY in CI. So the only tier that gates merges cannot
+   * project, which never blocks. So the only tier that ever blocks anything cannot
    * measure the row, and until this test existed a change that moved the row's
-   * height passed it completely. The worked case, produced by an audit rather than
+   * height reached `main` unremarked. The worked case, produced by an audit rather than
    * imagined: adding `pb={10}` beside the `pt` renders a 56px row while
    * `LISTING_ACTION_ROW_HEIGHT_PX` still says 46; every node assertion stayed green,
    * and PR3's skeleton would have imported 46, reserved 10px too little, and
-   * reflowed the grid on every query resolve.
+   * reflowed the grid on every query resolve. Nothing would have stopped that PR
+   * merging either way — what this adds is that `main` goes red immediately after,
+   * rather than the defect living until someone measures a card by hand.
    *
    * 🔴 IT IS A LEDGER, NOT A CONTAINMENT CHECK, and that is the whole design. The
    * hazard is a prop being ADDED, so a test that merely requires `pt` and `mih` to
@@ -480,7 +490,7 @@ describe('the card geometry module', () => {
    * 🔴 WHAT IT STILL CANNOT SEE, stated rather than implied, and the two halves are
    * NOT equally covered. It reads the row's own opening tag, so height moved by a
    * CHILD is invisible to it — and only ONE of the two children is picked up
-   * elsewhere in this blocking tier:
+   * elsewhere in this node tier:
    *
    *   - `triggerSize` IS covered: it reads `LISTING_ACTION_ROW_CONTROL_PX`, so the
    *     "reads every constant" test above and that constant's literal pin both see
@@ -488,14 +498,18 @@ describe('the card geometry module', () => {
    *   - **the CTA is NOT.** Its 36px comes from Mantine's `size="sm"` token, which
    *     no constant in the geometry module touches. Measured: flipping the CTA to
    *     `size="md"` leaves this whole node file green at 45/45, and only the
-   *     REPORT-ONLY browser tier reds. An earlier draft of this note said a child
-   *     change was "caught by the constants' own literal pins plus the browser
-   *     measurements", which credits the blocking tier with coverage it does not
-   *     have for half the row.
+   *     browser tier reds. An earlier draft of this note said a child change was
+   *     "caught by the constants' own literal pins plus the browser measurements",
+   *     which credits this file with coverage it does not have for half the row.
    *
    * `AppListingCard.browser.test.tsx` now asserts the CTA's RENDERED height as well
-   * as the trigger's, which is the real guard on that term — but it lives in the
-   * non-gating tier. Do not read this ledger as covering a CTA size bump.
+   * as the trigger's, which is the real guard on that term — but that tier never
+   * blocks, so a CTA size bump is caught by NOTHING that can stop a merge and by
+   * nothing that reddens `main` either. Do not read this ledger as covering it.
+   * Closing it properly is a ~5-line change (promote the size token into
+   * `appListingCardGeometry.ts` so the `Object.keys` loop above covers it
+   * automatically); it is deliberately deferred to a follow-up rather than done
+   * here, because it is production payload.
    */
   it("🔴 the action row's prop set is exactly the geometry it declares", () => {
     const code = cardCode();
@@ -517,15 +531,31 @@ describe('the card geometry module', () => {
     // scan below CANNOT see — it has no `name=` to match — so `{...{ pb: 10 }}`,
     // or the realistic `{...(compact ? { pt: 4, pb: 0 } : {})}` for a dense
     // variant, changes the rendered row height while leaving the set unchanged.
-    // Measured green at 45/45 against the previous version of this test. A ledger
-    // that can be walked past by writing the same prop a different way is a
-    // SPELLED guard, and this one's own comment claimed it was not.
+    // Measured green at 45/45 against the version of this test before the spread
+    // check existed. A ledger that can be walked past by writing the same prop a
+    // different way is a SPELLED guard, and this one's own comment claimed it was not.
+    //
+    // 🔴 A REGEX, NOT `toContain('{...')` — AND THE FIRST VERSION *WAS* THAT
+    // `toContain`, i.e. this guard shipped as an instance of the exact class it
+    // exists to close. JSX permits whitespace inside a spread attribute, so
+    // `{ ...{ pb: 10 } }` is valid, parses identically, and contains no literal
+    // `{...`. Measured: the spaced form left this file 45/45 GREEN while the
+    // browser tier reported 5 reds at `expected 56 to be 46` — the row really did
+    // render 10px taller and the source-reading tier saw nothing. The argument six
+    // lines below (prettier normalises the spacing, but nothing that gates a merge
+    // runs prettier) applies here word for word and was simply not applied.
+    //
+    // 🔴 `\s\{` RATHER THAN `\{`, so an OBJECT spread in a prop VALUE is not
+    // flagged: a JSX spread attribute is preceded by whitespace, while
+    // `style={{ ...base, pt: 10 }}` has its brace preceded by `=`/`{`. That form is
+    // a different hazard — it is a `style` prop, so the NAME ledger below catches
+    // it — and flagging it here would be a false positive on correct code.
     expect(
       tag,
-      `the action row's opening tag contains a spread. A spread can carry padding or ` +
+      `the action row's opening tag contains a JSX spread. A spread can carry padding or ` +
         `height props that the prop-name ledger below cannot see, so the row's 46px ` +
         `height would change with every node assertion green. Write the props literally.`
-    ).not.toContain('{...');
+    ).not.toMatch(/\s\{\s*\.\.\./);
 
     // The prop NAMES, in source order. `pb`, `p`, `py`, `h`, `mah`, `style` — or
     // anything else that can move a flex row's height — makes this set grow.
@@ -534,14 +564,16 @@ describe('the card geometry module', () => {
     // which required a prop to BEGIN A LINE — so `mt="auto" pb={10}` on one line
     // slipped a second prop past it, also measured green at 45/45. Prettier would
     // reformat that onto its own line and the ledger would then red, but nothing
-    // BLOCKING runs prettier here: `.github/workflows/lint.yml`'s
-    // `Prettier (modified files, report-only)` job is `continue-on-error: true`,
-    // and only ADDED files are gating. `AppListingCard.tsx` is a modified file.
+    // that runs before a merge runs prettier over this file:
+    // `.github/workflows/lint.yml`'s `Prettier (modified files, report-only)` job
+    // is `continue-on-error: true` and only ADDED files are checked at all —
+    // `AppListingCard.tsx` is a modified file. So the unformatted spelling can
+    // reach `main`, and the guard has to read it as written.
     const props = [...tag.matchAll(/\s([a-zA-Z-]+)=/g)].map((m) => m[1]);
     expect(
       props,
       `the action row's props changed — every one of them can move the 46px row height, ` +
-        `which the BLOCKING tier cannot measure. Update this ledger deliberately, ` +
+        `which the node tier cannot measure. Update this ledger deliberately, ` +
         `and re-measure the row in AppListingCard.browser.test.tsx.`
     ).toEqual(['mt', 'pt', 'mih', 'gap', 'wrap']);
 

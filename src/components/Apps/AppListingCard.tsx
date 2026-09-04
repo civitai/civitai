@@ -587,11 +587,16 @@ export function AppListingCard({
             56px row while the constant still says 46, and the BLOCKING node tier
             stays entirely green because it measures nothing. PR3's skeleton would
             then import 46, reserve 10px too little, and reflow the grid — exactly
-            what this module exists to prevent, in the one tier CI does not gate.
+            what this module exists to prevent. (This sentence used to end "in the
+            one tier CI does not gate", which is a FOURTH instance of the same wrong
+            severity story: on a pull request NEITHER tier gates. See the canonical
+            note in `appListingCardGeometry.ts`.)
             `mih` makes the read real (and is not inert: it holds the row at 46 if a
             control ever renders SHORTER), and the node tier now asserts this tag's
             whole PROP LEDGER, so a `pb` — or any other prop that can move the
-            row's height — fails the blocking tier rather than only the browser one.
+            row's height — fails the node tier too, not only the browser one. (That
+            is a `main`-push red, not a merge gate: on a PR both tiers are
+            `continue-on-error`. Canonical note in `appListingCardGeometry.ts`.)
             🔴 DO NOT ADD A PROP HERE WITHOUT UPDATING THAT LEDGER; that is the
             point of it, not an obstacle to route around.
 

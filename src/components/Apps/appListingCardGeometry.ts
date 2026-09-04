@@ -16,14 +16,32 @@
  * the card's own header and a test titled "reads every geometry constant" all said
  * otherwise (the test's list enumerated 8 of these 9). `appListingCardView.test.ts`
  * now derives that list from THIS module's `Object.keys`, so an export added below
- * and not read by the card fails the BLOCKING tier, naming it. (Its exact-count
+ * and not read by the card fails the node tier, naming it. (Its exact-count
  * backstop runs AFTER that loop, deliberately — ordered first, as it was at
  * first, the failure a reader saw was a length mismatch and the constant went
  * unnamed.)
  *
- * 🔴 REACT-FREE AND PURE, deliberately: the node `unit` project is the BLOCKING
- * tier here (the browser component suites are report-only), so a module with no
- * DOM dependency is one the blocking tier can assert about. The values that can
+ * 🔴 WHAT "THE NODE TIER" ACTUALLY BUYS — READ THIS BEFORE QUOTING A SEVERITY.
+ * THE CANONICAL STATEMENT FOR THIS COMPONENT; every other comment that mentions a
+ * tier defers to it. The node `unit` project **blocks pushes to `main` and is
+ * REPORT-ONLY on a pull request**: `.github/workflows/lint.yml` puts
+ * `continue-on-error: ${{ github.event_name == 'pull_request' }}` at JOB level on
+ * `unit` (line 405) and on `geometry` (line 830). The browser `component` project
+ * never blocks anything.
+ *
+ * So on a PR the two tiers are **equally non-gating**, and the difference is WHEN
+ * a regression is caught: node catches it on the next `main` push — after the
+ * merge — while browser never does. Three comments in this arc, and a severity
+ * call in the PR body, were written on the premise that node gates a PR and
+ * browser does not. It does not. The guards built on that premise are still worth
+ * having (catching a defect one push later beats never), but do not price them as
+ * merge gates. `lint.yml:377` warns about the same trap from the other side: with
+ * `continue-on-error` the JOB conclusion is `success` while the step underneath is
+ * `failure`, so a branch-protection rule naming "Unit tests (N)" would be inert.
+ *
+ * 🔴 REACT-FREE AND PURE, deliberately: the node `unit` project is the one that can
+ * run without a DOM (and, per the note above, the one that at least blocks `main`),
+ * so a module with no DOM dependency is one it can assert about. The values that can
  * only be MEASURED — that a 36px control plus 10px of padding really renders a
  * 46px row in the app's own stylesheet cascade — are pinned in
  * `AppListingCard.browser.test.tsx`, which renders the card for real.
