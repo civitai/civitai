@@ -45,8 +45,9 @@ export const postHandler = createOutboxHandler<{url: string}>({
           metadata,
           input: {
             mediaUrl: args.url,
-            model: 'wd14-vit.v1',
-            threshold:0.5,
+            model:
+              'urn:air:siglip2:repository:huggingface:cella110n/cl_tagger_v2@b57909b8e9c63f71e208a26473e7aabdf45ed6b6.tar',
+            threshold: 0.55,
           }
         },
         {
