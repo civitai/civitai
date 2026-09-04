@@ -243,9 +243,12 @@ describe('AppListingsMarketplaceBody', () => {
       .element(page.getByRole('button', { name: 'All apps' }))
       .toHaveAttribute('aria-pressed', 'true');
     // Query fired with kind=all default. `limit: 48` (was 24) — the column ladder now
-    // reaches SIX columns on a 2560 container, where 24 is only four rows; the page size
-    // and its relationship to the server's `max(50)` cap are pinned in the blocking unit
-    // suite (`__tests__/appListingGrid.test.ts`).
+    // reaches FIVE columns on a 2560 container, where 24 is under five rows; the page
+    // size and its relationship to the server's `max(50)` cap are pinned in the blocking
+    // unit suite (`__tests__/appListingGrid.test.ts`).
+    // ⚠️ This said "SIX columns … only four rows" until the card-width floor moved 383 →
+    // 460 in this same PR and made six unreachable. Written true, falsified by a later
+    // commit on the same branch.
     expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'top-rated', limit: 48 });
   });
 

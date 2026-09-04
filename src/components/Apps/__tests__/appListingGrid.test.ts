@@ -113,7 +113,7 @@ describe('🔴 the column LADDER — grid width → column count', () => {
     {
       contentWidth: 2528,
       columns: 5,
-      why: 'what /apps reaches at a 2560 container — 492.8px cards',
+      why: 'a 2560 CONTAINER yields this much grid — 492.8px cards',
     },
     { contentWidth: 2839, columns: 5, why: 'one px below the (unreachable) six-column rung' },
     {
@@ -258,15 +258,26 @@ describe('🔴 THE COLLISION — the card-width floor must NOT govern the narrow
   });
 });
 
-describe('🔴 the NARROW half is byte-equivalent to the retired Mantine media queries', () => {
+describe('🔴 the NARROW rungs are unchanged as functions of GRID width', () => {
   /**
-   * The claim this file has to make good on: moving off `<Grid.Col span={…}>` changed
-   * WHERE the column count is decided (grid width, not viewport width) but not WHAT it
-   * decides at any width `/apps` actually renders at.
+   * What moving off `<Grid.Col span={…}>` did and did not change.
    *
-   * The conversion is one subtraction: a Mantine breakpoint fires at viewport `V`,
-   * `/apps` takes no body measure, and the apps `Container` is full-bleed below its cap
-   * — so the grid at that instant is `V − APPS_CONTAINER_GUTTER` wide.
+   * DID NOT: the column count at any given GRID width below the five-column rung. Each
+   * narrow rung is the old breakpoint minus one subtraction — a Mantine breakpoint fires
+   * at viewport `V`, `/apps` takes no body measure, and the apps `Container` is
+   * full-bleed below its cap, so the rung sits at `V − APPS_CONTAINER_GUTTER` of grid.
+   *
+   * 🔴 DID: the mapping from VIEWPORT to grid width, and therefore the viewport at which
+   * a rung fires. This describe was titled "byte-equivalent to the retired Mantine media
+   * queries" and that was FALSE in production. The page's scroll container `.scroll-area`
+   * is `scrollbar-width: thin` with no document scroll, so the grid is
+   * `viewport − scrollbar − 32`; media queries ignored the scrollbar, a container query
+   * does not. On platforms that reserve one (~10px) every rung fires ~10px of viewport
+   * later than before. Kept deliberately — the content never had those pixels — and
+   * driven end-to-end in `AppListingsMarketplaceBody.stretch.geometry.test.tsx`, which is
+   * the only test in this PR that exercises the viewport→grid step at all.
+   *
+   * So everything below is stated in GRID width, which is what it was always measuring.
    */
   test('each retired breakpoint maps to its rung by exactly one subtraction', () => {
     const cases: [keyof typeof LISTING_GRID_SPAN, number][] = [
@@ -437,9 +448,15 @@ describe('🔴 the WIDE half holds the card-width floor', () => {
 
 describe('🔴 SEAM — the store page size fits the ladder AND the server cap', () => {
   /**
-   * The page size is a CONSEQUENCE of the ladder: 24 was six rows at the old four-column
-   * maximum and only four at the six columns the grid now reaches, so the widest screen
-   * the container supports would have met "Load more" after the least content.
+   * The page size is a CONSEQUENCE of the ladder: 24 was six rows at four columns and
+   * only 4.8 at the FIVE columns the grid now reaches, so the widest screen the container
+   * supports would have met "Load more" after the least content.
+   *
+   * ⚠️ This paragraph said "the six columns the grid now reaches" until the floor moved
+   * from 383 to 460 in this same PR, which made six unreachable — see the
+   * `SIX columns is declared but UNREACHABLE` test above. A claim that was true when
+   * written and falsified by a LATER commit of its own branch sits inside no review
+   * round's diff, which is exactly how it survived.
    *
    * It is also bounded by something this component cannot see. `listAppListingsSchema`
    * caps `limit` at 50, and exceeding it is a request-time zod error rather than a bigger
@@ -468,8 +485,8 @@ describe('🔴 SEAM — the store page size fits the ladder AND the server cap',
   });
 
   test('…which is at least eight rows at the widest REACHABLE column count, and twelve at four', () => {
-    // Written against what a viewer can actually reach (five columns at the 2528 this
-    // container tops out at), not against the declared-but-unreachable sixth rung — and
+    // Written against what a viewer can actually reach (five columns at the 2528 of grid
+    // this container yields), not against the declared-but-unreachable sixth rung — and
     // as a `>=` so it stays true if a future cap raise engages that rung (48 / 6 = 8).
     const widestReachable = listingGridColumnsAt(APPS_PAGE_CONTAINER_WIDTH - APPS_CONTAINER_GUTTER);
     expect(widestReachable).toBe(5);

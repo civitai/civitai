@@ -480,8 +480,11 @@ export function AppListingsMarketplaceBody() {
               `LISTING_GRID_SPAN` media queries put them (736 / 960 / 1168px of
               grid — those breakpoints minus the apps Container's 32px gutter), then
               FIVE from 2364. The store container is `LISTING_STORE_CONTAINER_SIZE` =
-              `APPS_PAGE_CONTAINER_WIDTH` = 2560, so `/apps` reaches 2528 of grid on a
-              2560 monitor and renders FIVE columns at 492.8px each — wider than the
+              `APPS_PAGE_CONTAINER_WIDTH` = 2560, which yields 2528 of grid — or ~2518
+              from a 2560 VIEWPORT, since the page's `.scroll-area` reserves a thin
+              scrollbar on Windows/Linux Chrome/Firefox (macOS overlay scrollbars and
+              touch reserve none). Either way `/apps` renders FIVE columns, at 492.8px
+              or ~490.8px each — wider than the
               460px four-up the 1920 container shipped, which is the point: the
               `LISTING_CARD_MIN_WIDTH` floor is 460, so a column is only added where
               every card ends up at least as big as it is today. A sixth column would

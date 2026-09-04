@@ -146,11 +146,18 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         }),
       },
     },
+    // `AppsPageLayout` -> `AppsSubNav` reads this; the real-chain fixture below renders
+    // the layout, so the factory has to carry it or that render throws.
+    blocks: { getNavSummary: { useQuery: () => ({ data: undefined }) } },
   },
 }));
 
 // Import AFTER the mocks (vi.mock is hoisted; static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
+const { AppsPageLayout } = await import('./AppsPageLayout');
+const { ScrollArea } = await import('~/components/ScrollArea/ScrollArea');
+const { APPS_CONTAINER_GUTTER } = await import('./appsPageWidths');
+const { listingGridColumnsAt, MANTINE_BREAKPOINT_PX } = await import('./appListingGrid');
 
 /**
  * Deliberately UNEVEN content, ALTERNATING so that any prefix of two or more holds both
@@ -282,6 +289,164 @@ function firstRowCells(cells: HTMLElement[]): HTMLElement[] {
 
 beforeEach(() => {
   mocks.items = MIXED;
+});
+
+/**
+ * A THIN SCROLLBAR, in px. Chrome/Firefox on Windows and Linux reserve roughly this much
+ * inside a `scrollbar-width: thin` box; macOS overlay scrollbars and touch reserve none.
+ * Used to drive the production-shaped case deterministically — see the note on the
+ * real-chain describe below for why it cannot be measured natively here.
+ */
+const THIN_SCROLLBAR_PX = 10;
+
+/**
+ * Render the REAL production chain — `.scroll-area` -> `AppsPageLayout`'s `Container` ->
+ * the store body -> the grid — at an explicit viewport, with content tall enough that the
+ * scroll container genuinely overflows.
+ *
+ * `availableWidth` narrows the scroll box the way a reserved scrollbar does on a platform
+ * that has one. Left undefined, the box is the full viewport.
+ */
+async function renderRealChain(
+  viewport: { width: number; height: number },
+  availableWidth?: number
+) {
+  await cleanup();
+  await renderAtViewport(
+    <div style={{ display: 'flex', flexDirection: 'column', height: viewport.height }}>
+      <ScrollArea
+        data-testid="scroll-area"
+        style={availableWidth != null ? { width: availableWidth } : undefined}
+      >
+        {/* 🔴 `<main className="min-w-0 flex-1">` IS PART OF THE REAL CHAIN, NOT PADDING.
+            `AppLayout`'s `MainContent` puts it between the ScrollArea and the page, and
+            omitting it changes the layout: `.scroll-area` is `display: flex; flex-direction:
+            column`, and Mantine's `Container` carries `margin-inline: auto`, which in a flex
+            container's cross axis DISABLES stretch — so without this the Container
+            shrink-to-fits its content and the grid measured 553.02px instead of 1168.
+            Found by this fixture failing, which is the argument for driving the real chain
+            rather than a wrapper of a chosen width. */}
+        <main className="min-w-0 flex-1">
+          <AppsPageLayout>
+            <AppListingsMarketplaceBody />
+          </AppsPageLayout>
+        </main>
+        {/* Force the overflow that makes a scrollbar appear at all. */}
+        <div style={{ height: viewport.height * 4 }} />
+      </ScrollArea>
+    </div>,
+    viewport
+  );
+  await nextLayout();
+  const scrollArea = document.querySelector('[data-testid="scroll-area"]') as HTMLElement | null;
+  const grid = document.querySelector('[data-testid="apps-listing-grid"]') as HTMLElement | null;
+  const cells = Array.from(
+    document.querySelectorAll('[data-testid="apps-listing-grid-col"]')
+  ) as HTMLElement[];
+  if (!scrollArea || !grid) {
+    throw new Error(`real chain not rendered (scrollArea=${!!scrollArea} grid=${!!grid})`);
+  }
+  return {
+    scrollArea,
+    grid,
+    /** What the scroll box actually offers its content — the number the ladder reads. */
+    availableInBox: scrollArea.clientWidth,
+    /** How much the harness's scrollbar takes. 0 when scrollbars are hidden. */
+    reserve: scrollArea.offsetWidth - scrollArea.clientWidth,
+    gridWidth: q(grid.getBoundingClientRect().width),
+    columns: firstRowCells(cells).length,
+    overflows: scrollArea.scrollHeight > scrollArea.clientHeight,
+  };
+}
+
+/**
+ * 🔴 THE VIEWPORT -> GRID CHAIN, DRIVEN END TO END.
+ *
+ * Every other fixture in this PR sets the grid's width directly on a wrapper. That is the
+ * right shape for testing the LADDER, and it is blind to the step in front of it: how the
+ * grid's width is DERIVED from the viewport. That derivation is where the ladder's most
+ * quoted numbers come from, and it is not what the retired implementation did.
+ *
+ * WHAT CHANGED, AND IT IS A REAL BEHAVIOUR CHANGE, KEPT DELIBERATELY. The page's scroll
+ * container is `.scroll-area` (`AppLayout` -> `ScrollArea`), which `globals.css` gives
+ * `overflow-x: hidden` + `scrollbar-width: thin`; `html, body { overflow: hidden }` means
+ * there is no document scroll, so the apps `Container` sits INSIDE a scrollbar-consuming
+ * box. `Grid.Col span` compiled to media queries, which evaluate against the VIEWPORT and
+ * are unaffected by a scrollbar. A container query measures the real box. So on platforms
+ * that reserve a scrollbar every rung now fires ~10px of viewport later than it used to:
+ *
+ *   viewport 1200 -> grid 1158 -> THREE columns, where the media query said four.
+ *
+ * That is the more correct answer — the content never had those 10px — which is why the
+ * behaviour is kept and the "byte-equivalent below 1888" claim was retired instead. The
+ * equivalence that survives is stated as a function of GRID width, not viewport width.
+ *
+ * 🔴 WHAT THIS HARNESS STRUCTURALLY CANNOT SEE, MEASURED RATHER THAN ASSUMED. Playwright
+ * launches headless Chromium with `--hide-scrollbars`, and this repo's vitest config does
+ * not pass `ignoreDefaultArgs`. Probed directly: a genuinely overflowing `.scroll-area`
+ * with `scrollbar-width: thin` reports `offsetWidth - clientWidth === 0`. So the NATIVE
+ * reserve is zero here and no test in this project can exercise the real 10px delta
+ * without changing the browser launch args for both browser projects — out of scope for
+ * this PR, and a change that would move every existing geometry number.
+ *
+ * The two tests below split that honestly: the first drives the real chain and asserts the
+ * RELATIONSHIP that holds on every platform (the grid reads the scroll box, not the
+ * viewport), and pins the harness's reserve at 0 so this note cannot silently rot; the
+ * second reproduces the production-shaped case by narrowing the box by
+ * `THIN_SCROLLBAR_PX`, which is deterministic in any harness.
+ */
+describe('🔴 the grid width comes from the SCROLL BOX, not from the viewport', () => {
+  test('the real chain: grid width === scroll box clientWidth − the Container gutter', async () => {
+    const VIEWPORT = { width: 1200, height: 800 };
+    const m = await renderRealChain(VIEWPORT);
+
+    // The fixture is only meaningful if the container really scrolls — otherwise there
+    // would be no scrollbar to reserve on any platform and the whole question is moot.
+    expect(m.overflows, 'the scroll container does not overflow, so nothing would reserve').toBe(
+      true
+    );
+
+    // 🔴 THE RELATIONSHIP, which is true with or without a scrollbar: the ladder reads the
+    // box it is in. A media-query implementation would instead track `window.innerWidth`,
+    // and the two only agree while the reserve is 0.
+    expect(m.gridWidth).toBe(m.availableInBox - APPS_CONTAINER_GUTTER);
+    expect(m.columns).toBe(listingGridColumnsAt(m.gridWidth));
+
+    // 🔴 THE HARNESS'S OWN BLINDNESS, PINNED. If a Playwright bump or a config change ever
+    // starts reserving scrollbar space, this fails and the note above stops being true —
+    // which is the point. It is NOT an assertion that production reserves nothing.
+    expect(
+      m.reserve,
+      'this harness has started reserving scrollbar width — the docstring above says it ' +
+        'does not, and the second test below simulates what it cannot show natively'
+    ).toBe(0);
+    // …so, and only because of that, the box here equals the viewport.
+    expect(m.availableInBox).toBe(VIEWPORT.width);
+  });
+
+  test('🔴 with a thin scrollbar reserved, viewport 1200 gives THREE columns, not four', async () => {
+    // THE PRODUCTION-SHAPED CASE, and the one the retired media queries got wrong. At a
+    // 1200px viewport the `lg` breakpoint fires and `Grid.Col span` gave FOUR columns
+    // regardless of the scrollbar. The grid actually has 1200 − 10 − 32 = 1158px, which is
+    // one pixel short of the four-column rung (1168), so three is the honest answer.
+    const VIEWPORT = { width: 1200, height: 800 };
+    const m = await renderRealChain(VIEWPORT, VIEWPORT.width - THIN_SCROLLBAR_PX);
+
+    expect(m.availableInBox).toBe(VIEWPORT.width - THIN_SCROLLBAR_PX);
+    expect(m.gridWidth).toBe(1158);
+    expect(
+      m.columns,
+      'the ladder is tracking the viewport rather than the box it is in — four columns ' +
+        'here is the retired media-query answer, and it truncates every card by the ' +
+        'width the scrollbar took'
+    ).toBe(3);
+
+    // Stated as the counterfactual, so the test says what it rules out: the `lg` rung
+    // fires at viewport 1200 but needs 1168 of GRID, which this box does not have.
+    expect(MANTINE_BREAKPOINT_PX.lg).toBe(VIEWPORT.width);
+    expect(listingGridColumnsAt(VIEWPORT.width - APPS_CONTAINER_GUTTER)).toBe(4);
+    expect(listingGridColumnsAt(m.gridWidth)).toBe(3);
+  });
 });
 
 describe('🔴 the store grid stretches its cards, so their action rows stay pinned', () => {

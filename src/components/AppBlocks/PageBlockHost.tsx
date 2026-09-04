@@ -342,20 +342,30 @@ export const FILL_MIN_HEIGHT_PX = 300;
  *         usually launched FROM) is exactly it. An app capped below this would
  *         render narrower than the page that linked to it, which reads as a
  *         downgrade rather than a frame.
- *   1920  `APPS_PAGE_CONTAINER_WIDTH` — the deliberate outlier, and it is an
+ *   2560  `APPS_PAGE_CONTAINER_WIDTH` — the deliberate outlier, and it is an
  *         outlier for a reason that does NOT transfer: it exists for card GRIDS
  *         and wide TABLES (`appsPageWidths.ts` records the measurements), which
  *         genuinely spend the space. An app block may be a grid, but it may just
  *         as easily be a single form, and the host cannot tell which.
+ *         ⚠️ IT WAS 1920 WHEN THIS BAND WAS CHOSEN and the ultrawide pass moved it
+ *         to 2560. The gap between the cap and the outlier therefore WIDENED, which
+ *         does not by itself justify widening the cap — see below.
  *
  * 1600 is above every ordinary content measure on the site and below the grid
- * container, i.e. no app is ever narrower than a civitai page and none is ever
- * wider than the widest first-party surface. It also clears the widest
- * app-imposed well (1100) by ~45%, so the cap can never letterbox an app that has
- * already thought about its own width, while leaving a two-pane shell like
- * Notepad or Sensei a ~1350px content pane — the case the cap exists for.
+ * container, i.e. no app is ever narrower than a civitai page. It also clears the
+ * widest app-imposed well (1100) by ~45%, so the cap can never letterbox an app
+ * that has already thought about its own width, while leaving a two-pane shell
+ * like Notepad or Sensei a ~1350px content pane — the case the cap exists for.
  * Concretely it holds five columns of a `minmax(300px, 1fr)` grid (1288 holds
- * four, 1920 holds six).
+ * four, 2560 holds eight).
+ *
+ * 🔴 DO NOT RE-DERIVE THIS CAP FROM "THE WIDEST FIRST-PARTY SURFACE". That phrasing
+ * used to appear here and it is a moving target: the apps container has gone
+ * 1600 → 1920 → 2560 without any of those moves being a statement about how wide a
+ * THIRD-PARTY app should be. The cap's real justification is the two bounds above
+ * it does control — above every ordinary content measure, and comfortably clear of
+ * the widest app-imposed well — neither of which moves when the apps container
+ * does. Widening 1600 is a separate decision with its own evidence.
  *
  * 🔴 THE APP THIS IS PROBABLY WRONG FOR, and why the opt-out ships WITH the cap
  * rather than after it: Playable Collections. Re-read at its DEPLOYED ref

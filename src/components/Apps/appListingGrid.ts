@@ -58,15 +58,30 @@ export const LISTING_GRID_SPAN = {
  * compiled to before the CSS-grid move, so they are what the container-query
  * thresholds below have to reproduce.
  *
- * ⚠️ THE ONE PLACE THE REPRODUCTION IS NOT EXACT. Mantine's breakpoints are `em`, so
- * they scale with the ROOT font size; a container query in px does not. At the
- * default 16px they are identical, and `globals.css` sets `html { font-size: 16px }`
- * (that is what `cascadeEvidence().htmlFontSize` reads in the geometry harness), so
- * the two agree for every viewer who has not overridden it in the browser. A viewer
- * who HAS enlarged their default font gets the px thresholds rather than the em ones
- * — i.e. slightly more columns than before at the same zoom. Accepted deliberately:
- * the alternative is `em` inside a container query, which resolves against the
- * CONTAINER's font size rather than the root's and is a different rule again.
+ * ⚠️ THE `em` ↔ `px` QUESTION, STATED CORRECTLY. Mantine's breakpoints are `em` and the
+ * container queries below are `px`, so they can only agree at one root size. What
+ * follows is narrower and better news than this comment used to claim.
+ *
+ * 🔴 A CSS `html { font-size }` CANNOT MOVE THEM AT ALL. Inside a MEDIA query, `em`
+ * resolves against the browser's INITIAL font size, not the root element's computed one
+ * — so an app-level declaration is not a mitigation and its absence is not an exposure.
+ * (Measured across three root sizes and 17 viewports: the `@media em` column is
+ * identical at 16 / 20 / 24px, and the ladder stays monotone non-decreasing in viewport
+ * at every one of them, so no rung inversion is reachable this way.)
+ *
+ * 🔴 AND THIS FILE USED TO CITE A SAFEGUARD THAT DOES NOT EXIST: it said "`globals.css`
+ * sets `html { font-size: 16px }`". It does not — there is no `html { … }` rule setting
+ * a root size (the only `font-size: 16px` is an iOS input-zoom guard inside
+ * `@media (hover: none) and (pointer: coarse)`), and the one `html { … }` block is
+ * commented out. `cascadeEvidence().htmlFontSize` reads the COMPUTED value, i.e. the UA
+ * default, so it can never have been evidence of an app declaration.
+ *
+ * WHAT REMAINS, honestly: a viewer who has changed their BROWSER's default font size
+ * moves the `em` breakpoints while these `px` thresholds stay put. Direction as stated —
+ * a larger default yields slightly more columns than the old media queries would have.
+ * Unmeasured, and there is no app-level mitigation because none is possible: the
+ * alternative, `em` inside a container query, resolves against the CONTAINER's font size
+ * rather than the root's and is a third rule again.
  */
 export const MANTINE_BREAKPOINT_PX = {
   base: 0,
@@ -152,9 +167,12 @@ export function minContentWidthForColumns(columns: number): number {
  *
  * 🔴 SIX IS DECLARED BUT UNREACHABLE AT TODAY'S CONTAINER CAP, ON PURPOSE. At the 460
  * floor six columns need `6 × 460 + 5 × 16 = 2840` of grid, and
- * {@link APPS_PAGE_CONTAINER_WIDTH} (2560) tops out at 2528 — so the ladder a viewer
- * can actually reach is 1 / 2 / 3 / 4 / 5, and 2560 renders five columns at 492.8px
- * each (wider than today's 460, which is the point of the floor). The rung is kept
+ * {@link APPS_PAGE_CONTAINER_WIDTH} (2560) tops out at 2528 of grid — so the ladder a
+ * viewer can actually reach is 1 / 2 / 3 / 4 / 5, and a 2560 container renders five
+ * columns at 492.8px each (wider than today's 460, which is the point of the floor).
+ * ⚠️ 2528 / 492.8 are the CONTAINER arithmetic (`2560 − APPS_CONTAINER_GUTTER`), not
+ * what a 2560 VIEWPORT yields: see the scroll-box note below. The column count is five
+ * either way. The rung is kept
  * rather than deleted so a future cap raise engages it automatically instead of
  * needing this list edited; `__tests__/appListingGrid.test.ts` asserts the
  * unreachability explicitly, so raising the cap past 2840 fails loudly and the density
@@ -197,12 +215,29 @@ export type ListingGridColumnStep = { minContentWidth: number; columns: number }
  *
  * ── HOW THE TWO HALVES ARE BUILT, AND WHY THEY ARE INDEPENDENT ──────────────────────
  * The NARROW rungs (1 / 2 / 3 / 4) are DERIVED from {@link LISTING_GRID_SPAN} and
- * {@link MANTINE_BREAKPOINT_PX} rather than retyped, so the container-query thresholds
- * are the media-query behaviour they replaced, converted once: a breakpoint fires at
- * viewport `V`, `/apps` takes no body measure, and the apps `Container` is full-bleed
- * below its cap, so the grid there is `V − APPS_CONTAINER_GUTTER` wide. `lg` and `xl`
- * both mean four columns, so the `xl` rung collapses into the `lg` one and the ladder
- * has no redundant step.
+ * {@link MANTINE_BREAKPOINT_PX} rather than retyped: a breakpoint fires at viewport `V`,
+ * `/apps` takes no body measure, and the apps `Container` is full-bleed below its cap,
+ * so the rung is placed at `V − APPS_CONTAINER_GUTTER` of GRID. `lg` and `xl` both mean
+ * four columns, so the `xl` rung collapses into the `lg` one and the ladder has no
+ * redundant step.
+ *
+ * 🔴 THE RUNGS ARE UNCHANGED AS FUNCTIONS OF **GRID** WIDTH — NOT OF VIEWPORT WIDTH, AND
+ * THE DIFFERENCE IS A REAL BEHAVIOUR CHANGE THAT IS KEPT ON PURPOSE. This module used to
+ * claim the narrow half was "byte-equivalent" to the retired media queries. It is not.
+ * The page's scroll container is `.scroll-area` (`AppLayout` → `ScrollArea`), which
+ * `src/styles/globals.css` gives `overflow-x: hidden` + `scrollbar-width: thin`, and
+ * `html, body { overflow: hidden }` means there is no document scroll — so the apps
+ * `Container` sits INSIDE a scrollbar-consuming box and the grid is
+ * `viewport − scrollbar − APPS_CONTAINER_GUTTER`. `Grid.Col span` compiled to media
+ * queries, which evaluate against the viewport and ignore a scrollbar; a container query
+ * measures the box the content actually gets. So on Windows/Linux Chrome/Firefox
+ * (~10px thin scrollbar) every rung fires ~10px of VIEWPORT later than it used to —
+ * viewport 1200 gives 1158 of grid and THREE columns where the media query said four.
+ * macOS overlay scrollbars and touch reserve nothing and are unaffected.
+ *
+ * That is the more correct answer, because the content never had those pixels, which is
+ * why the behaviour is kept and the claim was retired instead. Both halves are driven
+ * end-to-end in `AppListingsMarketplaceBody.stretch.geometry.test.tsx`.
  *
  * The WIDE rungs come from {@link WIDE_COLUMN_COUNTS} through
  * {@link minContentWidthForColumns}, i.e. straight out of the card-width floor.
@@ -278,7 +313,9 @@ export function listingGridColumnsAt(contentWidth: number): number {
  * still rather than being undone, and re-tuning to five columns there would have landed
  * 364.8px — narrower than what that pass shipped. The 2560 step adds ONE column, and
  * only where every card is still at least the 460px the store renders today: five from
- * 2364px of grid, giving 492.8px cards at the 2528 `/apps` reaches. Six would need 2840
+ * 2364px of grid, giving 492.8px cards at the 2528 a 2560 CONTAINER yields (a 2560
+ * viewport yields ~10px less on a platform that reserves a scrollbar — still five
+ * columns, ~490.8px cards). Six would need 2840
  * and is therefore unreachable at this cap — so widening the container makes the cards
  * BIGGER than they are now rather than more numerous and smaller. The arithmetic is
  * pinned in `__tests__/appsPageWidths.test.ts` and `__tests__/appListingGrid.test.ts`.

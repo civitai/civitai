@@ -66,12 +66,19 @@
   grid-template-columns: repeat(1, minmax(0, 1fr));
 }
 
-/* ── The narrow half: the retired Mantine breakpoints, converted once ───────────────
+/* ── The narrow half: the retired Mantine breakpoints, re-expressed in GRID width ───
    Each threshold is that breakpoint's viewport px MINUS the apps Container's 32px
-   gutter, because `/apps` takes no body measure and the Container is full-bleed below
-   its cap — so the grid there is exactly `viewport − 32`. sm 768 → 736, md 992 → 960,
-   lg 1200 → 1168. `xl` (1408) is absent deliberately: it and `lg` are both four
-   columns, so it was never a rung. */
+   gutter: sm 768 → 736, md 992 → 960, lg 1200 → 1168. `xl` (1408) is absent
+   deliberately — it and `lg` are both four columns, so it was never a rung.
+
+   🔴 THIS IS NOT "BYTE-EQUIVALENT TO THE OLD MEDIA QUERIES", and the claim that it was
+   has been retired. The page's scroll container (`.scroll-area`) is `scrollbar-width:
+   thin` with no document scroll, so the grid is `viewport − scrollbar − 32`. Media
+   queries ignored the scrollbar; a container query does not. On the platforms that
+   reserve one (~10px) every rung fires ~10px of VIEWPORT later than before — viewport
+   1200 gives 1158 of grid and THREE columns where the old `lg` span gave four. Kept
+   deliberately: the content never had those pixels. Driven end-to-end in
+   `AppListingsMarketplaceBody.stretch.geometry.test.tsx`. */
 @container (min-width: 736px) {
   .grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -97,8 +104,9 @@
    now — never more cards at a smaller size.
 
    🔴 THE 2840 RULE IS UNREACHABLE AT TODAY'S CONTAINER CAP, DELIBERATELY. The apps
-   Container is 2560, so this grid tops out at 2528 and the reachable ladder is
-   1/2/3/4/5 — 2560 renders FIVE columns at 492.8px. The rule is kept so a future cap
+   Container is 2560, so this grid tops out at 2528 (less any reserved scrollbar) and
+   the reachable ladder is 1/2/3/4/5 — a 2560 container renders FIVE columns at 492.8px,
+   a 2560 viewport ~490.8px. The rule is kept so a future cap
    raise engages six automatically; `__tests__/appListingGrid.test.ts` asserts both the
    rule's presence and its unreachability, so raising the cap past 2840 fails loudly.
 

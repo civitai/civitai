@@ -111,8 +111,10 @@ export default function AppsPage() {
             The store spends that width as an explicit column ladder driven by a
             container query (`LISTING_GRID_COLUMN_STEPS`): 1/2/3/4 exactly where the
             retired Mantine breakpoints put them, then 5 from 2364px of grid — so this
-            page renders five columns at 492.8px on a 2560 monitor, wider than the
-            460px four-up the 1920 container shipped. A sixth column is declared at
+            page renders five columns at ~490.8px on a 2560 monitor (492.8px against the
+            2560 CONTAINER; a 2560 viewport loses ~10px more to the scroll container's
+            thin scrollbar where the platform reserves one), wider than the 460px four-up
+            the 1920 container shipped. A sixth column is declared at
             2840 and is unreachable at this cap. Container and ladder are pinned
             together in `appListingGrid.ts` and its test so neither can drift alone. */}
         <AppListingsMarketplaceBody />

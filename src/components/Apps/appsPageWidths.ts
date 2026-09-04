@@ -68,7 +68,9 @@ export const APPS_CONTAINER_GUTTER = 32;
  * width as a fifth column at the one width where every card still clears the 460px it
  * renders at today, and stops there. The cap and the density are separately decided
  * instead of the cap standing in for the density — and the density decision is that
- * this container makes the cards BIGGER (492.8px at five columns in 2528 of grid),
+ * this container makes the cards BIGGER (492.8px at five columns in the 2528 of grid a
+ * 2560 container yields; ~490.8px from a 2560 viewport, which loses ~10px more to the
+ * scroll container's thin scrollbar on the platforms that reserve one),
  * not more numerous. A sixth column is declared at 2840 of grid and is deliberately
  * unreachable here; raising this constant past that fails a test rather than silently
  * shrinking every card.
@@ -86,8 +88,9 @@ export const APPS_CONTAINER_GUTTER = 32;
  * ⚠️ SIBLING ROUTES GET WIDER TOO, AND SOME OF THEM DO NOT YET SPEND IT. Every route
  * in {@link APPS_FULL_MEASURE_PAGES} — `/apps/installed`, `/apps/mine`,
  * `/apps/revenue`, `/apps/review/[publishRequestId]` — takes no measure, so its table
- * now lays out at up to 2528px of content. They are correct and unclipped there, but
- * a table that could not spend 1888 cannot spend 2528 either; making those tables use
+ * now lays out at up to 2528px of content (less the scroll container's scrollbar on
+ * platforms that reserve one). They are correct and unclipped there, but a table that
+ * could not spend 1888 cannot spend 2528 either; making those tables use
  * the space is a deliberate follow-up, not part of this change.
  *
  * 🔴 IT IS ALSO THE CHROME'S WIDTH, on every route, which is the point of this
@@ -99,7 +102,8 @@ export const APPS_PAGE_CONTAINER_WIDTH = 2560;
 /**
  * The READABLE measure — single-column form/detail surfaces where line length, not
  * available space, is the constraint. A submit wizard or a listing editor stretched
- * to the full container (2528px of content today) puts prose and form rows on an
+ * to the full container (2528px of content today, less any reserved scrollbar) puts
+ * prose and form rows on an
  * unreadable measure.
  *
  * `1068 = 1100 − 32`: the content width these pages rendered when they passed
@@ -119,7 +123,7 @@ export const APPS_READABLE_MEASURE = 1068;
  * the then-1888px content width, Submitter grew to ~380px to hold a short username and
  * a large dead gap opened between the last column and the Review button, which is the
  * action the moderator is actually aiming at. Raising the container to 2560 (2528 of
- * content) makes that worse, not better — which is why this class exists rather than
+ * content, less any reserved scrollbar) makes that worse, not better — which is why this class exists rather than
  * tracking the container.
  *
  * `1368 = 1400 − 32`: the content width the page rendered at `size={1400}`. 1400 was
