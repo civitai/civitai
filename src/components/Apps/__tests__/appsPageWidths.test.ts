@@ -580,7 +580,10 @@ describe('🔴 a BAND grows only where the container grew', () => {
 describe('🔴 the card-list column ladder steps exactly where the surplus appeared', () => {
   /** The CSS `repeat(auto-fill, minmax(min, 1fr))` count, mirrored in JS. */
   const columnsAt = (w: number) =>
-    Math.max(1, Math.floor((w + APPS_CARD_LIST_GAP) / (APPS_CARD_LIST_MIN_COLUMN + APPS_CARD_LIST_GAP)));
+    Math.max(
+      1,
+      Math.floor((w + APPS_CARD_LIST_GAP) / (APPS_CARD_LIST_MIN_COLUMN + APPS_CARD_LIST_GAP))
+    );
 
   test('one column through the OLD container, two in the current one', () => {
     // The whole justification for `/apps/installed` becoming a grid: it must change

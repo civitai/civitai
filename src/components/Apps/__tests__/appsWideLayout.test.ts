@@ -160,7 +160,8 @@ describe('🔴 every ledger is actually WIRED to its table', () => {
   const WIRED: { file: string; renders: RegExp }[] = [
     {
       file: 'src/components/Apps/UnifiedReviewList.tsx',
-      renders: /APPS_REVIEW_QUEUE_COLUMNS\.withDeploy[\s\S]{0,120}APPS_REVIEW_QUEUE_COLUMNS\.withoutDeploy/,
+      renders:
+        /APPS_REVIEW_QUEUE_COLUMNS\.withDeploy[\s\S]{0,120}APPS_REVIEW_QUEUE_COLUMNS\.withoutDeploy/,
     },
     {
       file: 'src/components/Apps/MyAppsBody.tsx',
