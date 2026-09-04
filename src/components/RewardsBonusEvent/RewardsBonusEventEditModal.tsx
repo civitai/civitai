@@ -10,12 +10,13 @@ import {
   type UpsertRewardsBonusEventSchema,
 } from '~/server/schema/rewards-bonus-event.schema';
 import {
-  defaultStartsAtValue,
+  initialStartsAtValue,
   lateEnableWarning,
+  resolveDisplayEnd,
   resolveDisplayStart,
+  toDisplayDate,
 } from '~/components/RewardsBonusEvent/rewards-bonus-event.utils';
 import dayjs from '~/shared/utils/dayjs';
-import { fromDisplayUTC, toDisplayUTC } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -80,20 +81,24 @@ export function RewardsBonusEventEditModal({
       articleUrl: event?.articleId ? `/articles/${event.articleId}` : '',
       bannerLabel: event?.bannerLabel ?? '',
       enabled: event?.enabled ?? false,
-      startsAt: event?.startsAt
-        ? toDisplayUTC(event.startsAt)
-        : event?.id
-        ? undefined
-        : defaultStartsAtValue(new Date()),
-      endsAt: event?.endsAt ? toDisplayUTC(event.endsAt) : undefined,
+      startsAt: initialStartsAtValue({ event, now: new Date() }),
+      endsAt: event?.endsAt ? toDisplayDate(event.endsAt) : undefined,
     },
   });
 
+  const watchedStartsAt = form.watch('startsAt');
+  const watchedEndsAt = form.watch('endsAt');
   const warning = lateEnableWarning({
-    // The schema defaults this to false, but the form's INPUT type still admits
-    // undefined before defaults apply.
-    enabled: !!form.watch('enabled'),
-    startsAt: form.watch('startsAt'),
+    next: {
+      // The schema defaults this to false, but the form's INPUT type still admits
+      // undefined before defaults apply.
+      enabled: !!form.watch('enabled'),
+      startsAt: watchedStartsAt ? resolveDisplayStart(watchedStartsAt) : null,
+      endsAt: watchedEndsAt ? resolveDisplayEnd(watchedEndsAt) : null,
+    },
+    previous: event?.id
+      ? { enabled: !!event.enabled, startsAt: event.startsAt, endsAt: event.endsAt }
+      : undefined,
     now: new Date(),
   });
 
@@ -116,9 +121,7 @@ export function RewardsBonusEventEditModal({
 
   function handleSubmit(data: z.infer<typeof schema>) {
     const startsAt = data.startsAt ? resolveDisplayStart(data.startsAt) : null;
-    const endsAt = data.endsAt
-      ? dayjs.utc(fromDisplayUTC(data.endsAt)).endOf('day').toDate()
-      : null;
+    const endsAt = data.endsAt ? resolveDisplayEnd(data.endsAt) : null;
 
     const payload: UpsertRewardsBonusEventSchema = {
       id: event?.id,
@@ -211,7 +214,7 @@ export function RewardsBonusEventEditModal({
           label="Enabled (must also be within the start/end window to be active)"
         />
         {warning && (
-          <Alert color="yellow" title="This will start the event mid-day">
+          <Alert color="yellow" title="This will start the event mid-day (UTC)">
             {warning}
           </Alert>
         )}
