@@ -112,6 +112,30 @@ export const BLOCK_INIT_FRAGMENT_ALLOWLIST: ReadonlySet<string> = new Set<string
   // transport strips the fragment during init. That hash-reading hazard is
   // what put `playable-collections` on the DENYLIST; this block is clear of it.
   'app-requests',
+
+  // The three below were added together and each was checked against BOTH halves
+  // of the bar above, per block — not inherited from `app-requests` because they
+  // shipped in the same batch.
+  //
+  // (a) SHIPS A DECODING READER. Each now serves an inline pre-paint fragment
+  //     reader in its own `index.html` that records the resolved theme on
+  //     `data-civitai-boot-theme`, and each declares `bootSkeleton: true`, so the
+  //     host stands its veil down and the block's own boot paint is what a viewer
+  //     actually sees. Verified against the SERVED artifact, not the repo.
+  //
+  // (b) READS `location.hash` NOWHERE AT RUNTIME. Measured per block over its
+  //     shipped `src/`: the only occurrences are inside each block's own
+  //     `bootFragment.test.tsx`, which SETS the hash to drive its reader. No app
+  //     code reads or rewrites it, so the SDK transport's strip-after-init cannot
+  //     race a competing consumer. This is the check `playable-collections` fails.
+  //
+  // KEYING: all three are page-mounted — `page` declared, `slots` empty, and each
+  // `blockId` equals its store slug — so, exactly as for `app-requests` above, one
+  // string covers whichever key the surface passes. None of them mounts in a model
+  // slot; if one ever does, re-read the KEYING ASYMMETRY note before trusting this.
+  'custom-generators',
+  'model-benchmarking',
+  'sensei',
 ]);
 
 /**
