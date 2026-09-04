@@ -13,7 +13,8 @@
  * because theirs are `import type` and erase. Keep the list here and re-export it from the service.
  *
  * Mirrored for the main app in `src/server/services/user-restriction.service.ts`; the two lists are
- * pinned to each other by `src/server/services/__tests__/restriction-type-seam.test.ts`.
+ * pinned to each other by `src/server/services/__tests__/restriction-type-seam.test.ts`, which
+ * imports and executes this module rather than reading it as text.
  */
 export const RESTRICTION_TYPES = ['generation', 'bot-account'] as const;
 export type RestrictionType = (typeof RESTRICTION_TYPES)[number];
@@ -38,9 +39,16 @@ export const RESTRICTION_TYPE_LABELS: Record<RestrictionType, string> = {
  * banned against a restriction nobody can close).
  *
  * 🔴 Kept identical to the main app's `RULINGS_WIRED_FOR` by
- * `src/server/services/__tests__/restriction-type-seam.test.ts`, which reads this file as text. The
- * two apps are separate builds with no runtime import path between them, so a pinned copy is the
- * strongest available form of "one rule, one place" — do not fork it by hand.
+ * `src/server/services/__tests__/restriction-type-seam.test.ts`, which IMPORTS AND EXECUTES this
+ * module and compares the resulting values. The two apps are separate builds with no runtime import
+ * path between them, so a pinned copy is the strongest available form of "one rule, one place" — do
+ * not fork it by hand.
+ *
+ * 🔴 That guard used to parse this file as TEXT, and passed green over a real divergence: a `]` in a
+ * trailing comment truncated its capture. So KEEP THIS MODULE IMPORT-FREE. It has no imports today,
+ * and that is the only reason the main app's Vitest project can load it across the app boundary;
+ * adding a `$lib/…` import here breaks the seam guard loudly rather than silently, but it does break
+ * it.
  */
 export const RULINGS_WIRED_FOR: readonly RestrictionType[] = ['generation'];
 

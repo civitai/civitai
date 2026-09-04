@@ -1,6 +1,8 @@
-import { readFileSync } from 'node:fs';
-import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import {
+  readModeratorVocabulary,
+  type ModeratorRestrictionVocabulary,
+} from './moderator-restriction-vocabulary.harness';
 import {
   PENDING_REVIEW_MUTE_NOTIFICATION,
   RULINGS_WIRED_FOR,
@@ -10,7 +12,7 @@ import {
 
 /**
  * The seam between the three things that have to agree about a restriction type, none of which imports
- * the others at runtime:
+ * the others in production (this file does, deliberately — see below):
  *
  *   1. the main app, which FILES restrictions of a type;
  *   2. the moderator app, which is the only place one can be REVIEWED;
@@ -22,70 +24,40 @@ import {
  * defect lives in the seam nobody owns.
  */
 
-const repoRoot = path.resolve(__dirname, '../../../..');
-
 /**
- * The moderator app's vocabulary file, read as TEXT rather than imported: it is a separate SvelteKit
- * project with its own `$lib` aliasing and its own Vitest project, so the main app's suite cannot
- * resolve its modules.
+ * 🔴 The moderator app's vocabulary is IMPORTED AND EXECUTED, not parsed. It used to be read as
+ * TEXT, and that guard passed green over a real divergence: `/…= \[([^\]]*)\]/` stops at the first
+ * `]` after the `=`, so a comment naming an index truncated the capture, and the extractor read only
+ * single-quoted strings, so a double-quoted entry vanished. Measured on #4609 — this file reported
+ * **8 passed / 0 failed** with the two lists genuinely disagreeing.
  *
- * Every parse below is deliberately narrow — it takes one literal and fails loudly if the declaration
- * is not where it says it is, so a moved or renamed constant reports as a broken guard rather than
- * silently matching nothing and passing.
- */
-const MODERATOR_TYPES_FILE = path.join(repoRoot, 'apps/moderator/src/lib/restriction-types.ts');
-
-function moderatorSource(): string {
-  return readFileSync(MODERATOR_TYPES_FILE, 'utf-8');
-}
-
-/** The single-quoted strings inside the array literal a declaration assigns. */
-function moderatorArray(declaration: RegExp, name: string): string[] {
-  const match = declaration.exec(moderatorSource());
-  if (!match) {
-    throw new Error(
-      `Could not find a \`${name}\` array literal in ${MODERATOR_TYPES_FILE}. If it moved, update this guard — do not delete it.`
-    );
-  }
-  return [...match[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
-}
-
-/** The moderator app's copy of the types that can be FILED and reviewed. */
-function moderatorRestrictionTypes(): string[] {
-  return moderatorArray(
-    /export const RESTRICTION_TYPES = \[([^\]]*)\] as const;/,
-    'RESTRICTION_TYPES'
-  );
-}
-
-/** The moderator app's copy of the types a VERDICT may be handed to. */
-function moderatorRulingsWiredFor(): string[] {
-  return moderatorArray(/export const RULINGS_WIRED_FOR[^=]*=\s*\[([^\]]*)\]/, 'RULINGS_WIRED_FOR');
-}
-
-/**
- * The moderator app's refusal message, with `${type}` substituted — read out of its template literal.
+ * A wider regex would not have fixed it. A guard that pins source text by PATTERN is walkable by
+ * reformatting the text, and the reformattings that walk it are ordinary. Executing the module makes
+ * formatting irrelevant by construction.
  *
- * The list is the rule; this is the sentence a moderator reads. They are pinned separately because
- * they fail differently: a drifted LIST is a security hole, a drifted SENTENCE is two surfaces
- * explaining the same refusal in two ways.
+ * That the import resolves at all rests on one fact: `apps/moderator/src/lib/restriction-types.ts`
+ * has no imports of its own, so the main app's Vitest project can load it even though the moderator
+ * app is a separate SvelteKit build with its own `$lib` aliasing. Give that file a `$lib/…` import
+ * and this fails loudly, naming the module — which is the right outcome, not something to work
+ * around.
+ *
+ * The reader, its shape validation and the fixtures that prove it sees a divergence live in
+ * `src/server/services/__tests__/moderator-restriction-vocabulary.harness.ts` and
+ * `src/server/services/__tests__/moderator-restriction-vocabulary.test.ts`.
  */
-function moderatorUnwiredRulingMessage(type: string): string {
-  const match = /return \(RULINGS_WIRED_FOR[\s\S]*?: `([^`]+)`;/.exec(moderatorSource());
-  if (!match) {
-    throw new Error(
-      `Could not find the \`unwiredRulingReason\` message template in ${MODERATOR_TYPES_FILE}. If it moved, update this guard — do not delete it.`
-    );
-  }
-  return match[1].replaceAll('${type}', type);
-}
+let moderator: ModeratorRestrictionVocabulary;
+
+beforeAll(async () => {
+  moderator = await readModeratorVocabulary();
+});
 
 describe('restriction type — main app ⇄ moderator app', () => {
-  // A positive control on the parser itself. A regex that silently matched nothing would make the
-  // equality assertion below compare two empty-ish things and pass with the guard providing nothing.
+  // A positive control on the reader. It cannot come back empty — `readModeratorVocabulary` throws
+  // on an empty or unreadable list rather than returning one — but this pins the fact rather than
+  // trusting a helper in another file to keep doing it.
   it('reads a non-empty type list out of the moderator app', () => {
-    expect(moderatorRestrictionTypes().length).toBeGreaterThan(0);
-    expect(moderatorRestrictionTypes()).toContain('generation');
+    expect(moderator.restrictionTypes.length).toBeGreaterThan(0);
+    expect(moderator.restrictionTypes).toContain('generation');
   });
 
   /**
@@ -97,7 +69,7 @@ describe('restriction type — main app ⇄ moderator app', () => {
    *  - a type in the moderator app but not the main app is a queue tab that can only ever be empty.
    */
   it('files exactly the types the moderator queue can show', () => {
-    expect([...moderatorRestrictionTypes()].sort()).toEqual([...USER_RESTRICTION_TYPES].sort());
+    expect([...moderator.restrictionTypes].sort()).toEqual([...USER_RESTRICTION_TYPES].sort());
   });
 });
 
@@ -115,26 +87,22 @@ describe('restriction type — main app ⇄ moderator app', () => {
  */
 describe('restriction type — ruling scope ⇄ moderator app', () => {
   it('reads a non-empty wired-for list out of the moderator app', () => {
-    // Positive control on this file's second parser, for the same reason the first one has one: a
-    // regex that silently matched nothing would compare two empty things and pass.
-    expect(moderatorRulingsWiredFor().length).toBeGreaterThan(0);
-    expect(moderatorRulingsWiredFor()).toContain('generation');
+    expect(moderator.rulingsWiredFor.length).toBeGreaterThan(0);
+    expect(moderator.rulingsWiredFor).toContain('generation');
   });
 
   it('agrees with the main app about which types a verdict can be handed to', () => {
-    expect([...moderatorRulingsWiredFor()].sort()).toEqual([...RULINGS_WIRED_FOR].sort());
+    expect([...moderator.rulingsWiredFor].sort()).toEqual([...RULINGS_WIRED_FOR].sort());
   });
 
   it('refuses the same types on both sides, word for word', () => {
     // Every type that can be FILED, so a type added to the vocabulary without a verdict path is
-    // covered here the day it is added rather than the day someone remembers this file.
-    for (const type of USER_RESTRICTION_TYPES) {
-      const main = unwiredRulingReason(type);
-      const moderator = moderatorRulingsWiredFor().includes(type)
-        ? null
-        : moderatorUnwiredRulingMessage(type);
-      expect(moderator).toEqual(main);
-    }
+    // covered here the day it is added rather than the day someone remembers this file. The
+    // moderator side is CALLED, not read out of its template literal — so a message assembled from
+    // constants, or moved behind a helper, is compared on what it produces.
+    for (const type of USER_RESTRICTION_TYPES)
+      expect(moderator.unwiredRulingReason(type)).toEqual(unwiredRulingReason(type));
+
     // The whole comparison above is vacuous if no type is currently refused — assert one is.
     expect(USER_RESTRICTION_TYPES.some((t) => unwiredRulingReason(t) !== null)).toBe(true);
   });

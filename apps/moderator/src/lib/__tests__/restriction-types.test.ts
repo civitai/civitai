@@ -25,9 +25,28 @@ describe('unwiredRulingReason', () => {
     for (const type of RULINGS_WIRED_FOR) expect(unwiredRulingReason(type)).toBeNull();
   });
 
+  /**
+   * 🔴 PINNED BY VALUE, not by "at least one type is refused".
+   *
+   * The test below used to lean on `unwired.length > 0` to stay non-vacuous, and that made it catch
+   * a widened `RULINGS_WIRED_FOR` only BY ACCIDENT — `bot-account` being the sole unwired type is
+   * the only reason wiring it in emptied the list. Add a third filed type and the accident is gone:
+   * `RULINGS_WIRED_FOR` could claim a verdict path for `bot-account` while `unwired` still holds the
+   * third type, so the length check passes and the loop passes and nothing here notices.
+   *
+   * A value pin does not decay that way. It is the mirror of the main app's own
+   * (`expect([...RULINGS_WIRED_FOR]).toEqual(['generation'])` in
+   * `src/server/__tests__/pending-review-mute.test.ts`), and widening this list on either side is
+   * supposed to be a deliberate act with the verdict path parameterised first.
+   */
+  it('claims a verdict path for generation and for nothing else', () => {
+    expect([...RULINGS_WIRED_FOR]).toEqual(['generation']);
+  });
+
   it('refuses every filed type that has no verdict path, naming it', () => {
     const unwired = RESTRICTION_TYPES.filter((t) => !RULINGS_WIRED_FOR.includes(t));
-    // The guard is only worth anything while some type is refused; today that is `bot-account`.
+    // Kept only as a vacuity guard. It is NOT what catches a widened `RULINGS_WIRED_FOR` any more —
+    // the value pin above is, and it does not decay as the vocabulary grows.
     expect(unwired.length).toBeGreaterThan(0);
 
     for (const type of unwired) {
