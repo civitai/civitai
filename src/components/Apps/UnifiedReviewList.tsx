@@ -9,6 +9,7 @@ import {
 import { useMemo, useState } from 'react';
 import type { OffsitePendingRow } from '~/components/Apps/OffsiteReviewQueue';
 import { canRetriggerBuild } from '~/components/Apps/deploy-status';
+import { AppsTableColgroup, APPS_REVIEW_QUEUE_COLUMNS } from '~/components/Apps/appsWideLayout';
 import {
   mergeReviewRows,
   offsiteRequestToUnifiedRow,
@@ -118,10 +119,29 @@ export function UnifiedReviewList({
       {rows.length > 0 && (
         <Card withBorder p={0}>
           <Table verticalSpacing="md" horizontalSpacing="md">
+            {/*
+              🔴 FIRST CHILD, BEFORE the row groups — HTML requires it there, and
+              `__tests__/appsWideLayout.test.ts` is what enforces it (see the note on that
+              guard for what the PIXELS can and cannot see about the ordering). Its ledger
+              is keyed on `showDeploy`, i.e. on the same DATA that decides whether the
+              Deploy column exists, so the two can never disagree about the column COUNT.
+              Why this table has one at all: `/apps/review` used to cap its whole page at
+              1368 because these columns could not spend the container and the Review
+              button drifted away from its row.
+            */}
+            <AppsTableColgroup
+              columns={
+                showDeploy
+                  ? APPS_REVIEW_QUEUE_COLUMNS.withDeploy
+                  : APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy
+              }
+            />
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Kind</Table.Th>
-                <Table.Th>App</Table.Th>
+                {/* The PRIMARY column — no width in the ledger, so it takes the slack.
+                    The testid is what `AppsWideLayout.geometry.test.tsx` measures. */}
+                <Table.Th data-testid="apps-unified-review-col-app">App</Table.Th>
                 <Table.Th>Submitter</Table.Th>
                 <Table.Th>{dateLabel}</Table.Th>
                 {showDeploy && <Table.Th>Deploy</Table.Th>}

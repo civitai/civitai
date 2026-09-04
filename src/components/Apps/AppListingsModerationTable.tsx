@@ -20,6 +20,7 @@ import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
 import { ReasonGatedActionModal } from '~/components/Apps/ReasonGatedActionModal';
 import { listingStatusChip } from '~/components/Apps/appListingModerationView';
+import { AppsTableColgroup, APPS_MOD_LISTINGS_COLUMNS } from '~/components/Apps/appsWideLayout';
 import { LISTING_KIND_LABELS } from '~/components/Apps/listingKindLabels';
 import {
   actionOpensOwnerMessage,
@@ -313,6 +314,10 @@ export function AppListingsModerationTable({
   const renderTable = (groups: SubmissionGroup<ModerationListingRow>[]) => (
     <Card withBorder p={0}>
       <Table verticalSpacing="md" horizontalSpacing="md">
+        {/* 🔴 FIRST CHILD, BEFORE the row groups — see `appsWideLayout`. `/apps/review`
+            hosts this table and no longer caps its body, so the slack has to have
+            somewhere deliberate to go: the App cell (slug + kind + status chips). */}
+        <AppsTableColgroup columns={APPS_MOD_LISTINGS_COLUMNS} />
         <Table.Thead>
           <Table.Tr>
             <SortableTh label="App" column="app" sort={sort ?? NEUTRAL_SORT} onSort={onSort} />

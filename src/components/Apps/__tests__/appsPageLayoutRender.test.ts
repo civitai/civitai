@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MantineProvider } from '@mantine/core';
 import { Window } from 'happy-dom';
 import { describe, expect, it, vi } from 'vitest';
+import type { AppsMeasure } from '~/components/Apps/appsPageWidths';
 
 /**
  * `/apps` chrome — the measure box, asserted on the RENDERED TREE, in the tier that
@@ -49,12 +50,25 @@ vi.mock('~/components/Apps/AppsSubNav', () => ({
 }));
 
 const { AppsPageLayout } = await import('~/components/Apps/AppsPageLayout');
-const { APPS_PAGE_MEASURES, APPS_PAGE_CONTAINER_WIDTH } = await import(
+const { APPS_PAGE_MEASURES, APPS_PAGE_CONTAINER_WIDTH, appsMeasureCss } = await import(
   '~/components/Apps/appsPageWidths'
 );
 
 /** Mantine emits `max-width:calc(<n/16>rem * var(--mantine-scale))` for `maw={n}`. */
 const remOf = (px: number) => `${px / 16}rem`;
+
+/**
+ * The substring the rendered `max-width` must contain for a given measure.
+ *
+ * 🔴 TWO SHAPES, ONE ASSERTION. A numeric measure is converted to `rem` by Mantine; a
+ * BAND is a `clamp(…)` string, which Mantine's `rem()` early-returns untouched. Reading
+ * both through the module's own `appsMeasureCss` is deliberate — a second hand-written
+ * copy of the formatter here would agree with itself while disagreeing with the layout.
+ */
+const expectedMaxWidth = (measure: AppsMeasure): string => {
+  const css = appsMeasureCss(measure);
+  return typeof css === 'number' ? remOf(css) : css;
+};
 
 type Tree = {
   /**
@@ -79,7 +93,7 @@ type Tree = {
   band: Element;
 };
 
-function renderLayout(measure?: number, withHeader = false): Tree {
+function renderLayout(measure?: AppsMeasure, withHeader = false): Tree {
   const html = renderToStaticMarkup(
     createElement(
       MantineProvider,
@@ -236,19 +250,31 @@ describe('the measure box, on the rendered tree', () => {
   });
 
   it('every route measure renders its own distinct max-width', () => {
-    const entries = Object.entries(APPS_PAGE_MEASURES);
-    // Guard-the-guard: an empty map would make the loop pass vacuously.
-    expect(entries.length).toBeGreaterThanOrEqual(8);
+    const entries = Object.entries(APPS_PAGE_MEASURES) as [string, AppsMeasure][];
+    // Guard-the-guard: an empty map would make the loop pass vacuously. Seven since
+    // `/apps/review` gave up its cap and joined the full-container list.
+    expect(entries.length).toBeGreaterThanOrEqual(7);
     const rendered = new Set<string>();
     for (const [route, measure] of entries) {
       const t = renderLayout(measure);
       expect(t.measureBox, `${route} rendered no measure box`).not.toBeNull();
-      expect(t.measureBox!.getAttribute('style'), route).toContain(remOf(measure));
+      expect(t.measureBox!.getAttribute('style'), route).toContain(expectedMaxWidth(measure));
       rendered.add(t.measureBox!.getAttribute('style') ?? '');
     }
-    // Three measure CLASSES, so three distinct rendered widths — proof the fixture
-    // varies the dimension rather than feeding one value eight times.
-    expect(rendered.size).toBe(3);
+    // Two measure CLASSES, so two distinct rendered widths — proof the fixture varies
+    // the dimension rather than feeding one value seven times.
+    expect(rendered.size).toBe(2);
+  });
+
+  it('🔴 a BAND reaches the DOM as a clamp, not as a rem floor', () => {
+    // The failure this catches is a measure that renders its `min` and stops growing —
+    // which looks completely correct at 1440 and silently un-does the whole band on a
+    // wide screen. `remOf(min)` must NOT be what lands in the attribute.
+    const band = { min: 1068, max: 1368, grow: 55 } as const;
+    const t = renderLayout(band);
+    const style = t.measureBox!.getAttribute('style') ?? '';
+    expect(style).toContain('clamp(1068px, 55%, 1368px)');
+    expect(style).not.toContain(remOf(1068));
   });
 
   it('🔴 the HEADER is bounded by the same measure as the body', () => {
