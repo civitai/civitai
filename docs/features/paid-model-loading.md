@@ -3,7 +3,8 @@
 **Status:** not started on the site side. The orchestrator can download and report; it cannot yet
 charge or guarantee residency.
 **Source:** lab call 2026-08-18 (Justin, Koen, Briant), the `@civitai/client` SDK, and the
-`civitai-orchestration` source at `9306e7333`.
+`civitai-orchestration` source at `9306e7333` — **which is deployed**, so everything described as
+built below is live.
 **Tracking:** ClickUp C2–C14, `Synced Team`.
 
 ---
@@ -271,19 +272,17 @@ These came out of reading the contract and the code, not out of the call. None h
    with LoRAs taking four hours, which Koen read as an unstable tunnel into the data centre.
    Koen: "we got to be prepared for us not giving any hard guarantees about when it's going to be
    available." A refund path is implied and unscoped.
-3. **Concurrent purchases of the same resource.** Two users pay to load the same model at the same
-   time. Does the second pay? Is one refunded? Does the 48 hours reset?
-4. **The 48-hour guarantee does not exist yet**, on the site or in the orchestrator. Nothing pins a
+3. **The 48-hour guarantee does not exist yet**, on the site or in the orchestrator. Nothing pins a
    prepared resource and nothing records an expiry, so there is no countdown to design until Koen
    builds retention. Until then the surfaces must not promise it.
-5. **Cluster capacity is unknown.** Briant's concern in the call: someone queues a pile of small
+4. **Cluster capacity is unknown.** Briant's concern in the call: someone queues a pile of small
    irrelevant checkpoints and starves the popular ones. The answers on record are that popular
    models stay resident because workers keep them, plus the rate limits, plus Koen's
    already-shipped eviction metric (tried to evict, couldn't, last copy). That metric is the only
    instrument we have, and nothing yet watches it.
-6. **Search does not show load state**, deliberately deferred. Justin: "maybe we won't, for
+5. **Search does not show load state**, deliberately deferred. Justin: "maybe we won't, for
    initially."
-7. **Queue-position boosting** is out for v1, and Justin expects it back if bot armies defeat the
+6. **Queue-position boosting** is out for v1, and Justin expects it back if bot armies defeat the
    rate limits.
 
 ---
@@ -300,6 +299,8 @@ These came out of reading the contract and the code, not out of the call. None h
 - A bystander on the model page can subscribe to someone else's in-flight load and get the
   notification.
 - Free tier gets 0 per day at launch.
+- Rate limits stay site-side only; the orchestrator accepts unlimited prepares from a user token.
+- Concurrent prepares of the same resource are not a concern and need no special handling.
 
 ---
 

@@ -10,15 +10,16 @@ while reading the contract and the code; they have no ClickUp task and no owner 
 
 ## Phase 0 — resolve before writing site code
 
-Nothing in Phase 1 onward is safe to start until these land. Two are decisions, one is a fact
-check.
+Nothing in Phase 1 onward is safe to start until these land. All four are decisions — the
+orchestrator questions are answered and recorded below.
 
 - [ ] **C14 — decide: standalone demo client, mod-only launch, or straight into the platform.**
       Justin owns it. Gates C5–C8. ([868ktt5bz](https://app.clickup.com/t/868ktt5bz))
       *Closes when:* Justin states the choice in the task.
 - [ ] 🔴 **Decide what we can honestly sell, given the 48-hour guarantee is not implemented.**
-      Verified against orchestrator source: nothing pins a prepared resource, so a paid load buys a
-      download and then ordinary eviction. Either Koen builds retention, or the surfaces stop saying
+      Verified against deployed orchestrator source: nothing pins a prepared resource, so a paid
+      load buys a download and then ordinary eviction. Either Koen builds retention (`PinModelJob`
+      looks like the intended primitive, but nothing creates one), or the surfaces stop saying
       "48 hours". See [Orchestrator state](#orchestrator-state--verified-against-source).
       *Closes when:* residency exists, or the copy is rewritten to promise only a load.
 - [ ] **Decide "select any model", and decide it as two questions.** `GenerationCoverage` is a
@@ -87,7 +88,6 @@ against a real download.
         throws a ValidationException before any charge
   - [ ] refuse (without charging) when already `available`
   - [ ] refuse when the model lacks a `RentCivit` licence (see Phase 0)
-  - [ ] decide the concurrent-purchase behaviour — two users, same model, same moment
 - [ ] **C10 — per-tier daily rate limits.** ([868ktt5aq](https://app.clickup.com/t/868ktt5aq))
   - [ ] four `rateLimit()` entries with `userReq` tier predicates, `period` = 1 day
   - [ ] apply the **same `sharedKey`** on the generation submit path, or the implicit
@@ -157,8 +157,7 @@ the platform second.
 Read directly from the orchestrator repo (`civitai-orchestration`, `main` at `9306e7333`), not from
 the SDK. This section supersedes a list of questions that turned out to be answerable ourselves.
 
-⚠️ **Source, not deployment.** Everything below is what `main` does. Whether the running cluster is
-on that commit is still worth one line of confirmation.
+**This commit is deployed**, so everything below marked as built is live.
 
 ### Built and working
 
@@ -196,7 +195,7 @@ like a missing feature. It is not missing — it is unadvertised.
 
 | Gap | Consequence |
 | --- | --- |
-| 🔴 **The 48-hour residency guarantee does not exist.** No pin, hold, reservation or retention TTL for a prepared resource appears anywhere in the source. `PrepareResourceJob` downloads the model and ends; the copy is then subject to ordinary worker eviction like any other. | This is the thing being sold. Without it, a paid load buys a download and no residency at all. **Nothing on the site should promise 48 hours until this exists.** |
+| 🔴 **The 48-hour residency guarantee does not exist.** `PrepareResourceJob` downloads the model and ends; the copy is then subject to ordinary worker eviction like any other. The one primitive that looks intended for it — **`PinModelJob`** — is defined and has a `PushWorkerHandler` handler, but **nothing in the repo creates one**, and `PrepareResourceHandler` does not issue it. | This is the thing being sold. Without it, a paid load buys a download and no residency at all. **Nothing on the site should promise 48 hours until this exists.** |
 | 🔴 **Cost is hardcoded to zero.** `PrepareResourceHandler.CalculateCost` returns `{ Factors = [], Fixed = [] }`, and its own comment says both collections empty is what short-circuits to a zero cost. | C2 is not a config toggle — the size-scaled pricing function has not been written. `?whatif=true` today returns **zero**, not a price, so the CTA has no number to show. |
 
 ### Site-relevant details worth knowing
@@ -220,17 +219,15 @@ like a missing feature. It is not missing — it is unadvertised.
 
 ### Still worth asking Koen
 
-Short list now, and none of it blocks starting.
+Deployment, concurrent prepares and the site-side rate-limit posture are all settled and no longer
+need asking. C2 (pricing) is the other open item and lives in Phase 0.
 
-- [ ] Is the deployed cluster on a build that has all of the above?
-- [ ] Is the 48-hour residency planned, and where — worker retention, or a provider-side hold? It
-      changes whether C5–C8 can say "48 hours" at all.
-- [ ] Two users prepare the same AIR while it is still loading — one job or two, and does either
-      get charged twice once pricing exists?
+- [ ] Is the 48-hour residency planned, and where? **`PinModelJob` looks like the intended
+      primitive** — it is defined and `[Preview]`, and `PushWorkerHandler` has a handler for it,
+      but nothing in the repo creates one and `PrepareResourceHandler` does not issue it. This
+      decides whether C5–C8 can say "48 hours" at all.
 - [ ] Is `step:preparing` unadvertised on purpose? `step:*` works, but if consumers are meant to
       subscribe narrowly we should know.
-- [ ] Confirm rate limiting stays site-side only, so the orchestrator will accept unlimited prepares
-      from a user token.
 
 ## Not in v1, on the record
 
@@ -247,4 +244,3 @@ Real work with no task and no owner. Listed so they are decided rather than disc
 
 - [ ] **Refund path** for a load that fails or never completes.
 - [ ] **48-hour residency display** — nothing shows the user when what they bought expires.
-- [ ] **Concurrent purchase** of the same resource by two users.
