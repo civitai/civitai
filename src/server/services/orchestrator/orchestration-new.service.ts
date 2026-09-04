@@ -104,7 +104,7 @@ import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 
 // Ecosystem handlers - unified router
 import { createEcosystemStepInput } from './ecosystems';
-import { recordShadowComparison, runHubParse, shadowFlags } from './form-graph/shadow-parse';
+import { recordShadowComparison, runHubParse } from './form-graph/shadow-parse';
 import { createComfyInput, resourcesToImageMetadataResources } from './ecosystems/comfy-input';
 import { extractStepErrors, sanitizeProviderError } from './provider-errors';
 import { resolveSourceImageIds, signProvenance, unionSourceImageIds } from './remix-provenance';
@@ -595,14 +595,14 @@ function validateInput(input: Record<string, unknown>, externalCtx: GenerationCt
   const normalized = normalizeInput(input);
   const result = generationGraph.safeParse(normalized, externalCtx);
 
-  // form-graph cutover: shadow-compare (and optionally serve) the hub parse.
-  // The v1 parse above always runs — it feeds the substitution metrics and,
-  // while serving the hub, the reverse comparison.
-  const cutover = shadowFlags();
-  const hubResult = cutover.shadow ? runHubParse(normalized, externalCtx) : undefined;
-  if (hubResult) {
-    recordShadowComparison(result, hubResult, String(normalized.workflow ?? 'unknown'));
-  }
+  // form-graph cutover: every parse runs both engines and records the
+  // comparison; the hub result is served for users with the cutover flag on.
+  // The v1 parse above always runs — it feeds the substitution metrics and
+  // the reverse comparison. Flag, comparison, and the whole shadow-parse
+  // module go away in the delete-data-graph change.
+  const serveHub = externalCtx.flags?.formGraphGenerator === true;
+  const hubResult = runHubParse(normalized, externalCtx);
+  recordShadowComparison(result, hubResult, String(normalized.workflow ?? 'unknown'));
 
   // Issue #3520 — count silent checkpoint substitutions. This is the single
   // choke point every SERVER-side graph validation passes through (submit,
@@ -616,7 +616,7 @@ function validateInput(input: Record<string, unknown>, externalCtx: GenerationCt
   // awaited: this function is synchronous and on the submit path.
   void emitModelSubstitutions(externalCtx.modelSubstitutions);
 
-  if (cutover.serve && hubResult && hubResult.ok !== null) {
+  if (serveHub && hubResult.ok !== null) {
     if (!hubResult.ok) {
       const errorMessages = Object.entries(hubResult.errors)
         .map(([key, error]) => `${key}: ${error.message}`)

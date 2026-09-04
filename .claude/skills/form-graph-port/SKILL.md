@@ -69,17 +69,21 @@ pick ONLY the fields worth carrying, build one address→raw-value record with
 schemas validate on first resolve, so stale garbage degrades to defaults. Never delete
 the old records while anything still reads them.
 
-## 6. Cutover: three flags, staged
+## 6. Cutover: ONE feature flag, always-on comparison
 
-1. `<form>-shadow-parse` (Flipt) — server parses BOTH, compares, counts
-   (`registerCounterWithLabels`) and logs divergence with **diff keys only — never field
-   values** (user content must not reach logs; pin that with a test).
-2. `<form>-parse` — serve the port's result; keep the old parse running for whatever
-   metrics still tap it.
-3. Client feature flag (`availability: ['mod']` first) swapping the form component.
+One feature flag (`availability: ['mod']` first, widened via its Flipt key) gates the
+whole cutover per user: it swaps the form component on the client AND serves the
+port's parse on the server (read from the ctx the feature-flag system already
+threads — coerce it, a sparse record reads `undefined`). Every server parse runs BOTH
+engines regardless and records the comparison — outcomes counted
+(`registerCounterWithLabels`), divergence logged with **diff keys only — never field
+values** (user content must not reach logs; pin that with a test, one sentinel per
+emit path). Comparison noise is fine: it dies with the old engine.
 
-Flags off must be byte-identical. Deleting the old engine is a separate change after the
-flags have fully flipped.
+Flag off must be byte-identical. The generation port briefly used three flags
+(separate shadow/serve Flipt switches) and collapsed them once the parity battery
+made independent server/client rollback unnecessary — start with one. Deleting the
+old engine is a separate change after the flag is fully widened.
 
 ## Keeping parity during the dual-graph window
 

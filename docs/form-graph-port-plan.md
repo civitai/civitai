@@ -303,14 +303,17 @@ records are only read, never deleted. Store-path gotcha this surfaced: STORE
 state holds raw inputs (a bare-number model), so mode picks and scopes read ids
 via `modelIdOf` rather than `.id`.
 
-### Phase 4 — server swap (small, high-stakes) — BUILT, staged behind Flipt flags (2026-09-02)
+### Phase 4 — server swap (small, high-stakes) — BUILT, gated on the ONE cutover flag (2026-09-04)
 
-No adapter needed. `validateInput` in `orchestration-new.service.ts` is staged behind
-two Flipt flags (both default off; see
-`src/server/services/orchestrator/form-graph/shadow-parse.ts`):
-`form-graph-shadow-parse` runs the hub parse alongside v1 and compares — outcomes
-counted in `form_graph_shadow_parse_total`, divergence logged with diff KEYS only —
-and `form-graph-parse` serves the hub result. The v1 parse always runs (substitution
+No adapter needed. `validateInput` in `orchestration-new.service.ts` runs BOTH engines
+on every parse and records the comparison — outcomes counted in
+`form_graph_shadow_parse_total`, divergence logged with diff KEYS only (see
+`src/server/services/orchestrator/form-graph/shadow-parse.ts`) — and serves the hub
+result for users whose `formGraphGenerator` feature flag is on (read from
+`externalCtx.flags`; the App Blocks bridge passes no flags, so it stays on v1
+throughout). Originally staged behind two extra Flipt flags; collapsed to the single
+feature flag 2026-09-04 — comparison logging stays on and noisy until Phase 6 removes
+it wholesale. The v1 parse always runs (substitution
 metrics + reverse compare); dropping it belongs to Phase 6. `computedKeys` on the
 serve path comes from the parse result's own `computedKeys` (wire-named computeds —
 the v1 node-partition equivalent), and the substitution metrics need no mapping
@@ -318,7 +321,7 @@ because the port's `checkpoint.ts` records into `ext.modelSubstitutions` directl
 `legacy-metadata-mapper.ts`'s `getGenerationDisplayKeys` deliberately stays on the v1
 graph: its input/computed partition differs in the hub (workflow/ecosystem are
 fields, not computeds), so it moves in Phase 6 with a behavior decision, not
-mechanically. Flip criterion: a sustained zero on diverged/error outcomes.
+mechanically. Widen criterion: a sustained zero on diverged/error outcomes.
 
 ### Phase 5 — client swap (large, UI) — BUILT, staged behind `formGraphGenerator` (mod-only); awaiting Briant's hands-on pass
 
@@ -340,8 +343,9 @@ needs Briant's hands-on testing before it is called done.
 
 Delete `src/libs/data-graph/`, `src/shared/data-graph/generation/` (the old graphs),
 move `form-graph/generation/` to its final home (`src/shared/generation-form/` or Briant's choice),
-delete the differential suites (they die with their oracle), and run `docs-drift-review`
-+ `comment-review` over the branch.
+delete the differential suites (they die with their oracle), delete the cutover
+machinery — the `formGraphGenerator` flag, `shadow-parse.ts`, its counter and Axiom
+logging — and run `docs-drift-review` + `comment-review` over the branch.
 
 **Closing condition:** no import of `~/libs/data-graph` or the old graph paths remains
 (`grep -rn "libs/data-graph\|shared/data-graph/generation" src` is empty besides the new
