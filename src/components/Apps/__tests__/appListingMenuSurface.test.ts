@@ -88,18 +88,35 @@ describe('the listing menu surface policy', () => {
         .replace(/\/\*[\s\S]*?\*\//g, ' ')
         .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
-    it('AppListingCard renders the menu with surface="card", and reads the same for layout', () => {
+    it('AppListingCard renders the menu with surface="card", and lays out the same either way', () => {
       const card = code('../AppListingCard.tsx');
       expect(card).toContain('surface="card"');
       expect(card).not.toContain('surface="detail"');
-      // 🔴 THE HOOK CALL TOO, NOT ONLY THE COMPONENT. The card asks
-      // `useAppListingActionsMenuVisible` whether the trigger takes up row space, and
-      // that answer must come from the SAME surface — a card that rendered
-      // `surface="card"` while laying out for `'detail'` reserves 36px for a control
-      // it does not render, which is a silent 46px-row geometry bug.
-      expect(card).toMatch(/useAppListingActionsMenuVisible\(\s*menuTarget,\s*'card'/);
-      // Positive control on the stripper: it did not simply eat the file.
+      // 🔴 THIS USED TO ALSO REQUIRE A `useAppListingActionsMenuVisible(menuTarget,
+      // 'card')` CALL, AND THAT REQUIREMENT IS RETIRED RATHER THAN RELAXED. The card
+      // asked the hook whether the trigger would take up row space, because the answer
+      // decided a container query on the recommend rollup: a card laying out for the
+      // wrong surface reserved 36px for a control it did not render. The rollup has
+      // moved to the meta block, the query is gone, and the card's layout is now
+      // IDENTICAL whether or not a `⋮` renders — so the coupling the old assertion
+      // protected has no shape left to take.
+      //
+      // 🔴 SO THE ABSENCE IS ASSERTED INSTEAD, because "the card does not branch its
+      // layout on menu visibility" is the property that replaced it. Re-introducing
+      // that predicate is how the deleted apparatus comes back — and it would come
+      // back silently, since nothing else reads it.
+      expect(
+        card,
+        'AppListingCard branches its layout on menu visibility again — the rollup lives in the meta block now, so it should not need to'
+      ).not.toContain('useAppListingActionsMenuVisible');
+      // Positive control on the stripper: it did not simply eat the file, AND the
+      // surface prop above is still reaching a real render.
       expect(card).toContain('AppListingActionsMenu');
+      // …and the hook itself is still exported for the surfaces that DO need it, so
+      // the absence above is a fact about this card, not about a deleted module.
+      expect(code('../AppListingActionsMenu.tsx')).toContain(
+        'export function useAppListingActionsMenuVisible'
+      );
     });
 
     it('AppListingDetailBody renders the menu with surface="detail"', () => {
