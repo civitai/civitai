@@ -63,6 +63,10 @@ export type ArticleQueryInput = z.input<typeof articleWhereSchema>;
 export const articleWhereSchema = baseQuerySchema.extend({
   query: z.string().optional(),
   tags: z.array(z.number()).optional(),
+  // `true` narrows to Civitai-published articles. `false` is NOT the inverse — it is
+  // absent, the same as not filtering — so a stale `?isOfficial=false` in a url cannot
+  // silently hide every official article from a feed.
+  isOfficial: z.boolean().optional(),
   favorites: z.boolean().optional(),
   hidden: z.boolean().optional(),
   username: z.string().optional(),
@@ -109,6 +113,9 @@ export const upsertArticleInput = z.object({
   attachments: z.array(baseFileSchema).optional(),
   lockedProperties: z.string().array().optional(),
   status: z.enum(ArticleStatus).optional(),
+  // Moderator-only. `upsertArticleHandler` DROPS this field for everyone else rather
+  // than refusing the save — see the comment there for why refusing is the wrong shape.
+  isOfficial: z.boolean().optional(),
 });
 
 export type ResolveArticleImageScanInput = z.infer<typeof resolveArticleImageScanSchema>;

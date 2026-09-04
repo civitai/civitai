@@ -125,6 +125,9 @@ const articleFilterSchema = z.object({
   periodMode: periodModeSchema,
   sort: z.enum(ArticleSort).default(ArticleSort.MostBookmarks),
   followed: z.boolean().optional(),
+  // Optional with no default, so an unfiltered store carries no key at all — the server
+  // reads only `true` as a filter.
+  isOfficial: z.boolean().optional(),
 });
 
 type CollectionFilterSchema = z.infer<typeof collectionFilterSchema>;

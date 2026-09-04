@@ -161,6 +161,7 @@ export const getArticles = async ({
   cursor,
   query,
   tags,
+  isOfficial,
   period,
   periodMode,
   sort,
@@ -213,6 +214,11 @@ export const getArticles = async ({
     if (query) {
       AND.push(Prisma.sql`a."title" ILIKE ${'%' + query + '%'}`);
     }
+    // Only `true` narrows. An explicit `false` is treated as no filter, matching the
+    // schema comment: nobody browses FOR community articles, and a `false` that filtered
+    // would let a stale url hide every official article from a feed.
+    if (isOfficial) AND.push(Prisma.sql`a."isOfficial" = true`);
+
     if (!!tags?.length) {
       AND.push(
         Prisma.sql`EXISTS (
