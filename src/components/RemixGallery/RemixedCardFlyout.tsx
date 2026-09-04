@@ -10,7 +10,10 @@ import { useRemixPeelStore } from '~/components/RemixGallery/remix-card-demo';
 import { Flags } from '~/shared/utils/flags';
 import { useHoverCapable } from '~/components/UserAvatar/UserHoverCard';
 import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
-import { useRemixFlyoutLayout } from '~/components/RemixGallery/remix-flyout-layout';
+import {
+  resolveShelfCell,
+  useRemixFlyoutLayout,
+} from '~/components/RemixGallery/remix-flyout-layout';
 import styles from './RemixedCardFlyout.module.scss';
 
 /** Dwell before the flyout opens, in ms. */
@@ -268,16 +271,6 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
     }
     itemRef.current = item;
 
-    // 🔴 Fall back to the grid cell when that walk finds nothing.
-    //
-    // Home-block shelves have no virtualiser item, so the walk runs off the top
-    // of the document and returns null — and every effect keyed on it then did
-    // nothing at all, silently. The panel was left unlifted and painted under
-    // the neighbouring cards: measured 0 of 3 hit-test points reachable on home
-    // against 3 of 3 in the feed. The cell is the shelf-side equivalent, being
-    // the box that sits beside the other cards.
-    if (!itemRef.current) itemRef.current = cardRef.current?.parentElement?.parentElement ?? null;
-
     // The clipper bounds where the panel may go. Walked from the card's PARENT:
     // the card itself is `overflow-hidden`, and so is the panel, which is why
     // `closest('[class*="overflow-hidden"]')` cannot be used for this — it
@@ -289,6 +282,21 @@ export function RemixedCardFlyout({ imageId }: { imageId: number }) {
       clip = clip.parentElement;
     }
     clipRef.current = clip;
+
+    // 🔴 Fall back to the shelf CELL when that walk finds nothing.
+    //
+    // Shelves have no virtualiser item, so the walk runs off the top of the
+    // document and returns null — and every effect keyed on it then did nothing
+    // at all, silently, leaving the panel painted under the neighbouring cards.
+    //
+    // The grandparent below is a LAST RESORT for a surface with no clipper, not
+    // a second definition of the cell — see `resolveShelfCell` for why counting
+    // levels does not find one.
+    if (!itemRef.current)
+      itemRef.current =
+        resolveShelfCell(cardRef.current, clip) ??
+        cardRef.current?.parentElement?.parentElement ??
+        null;
     // 🔴 Mounted INSIDE the item, as the card's sibling — not outside it.
     //
     // The panel has to paint above the content frame and below the card, and
