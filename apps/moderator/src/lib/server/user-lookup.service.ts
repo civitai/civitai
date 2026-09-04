@@ -400,12 +400,19 @@ export async function getLeaderboardRanks(userId: number): Promise<LeaderboardRa
  * name the SAME row, and three copies of an ordering rule is three places for it to stop agreeing.
  * `ur.id DESC` makes the order total, so all three resolve to that same row deterministically.
  * `expr` is a literal from this module, never caller input.
+ *
+ * 🔴 `DESC NULLS LAST`, not bare `DESC`. Postgres sorts NULLs FIRST under `DESC`, so `(ur.status =
+ * 'Pending')` evaluating to NULL would outrank an actual Pending row and put the panel back in the
+ * state this ordering exists to prevent — a real open case hidden behind another row. `ur.status` is
+ * a NOT NULL enum today, which makes bare `DESC` correct by a precondition nothing here states or
+ * checks; spelling the null placement makes the ordering independent of the column's nullability
+ * instead of quietly depending on it.
  */
 function restrictionField<T>(expr: string) {
   return sql<T>`(
     SELECT ${sql.raw(expr)} FROM "UserRestriction" ur
     WHERE ur."userId" = u.id
-    ORDER BY (ur.status = 'Pending') DESC, ur.id DESC
+    ORDER BY (ur.status = 'Pending') DESC NULLS LAST, ur.id DESC
     LIMIT 1
   )`;
 }

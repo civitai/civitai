@@ -72,7 +72,31 @@ describe('user lookup — which restriction the panel speaks for', () => {
     const sql = await identitySql();
 
     for (const sub of restrictionSubqueries(sql))
-      expect(sub).toContain(`ORDER BY (ur.status = 'Pending') DESC, ur.id DESC`);
+      expect(sub).toContain(`ORDER BY (ur.status = 'Pending') DESC NULLS LAST, ur.id DESC`);
+  });
+
+  /**
+   * 🔴 The null placement, asserted on its own so it cannot be dropped by someone tidying the
+   * ordering above back to a bare `DESC`.
+   *
+   * Postgres defaults `DESC` to `NULLS FIRST`. A NULL `(ur.status = 'Pending')` would therefore sort
+   * ABOVE a genuinely Pending row and hide the open case — exactly the failure the preference exists
+   * to prevent, arriving through the column's nullability rather than through the ordering. The
+   * column is a NOT NULL enum today, so this is an unstated precondition being made explicit rather
+   * than a live defect; spelled out, the ordering no longer depends on it.
+   */
+  it('places nulls last, so the ordering does not depend on status being NOT NULL', async () => {
+    const sql = await identitySql();
+    const subs = restrictionSubqueries(sql);
+
+    // Non-vacuous: three subqueries exist to check. (The slicer's own control lives in the first
+    // test; this repeats the count because an empty list would make the loop below pass.)
+    expect(subs).toHaveLength(3);
+    for (const sub of subs) {
+      expect(sub).toContain(`'Pending') DESC NULLS LAST`);
+      // And not a bare `DESC` on that expression, which is what the default null placement is.
+      expect(sub).not.toMatch(/'Pending'\)\s+DESC\s*,/);
+    }
   });
 
   /**

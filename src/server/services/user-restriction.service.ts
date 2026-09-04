@@ -124,10 +124,22 @@ export async function applyPendingReviewMute({
   updateSource: string;
   type?: UserRestrictionType;
 }): Promise<PendingReviewMuteResult> {
-  // 🔴 Runtime, not just TypeScript. This is the one seam whose entire purpose is accepting a
-  // caller-supplied type, and the types reaching it cross an HTTP boundary and a JSON body, where the
-  // compiler's word is worth nothing. An out-of-vocabulary value is not a harmless typo: it MUTES the
-  // account, files a row the queue's `z.enum(RESTRICTION_TYPES).catch(...)` can never select, and — via
+  // 🔴 Runtime, not just TypeScript — and it is worth being exact about why, because the obvious
+  // justification is not true here. NOTHING crosses an HTTP boundary into this parameter today:
+  // neither production caller passes a `type` at all, and the one HTTP route that reaches this
+  // function (`src/pages/api/mod/mute-user-pending-review.ts`) has no `type` key in its zod schema,
+  // so no request body can supply one. Every value arriving here is written by an in-process caller
+  // the compiler can see.
+  //
+  // What the guard is for is the SHAPE OF THE NEXT CALLER. This is the one seam whose entire purpose
+  // is accepting a caller-supplied type, it exists so a detector can file into this queue, and the
+  // obvious way to wire one up is a route that forwards a field off a JSON body — at which point the
+  // compiler's word is worth nothing and the guard is the only thing standing there. It also covers
+  // the callers TypeScript cannot vouch for today: an `as` cast, a value read back from the
+  // free-text `UserRestriction.type` column, or a JS caller.
+  //
+  // The harm it prevents is not a harmless typo: an out-of-vocabulary value MUTES the account, files
+  // a row the queue's `z.enum(RESTRICTION_TYPES).catch(...)` can never select, and — via
   // `PENDING_REVIEW_MUTE_NOTIFICATION[type]` coming back `undefined` — tells the user nothing. The
   // result is a silently muted account with no reviewable case anywhere.
   //

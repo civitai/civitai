@@ -1,3 +1,4 @@
+import type { NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
@@ -201,6 +202,7 @@ import {
   overturnPendingReviewMute,
   resolveUserRestriction,
 } from '~/server/services/user-restriction-resolve.service';
+import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
 
 const USER_ID = 101;
@@ -596,9 +598,12 @@ describe('pending-review mute — restriction type', () => {
 });
 
 /**
- * 🔴 The type a mute is filed under crosses an HTTP boundary and a JSON body before it reaches this
- * service, so TypeScript's word about it is worth nothing at the seam whose entire purpose is
- * accepting a caller-supplied value.
+ * 🔴 The runtime guard, and what it is actually for. No HTTP boundary supplies this parameter today:
+ * neither production caller passes a `type`, and `mute-user-pending-review.ts`'s zod schema has no
+ * `type` key, so no request body can reach it. The guard is there for the shape of the NEXT caller —
+ * this seam exists so a detector can file into the queue, and the obvious wiring is a route
+ * forwarding a JSON field — and for the callers TypeScript already cannot vouch for: an `as` cast, a
+ * value read back off the free-text `UserRestriction.type` column, a JS caller.
  */
 describe('pending-review mute — type is validated at runtime', () => {
   beforeEach(seed);
@@ -746,6 +751,82 @@ describe('resolveUserRestriction — ruling scope', () => {
         moderatorId: MOD_ID,
       })
     ).rejects.toThrow('Rulings are not yet available for "bot-account" restrictions');
+  });
+
+  /**
+   * 🔴 The SEAM between the refusal and what a moderator actually reads.
+   *
+   * Both ruling surfaces post through `/api/mod/restriction/resolve`, whose `defineModeratorEndpoint`
+   * wrapper hands a throw to `handleEndpointError`. A plain `Error` falls to that helper's catch-all
+   * branch and reaches the wire as **500 "An unexpected error occurred"** — the retool panel then
+   * renders "Restriction ruling: An unexpected error occurred." and the reason is destroyed. So the
+   * service throwing the right words is only half the behaviour; these drive the REAL helper over the
+   * REAL thrown value, because a test that asserted only the message would stay green through exactly
+   * that 500.
+   */
+  describe('the refusal survives the REST envelope', () => {
+    const throughRest = async (fn: () => Promise<unknown>) => {
+      const res = createRes();
+      let threw = false;
+      try {
+        await fn();
+      } catch (e) {
+        threw = true;
+        handleEndpointError(res as unknown as NextApiResponse, e);
+      }
+      // Positive control: a call that did NOT throw would leave `state` at its zero value and every
+      // assertion below would be about the fake rather than about the error.
+      expect(threw).toBe(true);
+      return res.state as { status: number; body: { message?: string } };
+    };
+
+    it('reaches REST as a 400 naming the type, not an opaque 500', async () => {
+      const id = fileRestriction('bot-account');
+
+      const { status, body } = await throughRest(() =>
+        resolveUserRestriction({
+          userRestrictionId: id,
+          status: UserRestrictionStatus.Overturned,
+          moderatorId: MOD_ID,
+        })
+      );
+
+      expect(status).toBe(400);
+      expect(body.message).toContain(
+        'Rulings are not yet available for "bot-account" restrictions'
+      );
+      // The exact sentence the moderator used to get instead. Pinned by value: it is the observable
+      // that says the reason was destroyed rather than merely reworded.
+      expect(body.message).not.toContain('An unexpected error occurred');
+    });
+
+    it('reports a missing row as a 404 rather than a server fault', async () => {
+      const { status, body } = await throughRest(() =>
+        resolveUserRestriction({
+          userRestrictionId: 4242,
+          status: UserRestrictionStatus.Upheld,
+          moderatorId: MOD_ID,
+        })
+      );
+
+      expect(status).toBe(404);
+      expect(body.message).toBe('Restriction record not found');
+    });
+
+    it('reports an already-ruled row as a 400 rather than a server fault', async () => {
+      const id = fileRestriction('generation', 'Upheld');
+
+      const { status, body } = await throughRest(() =>
+        resolveUserRestriction({
+          userRestrictionId: id,
+          status: UserRestrictionStatus.Overturned,
+          moderatorId: MOD_ID,
+        })
+      );
+
+      expect(status).toBe(400);
+      expect(body.message).toBe('Restriction has already been resolved');
+    });
   });
 
   /**
