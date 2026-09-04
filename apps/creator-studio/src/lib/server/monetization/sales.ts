@@ -188,10 +188,15 @@ export async function scheduleSale(
               : "None of the selected versions can go on sale — a sale can't run on early access.",
       };
 
-    const refusal = await zeroFloorRefusal(trx, userId, eligible.map((v) => v.id), {
-      discountType: input.discountType,
-      discountAmount: input.discountAmount,
-    });
+    const refusal = await zeroFloorRefusal(
+      trx,
+      userId,
+      eligible.map((v) => v.id),
+      {
+        discountType: input.discountType,
+        discountAmount: input.discountAmount,
+      }
+    );
     if (refusal) return { ok: false as const, error: refusal };
 
     const month = new Date(
