@@ -1,4 +1,4 @@
-import { NON_PUBLIC_IP_RANGES } from '@civitai/shared/clickhouse-ip-filters';
+import { NON_PUBLIC_IP_RANGES, publicIpOnlySql } from '@civitai/shared/clickhouse-ip-filters';
 import { describe, expect, it, vi } from 'vitest';
 import type { BotAccountCohortMember, SurfaceCounts } from '../cohort';
 import {
@@ -308,6 +308,28 @@ describe('registrationIpSql', () => {
 
     // Optional: a caller with no window still gets a correct, merely unpruned, answer.
     expect(registrationIpSql([1])).not.toContain('time >=');
+  });
+});
+
+describe('publicIpOnlySql', () => {
+  it('🔴 THROWS on a column that is not a bare identifier, rather than interpolating it', () => {
+    // 🔴 THE PRECONDITION WAS A COMMENT ONLY, ON A NEW SHARED EXPORT. The value is concatenated into
+    // a ClickHouse statement and the client does no escaping — the sibling `IP_PATTERN` in
+    // `apps/moderator/src/lib/server/clickhouse-filters.ts` exists for exactly that reason. Both
+    // call sites pass the default today, so this is closed BEFORE the parameter spreads.
+    //
+    // Watching the throw is the point: a guard nobody has seen go red is a claim about the regex.
+    expect(() => publicIpOnlySql("ip' OR 1=1 --")).toThrow(/bare SQL identifier/);
+    expect(() => publicIpOnlySql('ip)')).toThrow(/bare SQL identifier/);
+    expect(() => publicIpOnlySql('remote.ip')).toThrow(/bare SQL identifier/);
+    expect(() => publicIpOnlySql('')).toThrow(/bare SQL identifier/);
+    expect(() => publicIpOnlySql('1ip')).toThrow(/bare SQL identifier/);
+
+    // The negative control on the guard itself: a legitimate column must still get through, or the
+    // regex could be `/^$/` and every case above would pass for the wrong reason.
+    expect(publicIpOnlySql()).toContain(`ip != ''`);
+    expect(publicIpOnlySql('clientIp')).toContain(`clientIp != ''`);
+    expect(publicIpOnlySql('_ip2')).toContain(`_ip2 != ''`);
   });
 });
 
