@@ -11,6 +11,8 @@ import {
   withExternalFetch,
 } from '~/store/generation-graph.store';
 import { getImageDimensions } from '~/utils/image-utils';
+import { remixProvenanceStore } from '~/store/remix-provenance.store';
+import { trpcVanilla } from '~/utils/trpc';
 
 /**
  * Fields the remix entry-points need.
@@ -165,6 +167,20 @@ export async function startRemix({ kind, image }: { kind: RemixKind; image: Remi
     Promise.all([
       resolveDimensions(image, sourceUrl),
       fetchGenerationData({ type: 'modelVersion', id: engine.modelVersionId }),
+      // Minted HERE, against the image the user actually clicked, because this is
+      // the last moment the link is knowable. The generation form re-uploads any
+      // source that is not already an orchestrator URL — resized and re-encoded —
+      // so `sourceUrl` is replaced before submit and the server's URL-derived
+      // provenance finds nothing. Measured: the engine this button picks kept its
+      // on-site URL 98 times out of 2,526.
+      //
+      // In the same `Promise.all` so it costs no extra wall-clock, and swallowed
+      // because provenance is an enrichment: a remix whose token fails to mint
+      // must still open the generator, exactly as an off-site remix does.
+      trpcVanilla.orchestrator.mintRemixProvenance
+        .mutate({ imageId: image.id })
+        .then((r) => r.provenance)
+        .catch(() => undefined),
     ])
   );
 
@@ -172,7 +188,14 @@ export async function startRemix({ kind, image }: { kind: RemixKind; image: Remi
   // user has opened since, including a form they are already typing in.
   if (superseded) return;
 
-  const [{ width, height }, data] = result;
+  const [{ width, height }, data, provenance] = result;
+
+  // Keyed by the URL we are about to seed, so `uploadOrchestratorImage` can move
+  // it onto the uploaded blob when the form rewrites this source. Stored before
+  // `setData` for the same reason the panel opens before the awaits: the form
+  // can start resolving the moment the data lands.
+  if (provenance) remixProvenanceStore.setToken(sourceUrl, provenance);
+
   generationGraphStore.setData({
     params: {
       ...data.params,

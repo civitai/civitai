@@ -12,6 +12,7 @@
  * | useWorkflowPreferencesStore        | store/workflow-preferences.store.ts          | GenerationFormProvider, useCompatibilityInfo, useGeneratedItemWorkflows | localStorage   |
  * | useTipStore                        | store/tip.store.ts                           | FormFooter                                                       | localStorage   |
  * | useSourceMetadataStore             | store/source-metadata.store.ts               | ImageUploadMultipleInput, FormFooter, useGeneratedItemWorkflows  | sessionStorage |
+ * | useRemixProvenanceStore            | store/remix-provenance.store.ts              | SourceImageUploadMultiple, FormFooter                            | sessionStorage |
  * | useRemixStore                      | store/remix.store.ts                         | FormFooter, useRemixOfId, useGeneratedItemWorkflows              | localStorage   |
  * | useEcosystemGroupPreferencesStore  | store/ecosystem-group-preferences.store.ts   | BaseModelInput                                                   | localStorage   |
  * | usePromptFocusedStore              | inputs/PromptInput.tsx (local)               | PromptInput                                                      | memory         |
