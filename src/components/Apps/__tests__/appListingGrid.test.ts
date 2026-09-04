@@ -76,12 +76,21 @@ describe('🔴 the column LADDER — grid width → column count', () => {
    * that is the entire value of this test. `LISTING_GRID_COLUMN_STEPS` derives itself
    * from `LISTING_GRID_SPAN` + `MANTINE_BREAKPOINT_PX` + `LISTING_CARD_MIN_WIDTH`; a
    * test that re-ran the same derivation would agree with any mutation of any of those
-   * inputs. Literals are the independent witness — move the card-width floor and 1979
+   * inputs. Literals are the independent witness — move the card-width floor and 2364
    * stops being what the module produces.
    *
    * Each band is probed at THREE points, never on a boundary alone: one pixel below the
    * threshold, on it, and comfortably inside the band. A fixture that sits exactly on a
    * threshold cannot see an off-by-one in the wrong direction.
+   *
+   * 🔴 THE 1376 / 1887 / 1888 ROWS ARE THE MOST IMPORTANT IN THIS TABLE, and they exist
+   * because of an arithmetic COLLISION rather than because anything is near a rung:
+   * `4 × 460 + 3 × 16 = 1888`, so at today's floor the four-column rung would land on
+   * exactly the retired 1920 container's content width IF the floor governed the narrow
+   * half. It does not — but that is a claim about a derivation, and this is the width
+   * band where being wrong about it is invisible. 1376 is the `xl` low end: the safe
+   * middle of the desktop range, and the first thing a floor-governed narrow half would
+   * silently break. See the dedicated describe below.
    */
   const LADDER: { contentWidth: number; columns: number; why: string }[] = [
     { contentWidth: 0, columns: 1, why: 'degenerate — a zero-width grid is still one column' },
@@ -94,14 +103,24 @@ describe('🔴 the column LADDER — grid width → column count', () => {
     { contentWidth: 1100, columns: 3, why: 'inside the md band' },
     { contentWidth: 1167, columns: 3, why: 'one px below the lg rung' },
     { contentWidth: 1168, columns: 4, why: 'lg — viewport 1200 minus the gutter' },
-    { contentWidth: 1376, columns: 4, why: 'the old xl breakpoint (1408) — still four' },
-    { contentWidth: 1888, columns: 4, why: 'what the RETIRED 1920 container reached — unchanged' },
-    { contentWidth: 1978, columns: 4, why: 'one px below the five-column rung' },
-    { contentWidth: 1979, columns: 5, why: '5 × 383 + 4 × 16 — five cards at exactly the floor' },
-    { contentWidth: 2100, columns: 5, why: 'inside the five-column band' },
-    { contentWidth: 2377, columns: 5, why: 'one px below the six-column rung' },
-    { contentWidth: 2378, columns: 6, why: '6 × 383 + 5 × 16 — six cards at exactly the floor' },
-    { contentWidth: 2528, columns: 6, why: 'what /apps reaches at a 2560 container' },
+    { contentWidth: 1376, columns: 4, why: 'THE COLLISION GUARD — the xl low end (1408 − 32)' },
+    { contentWidth: 1887, columns: 4, why: 'THE COLLISION GUARD — one px below 4 × 460 + 3 × 16' },
+    { contentWidth: 1888, columns: 4, why: 'THE COLLISION GUARD — exactly 4 × 460 + 3 × 16' },
+    { contentWidth: 2100, columns: 4, why: 'still four — the fifth column is not free' },
+    { contentWidth: 2363, columns: 4, why: 'one px below the five-column rung' },
+    { contentWidth: 2364, columns: 5, why: '5 × 460 + 4 × 16 — five cards at exactly the floor' },
+    { contentWidth: 2450, columns: 5, why: 'inside the five-column band' },
+    {
+      contentWidth: 2528,
+      columns: 5,
+      why: 'what /apps reaches at a 2560 container — 492.8px cards',
+    },
+    { contentWidth: 2839, columns: 5, why: 'one px below the (unreachable) six-column rung' },
+    {
+      contentWidth: 2840,
+      columns: 6,
+      why: '6 × 460 + 5 × 16 — declared, but past the container cap',
+    },
     {
       contentWidth: 4000,
       columns: 6,
@@ -141,8 +160,8 @@ describe('🔴 the column LADDER — grid width → column count', () => {
       { minContentWidth: 736, columns: 2 },
       { minContentWidth: 960, columns: 3 },
       { minContentWidth: 1168, columns: 4 },
-      { minContentWidth: 1979, columns: 5 },
-      { minContentWidth: 2378, columns: 6 },
+      { minContentWidth: 2364, columns: 5 },
+      { minContentWidth: 2840, columns: 6 },
     ]);
     const widths = LISTING_GRID_COLUMN_STEPS.map((s) => s.minContentWidth);
     expect([...widths].sort((a, b) => a - b)).toEqual(widths);
@@ -150,6 +169,92 @@ describe('🔴 the column LADDER — grid width → column count', () => {
     expect([...columns].sort((a, b) => a - b)).toEqual(columns);
     // No redundant rung — `lg` and `xl` are both four columns and must collapse to one.
     expect(new Set(columns).size).toBe(columns.length);
+  });
+});
+
+describe('🔴 THE COLLISION — the card-width floor must NOT govern the narrow half', () => {
+  /**
+   * 🔴 WHY THIS DESCRIBE EXISTS, AND WHY IT DID NOT NEED TO AT THE OLD FLOOR.
+   *
+   * `LISTING_CARD_MIN_WIDTH` is 460, and `4 × 460 + 3 × 16 = 1888` — EXACTLY the content
+   * width of the retired 1920 container. So the four-column rung's floor-derived value
+   * and one of the most-quoted widths in this change are now the same number, and the
+   * two halves of the ladder are one refactor away from being confused for each other.
+   *
+   * If the floor ever governed the narrow half, four columns would start at 1888 and the
+   * ENTIRE 1168–1887 band would drop to three — including 1376, the `xl` low end, which
+   * is the middle of the ordinary desktop range and the last width anyone would think to
+   * re-check. Every other assertion in this file would still pass: 1888 itself would
+   * still read four (the floor's own rung), 2364 would still read five, the stylesheet
+   * seam would still agree, and the browser fixtures at 1888 / 2450 / 2528 would all be
+   * green. The defect would be invisible everywhere except here.
+   *
+   * At the old 383 floor `4 × 383 + 3 × 16 = 1580`, comfortably away from every number in
+   * play, and a floor-governed narrow half would have broken loudly. It is the NEW value
+   * that makes the failure quiet, so these assertions are a consequence of the product
+   * decision rather than general hygiene — do not delete them as redundant with the table.
+   */
+  test('🔴 four columns at 1376 — the `xl` low end, the width a floor-governed ladder breaks', () => {
+    const XL_LOW_END = MANTINE_BREAKPOINT_PX.xl - APPS_CONTAINER_GUTTER;
+    expect(XL_LOW_END).toBe(1376);
+    expect(
+      listingGridColumnsAt(XL_LOW_END),
+      'the xl low end fell below four columns. The most likely cause is that the narrow ' +
+        'half of LISTING_GRID_COLUMN_STEPS started deriving from LISTING_CARD_MIN_WIDTH: ' +
+        `minContentWidthForColumns(4) is ${minContentWidthForColumns(4)}, so four columns ` +
+        'would not begin until then and this whole band would render three.'
+    ).toBe(4);
+  });
+
+  test('🔴 four columns at 1887 AND at 1888 — one below the collision point and on it', () => {
+    const COLLISION = minContentWidthForColumns(4);
+    // The collision is real, not hypothetical: state it, so the reader can see why the
+    // two assertions below are interesting rather than arbitrary.
+    expect(COLLISION).toBe(1888);
+    expect(COLLISION).toBe(1920 - APPS_CONTAINER_GUTTER);
+    expect(listingGridColumnsAt(COLLISION - 1), 'one px below the collision point').toBe(4);
+    expect(listingGridColumnsAt(COLLISION), 'exactly at the collision point').toBe(4);
+    // 🔴 AND THE POINT: 1888 reads four for the RIGHT reason. It must be four because the
+    // lg rung (1168) has been in force for 720px, NOT because the floor happens to place
+    // a four-column rung there. Those two produce the same answer at 1888 and different
+    // answers everywhere below it — which is exactly what makes 1376 the load-bearing
+    // assertion and 1888 the one that would have reassured you.
+    expect(listingGridColumnsAt(1168)).toBe(4);
+  });
+
+  test('🔴 no narrow rung equals its own floor-derived value (the derivations are separate)', () => {
+    // The structural half of the claim. Each of 1/2/3/4 must come from a Mantine
+    // breakpoint minus the gutter and NOT from `minContentWidthForColumns`, so the two
+    // sets must disagree at every narrow column count.
+    const narrow = LISTING_GRID_COLUMN_STEPS.filter((s) => s.columns <= 4);
+    expect(narrow.map((s) => s.minContentWidth)).toEqual([0, 736, 960, 1168]);
+    for (const step of narrow) {
+      if (step.columns === 1) continue; // one column starts at 0 under either rule
+      expect(
+        step.minContentWidth,
+        `the ${step.columns}-column rung is at its floor-derived value ` +
+          `(${minContentWidthForColumns(step.columns)}) — the narrow half is being ` +
+          'governed by LISTING_CARD_MIN_WIDTH, which it must never be'
+      ).not.toBe(minContentWidthForColumns(step.columns));
+    }
+    // Guard-the-guard: the loop must actually have compared something, and the numbers it
+    // compared must be the ones this test is about.
+    expect(narrow.filter((s) => s.columns > 1)).toHaveLength(3);
+    expect(minContentWidthForColumns(2)).toBe(936);
+    expect(minContentWidthForColumns(3)).toBe(1412);
+    expect(minContentWidthForColumns(4)).toBe(1888);
+  });
+
+  test('the narrow rungs are BELOW every floor-derived rung of the same column count', () => {
+    // Stated as a direction, not just inequality: a narrow rung must fire EARLIER than
+    // the floor would allow, because the narrow half deliberately ships cards under the
+    // floor (four columns at 1376 is a 332px card). That asymmetry is the design — the
+    // floor governs only where a column is ADDED beyond what Mantine's scale reached.
+    for (const step of LISTING_GRID_COLUMN_STEPS.filter((s) => s.columns > 1 && s.columns <= 4)) {
+      expect(step.minContentWidth).toBeLessThan(minContentWidthForColumns(step.columns));
+    }
+    expect(listingCardWidthAt(1376, 4)).toBe(332);
+    expect(332).toBeLessThan(LISTING_CARD_MIN_WIDTH);
   });
 });
 
@@ -214,17 +319,62 @@ describe('🔴 the NARROW half is byte-equivalent to the retired Mantine media q
 });
 
 describe('🔴 the WIDE half holds the card-width floor', () => {
-  test('the floor is 383px, and the thresholds are what it produces', () => {
-    // 🔴 THE FLOOR IS THE MUTATION TARGET. Lowering it moves both thresholds, and the
+  test('the floor is 460px — the card width the store renders TODAY at its widest', () => {
+    // 🔴 THE FLOOR IS THE MUTATION TARGET. Moving it moves every wide threshold, and the
     // literals below are what notice. Without them the derivation would agree with any
     // floor at all.
-    expect(LISTING_CARD_MIN_WIDTH).toBe(383);
+    //
+    // 460 is not "the narrowest card we ever shipped" — it is the width four columns get
+    // in the RETIRED 1920 container, asserted here as a relationship rather than as a
+    // number so its provenance cannot rot:
+    const RETIRED_CONTAINER = 1920;
+    expect(listingCardWidthAt(RETIRED_CONTAINER - APPS_CONTAINER_GUTTER, 4)).toBe(460);
+    expect(LISTING_CARD_MIN_WIDTH).toBe(460);
     expect(LISTING_GRID_GUTTER).toBe(16);
-    expect(minContentWidthForColumns(5)).toBe(1979); // 5 × 383 + 4 × 16
-    expect(minContentWidthForColumns(6)).toBe(2378); // 6 × 383 + 5 × 16
+    expect(minContentWidthForColumns(5)).toBe(2364); // 5 × 460 + 4 × 16
+    expect(minContentWidthForColumns(6)).toBe(2840); // 6 × 460 + 5 × 16
     // A seventh column would need this much grid — stated so the next person adding one
     // can see the cost rather than picking a threshold by eye.
-    expect(minContentWidthForColumns(7)).toBe(2777); // 7 × 383 + 6 × 16
+    expect(minContentWidthForColumns(7)).toBe(3316); // 7 × 460 + 6 × 16
+  });
+
+  test('🔴 the widest REACHABLE rung makes cards BIGGER than the 1920 container did', () => {
+    // The product decision this floor encodes, stated as the outcome rather than as the
+    // input. A floor at the covers pass's own narrowest (380) would have put SIX columns
+    // in this container at 408px — i.e. widening the page would have SHRUNK the cards.
+    const grid = APPS_PAGE_CONTAINER_WIDTH - APPS_CONTAINER_GUTTER;
+    const columns = listingGridColumnsAt(grid);
+    expect(columns).toBe(5);
+    expect(listingCardWidthAt(grid, columns)).toBe(492.8);
+    // …strictly wider than today's four-up, which is the whole claim.
+    expect(listingCardWidthAt(grid, columns)).toBeGreaterThan(460);
+    // And the counterfactual, so the test says what it is ruling out: at a 380 floor the
+    // same container would have taken six columns at 408px — narrower than today.
+    const sixAt380 = 6 * 380 + 5 * LISTING_GRID_GUTTER;
+    expect(sixAt380).toBeLessThan(grid);
+    expect(listingCardWidthAt(grid, 6)).toBe(408);
+    expect(listingCardWidthAt(grid, 6)).toBeLessThan(460);
+  });
+
+  test('🔴 SIX columns is declared but UNREACHABLE at the current container cap', () => {
+    // Why the ladder a viewer can reach is 1/2/3/4/5 even though the module declares six.
+    // 🔴 THIS IS THE ASSERTION THAT FIRES IF SOMEONE RAISES THE CONTAINER CAP. It is not
+    // a statement that six is wrong — it is a statement that engaging six is a DENSITY
+    // decision, and it must be made deliberately rather than inherited from a width bump.
+    const maxGrid = APPS_PAGE_CONTAINER_WIDTH - APPS_CONTAINER_GUTTER;
+    expect(maxGrid).toBe(2528);
+    const sixRung = LISTING_GRID_COLUMN_STEPS.find((s) => s.columns === 6);
+    expect(sixRung, 'the six-column rung was deleted rather than left unreachable').toBeDefined();
+    expect(
+      sixRung!.minContentWidth,
+      'six columns is now REACHABLE — raising the container cap past the six-column rung ' +
+        'shrinks every card below LISTING_CARD_MIN_WIDTH-at-five. Decide the density on ' +
+        'purpose: either accept six, or raise the floor so the rung moves out again.'
+    ).toBeGreaterThan(maxGrid);
+    expect(listingGridColumnsAt(maxGrid)).toBe(5);
+    // The rung is still REAL, not decorative — it engages the moment the grid is wide
+    // enough, which is what makes keeping it (rather than deleting it) the right call.
+    expect(listingGridColumnsAt(sixRung!.minContentWidth)).toBe(6);
   });
 
   test('every FLOOR-DERIVED rung gives cards at least the floor wide, at its threshold', () => {
@@ -317,11 +467,19 @@ describe('🔴 SEAM — the store page size fits the ladder AND the server cap',
     expect(requestedLimit()).toBe(48);
   });
 
-  test('…which is eight rows at the ladder`s top rung, and twelve at the one below', () => {
-    const top = LISTING_GRID_COLUMN_STEPS[LISTING_GRID_COLUMN_STEPS.length - 1].columns;
-    expect(top).toBe(6);
-    expect(requestedLimit() / top).toBe(8);
+  test('…which is at least eight rows at the widest REACHABLE column count, and twelve at four', () => {
+    // Written against what a viewer can actually reach (five columns at the 2528 this
+    // container tops out at), not against the declared-but-unreachable sixth rung — and
+    // as a `>=` so it stays true if a future cap raise engages that rung (48 / 6 = 8).
+    const widestReachable = listingGridColumnsAt(APPS_PAGE_CONTAINER_WIDTH - APPS_CONTAINER_GUTTER);
+    expect(widestReachable).toBe(5);
+    expect(Math.floor(requestedLimit() / widestReachable)).toBeGreaterThanOrEqual(8);
     expect(requestedLimit() / 4).toBe(12);
+    // The `>=` is not a loophole: 48 is the largest multiple-of-12 page the server cap
+    // allows, so this cannot be satisfied by simply shrinking the ladder.
+    expect(requestedLimit()).toBeGreaterThanOrEqual(
+      8 * LISTING_GRID_COLUMN_STEPS[LISTING_GRID_COLUMN_STEPS.length - 1].columns
+    );
   });
 
   test('🔴 …and it is inside the SERVER`s own cap, read from the schema', () => {
@@ -380,7 +538,7 @@ describe('🔴 SEAM — the stylesheet implements exactly the ladder, and nothin
 
   /**
    * Comments stripped FIRST. Load-bearing rather than tidy: the stylesheet's own
-   * docstrings name `736`, `1979` and `2378` verbatim, so an unstripped scan would be
+   * docstrings name `736`, `2364` and `2840` verbatim, so an unstripped scan would be
    * reading the prose and would stay green with every real rule deleted.
    */
   const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
@@ -402,9 +560,17 @@ describe('🔴 SEAM — the stylesheet implements exactly the ladder, and nothin
     const code = strip(source);
     const rules = parsedRules();
     expect(rules.length, 'no @container rules parsed out of the stylesheet').toBeGreaterThan(0);
-    // And the strip really removed the prose: the header names 1600, which is not a rung.
-    expect(source).toContain('1600');
-    expect(code).not.toContain('1600');
+    // And the strip really removed the prose. `492.8` is the rendered CARD width at the
+    // top of the reachable ladder — a figure that appears only in the docstrings and can
+    // never be a threshold, so it cannot stop being a valid witness by becoming a rule.
+    expect(source, 'the comment-strip control lost its witness').toContain('492.8');
+    expect(code).not.toContain('492.8');
+    // 🔴 AND THE ONE THE STRIP EXISTS FOR: both live thresholds are named verbatim in the
+    // prose, so a scan that did not strip comments would find them with every real rule
+    // deleted. They must survive in the source and vanish from the stripped code's PROSE
+    // while remaining in its rules — which is what `parsedRules()` above proves.
+    expect(source).toContain('2364');
+    expect(source).toContain('2840');
   });
 
   test('the base rule is ONE column, and it is not inside a container query', () => {

@@ -226,10 +226,11 @@ export function AppListingsMarketplaceBody() {
         category: category ?? undefined,
         sort,
         // 🔴 48, NOT 24, AND IT IS THE COLUMN LADDER THAT MOVED IT. 24 was six rows at
-        // the old four-column maximum; at the SIX columns the grid now reaches on a
-        // 2560 monitor it is four, so a viewer on the widest screen the container
-        // supports would meet the "Load more" button after the least content. 48 keeps
-        // eight rows at six columns and twelve at four.
+        // the old four-column maximum; at the FIVE columns the grid now reaches on a
+        // 2560 monitor it is under five, so a viewer on the widest screen the container
+        // supports would meet the "Load more" button after the least content. 48 gives
+        // nine rows at five columns and twelve at four — and stays ≥ 8 rows even if a
+        // future cap raise engages the declared-but-unreachable sixth column.
         // 🔴 THE SERVER CAPS THIS AT 50, so 48 is deliberately just inside it.
         // `listAppListingsSchema` in
         // `src/server/schema/blocks/app-listing-read.schema.ts` declares
@@ -478,9 +479,14 @@ export function AppListingsMarketplaceBody() {
               WHAT IT DOES: 1 / 2 / 3 / 4 columns exactly where the retired
               `LISTING_GRID_SPAN` media queries put them (736 / 960 / 1168px of
               grid — those breakpoints minus the apps Container's 32px gutter), then
-              FIVE from 1979 and SIX from 2378. The store container is
-              `LISTING_STORE_CONTAINER_SIZE` = `APPS_PAGE_CONTAINER_WIDTH` = 2560,
-              so `/apps` reaches 2528 of grid on a 2560 monitor and renders six.
+              FIVE from 2364. The store container is `LISTING_STORE_CONTAINER_SIZE` =
+              `APPS_PAGE_CONTAINER_WIDTH` = 2560, so `/apps` reaches 2528 of grid on a
+              2560 monitor and renders FIVE columns at 492.8px each — wider than the
+              460px four-up the 1920 container shipped, which is the point: the
+              `LISTING_CARD_MIN_WIDTH` floor is 460, so a column is only added where
+              every card ends up at least as big as it is today. A sixth column would
+              need 2840 of grid and is unreachable at this cap; the rung is declared
+              anyway so a future cap raise engages it.
 
               WHY IT MOVED OFF `<Grid>`: `Grid.Col span` can only read a theme
               BREAKPOINT, and `xl` (88em / 1408px) is the top of Mantine's default

@@ -84,32 +84,47 @@ export const MANTINE_BREAKPOINT_PX = {
 export const LISTING_GRID_GUTTER = 16;
 
 /**
- * 🔴 THE MINIMUM CARD WIDTH THE WIDE STEPS OF THE LADDER HOLD, px — the constant the
- * 5- and 6-column thresholds are DERIVED from, so a threshold can never be moved
- * without moving this.
+ * 🔴 THE MINIMUM CARD WIDTH A NEW, WIDER RUNG OF THE LADDER MUST HOLD, px — the
+ * constant the 5- and 6-column thresholds are DERIVED from, so a threshold can never
+ * be moved without moving this.
  *
- * PROVENANCE, stated precisely because the number has been quoted loosely before.
- * The 2026-07 "make app cover images larger" pass shipped FOUR columns at a 1600px
- * container, i.e. `(1600 − 32 gutter − 3 × 16 gap) / 4 = 380px` per card. That is the
- * narrowest card width that pass was willing to ship, and it is the floor a NEW,
- * WIDER step must not go under — adding a column is only allowed to make each card
- * bigger than the covers pass shipped, never smaller.
+ * ── WHY 460, AND WHY IT IS NOT "THE NARROWEST CARD WE EVER SHIPPED" ─────────────────
+ * 460 is the card width the store renders TODAY at its widest: four columns in the
+ * 1920 container, `(1920 − 32 gutter − 3 × 16 gap) / 4 = 460`. It is a PRODUCT
+ * decision, taken deliberately over the alternative: a floor set at the narrowest
+ * width the 2026-07 "larger covers" pass was willing to ship (four columns at a 1600
+ * container = `(1600 − 32 − 48) / 4 = 380`) would have put SIX columns on a 2560
+ * monitor at 408px each — i.e. widening the container would have made cards SMALLER
+ * than they are now, partially reversing that pass at exactly the viewports it should
+ * help most. Bigger cards were chosen over more of them.
  *
- * ⚠️ 383, NOT THE MEASURED 380, AND THE THREE PIXELS ARE DELIBERATE. `appListingGrid`
- * and `appListingGrid.test.ts` have both carried "~383 px at 1600" since that pass;
- * the exact arithmetic is 380. Keeping the documented 383 rather than the measured 380
- * makes the floor three pixels STRICTER (a higher floor pushes each threshold OUT, so
- * a column is added later and every card is wider), which is the safe direction for a
- * constant whose whole job is "never ship a card narrower than the covers pass did".
- * Do not "correct" it downward without re-deriving the thresholds — they are computed
- * from it, so lowering it silently narrows every card at the top of the ladder.
+ * ⚠️ THE HISTORICAL "~383" IS WRONG AND IS NOT WHAT THIS IS. `appListingGrid.ts` and
+ * its test both carried "~383 px at 1600" since the covers pass; the arithmetic is
+ * 380. Neither number is this constant — do not "restore" either of them here.
+ *
+ * ── 🔴 460 COLLIDES WITH THE OLD CONTAINER, AND THAT IS A TRAP, NOT A COINCIDENCE ───
+ * `4 × 460 + 3 × 16 = 1888` — exactly the content width of the RETIRED 1920 container.
+ * So IF this floor ever governed the narrow half of the ladder, four columns would
+ * require 1888 of grid and the `xl` low end (viewport 1408 → 1376 of grid) would
+ * silently drop to THREE columns, destroying the below-1888 equivalence this change
+ * is built on — at a width nobody would think to test, because it used to be the safe
+ * middle of the range.
+ *
+ * It does not, and cannot: {@link LISTING_GRID_COLUMN_STEPS} builds its narrow rungs
+ * from {@link LISTING_GRID_SPAN} + {@link MANTINE_BREAKPOINT_PX} and never reads this
+ * constant, so the two halves are structurally independent. That independence is
+ * asserted directly — 4 columns at 1376, at 1887 and at 1888 — and mutation-checked
+ * in `__tests__/appListingGrid.test.ts` by making the floor govern everywhere and
+ * watching the 1376 rung go red. Do not remove those assertions on the grounds that
+ * the derivation "obviously" cannot do this; the collision is what makes them cheap
+ * to lose and expensive to be without.
  *
  * It is NOT a `min-width` handed to CSS. See {@link LISTING_GRID_COLUMN_STEPS} for why
  * an intrinsic `repeat(auto-fill, minmax(…, 1fr))` grid cannot express this ladder at
  * all — this constant is the DERIVATION of the explicit thresholds, not a value any
  * stylesheet reads.
  */
-export const LISTING_CARD_MIN_WIDTH = 383;
+export const LISTING_CARD_MIN_WIDTH = 460;
 
 /** The card width `columns` cards get in `contentWidth` px of grid. */
 export function listingCardWidthAt(contentWidth: number, columns: number): number {
@@ -134,6 +149,16 @@ export function minContentWidthForColumns(columns: number): number {
  *
  * Adding a 7th column is one entry here; its threshold falls out of the floor and
  * cannot be chosen independently.
+ *
+ * 🔴 SIX IS DECLARED BUT UNREACHABLE AT TODAY'S CONTAINER CAP, ON PURPOSE. At the 460
+ * floor six columns need `6 × 460 + 5 × 16 = 2840` of grid, and
+ * {@link APPS_PAGE_CONTAINER_WIDTH} (2560) tops out at 2528 — so the ladder a viewer
+ * can actually reach is 1 / 2 / 3 / 4 / 5, and 2560 renders five columns at 492.8px
+ * each (wider than today's 460, which is the point of the floor). The rung is kept
+ * rather than deleted so a future cap raise engages it automatically instead of
+ * needing this list edited; `__tests__/appListingGrid.test.ts` asserts the
+ * unreachability explicitly, so raising the cap past 2840 fails loudly and the density
+ * decision gets made deliberately rather than inherited.
  */
 const WIDE_COLUMN_COUNTS = [5, 6] as const;
 
@@ -155,10 +180,11 @@ export type ListingGridColumnStep = { minContentWidth: number; columns: number }
  *     needs `X > 364.8`, because five columns at 1888 is exactly 364.8px each.
  *
  * `X ≤ 332` and `X > 364.8` have no overlap. Any floor low enough to keep four columns
- * at 1376 gives FIVE at 1888, which lands a 364.8px card — narrower than the ~380px the
- * 2026-07 covers pass deliberately moved TO when it went five columns → four. So an
- * intrinsic grid would silently undo that pass at exactly the width most desktops use.
- * The column count therefore stays an explicit decision per width band.
+ * at 1376 gives FIVE at 1888, which lands a 364.8px card — narrower than the 380px the
+ * 2026-07 covers pass deliberately moved TO when it went five columns → four, and far
+ * under the 460 this grid now holds. So an intrinsic grid would silently undo that pass
+ * at exactly the width most desktops use. The column count therefore stays an explicit
+ * decision per width band.
  *
  * ── WHY A CONTAINER QUERY AND NOT A MEDIA QUERY ─────────────────────────────────────
  * Card width is not monotonic in VIEWPORT width, so a viewport breakpoint is the wrong
@@ -169,8 +195,8 @@ export type ListingGridColumnStep = { minContentWidth: number; columns: number }
  * adding a custom Mantine breakpoint, which would be a global theme change made to fix
  * one grid.
  *
- * ── HOW THE TWO HALVES ARE BUILT ────────────────────────────────────────────────────
- * BELOW 1888 the ladder is DERIVED from {@link LISTING_GRID_SPAN} and
+ * ── HOW THE TWO HALVES ARE BUILT, AND WHY THEY ARE INDEPENDENT ──────────────────────
+ * The NARROW rungs (1 / 2 / 3 / 4) are DERIVED from {@link LISTING_GRID_SPAN} and
  * {@link MANTINE_BREAKPOINT_PX} rather than retyped, so the container-query thresholds
  * are the media-query behaviour they replaced, converted once: a breakpoint fires at
  * viewport `V`, `/apps` takes no body measure, and the apps `Container` is full-bleed
@@ -178,13 +204,21 @@ export type ListingGridColumnStep = { minContentWidth: number; columns: number }
  * both mean four columns, so the `xl` rung collapses into the `lg` one and the ladder
  * has no redundant step.
  *
- * ABOVE it the rungs come from {@link WIDE_COLUMN_COUNTS} through
+ * The WIDE rungs come from {@link WIDE_COLUMN_COUNTS} through
  * {@link minContentWidthForColumns}, i.e. straight out of the card-width floor.
+ *
+ * 🔴 THE LOOP BELOW NEVER READS {@link LISTING_CARD_MIN_WIDTH} FOR A NARROW RUNG, AND
+ * THAT SEPARATION IS LOAD-BEARING RATHER THAN TIDY. At the current 460 floor,
+ * `minContentWidthForColumns(4)` is 1888 — so a version of this that let the floor
+ * decide everywhere would move four columns from 1168 to 1888 and drop the whole
+ * 1168–1887 band (the `xl` low end included) to THREE columns. See the collision note
+ * on {@link LISTING_CARD_MIN_WIDTH}.
  *
  * The resulting table (grid width → columns) and its equality with the `@container`
  * rules in `AppListingsMarketplaceBody.module.scss` are both pinned in
- * `__tests__/appListingGrid.test.ts`; the RENDERED column counts are measured in
- * `AppListingsMarketplaceBody.columns.browser.test.tsx`.
+ * `__tests__/appListingGrid.test.ts` — which also pins 4 columns at 1376 / 1887 / 1888
+ * and mutation-checks the independence above. The RENDERED column counts are measured
+ * in `AppListingsMarketplaceBody.columns.browser.test.tsx`.
  */
 export const LISTING_GRID_COLUMN_STEPS: readonly ListingGridColumnStep[] = (() => {
   const steps: ListingGridColumnStep[] = [];
@@ -242,11 +276,11 @@ export function listingGridColumnsAt(contentWidth: number): number {
  * The 1920 step DELIBERATELY left the column count at four: at 1920 that yields 460px
  * cards (vs 380 at 1600), so the 2026-07 "make app cover images larger" pass got larger
  * still rather than being undone, and re-tuning to five columns there would have landed
- * 364.8px — narrower than what that pass shipped. The 2560 step is what finally adds
- * columns, and it adds them only where each card still clears
- * {@link LISTING_CARD_MIN_WIDTH}: five columns from 1979px of grid (383px cards at the
- * threshold, 462.6 at the top of that band) and six from 2378 (383 at the threshold,
- * 408 at the 2528 `/apps` actually reaches at a 2560 container). The arithmetic is
+ * 364.8px — narrower than what that pass shipped. The 2560 step adds ONE column, and
+ * only where every card is still at least the 460px the store renders today: five from
+ * 2364px of grid, giving 492.8px cards at the 2528 `/apps` reaches. Six would need 2840
+ * and is therefore unreachable at this cap — so widening the container makes the cards
+ * BIGGER than they are now rather than more numerous and smaller. The arithmetic is
  * pinned in `__tests__/appsPageWidths.test.ts` and `__tests__/appListingGrid.test.ts`.
  */
 export const LISTING_STORE_CONTAINER_SIZE: number = APPS_PAGE_CONTAINER_WIDTH;

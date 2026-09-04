@@ -65,9 +65,13 @@ export const APPS_CONTAINER_GUTTER = 32;
  * column-count's job, because the grid had no way to add a column deliberately.
  * That is no longer true: {@link ~/components/Apps/appListingGrid} now carries an
  * EXPLICIT column ladder driven by a container query, so the store spends the extra
- * width as five and then six columns at widths where each card still clears its
- * measured minimum, and stops there. The cap and the density are separately decided
- * instead of the cap standing in for the density.
+ * width as a fifth column at the one width where every card still clears the 460px it
+ * renders at today, and stops there. The cap and the density are separately decided
+ * instead of the cap standing in for the density — and the density decision is that
+ * this container makes the cards BIGGER (492.8px at five columns in 2528 of grid),
+ * not more numerous. A sixth column is declared at 2840 of grid and is deliberately
+ * unreachable here; raising this constant past that fails a test rather than silently
+ * shrinking every card.
  *
  * What 1920 actually cost: Mantine's `Container` centres past its cap, so a 2560
  * viewport spent `(2560 − 1920) / 2 = 320px` of dead margin on EACH side of every

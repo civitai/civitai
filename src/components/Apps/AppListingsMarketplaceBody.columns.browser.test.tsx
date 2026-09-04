@@ -30,6 +30,7 @@
 import '@mantine/core/styles.css';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
@@ -117,6 +118,14 @@ const VIEWPORT = { width: 2880, height: 900 } as const;
  * so the fixture varies exactly one thing.
  */
 async function renderAtContainerWidth(width: number) {
+  // 🔴 CLEAN FIRST, ALWAYS — a test that measures more than one width is the whole point
+  // of this file, and `vitest-browser-react` APPENDS each render rather than replacing
+  // it. Without this the second call leaves TWO grids in the document, `getByText`
+  // throws a strict-mode violation, and — far worse — `document.querySelector` keeps
+  // returning the FIRST (stale) grid, so a loop over widths measures the first width N
+  // times and passes. That is exactly what an earlier version of the floor check below
+  // did: it looped two widths, measured one, and was green.
+  await cleanup();
   await page.viewport(VIEWPORT.width, VIEWPORT.height);
   renderWithProviders(
     <div style={{ width, maxWidth: 'none' }} data-testid="width-harness">
@@ -171,20 +180,29 @@ beforeEach(() => {
 /**
  * The measurement points.
  *
- * 🔴 NONE OF THEM SITS ON A THRESHOLD. The rungs are at 736 / 960 / 1168 / 1979 / 2378;
+ * 🔴 NONE OF THEM SITS ON A THRESHOLD. The rungs are at 736 / 960 / 1168 / 2364 / 2840;
  * a fixture placed exactly on one would be the case where a one-pixel mutation of that
  * threshold does not change the outcome, so it would survive a fully green suite for the
  * wrong reason. Every width below overshoots into the middle of its band.
  *
- * 1888 / 2100 / 2560 are the three the change is ABOUT: 1888 is what the retired 1920
- * container reached (its column count must be unchanged), and 2100 / 2560 are the two
- * new rungs. 1000 is the unchanged narrow case.
+ * 🔴 1376 AND 1888 ARE THE COLLISION GUARDS, RENDERED. The card-width floor is 460 and
+ * `4 × 460 + 3 × 16 = 1888`, so a ladder whose narrow half was governed by the floor
+ * would still render four columns at 1888 and would drop 1376 — the `xl` low end — to
+ * three. 1888 is the reassuring one; 1376 is the one that catches it. The arithmetic
+ * half of this lives in `__tests__/appListingGrid.test.ts`; this is the pixels.
+ *
+ * 2450 and 2560 are the new five-column band: 2450 is mid-band (deliberately not 2364,
+ * the rung itself) and 2560 is what the change is nominally about. 2528 is what `/apps`
+ * actually reaches at a 2560 container, so it is measured too rather than inferred.
+ * 1000 is the unchanged narrow case.
  */
 const CASES = [
   { containerWidth: 1000, columns: 3, why: 'unchanged narrow case — the md band' },
-  { containerWidth: 1888, columns: 4, why: 'what the RETIRED 1920 container reached' },
-  { containerWidth: 2100, columns: 5, why: 'the new five-column rung' },
-  { containerWidth: 2560, columns: 6, why: 'the new six-column rung' },
+  { containerWidth: 1376, columns: 4, why: '🔴 COLLISION GUARD — the xl low end (1408 − 32)' },
+  { containerWidth: 1888, columns: 4, why: '🔴 COLLISION GUARD — exactly 4 × 460 + 3 × 16' },
+  { containerWidth: 2450, columns: 5, why: 'mid-band in the new five-column rung' },
+  { containerWidth: 2528, columns: 5, why: 'what /apps reaches at a 2560 container' },
+  { containerWidth: 2560, columns: 5, why: 'a 2560-wide grid — five, not six' },
 ] as const;
 
 describe('the store grid renders the column ladder it declares', () => {
@@ -212,10 +230,11 @@ describe('the store grid renders the column ladder it declares', () => {
     }
   );
 
-  test('🔴 the new WIDE rungs really do clear the card-width floor, measured', async () => {
-    // The floor is arithmetic in the unit tier. Here it is a rendered box: five and six
-    // columns must both leave each card at least as wide as the covers pass shipped.
-    for (const containerWidth of [2100, 2560]) {
+  test('🔴 the new WIDE rung really does clear the card-width floor, measured', async () => {
+    // The floor is arithmetic in the unit tier. Here it is a rendered box: the five-column
+    // band must leave every card at least as wide as the four-up the 1920 container
+    // shipped — that is the whole product decision behind the 460 floor.
+    for (const containerWidth of [2450, 2528, 2560]) {
       const m = await renderAtContainerWidth(containerWidth);
       expect(m.cascadeLoaded).toBe(true);
       expect(
@@ -223,6 +242,37 @@ describe('the store grid renders the column ladder it declares', () => {
         `${m.columns} columns at ${containerWidth}px gave ${m.cellWidth}px cards`
       ).toBeGreaterThanOrEqual(LISTING_CARD_MIN_WIDTH);
     }
+  });
+
+  test('🔴 widening the page makes cards BIGGER than the 1920 container did, measured', async () => {
+    // The direction, not just the threshold. `/apps` at a 2560 container renders 2528 of
+    // grid; the old 1920 container rendered 1888 at four columns = 460px. The new layout
+    // must beat that, or the ultrawide pass has partially reversed the larger-covers one
+    // at exactly the viewports it exists to help.
+    const old1920 = await renderAtContainerWidth(1888);
+    expect(old1920.cascadeLoaded).toBe(true);
+    expect(old1920.columns).toBe(4);
+    expect(old1920.cellWidth).toBe(460);
+
+    const now2560 = await renderAtContainerWidth(2528);
+    expect(now2560.cascadeLoaded).toBe(true);
+    expect(now2560.columns).toBe(5);
+    expect(now2560.cellWidth).toBe(492.8);
+    expect(now2560.cellWidth).toBeGreaterThan(old1920.cellWidth);
+  });
+
+  test('🔴 SIX columns is unreachable at the container cap, measured', async () => {
+    // The rung is declared at 2840 and the container tops out at 2528. Rendering AT the
+    // cap must give five; rendering past the rung must give six — which proves the rung
+    // is real rather than decorative, and that the ladder is 4/5 today by ARITHMETIC
+    // rather than because six was deleted.
+    const atCap = await renderAtContainerWidth(2528);
+    expect(atCap.cascadeLoaded).toBe(true);
+    expect(atCap.columns).toBe(5);
+
+    const pastRung = await renderAtContainerWidth(2900);
+    expect(pastRung.cascadeLoaded).toBe(true);
+    expect(pastRung.columns).toBe(6);
   });
 
   test('🔴 it is a CONTAINER query, not a media query (a narrow grid on a wide screen)', async () => {
@@ -243,17 +293,35 @@ describe('the store grid renders the column ladder it declares', () => {
     expect(listingGridColumnsAt(VIEWPORT.width)).toBe(6);
   });
 
+  test('🔴 the harness really re-renders — two widths in one test give two answers', async () => {
+    // The control for the `cleanup()` above, and for every multi-width test in this file.
+    // Without it these two calls return the SAME measurement and every such test passes
+    // while measuring one width twice.
+    const narrow = await renderAtContainerWidth(1000);
+    const wide = await renderAtContainerWidth(2528);
+    expect(narrow.gridWidth).toBe(1000);
+    expect(wide.gridWidth).toBe(2528);
+    expect(narrow.columns).not.toBe(wide.columns);
+    // …and exactly one grid is in the document at a time, which is the mechanism.
+    expect(document.querySelectorAll('[data-testid="apps-listing-grid"]')).toHaveLength(1);
+  });
+
   test('the fixture set varies the dimension under test and covers both halves of the ladder', () => {
-    // Guard-the-guard: a table of one width, or of four widths in one band, cannot see a
-    // ladder bug at all.
+    // Guard-the-guard: a table of one width, or of several widths in one band, cannot see
+    // a ladder bug at all.
     const widths = CASES.map((c) => c.containerWidth);
     expect(new Set(widths).size).toBe(widths.length);
-    expect(new Set(CASES.map((c) => c.columns))).toEqual(new Set([3, 4, 5, 6]));
+    expect(new Set(CASES.map((c) => c.columns))).toEqual(new Set([3, 4, 5]));
     // And no fixture sits ON a rung — see the note above the table.
     for (const w of widths) {
-      for (const rung of [736, 960, 1168, 1979, 2378]) {
+      for (const rung of [736, 960, 1168, 2364, 2840]) {
         expect(w, `fixture ${w} sits exactly on the ${rung} rung`).not.toBe(rung);
       }
     }
+    // 🔴 THE COLLISION GUARDS MUST BOTH BE PRESENT. 1888 alone is the reassuring half —
+    // a floor-governed narrow half renders four there too — so a table that kept only
+    // 1888 would read as covering this and would not.
+    expect(widths, 'the xl-low-end collision guard was dropped').toContain(1376);
+    expect(widths, 'the 4 × 460 + 3 × 16 collision guard was dropped').toContain(1888);
   });
 });

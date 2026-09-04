@@ -525,21 +525,29 @@ describe('🔴 the store width and the store grid ladder are a MATCHED PAIR', ()
     expect(APPS_FULL_MEASURE_PAGES).toContain('/apps');
   });
 
-  test('the container yields the card width the top of the ladder was tuned for', () => {
+  test('the container yields the card width the top of the reachable ladder was tuned for', () => {
     //   container 2560 − 2×16 Container padding = 2528 of grid
-    //   the ladder's top rung is SIX columns from 2378; gap 16 → 5 gaps between them
-    //   → (2528 − 5×16) / 6 = 408 px per card.
+    //   the widest REACHABLE rung is FIVE columns from 2364; gap 16 → 4 gaps between them
+    //   → (2528 − 4×16) / 5 = 492.8 px per card.
+    //   (SIX is declared at 2840 and deliberately out of reach here — see
+    //   `__tests__/appListingGrid.test.ts`, which pins that as the thing that fails if
+    //   this container is ever raised past it.)
     const GUTTER = 16;
     const usable = LISTING_STORE_CONTAINER_SIZE - APPS_CONTAINER_GUTTER;
     expect(usable).toBe(2528);
     const columns = listingGridColumnsAt(usable);
     const cardWidth = (usable - GUTTER * (columns - 1)) / columns;
-    expect(columns).toBe(6);
-    expect(cardWidth).toBe(408);
+    expect(columns).toBe(5);
+    expect(cardWidth).toBe(492.8);
     // 🔴 THE PAIRING, AS A RELATIONSHIP RATHER THAN TWO NUMBERS: a container change
     // that outran the ladder would land cards under the floor the ladder exists to
     // hold, and this is what notices.
     expect(cardWidth).toBeGreaterThanOrEqual(LISTING_CARD_MIN_WIDTH);
+    // 🔴 AND THE DIRECTION, WHICH IS THE PRODUCT DECISION: widening the container from
+    // 1920 to 2560 makes each card BIGGER (492.8 vs 460), not smaller-and-more-numerous.
+    // Without this, a ladder re-tune that added columns faster would satisfy everything
+    // above while quietly reversing the 2026-07 larger-covers pass on wide screens.
+    expect(cardWidth).toBeGreaterThan((1920 - APPS_CONTAINER_GUTTER - 3 * GUTTER) / 4);
   });
 
   test('🔴 the retired container widths still produce the column counts they shipped', () => {
