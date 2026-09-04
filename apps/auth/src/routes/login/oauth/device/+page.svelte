@@ -1,6 +1,6 @@
 <script lang="ts">
   import { buildWordmarkSvg, buildBadgeSvg, getHoliday } from '@civitai/brand';
-  import { IconCheck, IconShieldCheck, IconDeviceDesktop } from '@tabler/icons-svelte';
+  import { IconCheck, IconShieldCheck, IconDeviceDesktop, IconX } from '@tabler/icons-svelte';
   import type { PageData, ActionData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -23,6 +23,12 @@
         <h1>Device connected</h1>
         <p>You can return to your device — it's now authorized. You may close this window.</p>
       </div>
+    {:else if form?.step === 'denied'}
+      <div class="centered">
+        <IconX size={40} color="#9aa0a6" />
+        <h1>Request denied</h1>
+        <p>That device was not connected to your account. You may close this window.</p>
+      </div>
     {:else if form?.step === 'review'}
       <h1>Authorize {form.client.name}</h1>
       {#if form.client.isVerified}
@@ -42,6 +48,7 @@
       <form method="POST" action="?/approve" class="stack">
         <input type="hidden" name="user_code" value={form.userCode} />
         <button type="submit" class="btn primary">Approve</button>
+        <button type="submit" class="btn secondary" formaction="?/deny">Deny</button>
       </form>
     {:else}
       <div class="centered">
@@ -208,6 +215,15 @@
   }
   .btn.primary:hover {
     background: color-mix(in srgb, #4285f4, white 8%);
+  }
+  .btn.secondary {
+    background: transparent;
+    color: #9aa0a6;
+    border: 1px solid #2a2d34;
+  }
+  .btn.secondary:hover {
+    background: #1c1f26;
+    color: #e8eaed;
   }
   .error {
     font-size: 0.9rem;

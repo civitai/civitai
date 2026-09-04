@@ -111,7 +111,7 @@ const NEW_TO_OLD: Record<string, string> = {
 };
 
 /** Migrate stored workflow key to current format, falling back to txt2img if unknown */
-function migrateWorkflowKey(key: string | undefined): string | undefined {
+export function migrateWorkflowKey(key: string | undefined): string | undefined {
   if (!key) return key;
   // Migrate old first-last-frame key to img2vid (now an alias on Vidu)
   if (key === 'img2vid:first-last-frame') return 'img2vid';

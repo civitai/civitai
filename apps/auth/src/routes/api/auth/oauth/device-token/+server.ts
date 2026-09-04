@@ -33,7 +33,12 @@ export const POST: RequestHandler = async ({ request }) => {
     return json({ error: 'invalid_request' }, { status: 400, headers });
   }
 
-  if (!(await checkOAuthRateLimit('token', client_id))) {
+  // device_code is unvalidated until the redis lookup below, so the per-IP ceiling is charged first and
+  // bounds how many device_code buckets one caller can create.
+  if (!(await checkOAuthRateLimit('device-token-anon', getClientIp(request)))) {
+    return json({ error: 'rate_limited' }, { status: 429, headers });
+  }
+  if (!(await checkOAuthRateLimit('device-token', device_code))) {
     return json({ error: 'rate_limited' }, { status: 429, headers });
   }
 

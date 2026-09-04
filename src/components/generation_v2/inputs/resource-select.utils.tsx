@@ -26,7 +26,17 @@ export type ResourceSelectValue = GenerationResource;
  * Partial resource value that can be passed to the input.
  * This matches what DataGraph validation schema outputs.
  */
-export type PartialResourceValue = Partial<GenerationResource> & { id: number };
+/**
+ * Pre-hydration values (localStorage, graph defaults, remix payloads) carry as
+ * little as an id — nested objects may themselves be partial and `model.type`
+ * is a plain string on the wire. The picker hydrates by id when fields are
+ * missing, so the prop type reflects that.
+ */
+export type PartialResourceValue = Partial<Omit<GenerationResource, 'model' | 'epochDetails'>> & {
+  id: number;
+  model?: { type?: string } & Partial<Omit<GenerationResource['model'], 'type'>>;
+  epochDetails?: Partial<NonNullable<GenerationResource['epochDetails']>>;
+};
 
 // =============================================================================
 // Hydration Helpers

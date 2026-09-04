@@ -21,6 +21,7 @@ export const GET: RequestHandler = ({ url }) => {
       token_endpoint: `${issuer}/api/auth/oauth/token`,
       userinfo_endpoint: `${issuer}/api/auth/oauth/userinfo`,
       revocation_endpoint: `${issuer}/api/auth/oauth/revoke`,
+      introspection_endpoint: `${issuer}/api/auth/oauth/introspect`,
       device_authorization_endpoint: `${issuer}/api/auth/oauth/device`,
       ...(oidcSigningEnabled
         ? {
@@ -38,6 +39,7 @@ export const GET: RequestHandler = ({ url }) => {
       ],
       code_challenge_methods_supported: ['S256'],
       token_endpoint_auth_methods_supported: ['client_secret_post', 'none'],
+      introspection_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
       scopes_supported: Object.keys(tokenScopeLabels),
       subject_types_supported: ['public'],
       claims_supported: ['sub', 'name', 'preferred_username', 'picture', 'email', 'email_verified'],
