@@ -59,18 +59,29 @@ const renderSurface = (s: SurfaceCounts) =>
  * 🔴 "STILL ON THE SITE", NOT "VISIBLE". `cohort.ts` deliberately counts an image whose scan has
  * not finished (`ingestion: Pending`) as on-site, which is exactly the case a moderator cannot view
  * yet — so calling that number "visible" claimed something the query does not deliver. The carve-out
- * is stated in the same sentence rather than left to a reader who would have no way to know.
+ * is stated in BOTH branches, rather than left to a reader who would have no way to know.
+ *
+ * 🔴 THE NOTHING-EXCLUDED BRANCH NEEDS THE CARVE-OUT MOST, and used to be the one branch without it.
+ * `imageCountArgs` keeps `ingestion: Pending`, so a twenty-minute-old account whose three uploads are
+ * all attached and all awaiting a scan has `excluded.total === 0` and takes this branch — and this is
+ * the modal shape of the population this detector exists to find, precisely because nothing has been
+ * actioned yet. "All 3 still on the site" then sent a moderator to look at three items none of which
+ * they can view. Same over-claim the word "visible" was removed for, surviving in the commoner half.
  */
+const PENDING_CARVE_OUT = 'Images still awaiting a scan result are counted as on the site.';
+
 export function renderPostCounts(posts: BotAccountCohortMember['posts']): string {
   const head = `Posted ${posts.all.total} item(s) — ${renderSurface(posts.all)}.`;
   if (posts.excluded.total === 0)
-    return `${head} All ${posts.all.total} still on the site (nothing hidden, blocked, unpublished or removed).`;
+    return (
+      `${head} All ${posts.all.total} still on the site (nothing hidden, blocked, unpublished or ` +
+      `removed). ${PENDING_CARVE_OUT}`
+    );
   return (
     `${head} Still on the site: ${posts.visible.total} (${renderSurface(posts.visible)}). ` +
     `NOT on the site: ${posts.excluded.total} (${renderSurface(posts.excluded)}) — drafts, ` +
     `unpublished or scheduled models, unattached uploads, uploads the scanner blocked or could not ` +
-    `find, and hidden, TOS-flagged or already-removed content. Images still awaiting a scan result ` +
-    `are counted as on the site.`
+    `find, and hidden, TOS-flagged or already-removed content. ${PENDING_CARVE_OUT}`
   );
 }
 

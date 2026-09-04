@@ -41,7 +41,9 @@ const surface = (partial: Partial<SurfaceCounts> = {}): SurfaceCounts => {
  *
  * The bare form gives what the account POSTED, with `visible` equal to it — the ordinary case where
  * nothing has been taken down. Pass `visible` to describe an account some of whose content is gone;
- * `excluded` is always the difference, exactly as `mergePostCounts` computes it.
+ * `excluded` is the difference. NOT a re-implementation of `mergePostCounts` — no caller passes a
+ * `visible` above its `all`, so the clamp that function applies to a torn read has nothing to do
+ * here, and the tests that exercise the clamp call `mergePostCounts` itself.
  */
 const counts = (
   entries: Array<[number, Partial<SurfaceCounts> & { visible?: Partial<SurfaceCounts> }]>
@@ -384,11 +386,13 @@ describe('mergePostCounts', () => {
     });
   });
 
-  it('floors `excluded` at zero when the two reads disagree', () => {
+  it('🔴 clamps `visible` to `all` when the two reads disagree', () => {
     // The filtered and unfiltered counts of one surface are separate statements against a replica,
     // so a row created between them can leave `visible` above `all`. A negative in the one sentence
     // a moderator acts on reads as corrupt data; zero reads as "nothing was taken down", which is
-    // the truth as near as this run can tell.
+    // the truth as near as this run can tell. Flooring the DIFFERENCE achieved that much but left
+    // `visible` reporting 9 items on the site for an account that posted 4 — clamping the surplus
+    // row away instead is what keeps the sentence internally consistent.
     const merged = mergePostCounts({
       ...emptyRaw(),
       images: [{ userId: 1, count: 9 }],
@@ -396,7 +400,32 @@ describe('mergePostCounts', () => {
     });
     expect(merged.get(1)?.excluded).toEqual({ comments: 0, models: 0, images: 0, total: 0 });
     expect(merged.get(1)?.all.total).toBe(4);
-    expect(merged.get(1)?.visible.total).toBe(9);
+    expect(merged.get(1)?.visible.total).toBe(4);
+  });
+
+  it('🔴 a two-direction torn read still adds up', () => {
+    // 🔴 F2. The eight reads are separate statements in ONE `Promise.all`, so two surfaces can tear
+    // in OPPOSITE directions within one run. `excluded.total` used to be
+    // `max(0, all.total - visible.total)` — derived from the totals, independently of the three
+    // floored surfaces — so this fixture produced a NOT-on-site total of 2 over a breakdown summing
+    // to 3, and a finding saying the account posted 5 comments while 6 were still on the site.
+    const merged = mergePostCounts({
+      ...emptyRaw(),
+      comments: [{ userId: 1, count: 6 }], // torn HIGH: the filtered read caught a newer row
+      allComments: [{ userId: 1, count: 5 }],
+      allModels: [{ userId: 1, count: 3 }], // torn the ordinary way: three models taken down
+    });
+    const row = merged.get(1)!;
+    // The relationship, not the constants: the breakdown a moderator reads must sum to the total
+    // stated beside it.
+    expect(row.excluded.total).toBe(
+      row.excluded.comments + row.excluded.models + row.excluded.images
+    );
+    expect(row.excluded).toEqual({ comments: 0, models: 3, images: 0, total: 3 });
+    // …and both halves add back to the figure the sentence leads with.
+    expect(row.visible.total + row.excluded.total).toBe(row.all.total);
+    expect(row.all.total).toBe(8);
+    expect(row.visible.total).toBe(5);
   });
 
   it('keeps users apart', () => {

@@ -19,6 +19,13 @@ import { afterEach, describe, expect, it } from 'vitest';
  *
  * 🔴 WHAT THE LEDGERS STRUCTURALLY CANNOT POLICE. Stating it, because a guard whose comment claims
  * more than it delivers is worse than no guard — it stops the next person looking.
+ *
+ * 🔴 THIS LIST IS NOT AN ENUMERATION. It names the escapes that have been DEMONSTRATED against this
+ * file — each was written, run, and left the suite green — and it is not, and cannot be, the set of
+ * every shape that escapes. A shape absent from it has not been ruled out; it has not been tried.
+ * An earlier revision closed this paragraph with "each is a live gap, listed so it is chosen rather
+ * than assumed away", which reads as completeness and is exactly the sentence this guard must not
+ * make. Two whole axes below (object fields, and the network) were missing from it at the time.
  *  - **Which BINDING is taken from an already-permitted specifier.** The import ledger records
  *    module specifiers, not names. `~/server/db/client` is on the list because `cohort.ts` needs
  *    `dbRead` from it; nothing here can tell that specifier apart from one that also yields
@@ -31,8 +38,25 @@ import { afterEach, describe, expect, it } from 'vitest';
  *  - **Destructured handles.** `resolveDbAliases` follows `const c = dbRead`, and does not follow
  *    `const { user } = dbRead`. That shape reaches `user.update(` with no `db` token in front of
  *    it, and the operation ledger would miss it. The name check does not cover it either.
- * None of these is hypothetical-only; each is a live gap, listed so it is chosen rather than
- * assumed away.
+ *  - **A handle held in an OBJECT FIELD, not a binding.** `const holder = { h: dbRead };
+ *    holder.h.user.update(…)` — `resolveDbAliases` rewrites declarations whose initialiser IS the
+ *    handle, and an object literal is not one. Left open deliberately: following a handle through
+ *    property assignment is a dataflow analysis, not a regex, and this file is not the place for one.
+ *  - **A method name COMPUTED rather than written.** `const k = 'up' + 'date';
+ *    (dbRead as any).user[k](…)` — `SEGMENT` requires a quoted literal inside `[…]`, so a
+ *    concatenation, a template with a hole, or a variable contributes no ledger member. Same reason:
+ *    resolving it is constant folding, which a scanner does not do.
+ *  - **🔴 THE NETWORK, WHICH IS A WHOLE AXIS NEITHER LEDGER LOOKS AT.**
+ *    `await fetch('http://…/api/mod/mute', { method: 'POST' })` mutes an account with no import — the
+ *    global needs none — and no database handle, so the import ledger and the operation ledger are
+ *    BOTH unmoved. Every other gap here is a way of hiding a `db` token; this one never has one. It
+ *    is not closed by widening any pattern below, and the only thing standing against it today is
+ *    `run.test.ts`'s behavioural claim over its own fixtures plus review.
+ *
+ * WHAT `resolveDbAliases` WAS WIDENED FOR, and what it still is not: it now follows a type
+ * annotation (`const c: typeof dbRead = dbRead`), a non-null assertion (`const c = dbRead!`) and a
+ * trailing `??`/`||`/`&&` operand (`const c = maybeDb ?? dbRead`). It does not follow destructuring,
+ * object fields, or a handle returned from a function. See its own docstring.
  */
 
 const MODULE_DIR = path.resolve(__dirname, '..');
@@ -216,11 +240,23 @@ const escapeRegExp = (literal: string) => literal.replace(/[.*+?^${}()|[\]\\]/g,
  * Iterated to a fixed point (bounded) so `const c = dbRead; const d = c;` resolves too. Widening
  * an identifier to `dbRead` can only ADD ledger members, so a wrong guess fails closed.
  *
- * It does NOT follow destructuring — see the file header; that gap is stated, not papered over.
+ * 🔴 THREE FORMS THE FIRST VERSION MISSED, all of them ordinary TypeScript rather than evasion:
+ *  - `const c: typeof dbRead = dbRead;` — a TYPE ANNOTATION sits between the identifier and the `=`,
+ *    so the pattern's `identifier` `=` adjacency never matched. This is the one most likely to be
+ *    written by accident, which is why it is worth the widening.
+ *  - `const c = dbRead!;` — a non-null assertion between the handle and the terminator.
+ *  - `const c = maybeDb ?? dbRead;` — the handle is the LAST operand, not the whole initialiser.
+ * All three left the guard 19/19 green. The optional initialiser prefix is deliberately anchored on
+ * `??`/`||`/`&&`: a bare `[^=;\n]*` would alias on any initialiser merely CONTAINING the handle
+ * (`wrap(dbRead)`), and while over-aliasing fails closed, doing it on every call expression makes
+ * the operation ledger noise rather than a ledger.
+ *
+ * It does NOT follow destructuring, an object field, or a handle returned from a call — see the file
+ * header; those gaps are stated, not papered over.
  */
 export function resolveDbAliases(source: string): string {
   const declaration =
-    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(db(?:Read|Write)?)\s*(?=[;\n,)])/g;
+    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;\n]*)?=\s*(?:[^=;\n]*?(?:\?\?|\|\||&&)\s*)?(db(?:Read|Write)?)\s*!?\s*(?=[;\n,)])/g;
   let out = source;
   for (let pass = 0; pass < 5; pass += 1) {
     let changed = false;

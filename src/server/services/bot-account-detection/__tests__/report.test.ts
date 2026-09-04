@@ -91,13 +91,18 @@ describe('buildFinding', () => {
     expect(finding.reason).toContain('NOT actioned');
   });
 
-  it('🔴 pins the WHOLE clause when nothing was taken down', () => {
+  it('🔴 pins the WHOLE clause when nothing was taken down — carve-out included', () => {
     // 🔴 THE WIRE CONTRACT CALLS THIS STRING "the whole value of the row to a moderator", so it is
     // pinned as a whole normalised string rather than by keyword. A guard on words is walkable by
     // rewording; this one makes a cosmetic reword a deliberate edit with a failing test attached.
+    //
+    // 🔴 The Pending carve-out is part of the pin, in THIS branch too. It was absent here while the
+    // excluded branch carried it, and this is the branch a young account with three unscanned
+    // uploads takes — see `renderPostCounts`.
     expect(renderPostCounts(posts({ comments: 2, models: 1, images: 3 }))).toBe(
       'Posted 6 item(s) — 2 comment(s), 1 model(s), 3 image(s). All 6 still on the site ' +
-        '(nothing hidden, blocked, unpublished or removed).'
+        '(nothing hidden, blocked, unpublished or removed). ' +
+        'Images still awaiting a scan result are counted as on the site.'
     );
   });
 
@@ -138,9 +143,13 @@ describe('buildFinding', () => {
     const shown = renderPostCounts(posts({ images: 40 }, { images: 1 }));
     expect(shown).not.toContain('visible');
     expect(shown).toContain('Images still awaiting a scan result are counted as on the site.');
-    // The no-exclusions branch has no room for the caveat and must not silently imply viewability
-    // either.
-    expect(renderPostCounts(posts({ images: 3 }))).not.toContain('visible');
+    // 🔴 AND THE NO-EXCLUSIONS BRANCH, which is where this actually bites. Three uploads, all
+    // attached, all `ingestion: Pending` — `excluded.total` is 0, so nothing has been taken down and
+    // there is nothing for a moderator to look at either. Dropping the word "visible" was never
+    // enough on its own here: "All 3 still on the site" makes the same claim in other words.
+    const allPending = renderPostCounts(posts({ images: 3 }));
+    expect(allPending).not.toContain('visible');
+    expect(allPending).toContain('Images still awaiting a scan result are counted as on the site.');
   });
 
   it('floors the account age at zero when the clocks disagree', () => {

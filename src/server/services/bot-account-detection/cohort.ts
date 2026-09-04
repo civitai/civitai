@@ -427,10 +427,22 @@ const zeroSurface = (): SurfaceCounts => ({ comments: 0, models: 0, images: 0, t
  *
  * 🔴 `excluded` is SUBTRACTED, not read. There is no eighth query for "how much was taken down":
  * it is `all` minus `visible` on the same rows at the same instant, which is the only definition
- * under which the three numbers in a finding are guaranteed to add up. It is floored at zero so a
- * torn read — the unfiltered and filtered counts of one surface are separate statements against a
- * replica, and a row can be created between them — reports 0 excluded rather than a negative, which
- * would read as corrupt data in the one sentence a moderator acts on.
+ * under which the three numbers in a finding are guaranteed to add up.
+ *
+ * 🔴 THE TORN READ IS CLAMPED ON THE `visible` SIDE, BEFORE ANY SUBTRACTION OR ANY TOTAL. The eight
+ * reads are separate statements in one `Promise.all` against a replica, so a surface's filtered count
+ * can exceed its unfiltered one and DIFFERENT surfaces can tear in opposite directions. Flooring each
+ * difference at zero independently — which is what this used to do, including for `total` — made the
+ * docstring above false: with `allComments=5, comments=6` and `allModels=3, models=0`, the per-surface
+ * floors give an excluded breakdown of `0 + 3 + 0 = 3` while `all.total - visible.total` floors to 2,
+ * so the finding stated a NOT-on-site total of 2 over a breakdown summing to 3, and said the account
+ * posted 5 comments while 6 were still on the site.
+ *
+ * Clamping `visible` to `all` per surface first fixes both halves at once and needs no floors after
+ * it: every difference is non-negative by construction, `visible.total + excluded.total === all.total`
+ * exactly, and each side's total is the sum of its own three surfaces. The clamp costs a torn read the
+ * one impossible surplus row it invented; nothing else moves, and `all` — what membership is decided
+ * on — is never touched.
  */
 export function mergePostCounts(raw: RawPostCounts): Map<number, PostCounts> {
   const merged = new Map<number, PostCounts>();
@@ -452,13 +464,19 @@ export function mergePostCounts(raw: RawPostCounts): Map<number, PostCounts> {
   for (const r of raw.allModels) get(r.userId).all.models += r.count;
   for (const r of raw.allImages) get(r.userId).all.images += r.count;
   for (const row of merged.values()) {
+    // Clamp first — see the docstring. After this every subtraction below is non-negative and the
+    // three surfaces and the total cannot disagree, so no `Math.max` floor is needed or wanted: one
+    // would only hide a future arithmetic error behind a plausible zero.
+    row.visible.comments = Math.min(row.visible.comments, row.all.comments);
+    row.visible.models = Math.min(row.visible.models, row.all.models);
+    row.visible.images = Math.min(row.visible.images, row.all.images);
     for (const side of [row.all, row.visible])
       side.total = side.comments + side.models + side.images;
     row.excluded = {
-      comments: Math.max(0, row.all.comments - row.visible.comments),
-      models: Math.max(0, row.all.models - row.visible.models),
-      images: Math.max(0, row.all.images - row.visible.images),
-      total: Math.max(0, row.all.total - row.visible.total),
+      comments: row.all.comments - row.visible.comments,
+      models: row.all.models - row.visible.models,
+      images: row.all.images - row.visible.images,
+      total: row.all.total - row.visible.total,
     };
   }
   return merged;
