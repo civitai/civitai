@@ -54,9 +54,21 @@
    card; it only stops one of the two ways of doing so, which is worse than either
    choice made consistently. And the cards are stale, not wrong: each still points
    at a listing that exists, so following one is a valid navigation rather than a
-   trap. Dim to say "being replaced"; leave it usable. */
+   trap. Dim to say "being replaced"; leave it usable.
+
+   🔴 0.7, NOT THE 0.55 THIS STARTED AT, AND THE REASON IS CONTRAST. Opacity composites
+   text toward its background, so it reduces contrast on everything under it — and one
+   thing under it is the card's author line, which `AppListingCard.tsx` records as an
+   ACCEPTED RESIDUAL at contrast 4.73, i.e. AA by 0.23. A heavy dim pushes that under AA
+   for however long the fetch takes, which on a slow connection is not a frame.
+   ⚠️ 0.7 IS A JUDGEMENT, NOT A MEASURED CONTRAST FIGURE — no ratio was computed for the
+   composited result, and this comment deliberately does not quote one. What is claimed
+   is only the direction (less dim, less contrast loss) and that 0.7 is still plainly
+   visible as a state change. If someone needs a guarantee here, the honest fix is to
+   measure the composite and pick a value from it, or to move the signal off opacity
+   entirely. */
 .gridPending {
-  opacity: 0.55;
+  opacity: 0.7;
   transition: opacity 120ms ease-out;
 }
 

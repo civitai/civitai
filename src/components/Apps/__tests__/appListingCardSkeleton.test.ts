@@ -237,12 +237,49 @@ describe('the store body renders the skeleton grid and keeps the previous page',
 
   it('🔴 the first-load state is the skeleton grid, and the bare Loader is gone', () => {
     const code = bodyCode();
-    expect(code).toMatch(/isLoading \?\s*\(?\s*<AppListingCardSkeletonGrid\s*\/>/);
+    expect(code).toMatch(/isLoading \|\| showingStaleEmpty \?\s*\(?\s*<AppListingCardSkeletonGrid/);
     // The retired spinner. Left in place beside the skeleton it would be dead
     // markup that reads as the live loading state to the next person here.
     expect(code, 'the store still renders a bare <Loader /> somewhere').not.toMatch(
       /<Loader[\s/>]/
     );
+  });
+
+  /**
+   * 🔴 THE SECOND ENTRY INTO THE SKELETON BRANCH, AND THE ORDERING THAT MAKES IT
+   * WORK.
+   *
+   * `keepPreviousData` removed `isLoading` from the filter-change path, and the
+   * dim that replaced it lives on the GRID branch — so when the previous page is
+   * EMPTY there is nothing to dim and the empty state renders, undimmed and
+   * unannounced, for the whole round trip. That is a REGRESSION against the
+   * pre-PR spinner, not merely a gap.
+   *
+   * ⚠️ THIS IS THE STRUCTURAL HALF ONLY. That the store genuinely shows an
+   * affordance on that path is behavioural and lives in
+   * `AppListingsMarketplaceBody.keepPreviousData.browser.test.tsx` ("a stale
+   * EMPTY previous page still shows a loading affordance"), which drives a real
+   * query through a real key change. What this adds is the ORDERING — the
+   * skeleton branch must be evaluated BEFORE `showingEmpty`, and a ternary chain
+   * makes that a source fact rather than a runtime one.
+   */
+  it('🔴 a stale EMPTY page falls back to the skeleton, and does so BEFORE showingEmpty', () => {
+    const code = bodyCode();
+    expect(code).toMatch(
+      /const showingStaleEmpty =\s*isPlaceholderData && filteredItems\.length === 0/
+    );
+    const stale = code.indexOf('isLoading || showingStaleEmpty ?');
+    const empty = code.indexOf('showingEmpty ?');
+    expect(stale, 'the stale-empty fallback is not wired into the render').toBeGreaterThan(-1);
+    expect(
+      empty,
+      'the empty state branch has moved — re-derive this ordering check'
+    ).toBeGreaterThan(-1);
+    expect(
+      stale,
+      'the empty state is evaluated before the stale-empty fallback, so "No apps match" ' +
+        'wins for the whole round trip and the fallback is dead code'
+    ).toBeLessThan(empty);
   });
 
   it('🔴 passes keepPreviousData to the listing query, imported from react-query', () => {

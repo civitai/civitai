@@ -51,7 +51,7 @@
  * taller than its skeleton and the grid still resizes — stated in the component's
  * header and in the PR body rather than papered over here.
  */
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import {
@@ -246,6 +246,17 @@ async function renderStore(
   };
 }
 
+/** How many cells share the FIRST visual row — i.e. the column count CSS produced. */
+function firstRowCount(cells: HTMLElement[]): number {
+  if (cells.length === 0) return 0;
+  const tops = cells.map((c) => Math.round(c.getBoundingClientRect().top));
+  const first = Math.min(...tops);
+  return tops.filter((t) => t === first).length;
+}
+
+/** 2dp, so sub-pixel layout is visible but float noise is not. */
+const q = (n: number) => Math.round(n * 100) / 100;
+
 /**
  * The rendered width of each card's CTA button — the action row's first child.
  *
@@ -271,10 +282,48 @@ function ctaWidths(): number[] {
   });
 }
 
+/**
+ * 🔴 REACT'S OWN DOM-VALIDITY CHANNEL, WIRED TO THE RUN'S VERDICT.
+ *
+ * `validateDOMNesting` is a `console.error`, not a thrown error, so it scrolls past in
+ * a run that reports green. That is not hypothetical here: this very file emitted
+ * `<div> cannot appear as a descendant of <p>` at `MetaLineSkeleton` on EVERY run of
+ * round 1 and still reported 7 passed — the offending element is `position: absolute`,
+ * so no box comparison can see it. A geometry suite is structurally blind to invalid
+ * nesting; this makes it not blind.
+ *
+ * Kept as a SECOND, independent signal beside
+ * `AppListingCardSkeleton.ssr.browser.test.tsx`'s string scan of the server markup:
+ * the two fail differently, so a change to React's warning text cannot disarm both.
+ */
+const domNestingErrors: string[] = [];
+let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
+
 beforeEach(() => {
   mocks.items = [];
   mocks.isLoading = false;
   mocks.currentUser = null;
+  domNestingErrors.length = 0;
+  consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+    const text = args.map((a) => String(a)).join(' ');
+    if (text.includes('validateDOMNesting') || text.includes('cannot appear as a descendant')) {
+      domNestingErrors.push(text);
+    }
+  });
+});
+
+afterEach(() => {
+  consoleErrorSpy?.mockRestore();
+  consoleErrorSpy = null;
+  // 🔴 ASSERTED IN THE HOOK, so it covers EVERY test in this file rather than the one
+  // someone remembered to add it to — including the ones whose whole point is to
+  // render the card and the skeleton side by side.
+  expect(
+    domNestingErrors,
+    'React reported invalid DOM nesting while rendering. A parser auto-closes the ' +
+      "offending parent, so the parsed DOM and React's tree disagree — that is a " +
+      'hydration mismatch on /apps, not a lint nit.'
+  ).toEqual([]);
 });
 
 describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () => {
@@ -344,6 +393,114 @@ describe('🔴 a skeleton cell occupies EXACTLY the box the card cell will', () 
       ).toEqual(resolved.boxes);
     }
   );
+
+  /**
+   * 🔴 THE CELL COUNT IS TWO ROWS OF THE GRID **AS CSS ACTUALLY LAID IT OUT** — not
+   * two rows of what the ladder says CSS should have done.
+   *
+   * The skeleton grid computes its count in JS (`listingGridColumnsAt` over a measured
+   * width) while the tracks are produced by an `@container (min-width: …)` query. Two
+   * mechanisms, one number, and they can silently disagree: a query container's size is
+   * its CONTENT box while `getBoundingClientRect()` is the BORDER box, so a `padding`
+   * or `border` added to `.gridContainer` — a plausible styling change — desynchronises
+   * them. The component subtracts padding and border for exactly that reason, but a
+   * check that re-derived the expected count from the ladder would be testing the JS
+   * against itself and would not notice.
+   *
+   * So this compares the count against the RENDERED first row: whatever CSS decided the
+   * column count is, the grid must hold exactly `APP_LISTING_SKELETON_ROWS` of them.
+   * That is a RELATIONSHIP, and it catches the desync above and any other cause of one.
+   */
+  test.each(WIDTHS)(
+    'at $gridWidth px the cell count is exactly two rows of the grid CSS actually laid out',
+    async ({ gridWidth, columns }) => {
+      const m = await renderStore(gridWidth, { loading: true });
+      const rendered = firstRowCount(m.cells);
+      expect(
+        m.cells.length,
+        `the grid rendered ${rendered} columns but the skeleton emitted ${m.cells.length} ` +
+          `cells, which is not ${APP_LISTING_SKELETON_ROWS} rows of it. The JS column ` +
+          'count and the @container ladder have desynchronised — check whether ' +
+          '`.gridContainer` gained padding or a border (the query reads the CONTENT box, ' +
+          '`getBoundingClientRect()` the BORDER box).'
+      ).toBe(rendered * APP_LISTING_SKELETON_ROWS);
+      // …and the rendered count really is the one the ladder predicts, so a failure
+      // above is attributable rather than merely a mismatch between two unknowns.
+      expect(rendered).toBe(columns);
+    }
+  );
+
+  /**
+   * 🔴 THE FOURTH CONTENT-VARIANCE AXIS, AND THE ONLY ONE THAT RUNS **DOWNWARD**.
+   *
+   * `ListingCard.creator` is nullable and `AppListingCard`'s `CreatorChip` returns
+   * `null` for a listing without one, while this skeleton reserves that line
+   * unconditionally. So such a card is SHORTER than its skeleton — the opposite
+   * direction from the tagline and the two badges, and it went undocumented for a
+   * round while the header and the PR body both said only "taller". It is not
+   * hypothetical: this PR's own `keepPreviousData` fixture uses `creator: null`.
+   *
+   * 🔴 THE DELTA IS DERIVED FROM THE RENDER, NOT RESTATED. Asserting "−22.29px" would
+   * pin a number nobody could check; asserting that the shortfall equals the skeleton's
+   * own creator line plus the meta stack's gap — both measured off the live tree — says
+   * WHY it is what it is, and stays true if the type scale moves.
+   */
+  test('🔴 a card with NO CREATOR is SHORTER than its skeleton, by exactly the reserved line', async () => {
+    const GRID_WIDTH = 1376;
+
+    // The skeleton, and the two meta lines it reserves.
+    const skel = await renderStore(GRID_WIDTH, { loading: true });
+    const creatorLine = box(
+      document.querySelector('[data-testid="apps-listing-skeleton-creator"]') as HTMLElement
+    );
+    const rollupLine = box(
+      document.querySelector('[data-testid="apps-listing-skeleton-rollup"]') as HTMLElement
+    );
+    // The meta `Stack`'s gap, measured rather than spelled: the card writes `gap={2}`
+    // and so does the skeleton, and neither number is in the geometry module.
+    const metaGap = q(rollupLine.top - creatorLine.bottom);
+    const skeletonHeight = skel.boxes[0].height;
+
+    // Arm A — WITH a creator. This is the parity fixture, and the parity test above
+    // already pins it equal to the skeleton; re-read here so the subtraction below is
+    // between two numbers this test measured itself.
+    const withCreator = await renderStore(GRID_WIDTH, {
+      loading: false,
+      items: POOL.slice(0, skel.cells.length),
+    });
+    expect(withCreator.boxes[0].height).toBe(skeletonHeight);
+
+    // Arm B — the SAME listings with the creator removed. Nothing else differs.
+    const withoutCreator = await renderStore(GRID_WIDTH, {
+      loading: false,
+      items: POOL.slice(0, skel.cells.length).map((c) => ({ ...c, creator: null })),
+    });
+
+    // NON-VACUITY: the chip really is gone, so the height change has a named cause.
+    expect(
+      document.querySelectorAll('[data-testid="apps-listing-grid-col"] a[href^="/user/"]'),
+      'the creator chip still rendered — the fixture did not actually drop it'
+    ).toHaveLength(0);
+
+    const shortfall = q(withCreator.boxes[0].height - withoutCreator.boxes[0].height);
+    const reserved = q(creatorLine.height + metaGap);
+    // 🔴 A SUB-PIXEL TOLERANCE, AND WHY IT DOES NOT WEAKEN THE CLAIM. Both sides are
+    // fractional layouts rounded independently (measured: 22.29 vs 20.3 + 2 = 22.30),
+    // so exact equality pins float noise rather than the reservation. 0.1px is far
+    // below the smallest thing that could be wrongly reserved here — the meta lines are
+    // 16.8 and 20.3 tall and the title box is 48 — so no incorrect reservation fits
+    // inside it.
+    expect(
+      Math.abs(shortfall - reserved),
+      `a creator-less card is ${shortfall}px shorter than its skeleton, which should be ` +
+        `the reserved creator line (${creatorLine.height}) plus the meta stack gap ` +
+        `(${metaGap}) = ${reserved}. If these disagree by more than sub-pixel rounding, ` +
+        'the skeleton is reserving something else too.'
+    ).toBeLessThan(0.1);
+
+    // …and state the DIRECTION explicitly, because that is the half the docs got wrong.
+    expect(withoutCreator.boxes[0].height).toBeLessThan(skeletonHeight);
+  });
 
   /**
    * Guard-the-guard #1: the two widths really are different column counts, and

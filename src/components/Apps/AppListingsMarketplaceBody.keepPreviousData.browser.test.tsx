@@ -240,6 +240,67 @@ describe('🔴 a sort change re-orders the store without emptying it', () => {
   });
 
   /**
+   * 🔴 THE PATH `keepPreviousData` QUIETLY TOOK A LOADING AFFORDANCE AWAY FROM.
+   *
+   * When the previous page is EMPTY there is no grid to dim. `isLoading` is false
+   * (that is what `keepPreviousData` buys), `filteredItems` is `[]`, so the empty
+   * state wins and "No apps match" sits there — undimmed, unannounced, no skeleton —
+   * for the whole round trip. Measured at `isPlaceholderData: true` over a previous
+   * page of `items: []`: `{pendingEls: 0, ariaBusyEls: 0, skeletonCells: 0,
+   * showsNoAppsYet: true}`.
+   *
+   * 🔴 AND IT IS A REGRESSION AGAINST PRE-PR BEHAVIOUR, NOT JUST A GAP: before this
+   * change a new query key gave `data: undefined` → `isLoading: true` → the spinner.
+   * So without the fix this PR is a net LOSS on that path, which is the shape a
+   * feature-flagged improvement is most likely to ship unnoticed.
+   *
+   * Found by an adversarial audit. The scenario is ordinary: filter to a category
+   * with nothing in it, then change the sort.
+   */
+  test('🔴 a stale EMPTY previous page still shows a loading affordance', async () => {
+    mocks.sort = 'top-rated';
+    mocks.pending = [];
+
+    renderWithProviders(<AppListingsMarketplaceBody />);
+
+    // First load resolves to NOTHING — the viewer has filtered into an empty corner.
+    await expect.poll(() => mocks.pending.length).toBe(1);
+    resolveNext([]);
+    await expect.poll(() => document.body.textContent).toContain('No apps');
+    expect(cardCells()).toBe(0);
+    expect(skeletonCells()).toBe(0);
+
+    // They change the sort. The placeholder is that same empty page.
+    setSort('newest');
+
+    // POSITIVE CONTROL FIRST — a second query really is in flight for the new sort.
+    // Without this, "a skeleton appeared" could just mean nothing happened at all.
+    await expect.poll(() => mocks.pending.length).toBe(1);
+    expect(mocks.pending[0].sort).toBe('newest');
+
+    await expect
+      .poll(() => skeletonCells(), {
+        message:
+          'the store showed NO loading affordance while re-sorting an empty result ' +
+          'set: no skeleton, and no grid to dim either. Before keepPreviousData this ' +
+          'path rendered a spinner, so this is a regression, not a gap. Check that ' +
+          '`showingStaleEmpty` still short-circuits ahead of `showingEmpty`.',
+      })
+      .toBeGreaterThan(0);
+
+    // …and the empty state is NOT also on screen — the two must not stack.
+    // 🔴 'No apps', not 'No apps match'. With no filters active the empty state reads
+    // "No apps YET", so asserting the absence of the *filtered* wording would pass
+    // whether or not the empty state rendered — a check that cannot fail.
+    expect(document.body.textContent).not.toContain('No apps');
+
+    // The new page lands and the store settles back to its ordinary empty state.
+    resolveNext([]);
+    await expect.poll(() => skeletonCells()).toBe(0);
+    await expect.poll(() => document.body.textContent).toContain('No apps');
+  });
+
+  /**
    * 🔴 GUARD-THE-GUARD, BY IDENTITY. The test above would measure the HARNESS rather
    * than the component if this file supplied `placeholderData` itself — it would then
    * stay green with the option deleted from the source, which is the exact shape of a

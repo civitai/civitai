@@ -398,6 +398,30 @@ export function AppListingsMarketplaceBody() {
 
   const showingEmpty = !isLoading && filteredItems.length === 0;
 
+  /**
+   * 🔴 A STALE **EMPTY** PREVIOUS PAGE IS STILL LOADING, AND WITHOUT THIS THE STORE
+   * SHOWS NO LOADING AFFORDANCE AT ALL.
+   *
+   * `keepPreviousData` removed `isLoading` from the filter-change path — that is the
+   * point of it — and the dim/`aria-busy` that replaced it lives on the GRID branch.
+   * When the previous page is EMPTY there is no grid branch to dim: `isLoading` is
+   * false, `filteredItems` is `[]`, so `showingEmpty` wins and "No apps match" sits
+   * there, undimmed and unannounced, for the whole round trip. Measured at
+   * `isPlaceholderData: true` over a previous page of `items: []` →
+   * `{pendingEls: 0, ariaBusyEls: 0, skeletonCells: 0, showsNoAppsYet: true}`.
+   *
+   * 🔴 IT IS A REGRESSION AGAINST THE PRE-PR BEHAVIOUR, NOT MERELY A GAP. Before
+   * `keepPreviousData` a new query key gave `data: undefined` → `isLoading: true` →
+   * the spinner. So this branch is what keeps the change from being a net loss on
+   * that path.
+   *
+   * The skeleton grid rather than a dimmed empty state, deliberately: dimming "No
+   * apps match" says "this answer is stale" about an answer the viewer has not been
+   * given yet — the honest signal is the loading one, and it is the same component
+   * the first load already uses.
+   */
+  const showingStaleEmpty = isPlaceholderData && filteredItems.length === 0;
+
   return (
     <Stack gap="md">
       {/*
@@ -476,8 +500,11 @@ export function AppListingsMarketplaceBody() {
           size and in the right place.
           🔴 IT IS NOT "ZERO LAYOUT SHIFT". Two rows of skeletons against up to 48
           results still changes the grid's HEIGHT on resolve, and the recents rail
-          still hydrates a frame late above it. See `AppListingCardSkeleton.tsx`. */}
-      {isLoading ? (
+          still hydrates a frame late above it. See `AppListingCardSkeleton.tsx`.
+          🔴 `showingStaleEmpty` IS THE SECOND ENTRY INTO THIS BRANCH, and it must
+          stay ORDERED BEFORE `showingEmpty` below — that ordering is the whole fix.
+          See its declaration for what renders without it. */}
+      {isLoading || showingStaleEmpty ? (
         <AppListingCardSkeletonGrid />
       ) : isError ? (
         <Center py="xl">
@@ -551,8 +578,16 @@ export function AppListingsMarketplaceBody() {
               anything — an opacity change is a repaint, never a reflow, which is
               the whole point of choosing it over a spinner or a shimmer that would
               re-introduce the shift this PR is removing.
-              `data-pending` is the machine-readable half; `aria-busy` is the
-              assistive-tech half. */}
+
+              🔴 `aria-busy` IS NOT AN ANNOUNCEMENT, AND CALLING IT "THE ASSISTIVE-TECH
+              HALF" (as an earlier draft did) OVERSTATES IT. On a non-live-region
+              element it tells assistive tech to defer processing of changes WITHIN a
+              live region; this container is not one, so it announces nothing. It is
+              still the correct attribute for "this region is being updated" and is
+              kept as such — but the affordance a viewer actually gets here is the
+              VISUAL dim, and the only thing on this page that announces is the
+              skeleton grid's own `role="status"` (which is what the stale-EMPTY path
+              now falls back to). `data-pending` is the machine-readable half. */}
           <div
             className={
               isPlaceholderData

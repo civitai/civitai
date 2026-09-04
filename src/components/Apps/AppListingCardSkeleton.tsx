@@ -11,7 +11,8 @@ import {
   LISTING_CARD_TITLE_LINE_HEIGHT,
   LISTING_CARD_TITLE_MIN_HEIGHT,
 } from '~/components/Apps/appListingCardGeometry';
-import { listingGridColumnsAt } from '~/components/Apps/appListingGrid';
+import { listingGridColumnsAt, MANTINE_BREAKPOINT_PX } from '~/components/Apps/appListingGrid';
+import { APPS_CONTAINER_GUTTER } from '~/components/Apps/appsPageWidths';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 
 /**
@@ -35,12 +36,27 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  * "Zero layout shift" is therefore the wrong claim. "Zero per-card shift" is the
  * right one.
  *
- * 🔴 AND A THIRD, SMALLER ONE: the skeleton reserves the card's INVARIANT parts
- * only — cover, icon, the two RESERVED title lines, the creator line, the always-
- * rendered recommend rollup line, and the 46px action row. A card also renders a
- * conditional tagline (`line-clamp-3`), a Beta badge, and an owner-only
- * "Incomplete" badge, none of which the loading state can predict. A listing
- * carrying one is taller than its skeleton. See the parity test's fixture note.
+ * 🔴 AND A THIRD: CONTENT VARIANCE, WHICH RUNS IN **BOTH** DIRECTIONS. The skeleton
+ * reserves cover, icon, the two RESERVED title lines, a creator line, the always-
+ * rendered recommend rollup line, and the 46px action row. Four axes move a real
+ * card off that:
+ *   · a conditional tagline (`line-clamp-3`)      → card TALLER
+ *   · an author-declared `Beta` badge             → card TALLER
+ *   · an owner-only "Incomplete" badge            → card TALLER
+ *   · NO CREATOR — `ListingCard.creator` is nullable and `CreatorChip` returns
+ *     `null` for it — → card SHORTER, by the creator line plus the meta stack's gap.
+ * ⚠️ THAT LAST ONE WAS MISSING FROM THIS LIST AND FROM THE PR BODY FOR A ROUND, both
+ * of which said only "a listing carrying one is TALLER than its skeleton". It is not
+ * hypothetical: measured at −22.29px (1376px grid / 4 columns) and −22.30px
+ * (2450px / 5), and this PR's own `keepPreviousData` fixture uses `creator: null`.
+ * It is pinned rather than merely described — see "a card with NO CREATOR is SHORTER"
+ * in `AppListingCardSkeleton.geometry.test.tsx`, which derives the delta from the
+ * rendered creator line rather than restating the number above.
+ *
+ * 🔴 SO "THE INVARIANT SHAPE" INCLUDES HAVING A CREATOR. The parity fixture is a
+ * listing WITH a creator and WITHOUT a tagline or badges; that is the shape the
+ * skeleton is exact for, and it is a choice (most listings have a creator, so
+ * reserving the line is right more often than not), not a discovered invariant.
  *
  * ── EVERY GEOMETRY NUMBER IS READ, NEVER SPELLED ────────────────────────────
  * 🔴 THIS FILE IMPORTS `appListingCardGeometry.ts` AND SO DOES `AppListingCard`.
@@ -53,7 +69,13 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  *
  * What is NOT single-sourced is the MARKUP the two files mirror (`gap={2}` on the
  * meta stack, `size="sm"`/`size="xs"` on the meta lines, `padding="md"` on the
- * Card). Those are not in the geometry module — the card spells them too — so the
+ * Card) — plus one deliberate DIVERGENCE: this file adds `flexGrow: 1` to the meta
+ * `Stack`, which the card does not have. The card's stack is sized by its real text;
+ * this one's content is absolutely-positioned bars over a non-breaking space, so
+ * without it the stack shrink-to-fits to almost nothing and the bars (sized in `%`)
+ * render as slivers. It changes no height — the title box is `min-height`-pinned and
+ * both meta lines are single-line — which is why the parity test stays exact.
+ * Those are not in the geometry module — the card spells them too — so the
  * thing that pins them is the MEASURED parity test
  * (`AppListingCardSkeleton.geometry.test.tsx`), which renders both grids and
  * compares boxes. Stated so nobody reads the import list above as covering more
@@ -71,6 +93,27 @@ import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
  * its own and cannot change the answer. A bar with a hand-picked pixel height
  * would be a second copy of Mantine's type scale, and would go wrong the day the
  * theme moved.
+ *
+ * 🔴 `component="span"` ON THE SKELETON IS NOT COSMETIC — IT IS THE ONLY REASON THIS
+ * IS VALID HTML. Mantine's `Text` renders a `<p>` and Mantine's `Skeleton` renders a
+ * `<div>`, and `<div>` may not descend from `<p>`. An HTML parser auto-closes the
+ * `<p>` at the `<div>`, so the parsed DOM is `<p></p><div></div>` while React's tree
+ * is `<p><div/></p>` — a HYDRATION MISMATCH on every `/apps` load, 16–20 times over.
+ * It shipped in the first round of this PR and was invisible to the parity suite,
+ * because the bar is `position: absolute` and therefore contributes no geometry for
+ * a box comparison to see; the only signal was a `validateDOMNesting` warning on a
+ * run that reported 7 passed. Both halves are now guarded —
+ * `AppListingCardSkeleton.ssr.browser.test.tsx` scans the SERVER HTML for a `<div>`
+ * inside a `<p>`, and the geometry suite fails the run on a `validateDOMNesting`
+ * console error.
+ *
+ * 🔴 AND THE FIX IS ON THE SKELETON, NOT ON THE TEXT, DELIBERATELY. `<Text
+ * component="div">` would also be valid HTML, and it would change the element this
+ * line is measured on. The whole point of the `<Text>` is that its line box equals
+ * the line box `AppListingCard`'s own `<Text size="xs">` (a `<p>`) produces, so
+ * moving the tag moves the measurement — the thing this component exists to
+ * reproduce. `position: absolute` blockifies the span, so nothing about the bar
+ * changes either.
  */
 function MetaLineSkeleton({
   size,
@@ -91,6 +134,7 @@ function MetaLineSkeleton({
           collapses, and is written as an escape so it is visible in a diff. */}
       {'\u00A0'}
       <Skeleton
+        component="span"
         style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${widthPct}%` }}
       />
     </Text>
@@ -242,6 +286,48 @@ export function AppListingCardSkeleton() {
 export const APP_LISTING_SKELETON_ROWS = 2;
 
 /**
+ * 🔴 THE COLUMN COUNT USED BEFORE ANYTHING HAS BEEN MEASURED — i.e. on the SERVER,
+ * and on the client's first render before the layout effect runs.
+ *
+ * ⚠️ THIS CONSTANT EXISTS BECAUSE ITS ABSENCE SHIPPED A REGRESSION, AND THE COMMENT
+ * THAT USED TO SIT BELOW ASSERTED THE OPPOSITE OF WHAT THE CODE DID. It read "the
+ * count is set BEFORE the browser paints and the viewer never sees the zero-cell
+ * first render", one sentence after correctly noting that this component renders
+ * during SSR. `useIsomorphicLayoutEffect` is `useLayoutEffect` only when `window`
+ * exists and a plain `useEffect` otherwise, so **it does not run during SSR at
+ * all** — and with the seed at 0 the server emitted an EMPTY `.grid`. tRPC runs
+ * `ssr: false`, so the server always renders the `isLoading` branch: this component
+ * replaced a spinner with literally nothing on first paint, then popped two rows of
+ * skeletons in at hydration. Found by an adversarial audit, not by a test; the
+ * `renderToString` guard in `AppListingCardSkeleton.ssr.browser.test.tsx` is the
+ * test that did not exist.
+ *
+ * 🔴 WHY A SEED IS SAFE AT ALL — AND IT IS THE WHOLE JUSTIFICATION, SO CHECK IT
+ * BEFORE CHANGING THE VALUE. This number decides HOW MANY cells are rendered. It
+ * does NOT decide how WIDE they are: the columns come from the `@container` ladder
+ * in `AppListingsMarketplaceBody.module.scss`, which is CSS and is correct on the
+ * very first paint at every viewport. So a wrong seed can only ever move the COUNT
+ * axis — the shift this component's header already declares as unresolved — and can
+ * never produce a wrongly-sized cell.
+ *
+ * That is what makes 4 the right default rather than 1. It is DERIVED, not chosen:
+ * `listingGridColumnsAt` at the `xl` breakpoint's grid width, i.e. the widest rung
+ * the legacy Mantine half of the ladder reaches, which is what a desktop first paint
+ * lands on. The two ways it is wrong, both count-only:
+ *   · a PHONE (1 column) paints 8 stacked cells and settles to 2. The grid is the
+ *     last element on the page, so shrinking it moves nothing above it, and the
+ *     surplus is below the fold;
+ *   · a 2364px+ grid (5 columns) paints 8 and settles to 10 — it under-reserves by
+ *     two cells rather than by the whole grid.
+ * Seeding 1 instead would be correct on a phone and would make every desktop first
+ * paint render two full-width cards that then become eight quarter-width ones —
+ * a PER-CELL shift, which is the thing this PR exists to remove.
+ */
+export const APP_LISTING_SKELETON_SSR_COLUMNS = listingGridColumnsAt(
+  MANTINE_BREAKPOINT_PX.xl - APPS_CONTAINER_GUTTER
+);
+
+/**
  * The store's loading grid — the SAME markup and the SAME CSS module classes the
  * results grid uses, so a skeleton cell and a card cell get byte-identical track
  * geometry from the container query.
@@ -253,19 +339,50 @@ export const APP_LISTING_SKELETON_ROWS = 2;
  * here — or a set of `@container` rules hiding surplus cells — would be exactly
  * the drift `appListingGrid.ts` exists to prevent.
  *
- * 🔴 MEASURED IN A LAYOUT EFFECT, so the count is set BEFORE the browser paints
- * and the viewer never sees the zero-cell first render. `useIsomorphicLayoutEffect`
- * because this component renders during SSR too (the query has no server data, so
- * `isLoading` is true there) and `useLayoutEffect` warns on the server.
+ * The seed above covers the server and the pre-effect render; the effect below
+ * corrects it on the client, before paint.
  */
 export function AppListingCardSkeletonGrid() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [columns, setColumns] = useState(0);
+  const [columns, setColumns] = useState(APP_LISTING_SKELETON_SSR_COLUMNS);
 
   useIsomorphicLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const measure = () => setColumns(listingGridColumnsAt(el.getBoundingClientRect().width));
+    /**
+     * 🔴 THE CONTENT BOX, NOT THE BORDER BOX — and the difference is currently ZERO,
+     * which is exactly why it is worth writing down.
+     *
+     * The ladder that actually lays this grid out is an `@container (min-width: …)`
+     * query, and a query container's size is its CONTENT box. `getBoundingClientRect()`
+     * returns the BORDER box. Today `.gridContainer` declares neither padding nor a
+     * border, so the two numbers are identical and either would work — meaning a later
+     * `padding: 8px` on that class would silently desynchronise the cell COUNT this
+     * computes from the track count CSS renders, with nothing anywhere going red.
+     * Subtracting them makes the two definitions agree by construction instead of by
+     * coincidence.
+     *
+     * `getBoundingClientRect()` rather than `clientWidth`: the latter is rounded to an
+     * integer, so a container at 1167.6px would report 1168 and pick the four-column
+     * rung while the (fractional) container query stays on three.
+     *
+     * The relationship is guarded end-to-end in
+     * `AppListingCardSkeleton.geometry.test.tsx` — "the cell count is two rows of the
+     * grid CSS ACTUALLY laid out" — which compares this count against the rendered
+     * first row rather than against the ladder, so it catches this and any other cause.
+     */
+    const measure = () => {
+      const rect = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      const px = (v: string) => parseFloat(v) || 0;
+      const inlineSize =
+        rect.width -
+        px(cs.paddingLeft) -
+        px(cs.paddingRight) -
+        px(cs.borderLeftWidth) -
+        px(cs.borderRightWidth);
+      setColumns(listingGridColumnsAt(inlineSize));
+    };
     measure();
     // Keep it right across a resize / a sub-nav reflow. Guarded because the
     // constructor is absent in some non-browser environments; the one-shot
