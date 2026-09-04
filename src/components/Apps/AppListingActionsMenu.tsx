@@ -159,20 +159,27 @@ type AppListingMenuGates = {
 };
 
 /**
- * The menu's gates — ONE definition, used by the component AND by
- * {@link useAppListingActionsMenuVisible}.
+ * The menu's gates, resolved once for the component that renders them.
  *
- * 🔴 WRITTEN ONCE ON PURPOSE. `showMenu` is a four-term disjunction over four
- * separately-defined predicates, and the card needs the ANSWER before it can lay
- * out its action row while the component needs the TERMS to render the items. A
- * second copy of the expression at either site is a predicate duplicated across
- * call sites, which is the shape that gets fixed at one site and stays wrong at
- * the other.
+ * 🔴 THIS USED TO HAVE A SECOND CALLER AND NO LONGER DOES. `useAppListingActionsMenuVisible`
+ * exported `showMenu` on its own so the store CARD could lay out around the trigger:
+ * the card's action row hid its recommend rollup below a container width derived
+ * from how wide the action cluster was, and the trigger's 36px was what made it
+ * wide. The rollup now lives in the card's meta block, the container query is gone,
+ * and the card's layout is identical whether or not a `⋮` renders — so nothing
+ * needs the answer in advance, and the hook was deleted rather than left exported
+ * with no consumer. `appListingMenuSurface.test.ts` fails if the card starts
+ * branching its layout on menu visibility again.
  *
- * 🔴 DELIBERATELY STATE-FREE, so it is safe to call TWICE in one render (the card
- * does). Every input is a pure read of the current user, the feature flags and the
- * mod state machine; nothing here owns a `useDisclosure` or a `useState`, so a
- * second call cannot fork a second copy of anything.
+ * 🔴 STILL WRITTEN ONCE, for the reason that survives: `showMenu` is a four-term
+ * disjunction over four separately-defined predicates, and a second copy of that
+ * expression anywhere is a predicate duplicated across call sites — the shape that
+ * gets fixed at one site and stays wrong at the other.
+ *
+ * 🔴 DELIBERATELY STATE-FREE. Every input is a pure read of the current user, the
+ * feature flags and the mod state machine; nothing here owns a `useDisclosure` or a
+ * `useState`. That is what made a second call safe when there was one, and it is
+ * what keeps this hook cheap to reuse if a surface ever needs it again.
  */
 function useAppListingMenuGates(
   listing: AppListingMenuTarget,
@@ -236,22 +243,6 @@ function useAppListingMenuGates(
     // menu, on every surface.
     showMenu: !preview && (showEdit || canReview || canReport || modActions.length > 0),
   };
-}
-
-/**
- * Would {@link AppListingActionsMenu} render anything for this viewer?
- *
- * 🔴 EXISTS SO A CALLER CAN LAY OUT AROUND THE TRIGGER WITHOUT GUESSING. The store
- * card's action row hides its recommend rollup below a container width derived from
- * how wide the action cluster is, and the trigger's 36px is exactly what makes it
- * wide — so the card has to know whether the trigger is there.
- */
-export function useAppListingActionsMenuVisible(
-  listing: AppListingMenuTarget,
-  surface: AppListingMenuSurface,
-  preview = false
-): boolean {
-  return useAppListingMenuGates(listing, surface, preview).showMenu;
 }
 
 /**
