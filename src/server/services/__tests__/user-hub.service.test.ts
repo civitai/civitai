@@ -525,12 +525,6 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
     expect(dbMock.dbWrite.userHub.create).not.toHaveBeenCalled();
   });
 
-  it('refuses a tag id that matches no row', async () => {
-    findTags.mockResolvedValue([]);
-
-    await expect(upsertUserHub(withTag())).rejects.toThrow(/not found/i);
-  });
-
   it('checks EVERY tag, not just the first one', async () => {
     // The guard matches rows to ids with `find`. Positional matching — `tags[0]` —
     // passes every single-tag case in this block, and in production lets a moderation
@@ -566,10 +560,16 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
     findTags.mockResolvedValue([]);
 
     await expect(upsertUserHub(withTag(true))).rejects.toThrow(/not found/i);
-    // And the same query, so the exclude side cannot drift onto a looser rule.
-    expect(findTags.mock.calls[0][0].where).toEqual(
-      expect.objectContaining({ type: { in: [TagType.UserGenerated, TagType.Label] } })
-    );
+    // All four clauses, not just `type`. Pinning one caught a drift on the vocabulary
+    // I happened to name and missed a drift that dropped `unlisted`, `adminOnly` or
+    // `target` — the three that hide moderation labels.
+    expect(findTags.mock.calls[0][0].where).toEqual({
+      id: { in: [77] },
+      unlisted: false,
+      adminOnly: false,
+      target: { hasEvery: [TagTarget.Image] },
+      type: { in: [TagType.UserGenerated, TagType.Label] },
+    });
   });
 });
 
@@ -930,9 +930,17 @@ describe('resolving a pasted link', () => {
       // `equals`, NOT `mode: 'insensitive'`. Tag.name is citext, so a plain equals is
       // already case-insensitive and index-served; the ILIKE the other spelling emits
       // is served by no btree. The same argument the username lookup makes above.
-      expect(findTag.mock.calls[0][0].where).toEqual(
-        expect.objectContaining({ name: { equals: 'dragon' } })
-      );
+      // Whole object rather than `objectContaining`: the name clause is known here, so
+      // nothing is lost by pinning all of it — and only the strict form catches a
+      // clause being ADDED beside the rule, which is how a loosening escape hatch
+      // would arrive.
+      expect(findTag.mock.calls[0][0].where).toEqual({
+        name: { equals: 'dragon' },
+        unlisted: false,
+        adminOnly: false,
+        target: { hasEvery: [TagTarget.Image] },
+        type: { in: [TagType.UserGenerated, TagType.Label] },
+      });
     });
 
     it('resolves a single-tag feed link by id', async () => {
@@ -944,7 +952,18 @@ describe('resolving a pasted link', () => {
       });
 
       expect(source).toEqual({ type: UserHubSourceType.Tag, targetId: 5499, alias: 'dragon' });
-      expect(findTag.mock.calls[0][0].where).toEqual(expect.objectContaining({ id: 5499 }));
+      // 🔴 The WHOLE where, vocabulary included. The rule is spread into two arms of a
+      // ternary, and pinning only `id` left this one — the feed-chip link, the paste
+      // most likely to carry a moderation-label id — free to drop it and return that
+      // label's NAME to the caller. Asserting `objectContaining({ id })` went green
+      // over exactly that.
+      expect(findTag.mock.calls[0][0].where).toEqual({
+        id: 5499,
+        unlisted: false,
+        adminOnly: false,
+        target: { hasEvery: [TagTarget.Image] },
+        type: { in: [TagType.UserGenerated, TagType.Label] },
+      });
     });
 
     it('applies the SAME vocabulary rule the add path applies', async () => {

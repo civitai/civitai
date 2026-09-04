@@ -66,7 +66,8 @@ export function HubSourceUrlInput({
         <Group gap={4} wrap="nowrap" c="dimmed">
           <IconAlertTriangle size={14} className="shrink-0" />
           <Text size="xs">
-            Not a link we recognise. Try a creator, model, version or collection page.
+            Not a link we recognise. Try a creator, model, version or tag page — a feed link works
+            too, as long as it carries a single tag.
           </Text>
         </Group>
       )}

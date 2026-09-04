@@ -110,7 +110,7 @@ export function HubSourcePanel({
           value={current}
           hideAdd={hideAdd}
           disabled={upsert.isPending}
-          emptyMessage="Nothing here yet. Add a creator, a model or a public collection."
+          emptyMessage="Nothing here yet. Add a creator, a model or a tag to start filling it."
           onChange={(next) => {
             setPending(next);
             upsert.mutate({ id: hub.id, sources: next.map((s, index) => ({ ...s, index })) });

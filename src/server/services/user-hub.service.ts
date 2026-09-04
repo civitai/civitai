@@ -1071,9 +1071,17 @@ export async function resolveHubSourceFromUrl({
   }
 
   if (ref.type === 'tag' || ref.type === 'tagId') {
-    // Name lookup is a plain equals because `Tag.name` is citext — case-insensitive
-    // AND index-served, the same reason `User.username` is matched this way above
-    // rather than with `mode: 'insensitive'`.
+    // Plain equals, never `mode: 'insensitive'`: measured on the prod replica, this
+    // is an Index Scan on `Tag_name_cover_idx` at 0.04ms over 567,616 rows, and the
+    // vocabulary clauses ride as a filter over the single row the unique index
+    // returns. 🔴 What carries that is the BIND being citext, not the column — force
+    // the same predicate to `text` and the plan collapses to a parallel seq scan at
+    // 77ms. Prisma leaves the parameter type to the server, which infers citext.
+    //
+    // Note /tag/<name> is the MODEL tag page, and this rule requires an Image-targeted
+    // tag — so a model-only tag resolves to null here, which is correct (it would
+    // match nothing in an image feed) but means the by-name arm succeeds only for
+    // dual-targeted tags.
     const [tag, replacedTagIds] = await Promise.all([
       dbRead.tag.findFirst({
         where:

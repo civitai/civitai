@@ -111,7 +111,17 @@ export function parseCivitaiUrlSafe(
   // A feed link carrying exactly ONE tag. Two or more is a filter, not an
   // identity, and picking the first would silently drop what the sender meant —
   // so it stays unrecognised rather than becoming an arbitrary one of them.
-  if (head === 'images') {
+  //
+  // All three feeds, because `ImageFeedTagBar` is mounted on /images AND /videos and
+  // writes the same param on whichever route the user is on — a tag chip clicked on
+  // /videos produced a link this refused while the identical id worked from /images.
+  // /posts carries the same param shape.
+  //
+  // `!second` matters: /images/<imageId> is the image detail route, and without the
+  // check a detail link that happened to carry the feed's query would resolve to a
+  // TAG the sender never picked. Nothing pushes that URL with a query today, which
+  // is the kind of thing that changes without anyone thinking about this file.
+  if (!second && (head === 'images' || head === 'videos' || head === 'posts')) {
     const tags = url.searchParams.getAll('tags');
     if (tags.length !== 1) return null;
     const tagId = toInt(tags[0]);

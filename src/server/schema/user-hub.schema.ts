@@ -73,6 +73,13 @@ export const HUB_COLLECTION_SOURCES_ENABLED = false;
  * is the control that already enforces it; a second, weaker spelling would leave a
  * user believing they had set something stronger than they had.
  */
+/**
+ * ⚠️ `entityType` holding exactly ONE value is load-bearing. The picker reaches
+ * `getTags`, which matches it with array OVERLAP (`target && ARRAY[...]`, i.e. ANY);
+ * the server's `hubTagWhere` uses `hasEvery` (ALL). Identical at one element, and
+ * they part company at two — in the dangerous direction, with the picker offering
+ * tags the server then refuses. Add a second target only with that reconciled.
+ */
 export const HUB_TAG_SOURCE_FILTER = {
   entityType: [TagTarget.Image],
   types: [TagType.UserGenerated, TagType.Label],

@@ -12,7 +12,8 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch } from '@tabler/icons-react';
 import { useState } from 'react';
 import type { HubSuggestionType } from '~/server/schema/user-hub.schema';
-import { TagTarget, TagType, UserHubSourceType } from '~/shared/utils/prisma/enums';
+import { HUB_TAG_SOURCE_FILTER } from '~/server/schema/user-hub.schema';
+import { UserHubSourceType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 
 type Suggestion = { type: UserHubSourceType; targetId: number; alias: string };
@@ -63,8 +64,13 @@ export function HubSourceSearch({
   // it, scoped to relationships tags do not have.
   const { data: tagData, isFetching: fetchingTags } = trpc.tag.getAll.useQuery(
     {
-      entityType: [TagTarget.Image],
-      types: [TagType.UserGenerated, TagType.Label],
+      // Spread, not retyped. The same two fields were written out here verbatim,
+      // which made this a third copy of a rule the server states once — and the
+      // divergence would be silent and one-directional: widen the constant and the
+      // server accepts the new tags while the picker keeps offering the old set, so
+      // a tag you could add by pasting a link could not be found by searching.
+      entityType: [...HUB_TAG_SOURCE_FILTER.entityType],
+      types: [...HUB_TAG_SOURCE_FILTER.types],
       query: debounced || undefined,
       limit: TAG_SUGGESTION_LIMIT,
     },

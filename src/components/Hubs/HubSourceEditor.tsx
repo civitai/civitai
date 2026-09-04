@@ -48,7 +48,7 @@ export function HubSourceEditor({
   const [addMode, setAddMode] = useState<AddMode>('include');
   const exclude = addMode === 'exclude';
 
-  const collected = value.filter((source) => !source.exclude);
+  const included = value.filter((source) => !source.exclude);
   const excluded = value.filter((source) => source.exclude);
 
   const addSource = (type: UserHubSourceType, targetId: number, rawAlias: string) => {
@@ -73,7 +73,7 @@ export function HubSourceEditor({
       });
       return;
     }
-    const held = exclude ? excluded.length : collected.length;
+    const held = exclude ? excluded.length : included.length;
     const cap = exclude ? maxExclusions : maxSources;
     if (held >= cap) {
       showErrorNotification({
@@ -159,12 +159,12 @@ export function HubSourceEditor({
         </>
       )}
 
-      {collected.length === 0 ? (
+      {included.length === 0 ? (
         <Text size="sm" c="dimmed">
           {emptyMessage}
         </Text>
       ) : (
-        <Stack gap={6}>{collected.map(renderCard)}</Stack>
+        <Stack gap={6}>{included.map(renderCard)}</Stack>
       )}
 
       {excluded.length > 0 && (
