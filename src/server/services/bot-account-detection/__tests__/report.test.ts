@@ -44,6 +44,7 @@ const member = (overrides: Partial<BotAccountCohortMember> = {}): BotAccountCoho
   username: 'newcomer',
   createdAt: at('2026-09-03T00:20:00.000Z'),
   posts: posts({ comments: 2, models: 1, images: 3 }),
+  emailDomain: 'newcomer.test',
   ...overrides,
 });
 
@@ -80,6 +81,43 @@ describe('buildFinding', () => {
 
   it('passes the blended confidence through unaltered', () => {
     expect(buildFinding(member(), score({ confidence: 0.75 }), STARTED).confidence).toBe(0.75);
+  });
+
+  it('🔴 carries each heuristic’s NOTE, not only its number', () => {
+    // 🔴 THE GAP THIS CLOSES. `HeuristicScore.note` was collected on every score and rendered
+    // nowhere: the reason carried `Per-heuristic: a=0.60` and no statement of what the heuristic
+    // SAW, which is the half a moderator needs to decide anything. It was invisible while the only
+    // registered heuristic was a placeholder whose note was always null.
+    const finding = buildFinding(
+      member(),
+      score({
+        confidence: 0.42,
+        subScores: [
+          {
+            id: 'registration-cluster',
+            score: 0.6,
+            weight: 1,
+            note: '9 new posting accounts share its registration IP',
+            clamped: false,
+          },
+          { id: 'content-templating', score: 0, weight: 1, note: null, clamped: false },
+        ],
+      }),
+      STARTED
+    );
+    expect(finding.reason).toContain(
+      'Signals — registration-cluster: 9 new posting accounts share its registration IP.'
+    );
+    // The heuristic that said nothing contributes no clause — a reason reciting every signal that
+    // did not fire buries the one that did.
+    expect(finding.reason).not.toContain('content-templating:');
+    // The numbers still follow, for both.
+    expect(finding.reason).toContain('registration-cluster=0.60, content-templating=0.00');
+  });
+
+  it('omits the signals clause entirely when nothing fired', () => {
+    // Rather than rendering `Signals — .`, which reads as a truncation.
+    expect(buildFinding(member(), score(), STARTED).reason).not.toContain('Signals —');
   });
 
   it('cites the evidence a moderator needs to judge it', () => {

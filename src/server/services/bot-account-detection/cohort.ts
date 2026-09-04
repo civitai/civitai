@@ -73,6 +73,13 @@ export type NewAccountRow = {
   id: number;
   username: string | null;
   createdAt: Date;
+  /**
+   * 🔴 THE ONLY PLACE A FULL EMAIL ADDRESS EXISTS IN THIS DETECTOR, and it does not survive
+   * `selectCohortMembers`. The registration-cluster heuristic needs the DOMAIN and nothing else, so
+   * the local part is dropped at the first pure step rather than carried through scoring into a
+   * reason string that a moderator board stores. See `normalizeEmailDomain`.
+   */
+  email: string | null;
 };
 
 /** Per-user counts from one content table. */
@@ -131,6 +138,11 @@ export type BotAccountCohortMember = {
   username: string | null;
   createdAt: Date;
   posts: PostCounts;
+  /**
+   * The lowercased domain of the registration email, or `null` when the account has no email or the
+   * address has no parseable domain. NOT the address — see `NewAccountRow.email`.
+   */
+  emailDomain: string | null;
 };
 
 /**
@@ -203,10 +215,46 @@ export function newAccountPageArgs(args: {
       bannedAt: null,
       deletedAt: null,
     },
-    select: { id: true, username: true, createdAt: true },
+    // 🔴 `email` is selected for the registration-cluster heuristic and for nothing else. It is
+    // reduced to its domain in `selectCohortMembers`, which is the last point at which the address
+    // exists — no scored object, counter, note or reason string can carry it. Selecting it here
+    // rather than in a second query is what keeps the operation ledger at the same five reads:
+    // widening a `select` adds no database operation.
+    select: { id: true, username: true, createdAt: true, email: true },
     orderBy: { id: 'desc' },
     take: args.take,
   } as const;
+}
+
+/**
+ * The domain half of an email address, lowercased — or `null` when there is not one.
+ *
+ * 🔴 THE RETURN VALUE IS THE WHOLE PRIVACY BOUNDARY. Everything downstream of this function sees a
+ * domain; nothing downstream can reconstruct the address. That is why the reduction happens in the
+ * pure selector rather than inside the heuristic that consumes it — a heuristic is the wrong place
+ * for a rule about what the rest of the system is allowed to hold.
+ *
+ * Deliberately strict about what counts as a domain, because the value becomes a CLUSTER KEY: two
+ * accounts are called related when their keys are equal, so a permissive parse that maps several
+ * malformed addresses onto one key manufactures a ring out of bad data. An address with no `@`,
+ * nothing after the last `@`, no dot in the domain, or whitespace in it yields `null` — which the
+ * heuristic reads as "no signal", never as a cluster.
+ *
+ * The LAST `@` is the split point: local parts may legally contain `@` inside quotes, domains may
+ * not contain one at all.
+ */
+export function normalizeEmailDomain(email: string | null): string | null {
+  if (!email) return null;
+  const at = email.lastIndexOf('@');
+  if (at < 0) return null;
+  const domain = email
+    .slice(at + 1)
+    .trim()
+    .toLowerCase();
+  // A domain with no dot is not a domain a registration can have come from, and a domain with
+  // internal whitespace is not one at all.
+  if (!domain || !domain.includes('.') || /\s/.test(domain)) return null;
+  return domain;
 }
 
 /**
@@ -511,6 +559,8 @@ export function selectCohortMembers(
       username: account.username,
       createdAt: account.createdAt,
       posts,
+      // The address is reduced here and never stored. See `normalizeEmailDomain`.
+      emailDomain: normalizeEmailDomain(account.email),
     });
   }
   return members;

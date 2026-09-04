@@ -1,5 +1,6 @@
 import { logToAxiom } from '~/server/logging/client';
 import { createCohortReader } from '~/server/services/bot-account-detection/cohort';
+import { createEvidenceReader } from '~/server/services/bot-account-detection/evidence';
 import { runBotAccountDetection } from '~/server/services/bot-account-detection/run';
 import { moderatorApp } from '~/server/services/moderator-app.service';
 import { createJob, UNRUNNABLE_JOB_CRON } from './job';
@@ -48,6 +49,11 @@ export const botAccountDetection = createJob(
   async (ctx) => {
     return runBotAccountDetection({
       reader: createCohortReader(),
+      // The cohort-level sources. Its ClickHouse half is `undefined` on any deployment without
+      // `CLICKHOUSE_HOST`, which is a supported state and NOT an error: the run reports
+      // `evidence_registration_ips: 0` and says so in the summary rather than reporting that no
+      // accounts shared an IP.
+      evidence: createEvidenceReader(),
       sendReport: (report) => moderatorApp.abuseReport(report),
       now: () => new Date(),
       // The scheduler cancels by closing the response; without this the walk keeps paging and

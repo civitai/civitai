@@ -7,7 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, mockNode } from '~/__tests__/mocks';
 import type { CohortReader, NewAccountRow } from '../cohort';
 import { BOT_ACCOUNT_DETECTOR } from '../report';
-import { BOT_ACCOUNT_HEURISTICS, type BotAccountHeuristic } from '../scoring';
+import { BOT_ACCOUNT_HEURISTICS } from '../heuristics';
+import { MIN_REPORTED_CONFIDENCE, type BotAccountHeuristic } from '../scoring';
 import { BotAccountReportError, runBotAccountDetection } from '../run';
 
 const STARTED = new Date('2026-09-03T03:20:00.000Z');
@@ -17,6 +18,9 @@ const account = (id: number): NewAccountRow => ({
   id,
   username: `u${id}`,
   createdAt: new Date('2026-09-03T01:00:00.000Z'),
+  // A distinct domain per account: a shared one would make every fixture a domain cluster and
+  // silently change what the clustering heuristic scores in tests that are about something else.
+  email: `u${id}@u${id}.test`,
 });
 
 /**
@@ -109,6 +113,163 @@ const run = (
     ),
   };
 };
+
+/** A run whose heuristics score each account a value chosen by id, so a case can build an exact
+ *  confidence distribution and then assert what the threshold did to it. */
+const runScoring = (
+  byId: Record<number, number>,
+  overrides: Parameters<typeof runBotAccountDetection>[1] = {}
+) => {
+  const accounts = Object.keys(byId).map((id) => account(Number(id)));
+  const { reader } = recordingReader(accounts);
+  const out = sink();
+  return {
+    ...out,
+    result: runBotAccountDetection(
+      {
+        reader,
+        sendReport: out.sendReport,
+        now: clock(),
+        heuristics: [
+          {
+            id: 'tunable',
+            description: 'test',
+            weight: 1,
+            score: ({ member }) => byId[member.userId] ?? 0,
+            explain: () => null,
+          },
+        ],
+      },
+      { pageSize: 100, maxAccounts: 1_000, ...overrides }
+    ),
+  };
+};
+
+describe('the reporting threshold, end to end', () => {
+  it('🔴 reports only the members above the cut, and COUNTS the rest', async () => {
+    // 🔴 THE FAILURE THIS EXISTS TO PREVENT. `run.ts` turned every cohort member into a finding
+    // with no confidence filter anywhere. With three real heuristics that puts a whole day's
+    // posting cohort on a live moderator board as confidence-0 rows — a board that is mostly noise
+    // on its first day is a board nobody reads on its second.
+    //
+    // Five members, one above the default 0.15 cut. Values overshoot the boundary in both
+    // directions rather than sitting on it.
+    const scenario = runScoring({ 1: 0.02, 2: 0.9, 3: 0, 4: 0.04, 5: 0.31 });
+    const result = await scenario.result;
+
+    expect(result.cohortSize).toBe(5);
+    expect(result.findingsReported).toBe(2);
+    expect(result.findingsSuppressed).toBe(3);
+    expect(result.minConfidence).toBe(MIN_REPORTED_CONFIDENCE);
+    expect(scenario.reports[0].findings.map((f) => f.userId).sort()).toEqual([2, 5]);
+  });
+
+  it('🔴 the suppressed members are still in the distribution counters', async () => {
+    // The counterweight that makes the threshold safe. A member nobody can see is a member nobody
+    // can grade, and grading is the entire purpose of the shadow phase. "2 findings" over a cohort
+    // of 5 is only readable next to the three that scored under the cut.
+    const scenario = runScoring({ 1: 0.02, 2: 0.9, 3: 0, 4: 0.04, 5: 0.31 });
+    await scenario.result;
+    const counters = scenario.reports[0].counters ?? {};
+
+    expect(counters.findings_reported).toBe(2);
+    expect(counters.findings_suppressed).toBe(3);
+    expect(counters.report_min_confidence).toBe(MIN_REPORTED_CONFIDENCE);
+    // Three members under 0.1, one in 0.3-0.4, one in 0.9-1.0.
+    expect(counters['confidence_bucket_0_10']).toBe(3);
+    expect(counters['confidence_bucket_30_40']).toBe(1);
+    expect(counters['confidence_bucket_90_100']).toBe(1);
+    // 🔴 The buckets sum back to the COHORT, not to the findings. That equality is the whole claim:
+    // nothing was dropped between scoring and reporting without being counted.
+    const bucketTotal = Object.entries(counters)
+      .filter(([k]) => k.startsWith('confidence_bucket_'))
+      .reduce((sum, [, v]) => sum + (v as number), 0);
+    expect(bucketTotal).toBe(counters.cohort_size);
+    expect(bucketTotal).toBe(counters.findings_reported + counters.findings_suppressed);
+  });
+
+  it('publishes every bucket on a run where nothing scored, zeros included', async () => {
+    // A counter that appears only in the interesting case cannot be alerted on.
+    const scenario = runScoring({ 1: 0, 2: 0 });
+    await scenario.result;
+    const counters = scenario.reports[0].counters ?? {};
+    const buckets = Object.keys(counters).filter((k) => k.startsWith('confidence_bucket_'));
+    expect(buckets).toHaveLength(10);
+    expect(counters['confidence_bucket_90_100']).toBe(0);
+  });
+
+  it('says what it suppressed in the summary a human reads first', async () => {
+    const scenario = runScoring({ 1: 0.02, 2: 0.9, 3: 0 });
+    await scenario.result;
+    const summary = scenario.reports[0].summary ?? '';
+    expect(summary).toContain('1 scored at or above the 0.15 reporting threshold');
+    expect(summary).toContain('2 scored under it');
+    expect(summary).toContain('NOT reported as findings');
+  });
+
+  it('a threshold of 0 restores the full-cohort run', async () => {
+    const scenario = runScoring({ 1: 0, 2: 0, 3: 0 }, { minConfidence: 0 });
+    const result = await scenario.result;
+    expect(result.findingsReported).toBe(3);
+    expect(result.findingsSuppressed).toBe(0);
+  });
+
+  it('still files an empty report when everything was suppressed', async () => {
+    // "No report today" and "a report with zero findings" look the same to a reader otherwise, and
+    // the first is what a broken producer looks like.
+    const scenario = runScoring({ 1: 0, 2: 0 });
+    const result = await scenario.result;
+    expect(result.reportsSent).toBe(1);
+    expect(scenario.reports[0].findings).toEqual([]);
+    expect(scenario.reports[0].counters?.findings_suppressed).toBe(2);
+  });
+});
+
+describe('the evidence sources are reported, not assumed', () => {
+  it('🔴 a run with NO evidence reader says the ring sources did not run', async () => {
+    // Two of the three heuristics score 0 when their source is missing, which is byte-identical to
+    // scoring 0 because nothing was found. These counters are the only things that tell the two
+    // apart — without them a grading pass averages blind runs in as evidence of no rings.
+    const scenario = run([account(1)]);
+    await scenario.result;
+    const counters = scenario.reports[0].counters ?? {};
+    expect(counters.evidence_registration_ips).toBe(0);
+    expect(counters.evidence_content_budget_exhausted).toBe(0);
+    expect(counters.evidence_members_sampled_for_content).toBe(0);
+  });
+
+  it('reports the sources as present when the reader answered', async () => {
+    const { reader } = recordingReader([account(1), account(2)]);
+    const out = sink();
+    await runBotAccountDetection(
+      {
+        reader,
+        evidence: {
+          hasRegistrationIps: true,
+          listRegistrationIps: async () => [
+            { userId: 1, ip: 'x' },
+            { userId: 2, ip: 'x' },
+          ],
+          listContentSamples: async () => [],
+        },
+        sendReport: out.sendReport,
+        now: clock(),
+        heuristics: [],
+      },
+      { pageSize: 100, maxAccounts: 100, minConfidence: 0 }
+    );
+    const counters = out.reports[0].counters ?? {};
+    expect(counters.evidence_registration_ips).toBe(1);
+    expect(counters.evidence_distinct_registration_ips).toBe(1);
+    expect(counters.evidence_members_sampled_for_content).toBe(2);
+  });
+
+  it('warns in the summary when the IP source was unavailable', async () => {
+    const scenario = run([account(1)]);
+    await scenario.result;
+    expect(scenario.reports[0].summary).toContain('REGISTRATION-IP DATA WAS UNAVAILABLE');
+  });
+});
 
 describe('runBotAccountDetection', () => {
   it('files the cohort as one report when it fits', async () => {
@@ -329,7 +490,16 @@ describe('runBotAccountDetection', () => {
     await expect(
       runBotAccountDetection(
         { reader, sendReport, now: clock(), heuristics: [] },
-        { pageSize: 10, maxAccounts: 10, maxFindingsPerReport: 2 }
+        {
+          pageSize: 10,
+          maxAccounts: 10,
+          maxFindingsPerReport: 2,
+          // 🔴 `heuristics: []` scores every member 0, which the DEFAULT threshold suppresses —
+          // so without this the run produces one empty report and this case silently stops
+          // exercising batching at all. `minConfidence: 0` is the documented full-cohort mode,
+          // and it is what keeps this test about the thing it names rather than about the cut.
+          minConfidence: 0,
+        }
       )
       // A bare rethrow would say "the run failed" and hide that a third of it is already on the
       // board — which is what a reader has to know before retrying, since a retry re-sends under a
@@ -359,7 +529,16 @@ describe('runBotAccountDetection', () => {
             if (checks > 2) throw new Error('Job was canceled');
           },
         },
-        { pageSize: 10, maxAccounts: 10, maxFindingsPerReport: 2 }
+        {
+          pageSize: 10,
+          maxAccounts: 10,
+          maxFindingsPerReport: 2,
+          // 🔴 `heuristics: []` scores every member 0, which the DEFAULT threshold suppresses —
+          // so without this the run produces one empty report and this case silently stops
+          // exercising batching at all. `minConfidence: 0` is the documented full-cohort mode,
+          // and it is what keeps this test about the thing it names rather than about the cut.
+          minConfidence: 0,
+        }
       )
     ).rejects.toThrow('Job was canceled');
     expect(out.sendReport).toHaveBeenCalledTimes(1);
@@ -371,7 +550,16 @@ describe('runBotAccountDetection', () => {
     const log = vi.fn();
     await runBotAccountDetection(
       { reader, sendReport: out.sendReport, now: clock(), heuristics: [], log },
-      { pageSize: 10, maxAccounts: 10, maxFindingsPerReport: 2 }
+      {
+        pageSize: 10,
+        maxAccounts: 10,
+        maxFindingsPerReport: 2,
+        // 🔴 `heuristics: []` scores every member 0, which the DEFAULT threshold suppresses —
+        // so without this the run produces one empty report and this case silently stops
+        // exercising batching at all. `minConfidence: 0` is the documented full-cohort mode,
+        // and it is what keeps this test about the thing it names rather than about the cut.
+        minConfidence: 0,
+      }
     );
     const sent = log.mock.calls.filter(([name]) => name === 'bot-account-detection:report-sent');
     expect(sent.map(([, data]) => data.batch)).toEqual([1, 2, 3]);
