@@ -1,17 +1,27 @@
 import { dbRead } from '~/server/db/client';
+import { ImageIngestionStatus, ModelStatus } from '~/shared/utils/prisma/enums';
 
 /**
  * The cohort a bot-account run looks at: accounts created in the last day that have already posted
- * something.
+ * something visible.
  *
  * Shaped after `apps/moderator/src/lib/server/comment-spam.service.ts` — a read that fetches raw rows
  * and a PURE function that decides which of them belong in the queue. Everything the rule rejects, it
  * rejects in the pure half, which is the half worth testing.
  *
- * 🔴 READ REPLICA ONLY. This module names `dbRead` and nothing else. That is not a performance
- * preference here, it is the property the shadow phase rests on: a detector that cannot reach a write
- * client cannot mute, ban, or file a restriction however wrong its scoring turns out to be. The
- * asserted ledger in `__tests__/no-write-surface.test.ts` fails if this file's database surface grows.
+ * 🔴 WHAT ACTUALLY HOLDS THE NO-WRITE PROPERTY, precisely — because the obvious reading is wrong.
+ * `dbRead` is NOT a structurally read-only client: `packages/civitai-db/src/client.ts` builds it as
+ * `singleClient ? dbWrite : new PrismaClient(replica)`, so wherever `DATABASE_REPLICA_URL` equals
+ * `DATABASE_URL` the two are THE SAME OBJECT, `.user.update()` included. Naming `dbRead` therefore
+ * buys convention, not reachability, and "a detector that cannot reach a write client" would be a
+ * comment stronger than the code.
+ *
+ * The property is held by two things that ARE checkable:
+ *  1. the compile-time `CohortDb` type below — a structural port with five read methods and no write
+ *     method, so this module cannot call one on the handle it is given however that handle was built;
+ *  2. the asserted source ledger in `__tests__/no-write-surface.test.ts`, which fails if this
+ *     module's database-operation set or its import set grows by so much as one member.
+ * Both are mechanical. Neither depends on `dbRead` being a different connection from `dbWrite`.
  */
 
 /** The window the detector is defined over. A day, because the operator's brief is "created in the
@@ -37,8 +47,24 @@ export const COHORT_PAGE_SIZE = 500;
  * (`cohort_capped` / `cohort_cap` counters, and a sentence in the report summary). A silent cap is
  * indistinguishable from a quiet day, which is the reassuring-zero the abuse board was built to
  * remove.
+ *
+ * 🔴 THE VALUE IS SET AGAINST A MEASUREMENT, and the previous one was set against nothing. A
+ * read-only count on a replica put the 24h signup baseline at **8,863 accounts**. Against the
+ * former ceiling of 10,000 that is ~13% headroom, which is the worst possible place for a cap to
+ * sit: it never trips on an ordinary day, so it looks proven, and it trips for the FIRST time on
+ * exactly the day a registration wave lands. 25,000 is ~2.8x the baseline, so an ordinary day plus
+ * a wave of nearly twice the site's normal daily signups still fits, and the cap goes back to being
+ * a ceiling on work rather than a daily filter.
+ *
+ * It is still a bound and it is still cheap: at `COHORT_PAGE_SIZE` this is at most 50 account pages
+ * and 200 `groupBy` reads, all on the replica, all keyset-paged.
+ *
+ * 🔴 The value is the SECOND line of defence, not the first. The walk below pages DESCENDING, so
+ * whatever the cap is set to, the accounts it discards are the OLDEST of the window rather than the
+ * newest — see `newAccountPageArgs`. Raising the number reduces how often truncation happens;
+ * paging downwards is what makes truncation safe when it does.
  */
-export const MAX_COHORT_ACCOUNTS = 10_000;
+export const MAX_COHORT_ACCOUNTS = 25_000;
 
 /** One row of the account read — who the account is, not what it did. */
 export type NewAccountRow = {
@@ -82,10 +108,13 @@ export type BotAccountCohortMember = {
  * fails if a write ever appears among them. Two read methods, no write method, nothing to widen.
  */
 export type CohortReader = {
-  /** One keyset page of new accounts, ordered by id ascending, ids strictly greater than `after`. */
+  /**
+   * One keyset page of new accounts, ordered by id DESCENDING — newest first — with ids strictly
+   * less than `before`. `before: undefined` seeds the walk at the newest account in the window.
+   */
   listNewAccounts(args: {
     createdAfter: Date;
-    after: number;
+    before: number | undefined;
     take: number;
   }): Promise<NewAccountRow[]>;
   /** Per-user content counts for exactly these ids. */
@@ -106,41 +135,124 @@ export function cohortCutoff(now: Date, windowHours = BOT_ACCOUNT_COHORT_WINDOW_
  *
  * `bannedAt`/`deletedAt` are excluded in SQL rather than in the pure selector: unlike "has posted",
  * they are not a judgement, and filtering them here keeps them out of the `IN` lists the content
- * reads build. Keyset on `id` rather than an OFFSET because the cohort's newest end grows while the
- * run walks it, and an OFFSET page would skip rows as it did.
+ * reads build.
+ *
+ * 🔴 KEYSET, AND IT PAGES DOWNWARDS. Keyset rather than OFFSET because the window's newest end grows
+ * while the run walks it and an OFFSET page skips rows as it does. DESCENDING because the walk is
+ * capped, and the direction decides WHICH accounts a capped run throws away:
+ *
+ *  - ascending, the unread remainder is the HIGHEST ids — the most recent signups. That is the
+ *    registration wave this detector exists to notice, discarded, while `capped: true` reads as
+ *    "we saw the first N". Measured baseline is ~8,863 signups/24h, so the cap does not trip on an
+ *    ordinary day and trips first on exactly the day it must not.
+ *  - descending, the unread remainder is the LOWEST ids — the oldest accounts of the window, which
+ *    have had a full day to be seen by every other surface and are the harmless end to drop.
+ *
+ * `id` is the primary key, so the order is TOTAL and the keyset is stable: no two rows tie, and
+ * `id < before` cannot re-emit or skip a row. Descending is also the stabler walk under concurrent
+ * inserts — new signups land ABOVE the seed page and are simply outside this run's window rather
+ * than a moving target the walk chases.
+ *
+ * `before: undefined` means "no lower-than bound yet", i.e. start at the newest. It is spelled as
+ * `undefined` rather than a sentinel id because Prisma drops an `undefined` field from the WHERE
+ * clause entirely, where a sentinel would have to be a real integer and `User.id` is an `int4` whose
+ * maximum a future migration could reach.
  */
-export function newAccountPageArgs(args: { createdAfter: Date; after: number; take: number }) {
+export function newAccountPageArgs(args: {
+  createdAfter: Date;
+  before: number | undefined;
+  take: number;
+}) {
   return {
     where: {
       createdAt: { gte: args.createdAfter },
-      id: { gt: args.after },
+      id: args.before === undefined ? undefined : ({ lt: args.before } as const),
       bannedAt: null,
       deletedAt: null,
     },
     select: { id: true, username: true, createdAt: true },
-    orderBy: { id: 'asc' },
+    orderBy: { id: 'desc' },
     take: args.take,
   } as const;
 }
 
 /**
- * The `groupBy` arguments each content read uses.
+ * 🔴 WHAT "HAS POSTED" MEANS: content a moderator can open right now.
+ *
+ * The reason string on every finding says "Posted N comment(s), N model(s), N image(s)" to a human
+ * whose next action is to go and look. So the counts have to be counts of things that are THERE.
+ * Filtering on `userId` alone counted an account's drafts, its never-attached image uploads, its
+ * blocked uploads, its hidden comments and its already-removed models — content that is either not
+ * published yet or has already been taken down — and sent a moderator after all of it.
+ *
+ * The rule, per surface, and what each clause excludes:
+ *  - `Comment` / `CommentV2`: `hidden` is not true, `tosViolation` is false. Both are moderation
+ *    outcomes: the comment is already gone from the page. `hidden` is a NULLABLE boolean, so
+ *    `{ not: true }` and not `false` — the repo's own idiom (`jobs/entity-moderation.ts`), and the
+ *    one that keeps the never-hidden rows whose column is NULL.
+ *  - `Model`: `status` is `Published`, not soft-deleted, not TOS-flagged. `Draft` and `Training` are
+ *    not posted yet; `Unpublished`/`UnpublishedViolation`/`Deleted` are posted and then withdrawn;
+ *    `Scheduled` is a promise to publish and has no page to open.
+ *  - `Image`: attached to a post (`postId` is not null — a detached image is a leftover with nowhere
+ *    to be viewed), not TOS-flagged, and its ingestion is not `Blocked`/`NotFound`.
+ *
+ * 🔴 `ingestion: Pending` is DELIBERATELY KEPT, and it is the one judgement call here. A fresh
+ * upload sits Pending for minutes; a bot wave's images are Pending *by definition* at the moment
+ * this detector looks at them. Excluding Pending would be excluding the signal, and unlike Blocked
+ * it is a scan that has not finished rather than a decision to remove. Blocked and NotFound are
+ * decisions, so they go.
  *
  * No time predicate, deliberately: every account in the list is younger than the window, so its
  * content is too, and a redundant `createdAt` filter would only cost the planner an extra condition
  * on a column these tables are not being seeked by.
  */
-export function postCountArgs(userIds: number[]) {
-  // NOT a blanket `as const`, and not a plain literal either — Prisma's generated `groupBy` argument
-  // type wants both at once. `by` must be a MUTABLE array of the model's scalar-field enum (a
-  // readonly tuple is rejected), while `_count._all` must be the literal `true` (a widened `boolean`
-  // is rejected). Getting either wrong produces the same error four times over, once per model,
-  // which reads as four unrelated faults.
-  return {
-    by: ['userId'] as ['userId'],
-    where: { userId: { in: userIds } },
-    _count: { _all: true as const },
-  };
+// NOT a blanket `as const`, and not a plain literal either — Prisma's generated `groupBy` argument
+// type wants both at once. `by` must be a MUTABLE array of the model's scalar-field enum (a
+// readonly tuple is rejected), while `_count._all` must be the literal `true` (a widened `boolean`
+// is rejected). Getting either wrong produces the same error four times over, once per model,
+// which reads as four unrelated faults.
+const groupByUser = <W>(where: W) => ({
+  by: ['userId'] as ['userId'],
+  where,
+  _count: { _all: true as const },
+});
+
+/** Comments still on the page: not hidden by moderation, not TOS-flagged. */
+export function commentCountArgs(userIds: number[]) {
+  return groupByUser({
+    userId: { in: userIds },
+    hidden: { not: true },
+    tosViolation: false,
+  });
+}
+
+/** The newer comment system, same rule. */
+export function commentV2CountArgs(userIds: number[]) {
+  return groupByUser({
+    userId: { in: userIds },
+    hidden: { not: true },
+    tosViolation: false,
+  });
+}
+
+/** Models with a live page: published, not soft-deleted, not TOS-flagged. */
+export function modelCountArgs(userIds: number[]) {
+  return groupByUser({
+    userId: { in: userIds },
+    status: ModelStatus.Published,
+    deletedAt: null,
+    tosViolation: false,
+  });
+}
+
+/** Images a moderator can open: attached to a post, not TOS-flagged, not blocked or missing. */
+export function imageCountArgs(userIds: number[]) {
+  return groupByUser({
+    userId: { in: userIds },
+    postId: { not: null },
+    tosViolation: false,
+    ingestion: { notIn: [ImageIngestionStatus.Blocked, ImageIngestionStatus.NotFound] },
+  });
 }
 
 type GroupByRow = { userId: number; _count: { _all: number } };
@@ -169,14 +281,14 @@ const toCountRows = (rows: GroupByRow[]): CountRow[] =>
  * (`toCountRows`), where the shape is asserted once. `findMany` has no such problem and keeps its
  * real row type, which is what pins the `select` in `newAccountPageArgs` to the fields used here.
  */
-type GroupByFn = (args: ReturnType<typeof postCountArgs>) => Promise<unknown>;
+type GroupByFn<A> = (args: A) => Promise<unknown>;
 
 export type CohortDb = {
   user: { findMany: (args: ReturnType<typeof newAccountPageArgs>) => Promise<NewAccountRow[]> };
-  comment: { groupBy: GroupByFn };
-  commentV2: { groupBy: GroupByFn };
-  model: { groupBy: GroupByFn };
-  image: { groupBy: GroupByFn };
+  comment: { groupBy: GroupByFn<ReturnType<typeof commentCountArgs>> };
+  commentV2: { groupBy: GroupByFn<ReturnType<typeof commentV2CountArgs>> };
+  model: { groupBy: GroupByFn<ReturnType<typeof modelCountArgs>> };
+  image: { groupBy: GroupByFn<ReturnType<typeof imageCountArgs>> };
 };
 
 /**
@@ -191,12 +303,11 @@ export function createCohortReader(db: CohortDb = dbRead): CohortReader {
     listNewAccounts: (args) => db.user.findMany(newAccountPageArgs(args)),
     countPosts: async (userIds) => {
       if (!userIds.length) return { comments: [], commentsV2: [], models: [], images: [] };
-      const args = postCountArgs(userIds);
       const [comments, commentsV2, models, images] = await Promise.all([
-        db.comment.groupBy(args),
-        db.commentV2.groupBy(args),
-        db.model.groupBy(args),
-        db.image.groupBy(args),
+        db.comment.groupBy(commentCountArgs(userIds)),
+        db.commentV2.groupBy(commentV2CountArgs(userIds)),
+        db.model.groupBy(modelCountArgs(userIds)),
+        db.image.groupBy(imageCountArgs(userIds)),
       ]);
       return {
         comments: toCountRows(comments as GroupByRow[]),
@@ -252,10 +363,11 @@ export function selectCohortMembers(
 }
 
 export type CohortResult = {
+  /** Newest account first — the walk's own order, see `newAccountPageArgs`. */
   members: BotAccountCohortMember[];
   /** Accounts read, before the has-posted filter. The denominator the counters report. */
   scanned: number;
-  /** Accounts were left unread because the cap was reached. */
+  /** Accounts were left unread because the cap was reached. They are the OLDEST of the window. */
   capped: boolean;
   /** Reads the walk performed, including the probe below. Reported so a run that did no paging is
    *  distinguishable from one that paged and found nothing. */
@@ -263,7 +375,7 @@ export type CohortResult = {
 };
 
 /**
- * Walk the window, page by page, up to the cap.
+ * Walk the window, page by page, up to the cap — newest account first.
  *
  * 🔴 `capped` means accounts were LEFT UNREAD, and it is measured rather than inferred from
  * `scanned === maxAccounts`. The two differ on the case a moderator would act on: a cohort whose
@@ -271,6 +383,15 @@ export type CohortResult = {
  * accounts that do not exist. So when the budget runs out the walk spends one extra 1-row read to
  * ask whether anything follows. Those rows are not scanned and not scored — the probe answers one
  * question and its result is discarded.
+ *
+ * 🔴 WHEN IT IS CAPPED, THE UNREAD REMAINDER IS THE OLDEST END. The walk descends by `id`, so the
+ * cursor moves from the newest signup in the window towards the oldest and truncation lands on
+ * accounts that have already had a full day of exposure. That is stated in the report summary in
+ * those words, because "TRUNCATED at the N-account cap" on its own reads as "we saw the first N"
+ * and the natural reading of "first" is the opposite of what happens.
+ *
+ * `checkCanceled` is called once per page rather than once per run: the scheduler cancels by closing
+ * the response, and a walk that never looks keeps reading pages after nobody is listening.
  */
 export async function collectCohort(
   reader: CohortReader,
@@ -278,23 +399,28 @@ export async function collectCohort(
     createdAfter: Date;
     pageSize?: number;
     maxAccounts?: number;
+    /** Throws if the job has been canceled. Optional so the core has no job-context dependency. */
+    checkCanceled?: () => void;
   }
 ): Promise<CohortResult> {
   const pageSize = opts.pageSize ?? COHORT_PAGE_SIZE;
   const maxAccounts = opts.maxAccounts ?? MAX_COHORT_ACCOUNTS;
+  const checkCanceled = opts.checkCanceled ?? (() => undefined);
 
   const members: BotAccountCohortMember[] = [];
-  let after = 0;
+  // No lower-than bound yet: the first page starts at the newest account in the window.
+  let before: number | undefined = undefined;
   let scanned = 0;
   let pages = 0;
   let capped = false;
 
   for (;;) {
+    checkCanceled();
     const remaining = maxAccounts - scanned;
     if (remaining <= 0) {
       const probe = await reader.listNewAccounts({
         createdAfter: opts.createdAfter,
-        after,
+        before,
         take: 1,
       });
       pages += 1;
@@ -304,14 +430,16 @@ export async function collectCohort(
     const take = Math.min(pageSize, remaining);
     const accounts = await reader.listNewAccounts({
       createdAfter: opts.createdAfter,
-      after,
+      before,
       take,
     });
     pages += 1;
     if (!accounts.length) break;
 
     scanned += accounts.length;
-    after = accounts[accounts.length - 1].id;
+    // Descending, so the LAST row of the page is the lowest id seen and the next page is strictly
+    // below it.
+    before = accounts[accounts.length - 1].id;
 
     const counts = mergePostCounts(await reader.countPosts(accounts.map((a) => a.id)));
     members.push(...selectCohortMembers(accounts, counts));

@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, mockNode } from '~/__tests__/mocks';
 import type { CohortReader, NewAccountRow } from '../cohort';
 import { BOT_ACCOUNT_DETECTOR } from '../report';
-import type { BotAccountHeuristic } from '../scoring';
+import { BOT_ACCOUNT_HEURISTICS, type BotAccountHeuristic } from '../scoring';
 import { BotAccountReportError, runBotAccountDetection } from '../run';
 
 const STARTED = new Date('2026-09-03T03:20:00.000Z');
@@ -29,9 +29,13 @@ const account = (id: number): NewAccountRow => ({
 function recordingReader(accounts: NewAccountRow[], postedIds?: Set<number>) {
   const operations: string[] = [];
   const reader: CohortReader = {
-    listNewAccounts: async ({ after, take }) => {
+    // Descending keyset, matching the real reader: ids strictly BELOW `before`, newest first.
+    listNewAccounts: async ({ before, take }) => {
       operations.push('listNewAccounts');
-      return accounts.filter((a) => a.id > after).slice(0, take);
+      return [...accounts]
+        .sort((a, b) => b.id - a.id)
+        .filter((a) => before === undefined || a.id < before)
+        .slice(0, take);
     },
     countPosts: async (ids) => {
       operations.push('countPosts');
@@ -108,7 +112,7 @@ describe('runBotAccountDetection', () => {
       reports: 1,
       reportsSent: 1,
     });
-    expect(scenario.reports[0].findings.map((f) => f.userId)).toEqual([1, 2]);
+    expect(scenario.reports[0].findings.map((f) => f.userId)).toEqual([2, 1]);
   });
 
   it('marks every finding of every batch un-actioned', async () => {
@@ -174,8 +178,10 @@ describe('runBotAccountDetection', () => {
   });
 
   it('reports the cap in the counters and the summary when it truncates', async () => {
+    // 13 against a cap of 8 at page size 4: overshoots the cap, and the cap is neither a multiple
+    // nor a power-of-two multiple of the page size, so the budget-clamped page runs.
     const scenario = run(
-      Array.from({ length: 12 }, (_, i) => account(i + 1)),
+      Array.from({ length: 13 }, (_, i) => account(i + 1)),
       {
         pageSize: 4,
         maxAccounts: 8,
@@ -187,6 +193,30 @@ describe('runBotAccountDetection', () => {
     expect(scenario.reports[0].counters?.cohort_capped).toBe(1);
     expect(scenario.reports[0].counters?.cohort_cap).toBe(8);
     expect(scenario.reports[0].summary).toContain('TRUNCATED');
+    // 🔴 The findings that survived a cap are the NEWEST accounts, end to end through the run —
+    // not only inside `collectCohort`.
+    expect(scenario.reports[0].findings.map((f) => f.userId)).toEqual([13, 12, 11, 10, 9, 8, 7, 6]);
+  });
+
+  it('says WHICH END the cap dropped, in the summary a moderator reads', async () => {
+    // "TRUNCATED at the N-account cap" alone is read as "we saw the first N", and in a signup
+    // window "first" means oldest — the exact opposite of what the walk does. A moderator who
+    // reads it that way concludes the newest signups went unexamined and goes looking for them.
+    const scenario = run(
+      Array.from({ length: 13 }, (_, i) => account(i + 1)),
+      { pageSize: 4, maxAccounts: 8 }
+    );
+    await scenario.result;
+    const summary = scenario.reports[0].summary ?? '';
+    expect(summary).toContain('NEWEST FIRST');
+    expect(summary).toContain('OLDEST end');
+    // The whole normalised sentence, so a cosmetic reword has to be a deliberate edit rather than
+    // something that slips past a keyword check while inverting the meaning.
+    expect(summary).toContain(
+      '🔴 TRUNCATED at the 8-account cap. Accounts are read NEWEST FIRST, so the 8 read are the ' +
+        'most recent of the window and the unread remainder is its OLDEST end — the earliest ' +
+        'signups of the window were not scored.'
+    );
   });
 
   it('publishes cohort_capped as a zero on an untruncated run', async () => {
@@ -245,6 +275,33 @@ describe('runBotAccountDetection', () => {
     expect(sendReport).toHaveBeenCalledTimes(2);
   });
 
+  it('stops at the next report when the job is canceled', async () => {
+    // Past `lockExpiration` the run-jobs route RELEASES the lock while the run continues, so an
+    // overrunning run is how a retry starts a second one whose different `startedAt` the board
+    // cannot merge. Cancellation is checked before each send, not only per page, because sending
+    // is where a canceled run does damage the board can see.
+    const { reader } = recordingReader(Array.from({ length: 5 }, (_, i) => account(i + 1)));
+    const out = sink();
+    let checks = 0;
+    await expect(
+      runBotAccountDetection(
+        {
+          reader,
+          sendReport: out.sendReport,
+          now: clock(),
+          heuristics: [],
+          checkCanceled: () => {
+            checks += 1;
+            // Pages first, then one send, then canceled.
+            if (checks > 2) throw new Error('Job was canceled');
+          },
+        },
+        { pageSize: 10, maxAccounts: 10, maxFindingsPerReport: 2 }
+      )
+    ).rejects.toThrow('Job was canceled');
+    expect(out.sendReport).toHaveBeenCalledTimes(1);
+  });
+
   it('logs each batch as it lands', async () => {
     const { reader } = recordingReader(Array.from({ length: 5 }, (_, i) => account(i + 1)));
     const out = sink();
@@ -296,6 +353,38 @@ describe('the shadow-mode invariant: nothing is muted, banned or restricted', ()
       'dbWrite.$queryRaw',
     ])
       expect(mockNode(path), `${path} was called by a shadow-mode run`).not.toHaveBeenCalled();
+  });
+
+  it('holds with the PRODUCTION heuristic registry, not only injected fakes', async () => {
+    // 🔴 Every other case here injects `heuristics`, so `BOT_ACCOUNT_HEURISTICS` — the registry a
+    // real run actually uses, and the one the first real heuristic will be added to — was never
+    // exercised against the real `dbWrite` spy. A heuristic that reached for a write client would
+    // have been invisible to this whole file.
+    const { reader, operations } = recordingReader(
+      Array.from({ length: 3 }, (_, i) => account(i + 1))
+    );
+    const out = sink();
+    const result = await runBotAccountDetection(
+      { reader, sendReport: out.sendReport, now: clock() }, // no `heuristics` override
+      { pageSize: 10, maxAccounts: 10 }
+    );
+
+    expect(result.counters.heuristics_registered).toBe(BOT_ACCOUNT_HEURISTICS.length);
+    expect(BOT_ACCOUNT_HEURISTICS.length).toBeGreaterThan(0);
+    // Every registered heuristic reports its own counters, so a registry member that silently
+    // fails to run is visible rather than absorbed into the blend.
+    for (const heuristic of BOT_ACCOUNT_HEURISTICS)
+      expect(out.reports[0].counters?.[`heuristic:${heuristic.id}:evaluated`]).toBe(3);
+
+    expect([...new Set(operations)].sort()).toEqual(['countPosts', 'listNewAccounts']);
+    for (const path of [
+      'dbWrite.user.update',
+      'dbWrite.userRestriction.create',
+      'dbWrite.$transaction',
+      'dbWrite.$executeRawUnsafe',
+    ])
+      expect(mockNode(path), `${path} was called by a real-registry run`).not.toHaveBeenCalled();
+    expect(JSON.stringify(out.reports)).not.toContain('"actioned":true');
   });
 
   it('sends nothing that claims an action was taken', async () => {

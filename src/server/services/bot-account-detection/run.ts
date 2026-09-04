@@ -41,6 +41,17 @@ export type BotAccountDetectionDeps = {
   heuristics?: readonly BotAccountHeuristic[];
   /** Structured progress, one call per notable step. Optional so the core has no logger dependency. */
   log?: (name: string, data: Record<string, unknown>) => void;
+  /**
+   * Throws if the job has been canceled. In production this is `JobContext.checkIfCanceled`.
+   *
+   * 🔴 A run that never asks keeps going after the scheduler has hung up, and this one is on a
+   * lock the webhook route releases at `lockExpiration` WHILE the run continues — so an uncanceled
+   * overrun is how the same window gets walked twice under two different `startedAt`s, which
+   * `(detector, started_at)` cannot merge and the board shows as two complete duplicate sets.
+   * Checked once per cohort page and once before each report send: the two places this run can be
+   * doing work nobody is waiting for.
+   */
+  checkCanceled?: () => void;
 };
 
 export type BotAccountDetectionOptions = {
@@ -86,11 +97,17 @@ export async function runBotAccountDetection(
   const maxAccounts = options.maxAccounts ?? MAX_COHORT_ACCOUNTS;
   const maxFindingsPerReport = options.maxFindingsPerReport ?? MAX_FINDINGS_PER_REPORT;
   const log = deps.log ?? (() => undefined);
+  const checkCanceled = deps.checkCanceled ?? (() => undefined);
 
   const startedAt = deps.now();
   const createdAfter = cohortCutoff(startedAt, windowHours);
 
-  const cohort = await collectCohort(deps.reader, { createdAfter, pageSize, maxAccounts });
+  const cohort = await collectCohort(deps.reader, {
+    createdAfter,
+    pageSize,
+    maxAccounts,
+    checkCanceled,
+  });
   log('bot-account-detection:cohort', {
     scanned: cohort.scanned,
     members: cohort.members.length,
@@ -120,11 +137,18 @@ export async function runBotAccountDetection(
     ...heuristicCounters(scores),
   };
 
+  // 🔴 The truncation sentence names WHICH END was dropped. "TRUNCATED at the N-account cap" alone
+  // is read as "we saw the first N", and "first" in a signup window means oldest — the opposite of
+  // what the walk does. The walk pages newest-first, so what a capped run did NOT read is the
+  // oldest tail of the window; saying so is what stops a moderator drawing the backwards
+  // conclusion that the newest signups went unexamined.
   const summary =
     `Scanned ${cohort.scanned} account(s) created since ${createdAfter.toISOString()}; ` +
     `${cohort.members.length} had posted and were scored by ${heuristics.length} heuristic(s).` +
     (cohort.capped
-      ? ` 🔴 TRUNCATED at the ${maxAccounts}-account cap — more accounts matched the window than this run read.`
+      ? ` 🔴 TRUNCATED at the ${maxAccounts}-account cap. Accounts are read NEWEST FIRST, so the ` +
+        `${cohort.scanned} read are the most recent of the window and the unread remainder is its ` +
+        `OLDEST end — the earliest signups of the window were not scored.`
       : '');
 
   const reports = buildReports({
@@ -138,6 +162,7 @@ export async function runBotAccountDetection(
 
   let sent = 0;
   for (const report of reports) {
+    checkCanceled();
     try {
       await deps.sendReport(report);
     } catch (e) {

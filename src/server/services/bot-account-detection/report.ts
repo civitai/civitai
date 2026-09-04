@@ -63,8 +63,14 @@ export function buildFinding(
     `Shadow-mode observation — NOT actioned. Account ${member.userId}` +
       `${member.username ? ` (${member.username})` : ''} registered ` +
       `${member.createdAt.toISOString()}, ${ageHours.toFixed(1)}h old at scan. ` +
-      `Posted ${member.posts.comments} comment(s), ${member.posts.models} model(s), ` +
-      `${member.posts.images} image(s). ` +
+      // 🔴 The qualifier is not decoration. This sentence is what a moderator acts on — they go and
+      // look — so it has to say what was counted. These counts are VISIBLE content only: published
+      // models, images attached to a post, comments not hidden or TOS-flagged, nothing soft-deleted
+      // or blocked (see `cohort.ts`). Naming that here is the difference between "4 images" meaning
+      // "four things you can open" and meaning "four rows, some of which are drafts we removed".
+      `Posted ${member.posts.comments} visible comment(s), ${member.posts.models} published ` +
+      `model(s), ${member.posts.images} visible image(s) — counts exclude drafts, unattached ` +
+      `uploads, blocked uploads, hidden or TOS-flagged content and anything already removed. ` +
       `Per-heuristic: ${renderSubScores(score.subScores)}. ` +
       `Blended confidence ${score.confidence.toFixed(2)}.`
   );

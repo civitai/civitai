@@ -60,12 +60,26 @@ describe('buildFinding', () => {
   it('cites the evidence a moderator needs to judge it', () => {
     const finding = buildFinding(member(), score(), STARTED);
     // Distinct counts per surface so a mutant reading the wrong field cannot produce this string.
-    expect(finding.reason).toContain('2 comment(s)');
-    expect(finding.reason).toContain('1 model(s)');
-    expect(finding.reason).toContain('3 image(s)');
+    expect(finding.reason).toContain('2 visible comment(s)');
+    expect(finding.reason).toContain('1 published model(s)');
+    expect(finding.reason).toContain('3 visible image(s)');
     expect(finding.reason).toContain('3.0h old');
     expect(finding.reason).toContain('placeholder-no-op=0.00');
     expect(finding.reason).toContain('NOT actioned');
+  });
+
+  it('says what the counts EXCLUDE, because the moderator’s next move is to go and look', () => {
+    // 🔴 The counts are of visible content only (see `cohort.ts`). An unqualified "Posted 3
+    // image(s)" was a promise the cohort query did not keep — it counted drafts, unattached and
+    // blocked uploads, hidden comments and removed models — and the wire contract calls this
+    // string "the whole value of the row". The whole normalised clause is pinned, not a keyword,
+    // so a reword that quietly drops the qualifier has to be a deliberate edit.
+    const finding = buildFinding(member(), score(), STARTED);
+    expect(finding.reason).toContain(
+      'Posted 2 visible comment(s), 1 published model(s), 3 visible image(s) — counts exclude ' +
+        'drafts, unattached uploads, blocked uploads, hidden or TOS-flagged content and anything ' +
+        'already removed.'
+    );
   });
 
   it('floors the account age at zero when the clocks disagree', () => {

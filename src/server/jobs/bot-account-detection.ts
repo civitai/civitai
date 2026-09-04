@@ -2,7 +2,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { createCohortReader } from '~/server/services/bot-account-detection/cohort';
 import { runBotAccountDetection } from '~/server/services/bot-account-detection/run';
 import { moderatorApp } from '~/server/services/moderator-app.service';
-import { createJob } from './job';
+import { createJob, UNRUNNABLE_JOB_CRON } from './job';
 
 /**
  * Bot-account detection, SHADOW MODE.
@@ -19,18 +19,40 @@ import { createJob } from './job';
  * configuration of this job that can act on an account — turning it live is a code change here and
  * in the run, not a flag.
  *
- * Scheduled off the hour so a daily full-window read does not land on top of the top-of-hour jobs.
- * The window is 24h and the schedule is daily, so a missed run
- * leaves a gap rather than double-counting; it is also runnable on demand at
- * `/api/webhooks/run-jobs/bot-account-detection`, which is how a shadow-phase grading pass gets a
- * fresh report without waiting for the schedule.
+ * 🔴 REGISTERED BUT NOT SCHEDULED — `UNRUNNABLE_JOB_CRON` is a deliberate choice, not a leftover.
+ * `/api/internal/get-jobs` publishes every registered job's cron to the external scheduler, so a
+ * real cron here means MERGING THIS ENABLES IT: at 03:20 UTC the next day it would POST to a board
+ * whose table may not have been applied yet (`apps/moderator/abuse-detection/schema.sql` is applied
+ * by hand per this repo's convention — without its `(detector, started_at)` unique index every POST
+ * 500s on a `42P10`), with a `MOD_INBOUND_TOKEN` that may be unset. That is a daily 500 repeating
+ * until somebody notices, and the noticing is the only part that is not automatic.
+ *
+ * `UNRUNNABLE_JOB_CRON` (a Feb 31st that never comes) keeps the job REGISTERED and on-demand
+ * runnable at `/api/webhooks/run-jobs/bot-account-detection` — which is the whole of what a
+ * shadow-phase grading pass needs — while firing no schedule. Restoring a real cron is a one-token
+ * change once both preconditions are confirmed live; the PR body records what they are.
+ *
+ * `lockExpiration` is widened from the 5-minute default because the run-jobs route hard-caps the
+ * lock hold at exactly that value and then RELEASES the lock while the run continues — so a run
+ * longer than the expiration leaves the door open for a second, concurrent full run whose different
+ * `startedAt` the board cannot merge with the first. A capped walk is up to
+ * `MAX_COHORT_ACCOUNTS / COHORT_PAGE_SIZE` account pages plus four `groupBy` reads each; 30 minutes
+ * is comfortably above that and is a ceiling, not a reservation.
  */
-export const botAccountDetection = createJob('bot-account-detection', '20 3 * * *', async () => {
-  return runBotAccountDetection({
-    reader: createCohortReader(),
-    sendReport: (report) => moderatorApp.abuseReport(report),
-    now: () => new Date(),
-    log: (name, data) =>
-      void logToAxiom({ type: 'info', name, ...data }, 'moderation').catch(() => undefined),
-  });
-});
+export const botAccountDetection = createJob(
+  'bot-account-detection',
+  UNRUNNABLE_JOB_CRON,
+  async (ctx) => {
+    return runBotAccountDetection({
+      reader: createCohortReader(),
+      sendReport: (report) => moderatorApp.abuseReport(report),
+      now: () => new Date(),
+      // The scheduler cancels by closing the response; without this the walk keeps paging and
+      // keeps POSTing after nobody is listening.
+      checkCanceled: () => ctx.checkIfCanceled(),
+      log: (name, data) =>
+        void logToAxiom({ type: 'info', name, ...data }, 'moderation').catch(() => undefined),
+    });
+  },
+  { lockExpiration: 30 * 60 }
+);
