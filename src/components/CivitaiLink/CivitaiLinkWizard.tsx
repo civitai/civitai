@@ -25,13 +25,11 @@ import {
   IconDownload,
   IconInfoCircle,
   IconLink,
-  IconRefresh,
 } from '@tabler/icons-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AppRow } from '~/components/CivitaiLink/CivitaiLinkAppRow';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import type { CivitaiLinkConnectPath } from '~/components/CivitaiLink/civitai-link-paths';
-import type { PairingStatus } from '~/workers/civitai-link-worker-types';
 import {
   CIVITAI_LINK_COMFYUI_DOWNLOAD,
   CIVITAI_LINK_DESKTOP_RELEASES,
@@ -198,45 +196,6 @@ function WizardFooter({ left, right }: { left: React.ReactNode; right?: React.Re
   );
 }
 
-function PairingState({ status, onRetry }: { status?: PairingStatus; onRetry: () => void }) {
-  // A live region added alongside its own content announces unreliably, so one
-  // wrapper spans all three states.
-  return (
-    <div role="status">
-      {status === 'paired' ? (
-        <Group justify="center" gap={10} my="md">
-          <Center
-            w={40}
-            h={40}
-            style={{ borderRadius: 999, background: 'var(--mantine-color-green-light)' }}
-          >
-            <IconCheck size={20} className="text-green-6" />
-          </Center>
-          <Text fz="md" fw={600} c="var(--mantine-color-bright)">
-            Signed in — this app is connected
-          </Text>
-        </Group>
-      ) : status === 'timeout' ? (
-        <Stack align="center" gap="xs" my="md">
-          <Text fz="sm" c="dimmed" ta="center" maw={420}>
-            Still waiting? Make sure the app is running.
-          </Text>
-          <Button variant="default" onClick={onRetry} leftSection={<IconRefresh size={16} />}>
-            Retry
-          </Button>
-        </Stack>
-      ) : (
-        <Group justify="center" gap={10} my="md">
-          <Loader size="sm" />
-          <Text fz="md" fw={600} c="var(--mantine-color-bright)">
-            Waiting for the app…
-          </Text>
-        </Group>
-      )}
-    </div>
-  );
-}
-
 export default function CivitaiLinkWizardModal() {
   const dialog = useDialogContext();
 
@@ -250,37 +209,16 @@ export default function CivitaiLinkWizardModal() {
   const nextStep = () => setActive((current) => (current < 2 ? current + 1 : current));
   const prevStep = () => setActive((current) => (current > 0 ? current - 1 : current));
 
-  const {
-    connected,
-    instance,
-    createInstance,
-    renameInstance,
-    awaitPairing,
-    cancelAwaitPairing,
-    pairingStatus,
-  } = useCivitaiLink();
+  const { connected, instance, createInstance, renameInstance } = useCivitaiLink();
   const [name, setName] = useState('');
-  // `instance` and `pairingStatus` are both provider-global, cross-tab broadcasts.
-  // Latch the id we paired with, or a join in another tab takes our typed name;
-  // latch that we saw 'paired', or another tab arming its own wait sends this step
-  // back to the spinner it never leaves.
-  const pairedIdRef = useRef<number | null>(null);
-  const [sawPaired, setSawPaired] = useState(false);
-  const isNodePack = path === 'nodepack';
 
-  const handleAdvance = () => {
+  const handleCreateInstance = () => {
     nextStep();
-    setSawPaired(false);
-    if (isNodePack) createInstance();
-    else awaitPairing();
+    createInstance();
   };
 
-  const handleRetryPairing = () => {
-    pairedIdRef.current = null;
-    setSawPaired(false);
-    awaitPairing();
-  };
-
+  // The instance exists from the moment the code is generated, so an abandoned
+  // wizard leaves an app under whatever default name the Link server assigned.
   const commitName = () => {
     const trimmed = name.trim();
     if (instance?.id && trimmed && trimmed !== instance.name) renameInstance(instance.id, trimmed);
@@ -289,21 +227,6 @@ export default function CivitaiLinkWizardModal() {
   useEffect(() => {
     if (connected) setActive(2);
   }, [connected]);
-
-  useEffect(() => {
-    if (active !== 2 || isNodePack) return;
-    return () => {
-      pairedIdRef.current = null;
-      cancelAwaitPairing();
-    };
-  }, [active, isNodePack]); // eslint-disable-line
-
-  useEffect(() => {
-    if (active !== 2 || isNodePack || pairingStatus !== 'paired') return;
-    setSawPaired(true);
-    if (pairedIdRef.current === null && instance?.id != null) pairedIdRef.current = instance.id;
-    if (instance?.id === pairedIdRef.current) commitName();
-  }, [active, isNodePack, pairingStatus, instance?.id]); // eslint-disable-line
 
   useEffect(() => {
     if (path !== 'desktop') return;
@@ -316,6 +239,7 @@ export default function CivitaiLinkWizardModal() {
     fetchReleases();
   }, [path]);
 
+  const isNodePack = path === 'nodepack';
   const otherOses = downloadableOses.filter((os) => os !== release.os);
 
   return (
@@ -336,8 +260,8 @@ export default function CivitaiLinkWizardModal() {
               How do you want to connect?
             </Text>
             <Text fz="sm" c="dimmed" lh={1.55}>
-              Civitai Link sends models straight from the site to the machine you generate on — it
-              downloads them and files them where your app expects. Pick whichever you already run.
+              Civitai Link sends models straight from the site to the machine you generate on — no
+              downloads, no file shuffling. Pick whichever you already run.
             </Text>
           </Stack>
           <Flex direction={{ base: 'column', sm: 'row' }} gap="sm" align="stretch">
@@ -502,7 +426,7 @@ export default function CivitaiLinkWizardModal() {
               </Button>
             }
             right={
-              <Button onClick={handleAdvance} rightSection={<IconChevronRight size={16} />}>
+              <Button onClick={handleCreateInstance} rightSection={<IconChevronRight size={16} />}>
                 {`I've installed it`}
               </Button>
             }
@@ -535,14 +459,14 @@ export default function CivitaiLinkWizardModal() {
                 </Center>
               </Center>
             </>
-          ) : isNodePack ? (
+          ) : (
             <>
               <Stack gap={4}>
                 <Text fz={24} fw={700} c="var(--mantine-color-bright)" lh={1.25}>
-                  Pair with this code
+                  Sign in from the app
                 </Text>
                 <Text fz="sm" c="dimmed" lh={1.55}>
-                  Enter this code in ComfyUI once. The connection sticks — you won&apos;t need it
+                  Enter this code in the app once. The connection sticks — you won&apos;t need it
                   again.
                 </Text>
               </Stack>
@@ -561,6 +485,9 @@ export default function CivitaiLinkWizardModal() {
                     <IconLink size={26} className="text-blue-6" />
                   </Center>
                 </div>
+                <Text fz="lg" fw={600} c="var(--mantine-color-bright)" mt="xs">
+                  Pair with this code
+                </Text>
                 {instance?.key ? (
                   <CopyButton value={instance.key}>
                     {({ copied, copy }) => (
@@ -586,35 +513,11 @@ export default function CivitaiLinkWizardModal() {
                   </Button>
                 )}
                 <Text size="sm" c="dimmed" ta="center" maw={420}>
-                  {`In ComfyUI, open the Civitai panel and paste the code. We'll pick it up here automatically.`}
+                  {isNodePack
+                    ? `In ComfyUI, open the Civitai panel and paste the code. We'll pick it up here automatically.`
+                    : `In the Link app, open the Civitai Link panel and paste the code. We'll pick it up here automatically.`}
                 </Text>
               </Stack>
-            </>
-          ) : (
-            <>
-              <Stack gap={4}>
-                <Text fz={24} fw={700} c="var(--mantine-color-bright)" lh={1.25}>
-                  Sign in from the app
-                </Text>
-                <Text fz="sm" c="dimmed" lh={1.55}>
-                  No code to copy. Approve the sign-in in your browser and this page picks it up.
-                </Text>
-              </Stack>
-              <Stack gap={16} pt={4}>
-                <NumberedStep index={1}>
-                  Open <b>Civitai Link</b> on that machine.
-                </NumberedStep>
-                <NumberedStep index={2}>
-                  Click <b>Sign in with Civitai</b>.
-                </NumberedStep>
-                <NumberedStep index={3} caption="It opens in your default browser.">
-                  Approve the request in the browser tab that opens.
-                </NumberedStep>
-              </Stack>
-              <PairingState
-                status={sawPaired ? 'paired' : pairingStatus}
-                onRetry={handleRetryPairing}
-              />
             </>
           )}
           <TextInput
@@ -636,9 +539,7 @@ export default function CivitaiLinkWizardModal() {
                 <IconAlertTriangle size={15} className={clsx('mt-0.5 shrink-0', classes.dimIcon)} />
               }
             >
-              {isNodePack
-                ? `Nothing after a minute? Make sure ComfyUI is running, then reload this page.`
-                : `Nothing after a minute? Make sure the Link app is running on that machine.`}
+              Nothing after a minute? Make sure the app is running, then reload this page.
             </NoteStrip>
           )}
           <WizardFooter
