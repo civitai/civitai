@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   initialStartsAtValue,
@@ -12,6 +12,35 @@ import {
 // 2026-08-19T21:18:52.600Z is the minute the "Creator Collab Update" event was
 // switched on, 21 hours after the 00:00 UTC start it already carried.
 const ACTIVATION = new Date('2026-08-19T21:18:52.600Z');
+
+const ORIGINAL_TZ = process.env.TZ;
+
+/**
+ * Run a block in a named zone, and prove the pin took.
+ *
+ * 🔴 Every display-space assertion here is an IDENTITY at UTC, which is what CI
+ * runs. Replacing `toDisplayDate` with `new Date(instant.getTime())` passes 17/17
+ * under `TZ=UTC` and fails 5 under `America/Denver`. A display test that inherits
+ * the runner's zone is not a weak test, it is no test.
+ *
+ * `delete` rather than assignment on restore: TZ is unset on some machines, and
+ * `process.env.TZ = undefined` stores the STRING "undefined", which Node reads as
+ * an invalid zone and resolves to UTC.
+ */
+function useTimezone(tz: string) {
+  beforeAll(() => {
+    process.env.TZ = tz;
+  });
+
+  afterAll(() => {
+    if (ORIGINAL_TZ === undefined) delete process.env.TZ;
+    else process.env.TZ = ORIGINAL_TZ;
+  });
+
+  it(`is running in ${tz}`, () => {
+    expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(tz);
+  });
+}
 
 // 🔴 Deliberately NOT the instant passed as `now`. Every function here takes the
 // clock as a parameter, so a mutation reading the ambient clock instead would be
@@ -37,10 +66,14 @@ describe('nextUtcMidnight', () => {
   });
 });
 
-describe('the display round trip', () => {
-  // Asserted as a relation between calendar fields rather than against a literal,
-  // so it means the same thing in every timezone the runner might use.
-  it('shows the operator the UTC calendar day, whatever the local offset is', () => {
+// West of UTC is where the SHIFT is observable: 00:00 UTC falls on the previous
+// local day, so a conversion that forgets to shift renders and saves the day
+// before. East of UTC these same targets land on the same local day and every
+// assertion below passes without exercising anything.
+describe('the display round trip, west of UTC', () => {
+  useTimezone('America/Denver');
+
+  it('shows the operator the UTC calendar day, not the local one', () => {
     const instant = nextUtcMidnight(ACTIVATION);
     const display = toDisplayDate(instant);
 
@@ -49,6 +82,9 @@ describe('the display round trip', () => {
       instant.getUTCMonth(),
       instant.getUTCDate(),
     ]);
+    // The control for the zone: at UTC these are the same instant and the
+    // assertion above holds for any implementation, identity included.
+    expect(display.getTime()).not.toBe(instant.getTime());
   });
 
   it('resolves back to the instant it was built from', () => {
@@ -63,75 +99,54 @@ describe('the display round trip', () => {
     ).toBe('2026-09-02T23:59:59.999Z');
   });
 
-  // 🔴 The control that has to run in a REAL timezone. An offset-arithmetic
-  // implementation (`toDisplayUTC`/`fromDisplayUTC`) is a correct-looking identity
-  // at any FIXED offset — including UTC, which is what CI runs — and only slips
-  // where the offset differs between the instant and the shifted value. Mocking
-  // `getTimezoneOffset` to a constant cannot reach it; nor can a west-of-UTC
-  // offset, because `startOf('day')` absorbs the shift inside the same UTC day.
-  //
-  // Sydney's 2026-10-04 is the date the old implementation turned into 2026-10-03.
-  describe('across a DST start that lands on UTC midnight', () => {
-    const original = process.env.TZ;
+  describe('initialStartsAtValue', () => {
+    it('opens a new event on the next UTC midnight', () => {
+      const value = initialStartsAtValue({ event: undefined, now: ACTIVATION });
 
-    beforeEach(() => {
-      process.env.TZ = 'Australia/Sydney';
+      expect(resolveDisplayStart(value!).toISOString()).toBe('2026-08-20T00:00:00.000Z');
     });
 
-    // 🔴 `delete`, not assignment. TZ is UNSET on some machines, and
-    // `process.env.TZ = undefined` stores the STRING "undefined", which Node reads
-    // as an invalid zone and silently resolves to UTC — leaving every later test
-    // file in this worker on a different clock than it asked for.
-    afterAll(() => {
-      if (original === undefined) delete process.env.TZ;
-      else process.env.TZ = original;
+    it('keeps the start an existing event already has', () => {
+      const value = initialStartsAtValue({
+        event: { id: 2, startsAt: new Date('2026-08-19T00:00:00.000Z') },
+        now: ACTIVATION,
+      });
+
+      expect(resolveDisplayStart(value!).toISOString()).toBe('2026-08-19T00:00:00.000Z');
     });
 
-    it('does not slip a day when the offset changes mid-trip', () => {
-      // Sunday 2026-10-04 02:00 AEST -> 03:00 AEDT, i.e. the transition sits on
-      // the 2026-10-04T00:00Z boundary this default is aiming at.
-      const eve = new Date('2026-10-03T12:00:00.000Z');
-      const target = nextUtcMidnight(eve);
-
-      expect(target.toISOString()).toBe('2026-10-04T00:00:00.000Z');
-      expect(resolveDisplayStart(toDisplayDate(target)).toISOString()).toBe(
-        '2026-10-04T00:00:00.000Z'
-      );
-    });
-
-    it('has a local offset that actually moves across that boundary', () => {
-      // The positive control for the block above: without a real DST shift here,
-      // the assertion would hold for a broken implementation too.
-      expect(new Date('2026-10-03T12:00:00.000Z').getTimezoneOffset()).not.toBe(
-        new Date('2026-10-04T12:00:00.000Z').getTimezoneOffset()
-      );
+    // 🔴 Event id 1 is enabled with a null start. Collapsing the three arms to two
+    // would hand it a start date the moment a moderator opened it, rescheduling a
+    // live event with nobody having typed anything.
+    it('leaves an existing event with no start date alone', () => {
+      expect(
+        initialStartsAtValue({ event: { id: 1, startsAt: null }, now: ACTIVATION })
+      ).toBeUndefined();
     });
   });
 });
 
-describe('initialStartsAtValue', () => {
-  it('opens a new event on the next UTC midnight', () => {
-    const value = initialStartsAtValue({ event: undefined, now: ACTIVATION });
+// A different axis from the block above: this one catches the offset CHANGING
+// mid-trip, which is what the old toDisplayUTC/fromDisplayUTC pair did across a
+// DST boundary. Sydney's 2026-10-04 is the date it turned into 2026-10-03.
+describe('the display round trip, across a DST start on UTC midnight', () => {
+  useTimezone('Australia/Sydney');
 
-    expect(resolveDisplayStart(value!).toISOString()).toBe('2026-08-20T00:00:00.000Z');
+  it('does not slip a day when the offset changes mid-trip', () => {
+    // Sunday 2026-10-04 02:00 AEST -> 03:00 AEDT, i.e. the transition sits on the
+    // 2026-10-04T00:00Z boundary this default aims at.
+    const target = nextUtcMidnight(new Date('2026-10-03T12:00:00.000Z'));
+
+    expect(target.toISOString()).toBe('2026-10-04T00:00:00.000Z');
+    expect(resolveDisplayStart(toDisplayDate(target)).toISOString()).toBe(
+      '2026-10-04T00:00:00.000Z'
+    );
   });
 
-  it('keeps the start an existing event already has', () => {
-    const value = initialStartsAtValue({
-      event: { id: 2, startsAt: new Date('2026-08-19T00:00:00.000Z') },
-      now: ACTIVATION,
-    });
-
-    expect(resolveDisplayStart(value!).toISOString()).toBe('2026-08-19T00:00:00.000Z');
-  });
-
-  // 🔴 Event id 1 is enabled with a null start. Collapsing the three arms to two
-  // would hand it a start date the moment a moderator opened it, rescheduling a
-  // live event with nobody having typed anything.
-  it('leaves an existing event with no start date alone', () => {
-    expect(
-      initialStartsAtValue({ event: { id: 1, startsAt: null }, now: ACTIVATION })
-    ).toBeUndefined();
+  it('has a local offset that actually moves across that boundary', () => {
+    expect(new Date('2026-10-03T12:00:00.000Z').getTimezoneOffset()).not.toBe(
+      new Date('2026-10-04T12:00:00.000Z').getTimezoneOffset()
+    );
   });
 });
 
@@ -188,8 +203,8 @@ describe('lateEnableWarning', () => {
     ).toMatch(/already passed/);
   });
 
-  // Enabled, but the window is behind us — `getActiveRewardsBonusEvent` picks up
-  // nothing, so there is nothing to warn about.
+  // Enabled, but the window is behind us, so getActiveRewardsBonusEvent picks up
+  // nothing and there is nothing to warn about.
   it('says nothing when the end date has already gone by', () => {
     expect(
       lateEnableWarning({
