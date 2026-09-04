@@ -25,6 +25,7 @@ import {
 import {
   LISTING_ACTION_ROW_CONTROL_PX,
   LISTING_ACTION_ROW_GAP_PX,
+  LISTING_ACTION_ROW_HEIGHT_PX,
   LISTING_ACTION_ROW_PT_PX,
   LISTING_CARD_COVER_ASPECT_RATIO,
   LISTING_CARD_ICON_SIZE_PX,
@@ -61,6 +62,13 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
  * reserve EXACTLY this geometry or the grid reflows when the query resolves, and
  * two hand-copied numbers is how that drifts. Do not re-literalise a value below
  * "for readability" — the literal is the bug.
+ *
+ * 🔴 AND "READS THEM" MEANS ALL OF THEM, WHICH IS NOW MACHINE-CHECKED AGAINST THE
+ * MODULE'S EXPORTS. This header claimed the action-row HEIGHT among them while
+ * nothing here consumed it; the row's `mih` is that consumer, and
+ * `__tests__/appListingCardView.test.ts` enumerates the module's `Object.keys`
+ * rather than a hand-maintained list, so the claim cannot quietly outgrow the code
+ * again.
  *
  * 🔴 THE RECOMMEND ROLLUP LIVES IN THE META BLOCK, NOT THE ACTION ROW. It used to
  * sit opposite the CTA under `justify="space-between"`, which cost an enforced
@@ -322,9 +330,11 @@ export function AppListingCard({
   // `container-type: inline-size` would be an unread containment declaration
   // that a later reader has to prove unused before touching. Nothing else on the
   // card is size-queried; re-add it WITH its consumer if that changes.
-  // (`useAppListingActionsMenuVisible` went with it — the card no longer needs to
-  // know whether the menu will render, only to render it. The predicate itself
-  // still lives in `AppListingActionsMenu` for the surfaces that do.)
+  // (`useAppListingActionsMenuVisible` went with it. That hook is now DELETED, not
+  // merely uncalled: it existed solely so this card could lay out around the
+  // trigger, so once the layout stopped depending on the answer it had no consumer
+  // anywhere — and an exported hook with no consumer is the same shape as an unread
+  // containment declaration, i.e. the thing that gets wired back in later.)
   // 🔴 S4 — CHROME MATCHES THE SITE'S CARD, and every property below is
   // load-bearing. Measured against a `/models` card in the same session (dark),
   // and re-measured at 394px mobile where all four values are identical:
@@ -565,7 +575,27 @@ export function AppListingCard({
             🔴 ROW HEIGHT IS A CONSTANT 46px AND MUST STAY ONE, and it is now
             DERIVED rather than asserted: `LISTING_ACTION_ROW_HEIGHT_PX` =
             `LISTING_ACTION_ROW_PT_PX` (10) + `LISTING_ACTION_ROW_CONTROL_PX`
-            (36), and this row reads both. Every control in it is that same 36:
+            (36), and this row reads all three.
+
+            🔴 `mih` IS THE HEIGHT CONSTANT'S ONLY PRODUCTION READ, AND IT IS HERE
+            BECAUSE OF WHAT ITS ABSENCE COST. The height was DERIVED in the module
+            and MEASURED in the browser suite, but nothing in production consumed
+            it — so the module's own header, this file's header and a test titled
+            "reads EVERY geometry constant" all claimed a coverage that did not
+            exist, and the test's loop quietly enumerated 8 of 9. An audit produced
+            the defect that gap admits: adding `pb={10}` beside the `pt` renders a
+            56px row while the constant still says 46, and the BLOCKING node tier
+            stays entirely green because it measures nothing. PR3's skeleton would
+            then import 46, reserve 10px too little, and reflow the grid — exactly
+            what this module exists to prevent, in the one tier CI does not gate.
+            `mih` makes the read real (and is not inert: it holds the row at 46 if a
+            control ever renders SHORTER), and the node tier now asserts this tag's
+            whole PROP LEDGER, so a `pb` — or any other prop that can move the
+            row's height — fails the blocking tier rather than only the browser one.
+            🔴 DO NOT ADD A PROP HERE WITHOUT UPDATING THAT LEDGER; that is the
+            point of it, not an obstacle to route around.
+
+            Every control in it is that same 36:
             the `sm` CTA button and the `⋮` trigger, which takes its size from the
             constant rather than a literal. The row lives in an `h-full` grid row,
             so a taller control here propagates to every card in that row across
@@ -575,6 +605,7 @@ export function AppListingCard({
         <Group
           mt="auto"
           pt={LISTING_ACTION_ROW_PT_PX}
+          mih={LISTING_ACTION_ROW_HEIGHT_PX}
           gap={LISTING_ACTION_ROW_GAP_PX}
           wrap="nowrap"
         >

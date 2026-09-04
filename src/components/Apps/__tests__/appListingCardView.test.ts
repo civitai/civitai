@@ -12,6 +12,7 @@ import {
   isEditableListingStatus,
   safeExternalHref,
 } from '~/components/Apps/appListingCardView';
+import * as geometry from '~/components/Apps/appListingCardGeometry';
 import {
   LISTING_ACTION_ROW_CONTROL_PX,
   LISTING_ACTION_ROW_GAP_PX,
@@ -401,33 +402,105 @@ describe('the card geometry module', () => {
    * 🔴 THE COMPONENT READS THE MODULE — the assertion the card⇄skeleton
    * relationship actually rests on, and the one a values-only test cannot make.
    *
-   * Named constants, one per geometry fact, so a failure says WHICH one stopped
-   * being read rather than "the import list changed".
+   * 🔴 THE LIST IS THE MODULE'S OWN EXPORTS, NOT A LIST SOMEONE MAINTAINS. It used
+   * to be nine names typed out here, and it contained eight — the title said "every
+   * geometry constant" while `LISTING_ACTION_ROW_HEIGHT_PX` was silently omitted,
+   * and that constant had NO production consumer at all. The description was wider
+   * than the body, which is the shape that reads as coverage while providing none.
+   * Deriving the list from `Object.keys` makes the omission impossible to repeat AND
+   * makes the guard cover constants nobody has written yet: add one to the module
+   * without reading it in the card and this fails, naming it.
+   *
+   * 🔴 SO THE FAILURE MESSAGE NAMES THE CONSTANT, not "the import list changed" —
+   * a set comparison would say only that two arrays differ.
    */
-  it('AppListingCard reads every geometry constant from the shared module', () => {
+  it('AppListingCard reads every geometry constant the module exports', () => {
     const code = cardCode();
     // Positive control on the stripper: it did not simply eat the file.
     expect(code).toContain('export function AppListingCard');
     expect(code).toContain("from '~/components/Apps/appListingCardGeometry'");
-    for (const name of [
-      'LISTING_CARD_COVER_ASPECT_RATIO',
-      'LISTING_CARD_ICON_SIZE_PX',
-      'LISTING_CARD_TITLE_LINES',
-      'LISTING_CARD_TITLE_LINE_HEIGHT',
-      'LISTING_CARD_TITLE_MIN_HEIGHT',
-      'LISTING_ACTION_ROW_PT_PX',
-      'LISTING_ACTION_ROW_GAP_PX',
-      'LISTING_ACTION_ROW_CONTROL_PX',
-    ]) {
+
+    const exported = Object.keys(geometry);
+    // Positive control on the enumeration itself: a module that exported nothing
+    // would make the loop below vacuous, and `toHaveLength(0)` is not something a
+    // reader would notice. 9 is typed out so ADDING an export is a deliberate act.
+    expect(exported).toHaveLength(9);
+    expect(exported).toContain('LISTING_ACTION_ROW_HEIGHT_PX');
+
+    for (const name of exported) {
       // Twice: once in the import list, once at the use site. A constant that is
       // imported and never read is exactly the state a re-literalised value
       // leaves behind, and it is invisible to a bare `toContain`.
       const uses = [...code.matchAll(new RegExp(name, 'g'))].length;
       expect(
         uses,
-        `${name} is imported but never read in AppListingCard.tsx`
+        `${name} is exported by appListingCardGeometry but never read in AppListingCard.tsx ` +
+          `(found ${uses} occurrence(s); an import with no use site counts as 1)`
       ).toBeGreaterThanOrEqual(2);
     }
+  });
+
+  /**
+   * 🔴 THE ACTION ROW'S PROP LEDGER — the assertion that makes the BLOCKING tier
+   * able to see a row-height regression at all.
+   *
+   * 🔴 THIS EXISTS BECAUSE THE OBVIOUS GUARD IS BLIND. Row height is 46px, derived
+   * as `PT + CONTROL`, and MEASURED at three container widths — in the browser
+   * project, which is REPORT-ONLY in CI. So the only tier that gates merges cannot
+   * measure the row, and until this test existed a change that moved the row's
+   * height passed it completely. The worked case, produced by an audit rather than
+   * imagined: adding `pb={10}` beside the `pt` renders a 56px row while
+   * `LISTING_ACTION_ROW_HEIGHT_PX` still says 46; every node assertion stayed green,
+   * and PR3's skeleton would have imported 46, reserved 10px too little, and
+   * reflowed the grid on every query resolve.
+   *
+   * 🔴 IT IS A LEDGER, NOT A CONTAINMENT CHECK, and that is the whole design. The
+   * hazard is a prop being ADDED, so a test that merely requires `pt` and `mih` to
+   * be present cannot see it. This asserts the EXACT SET, so it fails when the set
+   * grows as well as when it shrinks — and it fails loudly enough to name the prop.
+   *
+   * 🔴 WHAT IT STILL CANNOT SEE, stated rather than implied: it reads the row's own
+   * opening tag. Height moved by a CHILD — a taller CTA size, a bigger
+   * `triggerSize` — is invisible here and is caught by the constants' own literal
+   * pins plus the browser measurements. This closes the row's own tag, not the row.
+   */
+  it("🔴 the action row's prop set is exactly the geometry it declares", () => {
+    const code = cardCode();
+    // Locate the row by `mt="auto"` — the only bottom-pinned element on the card,
+    // and the same discriminator the browser suite's `actionRow()` uses after
+    // `--group-wrap` alone proved insufficient there.
+    const at = code.indexOf('mt="auto"');
+    expect(at, 'no bottom-pinned action row found in AppListingCard.tsx').toBeGreaterThan(-1);
+    const open = code.lastIndexOf('<', at);
+    const close = code.indexOf('>', at);
+    expect(open).toBeGreaterThan(-1);
+    expect(close).toBeGreaterThan(at);
+    const tag = code.slice(open, close + 1);
+    // It really is the row's Group, not some enclosing element the index walk
+    // happened to land on.
+    expect(tag.startsWith('<Group')).toBe(true);
+
+    // The prop NAMES, in source order. `pb`, `p`, `py`, `h`, `mah`, `style` — or
+    // anything else that can move a flex row's height — makes this set grow.
+    const props = [...tag.matchAll(/\n\s+([a-zA-Z-]+)=/g)].map((m) => m[1]);
+    expect(
+      props,
+      `the action row's props changed — every one of them can move the 46px row height, ` +
+        `which the BLOCKING tier cannot measure. Update this ledger deliberately, ` +
+        `and re-measure the row in AppListingCard.browser.test.tsx.`
+    ).toEqual(['mt', 'pt', 'mih', 'gap', 'wrap']);
+
+    // …and each geometry prop reads its constant rather than a literal. `mih` is
+    // the height constant's ONLY production consumer; without it the module's
+    // "the card READS every value" claim, this file's "reads every geometry
+    // constant" test title, and the loop above were all wider than the code.
+    expect(tag).toContain('pt={LISTING_ACTION_ROW_PT_PX}');
+    expect(tag).toContain('mih={LISTING_ACTION_ROW_HEIGHT_PX}');
+    expect(tag).toContain('gap={LISTING_ACTION_ROW_GAP_PX}');
+    // Positive control on the tag slice: `mt="auto"` is a literal on purpose (it is
+    // not geometry, it is "bottom-pinned"), so a green result above is about the
+    // three constants and not about a slice that matched nothing.
+    expect(tag).toContain('mt="auto"');
   });
 
   /**
@@ -479,8 +552,8 @@ describe('the card geometry module', () => {
  * is asserted instead — the exports must be GONE, not merely unused, because a
  * surviving constant with no consumer is the shape that gets wired back in later.
  */
-describe('the retired rollup-floor constants', () => {
-  it('are no longer exported by the card view-model', () => {
+describe('the retired rollup-floor constants (four deleted, one moved)', () => {
+  it('the four DELETED ones are gone from the card view-model', () => {
     // Runtime keys, not a source grep: the module's tombstone comment names all
     // four, so a text search would report them present in a correct file.
     const exported = Object.keys(cardView);
@@ -492,11 +565,34 @@ describe('the retired rollup-floor constants', () => {
       'LISTING_ROLLUP_MIN_WIDTH_PX',
       'LISTING_ROLLUP_HIDE_BELOW_PX',
       'LISTING_ACTIONS_WIDEST_PX',
-      'LISTING_ACTION_ROW_GAP_PX',
       'listingRollupHideThreshold',
     ]) {
       expect(exported, `${gone} came back to appListingCardView`).not.toContain(gone);
     }
+  });
+
+  /**
+   * 🔴 THE FIFTH ONE MOVED, AND SAYING "DELETED" ABOUT IT WAS AN ERROR WITH A
+   * FAILURE MODE. `LISTING_ACTION_ROW_GAP_PX` still exists, under the same name, in
+   * `appListingCardGeometry`; the card reads it as the action row's `gap`. A
+   * tombstone claiming all five were deleted sends the next person who needs a row
+   * gap off to mint a SECOND copy — the two-copies drift this whole PR removes.
+   *
+   * So this asserts the MOVE as a relationship — absent from the old home AND
+   * present in the new one — rather than just the absence. An absence alone is
+   * equally true of a genuinely deleted constant, which is the reading that was
+   * wrong.
+   */
+  it('the fifth MOVED to the geometry module, and is live in both senses', () => {
+    expect(Object.keys(cardView)).not.toContain('LISTING_ACTION_ROW_GAP_PX');
+    expect(
+      Object.keys(geometry),
+      'LISTING_ACTION_ROW_GAP_PX moved to appListingCardGeometry — if it is gone from ' +
+        'there too then it was deleted after all, and the tombstone in ' +
+        'appListingCardView.ts is now wrong in the other direction'
+    ).toContain('LISTING_ACTION_ROW_GAP_PX');
+    // Same value it had at the old home — a move, not a redefinition.
+    expect(geometry.LISTING_ACTION_ROW_GAP_PX).toBe(10);
   });
 
   it('and the container query they placed is gone from the component', () => {

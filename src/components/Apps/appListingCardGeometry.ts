@@ -10,6 +10,14 @@
  * skeleton importing the same module is enough to make the two agree by
  * construction instead of by review.
  *
+ * 🔴 "READS EVERY VALUE" IS A CHECKED CLAIM, NOT A PROMISE — and it was FALSE when
+ * first written. `LISTING_ACTION_ROW_HEIGHT_PX` was derived here and measured in
+ * the browser suite but consumed by nothing in production, while this paragraph,
+ * the card's own header and a test titled "reads every geometry constant" all said
+ * otherwise (the test's list enumerated 8 of these 9). `appListingCardView.test.ts`
+ * now derives that list from THIS module's `Object.keys`, so an export added below
+ * and not read by the card fails the BLOCKING tier, naming it.
+ *
  * 🔴 REACT-FREE AND PURE, deliberately: the node `unit` project is the BLOCKING
  * tier here (the browser component suites are report-only), so a module with no
  * DOM dependency is one the blocking tier can assert about. The values that can

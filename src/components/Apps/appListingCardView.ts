@@ -222,11 +222,27 @@ export function getOwnerEditHref(
 
 // ── Action-row geometry (S7) — RETIRED, and this note is the tombstone ──────
 //
-// 🔴 FIVE EXPORTS LIVED HERE AND ALL FIVE ARE DELETED, not moved:
-// `LISTING_ROLLUP_MIN_WIDTH_PX` (70), `LISTING_ROLLUP_HIDE_BELOW_PX` (264),
-// `LISTING_ACTIONS_WIDEST_PX` (184), `listingRollupHideThreshold()` and the
-// spelling guard in `__tests__/appListingCardView.test.ts` that asserted the
-// component's `@[264px]` Tailwind class agreed with the JS constant.
+// 🔴 FIVE EXPORTS LIVED HERE. FOUR ARE DELETED; ONE MOVED. The distinction is the
+// whole point of writing this down, and an earlier draft of this note got it wrong
+// — it said "all five are deleted" and then listed four names plus a TEST, which is
+// not an export at all.
+//
+//   DELETED, no replacement anywhere:
+//     `LISTING_ROLLUP_MIN_WIDTH_PX` (70) — the rollup's enforced min-width floor
+//     `LISTING_ACTIONS_WIDEST_PX`   (184) — the measured widest action cluster
+//     `LISTING_ROLLUP_HIDE_BELOW_PX`(264) — the derived container-query threshold
+//     `listingRollupHideThreshold()`      — the function that derived it
+//
+//   MOVED, same name, new home:
+//     `LISTING_ACTION_ROW_GAP_PX`   (10) → `~/components/Apps/appListingCardGeometry.ts`,
+//     where the card reads it as the action row's `gap`. It is still live geometry;
+//     it just is not rollup-threshold arithmetic any more. 🔴 IF YOU CAME HERE
+//     LOOKING FOR THE ROW GAP, IMPORT IT FROM THERE — do NOT mint a second copy,
+//     which is exactly the two-copies drift the geometry module exists to remove.
+//
+// Also deleted, though it was never an export: the spelling guard in
+// `__tests__/appListingCardView.test.ts` that asserted the component's `@[264px]`
+// Tailwind class agreed with the JS constant.
 //
 // Every one of them existed to let the recommend rollup and the CTA share the
 // action row: a floor so a growing CTA could not starve the rollup, a container

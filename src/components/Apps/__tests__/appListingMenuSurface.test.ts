@@ -112,10 +112,20 @@ describe('the listing menu surface policy', () => {
       // Positive control on the stripper: it did not simply eat the file, AND the
       // surface prop above is still reaching a real render.
       expect(card).toContain('AppListingActionsMenu');
-      // …and the hook itself is still exported for the surfaces that DO need it, so
-      // the absence above is a fact about this card, not about a deleted module.
+      // 🔴 AND THE HOOK IS GONE ENTIRELY — asserted so the absence above cannot be
+      // satisfied by a card that merely stopped calling something still sitting
+      // there exported. It had exactly one consumer, this card, for exactly one
+      // reason (laying out around the trigger), and that reason died with the
+      // rollup's container query. An earlier draft of this test asserted the
+      // OPPOSITE — "still exported for the surfaces that DO need it" — which was
+      // false when written: there are none. That framing would also have turned a
+      // future cleanup of dead code into a red BLOCKING test for no correctness
+      // reason, which is the failure mode this assertion is inverted to avoid.
+      expect(code('../AppListingActionsMenu.tsx')).not.toContain('useAppListingActionsMenuVisible');
+      // Positive control on that read: the module is still the one that owns the
+      // menu, so the absence is about the hook and not about an unreadable file.
       expect(code('../AppListingActionsMenu.tsx')).toContain(
-        'export function useAppListingActionsMenuVisible'
+        'export function AppListingActionsMenu'
       );
     });
 
