@@ -1,7 +1,8 @@
 # Paid Model Loading — implementation checklist
 
 Companion to [paid-model-loading.md](paid-model-loading.md), which holds the contract and the
-decisions. This file is the order of work and the state of it.
+decisions, and [paid-model-loading-build-plan.md](paid-model-loading-build-plan.md), which is the
+inventory of files, procedures, pages and components. This file is the state of the work.
 
 ClickUp ids are the C-numbers from the 2026-08-18 lab call. Items with no C-number are gaps found
 while reading the contract and the code; they have no ClickUp task and no owner yet.
@@ -89,7 +90,11 @@ against a real download.
   - [ ] refuse (without charging) when already `available`
   - [ ] refuse when the model lacks a `RentCivit` licence (see Phase 0)
 - [ ] **C10 — per-tier daily rate limits.** ([868ktt5aq](https://app.clickup.com/t/868ktt5aq))
-  - [ ] four `rateLimit()` entries with `userReq` tier predicates, `period` = 1 day
+  - [ ] 🔴 the free row must be an **unconditional catch-all**, and `founder` needs its own row —
+        `userTiers` is `[free, founder, bronze, silver, gold]`, and a tier matching no row gets
+        **no limit at all**, not the strictest one
+  - [ ] see [the build plan](paid-model-loading-build-plan.md#2-server--the-trpc-surface) for the
+        exact `rateLimit()` shape
   - [ ] apply the **same `sharedKey`** on the generation submit path, or the implicit
         prepare-via-txt2img route bypasses the cap entirely
   - [ ] `onlyCountSuccess: true`, so a refused purchase does not burn a slot
